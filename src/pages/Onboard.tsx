@@ -120,7 +120,7 @@ export default class Onboard extends React.Component<Props, State> {
         />}
         <Segment attached={!user ? 'bottom' : undefined} >
           <Form onSubmit={this.handleSubmit}>
-            <Form.Group unstackable>
+            <Form.Group unstackable className="template-picker-row">
               <TemplatePicker
                 label={t('Template')}
                 placeholder={t('Template to skip manual member creation (optional)')}
@@ -136,7 +136,6 @@ export default class Onboard extends React.Component<Props, State> {
                   <Form.Button 
                     type="button"
                     icon='question circle outline'
-                    width={1}
                   />}>
                 <Popup.Content>
                   <TemplatePreview members={template?.members} />

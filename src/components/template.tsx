@@ -71,6 +71,7 @@ export function TemplatePicker(props: TemplatePickerProps) {
 
   return (
     <Form.Dropdown
+      className="template-picker-field"
       label={props.label}
       name="template"
       search
@@ -94,18 +95,19 @@ export function TemplatePicker(props: TemplatePickerProps) {
 
 export function TemplatePreview(props: { members?: readonly TemplateMember[] }) {
   if (!props.members) {
-    return <p>{t('Select a template to see which members will be added')}</p>;
+    return <p className="template-preview-empty">{t('Select a template to see which members will be added')}</p>;
   }
 
   return (
-    <>
+    <div className="template-preview">
       {props.members.map((member, index) => (
-        <div key={`${member.name}-${index}`}>
+        <div className="template-preview-item" key={`${member.name}-${index}`}>
           <Flag name={nameToFlagCode(member.name)} />
-          {displayMemberName(member.name)} · {t(member.rank ?? Rank.Standard)}
+          <span>{displayMemberName(member.name)}</span>
+          <span className="template-preview-rank">{t(member.rank ?? Rank.Standard)}</span>
         </div>
       ))}
-    </>
+    </div>
   );
 }
 

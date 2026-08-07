@@ -24,6 +24,78 @@
   min-width: 8.5rem;
 }
 
+.ui.form .fields.template-picker-row {
+  align-items: flex-end;
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: minmax(0, 1fr) auto;
+  margin-left: 0;
+  margin-right: 0;
+}
+
+.ui.form .fields.template-picker-row > .field {
+  min-width: 0;
+  padding-left: 0;
+  padding-right: 0;
+  width: auto;
+}
+
+.template-picker-field .ui.selection.dropdown > .text {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.template-picker-field .ui.dropdown .menu > .item {
+  align-items: baseline;
+  display: flex;
+  gap: 0.75rem;
+  white-space: normal;
+}
+
+html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
+  white-space: normal;
+  word-break: normal;
+}
+
+.template-picker-field .ui.dropdown .menu > .item > .text {
+  min-width: 0;
+  order: 1;
+  overflow-wrap: anywhere;
+}
+
+.template-picker-field .ui.dropdown .menu > .item > .description {
+  flex: 0 0 auto;
+  float: none;
+  margin-left: auto;
+  order: 2;
+}
+
+.template-preview {
+  max-height: min(24rem, 60vh);
+  min-width: min(18rem, calc(100vw - 4rem));
+  overflow-y: auto;
+}
+
+.template-preview-item {
+  align-items: baseline;
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  padding: 0.25rem 0;
+}
+
+.template-preview-rank {
+  color: rgba(0, 0, 0, 0.55);
+  white-space: nowrap;
+}
+
+.template-preview-empty {
+  margin: 0;
+  max-width: min(24rem, calc(100vw - 4rem));
+}
+
 .committee-menu > .item,
 .committee-menu .menu > .item,
 .members-table th {
