@@ -30,7 +30,6 @@ import {
 import {
   canonicalCountryName,
   displayMemberName,
-  localizedMemberOptions,
   MemberData,
   nameToMemberOption,
   Rank,
@@ -46,9 +45,18 @@ import {
   UserTemplateData,
   userTemplatesRef
 } from '../models/template';
+import {
+  CountryFlag,
+  CountryTemplateChoice,
+  CountryTemplatePicker,
+  DEFAULT_COUNTRY_TEMPLATE_CHOICE
+} from '../components/country-template';
+import {countryDisplayName} from '../models/country-template';
+import type {DropdownItemProps} from 'semantic-ui-react';
 
 type DraftMember = MemberData & {id: string};
 type LocalizedNameDraft = {id: string; language: Language; name: string};
+type CountryMemberOption = DropdownItemProps & {memberName: string};
 
 const RANK_OPTIONS = [Rank.Standard, Rank.Veto, Rank.NGO, Rank.Observer].map(makeDropdownOption);
 
@@ -63,7 +71,8 @@ export default function Templates() {
   const [localizedNames, setLocalizedNames] = useState<LocalizedNameDraft[]>([]);
   const [members, setMembers] = useState<DraftMember[]>([]);
   const [memberName, setMemberName] = useState(COUNTRY_OPTIONS[0].text);
-  const [customCountries, setCustomCountries] = useState<typeof COUNTRY_OPTIONS>([]);
+  const [customCountries, setCustomCountries] = useState<CountryMemberOption[]>([]);
+  const [countryTemplate, setCountryTemplate] = useState<CountryTemplateChoice>(DEFAULT_COUNTRY_TEMPLATE_CHOICE);
   const [rank, setRank] = useState(Rank.Standard);
   const [present, setPresent] = useState(true);
   const [voting, setVoting] = useState(false);
@@ -85,10 +94,16 @@ export default function Templates() {
     return () => ref.off('value', callback);
   }, [user]);
 
-  const countryOptions = useMemo(
-    () => localizedMemberOptions([...customCountries, ...COUNTRY_OPTIONS]),
-    [customCountries]
-  );
+  const countryOptions = useMemo<CountryMemberOption[]>(() => [
+    ...customCountries,
+    ...Object.entries(countryTemplate.template.countries || {}).map(([id, country]) => ({
+      key: `${countryTemplate.key}:${id}`,
+      value: `${countryTemplate.key}:${id}`,
+      text: countryDisplayName(country),
+      content: <span className="country-template-option"><CountryFlag country={country} />{countryDisplayName(country)}</span>,
+      memberName: country.name
+    }))
+  ], [customCountries, countryTemplate]);
 
   const startNew = () => {
     setSelectedID(undefined);
@@ -131,8 +146,8 @@ export default function Templates() {
 
   const addCustomCountry = (value: string) => {
     const option = nameToMemberOption(value);
-    if (!COUNTRY_OPTIONS.some(country => country.value === option.value)) {
-      setCustomCountries(current => [option, ...current.filter(country => country.value !== option.value)]);
+    if (!countryOptions.some(country => country.memberName === option.text)) {
+      setCustomCountries(current => [{...option, memberName: option.text}, ...current.filter(country => country.value !== option.value)]);
     }
     setMemberName(option.text);
   };
@@ -254,6 +269,9 @@ export default function Templates() {
         <Menu.Item as="a" href="/onboard">
           <Icon name="arrow left" />{t('Create committee')}
         </Menu.Item>
+        <Menu.Item as="a" href="/countries">
+          <Icon name="world" />{t('Country manager')}
+        </Menu.Item>
         <LanguageMenuItem position="right" />
       </Menu>
       <Header as="h1">{t('Template editor')}</Header>
@@ -362,6 +380,14 @@ export default function Templates() {
                     </Button>
                   )}
                 </div>
+                <CountryTemplatePicker
+                  value={countryTemplate.key}
+                  onChange={choice => {
+                    setCountryTemplate(choice);
+                    const firstCountry = Object.values(choice.template.countries || {})[0];
+                    if (firstCountry) setMemberName(firstCountry.name);
+                  }}
+                />
                 <Header as="h3">{t('Committee members')}</Header>
                 <Table compact celled stackable>
                   <Table.Header>
@@ -415,13 +441,14 @@ export default function Templates() {
                       <Table.HeaderCell>
                         <Dropdown
                           fluid search={searchCountryOptions} selection allowAdditions
-                          value={nameToMemberOption(memberName).value}
+                          value={countryOptions.find(option =>
+                            canonicalCountryName(option.memberName) === canonicalCountryName(memberName)
+                          )?.value || nameToMemberOption(memberName).value}
                           options={countryOptions}
                           onAddItem={(_event, data) => addCustomCountry(String(data.value))}
                           onChange={(_event, data) => {
-                            const option = [...customCountries, ...COUNTRY_OPTIONS]
-                              .find(country => country.value === data.value);
-                            if (option) setMemberName(option.text);
+                            const option = countryOptions.find(country => country.value === data.value);
+                            if (option) setMemberName(option.memberName);
                           }}
                         />
                       </Table.HeaderCell>

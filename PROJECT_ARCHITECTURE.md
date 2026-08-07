@@ -39,7 +39,7 @@ flowchart LR
 
 `src/index.tsx` 初始化 Google Analytics、Sentry、浏览器 history 与 Semantic UI 样式，并把 `App` 挂载到 `#root`。`src/App.tsx` 初始化 Firebase；若 `VITE_USE_FIREBASE_EMULATORS=true`，则连接本机 Auth（9099）、Realtime Database（9000）和 Storage（9199），否则连接 `muncoordinated` Firebase 项目。
 
-`src/i18n.tsx` 提供无外部运行时依赖的界面国际化层。当前支持英语和简体中文；英语原文同时作为稳定词条键，简体中文词条集中维护。`LanguageProvider` 在语言变更时重新挂载界面，使类组件与函数组件统一获取新文案，并集中覆盖 Semantic UI 的搜索空结果、可新增选项等默认文案；语言切换控件嵌入主页、创建页和委员会工作区的导航菜单。用户选择保存在浏览器 `localStorage` 的 `muncoordinated-language` 项中，首次访问则根据浏览器语言选择默认值。除用户模板名称外，业务数据（委员会名称、帖子正文等）不会被翻译或写回；用户模板可保存多语言名称，并在模板管理和创建委员会时按当前界面语言解析。预设国家和地区名称仅在显示时按当前语言本地化，Firebase 中的规范值保持不变。
+`src/i18n.tsx` 提供无外部运行时依赖的界面国际化层。当前支持英语和简体中文；英语原文同时作为稳定词条键，简体中文词条集中维护。`LanguageProvider` 在语言变更时重新挂载界面，使类组件与函数组件统一获取新文案，并集中覆盖 Semantic UI 的搜索空结果、可新增选项等默认文案；语言切换控件嵌入主页、创建页和委员会工作区的导航菜单。用户选择保存在浏览器 `localStorage` 的 `muncoordinated-language` 项中，首次访问则根据浏览器语言选择默认值。除用户模板、国家模板和国家名称外，业务数据（委员会名称、帖子正文等）不会被翻译或写回；这些可本地化名称均在 Firebase 中保存默认语言和语言到名称的映射，并按当前界面语言解析。内置默认国家模板从静态国家列表生成，包含英语、简体中文名称、Emoji 国旗和大洲。
 
 简体中文排版由 `src/App.css` 中基于 `html[lang='zh-CN']` 的全局规则控制：统一中文字体回退、菜单/按钮/表头和术语列的防拆分规则，并通过 CSS 容器查询按栏宽调整表格密度；支持 `word-break: auto-phrase` 的浏览器会自动使用词组感知换行。新增页面通常无需为中文逐项添加排版补丁。
 
@@ -50,6 +50,7 @@ flowchart LR
 | `/` | `Homepage` | 产品主页与入口 |
 | `/onboard`、`/committees` | `Onboard` | 登录后创建委员会 |
 | `/templates` | `Templates` | 管理当前登录账号的自定义委员会模板及模板成员 |
+| `/countries` | `Countries` | 管理账号级国家模板、国家多语言名称、Emoji/图片国旗和大洲 |
 | `/committees/:committeeID` | `Committee` | 订阅整个委员会数据、显示欢迎页及主导航 |
 | `.../setup` | `Admin` | 委员会基础资料与成员设置 |
 | `.../motions` | `Motions` | 动议队列、表决及相关计时流程 |
@@ -85,9 +86,17 @@ templates/{creatorUid}/{templateID}
   names/{languageCode}
   members/{memberID}
     name, rank, present, voting
+
+countryTemplates/{creatorUid}/{countryTemplateID}
+  name, defaultLanguage, names/{languageCode}
+  countryLanguages/{index}
+  countries/{countryID}
+    name, defaultLanguage, names/{languageCode}
+    continent
+    flag/{type,value}
 ```
 
-`src/models/committee.ts` 定义 `CommitteeData`、默认委员会和内置模板。`src/models/template.ts` 定义账号级自定义模板及其 Firebase 增删改辅助函数；模板成员复用委员会成员的四种 `Rank`、出席和必须投票字段。其余 `src/models/*.ts` 文件定义对应子资源（成员、动议、磋商、决议、调查、帖子、计时器和设置）及创建/更新辅助函数。页面通过 Firebase 引用的 `on('value')` 接收实时快照；`src/modules/handlers.ts` 将输入控件事件映射为字段级 Database 写入。计时相关更新使用 Realtime Database transaction，以减少并发更新冲突。
+`src/models/committee.ts` 定义 `CommitteeData`、默认委员会和内置模板。`src/models/template.ts` 定义账号级自定义模板及其 Firebase 增删改辅助函数；模板成员复用委员会成员的四种 `Rank`、出席和必须投票字段。`src/models/country-template.ts` 定义内置及账号级国家模板；上传的图片国旗在浏览器端等比缩放到最大 256×160 并转为 WebP data URL，随国家记录保存到 Realtime Database，不使用 Storage。其余 `src/models/*.ts` 文件定义对应子资源（成员、动议、磋商、决议、调查、帖子、计时器和设置）及创建/更新辅助函数。页面通过 Firebase 引用的 `on('value')` 接收实时快照；`src/modules/handlers.ts` 将输入控件事件映射为字段级 Database 写入。计时相关更新使用 Realtime Database transaction，以减少并发更新冲突。
 
 浏览器本地还会通过 `src/hooks.ts` 的 `useLocalStorage` 保存匿名投票者 ID；这使公开投票/队列功能可以识别同一浏览器而无需一定登录。
 
@@ -96,6 +105,7 @@ templates/{creatorUid}/{templateID}
 - `src/components/auth.tsx` 使用 Firebase 邮箱密码认证，并查询 `creatorUid` 等于当前用户 UID 的委员会以显示“我的委员会”。
 - `database.rules.json` 允许读取委员会；常规写入要求登录用户是该委员会创建者。对公开队列、公开修正案、公开调查选项/投票和公开动议存在细粒度例外。
 - `templates/{creatorUid}` 仅允许 UID 对应的登录用户读写，自定义模板不会向其他账号或未登录访问者公开。
+- `countryTemplates/{creatorUid}` 同样仅允许 UID 对应的登录用户读写；内置默认国家模板随前端代码发布，不写入 Firebase。
 - `storage.rules` 允许公开读取 `committees/{committeeId}/{fileName}`；上传需写入委员会创建者 UID 元数据。文件拥有者或委员会主任可更新/删除。
 - `Files.tsx` 同时维护 Database 中的文件/帖子元数据和 Storage 中的二进制对象。
 

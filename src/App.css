@@ -129,6 +129,90 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   color: #1678c2;
 }
 
+.country-editor-heading {
+  align-items: center;
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+  margin-top: 1rem;
+}
+
+.country-editor-heading .ui.header {
+  margin: 0;
+}
+
+.country-table-scroll {
+  max-height: 65vh;
+  overflow: auto;
+}
+
+.ui.table.country-editor-table {
+  min-width: 56rem;
+}
+
+.ui.table.country-editor-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.ui.table.country-editor-table .field {
+  margin: 0;
+  min-width: 11rem;
+}
+
+.country-flag-editor {
+  align-items: center;
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: auto minmax(6rem, 1fr);
+  min-width: 14rem;
+}
+
+.country-flag-editor img {
+  border: 1px solid rgba(34, 36, 38, 0.18);
+  border-radius: 0.2rem;
+  grid-row: span 2;
+  height: 2.5rem;
+  object-fit: contain;
+  width: 4rem;
+}
+
+.country-flag-emoji {
+  font-size: 2rem;
+  grid-row: span 2;
+  line-height: 1;
+  text-align: center;
+  width: 4rem;
+}
+
+.country-flag-editor input[type='file'] {
+  max-width: 13rem;
+}
+
+.country-template-option {
+  align-items: center;
+  display: inline-flex;
+  gap: 0.6rem;
+}
+
+.country-template-flag {
+  flex: 0 0 auto;
+  height: 1.2rem;
+  object-fit: contain;
+  width: 1.8rem;
+}
+
+.country-template-flag-emoji {
+  font-size: 1.15rem;
+  line-height: 1;
+  text-align: center;
+}
+
+.ui.button.add-country-button {
+  margin: 0.75rem 0 1rem;
+}
+
 @media only screen and (max-width: 767px) {
   .ui.form .fields.template-localized-name-row {
     grid-template-columns: minmax(0, 1fr) auto;

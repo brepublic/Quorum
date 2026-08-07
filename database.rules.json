@@ -6,6 +6,12 @@
         ".write": "auth != null && auth.uid === $uid"
       }
     },
+    "countryTemplates": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": "auth != null && auth.uid === $uid"
+      }
+    },
     "committees": {
       ".indexOn": ["creatorUid"],
       ".read": true,

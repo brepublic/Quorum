@@ -189,6 +189,9 @@ export default class Onboard extends React.Component<Props, State> {
           <Menu.Item as="a" href="/templates">
             <Icon name="file alternate outline" />{t('Manage templates')}
           </Menu.Item>
+          <Menu.Item as="a" href="/countries">
+            <Icon name="world" />{t('Country manager')}
+          </Menu.Item>
           <LanguageMenuItem position="right" />
         </Menu>
         <Helmet>
