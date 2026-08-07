@@ -3,6 +3,17 @@ import { Dropdown, Icon, Menu } from 'semantic-ui-react';
 
 export type Language = 'en' | 'zh-CN';
 
+export const LANGUAGE_OPTIONS: ReadonlyArray<{
+  key: Language;
+  value: Language;
+  text: string;
+}> = [
+  { key: 'en', value: 'en', text: 'English' },
+  { key: 'zh-CN', value: 'zh-CN', text: '简体中文' }
+];
+
+export const SUPPORTED_LANGUAGES: readonly Language[] = LANGUAGE_OPTIONS.map(option => option.value);
+
 const STORAGE_KEY = 'muncoordinated-language';
 
 const en: Record<string, string> = {
@@ -18,7 +29,8 @@ const en: Record<string, string> = {
   'Motion action: Reorder': 'Reorder',
   'Motion action: Create': 'Create',
   'Motion action: Vote': 'Vote',
-  'Motion action: Enact': 'Enact'
+  'Motion action: Enact': 'Enact',
+  '25% of of members with voting rights': '25% of members with voting rights'
 };
 
 const zhCN: Record<string, string> = {
@@ -67,6 +79,28 @@ const zhCN: Record<string, string> = {
   'Topic': '议题',
   'Conference': '会议',
   'Template': '模板',
+  'Template editor': '模板编辑器',
+  'Manage templates': '管理模板',
+  'New template': '新建模板',
+  'Edit template': '编辑模板',
+  'Template name': '模板名称',
+  'Enter a template name': '输入模板名称',
+  'Other language': '其他语言',
+  'My template': '我的模板',
+  'Built-in': '内置',
+  'Committee members': '委员会成员',
+  'Country or delegation': '国家或代表团',
+  'Save template': '保存模板',
+  'Template saved': '模板已保存。',
+  'Could not save template': '无法保存模板。',
+  'Could not delete template': '无法删除模板。',
+  'Delete template': '删除模板',
+  'Delete template?': '删除模板？',
+  'Are you sure that you want to delete this template?': '确定要删除此模板吗？',
+  'No custom templates yet': '尚未创建自定义模板。',
+  'Log in to manage your templates': '请登录后管理您的模板。',
+  'Add at least one committee member': '请至少添加一名委员会成员。',
+  '{count} members': '{count} 个成员',
   'African Union': '非洲联盟',
   'Association of Southeast Asian Nations': '东南亚国家联盟',
   'European Union': '欧洲联盟',
@@ -79,7 +113,7 @@ const zhCN: Record<string, string> = {
   'Select preset member': '选择预设成员',
   'Rank': '席位类型',
   'Standard': '普通成员国',
-  'Veto': '常任理事国',
+  'Veto': '一票否决',
   'NGO': '非政府组织',
   'Observer': '观察员',
   'Present': '出席',
@@ -473,11 +507,6 @@ export function LanguageProvider(props: React.PropsWithChildren) {
   return <React.Fragment key={language}>{props.children}</React.Fragment>;
 }
 
-const LANGUAGE_OPTIONS = [
-  { key: 'en', value: 'en', text: 'English' },
-  { key: 'zh-CN', value: 'zh-CN', text: '简体中文' }
-];
-
 export function LanguageSwitcher() {
   const [language, updateLanguage] = React.useState<Language>(currentLanguage);
 
@@ -496,7 +525,7 @@ export function LanguageSwitcher() {
         aria-label={t('Language')}
         compact
         selection
-        options={LANGUAGE_OPTIONS}
+        options={[...LANGUAGE_OPTIONS]}
         value={language}
         onChange={(_, data) => setLanguage(data.value as Language)}
       />
