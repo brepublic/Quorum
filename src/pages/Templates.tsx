@@ -19,7 +19,14 @@ import {
 } from 'semantic-ui-react';
 import {Helmet} from 'react-helmet';
 import {Login} from '../components/auth';
-import {LanguageMenuItem, t} from '../i18n';
+import {
+  getLanguage,
+  LANGUAGE_OPTIONS,
+  Language,
+  LanguageMenuItem,
+  SUPPORTED_LANGUAGES,
+  t
+} from '../i18n';
 import {
   canonicalCountryName,
   displayMemberName,
@@ -34,19 +41,26 @@ import {makeDropdownOption, meetId} from '../utils';
 import {
   deleteUserTemplate,
   putUserTemplate,
+  templateDefaultLanguage,
+  templateDisplayName,
   UserTemplateData,
   userTemplatesRef
 } from '../models/template';
 
 type DraftMember = MemberData & {id: string};
+type LocalizedNameDraft = {id: string; language: Language; name: string};
 
 const RANK_OPTIONS = [Rank.Standard, Rank.Veto, Rank.NGO, Rank.Observer].map(makeDropdownOption);
 
 export default function Templates() {
+  const displayLanguage = getLanguage();
   const [user, setUser] = useState<firebase.User | null>();
   const [templates, setTemplates] = useState<Record<string, UserTemplateData>>({});
   const [selectedID, setSelectedID] = useState<string>();
   const [name, setName] = useState('');
+  const [defaultLanguage, setDefaultLanguage] = useState<Language>(displayLanguage);
+  const [nameIsFallback, setNameIsFallback] = useState(false);
+  const [localizedNames, setLocalizedNames] = useState<LocalizedNameDraft[]>([]);
   const [members, setMembers] = useState<DraftMember[]>([]);
   const [memberName, setMemberName] = useState(COUNTRY_OPTIONS[0].text);
   const [customCountries, setCustomCountries] = useState<typeof COUNTRY_OPTIONS>([]);
@@ -79,6 +93,9 @@ export default function Templates() {
   const startNew = () => {
     setSelectedID(undefined);
     setName('');
+    setDefaultLanguage(displayLanguage);
+    setNameIsFallback(false);
+    setLocalizedNames([]);
     setMembers([]);
     setSaved(false);
     setError(undefined);
@@ -86,8 +103,24 @@ export default function Templates() {
 
   const selectTemplate = (id: string) => {
     const template = templates[id];
+    const templateLanguage = templateDefaultLanguage(template);
+    const exactDisplayName = template.names?.[displayLanguage]?.trim()
+      || (displayLanguage === templateLanguage ? template.name.trim() : '');
     setSelectedID(id);
-    setName(template.name);
+    setDefaultLanguage(templateLanguage);
+    setName(exactDisplayName || templateDisplayName(template, displayLanguage));
+    setNameIsFallback(!exactDisplayName);
+    setLocalizedNames(SUPPORTED_LANGUAGES
+      .filter(language => language !== displayLanguage && !!(
+        template.names?.[language]?.trim()
+        || (language === templateLanguage && template.name.trim())
+      ))
+      .map(language => ({
+        id: meetId(),
+        language,
+        name: template.names?.[language]?.trim()
+          || (language === templateLanguage ? template.name.trim() : '')
+      })));
     setMembers(Object.entries(template.members || {}).map(([memberID, member]) => ({
       id: memberID,
       ...member
@@ -124,6 +157,28 @@ export default function Templates() {
     setSaved(false);
   };
 
+  const unusedLanguages = SUPPORTED_LANGUAGES.filter(
+    language => language !== displayLanguage
+      && !localizedNames.some(localizedName => localizedName.language === language)
+  );
+
+  const addLocalizedName = () => {
+    const language = unusedLanguages[0];
+    if (!language) {
+      return;
+    }
+    setLocalizedNames(current => [...current, {id: meetId(), language, name: ''}]);
+    setSaved(false);
+  };
+
+  const updateLocalizedName = (
+    id: string,
+    update: Partial<Pick<LocalizedNameDraft, 'language' | 'name'>>
+  ) => {
+    setLocalizedNames(current => current.map(item => item.id === id ? {...item, ...update} : item));
+    setSaved(false);
+  };
+
   const save = async () => {
     if (!user || !name.trim() || members.length === 0) {
       return;
@@ -134,10 +189,40 @@ export default function Templates() {
       result[id] = data;
       return result;
     }, {});
+    const trimmedName = name.trim();
+    const names: Partial<Record<Language, string>> = {};
+    if (!nameIsFallback) {
+      names[displayLanguage] = trimmedName;
+    }
+    localizedNames.forEach(localizedName => {
+      const value = localizedName.name.trim();
+      if (value) {
+        names[localizedName.language] = value;
+      }
+    });
+    let savedDefaultLanguage = defaultLanguage;
+    if (!names[savedDefaultLanguage]) {
+      const availableLanguage = SUPPORTED_LANGUAGES.find(language => !!names[language]);
+      if (availableLanguage) {
+        savedDefaultLanguage = availableLanguage;
+      } else {
+        names[displayLanguage] = trimmedName;
+        savedDefaultLanguage = displayLanguage;
+      }
+    }
+    const defaultName = names[savedDefaultLanguage] as string;
     try {
-      const ref = await putUserTemplate(user.uid, selectedID, {name: name.trim(), members: templateMembers});
+      const ref = await putUserTemplate(user.uid, selectedID, {
+        name: defaultName,
+        defaultLanguage: savedDefaultLanguage,
+        names,
+        members: templateMembers
+      });
       setSelectedID(ref.key ?? selectedID);
-      setName(name.trim());
+      setName(trimmedName);
+      setDefaultLanguage(savedDefaultLanguage);
+      setNameIsFallback(!names[displayLanguage]);
+      setLocalizedNames(current => current.map(item => ({...item, name: item.name.trim()})));
       setSaved(true);
       setError(undefined);
     } catch (reason) {
@@ -195,7 +280,7 @@ export default function Templates() {
                   <List.Item key={id} active={id === selectedID} onClick={() => selectTemplate(id)}>
                     <Icon name="file alternate outline" />
                     <List.Content>
-                      <List.Header>{template.name}</List.Header>
+                      <List.Header>{templateDisplayName(template)}</List.Header>
                       <List.Description>
                         {t('{count} members', {count: Object.keys(template.members || {}).length})}
                       </List.Description>
@@ -217,9 +302,66 @@ export default function Templates() {
                   required
                   label={t('Template name')}
                   value={name}
-                  onChange={event => { setName(event.currentTarget.value); setSaved(false); }}
+                  onChange={event => {
+                    setName(event.currentTarget.value);
+                    setNameIsFallback(false);
+                    setSaved(false);
+                  }}
                   placeholder={t('Enter a template name')}
                 />
+                <div className="template-localized-names">
+                  {localizedNames.map(localizedName => {
+                    const languageOptions = LANGUAGE_OPTIONS.filter(option =>
+                      option.value !== displayLanguage
+                      && (option.value === localizedName.language
+                        || !localizedNames.some(item => item.language === option.value))
+                    );
+                    return (
+                      <Form.Group key={localizedName.id} className="template-localized-name-row">
+                        <Form.Dropdown
+                          label={t('Language')}
+                          selection
+                          value={localizedName.language}
+                          options={languageOptions}
+                          onChange={(_event, data) => updateLocalizedName(
+                            localizedName.id,
+                            {language: data.value as Language}
+                          )}
+                        />
+                        <Form.Input
+                          label={t('Template name')}
+                          value={localizedName.name}
+                          placeholder={t('Enter a template name')}
+                          onChange={event => updateLocalizedName(
+                            localizedName.id,
+                            {name: event.currentTarget.value}
+                          )}
+                        />
+                        <Form.Button
+                          type="button"
+                          basic
+                          negative
+                          icon="trash"
+                          aria-label={t('Remove')}
+                          onClick={() => {
+                            setLocalizedNames(current => current.filter(item => item.id !== localizedName.id));
+                            setSaved(false);
+                          }}
+                        />
+                      </Form.Group>
+                    );
+                  })}
+                  {unusedLanguages.length > 0 && (
+                    <Button
+                      type="button"
+                      fluid
+                      className="add-template-language"
+                      onClick={addLocalizedName}
+                    >
+                      <Icon name="plus" />{t('Other language')}
+                    </Button>
+                  )}
+                </div>
                 <Header as="h3">{t('Committee members')}</Header>
                 <Table compact celled stackable>
                   <Table.Header>

@@ -3,6 +3,17 @@ import { Dropdown, Icon, Menu } from 'semantic-ui-react';
 
 export type Language = 'en' | 'zh-CN';
 
+export const LANGUAGE_OPTIONS: ReadonlyArray<{
+  key: Language;
+  value: Language;
+  text: string;
+}> = [
+  { key: 'en', value: 'en', text: 'English' },
+  { key: 'zh-CN', value: 'zh-CN', text: '简体中文' }
+];
+
+export const SUPPORTED_LANGUAGES: readonly Language[] = LANGUAGE_OPTIONS.map(option => option.value);
+
 const STORAGE_KEY = 'muncoordinated-language';
 
 const en: Record<string, string> = {
@@ -73,6 +84,7 @@ const zhCN: Record<string, string> = {
   'Edit template': '编辑模板',
   'Template name': '模板名称',
   'Enter a template name': '输入模板名称',
+  'Other language': '其他语言',
   'My template': '我的模板',
   'Built-in': '内置',
   'Committee members': '委员会成员',
@@ -494,11 +506,6 @@ export function LanguageProvider(props: React.PropsWithChildren) {
   return <React.Fragment key={language}>{props.children}</React.Fragment>;
 }
 
-const LANGUAGE_OPTIONS = [
-  { key: 'en', value: 'en', text: 'English' },
-  { key: 'zh-CN', value: 'zh-CN', text: '简体中文' }
-];
-
 export function LanguageSwitcher() {
   const [language, updateLanguage] = React.useState<Language>(currentLanguage);
 
@@ -517,7 +524,7 @@ export function LanguageSwitcher() {
         aria-label={t('Language')}
         compact
         selection
-        options={LANGUAGE_OPTIONS}
+        options={[...LANGUAGE_OPTIONS]}
         value={language}
         onChange={(_, data) => setLanguage(data.value as Language)}
       />

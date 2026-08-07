@@ -96,6 +96,49 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   max-width: min(24rem, calc(100vw - 4rem));
 }
 
+.template-localized-names {
+  margin: -0.35rem 0 1rem;
+}
+
+.ui.form .fields.template-localized-name-row {
+  align-items: flex-end;
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: minmax(9rem, 0.45fr) minmax(0, 1fr) auto;
+  margin: 0 0 0.75rem;
+}
+
+.ui.form .fields.template-localized-name-row > .field {
+  margin: 0;
+  min-width: 0;
+  padding: 0;
+  width: auto;
+}
+
+.ui.button.add-template-language {
+  background: transparent;
+  border: 1px dashed rgba(34, 36, 38, 0.35);
+  box-shadow: none;
+  color: rgba(0, 0, 0, 0.65);
+}
+
+.ui.button.add-template-language:hover,
+.ui.button.add-template-language:focus {
+  background: rgba(0, 0, 0, 0.025);
+  border-color: #2185d0;
+  color: #1678c2;
+}
+
+@media only screen and (max-width: 767px) {
+  .ui.form .fields.template-localized-name-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .ui.form .fields.template-localized-name-row > .field:first-child {
+    grid-column: 1 / -1;
+  }
+}
+
 .committee-menu > .item,
 .committee-menu .menu > .item,
 .members-table th {

@@ -18,7 +18,12 @@ import {
   TemplateMember,
   TEMPLATE_TO_MEMBERS
 } from '../models/committee';
-import {templateMembers, UserTemplateData, userTemplatesRef} from '../models/template';
+import {
+  templateDisplayName,
+  templateMembers,
+  UserTemplateData,
+  userTemplatesRef
+} from '../models/template';
 import {t} from '../i18n';
 
 export interface TemplateChoice {
@@ -57,13 +62,13 @@ export function TemplatePicker(props: TemplatePickerProps) {
   const choices = useMemo<TemplateChoice[]>(() => [
     ...Object.values(Template).map(name => ({
       key: `builtin:${name}`,
-      name,
+      name: t(name),
       members: TEMPLATE_TO_MEMBERS[name],
       custom: false
     })),
     ...Object.entries(customTemplates).map(([id, template]) => ({
       key: `custom:${id}`,
-      name: template.name,
+      name: templateDisplayName(template),
       members: templateMembers(template),
       custom: true
     }))
@@ -83,7 +88,7 @@ export function TemplatePicker(props: TemplatePickerProps) {
       options={choices.map(choice => ({
         key: choice.key,
         value: choice.key,
-        text: choice.custom ? choice.name : t(choice.name),
+        text: choice.name,
         description: choice.custom ? t('My template') : t('Built-in')
       }))}
       onChange={(_event, data) =>
