@@ -29,7 +29,8 @@ const en: Record<string, string> = {
   'Motion action: Reorder': 'Reorder',
   'Motion action: Create': 'Create',
   'Motion action: Vote': 'Vote',
-  'Motion action: Enact': 'Enact'
+  'Motion action: Enact': 'Enact',
+  '25% of of members with voting rights': '25% of members with voting rights'
 };
 
 const zhCN: Record<string, string> = {
