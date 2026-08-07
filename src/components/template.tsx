@@ -1,83 +1,148 @@
-import {Accordion, AccordionTitleProps, ButtonProps, Flag, Form, Icon, Popup} from "semantic-ui-react";
+import {
+  Accordion,
+  AccordionTitleProps,
+  ButtonProps,
+  Flag,
+  Form,
+  Icon,
+  Popup
+} from 'semantic-ui-react';
 import * as React from 'react';
-import {useState} from 'react';
-import {displayMemberName, nameToFlagCode} from "../modules/member"
-import {makeDropdownOption} from "../utils";
-import {CommitteeID, pushTemplateMembers, Template, TEMPLATE_TO_MEMBERS} from "../models/committee";
-import { t } from '../i18n';
+import {useEffect, useMemo, useState} from 'react';
+import firebase from 'firebase/compat/app';
+import {displayMemberName, nameToFlagCode, Rank} from '../modules/member';
+import {
+  CommitteeID,
+  pushTemplateMembers,
+  Template,
+  TemplateMember,
+  TEMPLATE_TO_MEMBERS
+} from '../models/committee';
+import {templateMembers, UserTemplateData, userTemplatesRef} from '../models/template';
+import {t} from '../i18n';
 
-export function TemplatePreview(props: { template?: Template }) {
-  if (!props.template) {
-    return (
-      <p>{t('Select a template to see which members will be added')}</p>
-    );
+export interface TemplateChoice {
+  key: string;
+  name: string;
+  members: readonly TemplateMember[];
+  custom: boolean;
+}
+
+interface TemplatePickerProps {
+  label?: string;
+  placeholder: string;
+  value?: string;
+  onChange: (choice?: TemplateChoice) => void;
+}
+
+export function TemplatePicker(props: TemplatePickerProps) {
+  const [user, setUser] = useState<firebase.User | null>(firebase.auth().currentUser);
+  const [customTemplates, setCustomTemplates] = useState<Record<string, UserTemplateData>>({});
+
+  useEffect(() => firebase.auth().onAuthStateChanged(setUser), []);
+
+  useEffect(() => {
+    if (!user) {
+      setCustomTemplates({});
+      return;
+    }
+
+    const ref = userTemplatesRef(user.uid);
+    const callback = (snapshot: firebase.database.DataSnapshot) =>
+      setCustomTemplates(snapshot.val() || {});
+    ref.on('value', callback);
+    return () => ref.off('value', callback);
+  }, [user]);
+
+  const choices = useMemo<TemplateChoice[]>(() => [
+    ...Object.values(Template).map(name => ({
+      key: `builtin:${name}`,
+      name,
+      members: TEMPLATE_TO_MEMBERS[name],
+      custom: false
+    })),
+    ...Object.entries(customTemplates).map(([id, template]) => ({
+      key: `custom:${id}`,
+      name: template.name,
+      members: templateMembers(template),
+      custom: true
+    }))
+  ], [customTemplates]);
+
+  return (
+    <Form.Dropdown
+      label={props.label}
+      name="template"
+      search
+      clearable
+      fluid
+      selection
+      placeholder={props.placeholder}
+      value={props.value || ''}
+      options={choices.map(choice => ({
+        key: choice.key,
+        value: choice.key,
+        text: choice.custom ? choice.name : t(choice.name),
+        description: choice.custom ? t('My template') : t('Built-in')
+      }))}
+      onChange={(_event, data) =>
+        props.onChange(choices.find(choice => choice.key === data.value))
+      }
+    />
+  );
+}
+
+export function TemplatePreview(props: { members?: readonly TemplateMember[] }) {
+  if (!props.members) {
+    return <p>{t('Select a template to see which members will be added')}</p>;
   }
 
   return (
     <>
-      {TEMPLATE_TO_MEMBERS[props.template]
-        .map(member =>
-          <div key={member.name}>
-            <Flag name={nameToFlagCode(member.name)} />
-            {displayMemberName(member.name)}
-          </div>
-        )}
+      {props.members.map((member, index) => (
+        <div key={`${member.name}-${index}`}>
+          <Flag name={nameToFlagCode(member.name)} />
+          {displayMemberName(member.name)} · {t(member.rank ?? Rank.Standard)}
+        </div>
+      ))}
     </>
   );
 }
 
 export function TemplateAdder(props: { committeeID: CommitteeID }) {
-  const [template, setTemplate] = useState<Template | undefined>(undefined);
+  const [template, setTemplate] = useState<TemplateChoice | undefined>();
   const [activeIndex, setActiveIndex] = useState<number>(-1);
 
-  const openAccordion = (event: React.MouseEvent<HTMLDivElement>, data: AccordionTitleProps) => {
-    const newIndex = activeIndex === data.index as number ? -1 : data.index as number;
+  const openAccordion = (_event: React.MouseEvent<HTMLDivElement>, data: AccordionTitleProps) => {
+    setActiveIndex(activeIndex === data.index as number ? -1 : data.index as number);
+  };
 
-    setActiveIndex(newIndex);
-  }
-
-  const pushTemplate = (event: React.MouseEvent<HTMLButtonElement>, data: ButtonProps) => {
+  const pushTemplate = (event: React.MouseEvent<HTMLButtonElement>, _data: ButtonProps) => {
     event.preventDefault();
-
     if (template) {
-      // Add countries as per selected templates
-      pushTemplateMembers(props.committeeID, template);
+      pushTemplateMembers(props.committeeID, template.members);
     }
-  }
-
+  };
 
   return (
     <Accordion>
-      <Accordion.Title
-        active={activeIndex === 0}
-        index={0}
-        onClick={openAccordion}
-      >
-        <Icon name='dropdown' />
+      <Accordion.Title active={activeIndex === 0} index={0} onClick={openAccordion}>
+        <Icon name="dropdown" />
         {t('Add members from a template (e.g. G20)')}
       </Accordion.Title>
       <Accordion.Content active={activeIndex === 0}>
         <Form>
-          <Form.Dropdown
+          <TemplatePicker
             label={t('Template')}
-            name="template"
-            search
-            clearable
-            fluid
-            selection
             placeholder={t('Select a template to add')}
-            value={template}
-            options={Object.values(Template).map(makeDropdownOption).map(option => ({
-              ...option,
-              text: t(String(option.text))
-            }))}
-            onChange={(event, data) => setTemplate(data.value as Template)}
+            value={template?.key}
+            onChange={setTemplate}
           />
           <Popup
             basic
             hoverable
             position="bottom left"
-            trigger={
+            trigger={(
               <Form.Button
                 icon="plus"
                 disabled={!template}
@@ -85,13 +150,14 @@ export function TemplateAdder(props: { committeeID: CommitteeID }) {
                 basic
                 onClick={pushTemplate}
               />
-            }>
+            )}
+          >
             <Popup.Content>
-              <TemplatePreview template={template} />
+              <TemplatePreview members={template?.members} />
             </Popup.Content>
           </Popup>
         </Form>
       </Accordion.Content>
     </Accordion>
-  )
+  );
 }

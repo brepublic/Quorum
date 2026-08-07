@@ -49,6 +49,7 @@ flowchart LR
 | --- | --- | --- |
 | `/` | `Homepage` | 产品主页与入口 |
 | `/onboard`、`/committees` | `Onboard` | 登录后创建委员会 |
+| `/templates` | `Templates` | 管理当前登录账号的自定义委员会模板及模板成员 |
 | `/committees/:committeeID` | `Committee` | 订阅整个委员会数据、显示欢迎页及主导航 |
 | `.../setup` | `Admin` | 委员会基础资料与成员设置 |
 | `.../motions` | `Motions` | 动议队列、表决及相关计时流程 |
@@ -77,9 +78,14 @@ committees/{committeeID}
   motions/{motionID}
   files/{postID}
   timer, notes, settings
+
+templates/{creatorUid}/{templateID}
+  name
+  members/{memberID}
+    name, rank, present, voting
 ```
 
-`src/models/committee.ts` 定义 `CommitteeData` 与默认委员会。其余 `src/models/*.ts` 文件定义对应子资源（成员、动议、磋商、决议、调查、帖子、计时器和设置）及创建/更新辅助函数。页面通过 Firebase 引用的 `on('value')` 接收实时快照；`src/modules/handlers.ts` 将输入控件事件映射为字段级 Database 写入。计时相关更新使用 Realtime Database transaction，以减少并发更新冲突。
+`src/models/committee.ts` 定义 `CommitteeData`、默认委员会和内置模板。`src/models/template.ts` 定义账号级自定义模板及其 Firebase 增删改辅助函数；模板成员复用委员会成员的四种 `Rank`、出席和必须投票字段。其余 `src/models/*.ts` 文件定义对应子资源（成员、动议、磋商、决议、调查、帖子、计时器和设置）及创建/更新辅助函数。页面通过 Firebase 引用的 `on('value')` 接收实时快照；`src/modules/handlers.ts` 将输入控件事件映射为字段级 Database 写入。计时相关更新使用 Realtime Database transaction，以减少并发更新冲突。
 
 浏览器本地还会通过 `src/hooks.ts` 的 `useLocalStorage` 保存匿名投票者 ID；这使公开投票/队列功能可以识别同一浏览器而无需一定登录。
 
@@ -87,6 +93,7 @@ committees/{committeeID}
 
 - `src/components/auth.tsx` 使用 Firebase 邮箱密码认证，并查询 `creatorUid` 等于当前用户 UID 的委员会以显示“我的委员会”。
 - `database.rules.json` 允许读取委员会；常规写入要求登录用户是该委员会创建者。对公开队列、公开修正案、公开调查选项/投票和公开动议存在细粒度例外。
+- `templates/{creatorUid}` 仅允许 UID 对应的登录用户读写，自定义模板不会向其他账号或未登录访问者公开。
 - `storage.rules` 允许公开读取 `committees/{committeeId}/{fileName}`；上传需写入委员会创建者 UID 元数据。文件拥有者或委员会主任可更新/删除。
 - `Files.tsx` 同时维护 Database 中的文件/帖子元数据和 Storage 中的二进制对象。
 

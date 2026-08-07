@@ -102,7 +102,8 @@ export interface CommitteeData {
   chair: string;
   topic: string;
   conference: string;
-  template?: Template;
+  /** Display name of the built-in or user-created template used at creation. */
+  template?: string;
   creatorUid: firebase.UserInfo['uid'];
   members?: Record<MemberID, MemberData>;
   caucuses?: Record<CaucusID, CaucusData>;
@@ -215,10 +216,9 @@ export const pushMember = (committeeID: CommitteeID, member: MemberData) => {
   logCreateMember(member.name)
 }
 
-export const TEMPLATE_TO_MEMBERS: Record<Template, {
-  name: MemberData['name']
-  rank?: Rank // not allowed to use members due to import order
-}[]> = {
+export type TemplateMember = Pick<MemberData, 'name'> & Partial<Pick<MemberData, 'rank' | 'present' | 'voting'>>;
+
+export const TEMPLATE_TO_MEMBERS: Record<Template, TemplateMember[]> = {
   'African Union': [
     {name: 'Algeria'},
     {name: 'Angola'},
@@ -406,7 +406,7 @@ export const TEMPLATE_TO_MEMBERS: Record<Template, {
     {name: 'United States of America', rank: Rank.Veto},
   ],
 }
-export const pushTemplateMembers = (committeeID: CommitteeID, template: Template) => {
+export const pushTemplateMembers = (committeeID: CommitteeID, template: Template | readonly TemplateMember[]) => {
   const ref = firebase.database()
     .ref('committees')
     .child(committeeID);
@@ -417,7 +417,11 @@ export const pushTemplateMembers = (committeeID: CommitteeID, template: Template
       canonicalCountryName(members[id].name)
     );
 
-    [...TEMPLATE_TO_MEMBERS[template]]
+    const templateMembers = typeof template === 'string'
+      ? TEMPLATE_TO_MEMBERS[template]
+      : template;
+
+    [...templateMembers]
       // Don't try and readd members that already exist
       .filter(member => !_.includes(memberNames, canonicalCountryName(member.name)))
       .forEach(
@@ -425,8 +429,8 @@ export const pushTemplateMembers = (committeeID: CommitteeID, template: Template
           pushMember(committeeID, {
             name: member.name,
             rank: member.rank ?? Rank.Standard,
-            present: true,
-            voting: false
+            present: member.present ?? true,
+            voting: member.voting ?? false
           })
       );
   });

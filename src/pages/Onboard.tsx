@@ -2,17 +2,16 @@ import * as React from 'react';
 import { RouteComponentProps } from 'react-router';
 import firebase from 'firebase/compat/app';
 import {
-  Form, Grid, Header, InputOnChangeData, DropdownProps,
+  Form, Grid, Header, InputOnChangeData,
   Message, Popup, Container, Segment, Icon, Menu,
 } from 'semantic-ui-react';
 import { Login } from '../components/auth';
 import { URLParameters } from '../types';
-import { makeDropdownOption } from '../utils';
 import ConnectionStatus from '../components/ConnectionStatus';
 import { logCreateCommittee } from '../modules/analytics';
 import { meetId } from '../utils';
-import {CommitteeData, DEFAULT_COMMITTEE, pushTemplateMembers, putCommittee, Template} from '../models/committee';
-import { TemplatePreview } from '../components/template';
+import {CommitteeData, DEFAULT_COMMITTEE, pushTemplateMembers, putCommittee} from '../models/committee';
+import {TemplateChoice, TemplatePicker, TemplatePreview} from '../components/template';
 import { Helmet } from 'react-helmet';
 import { t } from '../i18n';
 import { LanguageMenuItem } from '../i18n';
@@ -26,7 +25,7 @@ interface State {
   chair: string;
   conference: string;
   user: firebase.User | null;
-  template?: Template,
+  template?: TemplateChoice,
   committeesFref: firebase.database.Reference;
   unsubscribe?: () => void;
 }
@@ -70,11 +69,11 @@ export default class Onboard extends React.Component<Props, State> {
     this.setState({ [data.name]: data.value });
   }
 
-  onChangeTemplateDropdown = (event: React.SyntheticEvent<HTMLElement, Event>, data: DropdownProps): void => {
-    this.setState(old => ({ 
-      template: data.value as Template,
+  onChangeTemplate = (template?: TemplateChoice): void => {
+    this.setState(old => ({
+      template,
       // don't clear the name if the template is deselected
-      name: data.value as string || old.name
+      name: template?.name || old.name
     }));
   }
 
@@ -94,7 +93,7 @@ export default class Onboard extends React.Component<Props, State> {
       // We can't send `undefined` properties to Firebase or it will complain
       // so we only set this property if the template exists
       if (template) {
-        newCommittee.template = template;
+        newCommittee.template = template.name;
       }
 
       const newCommitteeRef = putCommittee(meetId(), newCommittee)
@@ -103,7 +102,7 @@ export default class Onboard extends React.Component<Props, State> {
 
       if (template) {
         // Add countries as per selected templates
-        pushTemplateMembers(newCommitteeRef.key!, template);
+        pushTemplateMembers(newCommitteeRef.key!, template.members);
       }
     }
   }
@@ -122,19 +121,11 @@ export default class Onboard extends React.Component<Props, State> {
         <Segment attached={!user ? 'bottom' : undefined} >
           <Form onSubmit={this.handleSubmit}>
             <Form.Group unstackable>
-              <Form.Dropdown
+              <TemplatePicker
                 label={t('Template')}
-                name="template"
-                width={14}
-                search
-                clearable
-                selection
                 placeholder={t('Template to skip manual member creation (optional)')}
-                options={Object.values(Template).map(makeDropdownOption).map(option => ({
-                  ...option,
-                  text: t(String(option.text))
-                }))}
-                onChange={this.onChangeTemplateDropdown}
+                value={template?.key}
+                onChange={this.onChangeTemplate}
               />
               <Popup 
                 basic 
@@ -148,7 +139,7 @@ export default class Onboard extends React.Component<Props, State> {
                     width={1}
                   />}>
                 <Popup.Content>
-                  <TemplatePreview template={template} />
+                  <TemplatePreview members={template?.members} />
                 </Popup.Content>
               </Popup>
             </Form.Group>
@@ -196,6 +187,9 @@ export default class Onboard extends React.Component<Props, State> {
     return (
       <Container style={{ padding: '1em 0em' }}>
         <Menu secondary>
+          <Menu.Item as="a" href="/templates">
+            <Icon name="file alternate outline" />{t('Manage templates')}
+          </Menu.Item>
           <LanguageMenuItem position="right" />
         </Menu>
         <Helmet>

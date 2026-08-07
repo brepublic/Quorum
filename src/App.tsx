@@ -18,6 +18,7 @@ import './App.css';
 import Onboard from './pages/Onboard';
 import Homepage from './pages/Homepage';
 import Committee from './pages/Committee';
+import Templates from './pages/Templates';
 import { NotFound } from './components/NotFound';
 
 const firebaseConfig = {
@@ -58,6 +59,7 @@ class App extends React.Component {
         <Route exact path="/" component={Homepage} />
         <Route exact path="/onboard" component={Onboard} />
         <Route exact path="/committees" component={Onboard} />
+        <Route exact path="/templates" component={Templates} />
         <Route path="/committees/:committeeID" component={Committee} />
         <Route path="*">
           <NotFound item="page" id="unknown" />
