@@ -10,3 +10,85 @@
 .thirdwidth {
   width: 33%;
 }
+.language-switcher {
+  align-items: center;
+  display: flex;
+  gap: 0.35rem;
+}
+
+.language-switcher > .icon {
+  margin: 0 0 0 0.25rem;
+}
+
+.language-switcher > .ui.dropdown {
+  min-width: 8.5rem;
+}
+
+.committee-menu > .item,
+.committee-menu .menu > .item,
+.members-table th {
+  white-space: nowrap;
+}
+
+html[lang='zh-CN'] body,
+html[lang='zh-CN'] .ui {
+  font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", Arial, sans-serif;
+}
+
+html[lang='zh-CN'] .ui.menu .item,
+html[lang='zh-CN'] .ui.dropdown .menu > .item,
+html[lang='zh-CN'] .ui.button,
+html[lang='zh-CN'] .ui.label,
+html[lang='zh-CN'] .ui.form .field > label,
+html[lang='zh-CN'] .ui.table th,
+html[lang='zh-CN'] .ui.definition.table td:first-child:not(.ignored) {
+  white-space: nowrap;
+  word-break: keep-all;
+}
+
+html[lang='zh-CN'] .ui.table td {
+  hyphens: none;
+  line-break: strict;
+  overflow-wrap: break-word;
+  text-wrap: pretty;
+  word-break: normal;
+}
+
+@supports (word-break: auto-phrase) {
+  html[lang='zh-CN'] .ui.table td {
+    word-break: auto-phrase;
+  }
+}
+
+html[lang='zh-CN'] .ui.definition.table td:first-child:not(.ignored) {
+  width: 1%;
+}
+
+html[lang='zh-CN'] .ui.grid > .row > .column,
+html[lang='zh-CN'] .ui.grid > .column {
+  container-type: inline-size;
+}
+
+@container (max-width: 32rem) {
+  html[lang='zh-CN'] .ui.table {
+    font-size: 0.9rem;
+  }
+
+  html[lang='zh-CN'] .ui.table th,
+  html[lang='zh-CN'] .ui.table td {
+    padding-left: 0.65em;
+    padding-right: 0.65em;
+  }
+}
+
+@media only screen and (max-width: 767px) {
+  html[lang='zh-CN'] .ui.buttons {
+    display: flex;
+    flex-wrap: wrap;
+  }
+
+  html[lang='zh-CN'] .ui.buttons > .button,
+  html[lang='zh-CN'] .ui.buttons > .or {
+    flex: 1 1 auto;
+  }
+}

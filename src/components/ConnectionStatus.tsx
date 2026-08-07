@@ -1,6 +1,7 @@
 import * as React from 'react';
 import firebase from 'firebase/compat/app';
 import { Message, Icon } from 'semantic-ui-react';
+import { t } from '../i18n';
 
 interface Props {
 }
@@ -55,9 +56,8 @@ export default class ConnectionStatus extends React.Component<Props, State> {
       <Message icon negative>
         <Icon name="circle notched" loading />
         <Message.Content>
-          <Message.Header>Connection Lost</Message.Header>
-          Changes are no longer being committed to the server. Either wait for a reconnection
-          or refresh the page. If you refresh the page, you will need to log in again.
+          <Message.Header>{t('Connection Lost')}</Message.Header>
+          {t('Changes are no longer being committed to the server. Either wait for a reconnection or refresh the page. If you refresh the page, you will need to log in again.')}
         </Message.Content>
       </Message>
     ) : <div />;

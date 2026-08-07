@@ -1,5 +1,6 @@
 import {MotionType} from "../models/motion";
 import {sentenceCase} from "../utils";
+import { t } from '../i18n';
 
 /**
  * Whether the motion is considered 'procedural' or not.
@@ -170,15 +171,15 @@ export const hasDuration = (motionType: MotionType): boolean => {
 export const showMotionType = (motionType: MotionType, time: string): string => {
   switch (motionType) {
     case MotionType.ExtendUnmoderatedCaucus:
-      return `Extend unmoderated caucus by ${time}`;
+      return t('Extend unmoderated caucus by {time}', { time });
     case MotionType.ExtendModeratedCaucus:
-      return `Extend moderated caucus by ${time}`;
+      return t('Extend moderated caucus by {time}', { time });
     case MotionType.OpenModeratedCaucus:
-      return `${time} moderated caucus`;
+      return t('{time} moderated caucus', { time });
     case MotionType.OpenUnmoderatedCaucus:
-      return `${time} unmoderated caucus`;
+      return t('{time} unmoderated caucus', { time });
     default:
-      return sentenceCase(motionType ?? 'Unknown type');
+      return t(sentenceCase(motionType ?? 'Unknown type'));
   }
 };
 export const hasCaucusTarget = (motionType: MotionType): boolean => {

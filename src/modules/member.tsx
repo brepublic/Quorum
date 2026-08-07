@@ -7,6 +7,7 @@ import {
 import {objectToList} from "../utils";
 import * as _ from "lodash";
 import type {DropdownItemProps} from 'semantic-ui-react';
+import { getLanguage } from '../i18n';
 
 export enum Rank {
   Veto = 'Veto',
@@ -76,9 +77,30 @@ export function searchCountryOptions(
       ? COUNTRY_ALIASES_BY_CODE.get(country.value) ?? []
       : [];
 
-    return [text, ...aliases]
+    return [text, country?.text ?? '', ...aliases]
       .some(term => _.deburr(term).toLowerCase().includes(normalizedQuery));
   });
+}
+
+export function displayMemberName(name: string): string {
+  const option = nameToCountryOption(name);
+
+  if (getLanguage() !== 'zh-CN' || !option || typeof Intl.DisplayNames !== 'function') {
+    return name;
+  }
+
+  try {
+    return new Intl.DisplayNames(['zh-CN'], { type: 'region' }).of(option.value.toUpperCase()) ?? name;
+  } catch {
+    return name;
+  }
+}
+
+export function localizedMemberOptions(options: MemberOption[]): MemberOption[] {
+  return options.map(option => ({
+    ...option,
+    text: displayMemberName(option.text)
+  }));
 }
 
 export function nameToFlagCode(name: string): FlagNames {

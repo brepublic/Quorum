@@ -36,6 +36,7 @@ import { NotFound } from '../components/NotFound';
 import { useVoterID } from '../hooks';
 import { push, remove, set, child } from 'firebase/database';
 import { Helmet } from 'react-helmet';
+import { localizeGeneratedName, t } from '../i18n';
 
 export interface StrawpollProps extends RouteComponentProps<URLParameters> {
 }
@@ -81,15 +82,15 @@ export function DeleteStrawpollModal(props: ModalProps) {
       onOpen={() => props.onChangeOpenState(true)}
       trigger={props.trigger}
     >
-      <Modal.Header>Delete strawpoll?</Modal.Header>
+      <Modal.Header>{t('Delete strawpoll?')}</Modal.Header>
       <Modal.Content>
         <Modal.Description>
-          Are you sure that you want to delete this strawpoll?
+          {t('Are you sure that you want to delete this strawpoll?')}
         </Modal.Description>
       </Modal.Content>
       <Modal.Actions>
-        <Button negative onClick={onYesClick}>Yes</Button>
-        <Button onClick={onNoClick}>No</Button>
+        <Button negative onClick={onYesClick}>{t('Yes')}</Button>
+        <Button onClick={onNoClick}>{t('No')}</Button>
       </Modal.Actions>
     </Modal>
   )
@@ -207,7 +208,7 @@ export default function Strawpoll(props: StrawpollProps) {
             value={option.text}
             onChange={modularFieldHandler<StrawpollOptionData>(strawpollOptionFref, 'text')}
             fluid
-            placeholder="Enter poll option"
+            placeholder={t('Enter poll option')}
             action
           >
             <input />
@@ -233,7 +234,7 @@ export default function Strawpoll(props: StrawpollProps) {
           <List.Item key={optionID}>
             <Input
               fluid
-              placeholder="Number of votes received"
+              placeholder={t('Number of votes received')}
               label={option.text}
               value={(!!option.tally || (option.tally === 0) ? option.tally : '').toString()}
               error={option.tally === undefined}
@@ -242,7 +243,7 @@ export default function Strawpoll(props: StrawpollProps) {
           </List.Item>
       case StrawpollStage.Results:
         return <List.Item key={optionID}>
-          <b>{option.text}</b> {votes} votes
+          <b>{option.text}</b> {t('{count} votes', { count: votes })}
           <Progress progress='value' value={votes} total={totalVotes} />
         </List.Item>
       default:
@@ -261,7 +262,7 @@ export default function Strawpoll(props: StrawpollProps) {
           fluid
           onClick={addOption}
         >
-          <Icon name="plus" />Add option
+          <Icon name="plus" />{t('Add option')}
         </Button>
       </List.Item>
       }
@@ -283,12 +284,12 @@ export default function Strawpoll(props: StrawpollProps) {
                   options={[{
                     key: StrawpollType.Checkbox,
                     value: StrawpollType.Checkbox,
-                    text: "Choose many",
+                    text: t('Choose many'),
                     icon: "check square"
                   }, {
                     key: StrawpollType.Radio,
                     value: StrawpollType.Radio,
-                    text: "Choose one",
+                    text: t('Choose one'),
                     icon: "radio"
                   }]}
                   onChange={togglePollType}
@@ -304,7 +305,7 @@ export default function Strawpoll(props: StrawpollProps) {
                       basic
                       onClick={() => setOpen(true)}
                     >
-                      <Icon name="delete" />Delete strawpoll?
+                      <Icon name="delete" />{t('Delete strawpoll?')}
                     </Button>
                   }
                 />
@@ -312,7 +313,7 @@ export default function Strawpoll(props: StrawpollProps) {
             </List.Item>
             <List.Item >
               <Checkbox
-                label="Delegates can add options"
+                label={t('Delegates can add options')}
                 toggle
                 checked={strawpoll ? (strawpoll.optionsArePublic || false) : false}
                 onClick={modularCheckboxHandler<StrawpollData>(strawpollFref, 'optionsArePublic')}
@@ -342,16 +343,16 @@ export default function Strawpoll(props: StrawpollProps) {
               basic
               onClick={createSharablePoll}
             >
-              Create shareable poll
+              {t('Create shareable poll')}
               <Icon name="arrow right" />
             </Button>
-            <Button.Or />
+            <Button.Or text={t('or')} />
             <Button
               primary
               basic
               onClick={createManualPoll}
             >
-              Create manual poll
+              {t('Create manual poll')}
               <Icon name="arrow right" />
             </Button>
           </Button.Group>
@@ -365,7 +366,7 @@ export default function Strawpoll(props: StrawpollProps) {
               onClick={editOptions}
             >
               <Icon name="arrow left" />
-              Edit options
+              {t('Edit options')}
             </Button>
             <Button
               primary
@@ -373,7 +374,7 @@ export default function Strawpoll(props: StrawpollProps) {
               disabled={!user}
               onClick={viewResults}
             >
-              View results
+              {t('View results')}
               <Icon name="arrow right" />
             </Button>
           </Button.Group>
@@ -387,7 +388,7 @@ export default function Strawpoll(props: StrawpollProps) {
             onClick={reopenVoting}
           >
             <Icon name="arrow left" />
-            Reopen voting
+            {t('Reopen voting')}
           </Button>
         )
       default:
@@ -398,14 +399,14 @@ export default function Strawpoll(props: StrawpollProps) {
   return (
     <Container text style={{ padding: '1em 0em' }}>
       <Helmet>
-          <title>{`${strawpoll.question} - Muncoordinated`}</title>
+          <title>{`${localizeGeneratedName(strawpoll.question)} - Muncoordinated`}</title>
       </Helmet>
       <Header as="h2">
         <Input
-          value={strawpoll ? strawpoll.question : ''}
+          value={strawpoll ? localizeGeneratedName(strawpoll.question) : ''}
           onChange={modularFieldHandler<StrawpollData>(strawpollFref, 'question')}
           fluid
-          placeholder="Type your question here"
+          placeholder={t('Type your question here')}
         />
       </Header>
       {renderMetaButtons()}

@@ -3,7 +3,7 @@ import { RouteComponentProps } from 'react-router';
 import firebase from 'firebase/compat/app';
 import {
   Form, Grid, Header, InputOnChangeData, DropdownProps,
-  Message, Popup, Container, Segment, Icon,
+  Message, Popup, Container, Segment, Icon, Menu,
 } from 'semantic-ui-react';
 import { Login } from '../components/auth';
 import { URLParameters } from '../types';
@@ -14,6 +14,8 @@ import { meetId } from '../utils';
 import {CommitteeData, DEFAULT_COMMITTEE, pushTemplateMembers, putCommittee, Template} from '../models/committee';
 import { TemplatePreview } from '../components/template';
 import { Helmet } from 'react-helmet';
+import { t } from '../i18n';
+import { LanguageMenuItem } from '../i18n';
 
 interface Props extends RouteComponentProps<URLParameters> {
 }
@@ -115,20 +117,23 @@ export default class Onboard extends React.Component<Props, State> {
         {!user && <Message
           error
           attached="top"
-          content="Log in or create an account to continue"
+          content={t('Log in or create an account to continue')}
         />}
         <Segment attached={!user ? 'bottom' : undefined} >
           <Form onSubmit={this.handleSubmit}>
             <Form.Group unstackable>
               <Form.Dropdown
-                label="Template"
+                label={t('Template')}
                 name="template"
                 width={14}
                 search
                 clearable
                 selection
-                placeholder="Template to skip manual member creation (optional)"
-                options={Object.values(Template).map(makeDropdownOption)}
+                placeholder={t('Template to skip manual member creation (optional)')}
+                options={Object.values(Template).map(makeDropdownOption).map(option => ({
+                  ...option,
+                  text: t(String(option.text))
+                }))}
                 onChange={this.onChangeTemplateDropdown}
               />
               <Popup 
@@ -148,29 +153,29 @@ export default class Onboard extends React.Component<Props, State> {
               </Popup>
             </Form.Group>
             <Form.Input
-              label="Name"
+              label={t('Name')}
               name="name"
               fluid
               value={this.state.name}
               required
               error={!this.state.name}
-              placeholder="Committee name"
+              placeholder={t('Committee name')}
               onChange={this.handleInput}
             />
             <Form.Input
-              label="Topic"
+              label={t('Topic')}
               name="topic"
               value={this.state.topic}
               fluid
-              placeholder="Committee topic"
+              placeholder={t('Committee topic')}
               onChange={this.handleInput}
             />
             <Form.Input
-              label="Conference"
+              label={t('Conference')}
               name="conference"
               value={this.state.conference}
               fluid
-              placeholder="Conference name"
+              placeholder={t('Conference name')}
               onChange={this.handleInput}
             />
             <Form.Button
@@ -178,7 +183,7 @@ export default class Onboard extends React.Component<Props, State> {
               fluid
               disabled={!this.state.user || this.state.name === ''}
             >
-              Create committee
+              {t('Create committee')}
               <Icon name="arrow right" />
             </Form.Button>
           </Form>
@@ -190,8 +195,11 @@ export default class Onboard extends React.Component<Props, State> {
   render() {
     return (
       <Container style={{ padding: '1em 0em' }}>
+        <Menu secondary>
+          <LanguageMenuItem position="right" />
+        </Menu>
         <Helmet>
-          <title>{`Create Committee - Muncoordinated`}</title>
+          <title>{`${t('Create committee')} - Muncoordinated`}</title>
           <meta name="description" content="Login, create an account, or create
                                       a committee with Muncoordinated now!" />
         </Helmet>
@@ -206,11 +214,11 @@ export default class Onboard extends React.Component<Props, State> {
                 Muncoordinated
               </Header>
               <Message>
-                <Message.Header>Browser compatibility notice</Message.Header>
+                <Message.Header>{t('Browser compatibility notice')}</Message.Header>
                   <p>
-                  Muncoordinated works best with newer versions of <a 
-                    href="https://www.google.com/chrome/">Google Chrome</a>.
-                   Use of other/older browsers has caused bugs and data loss.
+                  {t('Muncoordinated works best with newer versions of')} <a
+                    href="https://www.google.com/chrome/">Google Chrome</a>
+                  {t('. Use of other or older browsers has caused bugs and data loss.')}
                   </p>
               </Message>
             </Grid.Column>

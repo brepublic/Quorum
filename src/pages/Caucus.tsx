@@ -45,12 +45,13 @@ import {TimerData, Unit} from "../models/time";
 import {useAuthState} from "react-firebase-hooks/auth";
 import _ from "lodash";
 import {useObjectVal} from "react-firebase-hooks/database";
-import {MemberData, MemberOption, membersToPresentOptions, nameToFlagCode} from "../modules/member";
+import {displayMemberName, localizedMemberOptions, MemberData, MemberOption, membersToPresentOptions, nameToFlagCode} from "../modules/member";
 import {TimeSetter} from "../components/TimeSetter";
 import firebase from "firebase/compat/app";
 import {DragDropContext, Draggable, DraggableProvided, Droppable, DropResult} from "react-beautiful-dnd";
 import { Helmet } from 'react-helmet';
 import { getDatabase, ref } from 'firebase/database';
+import { localizeGeneratedName, t } from '../i18n';
 
 interface Props extends RouteComponentProps<URLParameters> {
 }
@@ -176,7 +177,7 @@ export function NextSpeaking(props: {
       onClick={nextSpeaker}
     >
       <Icon name="arrow up"/>
-      Stage
+      {t('Stage')}
     </Button>
   );
 
@@ -189,7 +190,7 @@ export function NextSpeaking(props: {
       onClick={startTimer}
     >
       <Icon name="hourglass start"/>
-      Start
+      {t('Start')}
     </Button>
   )
 
@@ -202,7 +203,7 @@ export function NextSpeaking(props: {
       onClick={nextSpeaker}
     >
       <Icon name="arrow up"/>
-      Next
+      {t('Next')}
     </Button>
   );
 
@@ -215,7 +216,7 @@ export function NextSpeaking(props: {
       onClick={nextSpeaker}
     >
       <Icon name="hourglass end"/>
-      Stop
+      {t('Stop')}
     </Button>
   );
 
@@ -228,7 +229,7 @@ export function NextSpeaking(props: {
       onClick={interlace}
     >
       <Icon name="random"/>
-      Order
+      {t('Order')}
     </Button>
   );
 
@@ -252,12 +253,11 @@ export function NextSpeaking(props: {
 
   return (
     <Segment textAlign="center" loading={!caucus}>
-      <Label attached="top left" size="large">Next speaking</Label>
+      <Label attached="top left" size="large">{t('Next speaking')}</Label>
       {button}
       <Popup
         trigger={interlaceButton}
-        content="Orders the list so that speakers are
-        'For', then 'Against', then 'Neutral', then 'For', etc."
+        content={t("Orders the list so that speakers are 'For', then 'Against', then 'Neutral', then 'For', etc.")}
       />
       <SpeakerFeed
         data={caucus ? caucus.queue : undefined}
@@ -324,20 +324,20 @@ class SpeakerFeedEntry extends React.PureComponent<{
         <Feed.Summary>
           <Feed.User>
             {data && <Flag name={nameToFlagCode(data.who)}/>}
-            {data ? data.who : ''}
+            {data ? displayMemberName(data.who) : ''}
           </Feed.User>
-          <Feed.Date>{data ? data.duration.toString() + ' seconds' : ''}</Feed.Date>
+          <Feed.Date>{data ? `${data.duration} ${t('seconds')}` : ''}</Feed.Date>
         </Feed.Summary>
         <Feed.Meta>
           <Feed.Like>
             {data && <StanceIcon stance={data.stance}/>}
-            {data ? data.stance : ''}
+            {data ? t(data.stance) : ''}
           </Feed.Like>
           {data && <Label size="mini" as="a" onClick={() => fref.remove()}>
-              Remove
+              {t('Remove')}
           </Label>}
           {data && speaking && (<Label size="mini" as="a" onClick={this.yieldHandler}>
-            Yield
+            {t('Yield')}
           </Label>)}
         </Feed.Meta>
       </Feed.Content>
@@ -488,7 +488,7 @@ function Queuer(props: {
 
   return (
     <Segment textAlign="center">
-      <Label attached="top left" size="large">Queue</Label>
+      <Label attached="top left" size="large">{t('Queue')}</Label>
       <Form>
         <Form.Dropdown
           icon="search"
@@ -498,18 +498,18 @@ function Queuer(props: {
           loading={!caucus}
           error={!queueMember}
           onChange={setMember}
-          options={memberOptions}
+          options={localizedMemberOptions(memberOptions)}
         />
         <TimeSetter
           loading={!caucus}
           unitValue={recoverUnit(caucus)}
-          placeholder="Speaking time"
+          placeholder={t('Speaking time')}
           durationValue={duration ? duration.toString() : undefined}
           onDurationChange={validatedNumberFieldHandler(caucusFref, 'speakerDuration')}
           onUnitChange={dropdownHandler(caucusFref, 'speakerUnit')}
         />
         <Form.Checkbox
-          label="Delegates can queue"
+          label={t('Delegates can queue')}
           indeterminate={!caucus}
           toggle
           checked={caucus ? caucus.queueIsPublic : false}
@@ -517,20 +517,20 @@ function Queuer(props: {
         />
         <Button.Group size="large" fluid>
           <Button
-            content="For"
+            content={t('For')}
             disabled={disableButtons}
             onClick={setStance(Stance.For)}
           />
-          <Button.Or/>
+          <Button.Or text={t('or')} />
           <Button
             disabled={disableButtons}
-            content="Neutral"
+            content={t('Neutral')}
             onClick={setStance(Stance.Neutral)}
           />
-          <Button.Or/>
+          <Button.Or text={t('or')} />
           <Button
             disabled={disableButtons}
-            content="Against"
+            content={t('Against')}
             onClick={setStance(Stance.Against)}
           />
         </Button.Group>
@@ -584,7 +584,7 @@ export default class Caucus extends React.Component<Props, State> {
     const statusDropdown = (
       <Dropdown 
         value={caucus ? caucus.status : CaucusStatus.Open} 
-        options={CAUCUS_STATUS_OPTIONS} 
+        options={CAUCUS_STATUS_OPTIONS.map(option => ({ ...option, text: t(String(option.text)) }))}
         onChange={dropdownHandler<CaucusData>(caucusFref, 'status')} 
       /> 
     );
@@ -594,13 +594,13 @@ export default class Caucus extends React.Component<Props, State> {
         <Input
           label={statusDropdown}
           labelPosition="right"
-          value={caucus ? caucus.name : ''}
+          value={caucus ? localizeGeneratedName(caucus.name) : ''}
           onChange={fieldHandler<CaucusData>(caucusFref, 'name')}
           loading={!caucus}
           attatched="top"
           size="massive"
           fluid
-          placeholder="Set caucus name"
+          placeholder={t('Set caucus name')}
         />
         <Form loading={!caucus}>
           <TextArea
@@ -609,7 +609,7 @@ export default class Caucus extends React.Component<Props, State> {
             onChange={textAreaHandler<CaucusData>(caucusFref, 'topic')}
             attatched="top"
             rows={1}
-            placeholder="Set caucus details"
+            placeholder={t('Set caucus details')}
           />
         </Form>
       </>
@@ -625,7 +625,7 @@ export default class Caucus extends React.Component<Props, State> {
 
     return (
       <Segment loading={!caucus}>
-        <Label attached="top left" size="large">Now speaking</Label>
+        <Label attached="top left" size="large">{t('Now speaking')}</Label>
         <Feed size="large">
           <SpeakerFeedEntry data={entryData} fref={caucusFref.child('speaking')} speakerTimer={speakerTimer}/>
         </Feed>
@@ -735,7 +735,7 @@ export default class Caucus extends React.Component<Props, State> {
     return (
       <Container style={{ 'padding-bottom': '2em' }}>
         <Helmet>
-            <title>{`${caucus?.name} - Muncoordinated`}</title>
+            <title>{`${localizeGeneratedName(caucus?.name ?? '')} - Muncoordinated`}</title>
         </Helmet>
         <Grid columns="equal" stackable>
           {header}

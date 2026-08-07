@@ -1,14 +1,15 @@
 import {Accordion, AccordionTitleProps, ButtonProps, Flag, Form, Icon, Popup} from "semantic-ui-react";
 import * as React from 'react';
 import {useState} from 'react';
-import {nameToFlagCode} from "../modules/member"
+import {displayMemberName, nameToFlagCode} from "../modules/member"
 import {makeDropdownOption} from "../utils";
 import {CommitteeID, pushTemplateMembers, Template, TEMPLATE_TO_MEMBERS} from "../models/committee";
+import { t } from '../i18n';
 
 export function TemplatePreview(props: { template?: Template }) {
   if (!props.template) {
     return (
-      <p>Select a template to see which members will be added</p>
+      <p>{t('Select a template to see which members will be added')}</p>
     );
   }
 
@@ -18,7 +19,7 @@ export function TemplatePreview(props: { template?: Template }) {
         .map(member =>
           <div key={member.name}>
             <Flag name={nameToFlagCode(member.name)} />
-            {member.name}
+            {displayMemberName(member.name)}
           </div>
         )}
     </>
@@ -53,20 +54,23 @@ export function TemplateAdder(props: { committeeID: CommitteeID }) {
         onClick={openAccordion}
       >
         <Icon name='dropdown' />
-        Add members from a template (e.g. G20)
+        {t('Add members from a template (e.g. G20)')}
       </Accordion.Title>
       <Accordion.Content active={activeIndex === 0}>
         <Form>
           <Form.Dropdown
-            label="Template"
+            label={t('Template')}
             name="template"
             search
             clearable
             fluid
             selection
-            placeholder="Select a template to add"
+            placeholder={t('Select a template to add')}
             value={template}
-            options={Object.values(Template).map(makeDropdownOption)}
+            options={Object.values(Template).map(makeDropdownOption).map(option => ({
+              ...option,
+              text: t(String(option.text))
+            }))}
             onChange={(event, data) => setTemplate(data.value as Template)}
           />
           <Popup
@@ -91,4 +95,3 @@ export function TemplateAdder(props: { committeeID: CommitteeID }) {
     </Accordion>
   )
 }
-

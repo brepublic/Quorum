@@ -5,6 +5,8 @@ import {
   MemberID,
   Rank,
   canonicalCountryName,
+  displayMemberName,
+  localizedMemberOptions,
   nameToFlagCode,
   nameToMemberOption,
   MemberOption,
@@ -23,6 +25,7 @@ import {CommitteeData, CommitteeID, pushMember, Template} from '../models/commit
 import { TemplateAdder } from '../components/template';
 import {COUNTRY_OPTIONS} from "../constants";
 import { Helmet } from 'react-helmet';
+import { t } from '../i18n';
 
 interface Props extends RouteComponentProps<URLParameters> {
   committee: CommitteeData;
@@ -63,14 +66,14 @@ export default class Admin extends React.Component<Props, State> {
       <Table.Row key={id}>
         <Table.Cell>
           <Flag name={nameToFlagCode(member.name)} />
-          {member.name}
+          {displayMemberName(member.name)}
         </Table.Cell>
         <Table.Cell>
           <Dropdown
             search
             selection
             fluid
-            options={RANK_OPTIONS}
+            options={RANK_OPTIONS.map(option => ({ ...option, text: t(String(option.text)) }))}
             onChange={dropdownHandler<MemberData>(fref, 'rank')}
             value={member.rank}
           />
@@ -178,13 +181,13 @@ export default class Admin extends React.Component<Props, State> {
           <Dropdown
             icon="search"
             className="adder__dropdown--select-member"
-            placeholder="Select preset member"
+            placeholder={t('Select preset member')}
             search={searchCountryOptions}
             selection
             fluid
             allowAdditions
             error={!this.canPushMember(member)}
-            options={[...newOptions, ...COUNTRY_OPTIONS]}
+            options={localizedMemberOptions([...newOptions, ...COUNTRY_OPTIONS])}
             onAddItem={handleAdd}
             onChange={setMember}
             value={member.key}
@@ -196,7 +199,7 @@ export default class Admin extends React.Component<Props, State> {
             search
             selection
             fluid
-            options={RANK_OPTIONS}
+            options={RANK_OPTIONS.map(option => ({ ...option, text: t(String(option.text)) }))}
             onChange={setRank}
             value={this.state.rank}
           />
@@ -239,13 +242,13 @@ export default class Admin extends React.Component<Props, State> {
 
     return (
       <>
-        <Table compact celled definition>
+        <Table className="members-table" compact celled definition>
           <Table.Header>
             <Table.Row>
               <Table.HeaderCell />
-              <Table.HeaderCell>Rank</Table.HeaderCell>
-              <Table.HeaderCell>Present</Table.HeaderCell>
-              <Table.HeaderCell>Voting</Table.HeaderCell>
+              <Table.HeaderCell>{t('Rank')}</Table.HeaderCell>
+              <Table.HeaderCell>{t('Present')}</Table.HeaderCell>
+              <Table.HeaderCell singleLine>{t('Must Vote')}</Table.HeaderCell>
               <Table.HeaderCell />
             </Table.Row>
           </Table.Header>
@@ -260,7 +263,7 @@ export default class Admin extends React.Component<Props, State> {
         </Table>
         {memberItems.length === 0
           ? <Message error>
-            Add at least one committee member to proceed
+            {t('Add at least one committee member to proceed')}
           </Message>
           : <Button
             as='a'
@@ -268,7 +271,7 @@ export default class Admin extends React.Component<Props, State> {
             primary
             fluid
           >
-            General Speakers' List
+            {t("General Speakers' List")}
               <Icon name="arrow right" />
           </Button>
         }
@@ -282,7 +285,7 @@ export default class Admin extends React.Component<Props, State> {
     return (
       <Container style={{ padding: '1em 0em 1.5em' }}>
         <Helmet>
-          <title>{`Setup - Muncoordinated`}</title>
+          <title>{`${t('Setup')} - Muncoordinated`}</title>
         </Helmet>
         <Grid columns="2" stackable>
           <Grid.Row>

@@ -1,5 +1,6 @@
 # dependencies
 /node_modules
+/.tools
 /.pnp
 .pnp.js
 
@@ -7,9 +8,16 @@
 /coverage
 /cypress/videos
 /cypress/screenshots
+/cypress/downloads
 
 # production
 /build
+
+# local tool and emulator caches
+/.firebase
+/.cache
+*.tsbuildinfo
+*-debug.log
 
 # misc
 .DS_Store

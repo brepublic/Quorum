@@ -41,6 +41,7 @@ import {logClickSetupCommittee} from '../modules/analytics';
 import {CommitteeData, CommitteeID, DEFAULT_COMMITTEE} from "../models/committee";
 import { createMedia } from '@artsy/fresnel';
 import { Helmet } from 'react-helmet';
+import { LanguageMenuItem, localizeGeneratedName, t } from '../i18n';
 
 interface DesktopContainerProps {
   menu?: React.ReactNode;
@@ -89,8 +90,8 @@ class DesktopContainer extends React.Component<DesktopContainerProps, DesktopCon
       <>
       <style>{mediaStyles}</style>
       <MediaContextProvider>
-          <Segment as={Media} basic greaterThanOrEqual="tablet" style={{padding: 0, margin: 0}}>
-            <Menu fluid size="small">
+          <Segment as={Media} basic greaterThanOrEqual="largeScreen" style={{padding: 0, margin: 0}}>
+            <Menu className="committee-menu" fluid size="small">
               {menu}
             </Menu>
             {body}
@@ -130,7 +131,7 @@ class MobileContainer extends React.Component<MobileContainerProps, MobileContai
     <>
     <style>{mediaStyles}</style>
     <MediaContextProvider>
-      <Segment as={Media} basic at="mobile" style={{padding: 0, margin: 0}}>
+      <Segment as={Media} basic lessThan="largeScreen" style={{padding: 0, margin: 0}}>
         <Sidebar.Pushable>
           <Sidebar as={Menu} animation="uncover" stackable visible={sidebarOpened}>
             {menu}
@@ -169,7 +170,7 @@ function ResponsiveNav(props: ResponsiveContainerProps) {
         name={name.toLowerCase()}
         active={props.location.pathname === destination}
         onClick={() => props.history.push(destination)}
-        text={name}
+        content={t(name)}
         // icon={icon}
       />
     );
@@ -183,7 +184,7 @@ function ResponsiveNav(props: ResponsiveContainerProps) {
         active={false}
         onClick={f}
         icon={icon}
-        text={name}
+        text={t(name)}
       />
     );
   }
@@ -195,7 +196,6 @@ function ResponsiveNav(props: ResponsiveContainerProps) {
       <Menu.Item
         key={name}
         active={props.location.pathname === destination}
-        position="right"
         onClick={() => props.history.push(destination)}
         icon={icon}
       />
@@ -211,7 +211,7 @@ function ResponsiveNav(props: ResponsiveContainerProps) {
         name={name}
         active={props.location.pathname === destination}
         onClick={() => props.history.push(destination)}
-        text={name}
+        text={localizeGeneratedName(name)}
       />
     );
   }
@@ -270,19 +270,19 @@ function ResponsiveNav(props: ResponsiveContainerProps) {
         {makeMenuItem('Setup', 'users')}
         {makeMenuItem('Motions', 'sort numeric descending')}
         {makeMenuItem('Unmod', 'discussions')}
-        <Dropdown key="caucuses" item text="Caucuses" loading={!committee}>
+        <Dropdown key="caucuses" item text={t('Caucuses')} loading={!committee}>
           <Dropdown.Menu>
             {makeSubmenuButton('New caucus', 'add', pushCaucus)}
             {caucusItems}
           </Dropdown.Menu>
         </Dropdown>
-        <Dropdown key="resolutions" item text="Resolutions" loading={!committee}>
+        <Dropdown key="resolutions" item text={t('Resolutions')} loading={!committee}>
           <Dropdown.Menu>
             {makeSubmenuButton('New resolution', 'add', pushResolution)}
             {resolutionItems}
           </Dropdown.Menu>
         </Dropdown>
-        <Dropdown key="strawpolls" item text="Strawpolls" loading={!committee}>
+        <Dropdown key="strawpolls" item text={t('Strawpolls')} loading={!committee}>
           <Dropdown.Menu>
             {makeSubmenuButton('New strawpoll', 'add', pushStrawpoll)}
             {strawpollItems}
@@ -294,10 +294,11 @@ function ResponsiveNav(props: ResponsiveContainerProps) {
         <Menu.Menu key="icon-submenu" position="right">
           {makeMenuIcon('Settings', 'settings')}
           {makeMenuIcon('Help', 'help')}
+          <LanguageMenuItem key="language" />
+          <Menu.Item key="login">
+            <LoginModal />
+          </Menu.Item>
         </Menu.Menu>
-        <Menu.Item key="login">
-          <LoginModal />
-        </Menu.Item>
       </React.Fragment>
     );
   }
@@ -368,35 +369,35 @@ export default class Committee extends React.Component<Props, State> {
             onChange={fieldHandler<CommitteeData>(committeeFref, 'name')}
             fluid
             error={committee ? !committee.name : false}
-            placeholder="Committee name"
+            placeholder={t('Committee name')}
           />
         </Header>
         <List>
           <List.Item>
             <Input
-              label="Topic"
+              label={t('Topic')}
               value={committee ? committee.topic : ''}
               onChange={fieldHandler<CommitteeData>(committeeFref, 'topic')}
               fluid
               loading={!committee}
-              placeholder="Committee topic"
+              placeholder={t('Committee topic')}
             />
           </List.Item>
           <List.Item>
             <Input
-              label="Conference"
+              label={t('Conference')}
               value={committee ? committee.conference : ''}
               onChange={fieldHandler<CommitteeData>(committeeFref, 'conference')}
               fluid
               loading={!committee}
-              placeholder="Conference name"
+              placeholder={t('Conference name')}
             />
           </List.Item>
         </List>
         <CommitteeShareHint committeeID={this.props.match.params.committeeID} />
         <Segment textAlign="center" basic style={{padding: 0}}>
           <Button as="a" primary size="large" onClick={this.gotoSetup}>
-            Setup committee
+            {t('Setup committee')}
             <Icon name="arrow right" />
           </Button>
         </Segment>

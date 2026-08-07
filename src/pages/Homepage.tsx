@@ -17,6 +17,8 @@ import {
 import { logClickCreateACommitteeButton, logClickLogInButton, logClickSignupButton } from '../modules/analytics';
 import Loading from '../components/Loading';
 import { ShareCapabilities } from '../components/share-hints';
+import { t } from '../i18n';
+import { LanguageMenuItem } from '../i18n';
 
 const HomepageMedia = createMedia({
   breakpoints: {
@@ -58,7 +60,7 @@ const HomepageHeading = ({ mobile }: HomepageHeadingProps) => (
     />
     <Header
       as="h2"
-      content="The collaborative browser-based Model UN committee management app"
+      content={t('The collaborative browser-based Model UN committee management app')}
       inverted
       style={{
         fontSize: mobile ? '1.25em' : '1.7em',
@@ -70,7 +72,7 @@ const HomepageHeading = ({ mobile }: HomepageHeadingProps) => (
     />
     <br />
     <Button as="a" primary size="huge" href="/onboard" onClick={logClickCreateACommitteeButton}>
-      Create a committee
+      {t('Create a committee')}
       <Icon name="arrow right" />
     </Button>
     <br />
@@ -125,15 +127,18 @@ class DesktopContainer extends React.Component<DesktopContainerProps, DesktopCon
               size="large"
             >
               <Container>
-                <Menu.Item as="a" active>Home</Menu.Item>
-                <Menu.Item position="right">
-                  <Button as="a" href="/onboard" inverted={!fixed} onClick={logClickLogInButton}>
-                    Log in
-                  </Button>
-                  <Button as="a" href="/onboard" inverted={!fixed} primary={fixed} style={{ marginLeft: '0.5em' }} onClick={logClickSignupButton}>
-                    Sign up
-                  </Button>
-                </Menu.Item>
+                <Menu.Item as="a" active>{t('Home')}</Menu.Item>
+                <Menu.Menu position="right">
+                  <LanguageMenuItem />
+                  <Menu.Item>
+                    <Button as="a" href="/onboard" inverted={!fixed} onClick={logClickLogInButton}>
+                      {t('Log in')}
+                    </Button>
+                    <Button as="a" href="/onboard" inverted={!fixed} primary={fixed} style={{ marginLeft: '0.5em' }} onClick={logClickSignupButton}>
+                      {t('Sign up')}
+                    </Button>
+                  </Menu.Item>
+                </Menu.Menu>
               </Container>
             </Menu>
             <HomepageHeading mobile={false} />
@@ -182,9 +187,10 @@ class MobileContainer extends React.Component<MobileContainerProps, MobileContai
       <>
         <Sidebar.Pushable>
           <Sidebar as={Menu} animation="push" inverted vertical visible={sidebarOpened}>
-            <Menu.Item as="a" active>Home</Menu.Item>
-            <Menu.Item as="a" href="/onboard" onClick={logClickLogInButton}>Log in</Menu.Item>
-            <Menu.Item as="a" href="/onboard" onClick={logClickSignupButton}>Sign up</Menu.Item>
+            <Menu.Item as="a" active>{t('Home')}</Menu.Item>
+            <LanguageMenuItem />
+            <Menu.Item as="a" href="/onboard" onClick={logClickLogInButton}>{t('Log in')}</Menu.Item>
+            <Menu.Item as="a" href="/onboard" onClick={logClickSignupButton}>{t('Sign up')}</Menu.Item>
           </Sidebar>
 
           <Sidebar.Pusher dimmed={sidebarOpened} onClick={this.handlePusherClick} style={{ minHeight: '100vh' }}>
@@ -194,13 +200,13 @@ class MobileContainer extends React.Component<MobileContainerProps, MobileContai
                   <Menu.Item onClick={this.handleToggle}>
                     <Icon name="sidebar" />
                   </Menu.Item>
-                  <Menu.Item as="a" active>Home</Menu.Item>
+                  <Menu.Item as="a" active>{t('Home')}</Menu.Item>
                   <Menu.Item position="right">
                     <Button as="a" inverted size="small" href="/onboard" onClick={logClickLogInButton}>
-                      Log in
+                      {t('Log in')}
                     </Button>
                     <Button as="a" inverted primary size="small" href="/onboard" style={{ marginLeft: '0.5em' }} onClick={logClickSignupButton}>
-                      Sign up
+                      {t('Sign up')}
                     </Button>
                   </Menu.Item>
                 </Menu>
@@ -248,11 +254,11 @@ export default class Homepage extends React.Component<{}, {
       <Statistic.Group textAlign="center">
         <Statistic>
           <Statistic.Value>{this.state.committeeNo || <Loading small />}</Statistic.Value>
-          <Statistic.Label>Committees created</Statistic.Label>
+          <Statistic.Label>{t('Committees created')}</Statistic.Label>
         </Statistic>
         <Statistic>
           <Statistic.Value>{this.state.delegateNo || <Loading small />}</Statistic.Value>
-          <Statistic.Label>Delegates participating</Statistic.Label>
+          <Statistic.Label>{t('Delegates participating')}</Statistic.Label>
         </Statistic>
       </Statistic.Group>
     );
@@ -266,24 +272,23 @@ export default class Homepage extends React.Component<{}, {
           <Grid stackable verticalAlign="middle">
             <Grid.Row>
               <Grid.Column width={8}>
-                <Header as="h3" style={{ fontSize: '2em' }}>Collaborative</Header>
+                <Header as="h3" style={{ fontSize: '2em' }}>{t('Collaborative')}</Header>
                 <p style={{ fontSize: '1.33em' }}>
-                  Using a shareable link delegates can: <br />
+                  {t('Using a shareable link delegates can:')} <br />
                   <ShareCapabilities />
                 </p>
                 <p style={{ fontSize: '1.33em' }}>
-                  Everyone will see all updates in real-time, without needing to refresh the page. It's like Google Docs, but for MUN.
+                  {t("Everyone will see all updates in real-time, without needing to refresh the page. It's like Google Docs, but for MUN.")}
                 </p>
                 <p style={{ fontSize: '1.33em' }}>
-                 For virtual MUNs, we recommend pairing Muncoordinated with <a href="https://discord.com/">Discord</a>, which allows you to speak, pass notes, &amp; share files and links.
+                  {t('For virtual MUNs, we recommend pairing Muncoordinated with')} <a href="https://discord.com/">Discord</a>, {t('which supports voice, note passing, and file and link sharing.')}
                 </p>
                 <p style={{ fontSize: '1.33em' }}>
-                  If you've got a big committee, multiple directors can manage it at the same time, using the same account.
+                  {t("If you've got a big committee, multiple directors can manage it at the same time, using the same account.")}
                 </p>
-                <Header as="h3" style={{ fontSize: '2em' }}>Backed up to the cloud</Header>
+                <Header as="h3" style={{ fontSize: '2em' }}>{t('Backed up to the cloud')}</Header>
                 <p style={{ fontSize: '1.33em' }}>
-                  You won't have to worry about data loss ever again. All committee activity is automatically saved to the server, 
-                  so you can start sessions with all data available from the day before.
+                  {t("You won't have to worry about data loss ever again. All committee activity is automatically saved to the server, so you can resume a session with earlier data available.")}
                 </p>
               </Grid.Column>
               <Grid.Column floated="right" width={8}>
@@ -297,26 +302,26 @@ export default class Homepage extends React.Component<{}, {
             </Grid.Row>
             <Grid.Row>
               <Grid.Column width={8}>
-                <Header as="h3" style={{ fontSize: '2em' }}>A comprehensive feature set</Header>
+                <Header as="h3" style={{ fontSize: '2em' }}>{t('A comprehensive feature set')}</Header>
                 <div style={{ fontSize: '1.33em' }}>
-                  Muncoordinated supports: <br />
+                  {t('Muncoordinated supports:')} <br />
                   <List as="ul">
-                    <List.Item as="li">Moderated and unmoderated caucuses</List.Item>
-                    <List.Item as="li">Resolutions and amendments</List.Item>
-                    <List.Item as="li">Motions</List.Item>
-                    <List.Item as="li">Roll-call voting</List.Item>
-                    <List.Item as="li">Custom delegations</List.Item>
-                    <List.Item as="li">Strawpolls</List.Item>
-                    <List.Item as="li">File uploads</List.Item>
-                    <List.Item as="li">Delegate performance statistics</List.Item>
+                    <List.Item as="li">{t('Moderated and unmoderated caucuses')}</List.Item>
+                    <List.Item as="li">{t('Resolutions and amendments')}</List.Item>
+                    <List.Item as="li">{t('Motions')}</List.Item>
+                    <List.Item as="li">{t('Roll-call voting')}</List.Item>
+                    <List.Item as="li">{t('Custom delegations')}</List.Item>
+                    <List.Item as="li">{t('Strawpolls')}</List.Item>
+                    <List.Item as="li">{t('File uploads')}</List.Item>
+                    <List.Item as="li">{t('Delegate performance statistics')}</List.Item>
                   </List>
                 </div>
-                <Header as="h3" style={{ fontSize: '2em' }}>Free and open-source</Header>
+                <Header as="h3" style={{ fontSize: '2em' }}>{t('Free and open-source')}</Header>
                 <p style={{ fontSize: '1.33em' }}>
-                  All of Muncoordinated's features are available for free, not locked behind paywalls.
+                  {t("All of Muncoordinated's features are available for free, not locked behind paywalls.")}
                 </p>
                 <p style={{ fontSize: '1.33em' }}>
-                  It's also <a href="https://github.com/MaxwellBo/Muncoordinated-2">open-source</a>, so you're free to customize it to your needs and liking.
+                  {t("It's also")} <a href="https://github.com/MaxwellBo/Muncoordinated-2">{t('open-source')}</a>, {t("so you're free to customize it to your needs and liking.")}
                 </p>
               </Grid.Column>
               <Grid.Column floated="right" width={8}>
@@ -337,29 +342,29 @@ export default class Homepage extends React.Component<{}, {
             <Grid divided inverted stackable>
               <Grid.Row>
                 <Grid.Column width={3}>
-                  <Header inverted as="h4" content="About" />
+                  <Header inverted as="h4" content={t('About')} />
                   <List link inverted>
-                    <List.Item as="a" href={REPO_LINK}>Source</List.Item>
+                    <List.Item as="a" href={REPO_LINK}>{t('Source')}</List.Item>
                     <List.Item
                       as="a"
                       href="https://github.com/MaxwellBo/Muncoordinated-2/blob/master/LICENSE"
                     >
-                      License
+                      {t('License')}
                     </List.Item>
                   </List>
                 </Grid.Column>
                 <Grid.Column width={3}>
-                  <Header inverted as="h4" content="Services" />
+                  <Header inverted as="h4" content={t('Services')} />
                   <List link inverted>
-                    <List.Item as="a" href="https://github.com/MaxwellBo/Muncoordinated-2/discussions">Forum</List.Item>
-                    <List.Item as="a" href="https://github.com/MaxwellBo/Muncoordinated-2/issues">Support</List.Item>
-                    <List.Item as="a" href="https://www.helpmymun.com/">MUN Resources</List.Item>
+                    <List.Item as="a" href="https://github.com/MaxwellBo/Muncoordinated-2/discussions">{t('Forum')}</List.Item>
+                    <List.Item as="a" href="https://github.com/MaxwellBo/Muncoordinated-2/issues">{t('Support')}</List.Item>
+                    <List.Item as="a" href="https://www.helpmymun.com/">{t('MUN Resources')}</List.Item>
                   </List>
                 </Grid.Column>
                 <Grid.Column width={7}>
-                  <Header as="h4" inverted>Info</Header>
-                  <p>Made with <span role="img" aria-label="love">💖</span> by <a href="https://github.com/MaxwellBo">Max Bo</a>, 
-                  with assistance from the <a href="https://www.facebook.com/UQUNSA/">UQ United Nations Student Association</a>
+                  <Header as="h4" inverted>{t('Info')}</Header>
+                  <p>{t('Made with')} <span role="img" aria-label="love">💖</span> {t('by')} <a href="https://github.com/MaxwellBo">Max Bo</a>,
+                  {t('with assistance from the')} <a href="https://www.facebook.com/UQUNSA/">UQ United Nations Student Association</a>
                   </p>
                   <p>Copyright © 2026</p>
                 </Grid.Column>

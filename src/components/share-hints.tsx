@@ -2,25 +2,26 @@ import * as React from 'react';
 import { Divider, Header, Input, List, Segment } from 'semantic-ui-react';
 import {CommitteeID} from "../models/committee";
 import {StrawpollID} from "../models/strawpoll";
+import { t } from '../i18n';
 
 function CopyableText(props: {
   value: string
 }) {
-  const [message, setMessage] = React.useState<string>('Copy');
+  const [message, setMessage] = React.useState<string>(t('Copy'));
 
   const copy = () => {
     // We have to try-catch because this API might not be available
     try {
       navigator.clipboard.writeText(props.value)
         .then(() => {
-          setMessage('Copied!')
-          setTimeout(() => setMessage('Copy'), 3000)
+          setMessage(t('Copied!'))
+          setTimeout(() => setMessage(t('Copy')), 3000)
         })
         .catch(() => {
-          setMessage('Please copy manually')
+          setMessage(t('Please copy manually'))
         })
     } catch (e) {
-      setMessage('Please copy manually')
+      setMessage(t('Please copy manually'))
     }
   }
 
@@ -46,12 +47,12 @@ export function CommitteeShareHint(props: {
 
   return (
     <Segment>
-      <Header size='medium'>Here's the shareable link to your committee</Header>
+      <Header size='medium'>{t("Here's the shareable link to your committee")}</Header>
       <CopyableText value={url} />
 
       <Divider hidden />
 
-      Copy and send this to your delegates, and they will be able to:
+      {t('Copy and send this to your delegates, and they will be able to:')}
 
       <VerboseShareCapabilities />
       
@@ -62,12 +63,12 @@ export function CommitteeShareHint(props: {
 export function ShareCapabilities() {
   return (
       <List bulleted>
-        <List.Item>Upload files</List.Item>
-        <List.Item>Add themselves to speakers' lists</List.Item>
-        <List.Item>Add and edit amendments on resolutions</List.Item>
-        <List.Item>Propose motions</List.Item>
-        <List.Item>Vote on motions</List.Item>
-        <List.Item>Vote on strawpolls</List.Item>
+        <List.Item>{t('Upload files')}</List.Item>
+        <List.Item>{t("Add themselves to speakers' lists")}</List.Item>
+        <List.Item>{t('Add and edit amendments on resolutions')}</List.Item>
+        <List.Item>{t('Propose motions')}</List.Item>
+        <List.Item>{t('Vote on motions')}</List.Item>
+        <List.Item>{t('Vote on strawpolls')}</List.Item>
       </List>
   )
 }
@@ -75,12 +76,12 @@ export function ShareCapabilities() {
 export function VerboseShareCapabilities() {
   return (
       <List bulleted>
-        <List.Item>Upload files</List.Item>
-        <List.Item>Add themselves to speakers' lists that have the <i>Delegates can queue</i> flag enabled</List.Item>
-        <List.Item>Add and edit amendments on resolutions that have the <i>Delegates can amend</i> flag enabled</List.Item>
-        <List.Item>Propose motions that have the <i>Delegates can propose motions</i> flag enabled</List.Item>
-        <List.Item>Vote on motions that have the <i>Delegates can vote on motions</i> flag enabled</List.Item>
-        <List.Item>Vote on strawpolls</List.Item>
+        <List.Item>{t('Upload files')}</List.Item>
+        <List.Item>{t("Add themselves to speakers' lists that have the Delegates can queue flag enabled")}</List.Item>
+        <List.Item>{t('Add and edit amendments on resolutions that have the Delegates can amend flag enabled')}</List.Item>
+        <List.Item>{t('Propose motions that have the Delegates can propose motions flag enabled')}</List.Item>
+        <List.Item>{t('Vote on motions that have the Delegates can vote on motions flag enabled')}</List.Item>
+        <List.Item>{t('Vote on strawpolls')}</List.Item>
       </List>
   )
 }
@@ -94,7 +95,7 @@ export function StrawpollShareHint(props: {
   const url = `${hostname}/committees/${committeeID}/strawpolls/${strawpollID}`;
   return (
     <Segment>
-      <Header size='small'>Here's the shareable link to your strawpoll</Header>
+      <Header size='small'>{t("Here's the shareable link to your strawpoll")}</Header>
       <CopyableText value={url} />
     </Segment>
   );
@@ -112,18 +113,18 @@ export function MotionsShareHint(props: {
   let action: string
 
   if (canVote && canPropose) {
-    action = 'vote on and propose motions'
+    action = t('vote on and propose motions')
   } else if (canVote) {
-    action = 'vote on motions'
+    action = t('vote on motions')
   } else if (canPropose) {
-    action = 'propose motions'
+    action = t('propose motions')
   } else {
-    action = 'vote on and propose motions'
+    action = t('vote on and propose motions')
   }
 
   return (
     <Segment>
-      <Header size='small'>Here's the shareable link to {action}</Header>
+      <Header size='small'>{t("Here's the shareable link to {action}", { action })}</Header>
       <CopyableText value={url} />
     </Segment>
   );

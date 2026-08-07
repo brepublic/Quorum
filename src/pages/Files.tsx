@@ -15,13 +15,14 @@ import {
   Tab,
   TextAreaProps
 } from 'semantic-ui-react';
-import {canonicalCountryName, MemberOption, nameToFlagCode} from '../modules/member';
+import {canonicalCountryName, displayMemberName, localizedMemberOptions, MemberOption, nameToFlagCode} from '../modules/member';
 import Loading from '../components/Loading';
 import {DEFAULT_AMENDMENT, putAmendment, ResolutionID} from '../models/resolution';
 import {CommitteeData, CommitteeID, recoverMemberOptions} from "../models/committee";
 import {File, Link, PostData, PostID, PostType, Text} from "../models/post";
 import {COUNTRY_OPTIONS} from "../constants";
 import { Helmet } from 'react-helmet';
+import { t } from '../i18n';
 
 const TEXT_ICON: SemanticICONS = 'align left';
 const FILE_ICON: SemanticICONS = 'file outline';
@@ -86,7 +87,7 @@ class Entry extends React.Component<EntryProps, EntryState> {
   renderDate = (action: 'Posted' | 'Uploaded') => {
     const { post } = this.props;
 
-    let sinceText: string = action;
+    let sinceText: string = t(action);
 
     if (post.timestamp) {
       const millis = new Date().getTime() - new Date(post.timestamp).getTime();
@@ -94,13 +95,13 @@ class Entry extends React.Component<EntryProps, EntryState> {
       const secondsSince = millis / 1000;
 
       if (secondsSince < 60) {
-        sinceText = `${action} ${Math.round(secondsSince)} seconds ago`;
+        sinceText = t('{action} {count} seconds ago', { action: t(action), count: Math.round(secondsSince) });
       } else if (secondsSince < 60 * 60) {
-        sinceText = `${action} ${Math.round(secondsSince / 60 )} minutes ago`;
+        sinceText = t('{action} {count} minutes ago', { action: t(action), count: Math.round(secondsSince / 60) });
       } else if (secondsSince < 60 * 60 * 24) {
-        sinceText = `${action} ${Math.round(secondsSince / (60 * 60))} hours ago`;
+        sinceText = t('{action} {count} hours ago', { action: t(action), count: Math.round(secondsSince / (60 * 60)) });
       } else {
-        sinceText = `${action} ${Math.round(secondsSince / (60 * 60 * 24))} days ago`;
+        sinceText = t('{action} {count} days ago', { action: t(action), count: Math.round(secondsSince / (60 * 60 * 24)) });
       }
     }
 
@@ -113,15 +114,15 @@ class Entry extends React.Component<EntryProps, EntryState> {
         <Feed.Label icon={TEXT_ICON} />
         <Feed.Content>
           <Feed.Summary>
-            <Feed.User><Flag name={nameToFlagCode(post.uploader)}/> {post.uploader}</Feed.User>
+            <Feed.User><Flag name={nameToFlagCode(post.uploader)}/> {displayMemberName(post.uploader)}</Feed.User>
             <Feed.Date>{this.renderDate('Posted')}</Feed.Date>
           </Feed.Summary>
           <Feed.Extra style={{'whiteSpace': 'pre-wrap'}} text>{post.body}</Feed.Extra>
           <Feed.Meta>
             {/* eslint-disable-next-line jsx-a11y/anchor-is-valid */}
-            <a onClick={this.props.onDelete}>Delete</a>
+            <a onClick={this.props.onDelete}>{t('Delete')}</a>
             {/* eslint-disable-next-line jsx-a11y/anchor-is-valid */}
-            {post.forResolution && <a onClick={this.props.onPromoteToAmendment}>Create amendment</a>}
+            {post.forResolution && <a onClick={this.props.onPromoteToAmendment}>{t('Create amendment')}</a>}
           </Feed.Meta>
         </Feed.Content>
       </Feed.Event>
@@ -134,14 +135,14 @@ class Entry extends React.Component<EntryProps, EntryState> {
         <Feed.Label icon={FILE_ICON} />
         <Feed.Content>
           <Feed.Summary>
-            <Feed.User><Flag name={nameToFlagCode(post.uploader)}/> {post.uploader}</Feed.User> uploaded a file
+            <Feed.User><Flag name={nameToFlagCode(post.uploader)}/> {displayMemberName(post.uploader)}</Feed.User> {t('uploaded a file')}
             <Feed.Date>{this.renderDate('Uploaded')}</Feed.Date>
           </Feed.Summary>
           {/* eslint-disable-next-line jsx-a11y/anchor-is-valid */}
           <Feed.Extra><a onClick={this.download(post.filename)}>{post.filename}</a></Feed.Extra>
           <Feed.Meta>
             {/* eslint-disable-next-line jsx-a11y/anchor-is-valid */}
-            <a onClick={this.props.onDelete}>Delete</a>
+            <a onClick={this.props.onDelete}>{t('Delete')}</a>
           </Feed.Meta>
         </Feed.Content>
       </Feed.Event>
@@ -154,7 +155,7 @@ class Entry extends React.Component<EntryProps, EntryState> {
         <Feed.Label icon={LINK_ICON} />
         <Feed.Content>
           <Feed.Summary>
-            <Feed.User><Flag name={nameToFlagCode(post.uploader)}/> {post.uploader}</Feed.User> posted a link
+            <Feed.User><Flag name={nameToFlagCode(post.uploader)}/> {displayMemberName(post.uploader)}</Feed.User> {t('posted a link')}
             <Feed.Date>{this.renderDate('Posted')}</Feed.Date>
           </Feed.Summary>
           <Feed.Extra><a href={post.url}>{post.name || post.url}</a></Feed.Extra>
@@ -163,7 +164,7 @@ class Entry extends React.Component<EntryProps, EntryState> {
           <br />
           <Feed.Meta>
             {/* eslint-disable-next-line jsx-a11y/anchor-is-valid */}
-            <a onClick={this.props.onDelete}>Delete</a>
+            <a onClick={this.props.onDelete}>{t('Delete')}</a>
           </Feed.Meta>
         </Feed.Content>
       </Feed.Event>
@@ -388,7 +389,7 @@ export default class Files extends React.Component<Props, State> {
           success={state === firebase.storage.TaskState.SUCCESS}
           error={!!errorCode} 
           active={true} 
-          label={errorCode} 
+          label={errorCode ? t(errorCode) : undefined}
         />
         <Form onSubmit={this.postFile}>
           <input type="file" onChange={this.onFileChange} />
@@ -402,8 +403,8 @@ export default class Files extends React.Component<Props, State> {
               selection
               error={!uploader}
               onChange={this.setMember}
-              options={memberOptions}
-              label="Uploader"
+              options={localizedMemberOptions(memberOptions)}
+              label={t('Uploader')}
               required
             />
             <Button
@@ -411,7 +412,7 @@ export default class Files extends React.Component<Props, State> {
               loading={state === firebase.storage.TaskState.RUNNING}
               disabled={!file || !uploader}
             >
-              Upload
+              {t('Upload')}
             </Button>
           </Form.Group>
         </Form>
@@ -450,8 +451,8 @@ export default class Files extends React.Component<Props, State> {
           multiple
           selection
           onChange={this.setFilter}
-          options={memberOptions}
-          label="View posts only by"
+          options={localizedMemberOptions(memberOptions)}
+          label={t('View posts only by')}
         />
       </Form>
     )
@@ -492,11 +493,11 @@ export default class Files extends React.Component<Props, State> {
           value={body}
           onChange={this.setName}
           autoHeight
-          label="Name"
+          label={t('Name')}
           rows={1}
         />
         <Form.Input 
-          label="Link"
+          label={t('Link')}
           required
           error={!link}
           value={link}
@@ -513,14 +514,14 @@ export default class Files extends React.Component<Props, State> {
             selection
             error={!uploader}
             onChange={this.setMember}
-            options={memberOptions}
-            label="Poster"
+            options={localizedMemberOptions(memberOptions)}
+            label={t('Poster')}
           />
           <Button 
             type="submit" 
             disabled={!link || !uploader}
           >
-              Post
+              {t('Post')}
           </Button>
         </Form.Group>
       </Form>
@@ -538,7 +539,7 @@ export default class Files extends React.Component<Props, State> {
           value={body}
           onChange={this.setBody}
           autoHeight={true}
-          label="Body"
+          label={t('Body')}
           rows={3}
         />
         <Form.Group widths="equal">
@@ -551,14 +552,14 @@ export default class Files extends React.Component<Props, State> {
             selection
             error={!uploader}
             onChange={this.setMember}
-            options={memberOptions}
-            label="Poster"
+            options={localizedMemberOptions(memberOptions)}
+            label={t('Poster')}
           />
           <Button 
             type="submit" 
             disabled={!body || !uploader}
           >
-              Post
+              {t('Post')}
           </Button>
         </Form.Group>
       </Form>
@@ -604,15 +605,15 @@ export default class Files extends React.Component<Props, State> {
 
     const panes = [
       { 
-        menuItem: { key: 'Text', icon: TEXT_ICON, content: 'Text' }, 
+        menuItem: { key: 'Text', icon: TEXT_ICON, content: t('Text') },
         render: () => <Tab.Pane>{this.renderPoster()}</Tab.Pane> 
       },
       { 
-        menuItem: { key: 'Link', icon: LINK_ICON, content: 'Link' }, 
+        menuItem: { key: 'Link', icon: LINK_ICON, content: t('Link') },
         render: () => <Tab.Pane>{this.renderLinker()}</Tab.Pane>
       },
       { 
-        menuItem: { key: 'File', icon: FILE_ICON, content: 'File' }, 
+        menuItem: { key: 'File', icon: FILE_ICON, content: t('File') },
         render: () => <Tab.Pane>{this.renderUploader()}</Tab.Pane> 
       },
     ];
@@ -647,7 +648,7 @@ export default class Files extends React.Component<Props, State> {
       (
         <Container text style={{ padding: '1em 0em' }}>
           <Helmet>
-            <title>{`Posts - Muncoordinated`}</title>
+            <title>{`${t('Posts')} - Muncoordinated`}</title>
           </Helmet>
           {inner}
         </Container>

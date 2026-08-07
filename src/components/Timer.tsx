@@ -4,6 +4,7 @@ import {Button, DropdownProps, Form, Icon, Label, Progress, Segment} from 'seman
 import {TimeSetter} from './TimeSetter';
 import _ from 'lodash';
 import {DEFAULT_TIMER, getSeconds, TimerData, Unit} from "../models/time";
+import { t } from '../i18n';
 
 interface Props {
   name: string;
@@ -244,7 +245,7 @@ export default class Timer extends React.Component<Props, State> {
 
     return (
       <Segment textAlign="center" >
-        <Label attached="top left" size="large">{this.props.name}</Label>
+        <Label attached="top left" size="large">{t(this.props.name)}</Label>
         <Button
           loading={!timer}
           active={timer ? !!timer.ticking : false}

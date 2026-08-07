@@ -6,6 +6,7 @@ import Timer from '../components/Timer';
 import { URLParameters } from '../types';
 import {TimerData, Unit} from "../models/time";
 import { Helmet } from 'react-helmet';
+import { t } from '../i18n';
 
 interface Props extends RouteComponentProps<URLParameters> {
 }
@@ -34,7 +35,7 @@ export default class Unmod extends React.Component<Props, State> {
     return (
       <Container text style={{ padding: '1em 0em' }}>
         <Helmet>
-          <title>{`Unmoderated Caucus - Muncoordinated`}</title>
+          <title>{`${t('Unmoderated caucus')} - Muncoordinated`}</title>
         </Helmet>
         <Timer 
           name="Unmoderated caucus" 

@@ -3,7 +3,7 @@ import firebase from 'firebase/compat/app';
 import * as _ from 'lodash';
 import { RouteComponentProps } from 'react-router';
 import { Table, Flag, Container } from 'semantic-ui-react';
-import { MemberData, MemberID, nameToFlagCode } from '../modules/member';
+import { displayMemberName, MemberData, MemberID, nameToFlagCode } from '../modules/member';
 import { URLParameters } from '../types';
 import Loading from '../components/Loading';
 import { hhmmss } from '../components/Timer';
@@ -13,6 +13,7 @@ import {CommitteeData} from "../models/committee";
 import {MotionData, MotionID} from "../models/motion";
 import {SpeakerEvent} from "../models/caucus";
 import { Helmet } from 'react-helmet';
+import { t } from '../i18n';
 
 interface Props extends RouteComponentProps<URLParameters> {
 }
@@ -123,7 +124,7 @@ export default class Stats extends React.Component<Props, State> {
         <Table.Row key={mid} >
           <Table.Cell>
             <Flag name={nameToFlagCode(member.name)} />
-            {member.name}
+            {displayMemberName(member.name)}
           </Table.Cell>
           <Table.Cell textAlign="right">
             {stats.times}
@@ -144,16 +145,16 @@ export default class Stats extends React.Component<Props, State> {
     return (
       <Container text style={{ padding: '1em 0em 1.5em' }}>
         <Helmet>
-          <title>{`Stats - Muncoordinated`}</title>
+          <title>{`${t('Stats')} - Muncoordinated`}</title>
         </Helmet>
         <Table compact celled definition>
           <Table.Header>
             <Table.Row>
               <Table.HeaderCell />
-              <Table.HeaderCell textAlign="right">Times spoken</Table.HeaderCell>
-              <Table.HeaderCell textAlign="right">Total speaking time</Table.HeaderCell>
-              <Table.HeaderCell textAlign="right">Motion proposals</Table.HeaderCell>
-              <Table.HeaderCell textAlign="right">Amendment proposals</Table.HeaderCell>
+              <Table.HeaderCell textAlign="right">{t('Times spoken')}</Table.HeaderCell>
+              <Table.HeaderCell textAlign="right">{t('Total speaking time')}</Table.HeaderCell>
+              <Table.HeaderCell textAlign="right">{t('Motion proposals')}</Table.HeaderCell>
+              <Table.HeaderCell textAlign="right">{t('Amendment proposals')}</Table.HeaderCell>
             </Table.Row>
           </Table.Header>
 
@@ -174,4 +175,4 @@ export default class Stats extends React.Component<Props, State> {
       return <Loading />;
     }
   }
-}  
+}

@@ -1,7 +1,7 @@
 import * as React from 'react';
 import firebase from 'firebase/compat/app';
 import * as _ from 'lodash';
-import {canVote, MemberData, MemberID, nameToMemberOption, Rank} from '../modules/member';
+import {canVote, displayMemberName, localizedMemberOptions, MemberData, MemberID, nameToMemberOption, Rank} from '../modules/member';
 import {
   Button,
   Card,
@@ -48,22 +48,23 @@ import {CommitteeStatsTable} from '../modules/committee-stats';
 import {CommitteeData, recoverMemberOptions} from "../models/committee";
 import {getThreshold, getThresholdName} from "../viewmodels/resolution";
 import { Helmet } from 'react-helmet';
+import { localizeGeneratedName, t } from '../i18n';
 
 const TAB_ORDER = ['feed', 'text', 'amendments', 'voting'];
 
-export const IDENTITCAL_PROPOSER_SECONDER = (
+export const IdenticalProposerSeconder = () => (
   <Message
     error
-    content="A resolution's proposer and seconder cannot be the same"
+    content={t("A resolution's proposer and seconder cannot be the same")}
   />
 );
 
-export const DELEGATES_CAN_AMEND_NOTICE = (
+export const DelegatesCanAmendNotice = () => (
   <Message
     basic
     attached="bottom"
   >
-    Delegates can create and edit, but not delete, amendments.
+    {t('Delegates can create and edit, but not delete, amendments.')}
   </Message>
 );
 
@@ -75,13 +76,14 @@ function DeleteResolutionModal(props: { onConfirm: () => void }) {
       <Dropdown.Item negative fluid basic
           onClick={() => setIsModalOpen(true)}
       >
-        <Icon name="delete" /> Delete resolution?
+        <Icon name="delete" /> {t('Delete resolution?')}
       </Dropdown.Item>
       <Confirm
         open={isModalOpen}
-        header='Delete resolution?'
-        content='Are you sure? This is irreversible and will delete all
-                  posts, text, amendments and voting history. You might want to close the resolution (top right dropdown) instead?'
+        header={t('Delete resolution?')}
+        content={t('Are you sure? This is irreversible and will delete all posts, text, amendments and voting history. You might want to close the resolution (top right dropdown) instead?')}
+        cancelButton={t('Cancel')}
+        confirmButton={t('OK')}
         onCancel={() => setIsModalOpen(false)}
         onConfirm={() => { setIsModalOpen(false); props.onConfirm() }}
       />
@@ -217,11 +219,11 @@ export default class Resolution extends React.Component<Props, State> {
     const textArea = (
       <TextArea
         value={text}
-        label="Text"
+        label={t('Text')}
         autoHeight
         onChange={textAreaHandler<AmendmentData>(amendmentFref, 'text')}
         rows={1}
-        placeholder="Text"
+        placeholder={t('Text')}
       />
     );
 
@@ -235,7 +237,7 @@ export default class Resolution extends React.Component<Props, State> {
       <Dropdown
         disabled={!hasAuth}
         value={status}
-        options={AMENDMENT_STATUS_OPTIONS}
+        options={AMENDMENT_STATUS_OPTIONS.map(option => ({ ...option, text: t(String(option.text)) }))}
         onChange={dropdownHandler<AmendmentData>(amendmentFref, 'status')}
       />
     );
@@ -251,10 +253,10 @@ export default class Resolution extends React.Component<Props, State> {
         search
         selection
         fluid
-        label="Proposer"
-        placeholder="Proposer"
+        label={t('Amendment proposer')}
+        placeholder={t('Amendment proposer')}
         onChange={memberDropdownHandler<AmendmentData>(amendmentFref, 'proposer', memberOptions)}
-        options={memberOptions}
+        options={localizedMemberOptions(memberOptions)}
       />
     );
 
@@ -263,7 +265,7 @@ export default class Resolution extends React.Component<Props, State> {
         floated="right"
         onClick={() => this.gotoCaucus(amendment!.caucus)}
       >
-        Associated caucus
+        {t('Associated caucus')}
         <Icon name="arrow right" />
       </Button>
     ):(
@@ -272,7 +274,7 @@ export default class Resolution extends React.Component<Props, State> {
         disabled={!amendment || amendment.proposer === '' || !hasAuth}
         onClick={() => handleProvisionAmendment(id, amendment!)}
       >
-        Provision caucus
+        {t('Provision caucus')}
       </Button>
     );
 
@@ -370,7 +372,7 @@ export default class Resolution extends React.Component<Props, State> {
     const voting = (
       <Popup
         trigger={<Label style={{ marginLeft: 5 }} circular size="mini" color="purple">V</Label>}
-        content="Voting"
+        content={t('Voting')}
       />
     );
 
@@ -379,7 +381,7 @@ export default class Resolution extends React.Component<Props, State> {
         {button}
         <List.Content verticalAlign="middle">
           <List.Header>
-            {member.name.toUpperCase()}
+            {displayMemberName(member.name).toUpperCase()}
             {member.voting && voting}
             {/* {!member.present && <Label circular color="red" size="mini">NP</Label>} */}
           </List.Header>
@@ -403,7 +405,7 @@ export default class Resolution extends React.Component<Props, State> {
           icon
           fluid
         >
-          {key.toUpperCase()}: {count}
+          {t(key)}: {count}
         </Button>
       </Grid.Column>
     );
@@ -414,9 +416,9 @@ export default class Resolution extends React.Component<Props, State> {
 
     return (
       <Dropdown
-        placeholder="Select majority type"
+        placeholder={t('Select majority type')}
         search
-        options={MAJORITY_OPTIONS}
+        options={MAJORITY_OPTIONS.map(option => ({ ...option, text: t(String(option.text)) }))}
         onChange={dropdownHandler<ResolutionData>(resolutionFref, 'requiredMajority')}
         value={resolution ? resolution.requiredMajority : DEFAULT_RESOLUTION.requiredMajority}
       />
@@ -492,19 +494,19 @@ export default class Resolution extends React.Component<Props, State> {
             {renderCount('abstaining', 'yellow', 'minus', abstains)}
           </Grid>
           {resolutionPassed && <Statistic inverted>
-            <Statistic.Value>Passed</Statistic.Value>
-            <Statistic.Label>{fors} clears the required {thresholdName} of {threshold}</Statistic.Label>
+            <Statistic.Value>{t('Passed')}</Statistic.Value>
+            <Statistic.Label>{t('{votes} clears the required {thresholdName} of {threshold}', { votes: fors, thresholdName: t(thresholdName), threshold })}</Statistic.Label>
             {requiredMajority === Majority.TwoThirdsNoAbstentions &&
-              <Statistic.Label>Further votes may change the result from 'Passed'</Statistic.Label>
+              <Statistic.Label>{t("Further votes may change the result from 'Passed'")}</Statistic.Label>
             }
           </Statistic>}
           {resolutionFailed && <Statistic inverted>
-            <Statistic.Value>Failed</Statistic.Value>
-            <Statistic.Label>There are insufficient votes remaining to achieve a {thresholdName}</Statistic.Label>
+            <Statistic.Value>{t('Failed')}</Statistic.Value>
+            <Statistic.Label>{t('There are insufficient votes remaining to achieve a {thresholdName}', { thresholdName: t(thresholdName) })}</Statistic.Label>
           </Statistic>}
           {resolutionVetoed && <Statistic inverted>
-            <Statistic.Value>Vetoed</Statistic.Value>
-            <Statistic.Label>{vetoes[0].name} was the first to veto the resolution</Statistic.Label>
+            <Statistic.Value>{t('Vetoed')}</Statistic.Value>
+            <Statistic.Label>{t('{name} was the first to veto the resolution', { name: displayMemberName(vetoes[0].name) })}</Statistic.Label>
           </Statistic>}
           <Segment inverted>
             {this.renderMajoritySelector(resolution)}
@@ -543,8 +545,8 @@ export default class Resolution extends React.Component<Props, State> {
         selection
         fluid
         onChange={memberDropdownHandler<ResolutionData>(resolutionFref, 'proposer', memberOptions)}
-        options={memberOptions}
-        label="Proposer"
+        options={localizedMemberOptions(memberOptions)}
+        label={t('Resolution proposer')}
       />
     );
 
@@ -559,8 +561,8 @@ export default class Resolution extends React.Component<Props, State> {
         selection
         fluid
         onChange={memberDropdownHandler<ResolutionData>(resolutionFref, 'seconder', memberOptions)}
-        options={memberOptions}
-        label="Seconder"
+        options={localizedMemberOptions(memberOptions)}
+        label={t('Resolution seconder')}
       />
     );
 
@@ -572,7 +574,7 @@ export default class Resolution extends React.Component<Props, State> {
         disabled={!resolution}
         onClick={() => this.gotoCaucus(resolution!.caucus)}
       >
-        Associated caucus
+        {t('Associated caucus')}
         <Icon name="arrow right" />
       </Form.Button>
     ) : (
@@ -582,7 +584,7 @@ export default class Resolution extends React.Component<Props, State> {
           disabled={!resolution || !resolution.proposer || !resolution.seconder || hasError}
           onClick={() => handleProvisionResolution(resolution!)}
         >
-          Provision caucus
+          {t('Provision caucus')}
         </Form.Button>
       );
 
@@ -592,10 +594,10 @@ export default class Resolution extends React.Component<Props, State> {
           <Form error={hasError}>
             {proposerTree}
             {seconderTree}
-            {IDENTITCAL_PROPOSER_SECONDER}
+            <IdenticalProposerSeconder />
             {provisionTree}
             <Form.Checkbox
-              label="Delegates can amend"
+              label={t('Delegates can amend')}
               indeterminate={!resolution}
               toggle
               checked={amendmentsArePublic(resolution)}
@@ -604,7 +606,7 @@ export default class Resolution extends React.Component<Props, State> {
           </Form>
           {this.renderAdditionalOptions()}
         </Segment>
-        {amendmentsArePublic(resolution) && DELEGATES_CAN_AMEND_NOTICE}
+        {amendmentsArePublic(resolution) && <DelegatesCanAmendNotice />}
       </React.Fragment>
     );
   }
@@ -620,7 +622,7 @@ export default class Resolution extends React.Component<Props, State> {
           onChange={textAreaHandler<ResolutionData>(resolutionFref, 'link')}
           attatched="top"
           rows={3}
-          placeholder="Resolution text"
+          placeholder={t('Resolution text')}
         />
       </Form>
     )
@@ -632,7 +634,7 @@ export default class Resolution extends React.Component<Props, State> {
     const statusDropdown = (
       <Dropdown
         value={resolution ? resolution.status : ResolutionStatus.Introduced}
-        options={RESOLUTION_STATUS_OPTIONS}
+        options={RESOLUTION_STATUS_OPTIONS.map(option => ({ ...option, text: t(String(option.text)) }))}
         onChange={dropdownHandler<ResolutionData>(resolutionFref, 'status')}
         loading={!resolution}
       />
@@ -640,7 +642,7 @@ export default class Resolution extends React.Component<Props, State> {
 
     return (
       <Input
-        value={resolution ? resolution.name : ''}
+        value={resolution ? localizeGeneratedName(resolution.name) : ''}
         label={statusDropdown}
         loading={!resolution}
         labelPosition="right"
@@ -648,7 +650,7 @@ export default class Resolution extends React.Component<Props, State> {
         attatched="top"
         size="massive"
         fluid
-        placeholder="Set resolution name"
+        placeholder={t('Set resolution name')}
       />
     );
   }
@@ -666,7 +668,7 @@ export default class Resolution extends React.Component<Props, State> {
   renderAdditionalOptions = () => {
     return  (
       <Dropdown
-        text='More options'
+        text={t('More options')}
         className='icon'
       >
       <Dropdown.Menu>
@@ -745,16 +747,16 @@ export default class Resolution extends React.Component<Props, State> {
 
     const panes = [
       {
-        menuItem: 'Feed',
+        menuItem: t('Feed'),
         render: () => <Tab.Pane>{renderFeed()}</Tab.Pane>
       }, {
-        menuItem: 'Text',
+        menuItem: t('Text'),
         render: () => <Tab.Pane>{renderText(resolution)}</Tab.Pane>
       }, {
-        menuItem: 'Amendments',
+        menuItem: t('Amendments'),
         render: () => <Tab.Pane>{renderAmendmentsGroup(resolution)}</Tab.Pane>
       }, {
-        menuItem: 'Voting',
+        menuItem: t('Voting'),
         render: () => <Tab.Pane>{renderVoting(resolution)}</Tab.Pane>
       }
     ];
@@ -762,7 +764,7 @@ export default class Resolution extends React.Component<Props, State> {
     return (
       <Container style={{ 'padding-bottom': '2em' }}>
         <Helmet>
-          <title>{`${resolution?.name} - Muncoordinated`}</title>
+          <title>{`${localizeGeneratedName(resolution?.name ?? '')} - Muncoordinated`}</title>
         </Helmet>
         <Grid columns="equal" stackable>
           <Grid.Row>

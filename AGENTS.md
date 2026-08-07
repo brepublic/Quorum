@@ -1,5 +1,21 @@
 # Agent Notes
 
+## Required Orientation
+
+Before working on this repository, read `PROJECT_ARCHITECTURE.md` and this
+file. Keep `PROJECT_ARCHITECTURE.md` accurate when a change affects the
+application architecture, runtime dependencies, test workflow, security
+boundary, or deployment model.
+
+## Local WSL Toolchain
+
+- Source `scripts/wsl-env.sh` before using project commands. It prepends the
+  repository-local Node 22 and pnpm binaries and configures Java 21 when those
+  tools have been installed under `.tools/`.
+- The repository-local `.tools/` directory is intentionally ignored: it is a
+  reproducible per-checkout tool cache, not source code. If it is absent, use
+  the documented system prerequisites or reinstall the local tools.
+
 ## Firebase Emulators And Cypress
 
 - Use `pnpm test:e2e` for integration tests. It starts the Firebase Auth, Realtime Database, and Storage emulators, starts Vite with `VITE_USE_FIREBASE_EMULATORS=true`, seeds deterministic Cypress data, and runs the Cypress specs.

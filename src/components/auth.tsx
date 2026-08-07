@@ -5,6 +5,7 @@ import _ from 'lodash';
 import Loading from './Loading';
 import { logCreateAccount, logLogin } from '../modules/analytics';
 import {CommitteeData, CommitteeID} from "../models/committee";
+import { t } from '../i18n';
 
 enum Mode {
   Login = 'Login',
@@ -103,8 +104,8 @@ export class Login extends React.Component<Props, State> {
     firebase.auth().createUserWithEmailAndPassword(email, password).then(credential => {
 
       const success = { 
-        name: 'Account created',
-        message: 'Your account was successfully created' 
+        name: t('Account created'),
+        message: t('Your account was successfully created')
       };
 
       this.setState({ 
@@ -125,8 +126,8 @@ export class Login extends React.Component<Props, State> {
 
     firebase.auth().sendPasswordResetEmail(email).then(() => {
       const success = {
-        name: 'Password reset',
-        message: `Check your inbox at ${email} for further instructions`
+        name: t('Password reset'),
+        message: t('Check your inbox at {email} for further instructions', { email })
       };
 
       this.setState({ resetting: false, success });
@@ -191,7 +192,7 @@ export class Login extends React.Component<Props, State> {
       <List.Item key={'add'}>
         <List.Content>
           <List.Header as="a" href={'/onboard'}>
-            <Icon name="plus" />Create new committee
+            <Icon name="plus" />{t('Create new committee')}
           </List.Header>
         </List.Content>
       </List.Item>
@@ -211,9 +212,9 @@ export class Login extends React.Component<Props, State> {
         {owned.map(k => renderCommittee(k, defaulted[k]))}
       </List>
     ) : (
-      <Header as='h4'> No committees created
+      <Header as='h4'>{t('No committees created')}
         <Header.Subheader>
-          Create a new committee and it'll appear here!
+          {t("Create a new committee and it'll appear here!")}
         </Header.Subheader>
       </Header>
     );
@@ -223,6 +224,9 @@ export class Login extends React.Component<Props, State> {
     const { dismissError } = this;
 
     const err = this.state.error;
+    const code = (err as Error & { code?: string } | undefined)?.code;
+    const translatedMessage = code ? t(code) : undefined;
+    const hasTranslatedMessage = !!code && translatedMessage !== code;
     
     return (
       <Message
@@ -230,8 +234,8 @@ export class Login extends React.Component<Props, State> {
         error
         onDismiss={dismissError}
       >
-        <Message.Header>{err ? err.name : ''}</Message.Header>
-        <Message.Content>{err ? err.message : ''}</Message.Content>
+        <Message.Header>{hasTranslatedMessage ? t('Authentication error') : err ? err.name : ''}</Message.Header>
+        <Message.Content>{hasTranslatedMessage ? translatedMessage : err ? err.message : ''}</Message.Content>
       </Message>
     );
   }
@@ -265,7 +269,7 @@ export class Login extends React.Component<Props, State> {
             {u.email}
           </Card.Header>
           <Card.Meta>
-            Logged in
+            {t('Logged in')}
           </Card.Meta>
         </Card.Content>
         <Card.Content key="committees" style={{ 
@@ -278,7 +282,7 @@ export class Login extends React.Component<Props, State> {
           {renderNewCommitteeButton()}
         </Card.Content>}
         <Card.Content extra key="extra">
-          <Button basic color="red" fluid onClick={logout}>Logout</Button>
+          <Button basic color="red" fluid onClick={logout}>{t('Logout')}</Button>
         </Card.Content>
       </Card>
     );
@@ -295,7 +299,7 @@ export class Login extends React.Component<Props, State> {
         loading={loggingIn}
         type="submit"
       >
-        Log in
+        {t('Log in')}
       </Button>
     );
 
@@ -304,7 +308,7 @@ export class Login extends React.Component<Props, State> {
         positive
         onClick={this.toCreateAccountMode}
       >
-        Create account <Icon name="arrow right" />
+        {t('Create account')} <Icon name="arrow right" />
       </Button>
     );
 
@@ -317,7 +321,7 @@ export class Login extends React.Component<Props, State> {
         disabled={!email || !password}
         type="submit"
       >
-        Create account
+        {t('Create account')}
       </Button>
     )
 
@@ -327,7 +331,7 @@ export class Login extends React.Component<Props, State> {
         onClick={this.toForgotPasswordMode} 
         style={{'cursor': 'pointer'}}
       >
-        Forgot password?
+        {t('Forgot password?')}
       </a>
     );
 
@@ -341,7 +345,7 @@ export class Login extends React.Component<Props, State> {
           }}
         >
           <Icon name="arrow left" />
-          Back to login
+          {t('Back to login')}
         </a>
       </div>
     );
@@ -355,7 +359,7 @@ export class Login extends React.Component<Props, State> {
         disabled={!email}
         type="submit"
       >
-        Send reset email
+        {t('Send reset email')}
       </Button>
     );
 
@@ -366,29 +370,28 @@ export class Login extends React.Component<Props, State> {
       <React.Fragment>
         {mode === Mode.Login && 
           <Header as="h3" attached="top">
-            Login
+            {t('Login')}
             <Header.Subheader>
-              to create a new committee, or access an older committee.
+              {t('to create a new committee, or access an older committee.')}
             </Header.Subheader>
           </Header>}
         {mode === Mode.CreateAccount && 
           <Header as="h3" attached="top">
-            Create account
+            {t('Create account')}
             <Header.Subheader>
-                Multiple directors may use the same account simultaneously. 
-                Choose a password you're willing to share.
+                {t("Multiple directors may use the same account simultaneously. Choose a password you're willing to share.")}
             </Header.Subheader>
           </Header>}
         {mode === Mode.ForgotPassword && 
           <Header as="h3" attached="top">
-            Reset password
+            {t('Reset password')}
           </Header>}
         <Segment attached="bottom">
           {mode !== Mode.Login && renderToLoginButton()}
           <Form error={!!err} success={!!succ} loading={user === undefined}>
             <Form.Input
               key="email"
-              label="Email"
+              label={t('Email')}
               error={mode === Mode.CreateAccount && !email}
               required={mode === Mode.CreateAccount}
               placeholder="joe@schmoe.com"
@@ -399,7 +402,7 @@ export class Login extends React.Component<Props, State> {
             </Form.Input>
             {mode === Mode.Login && <Form.Input
               key="current-password"
-              label="Password"
+              label={t('Password')}
               type="password"
               placeholder="correct horse battery staple"
               value={password}
@@ -409,7 +412,7 @@ export class Login extends React.Component<Props, State> {
             </Form.Input>}
             {mode === Mode.CreateAccount && <Form.Input
               key="new-password"
-              label="Password"
+              label={t('Password')}
               type="password"
               error={!password}
               required
@@ -423,7 +426,7 @@ export class Login extends React.Component<Props, State> {
             {this.renderError()}
             {mode === Mode.Login && <Button.Group fluid widths='2'>
                {renderLogInButton()}
-               <Button.Or />
+               <Button.Or text={t('or')} />
                {renderCreateAccountButton()}
             </Button.Group>}
             {mode === Mode.ForgotPassword && renderSendResetEmailButton()}
@@ -457,7 +460,7 @@ export class LoginModal extends React.Component<{},
   renderModalTrigger() {
     const { user } = this.state;
 
-    const text = user ? user.email : 'Login';
+    const text = user ? user.email : t('Login');
 
     return (
       <Button loading={user === undefined} className="nav__auth-status">

@@ -3,6 +3,7 @@ import firebase from 'firebase/compat/app';
 import * as _ from 'lodash';
 import { TransitionablePortal, Button, Card } from 'semantic-ui-react';
 import { State as ConnectionStatusState } from './ConnectionStatus';
+import { t } from '../i18n';
 
 interface Props {
 }
@@ -121,8 +122,8 @@ export default class Notifications extends React.Component<Props, State> {
     return (
       <Card style={{ 'maxWidth': 275 }} key={key} raised>
         <Card.Content>
-          <Card.Header>{notification.header}</Card.Header>
-          {notification.message && <Card.Description>{notification.message}</Card.Description>}
+          <Card.Header>{t(notification.header)}</Card.Header>
+          {notification.message && <Card.Description>{t(notification.message)}</Card.Description>}
         </Card.Content>
         <Card.Content extra>
           <Button 
@@ -132,7 +133,7 @@ export default class Notifications extends React.Component<Props, State> {
             negative={notification.disposition === 'negative'} 
             onClick={this.dismiss(key)}
           >
-              Dismiss
+              {t('Dismiss')}
           </Button>
         </Card.Content>
       </Card>

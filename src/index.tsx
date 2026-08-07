@@ -8,6 +8,7 @@ import * as ReactGA from 'react-ga';
 import * as Sentry from "@sentry/react";
 import 'semantic-ui-css/semantic.min.css';
 import './index.css';
+import { LanguageProvider } from './i18n';
 
 ReactGA.initialize('UA-122177622-1');
 ReactGA.pageview(window.location.pathname + window.location.search);
@@ -31,7 +32,9 @@ history.listen((location, action) => {
 ReactDOM.render(
 // @ts-ignore
   <Router history={history}>
-    <App />
+    <LanguageProvider>
+      <App />
+    </LanguageProvider>
   </Router>,
   document.getElementById('root') as HTMLElement
 );

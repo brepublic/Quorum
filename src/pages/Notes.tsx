@@ -7,6 +7,7 @@ import { textAreaHandler } from '../modules/handlers';
 import Loading from '../components/Loading';
 import {CommitteeData} from "../models/committee";
 import { Helmet } from 'react-helmet';
+import { t } from '../i18n';
 
 interface Props extends RouteComponentProps<URLParameters> {
 }
@@ -50,14 +51,14 @@ export default class Notes extends React.Component<Props, State> {
     return committee ? (
       <Container text style={{ padding: '1em 0em' }}>
         <Helmet>
-          <title>{`Notes - Muncoordinated`}</title>
+          <title>{`${t('Notes')} - Muncoordinated`}</title>
         </Helmet>
         <Form>
           <TextArea
             value={committee ? committee.notes : ''}
             onChange={textAreaHandler<CommitteeData>(committeeFref, 'notes')}
             autoHeight
-            placeholder="Notes"
+            placeholder={t('Notes')}
           />
           {/* <Popup
             trigger={trigger}

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { t } from '../i18n';
 
 interface Props {
 }
@@ -46,7 +47,7 @@ export default class Footer extends React.PureComponent<Props, State> {
 
     return (
       <div style={{ position: 'fixed', bottom: 5, left: 5, background: '#FFFFFF' }}>
-        <VersionLink version={latestVersion || CLIENT_VERSION} /> by <a href="https://maxbo.me">Max Bo</a> &amp; <a href="https://www.facebook.com/UQUNSA/">UQUNSA</a>
+        <VersionLink version={latestVersion || CLIENT_VERSION} /> {t('by')} <a href="https://maxbo.me">Max Bo</a> &amp; <a href="https://www.facebook.com/UQUNSA/">UQUNSA</a>
       </div>
     );
   }

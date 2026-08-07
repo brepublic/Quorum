@@ -12,7 +12,7 @@ import {
 } from '../modules/handlers';
 import {implies,} from '../utils';
 import {TimeSetter} from '../components/TimeSetter';
-import {nameToMemberOption, nameToFlagCode} from '../modules/member';
+import {displayMemberName, localizedMemberOptions, nameToMemberOption, nameToFlagCode} from '../modules/member';
 import {
   CaucusData,
   CaucusStatus,
@@ -34,7 +34,7 @@ import {
   recoverSettings
 } from '../models/committee';
 import {URLParameters} from '../types';
-import {IDENTITCAL_PROPOSER_SECONDER} from './Resolution';
+import {IdenticalProposerSeconder} from './Resolution';
 import {
   AmendmentData,
   DEFAULT_AMENDMENT,
@@ -67,11 +67,12 @@ import {
 import {getSeconds, TimerData, Unit} from "../models/time";
 import {SettingsData} from "../models/settings";
 import { Helmet } from 'react-helmet';
+import { localizeGeneratedName, t } from '../i18n';
 
-const DIVISIBILITY_ERROR = (
+const DivisibilityError = () => (
   <Message
     error
-    content="Speaker time does not evenly divide the caucus time"
+    content={t('Speaker time does not evenly divide the caucus time')}
   />
 );
 
@@ -324,7 +325,7 @@ export class MotionsComponent extends React.Component<Props & Hooks, State> {
       return (
         <Button.Group className="thirdwidth">
           <Popup
-            content="Against"
+            content={t('Against')}
             trigger={
               <Button
                 color='red'
@@ -342,7 +343,7 @@ export class MotionsComponent extends React.Component<Props & Hooks, State> {
           />
           {procedural(motionData.type) &&
             <Popup
-              content="Abstain"
+              content={t('Abstain')}
               trigger={
                 <Button
                   color='yellow'
@@ -359,7 +360,7 @@ export class MotionsComponent extends React.Component<Props & Hooks, State> {
               } />
             }
           <Popup
-            content="In favour"
+            content={t('In favour')}
             trigger={
               <Button
                 color='green'
@@ -381,7 +382,7 @@ export class MotionsComponent extends React.Component<Props & Hooks, State> {
     const descriptionTree = (
       <Card.Description>
         <Label horizontal>
-          {detailLabel(type)}
+          {t(detailLabel(type))}
         </Label>
         {proposal}
       </Card.Description>
@@ -391,25 +392,25 @@ export class MotionsComponent extends React.Component<Props & Hooks, State> {
     const proposerTree = (
       <div>
         <Label horizontal>
-          Proposer
+          {t('Proposer')}
         </Label>
-        <Flag name={nameToFlagCode(proposer || '')} /> {proposer}
+        <Flag name={nameToFlagCode(proposer || '')} /> {proposer ? displayMemberName(proposer) : ''}
       </div>
     );
 
     const seconderTree = (
       <div>
         <Label horizontal>
-          Seconder
+          {t('Seconder')}
         </Label>
-        <Flag name={nameToFlagCode(seconder || '')} /> {seconder}
+        <Flag name={nameToFlagCode(seconder || '')} /> {seconder ? displayMemberName(seconder) : ''}
       </div>
     );
 
     const caucusTargetTree = (
       <div>
         <Label horizontal>
-          Target caucus
+          {t('Target caucus')}
         </Label>
         {caucusTargetText}
       </div>
@@ -418,7 +419,7 @@ export class MotionsComponent extends React.Component<Props & Hooks, State> {
     const resolutionTargetTree = (
       <div>
         <Label horizontal>
-          Target resolution
+          {t('Target resolution')}
         </Label>
         {resolutionTargetText}
       </div>
@@ -426,8 +427,8 @@ export class MotionsComponent extends React.Component<Props & Hooks, State> {
 
     const time = hasDuration(type) ?
       hasSpeakers(type)
-        ? `${caucusDuration || 0} ${caucusUnit} / ${speakerDuration || 0} ${speakerUnit} `
-        : `${caucusDuration || 0} ${caucusUnit} `
+        ? `${caucusDuration || 0} ${t(caucusUnit)} / ${speakerDuration || 0} ${t(speakerUnit)} `
+        : `${caucusDuration || 0} ${t(caucusUnit)} `
       : '';
 
     return (
@@ -437,7 +438,7 @@ export class MotionsComponent extends React.Component<Props & Hooks, State> {
       >
         <Card.Content>
           <Card.Header>
-            {showMotionType(type, time)}
+            {t(showMotionType(type, time))}
           </Card.Header>
           <Card.Meta>
             {proposerTree}
@@ -454,7 +455,7 @@ export class MotionsComponent extends React.Component<Props & Hooks, State> {
             negative
             onClick={() => motionFref.child('deleted').set(true)}
           >
-            Delete
+            {t('Delete')}
           </Button>
           {recoverSettings(committee).motionVotes && renderVoteCount()}
           {approvable(type) && <Button 
@@ -464,7 +465,7 @@ export class MotionsComponent extends React.Component<Props & Hooks, State> {
             positive
             onClick={() => handleApproveMotion(motionFref, motionData)}
           >
-            {actionName(type)}
+            {t(`Motion action: ${actionName(type)}`)}
           </Button>}
         </Button.Group>
       </Card>
@@ -499,15 +500,15 @@ export class MotionsComponent extends React.Component<Props & Hooks, State> {
         autoHeight
         onChange={stateTextAreaHandler<Props, State>(this, 'newMotion', 'proposal')}
         rows={2}
-        label={detailLabel(newMotion.type)}
-        placeholder={detailLabel(newMotion.type)}
+        label={t(detailLabel(newMotion.type))}
+        placeholder={t(detailLabel(newMotion.type))}
       />
     );
 
     const boxForNames = (
       <Form.Input
-        label="Name"
-        placeholder="Name"
+        label={t('Name')}
+        placeholder={t('Name')}
         value={proposal}
         onChange={stateFieldHandler<Props, State>(this, 'newMotion', 'proposal')}
         fluid
@@ -530,7 +531,7 @@ export class MotionsComponent extends React.Component<Props & Hooks, State> {
         durationValue={speakerDuration ? speakerDuration.toString() : undefined}
         onUnitChange={stateDropdownHandler<Props, State>(this, 'newMotion', 'speakerUnit')}
         onDurationChange={stateValidatedNumberFieldHandler<Props, State>(this, 'newMotion', 'speakerDuration')}
-        label="Speaking time"
+        label={t('Speaking time')}
       />
     );
 
@@ -541,7 +542,7 @@ export class MotionsComponent extends React.Component<Props & Hooks, State> {
         durationValue={caucusDuration ? caucusDuration.toString() : undefined}
         onUnitChange={stateDropdownHandler<Props, State>(this, 'newMotion', 'caucusUnit')}
         onDurationChange={stateValidatedNumberFieldHandler<Props, State>(this, 'newMotion', 'caucusDuration')}
-        label="Duration"
+        label={t('Duration')}
       />
     );
 
@@ -553,12 +554,12 @@ export class MotionsComponent extends React.Component<Props & Hooks, State> {
     const caucusOptions = Object.keys(caucuses || {}).filter(key =>
       caucuses![key].status === CaucusStatus.Open.toString()
     ).map(key =>
-      ({ key: key, value: key, text: caucuses![key].name })
+      ({ key: key, value: key, text: localizeGeneratedName(caucuses![key].name) })
     );
 
     // Prioritize recency
     const resolutionOptions = Object.keys(resolutions || {}).map(key =>
-      ({ key: key, value: key, text: resolutions![key].name })
+      ({ key: key, value: key, text: localizeGeneratedName(resolutions![key].name) })
     );
 
     const caucusTargetSetter = (
@@ -573,7 +574,7 @@ export class MotionsComponent extends React.Component<Props & Hooks, State> {
         onChange={stateDropdownHandler<Props, State>(this, 'newMotion', 'caucusTarget')}
         options={caucusOptions}
         icon="search"
-        label="Target caucus"
+        label={t('Target caucus')}
       />
     );
 
@@ -589,7 +590,7 @@ export class MotionsComponent extends React.Component<Props & Hooks, State> {
         onChange={stateDropdownHandler<Props, State>(this, 'newMotion', 'resolutionTarget')}
         options={resolutionOptions}
         icon="search"
-        label="Target resolution"
+        label={t('Target resolution')}
       />
     );
 
@@ -615,8 +616,8 @@ export class MotionsComponent extends React.Component<Props & Hooks, State> {
         selection
         fluid
         onChange={stateMemberDropdownHandler<Props, State>(this, 'newMotion', 'proposer', memberOptions)}
-        options={memberOptions}
-        label="Proposer"
+        options={localizedMemberOptions(memberOptions)}
+        label={t('Proposer')}
       />
     );
 
@@ -631,8 +632,8 @@ export class MotionsComponent extends React.Component<Props & Hooks, State> {
         selection
         fluid
         onChange={stateMemberDropdownHandler<Props, State>(this, 'newMotion', 'seconder', memberOptions)}
-        options={memberOptions}
-        label="Seconder"
+        options={localizedMemberOptions(memberOptions)}
+        label={t('Seconder')}
       />
     );
 
@@ -643,13 +644,13 @@ export class MotionsComponent extends React.Component<Props & Hooks, State> {
         error={hasError}
       >
         <Form.Dropdown
-          placeholder="Select type"
+          placeholder={t('Select type')}
           search
           selection
           fluid
-          label="Type"
+          label={t('Type')}
           icon="search"
-          options={MOTION_TYPE_OPTIONS}
+          options={MOTION_TYPE_OPTIONS.map(option => ({ ...option, text: t(String(option.text)) }))}
           onChange={stateDropdownHandler<Props, State>(this, 'newMotion', 'type')}
           value={type}
         />
@@ -663,8 +664,8 @@ export class MotionsComponent extends React.Component<Props & Hooks, State> {
           || hasCaucusTarget(type)
           || hasResolutionTarget(type)
         ) && setters}
-        {this.hasDivisiblityError() && DIVISIBILITY_ERROR}
-        {this.hasIdenticalProposerSeconder() && IDENTITCAL_PROPOSER_SECONDER}
+        {this.hasDivisiblityError() && <DivisibilityError />}
+        {this.hasIdenticalProposerSeconder() && <IdenticalProposerSeconder />}
         <Button
           icon="plus"
           basic
@@ -731,13 +732,13 @@ export class MotionsComponent extends React.Component<Props & Hooks, State> {
     return (
       <Container text style={{ padding: '1em 0em' }}>
         <Helmet>
-          <title>{`Motions - Muncoordinated`}</title>
+          <title>{`${t('Motions')} - Muncoordinated`}</title>
         </Helmet>
         {renderAdder(committee)}
         <Divider hidden />
         <Checkbox
           style={{ 'padding-right': '50px' }}
-          label="Delegates can propose motions"
+          label={t('Delegates can propose motions')}
           toggle
           checked={motionsArePublic}
           onChange={
@@ -746,7 +747,7 @@ export class MotionsComponent extends React.Component<Props & Hooks, State> {
               'motionsArePublic')}
         />
         <Checkbox
-          label="Delegates can vote on motions"
+          label={t('Delegates can vote on motions')}
           toggle
           checked={motionVotes}
           onChange={
@@ -760,13 +761,13 @@ export class MotionsComponent extends React.Component<Props & Hooks, State> {
             canVote={motionVotes}
             canPropose={motionsArePublic} />}
         <Divider />
-        <Icon name="sort numeric ascending" /> Sorted from most to least disruptive. {operative} votes required to pass a motion
+        <Icon name="sort numeric ascending" /> {t('Sorted from most to least disruptive.')} {t('{count} votes required to pass a motion', { count: operative })}
         <Button
           negative
           disabled={renderedMotions.length <= 0}
           floated="right"
           icon="eraser"
-          content="Clear"
+          content={t('Clear')}
           compact
           basic
           onClick={this.handleClearMotions}
