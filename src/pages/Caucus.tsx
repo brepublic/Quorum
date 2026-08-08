@@ -8,6 +8,7 @@ import {
   FeedEvent,
   Form,
   Grid,
+  Header,
   Icon,
   Input,
   Label,
@@ -15,7 +16,7 @@ import {
   Segment,
   TextArea
 } from 'semantic-ui-react';
-import Timer, {toggleTicking} from '../components/Timer';
+import Timer, {getTimeWithSkewCorrection} from '../components/Timer';
 import {RouteComponentProps} from 'react-router';
 import {
   checkboxHandler,
@@ -32,6 +33,8 @@ import {
   CaucusID,
   CaucusStatus,
   DEFAULT_CAUCUS,
+  hasTimeForAnotherSpeaker,
+  isGeneralSpeakersList,
   Lifecycle,
   recoverDuration,
   recoverUnit,
@@ -43,13 +46,11 @@ import {CommitteeData, recoverCaucus, recoverMembers, recoverSettings} from "../
 import {TimerData, Unit} from "../models/time";
 import {useAuthState} from "react-firebase-hooks/auth";
 import _ from "lodash";
-import {useObjectVal} from "react-firebase-hooks/database";
 import {displayMemberName, isMemberPresent, localizedMemberOptions, memberByName, MemberData, MemberFlag, MemberOption, membersToAttendanceOptions} from "../modules/member";
 import {TimeSetter} from "../components/TimeSetter";
 import firebase from "firebase/compat/app";
 import {DragDropContext, Draggable, DraggableProvided, Droppable, DropResult} from "react-beautiful-dnd";
 import { Helmet } from 'react-helmet';
-import { getDatabase, ref } from 'firebase/database';
 import { localizeGeneratedName, t } from '../i18n';
 
 interface Props extends RouteComponentProps<URLParameters> {
@@ -73,9 +74,12 @@ const isSpeakerPresent = (
 export function NextSpeaking(props: {
   caucus?: CaucusData;
   members?: Record<string, MemberData>;
+  caucusTimer: TimerData;
   speakerTimer: TimerData;
   fref: firebase.database.Reference;
   autoNextSpeaker: boolean;
+  showCaucusTimer: boolean;
+  toggleTimers: (skew?: number) => void;
 }) {
   // TODO: Bandaid - I don't think the hook types nicely with the compat patch
   const [user] = useAuthState(firebase.auth() as any);
@@ -151,22 +155,24 @@ export function NextSpeaking(props: {
       timerResetSeconds: speakerSeconds
     };
 
+    if (props.showCaucusTimer && props.caucus.speaking) {
+      props.fref.child('caucusTimer').set({
+        ...props.caucusTimer,
+        ticking: false
+      });
+
+      if (!hasTimeForAnotherSpeaker(props.caucusTimer, speakerSeconds)) {
+        runLifecycle(lifecycle);
+        props.fref.child('status').set(CaucusStatus.Closed);
+        return;
+      }
+    }
+
     runLifecycle({...lifecycle, ...queueHeadDetails});
   };
 
-  const db = getDatabase();
-  const [skew] = useObjectVal<number>(ref(db, '.info/serverTimeOffset'));
-  console.log("Got skew", skew, "millis");
-
   const startTimer = () => {
-    if (!isSpeakerPresent(props.members, props.caucus?.speaking)) {
-      return;
-    }
-    toggleTicking({
-      timerFref: props.fref.child('speakerTimer'),
-      timer: props.speakerTimer,
-      skew
-    });
+    props.toggleTimers();
   };
 
   const {caucus} = props;
@@ -606,6 +612,7 @@ export default class Caucus extends React.Component<Props, State> {
 
   renderHeader = (caucus?: CaucusData) => {
     const caucusFref = this.recoverCaucusFref();
+    const speakersList = isGeneralSpeakersList(this.props.match.params.caucusID);
 
     const statusDropdown = (
       <Dropdown 
@@ -626,7 +633,7 @@ export default class Caucus extends React.Component<Props, State> {
           attatched="top"
           size="massive"
           fluid
-          placeholder={t('Set caucus name')}
+          placeholder={t(speakersList ? 'Set speakers list name' : 'Set caucus name')}
         />
         <Form loading={!caucus}>
           <TextArea
@@ -635,7 +642,7 @@ export default class Caucus extends React.Component<Props, State> {
             onChange={textAreaHandler<CaucusData>(caucusFref, 'topic')}
             attatched="top"
             rows={1}
-            placeholder={t('Set caucus details')}
+            placeholder={t(speakersList ? 'Set speakers list details' : 'Set caucus details')}
           />
         </Form>
       </>
@@ -660,6 +667,15 @@ export default class Caucus extends React.Component<Props, State> {
   }
 
   setSpeakerTimer = (timer: TimerData) => {
+    const speakersList = isGeneralSpeakersList(this.props.match.params.caucusID);
+
+    if (!speakersList && timer.remaining === 0 && this.state.caucusTimer.ticking) {
+      this.recoverCaucusFref().child('caucusTimer').set({
+        ...this.state.caucusTimer,
+        ticking: false
+      });
+    }
+
     this.setState({ speakerTimer: timer });
   }
 
@@ -667,12 +683,53 @@ export default class Caucus extends React.Component<Props, State> {
     this.setState({ caucusTimer: timer });
   }
 
+  toggleTimers = (skew?: number) => {
+    const {caucusTimer, committee, speakerTimer} = this.state;
+    const caucusID: CaucusID = this.props.match.params.caucusID;
+    const caucus = recoverCaucus(committee, caucusID);
+    const speakersList = isGeneralSpeakersList(caucusID);
+
+    if (!caucus || caucus.status === CaucusStatus.Closed) {
+      return;
+    }
+
+    const timersAreRunning = !!speakerTimer.ticking || (!speakersList && !!caucusTimer.ticking);
+
+    if (!timersAreRunning) {
+      const members = recoverMembers(committee);
+      if (!isSpeakerPresent(members, caucus.speaking)) {
+        return;
+      }
+
+      const speakerSeconds = recoverDuration(caucus)
+        ? Number(recoverDuration(caucus)) * (recoverUnit(caucus) === Unit.Minutes ? 60 : 1)
+        : 60;
+
+      if (!speakersList && !hasTimeForAnotherSpeaker(caucusTimer, speakerSeconds)) {
+        this.recoverCaucusFref().child('status').set(CaucusStatus.Closed);
+        return;
+      }
+    }
+
+    const ticking = timersAreRunning ? false : getTimeWithSkewCorrection(skew);
+
+    const timerUpdate = speakersList
+      ? {speakerTimer: {...speakerTimer, ticking}}
+      : {
+        caucusTimer: {...caucusTimer, ticking},
+        speakerTimer: {...speakerTimer, ticking}
+      };
+
+    this.recoverCaucusFref().update(timerUpdate);
+  }
+
   renderCaucus = (caucus?: CaucusData) => {
     const { renderNowSpeaking, renderHeader, recoverCaucusFref } = this;
-    const { speakerTimer, committee } = this.state;
+    const { caucusTimer, speakerTimer, committee } = this.state;
 
     const { caucusID } = this.props.match.params;
     const caucusFref = recoverCaucusFref();
+    const speakersList = isGeneralSpeakersList(caucusID);
 
     const members = recoverMembers(committee);
 
@@ -682,6 +739,7 @@ export default class Caucus extends React.Component<Props, State> {
         timerFref={caucusFref.child('speakerTimer')}
         key={caucusID + 'speakerTimer'}
         onChange={this.setSpeakerTimer}
+        onToggle={this.toggleTimers}
         toggleKeyCode={83} // S - if changing this, update Help
         defaultUnit={recoverUnit(caucus)}
         defaultDuration={recoverDuration(caucus) || 60}
@@ -694,6 +752,7 @@ export default class Caucus extends React.Component<Props, State> {
         timerFref={caucusFref.child('caucusTimer')}
         key={caucusID + 'caucusTimer'}
         onChange={this.setCaucusTimer}
+        onToggle={this.toggleTimers}
         toggleKeyCode={67} // C - if changing this, update Help
         defaultUnit={Unit.Minutes}
         defaultDuration={10}
@@ -726,13 +785,37 @@ export default class Caucus extends React.Component<Props, State> {
       <NextSpeaking
         caucus={caucus} 
         members={members}
+        caucusTimer={caucusTimer}
         fref={caucusFref} 
         speakerTimer={speakerTimer} 
         autoNextSpeaker={autoNextSpeaker}
+        showCaucusTimer={!speakersList}
+        toggleTimers={this.toggleTimers}
       />
     );
 
-    const body = !timersInSeparateColumns ? (
+    const completedBody = (
+      <Grid.Row>
+        <Grid.Column>
+          <Segment placeholder textAlign="center">
+            <Header icon>
+              <Icon name="check circle outline" />
+              {t(speakersList ? 'Speakers list complete' : 'Moderated caucus complete')}
+            </Header>
+            <Button
+              primary
+              size="large"
+              onClick={() => this.props.history.push(`/committees/${this.props.match.params.committeeID}/motions`)}
+            >
+              {t('Go to motions')}
+              <Icon name="arrow right" />
+            </Button>
+          </Segment>
+        </Grid.Column>
+      </Grid.Row>
+    );
+
+    const combinedTimerBody = (
       <Grid.Row>
         <Grid.Column>
           {renderNowSpeaking(caucus, members)}
@@ -742,10 +825,12 @@ export default class Caucus extends React.Component<Props, State> {
         </Grid.Column>
         <Grid.Column>
           {renderedSpeakerTimer}
-          {renderedCaucusTimer}
+          {!speakersList && renderedCaucusTimer}
         </Grid.Column>
       </Grid.Row>
-    ) : (
+    );
+
+    const separateTimerBody = (
       <Grid.Row>
         <Grid.Column>
           {renderedSpeakerTimer}
@@ -759,6 +844,10 @@ export default class Caucus extends React.Component<Props, State> {
       </Grid.Row>
     );
 
+    const body = speakersList || !timersInSeparateColumns
+      ? combinedTimerBody
+      : separateTimerBody;
+
     return (
       <Container style={{ 'padding-bottom': '2em' }}>
         <Helmet>
@@ -766,7 +855,7 @@ export default class Caucus extends React.Component<Props, State> {
         </Helmet>
         <Grid columns="equal" stackable>
           {header}
-          {body}
+          {caucus?.status === CaucusStatus.Closed ? completedBody : body}
         </Grid >
       </Container>
     );

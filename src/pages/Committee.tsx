@@ -24,7 +24,13 @@ import RollCall from './RollCall';
 import Unmod from './Unmod';
 import Notes from './Notes';
 import Help from './Help';
-import {CaucusStatus, DEFAULT_CAUCUS, putCaucus} from '../models/caucus';
+import {
+  CaucusStatus,
+  DEFAULT_CAUCUS,
+  GENERAL_SPEAKERS_LIST_ID,
+  isGeneralSpeakersList,
+  putCaucus
+} from '../models/caucus';
 import {URLParameters} from '../types';
 import Loading from '../components/Loading';
 import Footer from '../components/Footer';
@@ -241,12 +247,15 @@ function ResponsiveNav(props: ResponsiveContainerProps) {
   const renderMenuItems = () => {
     const { committee } = props;
 
+    const generalSpeakersListDestination =
+      `/committees/${committeeID}/caucuses/${GENERAL_SPEAKERS_LIST_ID}`;
+
     const caucuses = committee ? committee.caucuses : undefined;
     const resolutions = committee ? committee.resolutions : undefined;
     const strawpolls = committee ? committee.strawpolls : undefined;
 
     const caucusItems = Object.keys(caucuses || {})
-      .filter(key => caucuses![key].status !== CaucusStatus.Closed)
+      .filter(key => !isGeneralSpeakersList(key) && caucuses![key].status !== CaucusStatus.Closed)
       .map(key => makeSubmenuItem(key, caucuses![key].name, caucuses![key].topic, 'caucuses')
     );
 
@@ -271,6 +280,13 @@ function ResponsiveNav(props: ResponsiveContainerProps) {
         {makeMenuItem('Setup', 'users')}
         {makeMenuItem('Roll call', 'check square outline', 'roll-call')}
         {makeMenuItem('Motions', 'sort numeric descending')}
+        <Menu.Item
+          key="general-speakers-list"
+          active={props.location.pathname === generalSpeakersListDestination}
+          onClick={() => props.history.push(generalSpeakersListDestination)}
+        >
+          {t("General Speakers' List")}
+        </Menu.Item>
         {makeMenuItem('Unmod', 'discussions')}
         <Dropdown key="caucuses" item text={t('Caucuses')} loading={!committee}>
           <Dropdown.Menu>

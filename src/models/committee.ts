@@ -10,7 +10,7 @@ import {
 } from '../modules/member';
 import {logCreateMember} from '../modules/analytics';
 import _ from 'lodash';
-import {CaucusData, CaucusID, DEFAULT_CAUCUS} from "./caucus";
+import {CaucusData, CaucusID, DEFAULT_CAUCUS, GENERAL_SPEAKERS_LIST_ID} from "./caucus";
 import { DEFAULT_CAUCUS_TIME_SECONDS } from './constants';
 import firebase from "firebase/compat/app";
 import {PostData, PostID} from "./post";
@@ -142,7 +142,7 @@ export const DEFAULT_COMMITTEE: CommitteeData = {
   creatorUid: '',
   members: {} as Record<MemberID, MemberData>,
   caucuses: {
-    'gsl': GENERAL_SPEAKERS_LIST
+    [GENERAL_SPEAKERS_LIST_ID]: GENERAL_SPEAKERS_LIST
   } as Record<string, CaucusData>,
   resolutions: {} as Record<ResolutionID, ResolutionData>,
   files: {} as Record<PostID, PostData>,

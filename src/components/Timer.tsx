@@ -3,13 +3,14 @@ import firebase from 'firebase/compat/app';
 import {Button, DropdownProps, Form, Icon, Label, Progress, Segment} from 'semantic-ui-react';
 import {TimeSetter} from './TimeSetter';
 import _ from 'lodash';
-import {DEFAULT_TIMER, getSeconds, TimerData, Unit} from "../models/time";
+import {advanceTimer, DEFAULT_TIMER, getSeconds, TimerData, Unit} from "../models/time";
 import { t } from '../i18n';
 
 interface Props {
   name: string;
   timerFref: firebase.database.Reference;
   onChange: (timer: TimerData) => void;
+  onToggle?: (skew?: number) => void;
   toggleKeyCode?: number;
   defaultUnit: Unit;
   defaultDuration: number;
@@ -26,14 +27,7 @@ interface State {
 }
 
 export function hhmmss(seconds: number): string {
-  let sign = '';
-
-  seconds = seconds || 0;
-
-  if (seconds < 0) {
-    sign = '-';
-    seconds = Math.abs(seconds);
-  }
+  seconds = Math.max(0, seconds || 0);
 
   const minutes = Math.floor(seconds / 60);
   const hours = Math.floor(minutes / 60);
@@ -42,9 +36,9 @@ export function hhmmss(seconds: number): string {
   const minutesFormatted = _.padStart((minutes % 60).toString(), 2, '0');
 
   if (hours !== 0) {
-    return sign + hours + ':' + minutesFormatted + ':' + secondsFormatted;
+    return hours + ':' + minutesFormatted + ':' + secondsFormatted;
   } else {
-    return sign + minutes + ':' + secondsFormatted;
+    return minutes + ':' + secondsFormatted;
   }
 }
 
@@ -65,10 +59,11 @@ export function toggleTicking({
   skew?: number,
 }) {
   if (timer) {
+    const remaining = Math.max(0, timer.remaining);
     const newTimer = {
       elapsed: timer.elapsed,
-      remaining: timer.remaining,
-      ticking: timer.ticking ? false : getTimeWithSkewCorrection(skew)
+      remaining,
+      ticking: timer.ticking || remaining === 0 ? false : getTimeWithSkewCorrection(skew)
     };
 
     timerFref.set(newTimer);
@@ -93,14 +88,14 @@ export default class Timer extends React.Component<Props, State> {
     const timer = this.state.timer;
 
     if (timer && timer.ticking) {
-      let newTimer = {
-        ...timer,
-        elapsed: timer.elapsed + 1,
-        remaining: timer.remaining - 1,
-      };
+      const newTimer = advanceTimer(timer, 1);
 
       this.setState({ timer: newTimer });
       this.props.onChange(newTimer);
+
+      if (newTimer.remaining === 0) {
+        this.props.timerFref.set(newTimer);
+      }
 
       const { mute } = this.state;
 
@@ -117,7 +112,12 @@ export default class Timer extends React.Component<Props, State> {
 
   localToggleTicking = () => {
     const { timer, skew } = this.state;
-    const { timerFref } = this.props;
+    const { onToggle, timerFref } = this.props;
+
+    if (onToggle) {
+      onToggle(skew);
+      return;
+    }
 
     toggleTicking({ timer, timerFref, skew });
   }
@@ -137,18 +137,24 @@ export default class Timer extends React.Component<Props, State> {
 
   timerCallback = (timer: firebase.database.DataSnapshot | null) => {
     if (timer && timer.val()) {
-      let timerData = timer.val();
+      let timerData: TimerData = timer.val();
 
       const { skew } = this.state;
 
       const now = getTimeWithSkewCorrection(skew)
 
       if (timerData.ticking) {
-        const remaining = timerData.remaining - (now - timerData.ticking);
-        const elapsed = timerData.elapsed + (now - timerData.ticking);
+        const wasTicking = timerData.ticking;
         // HACK: Handle late mounts by checking the difference between when the clock started clicking
         // and when the timer mounted / recieved new info
-        timerData = { ...timerData, remaining , elapsed };
+        timerData = advanceTimer(timerData, now - Number(timerData.ticking));
+
+        if (wasTicking && !timerData.ticking) {
+          this.props.timerFref.set(timerData);
+        }
+      } else if (timerData.remaining < 0) {
+        timerData = {...timerData, remaining: 0, ticking: false};
+        this.props.timerFref.set(timerData);
       }
 
       this.setState({ timer: timerData });

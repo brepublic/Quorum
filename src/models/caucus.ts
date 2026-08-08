@@ -14,7 +14,20 @@ export function recoverDuration(caucus?: CaucusData): number | undefined {
   return caucus?.speakerDuration;
 }
 
+export function hasTimeForAnotherSpeaker(
+  caucusTimer: TimerData,
+  speakerDurationSeconds: number
+): boolean {
+  return caucusTimer.remaining >= speakerDurationSeconds;
+}
+
 export type CaucusID = string;
+
+export const GENERAL_SPEAKERS_LIST_ID: CaucusID = 'gsl';
+
+export function isGeneralSpeakersList(caucusID: CaucusID): boolean {
+  return caucusID === GENERAL_SPEAKERS_LIST_ID;
+}
 
 export enum CaucusStatus {
   Open = 'Open',

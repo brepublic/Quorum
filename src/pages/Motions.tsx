@@ -46,10 +46,10 @@ import {DEFAULT_STRAWPOLL, putStrawpoll} from '../models/strawpoll';
 import {MotionsShareHint} from '../components/share-hints';
 import _ from 'lodash';
 import {makeCommitteeStats} from '../modules/committee-stats';
-import {DEFAULT_MOTION, MOTION_TYPE_OPTIONS, MotionData, MotionID, MotionType, MotionVote} from "../models/motion";
+import {DEFAULT_MOTION, MOTION_TYPE_OPTIONS, MotionData, MotionID, MotionResult, MotionType, MotionVote} from "../models/motion";
 import {
-  actionName,
   approvable,
+  destinationName,
   detailLabel,
   disruptiveness,
   hasCaucusTarget,
@@ -65,7 +65,7 @@ import {
 import {getSeconds, TimerData, Unit} from "../models/time";
 import {SettingsData} from "../models/settings";
 import { Helmet } from 'react-helmet';
-import { localizeGeneratedName, t } from '../i18n';
+import { getLanguage, localizeGeneratedName, t } from '../i18n';
 import {getAutomaticVoteResult} from '../viewmodels/voting';
 
 const DivisibilityError = () => (
@@ -86,6 +86,8 @@ interface State {
 }
 
 export class MotionsComponent extends React.Component<Props, State> {
+  decidingMotions = new Set<MotionID>();
+
   constructor(props: Props) {
     super(props);
 
@@ -148,7 +150,7 @@ export class MotionsComponent extends React.Component<Props, State> {
       ? committee.motions || {} as Record<string, MotionData>
       : {} as Record<string, MotionData>;
 
-    Object.keys(motions).forEach(key => {
+    Object.keys(motions).filter(key => !motions[key].result).forEach(key => {
       committeeFref
         .child('motions')
         .child(key)
@@ -163,10 +165,9 @@ export class MotionsComponent extends React.Component<Props, State> {
     });
   }
 
-  handleApproveMotion = (
-    motionFref: firebase.database.Reference,
+  enactMotion = (
     motionData: MotionData
-  ): void => {
+  ): string | undefined => {
     const committeeID: CommitteeID = this.props.match.params.committeeID;
     const { committee } = this.state;
 
@@ -175,13 +176,11 @@ export class MotionsComponent extends React.Component<Props, State> {
 
     if (!isMemberPresent(committee?.members, proposer)
       || (hasSeconder(motionData.type) && !isMemberPresent(committee?.members, seconder))) {
-      return;
+      return undefined;
     }
 
     const caucusID = motionData.caucusTarget;
     const resolutionID = motionData.resolutionTarget;
-
-    motionFref.child('deleted').set(true);
 
     if (motionData.type === MotionType.OpenModeratedCaucus && speakerDuration && caucusDuration && proposer) {
 
@@ -211,14 +210,10 @@ export class MotionsComponent extends React.Component<Props, State> {
 
       const caucusRef = putCaucus(committeeID, newCaucus);
 
-      this.props.history
-        .push(`/committees/${committeeID}/caucuses/${caucusRef.key}`);
+      return `/committees/${committeeID}/caucuses/${caucusRef.key}`;
 
     }
     else if ((motionData.type === MotionType.OpenUnmoderatedCaucus || motionData.type === MotionType.AddWorkingPaper) && caucusDuration) {
-      this.props.history
-        .push(`/committees/${committeeID}/unmod`);
-
       const caucusSeconds = getSeconds(caucusDuration, caucusUnit);
 
       const newTimer: TimerData = {
@@ -227,6 +222,8 @@ export class MotionsComponent extends React.Component<Props, State> {
       };
 
       putUnmodTimer(committeeID, newTimer);
+
+      return `/committees/${committeeID}/unmod`;
 
     } else if (motionData.type === MotionType.IntroduceDraftResolution && proposer && seconder) {
       const newResolution: ResolutionData = {
@@ -238,13 +235,9 @@ export class MotionsComponent extends React.Component<Props, State> {
 
       const resolutionRef = putResolution(committeeID, newResolution);
 
-      this.props.history
-        .push(`/committees/${committeeID}/resolutions/${resolutionRef.key}`);
+      return `/committees/${committeeID}/resolutions/${resolutionRef.key}`;
 
     } else if (motionData.type === MotionType.ExtendUnmoderatedCaucus && caucusDuration) {
-      this.props.history
-        .push(`/committees/${committeeID}/unmod`);
-
       const caucusSeconds = getSeconds(caucusDuration, caucusUnit);
 
       // TODO: Do I wait a second before extending so it looks sexy?
@@ -253,10 +246,9 @@ export class MotionsComponent extends React.Component<Props, State> {
       // when this gets fired off
       extendUnmodTimer(committeeID, caucusSeconds);
 
-    } else if (motionData.type === MotionType.ExtendModeratedCaucus && caucusDuration && caucusID && proposer && committee) {
-      this.props.history
-        .push(`/committees/${committeeID}/caucuses/${caucusID}`);
+      return `/committees/${committeeID}/unmod`;
 
+    } else if (motionData.type === MotionType.ExtendModeratedCaucus && caucusDuration && caucusID && proposer && committee) {
       const caucusSeconds = getSeconds(caucusDuration, caucusUnit);
 
       extendModTimer(committeeID, caucusID, caucusSeconds);
@@ -272,15 +264,12 @@ export class MotionsComponent extends React.Component<Props, State> {
         duration: speakerSeconds
       });
 
+      return `/committees/${committeeID}/caucuses/${caucusID}`;
+
     } else if (motionData.type === MotionType.CloseModeratedCaucus && caucusID) {
-      this.props.history
-        .push(`/committees/${committeeID}/caucuses/${caucusID}`);
-
       closeCaucus(committeeID, caucusID);
+      return `/committees/${committeeID}/caucuses/${caucusID}`;
     } else if (motionData.type === MotionType.IntroduceAmendment && resolutionID && proposer) {
-      this.props.history
-        .push(`/committees/${committeeID}/resolutions/${resolutionID}/amendments`);
-
       const newAmendment: AmendmentData = {
         ...DEFAULT_AMENDMENT,
         text: proposal,
@@ -288,23 +277,52 @@ export class MotionsComponent extends React.Component<Props, State> {
       };
 
       putAmendment(committeeID, resolutionID, newAmendment);
+      return `/committees/${committeeID}/resolutions/${resolutionID}/amendments`;
     } else if (motionData.type === MotionType.VoteOnResolution && resolutionID) {
-      this.props.history
-        .push(`/committees/${committeeID}/resolutions/${resolutionID}/voting`);
-
+      return `/committees/${committeeID}/resolutions/${resolutionID}/voting`;
     } else if (motionData.type === MotionType.ProposeStrawpoll) {
       const strawpollRef = putStrawpoll(committeeID, {
         ...DEFAULT_STRAWPOLL,
         question: proposal
       });
 
-      this.props.history
-        .push(`/committees/${committeeID}/strawpolls/${strawpollRef.key}`);
+      return `/committees/${committeeID}/strawpolls/${strawpollRef.key}`;
+    }
+
+    return undefined;
+  }
+
+  handleDecideMotion = async (
+    id: MotionID,
+    motionFref: firebase.database.Reference,
+    motionData: MotionData,
+    result: MotionResult
+  ): Promise<void> => {
+    if (motionData.result || this.decidingMotions.has(id)) {
+      return;
+    }
+
+    this.decidingMotions.add(id);
+    this.forceUpdate();
+
+    try {
+      const destination = result === MotionResult.Passed
+        ? this.enactMotion(motionData)
+        : undefined;
+
+      await motionFref.update({
+        result,
+        decidedAt: Date.now(),
+        destination: destination || null
+      });
+    } finally {
+      this.decidingMotions.delete(id);
+      this.forceUpdate();
     }
   }
 
   renderMotion = (id: MotionID, motionData: MotionData, motionFref: firebase.database.Reference) => {
-    const { handleApproveMotion } = this;
+    const { handleDecideMotion } = this;
     const { committee } = this.state;
     const { proposer, proposal, type, caucusUnit, caucusDuration, speakerUnit,
       speakerDuration, seconder, caucusTarget, resolutionTarget } = motionData;
@@ -326,7 +344,9 @@ export class MotionsComponent extends React.Component<Props, State> {
         return member.present && (procedural(motionData.type) ? nonNGO(member) : canVote(member));
       });
       const votingMemberID = this.state.votingMemberID;
-      const canSelectedMemberVote = !!votingMemberID && eligibleMemberIDs.includes(votingMemberID);
+      const canSelectedMemberVote = !motionData.result
+        && !!votingMemberID
+        && eligibleMemberIDs.includes(votingMemberID);
 
       // Remove vote if same vote, otherwise change vote
       const vote = (vote: MotionVote) => {
@@ -479,6 +499,16 @@ export class MotionsComponent extends React.Component<Props, State> {
         ? `${caucusDuration || 0} ${t(caucusUnit)} / ${speakerDuration || 0} ${t(speakerUnit)} `
         : `${caucusDuration || 0} ${t(caucusUnit)} `
       : '';
+    const isDecided = !!motionData.result;
+    const isDeciding = this.decidingMotions.has(id);
+    const canPass = !approvable(type)
+      || (isMemberPresent(committee?.members, motionData.proposer)
+        && (!hasSeconder(type) || isMemberPresent(committee?.members, motionData.seconder)));
+    const decisionText = motionData.result === MotionResult.Passed ? t('Passed') : t('Failed');
+    const decisionTime = motionData.decidedAt
+      ? new Date(motionData.decidedAt).toLocaleString(getLanguage())
+      : '';
+    const destination = destinationName(type);
 
     return (
       <Card
@@ -486,9 +516,34 @@ export class MotionsComponent extends React.Component<Props, State> {
         key={id}
       >
         <Card.Content>
-          <Card.Header>
-            {t(showMotionType(type, time))}
-          </Card.Header>
+          <div className="motion-heading">
+            <Card.Header>
+              {t(showMotionType(type, time))}
+            </Card.Header>
+            {isDecided ? (
+              <time
+                className={`motion-decision motion-decision-${motionData.result}`}
+                dateTime={motionData.decidedAt ? new Date(motionData.decidedAt).toISOString() : undefined}
+              >
+                {decisionText}{decisionTime && ` · ${decisionTime}`}
+              </time>
+            ) : (
+              <Popup
+                content={t('Delete')}
+                trigger={
+                  <Button
+                    aria-label={t('Delete')}
+                    basic
+                    circular
+                    compact
+                    icon="trash"
+                    negative
+                    onClick={() => motionFref.child('deleted').set(true)}
+                  />
+                }
+              />
+            )}
+          </div>
           <Card.Meta>
             {proposerTree}
             {hasSeconder(type) && seconderTree}
@@ -500,26 +555,37 @@ export class MotionsComponent extends React.Component<Props, State> {
         {recoverSettings(committee).motionVotes && (
           <Card.Content extra>{renderVoteCount()}</Card.Content>
         )}
-        <Button.Group fluid attached="bottom">
+        {!isDecided && (
+          <Button.Group fluid attached="bottom">
+            <Button
+              negative
+              disabled={isDeciding}
+              loading={isDeciding}
+              onClick={() => handleDecideMotion(id, motionFref, motionData, MotionResult.Failed)}
+            >
+              {t('Failed')}
+            </Button>
+            <Button
+              positive
+              disabled={!canPass || isDeciding}
+              loading={isDeciding}
+              onClick={() => handleDecideMotion(id, motionFref, motionData, MotionResult.Passed)}
+            >
+              {t('Passed')}
+            </Button>
+          </Button.Group>
+        )}
+        {isDecided && motionData.destination && destination && (
           <Button
-            className="thirdwidth"
-            basic
-            negative
-            onClick={() => motionFref.child('deleted').set(true)}
+            attached="bottom"
+            fluid
+            primary
+            onClick={() => this.props.history.push(motionData.destination!)}
           >
-            {t('Delete')}
+            {t(destination)}
+            <Icon name="arrow right" />
           </Button>
-          {approvable(type) && <Button 
-            className="thirdwidth"
-            disabled={!isMemberPresent(committee?.members, motionData.proposer)
-              || (hasSeconder(type) && !isMemberPresent(committee?.members, motionData.seconder))}
-            basic
-            positive
-            onClick={() => handleApproveMotion(motionFref, motionData)}
-          >
-            {t(`Motion action: ${actionName(type)}`)}
-          </Button>}
-        </Button.Group>
+        )}
       </Card>
     );
   }
@@ -809,9 +875,13 @@ export class MotionsComponent extends React.Component<Props, State> {
         description: member.present ? undefined : t('Absent')
       }));
 
+    const motions = committee?.motions || {} as Record<string, MotionData>;
     const renderedMotions = committee
-      ? renderMotions(committee.motions || {} as Record<string, MotionData>)
+      ? renderMotions(motions)
       : []; // TODO: This could probably do with a nice spinner
+    const pendingMotionsCount = Object.values(motions)
+      .filter(motion => !motion.deleted && !motion.result)
+      .length;
 
     return (
       <Container text style={{ padding: '1em 0em' }}>
@@ -861,7 +931,7 @@ export class MotionsComponent extends React.Component<Props, State> {
         <Icon name="sort numeric ascending" /> {t('Sorted from most to least disruptive.')} {t('{count} votes required to pass a motion', { count: operative })}
         <Button
           negative
-          disabled={renderedMotions.length <= 0}
+          disabled={pendingMotionsCount <= 0}
           floated="right"
           icon="eraser"
           content={t('Clear')}
