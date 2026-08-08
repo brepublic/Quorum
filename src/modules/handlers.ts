@@ -143,12 +143,20 @@ export function checkboxHandler<T>
 
 export function memberDropdownHandler<T>
 (fref: firebase.database.Reference, field: keyof T, memberOptions: MemberOption[]) {
-  return (event: React.SyntheticEvent<HTMLElement>, data: DropdownProps) =>
-    fref.child(field.toString()).set(memberOptions.filter(c => c.value === data.value)[0].text);
+  return (event: React.SyntheticEvent<HTMLElement>, data: DropdownProps) => {
+    const selected = memberOptions.find(c => c.value === data.value);
+    if (selected && !selected.disabled) {
+      fref.child(field.toString()).set(selected.text);
+    }
+  };
 }
 
 export function stateMemberDropdownHandler<P, S>
 (comp: React.Component<P, S>, field: keyof S, target: string, memberOptions: MemberOption[]) {
-  return (event: React.SyntheticEvent<HTMLElement>, data: DropdownProps) =>
-    lens(comp, field, target, memberOptions.filter(c => c.value === data.value)[0].text);
+  return (event: React.SyntheticEvent<HTMLElement>, data: DropdownProps) => {
+    const selected = memberOptions.find(c => c.value === data.value);
+    if (selected && !selected.disabled) {
+      lens(comp, field, target, selected.text);
+    }
+  };
 }

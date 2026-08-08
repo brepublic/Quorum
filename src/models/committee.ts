@@ -3,6 +3,7 @@ import {
   MemberData,
   MemberID,
   MemberOption,
+  membersToAttendanceOptions,
   membersToOptions,
   membersToPresentOptions,
   Rank
@@ -30,6 +31,14 @@ export function recoverMemberOptions(committee?: CommitteeData): MemberOption[] 
 export function recoverPresentMemberOptions(committee?: CommitteeData): MemberOption[] {
   if (committee) {
     return membersToPresentOptions(committee.members);
+  } else {
+    return [];
+  }
+}
+
+export function recoverAttendanceMemberOptions(committee?: CommitteeData): MemberOption[] {
+  if (committee) {
+    return membersToAttendanceOptions(committee.members);
   } else {
     return [];
   }
@@ -114,6 +123,12 @@ export interface CommitteeData {
   timer: TimerData;
   notes: string;
   settings: SettingsData;
+  rollCall?: RollCallData;
+}
+
+export interface RollCallData {
+  called?: Record<MemberID, true>;
+  currentMemberID?: MemberID;
 }
 
 const GENERAL_SPEAKERS_LIST: CaucusData = {
@@ -434,7 +449,7 @@ export const pushTemplateMembers = (committeeID: CommitteeID, template: Template
       pushMember(committeeID, {
         name: member.name,
         rank: member.rank ?? Rank.Standard,
-        present: member.present ?? true,
+        present: member.present ?? false,
         voting: member.voting ?? false,
         ...(member.flag?.value ? {flag: member.flag} : {})
       });

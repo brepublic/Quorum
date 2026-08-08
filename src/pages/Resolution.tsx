@@ -1,7 +1,7 @@
 import * as React from 'react';
 import firebase from 'firebase/compat/app';
 import * as _ from 'lodash';
-import {canVote, displayMemberName, localizedMemberOptions, MemberData, MemberID, nameToMemberOption, Rank} from '../modules/member';
+import {canVote, displayMemberName, isMemberPresent, localizedMemberOptions, MemberData, MemberID, nameToMemberOption, Rank} from '../modules/member';
 import {
   Button,
   Card,
@@ -10,15 +10,15 @@ import {
   Dropdown,
   Form,
   Grid,
+  Header,
   Icon,
   Input,
   Label,
-  List,
   Message,
+  Pagination,
+  PaginationProps,
   Popup,
   Segment,
-  SemanticCOLORS,
-  SemanticICONS,
   Statistic,
   Tab,
   TabProps,
@@ -44,13 +44,15 @@ import {
 import {CaucusData, CaucusID, DEFAULT_CAUCUS, putCaucus, Stance} from '../models/caucus';
 import {NotFound} from '../components/NotFound';
 import Files from './Files';
-import {CommitteeStatsTable} from '../modules/committee-stats';
-import {CommitteeData, recoverMemberOptions} from "../models/committee";
+import {makeCommitteeStats} from '../modules/committee-stats';
+import {CommitteeData, recoverAttendanceMemberOptions} from "../models/committee";
 import {getThreshold, getThresholdName} from "../viewmodels/resolution";
+import {getAutomaticVoteResult, nextUnvotedMemberID} from "../viewmodels/voting";
 import { Helmet } from 'react-helmet';
 import { localizeGeneratedName, t } from '../i18n';
 
 const TAB_ORDER = ['feed', 'text', 'amendments', 'voting'];
+export const RESOLUTION_VOTING_PAGE_SIZE = 18;
 
 export const IdenticalProposerSeconder = () => (
   <Message
@@ -99,6 +101,15 @@ interface State {
   authUnsubscribe?: () => void;
   user?: firebase.User | null;
   loading: boolean;
+  currentVotingMemberID?: MemberID;
+  votingPage: number;
+  votingResolutionID: ResolutionID;
+  votingHistory: Array<{
+    memberID: MemberID;
+    previousVote?: Vote;
+    previousCurrentMemberID?: MemberID;
+    previousPage: number;
+  }>;
 }
 
 export default class Resolution extends React.Component<Props, State> {
@@ -109,7 +120,10 @@ export default class Resolution extends React.Component<Props, State> {
 
     this.state = {
       committeeFref: firebase.database().ref('committees').child(match.params.committeeID),
-      loading: true
+      loading: true,
+      votingPage: 0,
+      votingResolutionID: match.params.resolutionID,
+      votingHistory: []
     };
   }
 
@@ -119,9 +133,44 @@ export default class Resolution extends React.Component<Props, State> {
 
   firebaseCallback = (committee: firebase.database.DataSnapshot | null) => {
     if (committee) {
-      this.setState({ committee: committee.val(), loading: false });
+      const committeeData: CommitteeData = committee.val();
+      this.setState(state => {
+        const resolutionID = this.props.match.params.resolutionID;
+        const resolutionChanged = state.votingResolutionID !== resolutionID;
+        const votingMemberIDs = this.sortedVotingMemberIDs(committeeData);
+        const presentVotingMemberIDs = votingMemberIDs
+          .filter(memberID => committeeData.members?.[memberID]?.present);
+        const resolution = committeeData.resolutions?.[resolutionID];
+        const currentIsEligible = !resolutionChanged && !!state.currentVotingMemberID
+          && presentVotingMemberIDs.includes(state.currentVotingMemberID);
+        const currentVotingMemberID = currentIsEligible
+          ? state.currentVotingMemberID
+          : presentVotingMemberIDs.find(memberID => !resolution?.votes?.[memberID])
+            ?? presentVotingMemberIDs[0];
+        const currentIndex = currentVotingMemberID
+          ? votingMemberIDs.indexOf(currentVotingMemberID)
+          : -1;
+
+        return {
+          committee: committeeData,
+          currentVotingMemberID,
+          loading: false,
+          votingHistory: resolutionChanged ? [] : state.votingHistory,
+          votingPage: currentIndex >= 0
+            ? Math.floor(currentIndex / RESOLUTION_VOTING_PAGE_SIZE)
+            : state.votingPage,
+          votingResolutionID: resolutionID
+        };
+      });
     }
   }
+
+  sortedVotingMemberIDs = (committee: CommitteeData | undefined = this.state.committee): MemberID[] => {
+    const members = committee?.members || {};
+    return Object.keys(members)
+      .filter(memberID => canVote(members[memberID]))
+      .sort((first, second) => members[first].name.localeCompare(members[second].name, 'en'));
+  };
 
   componentDidMount() {
     this.state.committeeFref.on('value', this.firebaseCallback);
@@ -157,6 +206,10 @@ export default class Resolution extends React.Component<Props, State> {
     const { committeeID } = this.props.match.params;
     const { proposer, text } = amendment;
 
+    if (!isMemberPresent(this.state.committee?.members, proposer)) {
+      return;
+    }
+
     const newCaucus: CaucusData = {
       ...DEFAULT_CAUCUS,
       name: `Amendment by ${amendment.proposer}`,
@@ -187,6 +240,11 @@ export default class Resolution extends React.Component<Props, State> {
   handleProvisionResolution = (resolutionData: ResolutionData) => {
     const { committeeID } = this.props.match.params;
     const { proposer, seconder, name } = resolutionData;
+
+    if (!isMemberPresent(this.state.committee?.members, proposer)
+      || !isMemberPresent(this.state.committee?.members, seconder)) {
+      return;
+    }
 
     const newCaucus: CaucusData = {
       ...DEFAULT_CAUCUS,
@@ -242,14 +300,15 @@ export default class Resolution extends React.Component<Props, State> {
       />
     );
 
-    const memberOptions = recoverMemberOptions(this.state.committee);
+    const memberOptions = recoverAttendanceMemberOptions(this.state.committee);
+    const proposerPresent = isMemberPresent(committee?.members, proposer);
 
     const proposerDropdown = (
       <Form.Dropdown
         key="proposer"
         icon="search"
         value={nameToMemberOption(proposer).key}
-        error={!proposer}
+        error={!proposer || !proposerPresent}
         search
         selection
         fluid
@@ -271,7 +330,7 @@ export default class Resolution extends React.Component<Props, State> {
     ):(
       <Button
         floated="right"
-        disabled={!amendment || amendment.proposer === '' || !hasAuth}
+        disabled={!amendment || amendment.proposer === '' || !proposerPresent || !hasAuth}
         onClick={() => handleProvisionAmendment(id, amendment!)}
       >
         {t('Provision caucus')}
@@ -306,110 +365,114 @@ export default class Resolution extends React.Component<Props, State> {
     );
   }
 
-  cycleVote = (memberID: MemberID, member: MemberData, currentVote?: Vote) => {
+  setCurrentVote = (newVote: Vote) => {
     const { resolutionID, committeeID } = this.props.match.params;
+    const {committee, currentVotingMemberID} = this.state;
+    const member = currentVotingMemberID
+      ? committee?.members?.[currentVotingMemberID]
+      : undefined;
 
-    // leave this be in the case of undefined and Against
-    let newVote = undefined;
-
-    if (currentVote === undefined) {
-      newVote = Vote.For;
-    } else if (currentVote === Vote.For) {
-      if (member.voting) {
-        newVote = Vote.Against;
-      } else {
-        newVote = Vote.Abstaining;
-      }
-    } else if (currentVote === Vote.Abstaining) {
-      newVote = Vote.Against;
-    } else if (currentVote === Vote.Against) {
-      // delete the vote
+    if (!currentVotingMemberID || !member?.present || !canVote(member)) {
+      return;
+    }
+    if (newVote === Vote.Abstaining && member.voting) {
+      return;
     }
 
-    voteOnResolution(committeeID, resolutionID, memberID, newVote);
-  }
+    const resolution = committee?.resolutions?.[resolutionID];
+    const previousVote = resolution?.votes?.[currentVotingMemberID];
+    const votingMemberIDs = this.sortedVotingMemberIDs();
+    const presentVotingMemberIDs = votingMemberIDs
+      .filter(memberID => committee?.members?.[memberID]?.present);
+    const optimisticVotes = {...(resolution?.votes || {}), [currentVotingMemberID]: newVote};
+    const nextMemberID = nextUnvotedMemberID(
+      presentVotingMemberIDs,
+      currentVotingMemberID,
+      optimisticVotes
+    )
+      ?? currentVotingMemberID;
+    const nextIndex = votingMemberIDs.indexOf(nextMemberID);
 
-  renderVotingMember = (key: MemberID, member: MemberData, vote?: Vote) => {
-    const { cycleVote } = this;
+    voteOnResolution(committeeID, resolutionID, currentVotingMemberID, newVote);
+    this.setState(state => ({
+      currentVotingMemberID: nextMemberID,
+      votingHistory: [...state.votingHistory, {
+        memberID: currentVotingMemberID,
+        previousVote,
+        previousCurrentMemberID: currentVotingMemberID,
+        previousPage: state.votingPage
+      }],
+      votingPage: nextIndex >= 0
+        ? Math.floor(nextIndex / RESOLUTION_VOTING_PAGE_SIZE)
+        : state.votingPage
+    }));
+  };
 
-    let color: 'green' | 'yellow' | 'red' | undefined;
-    let icon: SemanticICONS = 'question';
-
-    if (vote === Vote.For) {
-      color = 'green';
-      icon = 'plus';
-    } else if (vote === Vote.Abstaining) {
-      color = 'yellow';
-      icon = 'minus';
-    } else if (vote === Vote.Against) {
-      color = 'red';
-      icon = 'remove';
+  undoVote = () => {
+    const previous = this.state.votingHistory[this.state.votingHistory.length - 1];
+    if (!previous) {
+      return;
     }
 
-    const button = (
-      <Button
-        floated="left"
-        color={color}
-        icon
-        onClick={() => cycleVote(key, member, vote)}
-      >
-        <Icon
-          name={icon}
-          color={color === 'yellow' ? 'black' : undefined}
-        />
-      </Button>
-    );
+    const {resolutionID, committeeID} = this.props.match.params;
+    voteOnResolution(committeeID, resolutionID, previous.memberID, previous.previousVote);
+    this.setState(state => ({
+      currentVotingMemberID: previous.previousCurrentMemberID,
+      votingHistory: state.votingHistory.slice(0, -1),
+      votingPage: previous.previousPage
+    }));
+  };
 
-    // const { voting, rank } = member;
-    // const veto: boolean = rank === Rank.Veto;
+  selectVotingMember = (memberID: MemberID) => {
+    const member = this.state.committee?.members?.[memberID];
+    if (!member?.present || !canVote(member)) {
+      return;
+    }
 
-    // const description = (
-    //   <List.Description>
-    //     Veto
-    //   </List.Description>
-    // );
+    const votingMemberIDs = this.sortedVotingMemberIDs();
+    this.setState({
+      currentVotingMemberID: memberID,
+      votingPage: Math.floor(votingMemberIDs.indexOf(memberID) / RESOLUTION_VOTING_PAGE_SIZE)
+    });
+  };
 
-    const voting = (
-      <Popup
-        trigger={<Label style={{ marginLeft: 5 }} circular size="mini" color="purple">V</Label>}
-        content={t('Voting')}
-      />
-    );
+  changeVotingPage = (_event: React.MouseEvent<HTMLAnchorElement>, data: PaginationProps) => {
+    this.setState({votingPage: Number(data.activePage) - 1});
+  };
+
+  renderVotingMember = (memberID: MemberID, member: MemberData, vote?: Vote) => {
+    const voteClass = !member.present
+      ? 'vote-absent'
+      : vote === Vote.For
+        ? 'vote-for'
+        : vote === Vote.Against
+          ? 'vote-against'
+          : vote === Vote.Abstaining
+            ? 'vote-abstaining'
+            : 'vote-unset';
+    const current = memberID === this.state.currentVotingMemberID;
 
     return (
-      <List.Item key={key}>
-        {button}
-        <List.Content verticalAlign="middle">
-          <List.Header>
-            {displayMemberName(member.name).toUpperCase()}
-            {member.voting && voting}
-            {/* {!member.present && <Label circular color="red" size="mini">NP</Label>} */}
-          </List.Header>
-        </List.Content>
-      </List.Item>
+      <button
+        aria-label={`${displayMemberName(member.name)}${member.present ? '' : `: ${t('Absent')}`}`}
+        className={`resolution-voting-member ${voteClass}${current ? ' is-current' : ''}`}
+        disabled={!member.present}
+        key={memberID}
+        onClick={() => this.selectVotingMember(memberID)}
+        type="button"
+      >
+        <span className="resolution-voting-status-light" aria-hidden="true" />
+        <span className="resolution-voting-member-name">
+          {displayMemberName(member.name)}
+          {member.voting && <Popup
+            trigger={<Label circular size="mini" color="purple">V</Label>}
+            content={t('Voting')}
+          />}
+          {!member.present && <Label basic size="mini">{t('Absent')}</Label>}
+        </span>
+      </button>
     );
-  }
-
-  renderStats = () => {
-    const { committee } = this.state;
-
-    return <CommitteeStatsTable verbose={false} data={committee} />;
-  }
-
-  renderCount = (key: string, color: SemanticCOLORS, icon: SemanticICONS, count: number) => {
-   return (
-      <Grid.Column key={key}>
-        <Button
-          key={'count' + key}
-          color={color}
-          icon
-          fluid
-        >
-          {t(key)}: {count}
-        </Button>
-      </Grid.Column>
-    );
-  }
+  };
 
   renderMajoritySelector = (resolution?: ResolutionData) => {
     const resolutionFref = this.recoverResolutionFref();
@@ -427,20 +490,19 @@ export default class Resolution extends React.Component<Props, State> {
   }
 
   renderVoting = (resolution?: ResolutionData) => {
-    const { renderVotingMember, renderCount } = this;
+    const { renderVotingMember } = this;
     const { committee } = this.state;
 
     const members = (committee ? committee.members : undefined) || {};
     const votes = (resolution ? resolution.votes : undefined) || {};
 
-    const sortedPresentAndCanVote = _.chain(members)
+    const sortedCanVote = _.chain(members)
       .keys()
-      .filter(key => canVote(members[key]) && members[key].present)
+      .filter(key => canVote(members[key]))
       .sortBy((key: string) => [members[key].name])
       .value();
 
-    const rendered = sortedPresentAndCanVote
-      .map((key: string) => renderVotingMember(key, members[key], votes[key]));
+    const sortedPresentAndCanVote = sortedCanVote.filter(key => members[key].present);
 
     const vetoes = _.chain(sortedPresentAndCanVote)
       .filter((key: string) => members[key].rank === Rank.Veto && votes[key] === Vote.Against)
@@ -456,8 +518,6 @@ export default class Resolution extends React.Component<Props, State> {
     const fors = votesByVoters.filter(v => v === Vote.For).length;
     const abstains = votesByVoters.filter(v => v === Vote.Abstaining).length;
     const againsts = votesByVoters.filter(v => v === Vote.Against).length;
-    const remaining = sortedPresentAndCanVote.length - votesByVoters.length;
-
     const requiredMajority = resolution
       ? resolution.requiredMajority
       : DEFAULT_RESOLUTION.requiredMajority;
@@ -465,54 +525,157 @@ export default class Resolution extends React.Component<Props, State> {
     const threshold = getThreshold(requiredMajority, committee, fors, againsts);
     const thresholdName = getThresholdName(requiredMajority);
 
-    const resolutionPassed: boolean = fors >= threshold && !resolutionVetoed; 
-    const resolutionFailed: boolean = fors + remaining < threshold && !resolutionVetoed;
+    const automaticResult = requiredMajority === Majority.TwoThirdsNoAbstentions
+      ? (() => {
+          if (resolutionVetoed) {
+            return undefined;
+          }
+          if (sortedPresentAndCanVote.length === 0) {
+            return 'failed';
+          }
+          if (fors > 0 && fors >= threshold) {
+            return 'passed';
+          }
+          const remaining = Math.max(0, sortedPresentAndCanVote.length - votesByVoters.length);
+          const bestPossibleFor = fors + remaining;
+          const bestCaseThreshold = Math.ceil((2 / 3) * (fors + againsts + remaining));
+          return bestPossibleFor < bestCaseThreshold ? 'failed' : undefined;
+        })()
+      : getAutomaticVoteResult({
+          eligibleVoters: sortedPresentAndCanVote.length,
+          votesFor: fors,
+          votesCast: votesByVoters.length,
+          threshold,
+          vetoed: resolutionVetoed
+        });
+    const resolutionPassed = automaticResult === 'passed';
+    const resolutionFailed = automaticResult === 'failed';
 
-    const COLUMNS = 3;
-    const ROWS = Math.ceil(sortedPresentAndCanVote.length / COLUMNS);
-
-    const columns = _.times(3, i => (
-      <Grid.Column key={i}>
-        <List
-          inverted
-        >
-          {_.chain(rendered).drop(ROWS * i).take(ROWS).value()}
-        </List>
-      </Grid.Column>
-    ));
-
+    const {presentNo, simpleMajority, twoThirdsMajority} = makeCommitteeStats(committee);
+    const totalPages = Math.max(1, Math.ceil(sortedCanVote.length / RESOLUTION_VOTING_PAGE_SIZE));
+    const votingPage = Math.min(this.state.votingPage, totalPages - 1);
+    const pageMemberIDs = sortedCanVote.slice(
+      votingPage * RESOLUTION_VOTING_PAGE_SIZE,
+      (votingPage + 1) * RESOLUTION_VOTING_PAGE_SIZE
+    );
+    const currentMemberID = this.state.currentVotingMemberID;
+    const currentMember = currentMemberID ? members[currentMemberID] : undefined;
 
     return (
       <>
-        <Segment inverted loading={!resolution} textAlign="center">
-          <Grid columns="equal">
-            {columns}
-          </Grid>
-          <Grid columns="equal">
-            {renderCount('yes', 'green', 'plus', fors)}
-            {renderCount('no', 'red', 'remove', againsts)}
-            {renderCount('abstaining', 'yellow', 'minus', abstains)}
-          </Grid>
-          {resolutionPassed && <Statistic inverted>
+        <Segment className="resolution-voting-board" loading={!resolution}>
+          <div className="resolution-voting-dashboard">
+            <aside className="resolution-voting-metrics resolution-voting-thresholds">
+              <div className="resolution-voting-metric metric-present">
+                <span>{t('Present')}</span>
+                <strong>{presentNo}</strong>
+              </div>
+              <div className="resolution-voting-metric metric-simple">
+                <span>{t('Simple majority')}</span>
+                <strong>{simpleMajority}</strong>
+              </div>
+              <div className="resolution-voting-metric metric-two-thirds">
+                <span>{t('Two-thirds majority')}</span>
+                <strong>{twoThirdsMajority}</strong>
+              </div>
+            </aside>
+
+            <div className="resolution-voting-matrix-wrap">
+              <div className="resolution-voting-grid">
+                {pageMemberIDs.map(memberID => renderVotingMember(
+                  memberID,
+                  members[memberID],
+                  votes[memberID]
+                ))}
+              </div>
+              {totalPages > 1 && <Pagination
+                activePage={votingPage + 1}
+                boundaryRange={1}
+                className="resolution-voting-pagination"
+                ellipsisItem={null}
+                onPageChange={this.changeVotingPage}
+                siblingRange={1}
+                totalPages={totalPages}
+              />}
+            </div>
+
+            <aside className="resolution-voting-metrics resolution-vote-counts">
+              <div className="resolution-voting-metric metric-for">
+                <span>{t('yes')}</span>
+                <strong>{fors}</strong>
+              </div>
+              <div className="resolution-voting-metric metric-against">
+                <span>{t('no')}</span>
+                <strong>{againsts}</strong>
+              </div>
+              <div className="resolution-voting-metric metric-abstaining">
+                <span>{t('abstaining')}</span>
+                <strong>{abstains}</strong>
+              </div>
+            </aside>
+          </div>
+
+          <div className="resolution-voting-current">
+            <div className="resolution-voting-current-label">{t('Now voting')}</div>
+            <Header as="h2">
+              {currentMember ? displayMemberName(currentMember.name) : t('No eligible delegations')}
+            </Header>
+            <div className="resolution-voting-actions">
+              <div className="resolution-voting-primary-actions">
+                <Button
+                  positive
+                  content={t('yes')}
+                  disabled={!currentMember}
+                  icon="plus"
+                  onClick={() => this.setCurrentVote(Vote.For)}
+                />
+                <Button
+                  negative
+                  content={t('no')}
+                  disabled={!currentMember}
+                  icon="remove"
+                  onClick={() => this.setCurrentVote(Vote.Against)}
+                />
+                <Button
+                  color="yellow"
+                  content={t('abstaining')}
+                  disabled={!currentMember || currentMember.voting}
+                  icon="minus"
+                  onClick={() => this.setCurrentVote(Vote.Abstaining)}
+                />
+              </div>
+              <Button
+                basic
+                className="resolution-voting-undo"
+                content={t('Undo')}
+                disabled={this.state.votingHistory.length === 0}
+                icon="undo"
+                onClick={this.undoVote}
+              />
+            </div>
+          </div>
+
+          <div className="resolution-voting-outcome">
+          {resolutionPassed && <Statistic className="resolution-result outcome-passed">
             <Statistic.Value>{t('Passed')}</Statistic.Value>
             <Statistic.Label>{t('{votes} clears the required {thresholdName} of {threshold}', { votes: fors, thresholdName: t(thresholdName), threshold })}</Statistic.Label>
             {requiredMajority === Majority.TwoThirdsNoAbstentions &&
               <Statistic.Label>{t("Further votes may change the result from 'Passed'")}</Statistic.Label>
             }
           </Statistic>}
-          {resolutionFailed && <Statistic inverted>
+          {resolutionFailed && <Statistic className="resolution-result outcome-failed">
             <Statistic.Value>{t('Failed')}</Statistic.Value>
             <Statistic.Label>{t('There are insufficient votes remaining to achieve a {thresholdName}', { thresholdName: t(thresholdName) })}</Statistic.Label>
           </Statistic>}
-          {resolutionVetoed && <Statistic inverted>
+          {resolutionVetoed && <Statistic>
             <Statistic.Value>{t('Vetoed')}</Statistic.Value>
             <Statistic.Label>{t('{name} was the first to veto the resolution', { name: displayMemberName(vetoes[0].name) })}</Statistic.Label>
           </Statistic>}
-          <Segment inverted>
+          </div>
+          <Segment secondary textAlign="center">
             {this.renderMajoritySelector(resolution)}
           </Segment>
         </Segment>
-        {this.renderStats()}
       </>
     );
   }
@@ -521,7 +684,7 @@ export default class Resolution extends React.Component<Props, State> {
     const resolutionFref = this.recoverResolutionFref();
     const { handleProvisionResolution, amendmentsArePublic } = this;
 
-    const memberOptions = recoverMemberOptions(this.state.committee);
+    const memberOptions = recoverAttendanceMemberOptions(this.state.committee);
 
     // TFW no null coalescing operator 
     const proposer = resolution
@@ -533,13 +696,15 @@ export default class Resolution extends React.Component<Props, State> {
       : undefined;
 
     const hasIdenticalProposerSeconder = proposer && seconder ? proposer === seconder : false;
+    const proposerPresent = isMemberPresent(this.state.committee?.members, proposer);
+    const seconderPresent = isMemberPresent(this.state.committee?.members, seconder);
 
     const proposerTree = (
       <Form.Dropdown
         key="proposer"
         icon="search"
         value={proposer ? nameToMemberOption(proposer).key : undefined}
-        error={!proposer || hasIdenticalProposerSeconder}
+        error={!proposer || !proposerPresent || hasIdenticalProposerSeconder}
         loading={!resolution}
         search
         selection
@@ -556,7 +721,7 @@ export default class Resolution extends React.Component<Props, State> {
         loading={!resolution}
         icon="search"
         value={seconder ? nameToMemberOption(seconder).key : undefined}
-        error={!seconder || hasIdenticalProposerSeconder}
+        error={!seconder || !seconderPresent || hasIdenticalProposerSeconder}
         search
         selection
         fluid
@@ -566,7 +731,7 @@ export default class Resolution extends React.Component<Props, State> {
       />
     );
 
-    const hasError = hasIdenticalProposerSeconder;
+    const hasError = hasIdenticalProposerSeconder || !proposerPresent || !seconderPresent;
 
     const provisionTree = this.hasLinkedCaucus(resolution) ? (
       <Form.Button
@@ -739,6 +904,7 @@ export default class Resolution extends React.Component<Props, State> {
   renderResolution = (resolution?: ResolutionData) => {
     const { renderAmendmentsGroup, renderVoting, renderFeed, renderText } = this;
     const { tab } = this.props.match.params;
+    const isVotingTab = tab === 'voting';
 
     let index = TAB_ORDER.findIndex(x => x === tab)
     if (index === -1) {
@@ -762,7 +928,11 @@ export default class Resolution extends React.Component<Props, State> {
     ];
 
     return (
-      <Container style={{ 'padding-bottom': '2em' }}>
+      <Container
+        className={isVotingTab ? 'resolution-page resolution-voting-page' : 'resolution-page'}
+        fluid={isVotingTab}
+        style={{ 'padding-bottom': '2em' }}
+      >
         <Helmet>
           <title>{`${localizeGeneratedName(resolution?.name ?? '')} - Quorum`}</title>
         </Helmet>
@@ -773,12 +943,12 @@ export default class Resolution extends React.Component<Props, State> {
             </Grid.Column>
           </Grid.Row>
           <Grid.Row>
-            <Grid.Column width={11}>
+            <Grid.Column width={isVotingTab ? 16 : 11}>
               <Tab panes={panes} onTabChange={this.onTabChange} activeIndex={index}/>
             </Grid.Column>
-            <Grid.Column width={5}>
+            {!isVotingTab && <Grid.Column width={5}>
               {this.renderMeta(resolution)}
-            </Grid.Column>
+            </Grid.Column>}
           </Grid.Row>
         </Grid >
       </Container>

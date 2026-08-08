@@ -3,7 +3,6 @@ import "cypress-real-events/support";
 
 const SELECT_MEMBER = '.adder__dropdown--select-member'
 const SELECT_RANK = '.adder__dropdown--select-rank'
-const TOGGLE_PRESENT = '.adder__checkbox--toggle-present'
 const TOGGLE_VOTING = '.adder__checkbox--toggle-voting'
 const ADD_MEMBER = '.adder__button--add-member'
 const REMOVE_MEMBER = ".members__button--remove-member"
@@ -69,14 +68,26 @@ describe('Add members and checks that the thresholds are sensible', function () 
     cy.get('table').should('contain', 'China')
   })
 
-  it('goes to the Thresholds page', function () {
+  it('shows only the pre-roll-call committee summary', function () {
     cy.get('table').eq(1).contains('Total').siblings().should('contain', '3')
-    cy.get('table').eq(1).contains('Present').siblings().should('contain', '3')
     cy.get('table').eq(1).contains('Have voting rights').siblings().should('contain', '2')
-    cy.get('table').eq(1).contains('Debate').siblings().should('contain', '1')
-    cy.get('table').eq(1).contains('Procedural threshold').siblings().should('contain', '2')
-    cy.get('table').eq(1).contains('Operative threshold').siblings().should('contain', '1')
-    cy.get('table').eq(1).contains('Draft resolution').siblings().should('contain', '1')
-    cy.get('table').eq(1).contains('Amendment').siblings().should('contain', '1')
+    cy.get('table').eq(1).contains('Quorum').siblings().should('contain', '1')
+    cy.get('table').eq(1).should('not.contain', 'Procedural threshold')
+  })
+
+  it('moves into roll call and records every delegation', function () {
+    cy.contains('a', 'Roll call').click()
+    cy.url().should('include', '/roll-call')
+    cy.get('.roll-call-member.status-uncalled').should('have.length', 3)
+
+    cy.contains('button', 'Present').click()
+    cy.get('.roll-call-member.status-present').should('have.length', 1)
+    cy.contains('button', 'Absent').click()
+    cy.get('.roll-call-member.status-absent').should('have.length', 1)
+    cy.contains('button', 'Present').click()
+
+    cy.contains('Roll call complete').should('be.visible')
+    cy.contains('button', 'Go to motions').should('be.visible')
+    cy.get('.roll-call-summary').should('contain', 'Procedural threshold')
   })
 })

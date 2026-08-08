@@ -44,7 +44,7 @@ import {TimerData, Unit} from "../models/time";
 import {useAuthState} from "react-firebase-hooks/auth";
 import _ from "lodash";
 import {useObjectVal} from "react-firebase-hooks/database";
-import {displayMemberName, localizedMemberOptions, memberByName, MemberData, MemberFlag, MemberOption, membersToPresentOptions} from "../modules/member";
+import {displayMemberName, isMemberPresent, localizedMemberOptions, memberByName, MemberData, MemberFlag, MemberOption, membersToAttendanceOptions} from "../modules/member";
 import {TimeSetter} from "../components/TimeSetter";
 import firebase from "firebase/compat/app";
 import {DragDropContext, Draggable, DraggableProvided, Droppable, DropResult} from "react-beautiful-dnd";
@@ -63,6 +63,12 @@ interface State {
   loading: boolean;
 }
 
+const isSpeakerPresent = (
+  members: Record<string, MemberData> | undefined,
+  speaker: SpeakerEvent | undefined
+) => !!speaker && (speaker.memberID
+  ? !!members?.[speaker.memberID]?.present
+  : isMemberPresent(members, speaker.who));
 
 export function NextSpeaking(props: {
   caucus?: CaucusData;
@@ -92,7 +98,8 @@ export function NextSpeaking(props: {
 
     const q = props.caucus.queue || {};
 
-    const vs: SpeakerEvent[] = _.values(q);
+    const vs: SpeakerEvent[] = _.values(q)
+      .filter(speaker => isSpeakerPresent(props.members, speaker));
 
     const fors = vs.filter((se) => se.stance === Stance.For);
     const againsts = vs.filter((se) => se.stance === Stance.Against);
@@ -116,7 +123,8 @@ export function NextSpeaking(props: {
 
     const q = props.caucus.queue || {};
 
-    const queueHeadKey = Object.keys(q)[0];
+    const queueHeadKey = Object.keys(q)
+      .find(key => isSpeakerPresent(props.members, q[key]));
 
     let queueHeadDetails = {};
 
@@ -151,6 +159,9 @@ export function NextSpeaking(props: {
   console.log("Got skew", skew, "millis");
 
   const startTimer = () => {
+    if (!isSpeakerPresent(props.members, props.caucus?.speaking)) {
+      return;
+    }
     toggleTicking({
       timerFref: props.fref.child('speakerTimer'),
       timer: props.speakerTimer,
@@ -163,7 +174,9 @@ export function NextSpeaking(props: {
 
   const queue = caucus ? caucus.queue : {};
   const hasNowSpeaking = caucus ? !!caucus.speaking : false;
-  const queueLength = _.values(queue).length;
+  const currentSpeakerPresent = isSpeakerPresent(props.members, caucus?.speaking);
+  const queueLength = _.values(queue)
+    .filter(speaker => isSpeakerPresent(props.members, speaker)).length;
   const hasNextSpeaking = queueLength > 0;
   const interlaceable = queueLength > 1;
   const nextable = hasNowSpeaking || hasNextSpeaking;
@@ -237,6 +250,8 @@ export function NextSpeaking(props: {
 
   if (!hasNowSpeaking) {
     button = stageButton;
+  } else if (hasNowSpeaking && !currentSpeakerPresent) {
+    button = hasNextSpeaking ? nextButton : stopButton;
   } else if (hasNowSpeaking && !ticking) {
     button = startButton;
   } else if (hasNowSpeaking && ticking && hasNextSpeaking) {
@@ -320,6 +335,7 @@ class SpeakerFeedEntry extends React.PureComponent<{
 
   renderContent() {
     const {data, speaking, fref} = this.props;
+    const absent = !!data && !isSpeakerPresent(this.props.members, data);
 
     return (
       <Feed.Content>
@@ -327,6 +343,7 @@ class SpeakerFeedEntry extends React.PureComponent<{
           <Feed.User>
             {data && <MemberFlag member={memberByName(this.props.members, data.who)} />}
             {data ? displayMemberName(data.who) : ''}
+            {absent && <Label size="mini">{t('Absent')}</Label>}
           </Feed.User>
           <Feed.Date>{data ? `${data.duration} ${t('seconds')}` : ''}</Feed.Date>
         </Feed.Summary>
@@ -338,7 +355,7 @@ class SpeakerFeedEntry extends React.PureComponent<{
           {data && <Label size="mini" as="a" onClick={() => fref.remove()}>
               {t('Remove')}
           </Label>}
-          {data && speaking && (<Label size="mini" as="a" onClick={this.yieldHandler}>
+          {data && speaking && !absent && (<Label size="mini" as="a" onClick={this.yieldHandler}>
             {t('Yield')}
           </Label>)}
         </Feed.Meta>
@@ -348,10 +365,11 @@ class SpeakerFeedEntry extends React.PureComponent<{
 
   render() {
     const {draggableProvided} = this.props;
+    const absent = !!this.props.data && !isSpeakerPresent(this.props.members, this.props.data);
 
     return draggableProvided ? (
       <div
-        className="event" // XXX: quite possibly the most bullshit hack known to man
+        className={`event${absent ? ' absent-member' : ''}`} // XXX: quite possibly the most bullshit hack known to man
         ref={draggableProvided.innerRef}
         {...draggableProvided.draggableProps}>
         {this.renderContent()}
@@ -360,7 +378,7 @@ class SpeakerFeedEntry extends React.PureComponent<{
              }> ⠿
         </div>
       </div>
-    ) : <FeedEvent>
+    ) : <FeedEvent className={absent ? 'absent-member' : undefined}>
       {this.renderContent()}
     </FeedEvent>
   }
@@ -465,16 +483,17 @@ function Queuer(props: {
 }) {
   const {members, caucus, caucusFref} = props;
   const [queueMember, setQueueMember] = React.useState<MemberOption | undefined>(undefined);
-  const memberOptions = membersToPresentOptions(members);
+  const memberOptions = membersToAttendanceOptions(members);
 
   const setStance = (stance: Stance) => () => {
     const {caucus} = props;
 
     const duration = Number(recoverDuration(caucus));
 
-    if (duration && queueMember) {
+    if (duration && queueMember && !queueMember.disabled && queueMember.memberID) {
       const newEvent: SpeakerEvent = {
         who: queueMember.text,
+        memberID: queueMember.memberID,
         stance: stance,
         duration: recoverUnit(caucus) === Unit.Minutes ? duration * 60 : duration,
       };
@@ -484,11 +503,14 @@ function Queuer(props: {
   }
 
   const setMember = (event: React.SyntheticEvent<HTMLElement>, data: DropdownProps): void => {
-    setQueueMember(memberOptions.filter(c => c.value === data.value)[0]);
+    const selected = memberOptions.find(c => c.value === data.value);
+    if (selected && !selected.disabled) {
+      setQueueMember(selected);
+    }
   }
 
   const duration = recoverDuration(caucus);
-  const disableButtons = !queueMember || !duration;
+  const disableButtons = !queueMember || queueMember.disabled || !duration;
 
   return (
     <Segment textAlign="center">

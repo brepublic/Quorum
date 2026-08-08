@@ -1,6 +1,6 @@
 import {makeSentenceCaseDropdownOption} from "../utils";
 import {CaucusID} from "./caucus";
-import {VoterID} from "../hooks";
+import {MemberID} from "../modules/member";
 import {Unit} from "./time";
 import {ResolutionID} from "./resolution";
 
@@ -34,7 +34,9 @@ export enum MotionVote {
 export interface MotionData {
   proposal: string;
   proposer?: string;
+  proposerID?: MemberID;
   seconder?: string;
+  seconderID?: MemberID;
   speakerDuration?: number;
   speakerUnit: Unit;
   caucusDuration?: number;
@@ -43,7 +45,7 @@ export interface MotionData {
   caucusTarget?: CaucusID;
   resolutionTarget?: ResolutionID;
   deleted?: boolean;
-  votes?: Record<VoterID, MotionVote>
+  votes?: Record<MemberID, MotionVote>
 }
 
 export const MOTION_TYPE_OPTIONS = [

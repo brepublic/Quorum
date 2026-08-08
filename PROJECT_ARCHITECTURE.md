@@ -53,6 +53,7 @@ flowchart LR
 | `/countries` | `Countries` | 管理账号级国家模板、国家多语言名称、Emoji/图片国旗和大洲 |
 | `/committees/:committeeID` | `Committee` | 订阅整个委员会数据、显示欢迎页及主导航 |
 | `.../setup` | `Admin` | 委员会基础资料与成员设置 |
+| `.../roll-call` | `RollCall` | 按代表团逐一记录出席状态、自动翻页并在点名完成后展示人数与议事门槛 |
 | `.../motions` | `Motions` | 动议队列、表决及相关计时流程 |
 | `.../unmod` | `Unmod` | 自由磋商计时器 |
 | `.../caucuses/:caucusID` | `Caucus` | 有主持核心磋商、发言队列、发言记录与计时 |
@@ -65,6 +66,10 @@ flowchart LR
 
 `Committee` 是委员会工作区的壳层：它对 `/committees/:committeeID` 建立 Realtime Database `value` 订阅，把当前委员会对象交给导航和管理页；具体业务页通常各自建立对应订阅。
 
+点名页把每个代表团的最终出席/缺席结果保存到成员现有的 `present` 字段，并用 `rollCall/called/{memberID}` 与 `rollCall/currentMemberID` 保存点名进度和当前代表团，因此刷新或重新进入页面后仍可继续。撤销历史和手动翻页位置仅属于当前页面会话状态。委员会设置页只展示总人数、有表决权人数与法定人数，依赖点名结果的出席人数和各类议事门槛会在点名完成后统一展示。
+
+`present` 也是后续议事流程的统一出席来源：缺席代表团会保留在动议、决议表决和发言名单的选择界面中，但以缺席状态灰显且不能操作；已经排入发言队列后才变为缺席的代表团会被自动跳过。决议表决页使用全宽、可分页的代表团矩阵，逐国记录赞成、反对或弃权，并同时展示简单多数、三分之二多数和实时票数；在已达到门槛或剩余票数已不可能达到门槛时自动显示结果。公开动议投票以 `memberID` 作为票键，不再使用浏览器匿名投票者 ID，数据库规则会校验投票代表团仍为出席状态。
+
 ## 4. 数据模型与数据流
 
 Realtime Database 的主根节点是：
@@ -73,6 +78,9 @@ Realtime Database 的主根节点是：
 committees/{committeeID}
   creatorUid, name, chair, topic, conference, template
   members/{memberID}
+  rollCall
+    called/{memberID}: true
+    currentMemberID
   caucuses/{caucusID}
   resolutions/{resolutionID}
   strawpolls/{strawpollID}
@@ -98,12 +106,12 @@ countryTemplates/{creatorUid}/{countryTemplateID}
 
 `src/models/committee.ts` 定义 `CommitteeData`、默认委员会和内置模板。`src/models/template.ts` 定义账号级自定义模板及其 Firebase 增删改辅助函数；模板成员复用委员会成员的四种 `Rank`、出席、必须投票字段，并可携带从国家模板取得的自定义国旗快照。`src/models/country-template.ts` 定义内置及账号级国家模板；上传的图片国旗在浏览器端等比缩放到最大 256×160 并转为 WebP data URL，随国家记录保存到 Realtime Database，不使用 Storage。把模板成员加入委员会时会继续保存国旗快照；对已有同名成员重新应用模板也会更新其自定义国旗。其余 `src/models/*.ts` 文件定义对应子资源（成员、动议、磋商、决议、调查、帖子、计时器和设置）及创建/更新辅助函数。页面通过 Firebase 引用的 `on('value')` 接收实时快照；`src/modules/handlers.ts` 将输入控件事件映射为字段级 Database 写入。计时相关更新使用 Realtime Database transaction，以减少并发更新冲突。
 
-浏览器本地还会通过 `src/hooks.ts` 的 `useLocalStorage` 保存匿名投票者 ID；这使公开投票/队列功能可以识别同一浏览器而无需一定登录。
+浏览器本地还会通过 `src/hooks.ts` 的 `useLocalStorage` 保存匿名投票者 ID；意向性投票使用它识别同一浏览器。动议投票则使用所选代表团的 `memberID`，以便将票与持久化的出席状态关联。
 
 ## 5. 身份、权限与文件
 
 - `src/components/auth.tsx` 使用 Firebase 邮箱密码认证，并查询 `creatorUid` 等于当前用户 UID 的委员会以显示“我的委员会”。
-- `database.rules.json` 允许读取委员会；常规写入要求登录用户是该委员会创建者。对公开队列、公开修正案、公开调查选项/投票和公开动议存在细粒度例外。
+- `database.rules.json` 允许读取委员会；常规写入要求登录用户是该委员会创建者。对公开队列、公开修正案、公开调查选项/投票和公开动议存在细粒度例外。公开发言排队、动议提出与动议投票会校验对应 `memberID` 的 `present` 状态，并校验公开提交的代表团名称与成员记录一致。
 - `templates/{creatorUid}` 仅允许 UID 对应的登录用户读写，自定义模板不会向其他账号或未登录访问者公开。
 - `countryTemplates/{creatorUid}` 同样仅允许 UID 对应的登录用户读写；内置默认国家模板随前端代码发布，不写入 Firebase。
 - `storage.rules` 允许公开读取 `committees/{committeeId}/{fileName}`；上传需写入委员会创建者 UID 元数据。文件拥有者或委员会主任可更新/删除。
