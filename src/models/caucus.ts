@@ -4,6 +4,7 @@ import {makeDropdownOption, shortMeetId} from '../utils';
 import {CommitteeID} from "./committee";
 import {DEFAULT_TIMER, TimerData, Unit} from "./time";
 import {DEFAULT_SPEAKER_TIME_SECONDS, DEFAULT_CAUCUS_TIME_SECONDS} from "./constants";
+import {MemberID} from "../modules/member";
 
 export function recoverUnit(caucus?: CaucusData): Unit {
   return caucus ? caucus.speakerUnit : Unit.Seconds;
@@ -47,6 +48,7 @@ export enum Stance {
 
 export interface SpeakerEvent {
   who: string;
+  memberID?: MemberID;
   stance: Stance;
   duration: number;
 }

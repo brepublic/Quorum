@@ -19,8 +19,7 @@ import { makeDropdownOption } from '../utils';
 import _ from 'lodash';
 import { URLParameters } from '../types';
 import { RouteComponentProps } from 'react-router';
-import { logClickGeneralSpeakersList } from '../modules/analytics';
-import { CommitteeStatsTable } from '../modules/committee-stats';
+import { CommitteeSetupStatsTable } from '../modules/committee-stats';
 import {CommitteeData, CommitteeID, pushMember, Template} from '../models/committee';
 import { TemplateAdder } from '../components/template';
 import {COUNTRY_OPTIONS} from "../constants";
@@ -38,7 +37,6 @@ interface State {
   options: MemberOption[];
   rank: Rank;
   voting: MemberData['voting'];
-  present: MemberData['present'];
 }
 
 const RANK_OPTIONS = [
@@ -56,8 +54,7 @@ export default class Admin extends React.Component<Props, State> {
       member: COUNTRY_OPTIONS[0],
       options: [],
       rank: Rank.Standard,
-      voting: false,
-      present: true
+      voting: false
     };
   }
 
@@ -76,13 +73,6 @@ export default class Admin extends React.Component<Props, State> {
             options={RANK_OPTIONS.map(option => ({ ...option, text: t(String(option.text)) }))}
             onChange={dropdownHandler<MemberData>(fref, 'rank')}
             value={member.rank}
-          />
-        </Table.Cell>
-        <Table.Cell collapsing>
-          <Checkbox 
-            toggle 
-            checked={member.present} 
-            onChange={checkboxHandler<MemberData>(fref, 'present')} 
           />
         </Table.Cell>
         <Table.Cell collapsing>
@@ -121,7 +111,7 @@ export default class Admin extends React.Component<Props, State> {
     const member: MemberData = {
       name: this.state.member.text,
       rank: this.state.rank,
-      present: this.state.present,
+      present: false,
       voting: this.state.voting
     };
 
@@ -130,15 +120,12 @@ export default class Admin extends React.Component<Props, State> {
 
   setMember = (event: React.SyntheticEvent<HTMLElement>, data: DropdownProps) => {
     const { options: newOptions } = this.state;
-    const newMember = [...newOptions, ...COUNTRY_OPTIONS].filter(c => c.value === data.value)[0];
+    const availableOptions: MemberOption[] = [...newOptions, ...COUNTRY_OPTIONS];
+    const newMember = availableOptions.filter(c => c.value === data.value)[0];
 
     if (newMember) {
       this.setState({ member: newMember });
     }
-  }
-
-  setPresent = (event: React.FormEvent<HTMLInputElement>, data: CheckboxProps) => {
-    this.setState({ present: data.checked ?? false });
   }
 
   setVoting = (event: React.FormEvent<HTMLInputElement>, data: CheckboxProps) => {
@@ -153,7 +140,7 @@ export default class Admin extends React.Component<Props, State> {
     // FSM looks sorta like the UN flag
     const newMember = nameToMemberOption((data.value as number | string).toString());
 
-    if (_.includes(COUNTRY_OPTIONS, newMember)) {
+    if (COUNTRY_OPTIONS.some(option => option.value === newMember.value)) {
       this.setState({ member: newMember });
     } else {
       const newOptions = [ newMember, ...this.state.options ];
@@ -161,19 +148,17 @@ export default class Admin extends React.Component<Props, State> {
     }
   }
 
-  gotoGSL = () => {
+  gotoRollCall = () => {
     const { committeeID } = this.props.match.params;
 
     this.props.history
-      .push(`/committees/${committeeID}/caucuses/gsl`);
-
-    logClickGeneralSpeakersList();
+      .push(`/committees/${committeeID}/roll-call`);
   }
 
 
   renderAdder() {
-    const { handleAdd, setMember, setRank, setPresent, setVoting } = this;
-    const { present: newMemberPresent, voting: newMemberVoting, options: newOptions, member } = this.state;
+    const { handleAdd, setMember, setRank, setVoting } = this;
+    const { voting: newMemberVoting, options: newOptions, member } = this.state;
 
     return (
       <Table.Row>
@@ -202,14 +187,6 @@ export default class Admin extends React.Component<Props, State> {
             options={RANK_OPTIONS.map(option => ({ ...option, text: t(String(option.text)) }))}
             onChange={setRank}
             value={this.state.rank}
-          />
-        </Table.HeaderCell>
-        <Table.HeaderCell collapsing >
-          <Checkbox 
-            className="adder__checkbox--toggle-present"
-            toggle 
-            checked={newMemberPresent} 
-            onChange={setPresent} 
           />
         </Table.HeaderCell>
         <Table.HeaderCell collapsing >
@@ -247,7 +224,6 @@ export default class Admin extends React.Component<Props, State> {
             <Table.Row>
               <Table.HeaderCell />
               <Table.HeaderCell>{t('Rank')}</Table.HeaderCell>
-              <Table.HeaderCell>{t('Present')}</Table.HeaderCell>
               <Table.HeaderCell singleLine>{t('Must Vote')}</Table.HeaderCell>
               <Table.HeaderCell />
             </Table.Row>
@@ -267,11 +243,11 @@ export default class Admin extends React.Component<Props, State> {
           </Message>
           : <Button
             as='a'
-            onClick={this.gotoGSL}
+            onClick={this.gotoRollCall}
             primary
             fluid
           >
-            {t("General Speakers' List")}
+            {t('Roll call')}
               <Icon name="arrow right" />
           </Button>
         }
@@ -294,7 +270,7 @@ export default class Admin extends React.Component<Props, State> {
               {this.renderCommitteeMembers({ data: committee, fref })}
             </Grid.Column>
             <Grid.Column width={7}>
-              <CommitteeStatsTable verbose={true} data={committee} />
+              <CommitteeSetupStatsTable data={committee} />
             </Grid.Column>
           </Grid.Row>
         </Grid >

@@ -20,6 +20,7 @@ import {
 } from 'semantic-ui-react';
 import Stats from './Stats';
 import Motions from './Motions';
+import RollCall from './RollCall';
 import Unmod from './Unmod';
 import Notes from './Notes';
 import Help from './Help';
@@ -161,8 +162,8 @@ interface ResponsiveContainerProps extends RouteComponentProps<URLParameters> {
 function ResponsiveNav(props: ResponsiveContainerProps) {
   const committeeID: CommitteeID = props.match.params.committeeID;
 
-  const makeMenuItem = (name: string, icon: SemanticICONS) => {
-    const destination = `/committees/${committeeID}/${name.toLowerCase()}`;
+  const makeMenuItem = (name: string, icon: SemanticICONS, slug = name.toLowerCase()) => {
+    const destination = `/committees/${committeeID}/${slug}`;
 
     return (
       <Menu.Item
@@ -268,6 +269,7 @@ function ResponsiveNav(props: ResponsiveContainerProps) {
           {committee ? committee.name : <Loading small />}
         </Menu.Item>
         {makeMenuItem('Setup', 'users')}
+        {makeMenuItem('Roll call', 'check square outline', 'roll-call')}
         {makeMenuItem('Motions', 'sort numeric descending')}
         {makeMenuItem('Unmod', 'discussions')}
         <Dropdown key="caucuses" item text={t('Caucuses')} loading={!committee}>
@@ -355,6 +357,16 @@ export default class Committee extends React.Component<Props, State> {
     );
   }
 
+  renderRollCall = () => {
+    return (
+      <RollCall
+        {...this.props}
+        committee={this.state.committee || DEFAULT_COMMITTEE}
+        fref={this.state.committeeFref}
+      />
+    );
+  }
+
   renderWelcome = () => {
     const { committee, committeeFref } = this.state;
 
@@ -406,7 +418,7 @@ export default class Committee extends React.Component<Props, State> {
   }
 
   render() {
-    const { renderAdmin, renderWelcome } = this;
+    const { renderAdmin, renderRollCall, renderWelcome } = this;
 
     return (
       <React.Fragment>
@@ -417,6 +429,7 @@ export default class Committee extends React.Component<Props, State> {
           </Container>
           <Route exact={true} path="/committees/:committeeID" render={renderWelcome} />
           <Route exact={true} path="/committees/:committeeID/setup" render={renderAdmin} />
+          <Route exact={true} path="/committees/:committeeID/roll-call" render={renderRollCall} />
           <Route exact={true} path="/committees/:committeeID/stats" component={Stats} />
           <Route exact={true} path="/committees/:committeeID/unmod" component={Unmod} />
           <Route exact={true} path="/committees/:committeeID/motions" component={Motions} />

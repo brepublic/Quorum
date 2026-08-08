@@ -1,18 +1,17 @@
 import * as React from 'react';
 import firebase from 'firebase/compat/app';
 import {RouteComponentProps} from 'react-router';
-import {Button, Card, Checkbox, Container, Divider, Form, Icon, Label, Message, Popup} from 'semantic-ui-react';
+import {Button, Card, Checkbox, Container, Divider, DropdownProps, Form, Icon, Label, Message, Popup} from 'semantic-ui-react';
 import {
   checkboxHandler,
   stateDropdownHandler,
   stateFieldHandler,
-  stateMemberDropdownHandler,
   stateTextAreaHandler,
   stateValidatedNumberFieldHandler
 } from '../modules/handlers';
 import {implies,} from '../utils';
 import {TimeSetter} from '../components/TimeSetter';
-import {displayMemberName, localizedMemberOptions, memberByName, MemberFlag, nameToMemberOption} from '../modules/member';
+import {canVote, displayMemberName, isMemberPresent, localizedMemberOptions, memberByName, MemberFlag, MemberID, nameToMemberOption, nonNGO} from '../modules/member';
 import {
   CaucusData,
   CaucusStatus,
@@ -29,7 +28,7 @@ import {
   extendUnmodTimer,
   putUnmodTimer,
   recoverCaucus,
-  recoverPresentMemberOptions,
+  recoverAttendanceMemberOptions,
   recoverResolution,
   recoverSettings
 } from '../models/committee';
@@ -45,7 +44,6 @@ import {
 } from '../models/resolution';
 import {DEFAULT_STRAWPOLL, putStrawpoll} from '../models/strawpoll';
 import {MotionsShareHint} from '../components/share-hints';
-import {useVoterID, VoterID} from '../hooks';
 import _ from 'lodash';
 import {makeCommitteeStats} from '../modules/committee-stats';
 import {DEFAULT_MOTION, MOTION_TYPE_OPTIONS, MotionData, MotionID, MotionType, MotionVote} from "../models/motion";
@@ -68,6 +66,7 @@ import {getSeconds, TimerData, Unit} from "../models/time";
 import {SettingsData} from "../models/settings";
 import { Helmet } from 'react-helmet';
 import { localizeGeneratedName, t } from '../i18n';
+import {getAutomaticVoteResult} from '../viewmodels/voting';
 
 const DivisibilityError = () => (
   <Message
@@ -79,18 +78,15 @@ const DivisibilityError = () => (
 interface Props extends RouteComponentProps<URLParameters> {
 }
 
-interface Hooks {
-  voterID: VoterID
-}
-
 interface State {
   newMotion: MotionData;
   committee?: CommitteeData;
   committeeFref: firebase.database.Reference;
+  votingMemberID?: MemberID;
 }
 
-export class MotionsComponent extends React.Component<Props & Hooks, State> {
-  constructor(props: Props & Hooks) {
+export class MotionsComponent extends React.Component<Props, State> {
+  constructor(props: Props) {
     super(props);
 
     const { match } = props;
@@ -118,6 +114,12 @@ export class MotionsComponent extends React.Component<Props & Hooks, State> {
   handlePushMotion = (): void => {
     const { newMotion } = this.state;
 
+    if (!isMemberPresent(this.state.committee?.members, newMotion.proposer)
+      || (hasSeconder(newMotion.type)
+        && !isMemberPresent(this.state.committee?.members, newMotion.seconder))) {
+      return;
+    }
+
     this.state.committeeFref.child('motions').push().set(newMotion);
 
     const duration = newMotion.caucusUnit === 'min'
@@ -125,7 +127,7 @@ export class MotionsComponent extends React.Component<Props & Hooks, State> {
       : newMotion.caucusDuration;
 
     this.setState(prevState => {
-      const { proposer, seconder, ...rest } = {
+      const { proposer, proposerID, seconder, seconderID, ...rest } = {
         ...prevState.newMotion,
         caucusDuration: duration,
         proposal: ''
@@ -171,6 +173,11 @@ export class MotionsComponent extends React.Component<Props & Hooks, State> {
     const { proposer, speakerDuration, speakerUnit,
       caucusDuration, caucusUnit, seconder, proposal } = motionData;
 
+    if (!isMemberPresent(committee?.members, proposer)
+      || (hasSeconder(motionData.type) && !isMemberPresent(committee?.members, seconder))) {
+      return;
+    }
+
     const caucusID = motionData.caucusTarget;
     const resolutionID = motionData.resolutionTarget;
 
@@ -194,6 +201,7 @@ export class MotionsComponent extends React.Component<Props & Hooks, State> {
         },
         speaking: {
           who: proposer,
+          memberID: motionData.proposerID,
           stance: Stance.For,
           duration: speakerSeconds
         },
@@ -259,6 +267,7 @@ export class MotionsComponent extends React.Component<Props & Hooks, State> {
 
       putSpeaking(committeeID, caucusID, {
         who: proposer,
+        memberID: motionData.proposerID,
         stance: Stance.For,
         duration: speakerSeconds
       });
@@ -305,77 +314,115 @@ export class MotionsComponent extends React.Component<Props & Hooks, State> {
 
     const resolution = recoverResolution(committee, resolutionTarget || '');
     const resolutionTargetText = resolution ? resolution.name : resolutionTarget;
+    const proposerPresent = isMemberPresent(committee?.members, proposer);
+    const seconderPresent = !hasSeconder(type) || isMemberPresent(committee?.members, seconder);
 
 
     const renderVoteCount = () => {
-      const { voterID } = this.props;
       const votes = motionData.votes ?? {};
+      const members = committee?.members || {};
+      const eligibleMemberIDs = Object.keys(members).filter(memberID => {
+        const member = members[memberID];
+        return member.present && (procedural(motionData.type) ? nonNGO(member) : canVote(member));
+      });
+      const votingMemberID = this.state.votingMemberID;
+      const canSelectedMemberVote = !!votingMemberID && eligibleMemberIDs.includes(votingMemberID);
 
       // Remove vote if same vote, otherwise change vote
       const vote = (vote: MotionVote) => {
-        if (votes[voterID] === vote) {
-          motionFref.child('votes').child(voterID).remove();
+        if (!votingMemberID || !canSelectedMemberVote) {
+          return;
+        }
+
+        if (votes[votingMemberID] === vote) {
+          motionFref.child('votes').child(votingMemberID).remove();
         } else {
-          motionFref.child('votes').child(voterID).set(vote);
+          motionFref.child('votes').child(votingMemberID).set(vote);
         }
       }
 
-      const counts = _.countBy(Object.values(votes))
+      const eligibleVotes = Object.entries(votes)
+        .filter(([memberID]) => eligibleMemberIDs.includes(memberID))
+        .map(([, vote]) => vote);
+      const counts = _.countBy(eligibleVotes);
+      const thresholdStats = makeCommitteeStats(committee);
+      const threshold = procedural(motionData.type)
+        ? thresholdStats.procedural
+        : thresholdStats.operative;
+      const fors = counts[MotionVote.For] ?? 0;
+      const automaticResult = getAutomaticVoteResult({
+        eligibleVoters: eligibleMemberIDs.length,
+        votesFor: fors,
+        votesCast: eligibleVotes.length,
+        threshold
+      });
+      const passed = automaticResult === 'passed';
+      const failed = automaticResult === 'failed';
 
       return (
-        <Button.Group className="thirdwidth">
-          <Popup
-            content={t('Against')}
-            trigger={
-              <Button
-                color='red'
-                active={votes[voterID] === MotionVote.Against}
-                onClick={() => vote(MotionVote.Against)}
-              >
-                <Icon name={
-                  votes[voterID] === MotionVote.Against
-                    ? "thumbs down"
-                    : "thumbs down outline"}
-                />
-                {counts[MotionVote.Against] ?? 0}
-              </Button>
-            }
-          />
-          {procedural(motionData.type) &&
+        <div className="motion-vote-panel">
+          <Button.Group fluid>
             <Popup
-              content={t('Abstain')}
+              content={t('Against')}
               trigger={
                 <Button
-                  color='yellow'
-                  active={votes[voterID] === MotionVote.Abstain}
-                  onClick={() => vote(MotionVote.Abstain)}
+                  color='red'
+                  disabled={!canSelectedMemberVote}
+                  active={!!votingMemberID && votes[votingMemberID] === MotionVote.Against}
+                  onClick={() => vote(MotionVote.Against)}
                 >
                   <Icon name={
-                    votes[voterID] === MotionVote.Abstain
-                      ? "circle"
-                      : "circle outline"}
+                    votingMemberID && votes[votingMemberID] === MotionVote.Against
+                      ? "thumbs down"
+                      : "thumbs down outline"}
                   />
-                  {counts[MotionVote.Abstain] ?? 0}
+                  {counts[MotionVote.Against] ?? 0}
+                </Button>
+              }
+            />
+            {!procedural(motionData.type) &&
+              <Popup
+                content={t('Abstain')}
+                trigger={
+                  <Button
+                    color='yellow'
+                    disabled={!canSelectedMemberVote}
+                    active={!!votingMemberID && votes[votingMemberID] === MotionVote.Abstain}
+                    onClick={() => vote(MotionVote.Abstain)}
+                  >
+                    <Icon name={
+                      votingMemberID && votes[votingMemberID] === MotionVote.Abstain
+                        ? "circle"
+                        : "circle outline"}
+                    />
+                    {counts[MotionVote.Abstain] ?? 0}
+                  </Button>
+                } />
+              }
+            <Popup
+              content={t('In favour')}
+              trigger={
+                <Button
+                  color='green'
+                  disabled={!canSelectedMemberVote}
+                  active={!!votingMemberID && votes[votingMemberID] === MotionVote.For}
+                  onClick={() => vote(MotionVote.For)}
+                >
+                  <Icon name={
+                    votingMemberID && votes[votingMemberID] === MotionVote.For
+                      ? "thumbs up"
+                      : "thumbs up outline"}
+                  />
+                  {counts[MotionVote.For] ?? 0}
                 </Button>
               } />
-            }
-          <Popup
-            content={t('In favour')}
-            trigger={
-              <Button
-                color='green'
-                active={votes[voterID] === MotionVote.For}
-                onClick={() => vote(MotionVote.For)}
-              >
-                <Icon name={
-                  votes[voterID] === MotionVote.For
-                    ? "thumbs up"
-                    : "thumbs up outline"}
-                />
-                {counts[MotionVote.For] ?? 0}
-              </Button>
-            } />
-        </Button.Group>
+          </Button.Group>
+          <div className="motion-vote-result">
+            <span>{t('{count} votes required to pass a motion', {count: threshold})}</span>
+            {passed && <Label color="green">{t('Passed')}</Label>}
+            {failed && <Label color="red">{t('Failed')}</Label>}
+          </div>
+        </div>
       )
     }
 
@@ -395,6 +442,7 @@ export class MotionsComponent extends React.Component<Props & Hooks, State> {
           {t('Proposer')}
         </Label>
         <MemberFlag member={memberByName(committee?.members, proposer || '')} /> {proposer ? displayMemberName(proposer) : ''}
+        {!proposerPresent && <Label basic size="mini">{t('Absent')}</Label>}
       </div>
     );
 
@@ -404,6 +452,7 @@ export class MotionsComponent extends React.Component<Props & Hooks, State> {
           {t('Seconder')}
         </Label>
         <MemberFlag member={memberByName(committee?.members, seconder || '')} /> {seconder ? displayMemberName(seconder) : ''}
+        {!seconderPresent && <Label basic size="mini">{t('Absent')}</Label>}
       </div>
     );
 
@@ -448,6 +497,9 @@ export class MotionsComponent extends React.Component<Props & Hooks, State> {
           </Card.Meta>
           {hasDetail(type) && descriptionTree}
         </Card.Content>
+        {recoverSettings(committee).motionVotes && (
+          <Card.Content extra>{renderVoteCount()}</Card.Content>
+        )}
         <Button.Group fluid attached="bottom">
           <Button
             className="thirdwidth"
@@ -457,10 +509,10 @@ export class MotionsComponent extends React.Component<Props & Hooks, State> {
           >
             {t('Delete')}
           </Button>
-          {recoverSettings(committee).motionVotes && renderVoteCount()}
           {approvable(type) && <Button 
             className="thirdwidth"
-            disabled={motionData.proposer === ''}
+            disabled={!isMemberPresent(committee?.members, motionData.proposer)
+              || (hasSeconder(type) && !isMemberPresent(committee?.members, motionData.seconder))}
             basic
             positive
             onClick={() => handleApproveMotion(motionFref, motionData)}
@@ -603,7 +655,26 @@ export class MotionsComponent extends React.Component<Props & Hooks, State> {
       </Form.Group>
     );
 
-    const memberOptions = recoverPresentMemberOptions(this.state.committee);
+    const memberOptions = recoverAttendanceMemberOptions(this.state.committee);
+    const setMotionMember = (
+      field: 'proposer' | 'seconder',
+      idField: 'proposerID' | 'seconderID'
+    ) => (_event: React.SyntheticEvent<HTMLElement>, data: DropdownProps) => {
+      const selected = memberOptions.find(option => option.value === data.value);
+      if (!selected || selected.disabled) {
+        return;
+      }
+
+      this.setState(previous => ({
+        newMotion: {
+          ...previous.newMotion,
+          [field]: selected.text,
+          [idField]: selected.memberID
+        }
+      }));
+    };
+    const proposerPresent = isMemberPresent(committee?.members, proposer);
+    const seconderPresent = !hasSeconder(type) || isMemberPresent(committee?.members, seconder);
 
     const proposerTree = (
       <Form.Dropdown
@@ -611,11 +682,11 @@ export class MotionsComponent extends React.Component<Props & Hooks, State> {
         key="proposer"
         value={proposer ? nameToMemberOption(proposer).key : false}
         search
-        error={!proposer || this.hasIdenticalProposerSeconder()}
+        error={!proposer || !proposerPresent || this.hasIdenticalProposerSeconder()}
         loading={!committee}
         selection
         fluid
-        onChange={stateMemberDropdownHandler<Props, State>(this, 'newMotion', 'proposer', memberOptions)}
+        onChange={setMotionMember('proposer', 'proposerID')}
         options={localizedMemberOptions(memberOptions)}
         label={t('Proposer')}
       />
@@ -625,19 +696,22 @@ export class MotionsComponent extends React.Component<Props & Hooks, State> {
       <Form.Dropdown
         icon="search"
         key="seconder"
-        error={!seconder || this.hasIdenticalProposerSeconder()}
+        error={!seconder || !seconderPresent || this.hasIdenticalProposerSeconder()}
         value={seconder ? nameToMemberOption(seconder).key : false}
         loading={!committee}
         search
         selection
         fluid
-        onChange={stateMemberDropdownHandler<Props, State>(this, 'newMotion', 'seconder', memberOptions)}
+        onChange={setMotionMember('seconder', 'seconderID')}
         options={localizedMemberOptions(memberOptions)}
         label={t('Seconder')}
       />
     );
 
-    const hasError = this.hasDivisiblityError() || this.hasIdenticalProposerSeconder();
+    const hasError = this.hasDivisiblityError()
+      || this.hasIdenticalProposerSeconder()
+      || !proposerPresent
+      || !seconderPresent;
 
     return (
       <Form
@@ -724,6 +798,16 @@ export class MotionsComponent extends React.Component<Props & Hooks, State> {
     const { committeeID } = this.props.match.params;
     const { operative } = makeCommitteeStats(this.state.committee);
     const { motionVotes, motionsArePublic } = recoverSettings(committee);
+    const votingMemberOptions = Object.entries(committee?.members || {})
+      .sort(([, a], [, b]) => displayMemberName(a.name).localeCompare(displayMemberName(b.name)))
+      .map(([memberID, member]) => ({
+        key: memberID,
+        value: memberID,
+        text: displayMemberName(member.name),
+        flag: <MemberFlag member={member} />,
+        disabled: !member.present,
+        description: member.present ? undefined : t('Absent')
+      }));
 
     const renderedMotions = committee
       ? renderMotions(committee.motions || {} as Record<string, MotionData>)
@@ -760,6 +844,19 @@ export class MotionsComponent extends React.Component<Props & Hooks, State> {
             committeeID={committeeID}
             canVote={motionVotes}
             canPropose={motionsArePublic} />}
+        {motionVotes && (
+          <Form.Dropdown
+            className="motion-voter"
+            label={t('Voting delegation')}
+            placeholder={t('Select your delegation')}
+            search
+            selection
+            fluid
+            value={this.state.votingMemberID}
+            options={votingMemberOptions}
+            onChange={(_event, data) => this.setState({votingMemberID: String(data.value)})}
+          />
+        )}
         <Divider />
         <Icon name="sort numeric ascending" /> {t('Sorted from most to least disruptive.')} {t('{count} votes required to pass a motion', { count: operative })}
         <Button
@@ -784,7 +881,5 @@ export class MotionsComponent extends React.Component<Props & Hooks, State> {
 }
 
 export default function Motions(props: Props) {
-  const [voterID] = useVoterID();
-
-  return <MotionsComponent {...props} voterID={voterID} />
+  return <MotionsComponent {...props} />
 }

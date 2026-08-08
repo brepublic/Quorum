@@ -36,6 +36,10 @@ describe('i18n', () => {
     expect(t('Introduce draft resolution')).toBe('展示决议草案');
     expect(t('Introduce working paper')).toBe('展示工作文件');
     expect(t('Veto')).toBe('一票否决');
+    expect(t('Roll call')).toBe('点名');
+    expect(t('Absent')).toBe('缺席');
+    expect(t('Voting delegation')).toBe('投票代表团');
+    expect(t('Now voting')).toBe('当前表决国家');
   });
 
   it('localizes preset country names without changing their stored value', () => {

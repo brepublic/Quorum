@@ -6,9 +6,11 @@ import {
 } from '../constants';
 import {
   canonicalCountryName,
+  membersToAttendanceOptions,
   nameToCountryOption,
   nameToFlagCode,
   nameToMemberOption,
+  Rank,
   searchCountryOptions
 } from './member';
 
@@ -77,5 +79,21 @@ describe('stored country name compatibility', () => {
     expect(searchCountryOptions(COUNTRY_OPTIONS, 'Cote dIvoire')).toEqual([
       nameToMemberOption("Côte d'Ivoire"),
     ]);
+  });
+});
+
+describe('attendance member options', () => {
+  it('keeps absent delegations visible but disabled and retains their member IDs', () => {
+    const options = membersToAttendanceOptions({
+      present: {name: 'China', present: true, rank: Rank.Standard, voting: false},
+      absent: {name: 'France', present: false, rank: Rank.Standard, voting: false}
+    });
+
+    expect(options.find(option => option.memberID === 'present')?.disabled).toBe(false);
+    expect(options.find(option => option.memberID === 'absent')).toMatchObject({
+      memberID: 'absent',
+      disabled: true,
+      text: 'France'
+    });
   });
 });

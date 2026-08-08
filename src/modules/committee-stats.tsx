@@ -31,8 +31,15 @@ export function makeCommitteeStats(data?: CommitteeData) {
     procedural, operative, hasQuorum, draftResolution, amendment, twoThirdsMajority, simpleMajority };
 }
 
-export function CommitteeStatsTable(props: { data?: CommitteeData, verbose?: boolean }) {
+export type CommitteeStatsRow = 'present' | 'two-thirds-majority';
+
+export function CommitteeStatsTable(props: {
+  data?: CommitteeData,
+  verbose?: boolean,
+  hiddenRows?: CommitteeStatsRow[]
+}) {
   const { data, verbose } = props;
+  const hiddenRows = new Set(props.hiddenRows || []);
 
   // TODO: Fill this table out with all fields.
   const  { delegatesNo, presentNo, canVoteNo, quorum, 
@@ -55,11 +62,11 @@ export function CommitteeStatsTable(props: { data?: CommitteeData, verbose?: boo
           <Table.Cell>{delegatesNo.toString()}</Table.Cell>
           <Table.Cell>{t('Delegates in committee')}</Table.Cell>
         </Table.Row>
-        <Table.Row>
+        {!hiddenRows.has('present') && <Table.Row>
           <Table.Cell>{t('Present')}</Table.Cell>
           <Table.Cell>{presentNo.toString()}</Table.Cell>
           <Table.Cell>{t('Delegates in attendance')}</Table.Cell>
-        </Table.Row>
+        </Table.Row>}
         <Table.Row>
           <Table.Cell>{t('Have voting rights')}</Table.Cell>
           <Table.Cell>{canVoteNo.toString()}</Table.Cell>
@@ -83,12 +90,12 @@ export function CommitteeStatsTable(props: { data?: CommitteeData, verbose?: boo
           <Table.Cell>{t('Required votes for operative matters, such as amendments')}</Table.Cell>
           {verbose && <Table.Cell>{t('50% of present delegates with voting rights')}</Table.Cell>}
         </Table.Row>
-        <Table.Row>
+        {!hiddenRows.has('two-thirds-majority') && <Table.Row>
           <Table.Cell>{t('Two-thirds majority')}</Table.Cell>
           <Table.Cell>{twoThirdsMajority.toString()}</Table.Cell>
           <Table.Cell>{t('Required votes for passing resolutions')}</Table.Cell>
           {verbose && <Table.Cell>{t('2/3 of present delegates with voting rights')}</Table.Cell>}
-        </Table.Row>
+        </Table.Row>}
         {verbose && <Table.Row>
           <Table.Cell>{t('Draft resolution')}</Table.Cell>
           <Table.Cell>{draftResolution.toString()}</Table.Cell>
@@ -101,6 +108,40 @@ export function CommitteeStatsTable(props: { data?: CommitteeData, verbose?: boo
           <Table.Cell>{t('Delegates needed to table an amendment')}</Table.Cell>
           <Table.Cell>{t('10% of present delegates with voting rights')}</Table.Cell>
         </Table.Row>}
+      </Table.Body>
+    </Table>
+  );
+}
+
+export function CommitteeSetupStatsTable(props: { data?: CommitteeData }) {
+  const { delegatesNo, absCanVote, quorum } = makeCommitteeStats(props.data);
+
+  return (
+    <Table definition className="committee-setup-stats">
+      <Table.Header>
+        <Table.Row>
+          <Table.HeaderCell />
+          <Table.HeaderCell>{t('Number')}</Table.HeaderCell>
+          <Table.HeaderCell>{t('Description')}</Table.HeaderCell>
+        </Table.Row>
+      </Table.Header>
+
+      <Table.Body>
+        <Table.Row>
+          <Table.Cell>{t('Total')}</Table.Cell>
+          <Table.Cell>{delegatesNo.toString()}</Table.Cell>
+          <Table.Cell>{t('Delegates in committee')}</Table.Cell>
+        </Table.Row>
+        <Table.Row>
+          <Table.Cell>{t('Have voting rights')}</Table.Cell>
+          <Table.Cell>{absCanVote.toString()}</Table.Cell>
+          <Table.Cell>{t('Delegates with voting rights')}</Table.Cell>
+        </Table.Row>
+        <Table.Row>
+          <Table.Cell>{t('Quorum')}</Table.Cell>
+          <Table.Cell>{quorum.toString()}</Table.Cell>
+          <Table.Cell>{t('Delegates needed for debate')}</Table.Cell>
+        </Table.Row>
       </Table.Body>
     </Table>
   );

@@ -7,7 +7,7 @@ import {
 import {objectToList} from "../utils";
 import * as _ from "lodash";
 import type {DropdownItemProps} from 'semantic-ui-react';
-import { getLanguage } from '../i18n';
+import { getLanguage, t } from '../i18n';
 import * as React from 'react';
 import {CountryFlag as CountryFlagData} from '../models/country-template';
 
@@ -33,10 +33,13 @@ export interface MemberData {
 }
 
 export interface MemberOption {
+  memberID?: MemberID;
   key: string;
   value: string;
   flag: DropdownItemProps['flag'];
   text: string;
+  disabled?: boolean;
+  description?: DropdownItemProps['description'];
 }
 
 const COUNTRY_BY_CODE = new Map(
@@ -105,13 +108,17 @@ export function displayMemberName(name: string): string {
 }
 
 export function localizedMemberOptions(options: MemberOption[]): MemberOption[] {
-  return options.map(option => ({
-    ...option,
-    flag: React.isValidElement(option.flag)
-      ? option.flag
-      : <MemberFlag member={option.text} />,
-    text: displayMemberName(option.text)
-  }));
+  return options.map(option => {
+    const {memberID: _memberID, ...dropdownOption} = option;
+    return {
+      ...dropdownOption,
+      flag: React.isValidElement(option.flag)
+        ? option.flag
+        : <MemberFlag member={option.text} />,
+      text: displayMemberName(option.text),
+      description: option.disabled ? t('Absent') : option.description
+    };
+  });
 }
 
 export function nameToFlagCode(name: string): FlagNames {
@@ -171,16 +178,17 @@ export function memberByName(
   ) ?? {name};
 }
 
-function memberToOption(member: MemberData): MemberOption {
+function memberToOption(member: MemberData, memberID?: MemberID): MemberOption {
   return {
     ...nameToMemberOption(member.name),
+    ...(memberID ? {memberID} : {}),
     flag: <MemberFlag member={member} />
   };
 }
 
 export function membersToOptions(members: Record<MemberID, MemberData> | undefined): MemberOption[] {
   const options = objectToList(members || {})
-    .map(memberToOption);
+    .map(member => memberToOption(member));
 
   return _.sortBy(options, (option: MemberOption) => option.text);
 }
@@ -188,9 +196,33 @@ export function membersToOptions(members: Record<MemberID, MemberData> | undefin
 export function membersToPresentOptions(members: Record<MemberID, MemberData> | undefined): MemberOption[] {
   const options = objectToList(members || {})
     .filter(x => x.present)
-    .map(memberToOption);
+    .map(member => memberToOption(member));
 
   return _.sortBy(options, (option: MemberOption) => option.text);
+}
+
+export function membersToAttendanceOptions(members: Record<MemberID, MemberData> | undefined): MemberOption[] {
+  const options = Object.entries(members || {})
+    .map(([memberID, member]) => ({
+      ...memberToOption(member, memberID),
+      disabled: !member.present
+    }));
+
+  return _.sortBy(options, (option: MemberOption) => option.text);
+}
+
+export function isMemberPresent(
+  members: Record<MemberID, MemberData> | undefined,
+  name: string | undefined
+): boolean {
+  if (!name) {
+    return false;
+  }
+
+  const canonicalName = canonicalCountryName(name);
+  return Object.values(members || {}).some(member =>
+    canonicalCountryName(member.name) === canonicalName && member.present
+  );
 }
 
 export function nameToMemberOption(name: string): MemberOption {
