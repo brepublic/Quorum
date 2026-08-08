@@ -195,9 +195,9 @@ export default class Onboard extends React.Component<Props, State> {
           <LanguageMenuItem position="right" />
         </Menu>
         <Helmet>
-          <title>{`${t('Create committee')} - Muncoordinated`}</title>
+          <title>{`${t('Create committee')} - Quorum`}</title>
           <meta name="description" content="Login, create an account, or create
-                                      a committee with Muncoordinated now!" />
+                                      a committee with Quorum now!" />
         </Helmet>
         <ConnectionStatus />
         <Grid
@@ -207,12 +207,12 @@ export default class Onboard extends React.Component<Props, State> {
           <Grid.Row>
             <Grid.Column>
               <Header as="h1" textAlign='center'>
-                Muncoordinated
+                Quorum
               </Header>
               <Message>
                 <Message.Header>{t('Browser compatibility notice')}</Message.Header>
                   <p>
-                  {t('Muncoordinated works best with newer versions of')} <a
+                  {t('Quorum works best with newer versions of')} <a
                     href="https://www.google.com/chrome/">Google Chrome</a>
                   {t('. Use of other or older browsers has caused bugs and data loss.')}
                   </p>

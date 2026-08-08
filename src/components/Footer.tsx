@@ -13,12 +13,12 @@ export const CLIENT_VERSION = 'v2.20.12';
 export function VersionLink(props: { 
   version: string 
 }) {
-  return <a href="https://github.com/MaxwellBo/Muncoordinated-2/releases">
+  return <a href="https://github.com/brepublic/Quorum/releases">
     {props.version}
   </a>
 }
 
-const RELEASES_LATEST = 'https://api.github.com/repos/MaxwellBo/Muncoordinated-2/releases/latest';
+const RELEASES_LATEST = 'https://api.github.com/repos/brepublic/Quorum/releases/latest';
 
 export default class Footer extends React.PureComponent<Props, State> {
   constructor(props: Props) {

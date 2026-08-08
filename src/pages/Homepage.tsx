@@ -37,7 +37,8 @@ interface HomepageHeadingProps {
   mobile: boolean;
 }
 
-const REPO_LINK = 'https://github.com/MaxwellBo/Muncoordinated-2';
+const REPO_LINK = 'https://github.com/brepublic/Quorum';
+const ORIGINAL_REPO_LINK = 'https://github.com/MaxwellBo/Muncoordinated-2';
 
 /* eslint-disable react/no-multi-comp */
 /* Heads up! HomepageHeading uses inline styling, however it's not the best practice. Use CSS or styled components for
@@ -47,7 +48,7 @@ const HomepageHeading = ({ mobile }: HomepageHeadingProps) => (
   <Container text style={{ maxWidth: '100%', padding: '0 1em' }}>
     <Header
       as="h1"
-      content="Muncoordinated"
+      content="Quorum"
       inverted
       style={{
         fontSize: mobile ? '2em' : '4em',
@@ -281,7 +282,7 @@ export default class Homepage extends React.Component<{}, {
                   {t("Everyone will see all updates in real-time, without needing to refresh the page. It's like Google Docs, but for MUN.")}
                 </p>
                 <p style={{ fontSize: '1.33em' }}>
-                  {t('For virtual MUNs, we recommend pairing Muncoordinated with')} <a href="https://discord.com/">Discord</a>, {t('which supports voice, note passing, and file and link sharing.')}
+                  {t('For virtual MUNs, we recommend pairing Quorum with')} <a href="https://discord.com/">Discord</a>, {t('which supports voice, note passing, and file and link sharing.')}
                 </p>
                 <p style={{ fontSize: '1.33em' }}>
                   {t("If you've got a big committee, multiple directors can manage it at the same time, using the same account.")}
@@ -304,7 +305,7 @@ export default class Homepage extends React.Component<{}, {
               <Grid.Column width={8}>
                 <Header as="h3" style={{ fontSize: '2em' }}>{t('A comprehensive feature set')}</Header>
                 <div style={{ fontSize: '1.33em' }}>
-                  {t('Muncoordinated supports:')} <br />
+                  {t('Quorum supports:')} <br />
                   <List as="ul">
                     <List.Item as="li">{t('Moderated and unmoderated caucuses')}</List.Item>
                     <List.Item as="li">{t('Resolutions and amendments')}</List.Item>
@@ -318,10 +319,10 @@ export default class Homepage extends React.Component<{}, {
                 </div>
                 <Header as="h3" style={{ fontSize: '2em' }}>{t('Free and open-source')}</Header>
                 <p style={{ fontSize: '1.33em' }}>
-                  {t("All of Muncoordinated's features are available for free, not locked behind paywalls.")}
+                  {t("All of Quorum's features are available for free, not locked behind paywalls.")}
                 </p>
                 <p style={{ fontSize: '1.33em' }}>
-                  {t("It's also")} <a href="https://github.com/MaxwellBo/Muncoordinated-2">{t('open-source')}</a>, {t("so you're free to customize it to your needs and liking.")}
+                  {t("It's also")} <a href={REPO_LINK}>{t('open-source')}</a>, {t("so you're free to customize it to your needs and liking.")}
                 </p>
               </Grid.Column>
               <Grid.Column floated="right" width={8}>
@@ -347,7 +348,7 @@ export default class Homepage extends React.Component<{}, {
                     <List.Item as="a" href={REPO_LINK}>{t('Source')}</List.Item>
                     <List.Item
                       as="a"
-                      href="https://github.com/MaxwellBo/Muncoordinated-2/blob/master/LICENSE"
+                      href={`${REPO_LINK}/blob/master/LICENSE`}
                     >
                       {t('License')}
                     </List.Item>
@@ -356,8 +357,8 @@ export default class Homepage extends React.Component<{}, {
                 <Grid.Column width={3}>
                   <Header inverted as="h4" content={t('Services')} />
                   <List link inverted>
-                    <List.Item as="a" href="https://github.com/MaxwellBo/Muncoordinated-2/discussions">{t('Forum')}</List.Item>
-                    <List.Item as="a" href="https://github.com/MaxwellBo/Muncoordinated-2/issues">{t('Support')}</List.Item>
+                    <List.Item as="a" href={`${REPO_LINK}/discussions`}>{t('Forum')}</List.Item>
+                    <List.Item as="a" href={`${REPO_LINK}/issues`}>{t('Support')}</List.Item>
                     <List.Item as="a" href="https://www.helpmymun.com/">{t('MUN Resources')}</List.Item>
                   </List>
                 </Grid.Column>
@@ -366,6 +367,7 @@ export default class Homepage extends React.Component<{}, {
                   <p>{t('Made with')} <span role="img" aria-label="love">💖</span> {t('by')} <a href="https://github.com/MaxwellBo">Max Bo</a>,
                   {t('with assistance from the')} <a href="https://www.facebook.com/UQUNSA/">UQ United Nations Student Association</a>
                   </p>
+                  <p>{t('Quorum is based on')} <a href={ORIGINAL_REPO_LINK}>Muncoordinated</a>. {t('Thanks to its original authors and contributors.')}</p>
                   <p>Copyright © 2026</p>
                 </Grid.Column>
               </Grid.Row>

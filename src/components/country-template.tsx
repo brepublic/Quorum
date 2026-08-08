@@ -7,9 +7,11 @@ import {
   CountryTemplateData,
   countryTemplateDisplayName,
   DEFAULT_COUNTRY_TEMPLATE,
+  isoCodeToEmoji,
   userCountryTemplatesRef
 } from '../models/country-template';
 import {t} from '../i18n';
+import {FlagDisplay, nameToCountryOption, VectorCountryFlag} from '../modules/member';
 
 export interface CountryTemplateChoice {
   key: string;
@@ -77,9 +79,10 @@ export function CountryTemplatePicker(props: {
 }
 
 export function CountryFlag(props: {country: CountryData}) {
-  const flag = props.country.flag;
-  if (flag?.type === 'image' && flag.value) {
-    return <img className="country-template-flag" src={flag.value} alt="" />;
+  const option = nameToCountryOption(props.country.name);
+  if (props.country.flag?.type === 'emoji' && option
+    && props.country.flag.value === isoCodeToEmoji(option.value)) {
+    return <VectorCountryFlag code={option.value} />;
   }
-  return <span className="country-template-flag country-template-flag-emoji">{flag?.value || '🏳️'}</span>;
+  return <FlagDisplay flag={props.country.flag} />;
 }

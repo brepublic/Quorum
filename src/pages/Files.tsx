@@ -8,14 +8,13 @@ import {
   Container,
   DropdownProps,
   Feed,
-  Flag,
   Form,
   Progress,
   SemanticICONS,
   Tab,
   TextAreaProps
 } from 'semantic-ui-react';
-import {canonicalCountryName, displayMemberName, localizedMemberOptions, MemberOption, nameToFlagCode} from '../modules/member';
+import {canonicalCountryName, displayMemberName, localizedMemberOptions, memberByName, MemberData, MemberFlag, MemberOption} from '../modules/member';
 import Loading from '../components/Loading';
 import {DEFAULT_AMENDMENT, putAmendment, ResolutionID} from '../models/resolution';
 import {CommitteeData, CommitteeID, recoverMemberOptions} from "../models/committee";
@@ -30,6 +29,7 @@ const LINK_ICON: SemanticICONS = 'linkify';
 
 interface EntryProps {
   committeeID: CommitteeID;
+  members?: Record<string, MemberData>;
   post: PostData;
   onDelete: () => void;
   onPromoteToAmendment: () => void;
@@ -114,7 +114,7 @@ class Entry extends React.Component<EntryProps, EntryState> {
         <Feed.Label icon={TEXT_ICON} />
         <Feed.Content>
           <Feed.Summary>
-            <Feed.User><Flag name={nameToFlagCode(post.uploader)}/> {displayMemberName(post.uploader)}</Feed.User>
+            <Feed.User><MemberFlag member={memberByName(this.props.members, post.uploader)} /> {displayMemberName(post.uploader)}</Feed.User>
             <Feed.Date>{this.renderDate('Posted')}</Feed.Date>
           </Feed.Summary>
           <Feed.Extra style={{'whiteSpace': 'pre-wrap'}} text>{post.body}</Feed.Extra>
@@ -135,7 +135,7 @@ class Entry extends React.Component<EntryProps, EntryState> {
         <Feed.Label icon={FILE_ICON} />
         <Feed.Content>
           <Feed.Summary>
-            <Feed.User><Flag name={nameToFlagCode(post.uploader)}/> {displayMemberName(post.uploader)}</Feed.User> {t('uploaded a file')}
+            <Feed.User><MemberFlag member={memberByName(this.props.members, post.uploader)} /> {displayMemberName(post.uploader)}</Feed.User> {t('uploaded a file')}
             <Feed.Date>{this.renderDate('Uploaded')}</Feed.Date>
           </Feed.Summary>
           {/* eslint-disable-next-line jsx-a11y/anchor-is-valid */}
@@ -155,7 +155,7 @@ class Entry extends React.Component<EntryProps, EntryState> {
         <Feed.Label icon={LINK_ICON} />
         <Feed.Content>
           <Feed.Summary>
-            <Feed.User><Flag name={nameToFlagCode(post.uploader)}/> {displayMemberName(post.uploader)}</Feed.User> {t('posted a link')}
+            <Feed.User><MemberFlag member={memberByName(this.props.members, post.uploader)} /> {displayMemberName(post.uploader)}</Feed.User> {t('posted a link')}
             <Feed.Date>{this.renderDate('Posted')}</Feed.Date>
           </Feed.Summary>
           <Feed.Extra><a href={post.url}>{post.name || post.url}</a></Feed.Extra>
@@ -636,6 +636,7 @@ export default class Files extends React.Component<Props, State> {
                 onDelete={this.deletePost(key)}
                 onPromoteToAmendment={this.promoteToAmendment(files[key])}
                 committeeID={committeeID}
+                members={committee.members}
                 post={files[key]}
               />
           ) : <Loading />}
@@ -648,7 +649,7 @@ export default class Files extends React.Component<Props, State> {
       (
         <Container text style={{ padding: '1em 0em' }}>
           <Helmet>
-            <title>{`${t('Posts')} - Muncoordinated`}</title>
+            <title>{`${t('Posts')} - Quorum`}</title>
           </Helmet>
           {inner}
         </Container>

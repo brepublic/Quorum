@@ -35,7 +35,7 @@ export default class Unmod extends React.Component<Props, State> {
     return (
       <Container text style={{ padding: '1em 0em' }}>
         <Helmet>
-          <title>{`${t('Unmoderated caucus')} - Muncoordinated`}</title>
+          <title>{`${t('Unmoderated caucus')} - Quorum`}</title>
         </Helmet>
         <Timer 
           name="Unmoderated caucus" 

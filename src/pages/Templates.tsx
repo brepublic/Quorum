@@ -30,7 +30,9 @@ import {
 import {
   canonicalCountryName,
   displayMemberName,
+  MemberFlag,
   MemberData,
+  nameToCountryOption,
   nameToMemberOption,
   Rank,
   searchCountryOptions
@@ -51,14 +53,25 @@ import {
   CountryTemplatePicker,
   DEFAULT_COUNTRY_TEMPLATE_CHOICE
 } from '../components/country-template';
-import {countryDisplayName} from '../models/country-template';
+import {CountryData, countryDisplayName, isoCodeToEmoji} from '../models/country-template';
 import type {DropdownItemProps} from 'semantic-ui-react';
 
 type DraftMember = MemberData & {id: string};
 type LocalizedNameDraft = {id: string; language: Language; name: string};
-type CountryMemberOption = DropdownItemProps & {memberName: string};
+type CountryMemberOption = DropdownItemProps & {memberName: string; country?: CountryData};
 
 const RANK_OPTIONS = [Rank.Standard, Rank.Veto, Rank.NGO, Rank.Observer].map(makeDropdownOption);
+
+const customFlagSnapshot = (country?: CountryData): MemberData['flag'] => {
+  if (!country?.flag?.value) return undefined;
+  const flag = country.flag;
+  const builtInCountry = nameToCountryOption(country.name);
+  if (flag.type === 'emoji' && builtInCountry
+    && flag.value === isoCodeToEmoji(builtInCountry.value)) {
+    return undefined;
+  }
+  return flag;
+};
 
 export default function Templates() {
   const displayLanguage = getLanguage();
@@ -100,8 +113,9 @@ export default function Templates() {
       key: `${countryTemplate.key}:${id}`,
       value: `${countryTemplate.key}:${id}`,
       text: countryDisplayName(country),
-      content: <span className="country-template-option"><CountryFlag country={country} />{countryDisplayName(country)}</span>,
-      memberName: country.name
+      flag: <CountryFlag country={country} />,
+      memberName: country.name,
+      country
     }))
   ], [customCountries, countryTemplate]);
 
@@ -147,7 +161,11 @@ export default function Templates() {
   const addCustomCountry = (value: string) => {
     const option = nameToMemberOption(value);
     if (!countryOptions.some(country => country.memberName === option.text)) {
-      setCustomCountries(current => [{...option, memberName: option.text}, ...current.filter(country => country.value !== option.value)]);
+      setCustomCountries(current => [{
+        ...option,
+        flag: <MemberFlag member={option.text} />,
+        memberName: option.text
+      }, ...current.filter(country => country.value !== option.value)]);
     }
     setMemberName(option.text);
   };
@@ -157,12 +175,17 @@ export default function Templates() {
       return;
     }
 
+    const selectedCountry = countryOptions.find(option =>
+      canonicalCountryName(option.memberName) === canonicalCountryName(memberName)
+    )?.country;
+    const flag = customFlagSnapshot(selectedCountry);
     setMembers(current => [...current, {
       id: meetId(),
       name: memberName,
       rank,
       present,
-      voting
+      voting,
+      ...(flag ? {flag} : {})
     }]);
     setSaved(false);
   };
@@ -201,7 +224,13 @@ export default function Templates() {
 
     const templateMembers = members.reduce<Record<string, MemberData>>((result, member) => {
       const {id, ...data} = member;
-      result[id] = data;
+      const selectedCountry = countryOptions.find(option =>
+        canonicalCountryName(option.memberName) === canonicalCountryName(member.name)
+      )?.country;
+      const flag = customFlagSnapshot(selectedCountry);
+      result[id] = data.flag?.value || !flag
+        ? data
+        : {...data, flag};
       return result;
     }, {});
     const trimmedName = name.trim();
@@ -264,7 +293,7 @@ export default function Templates() {
 
   return (
     <Container style={{padding: '1em 0 2em'}}>
-      <Helmet><title>{`${t('Template editor')} - Muncoordinated`}</title></Helmet>
+      <Helmet><title>{`${t('Template editor')} - Quorum`}</title></Helmet>
       <Menu secondary>
         <Menu.Item as="a" href="/onboard">
           <Icon name="arrow left" />{t('Create committee')}
@@ -402,7 +431,7 @@ export default function Templates() {
                   <Table.Body>
                     {members.map(member => (
                       <Table.Row key={member.id}>
-                        <Table.Cell>{displayMemberName(member.name)}</Table.Cell>
+                        <Table.Cell><MemberFlag member={member} />{displayMemberName(member.name)}</Table.Cell>
                         <Table.Cell>
                           <Dropdown
                             fluid selection

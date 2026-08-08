@@ -399,7 +399,7 @@ export default function Strawpoll(props: StrawpollProps) {
   return (
     <Container text style={{ padding: '1em 0em' }}>
       <Helmet>
-          <title>{`${localizeGeneratedName(strawpoll.question)} - Muncoordinated`}</title>
+          <title>{`${localizeGeneratedName(strawpoll.question)} - Quorum`}</title>
       </Helmet>
       <Header as="h2">
         <Input

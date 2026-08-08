@@ -43,6 +43,7 @@ import {
   resizeFlagImage,
   userCountryTemplatesRef
 } from '../models/country-template';
+import {CountryFlag} from '../components/country-template';
 
 type LocalizedNameDraft = {id: string; language: Language; name: string};
 type DraftCountry = CountryData & {id: string};
@@ -60,6 +61,7 @@ export default function Countries() {
   const [languages, setLanguages] = useState<Language[]>([displayLanguage]);
   const [countries, setCountries] = useState<DraftCountry[]>([]);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [languageToDelete, setLanguageToDelete] = useState<Language>();
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string>();
@@ -97,7 +99,13 @@ export default function Countries() {
     const templateLanguage = countryTemplateDefaultLanguage(template);
     const exactDisplayName = template.names?.[displayLanguage]?.trim()
       || (displayLanguage === templateLanguage ? template.name.trim() : '');
-    const discoveredLanguages = countryNameLanguages(template, displayLanguage);
+    const templateNameLanguages = Object.keys(template.names || {}).filter(
+      (language): language is Language => SUPPORTED_LANGUAGES.includes(language as Language)
+    );
+    const discoveredLanguages = [...new Set([
+      ...countryNameLanguages(template, displayLanguage),
+      ...templateNameLanguages
+    ])];
     setSelectedID(id);
     setDefaultLanguage(templateLanguage);
     setName(exactDisplayName || countryTemplateDisplayName(template, displayLanguage));
@@ -138,6 +146,7 @@ export default function Countries() {
     const language = unusedTemplateLanguages[0];
     if (language) {
       setLocalizedNames(current => [...current, {id: meetId(), language, name: ''}]);
+      setLanguages(current => current.includes(language) ? current : [...current, language]);
       setSaved(false);
     }
   };
@@ -146,8 +155,42 @@ export default function Countries() {
     const language = unusedCountryLanguages[0];
     if (language) {
       setLanguages(current => [...current, language]);
+      if (language !== displayLanguage) {
+        setLocalizedNames(current => current.some(item => item.language === language)
+          ? current
+          : [...current, {id: meetId(), language, name: ''}]);
+      }
       setSaved(false);
     }
+  };
+
+  const removeLanguage = () => {
+    const language = languageToDelete;
+    if (!language || (languages.includes(language) && languages.length <= 1)) return;
+
+    const remainingLanguages = languages.filter(candidate => candidate !== language);
+    setLocalizedNames(current => current.filter(item => item.language !== language));
+    setLanguages(remainingLanguages);
+    setCountries(current => current.map(country => {
+      const names = {...country.names};
+      delete names[language];
+      const nextDefaultLanguage = country.defaultLanguage === language
+        ? remainingLanguages.find(candidate => !!names[candidate]?.trim()) || remainingLanguages[0]
+        : country.defaultLanguage;
+      return {
+        ...country,
+        name: country.defaultLanguage === language
+          ? (nextDefaultLanguage ? names[nextDefaultLanguage]?.trim() || '' : '')
+          : country.name,
+        defaultLanguage: nextDefaultLanguage,
+        names
+      };
+    }));
+    if (defaultLanguage === language) {
+      setDefaultLanguage(remainingLanguages[0] || displayLanguage);
+    }
+    setLanguageToDelete(undefined);
+    setSaved(false);
   };
 
   const updateLocalizedName = (
@@ -299,8 +342,8 @@ export default function Countries() {
   const invalidCountries = countries.some(country => !countryHasName(country));
 
   return (
-    <Container style={{padding: '1em 0 2em'}}>
-      <Helmet><title>{`${t('Country manager')} - Muncoordinated`}</title></Helmet>
+    <Container fluid className="country-manager-page">
+      <Helmet><title>{`${t('Country manager')} - Quorum`}</title></Helmet>
       <Menu secondary>
         <Menu.Item as="a" href="/onboard"><Icon name="arrow left" />{t('Create committee')}</Menu.Item>
         <Menu.Item as="a" href="/templates"><Icon name="file alternate outline" />{t('Template editor')}</Menu.Item>
@@ -310,15 +353,15 @@ export default function Countries() {
 
       {user === undefined && <Segment loading style={{minHeight: 120}} />}
       {user === null && (
-        <Grid stackable columns={2}>
+        <Grid stackable columns={2} className="country-manager-login">
           <Grid.Column><Message warning content={t('Log in to manage your country templates')} /></Grid.Column>
           <Grid.Column><Login allowNewCommittee={false} /></Grid.Column>
         </Grid>
       )}
 
       {user && (
-        <Grid stackable columns={2}>
-          <Grid.Column width={5}>
+        <Grid stackable className="country-manager-layout">
+          <Grid.Column className="country-manager-sidebar">
             <Segment>
               <Button primary fluid icon labelPosition="left" onClick={startNew}>
                 <Icon name="plus" />{t('New country template')}
@@ -347,9 +390,14 @@ export default function Countries() {
             </Segment>
           </Grid.Column>
 
-          <Grid.Column width={11}>
+          <Grid.Column className="country-manager-editor">
             <Segment>
-              <Header as="h2">{isBuiltin ? t('Default country template') : selectedID ? t('Edit country template') : t('New country template')}</Header>
+              <div className="country-template-editor-header">
+                <Header as="h2">{isBuiltin ? t('Default country template') : selectedID ? t('Edit country template') : t('New country template')}</Header>
+                {selectedID && <Button type="button" basic primary onClick={cloneSelected} loading={saving}>
+                  <Icon name="copy outline" />{t('Clone country template')}
+                </Button>}
+              </div>
               {isBuiltin && <Message info content={t('The built-in country template is read-only. Clone it to customize the countries.')} />}
               <Form success={saved} error={!!error} warning={countries.length === 0 || invalidCountries} onSubmit={save}>
                 <Form.Input
@@ -387,8 +435,8 @@ export default function Countries() {
                         onChange={event => updateLocalizedName(localizedName.id, {name: event.currentTarget.value})}
                       />
                       {!isBuiltin && <Form.Button
-                        type="button" basic negative icon="trash" aria-label={t('Remove')}
-                        onClick={() => setLocalizedNames(current => current.filter(item => item.id !== localizedName.id))}
+                        type="button" basic negative icon="trash" aria-label={t('Delete language')}
+                        onClick={() => setLanguageToDelete(localizedName.language)}
                       />}
                     </Form.Group>
                   ))}
@@ -435,9 +483,7 @@ export default function Countries() {
                           ))}
                           <Table.Cell>
                             <div className="country-flag-editor">
-                              {country.flag?.type === 'image'
-                                ? <img src={country.flag.value} alt={countryDisplayName(country)} />
-                                : <span className="country-flag-emoji">{country.flag?.value || '🏳️'}</span>}
+                              <CountryFlag country={country} />
                               <Dropdown
                                 compact selection disabled={isBuiltin}
                                 value={country.flag?.type || 'emoji'} options={flagTypeOptions}
@@ -495,9 +541,6 @@ export default function Countries() {
                 {!isBuiltin && <Button type="submit" primary loading={saving} disabled={!name.trim() || countries.length === 0 || invalidCountries}>
                   <Icon name="save" />{t('Save country template')}
                 </Button>}
-                {selectedID && <Button type="button" basic primary onClick={cloneSelected} loading={saving}>
-                  <Icon name="copy outline" />{t('Clone country template')}
-                </Button>}
                 {selectedID && !isBuiltin && <Button type="button" negative basic floated="right" onClick={() => setDeleteOpen(true)}>
                   <Icon name="trash" />{t('Delete country template')}
                 </Button>}
@@ -507,6 +550,15 @@ export default function Countries() {
         </Grid>
       )}
 
+      <Confirm
+        open={!!languageToDelete}
+        header={t('Delete language?')}
+        content={t('Deleting this language will also remove its country-name column and every country name entered in that language.')}
+        cancelButton={t('Cancel')}
+        confirmButton={t('Delete')}
+        onCancel={() => setLanguageToDelete(undefined)}
+        onConfirm={removeLanguage}
+      />
       <Confirm
         open={deleteOpen}
         header={t('Delete country template?')}

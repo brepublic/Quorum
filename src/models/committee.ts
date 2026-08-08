@@ -216,7 +216,7 @@ export const pushMember = (committeeID: CommitteeID, member: MemberData) => {
   logCreateMember(member.name)
 }
 
-export type TemplateMember = Pick<MemberData, 'name'> & Partial<Pick<MemberData, 'rank' | 'present' | 'voting'>>;
+export type TemplateMember = Pick<MemberData, 'name'> & Partial<Omit<MemberData, 'name'>>;
 
 export const TEMPLATE_TO_MEMBERS: Record<Template, TemplateMember[]> = {
   'African Union': [
@@ -413,25 +413,31 @@ export const pushTemplateMembers = (committeeID: CommitteeID, template: Template
 
   ref.child('members').once('value', (snapshot) => {
     const members: Record<MemberID, MemberData> = snapshot.val() || {};
-    const memberNames = Object.keys(members).map(id =>
-      canonicalCountryName(members[id].name)
-    );
+    const memberIDsByName = new Map(Object.keys(members).map(id => [
+      canonicalCountryName(members[id].name),
+      id
+    ]));
 
     const templateMembers = typeof template === 'string'
       ? TEMPLATE_TO_MEMBERS[template]
       : template;
 
-    [...templateMembers]
-      // Don't try and readd members that already exist
-      .filter(member => !_.includes(memberNames, canonicalCountryName(member.name)))
-      .forEach(
-        member =>
-          pushMember(committeeID, {
-            name: member.name,
-            rank: member.rank ?? Rank.Standard,
-            present: member.present ?? true,
-            voting: member.voting ?? false
-          })
-      );
+    [...templateMembers].forEach(member => {
+      const existingID = memberIDsByName.get(canonicalCountryName(member.name));
+      if (existingID) {
+        // Re-applying a template also repairs or updates custom flag snapshots.
+        if (member.flag?.value) {
+          ref.child('members').child(existingID).child('flag').set(member.flag);
+        }
+        return;
+      }
+      pushMember(committeeID, {
+        name: member.name,
+        rank: member.rank ?? Rank.Standard,
+        present: member.present ?? true,
+        voting: member.voting ?? false,
+        ...(member.flag?.value ? {flag: member.flag} : {})
+      });
+    });
   });
 }
