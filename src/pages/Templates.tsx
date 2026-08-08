@@ -30,8 +30,9 @@ import {
 import {
   canonicalCountryName,
   displayMemberName,
-  localizedMemberOptions,
+  MemberFlag,
   MemberData,
+  nameToCountryOption,
   nameToMemberOption,
   Rank,
   searchCountryOptions
@@ -46,11 +47,31 @@ import {
   UserTemplateData,
   userTemplatesRef
 } from '../models/template';
+import {
+  CountryFlag,
+  CountryTemplateChoice,
+  CountryTemplatePicker,
+  DEFAULT_COUNTRY_TEMPLATE_CHOICE
+} from '../components/country-template';
+import {CountryData, countryDisplayName, isoCodeToEmoji} from '../models/country-template';
+import type {DropdownItemProps} from 'semantic-ui-react';
 
 type DraftMember = MemberData & {id: string};
 type LocalizedNameDraft = {id: string; language: Language; name: string};
+type CountryMemberOption = DropdownItemProps & {memberName: string; country?: CountryData};
 
 const RANK_OPTIONS = [Rank.Standard, Rank.Veto, Rank.NGO, Rank.Observer].map(makeDropdownOption);
+
+const customFlagSnapshot = (country?: CountryData): MemberData['flag'] => {
+  if (!country?.flag?.value) return undefined;
+  const flag = country.flag;
+  const builtInCountry = nameToCountryOption(country.name);
+  if (flag.type === 'emoji' && builtInCountry
+    && flag.value === isoCodeToEmoji(builtInCountry.value)) {
+    return undefined;
+  }
+  return flag;
+};
 
 export default function Templates() {
   const displayLanguage = getLanguage();
@@ -63,7 +84,8 @@ export default function Templates() {
   const [localizedNames, setLocalizedNames] = useState<LocalizedNameDraft[]>([]);
   const [members, setMembers] = useState<DraftMember[]>([]);
   const [memberName, setMemberName] = useState(COUNTRY_OPTIONS[0].text);
-  const [customCountries, setCustomCountries] = useState<typeof COUNTRY_OPTIONS>([]);
+  const [customCountries, setCustomCountries] = useState<CountryMemberOption[]>([]);
+  const [countryTemplate, setCountryTemplate] = useState<CountryTemplateChoice>(DEFAULT_COUNTRY_TEMPLATE_CHOICE);
   const [rank, setRank] = useState(Rank.Standard);
   const [present, setPresent] = useState(true);
   const [voting, setVoting] = useState(false);
@@ -85,10 +107,17 @@ export default function Templates() {
     return () => ref.off('value', callback);
   }, [user]);
 
-  const countryOptions = useMemo(
-    () => localizedMemberOptions([...customCountries, ...COUNTRY_OPTIONS]),
-    [customCountries]
-  );
+  const countryOptions = useMemo<CountryMemberOption[]>(() => [
+    ...customCountries,
+    ...Object.entries(countryTemplate.template.countries || {}).map(([id, country]) => ({
+      key: `${countryTemplate.key}:${id}`,
+      value: `${countryTemplate.key}:${id}`,
+      text: countryDisplayName(country),
+      flag: <CountryFlag country={country} />,
+      memberName: country.name,
+      country
+    }))
+  ], [customCountries, countryTemplate]);
 
   const startNew = () => {
     setSelectedID(undefined);
@@ -131,8 +160,12 @@ export default function Templates() {
 
   const addCustomCountry = (value: string) => {
     const option = nameToMemberOption(value);
-    if (!COUNTRY_OPTIONS.some(country => country.value === option.value)) {
-      setCustomCountries(current => [option, ...current.filter(country => country.value !== option.value)]);
+    if (!countryOptions.some(country => country.memberName === option.text)) {
+      setCustomCountries(current => [{
+        ...option,
+        flag: <MemberFlag member={option.text} />,
+        memberName: option.text
+      }, ...current.filter(country => country.value !== option.value)]);
     }
     setMemberName(option.text);
   };
@@ -142,12 +175,17 @@ export default function Templates() {
       return;
     }
 
+    const selectedCountry = countryOptions.find(option =>
+      canonicalCountryName(option.memberName) === canonicalCountryName(memberName)
+    )?.country;
+    const flag = customFlagSnapshot(selectedCountry);
     setMembers(current => [...current, {
       id: meetId(),
       name: memberName,
       rank,
       present,
-      voting
+      voting,
+      ...(flag ? {flag} : {})
     }]);
     setSaved(false);
   };
@@ -186,7 +224,13 @@ export default function Templates() {
 
     const templateMembers = members.reduce<Record<string, MemberData>>((result, member) => {
       const {id, ...data} = member;
-      result[id] = data;
+      const selectedCountry = countryOptions.find(option =>
+        canonicalCountryName(option.memberName) === canonicalCountryName(member.name)
+      )?.country;
+      const flag = customFlagSnapshot(selectedCountry);
+      result[id] = data.flag?.value || !flag
+        ? data
+        : {...data, flag};
       return result;
     }, {});
     const trimmedName = name.trim();
@@ -249,10 +293,13 @@ export default function Templates() {
 
   return (
     <Container style={{padding: '1em 0 2em'}}>
-      <Helmet><title>{`${t('Template editor')} - Muncoordinated`}</title></Helmet>
+      <Helmet><title>{`${t('Template editor')} - Quorum`}</title></Helmet>
       <Menu secondary>
         <Menu.Item as="a" href="/onboard">
           <Icon name="arrow left" />{t('Create committee')}
+        </Menu.Item>
+        <Menu.Item as="a" href="/countries">
+          <Icon name="world" />{t('Country manager')}
         </Menu.Item>
         <LanguageMenuItem position="right" />
       </Menu>
@@ -362,6 +409,14 @@ export default function Templates() {
                     </Button>
                   )}
                 </div>
+                <CountryTemplatePicker
+                  value={countryTemplate.key}
+                  onChange={choice => {
+                    setCountryTemplate(choice);
+                    const firstCountry = Object.values(choice.template.countries || {})[0];
+                    if (firstCountry) setMemberName(firstCountry.name);
+                  }}
+                />
                 <Header as="h3">{t('Committee members')}</Header>
                 <Table compact celled stackable>
                   <Table.Header>
@@ -376,7 +431,7 @@ export default function Templates() {
                   <Table.Body>
                     {members.map(member => (
                       <Table.Row key={member.id}>
-                        <Table.Cell>{displayMemberName(member.name)}</Table.Cell>
+                        <Table.Cell><MemberFlag member={member} />{displayMemberName(member.name)}</Table.Cell>
                         <Table.Cell>
                           <Dropdown
                             fluid selection
@@ -415,13 +470,14 @@ export default function Templates() {
                       <Table.HeaderCell>
                         <Dropdown
                           fluid search={searchCountryOptions} selection allowAdditions
-                          value={nameToMemberOption(memberName).value}
+                          value={countryOptions.find(option =>
+                            canonicalCountryName(option.memberName) === canonicalCountryName(memberName)
+                          )?.value || nameToMemberOption(memberName).value}
                           options={countryOptions}
                           onAddItem={(_event, data) => addCustomCountry(String(data.value))}
                           onChange={(_event, data) => {
-                            const option = [...customCountries, ...COUNTRY_OPTIONS]
-                              .find(country => country.value === data.value);
-                            if (option) setMemberName(option.text);
+                            const option = countryOptions.find(country => country.value === data.value);
+                            if (option) setMemberName(option.memberName);
                           }}
                         />
                       </Table.HeaderCell>

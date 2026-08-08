@@ -53,6 +53,9 @@ importers:
       firebase:
         specifier: ^10.12.2
         version: 10.12.2
+      flag-icons:
+        specifier: 7.5.0
+        version: 7.5.0
       history:
         specifier: 4.10.1
         version: 4.10.1
@@ -2262,6 +2265,9 @@ packages:
 
   firebase@10.12.2:
     resolution: {integrity: sha512-ZxEdtSvP1I9su1yf32D8TIdgxtPgxwr6z3jYAR1TXS/t+fVfpoPc/N1/N2bxOco9mNjUoc+od34v5Fn4GeKs6Q==}
+
+  flag-icons@7.5.0:
+    resolution: {integrity: sha512-kd+MNXviFIg5hijH766tt+3x76ele1AXlo4zDdCxIvqWZhKt4T83bOtxUOOMlTx/EcFdUMH5yvQgYlFh1EqqFg==}
 
   fn.name@1.1.0:
     resolution: {integrity: sha512-GRnmB5gPyJpAhTQdSZTSp9uaPSvl09KoYcMQtsB9rQoOmzs9dH6ffeccH+Z+cv6P68Hu5bC6JjRh4Ah/mHSNRw==}
@@ -6843,6 +6849,8 @@ snapshots:
       '@firebase/vertexai-preview': 0.0.2(@firebase/app-types@0.9.2)(@firebase/app@0.10.5)
     transitivePeerDependencies:
       - '@react-native-async-storage/async-storage'
+
+  flag-icons@7.5.0: {}
 
   fn.name@1.1.0: {}
 

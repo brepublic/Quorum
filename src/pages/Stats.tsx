@@ -2,8 +2,8 @@ import * as React from 'react';
 import firebase from 'firebase/compat/app';
 import * as _ from 'lodash';
 import { RouteComponentProps } from 'react-router';
-import { Table, Flag, Container } from 'semantic-ui-react';
-import { displayMemberName, MemberData, MemberID, nameToFlagCode } from '../modules/member';
+import { Table, Container } from 'semantic-ui-react';
+import { displayMemberName, MemberData, MemberFlag, MemberID } from '../modules/member';
 import { URLParameters } from '../types';
 import Loading from '../components/Loading';
 import { hhmmss } from '../components/Timer';
@@ -123,7 +123,7 @@ export default class Stats extends React.Component<Props, State> {
       return (
         <Table.Row key={mid} >
           <Table.Cell>
-            <Flag name={nameToFlagCode(member.name)} />
+            <MemberFlag member={member} />
             {displayMemberName(member.name)}
           </Table.Cell>
           <Table.Cell textAlign="right">
@@ -145,7 +145,7 @@ export default class Stats extends React.Component<Props, State> {
     return (
       <Container text style={{ padding: '1em 0em 1.5em' }}>
         <Helmet>
-          <title>{`${t('Stats')} - Muncoordinated`}</title>
+          <title>{`${t('Stats')} - Quorum`}</title>
         </Helmet>
         <Table compact celled definition>
           <Table.Header>

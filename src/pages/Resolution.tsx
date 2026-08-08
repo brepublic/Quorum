@@ -764,7 +764,7 @@ export default class Resolution extends React.Component<Props, State> {
     return (
       <Container style={{ 'padding-bottom': '2em' }}>
         <Helmet>
-          <title>{`${localizeGeneratedName(resolution?.name ?? '')} - Muncoordinated`}</title>
+          <title>{`${localizeGeneratedName(resolution?.name ?? '')} - Quorum`}</title>
         </Helmet>
         <Grid columns="equal" stackable>
           <Grid.Row>

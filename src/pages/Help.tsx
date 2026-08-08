@@ -38,7 +38,7 @@ export const KeyboardShortcutList = () => (
 
 export default class Help extends React.PureComponent<{}, {}> {
   gpl = ( 
-    <a href="https://github.com/MaxwellBo/Muncoordinated-2/blob/master/LICENSE">
+    <a href="https://github.com/brepublic/Quorum/blob/master/LICENSE">
       GNU GPLv3
     </a>
   );
@@ -49,7 +49,7 @@ export default class Help extends React.PureComponent<{}, {}> {
     return (
       <Container text style={{ padding: '1em 0em' }}>
         <Helmet>
-          <title>{`${t('Help')} - Muncoordinated`}</title>
+          <title>{`${t('Help')} - Quorum`}</title>
         </Helmet>
         <Header as="h3" attached="top">{t('Keyboard shortcuts')}</Header>
         <Segment attached="bottom">
@@ -61,8 +61,8 @@ export default class Help extends React.PureComponent<{}, {}> {
           <br />
           <List ordered>
             <List.Item>
-              {t('Create an issue on the')} <a href="https://github.com/MaxwellBo/Muncoordinated-2/issues">
-                {t('Muncoordinated issue tracking page')}
+              {t('Create an issue on the')} <a href="https://github.com/brepublic/Quorum/issues">
+                {t('Quorum issue tracking page')}
               </a>. {t('You can also use this for help requests regarding the app.')}
             </List.Item>
             <List.Item>
@@ -81,11 +81,15 @@ export default class Help extends React.PureComponent<{}, {}> {
         </Segment>
         <Header as="h3" attached="top">{t('License')}</Header>
         <Segment attached="bottom">
-          {t('Muncoordinated is licensed under')} {gpl}
+          {t('Quorum is licensed under')} {gpl}
         </Segment>
-        <Header as="h3" attached="top">{t('Social media')}</Header>
+        <Header as="h3" attached="top">{t('Community')}</Header>
         <Segment attached="bottom">
-          {t('Want to meet other Muncoordinators? Visit')} <a href="https://github.com/MaxwellBo/Muncoordinated-2/discussions">{t("The Muncoordinator's Discussion Space")}</a>.
+          <a href="https://github.com/brepublic/Quorum/discussions">{t('Visit the Quorum discussion space')}</a>.
+        </Segment>
+        <Header as="h3" attached="top">{t('Acknowledgements')}</Header>
+        <Segment attached="bottom">
+          {t('Quorum is based on')} <a href="https://github.com/MaxwellBo/Muncoordinated-2">Muncoordinated</a>. {t('Thanks to its original authors and contributors.')}
         </Segment>
       </Container>
     );

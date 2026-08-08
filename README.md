@@ -1,109 +1,69 @@
-# Muncoordinated
+# Quorum
 
-[![Netlify Status](https://api.netlify.com/api/v1/badges/620aebdc-0c8d-4ef6-873d-cfcd154f8269/deploy-status)](https://app.netlify.com/sites/muncoordinated/deploys)
+Quorum 是一款用于模拟联合国（Model UN）委员会管理的免费开源 Web 应用。它支持实时协作，涵盖发言名单、核心磋商、动议、决议草案与修正案、表决、文件分享和会场统计等常用流程。
 
-[![Muncoordinated](https://img.shields.io/endpoint?url=https://dashboard.cypress.io/badge/detailed/zxca1q/master&style=flat&logo=cypress)](https://dashboard.cypress.io/projects/zxca1q/runs)
+源码仓库：[github.com/brepublic/Quorum](https://github.com/brepublic/Quorum)
 
-Muncoordinated is a Model UN committee management service, (re)written with TypeScript, React, Semantic UI and Firebase, and available at [muncoordinated.io](https://muncoordinated.io).
+![Quorum 界面截图](public/promo.png)
 
-![demo screenshot](public/promo.png)
+## 技术栈
 
+- React 18、TypeScript、Vite 与 Semantic UI React
+- Firebase Authentication、Realtime Database 与 Cloud Storage
+- Vitest 单元测试、Cypress 端到端测试
+- 英语与简体中文界面
 
-## Background
+## 本地开发
 
-This version of Muncoordinated began development at the end of 2017, ahead of SydMUN 2017. It began as a reimplementation of a previous version of Muncoordinated, built in Elm. 
+需要 Node.js 22、pnpm，以及运行 Firebase Emulator Suite 所需的 Java 21 或更高版本。
 
-
-## Development
-
+在 WSL 中，先从仓库根目录加载项目工具链环境：
 
 ```sh
-pnpm install && pnpm start
+source scripts/wsl-env.sh
 ```
 
-Runs the app in the development mode.<br>
-Open [http://localhost:5173](http://localhost:5173) to view it in the browser.
+安装依赖并启动开发服务器：
 
-The page will reload if you make edits.<br>
-You will also see any lint errors in the console.
+```sh
+pnpm install --frozen-lockfile
+pnpm start
+```
 
-To run the app against the Firebase local emulator suite, start the emulators in
-one terminal and Vite with emulator wiring in another:
+应用默认通过 [http://localhost:5173](http://localhost:5173) 访问。默认配置会连接现有 Firebase 项目；本地开发和测试应优先使用模拟器，避免改动生产数据。
+
+## 使用 Firebase 模拟器
+
+分别在两个终端运行：
 
 ```sh
 pnpm emulators
+```
+
+```sh
 VITE_USE_FIREBASE_EMULATORS=true pnpm start
 ```
 
-These commands expect the Firebase CLI (`firebase`) to be available on your
-PATH through `pnpm install` and Java 21 or newer to be installed. On macOS, the
-scripts automatically use a Homebrew OpenJDK 21 install when one is present.
+模拟器端口为 Auth 9099、Realtime Database 9000、Storage 9199，管理界面位于 4000。
 
-## Tests
-
+## 测试与构建
 
 ```sh
-pnpm test
+pnpm exec vitest run  # 一次性运行单元测试
+pnpm test:e2e         # 使用 Firebase 模拟器运行 Cypress 集成测试
+pnpm build            # TypeScript 检查并生成生产构建
 ```
 
-Launches the test runner in the interactive watch mode.<br>
-See the section about [running tests](https://vitest.dev/guide/workspace.html#running-tests) for more information.
+`pnpm test` 会以监听模式运行 Vitest，不会自动退出。生产构建输出到 `build/`。
 
-## Integration tests
+## 参与贡献
 
-```sh
-pnpm test:e2e
-```
+请在 [Quorum Issues](https://github.com/brepublic/Quorum/issues) 报告问题或提出改进建议，并向本仓库提交 Pull Request。社区讨论请前往 [Quorum Discussions](https://github.com/brepublic/Quorum/discussions)。
 
-Launches the Firebase Auth, Realtime Database, and Storage emulators, starts the
-Vite dev server against them, seeds the Cypress test user and sandbox committee,
-and runs the integration test runner.<br>
-See the section about [The Test Runner](https://docs.cypress.io/guides/core-concepts/test-runner.html)
+## 鸣谢
 
-## Building
+Quorum 基于 [Muncoordinated](https://github.com/MaxwellBo/Muncoordinated-2) 开发。感谢原作者 [Max Bo](https://github.com/MaxwellBo)、原项目的所有贡献者，以及曾协助该项目的 [UQ United Nations Student Association](https://www.facebook.com/UQUNSA/)。
 
-```sh
-pnpm build
-```
+## 许可证
 
-Builds the app for production to the `build` folder.<br>
-It will bundle React in production mode and optimize the build for the best performance.
-
-The build is minified and the filenames include the hashes.<br>
-
-## Maintainers
-
-[@MaxwellBo](https://github.com/MaxwellBo).
-
-## Self-hosting
-
-It is strongly discouraged to maintain and deploy your own customized fork of Muncoordinated. Instead, consider giving back to the Model UN community by ensuring your custom features are merged into the version hosted at [muncoordinated.io]. 
-
-## Contributing
-
-Take a look at the [open issues](https://github.com/MaxwellBo/Muncoordinated-2/issues) and submit some PRs that help address them. 
-
-You might also want access to some of the SaaS services that we've used to build Muncoordinated:
-
-- [Public Netlify deployment status](https://app.netlify.com/sites/muncoordinated/deploys)
-- [Public Cypress integration test run recordings](https://dashboard.cypress.io/projects/zxca1q/runs)
-- [Private Sentry error logging](https://sentry.io/organizations/muncoordinated/issues/?project=5450534) (access available upon request)
-- [Private Google Analytics](https://analytics.google.com/analytics/web/?authuser=0&hl=en#/report-home/a122177622w180239935p178399522) (access available upon request)
-
-## Learn More
-
-You can learn more in the [Vite documentation](https://vitejs.dev/guide/).
-
-To learn React, check out the [React documentation](https://reactjs.org/).
-
-
-### Contributors
-
-This project exists thanks to all the people who contribute. Special thanks to:
-
-- [UQ United Nations Student Association](https://www.facebook.com/UQUNSA/)
-
-
-## License
-
-[GNU GPLv3](LICENSE) © Maxwell Bo
+本项目采用 [GNU GPLv3](LICENSE) 许可证。请同时保留原项目的版权与署名信息。

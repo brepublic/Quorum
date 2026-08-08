@@ -79,7 +79,7 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
 }
 
 .template-preview-item {
-  align-items: baseline;
+  align-items: center;
   display: grid;
   gap: 0.5rem;
   grid-template-columns: auto minmax(0, 1fr) auto;
@@ -129,6 +129,137 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   color: #1678c2;
 }
 
+.country-editor-heading {
+  align-items: center;
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+  margin-top: 1rem;
+}
+
+.country-template-editor-header {
+  align-items: center;
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.country-template-editor-header .ui.header {
+  margin: 0;
+}
+
+.ui.fluid.container.country-manager-page {
+  box-sizing: border-box;
+  margin: 0 auto !important;
+  max-width: 1920px;
+  padding: 1em clamp(1rem, 3vw, 4rem) 2em;
+  width: 100% !important;
+}
+
+@media only screen and (min-width: 992px) {
+  .ui.grid.country-manager-layout {
+    display: grid;
+    gap: 1.5rem;
+    grid-template-columns: minmax(15rem, 18rem) minmax(0, 1fr);
+    margin: 0;
+  }
+
+  .ui.grid.country-manager-layout > .column {
+    padding: 0;
+    width: auto !important;
+  }
+
+  .country-manager-sidebar > .ui.segment {
+    position: sticky;
+    top: 1rem;
+  }
+}
+
+.country-editor-heading .ui.header {
+  margin: 0;
+}
+
+.country-table-scroll {
+  max-height: 65vh;
+  overflow: auto;
+}
+
+.ui.table.country-editor-table {
+  table-layout: auto;
+  width: 100%;
+}
+
+.ui.table.country-editor-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.ui.table.country-editor-table .field {
+  margin: 0;
+  min-width: 9rem;
+}
+
+.country-flag-editor {
+  align-items: center;
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: auto minmax(6rem, 1fr);
+  min-width: 12rem;
+}
+
+.country-flag-editor .country-flag-display {
+  border: 1px solid rgba(34, 36, 38, 0.18);
+  border-radius: 0.2rem;
+  font-size: 6rem;
+  grid-row: span 2;
+}
+
+.country-flag-editor input[type='file'] {
+  max-width: 13rem;
+}
+
+.country-flag-display {
+  align-items: center;
+  display: inline-flex;
+  flex: 0 0 1em;
+  font-size: 3em;
+  justify-content: center;
+  line-height: 1;
+  margin-right: 0.333em;
+  text-align: center;
+  vertical-align: middle;
+  width: 1em;
+}
+
+.country-flag-display-image {
+  display: block;
+  height: auto;
+  max-width: none;
+  object-fit: contain;
+  width: 100%;
+}
+
+.country-flag-display-emoji {
+  overflow: visible;
+}
+
+.ui.dropdown .country-flag-display {
+  font-size: 2em;
+  vertical-align: middle;
+}
+
+.ui.dropdown > .text:has(> .country-flag-display),
+.ui.dropdown .menu > .item:has(> .country-flag-display) {
+  align-items: center;
+  display: flex;
+}
+
+.ui.button.add-country-button {
+  margin: 0.75rem 0 1rem;
+}
+
 @media only screen and (max-width: 767px) {
   .ui.form .fields.template-localized-name-row {
     grid-template-columns: minmax(0, 1fr) auto;
@@ -136,6 +267,15 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
 
   .ui.form .fields.template-localized-name-row > .field:first-child {
     grid-column: 1 / -1;
+  }
+
+  .ui.fluid.container.country-manager-page {
+    padding-left: 0.75rem;
+    padding-right: 0.75rem;
+  }
+
+  .ui.table.country-editor-table {
+    min-width: 48rem;
   }
 }
 

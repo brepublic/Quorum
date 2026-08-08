@@ -2,7 +2,6 @@ import {
   Accordion,
   AccordionTitleProps,
   ButtonProps,
-  Flag,
   Form,
   Icon,
   Popup
@@ -10,7 +9,7 @@ import {
 import * as React from 'react';
 import {useEffect, useMemo, useState} from 'react';
 import firebase from 'firebase/compat/app';
-import {displayMemberName, nameToFlagCode, Rank} from '../modules/member';
+import {displayMemberName, MemberFlag, Rank} from '../modules/member';
 import {
   CommitteeID,
   pushTemplateMembers,
@@ -107,7 +106,7 @@ export function TemplatePreview(props: { members?: readonly TemplateMember[] }) 
     <div className="template-preview">
       {props.members.map((member, index) => (
         <div className="template-preview-item" key={`${member.name}-${index}`}>
-          <Flag name={nameToFlagCode(member.name)} />
+          <MemberFlag member={member} />
           <span>{displayMemberName(member.name)}</span>
           <span className="template-preview-rank">{t(member.rank ?? Rank.Standard)}</span>
         </div>

@@ -7,12 +7,12 @@ import {
   canonicalCountryName,
   displayMemberName,
   localizedMemberOptions,
-  nameToFlagCode,
+  MemberFlag,
   nameToMemberOption,
   MemberOption,
   searchCountryOptions
 } from '../modules/member';
-import { Dropdown, Flag, Table, Button, Checkbox,
+import { Dropdown, Table, Button, Checkbox,
   CheckboxProps, DropdownProps, ButtonProps, Container, Message, Icon, Grid } from 'semantic-ui-react';
 import { checkboxHandler, dropdownHandler } from '../modules/handlers';
 import { makeDropdownOption } from '../utils';
@@ -65,7 +65,7 @@ export default class Admin extends React.Component<Props, State> {
     return (
       <Table.Row key={id}>
         <Table.Cell>
-          <Flag name={nameToFlagCode(member.name)} />
+          <MemberFlag member={member} />
           {displayMemberName(member.name)}
         </Table.Cell>
         <Table.Cell>
@@ -285,7 +285,7 @@ export default class Admin extends React.Component<Props, State> {
     return (
       <Container style={{ padding: '1em 0em 1.5em' }}>
         <Helmet>
-          <title>{`${t('Setup')} - Muncoordinated`}</title>
+          <title>{`${t('Setup')} - Quorum`}</title>
         </Helmet>
         <Grid columns="2" stackable>
           <Grid.Row>

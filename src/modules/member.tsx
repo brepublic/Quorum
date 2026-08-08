@@ -8,6 +8,8 @@ import {objectToList} from "../utils";
 import * as _ from "lodash";
 import type {DropdownItemProps} from 'semantic-ui-react';
 import { getLanguage } from '../i18n';
+import * as React from 'react';
+import {CountryFlag as CountryFlagData} from '../models/country-template';
 
 export enum Rank {
   Veto = 'Veto',
@@ -26,12 +28,14 @@ export interface MemberData {
   present: boolean;
   rank: Rank;
   voting: boolean;
+  /** Snapshot of a custom flag selected from a country template. */
+  flag?: CountryFlagData;
 }
 
 export interface MemberOption {
   key: string;
   value: string;
-  flag: string;
+  flag: DropdownItemProps['flag'];
   text: string;
 }
 
@@ -48,6 +52,10 @@ const COUNTRY_ALIASES_BY_CODE = Object.entries(COUNTRY_NAME_ALIASES)
     aliasesByCode.set(code, aliases);
     return aliasesByCode;
   }, new Map<string, string[]>());
+const VECTOR_FLAG_URLS = import.meta.glob(
+  '../../node_modules/flag-icons/flags/4x3/*.svg',
+  {eager: true, query: '?url', import: 'default'}
+) as Record<string, string>;
 
 export function nameToCountryOption(name: string): MemberOption | undefined {
   const exactMatch = COUNTRY_BY_NAME.get(name);
@@ -99,6 +107,9 @@ export function displayMemberName(name: string): string {
 export function localizedMemberOptions(options: MemberOption[]): MemberOption[] {
   return options.map(option => ({
     ...option,
+    flag: React.isValidElement(option.flag)
+      ? option.flag
+      : <MemberFlag member={option.text} />,
     text: displayMemberName(option.text)
   }));
 }
@@ -113,9 +124,63 @@ export function nameToFlagCode(name: string): FlagNames {
   return 'fm';
 }
 
+export function FlagDisplay(props: {flag?: CountryFlagData}) {
+  if (props.flag?.type === 'image' && props.flag.value) {
+    return (
+      <span className="country-flag-display">
+        <img className="country-flag-display-image" src={props.flag.value} alt="" />
+      </span>
+    );
+  }
+
+  return (
+    <span className="country-flag-display country-flag-display-emoji">
+      {props.flag?.value || '🏳️'}
+    </span>
+  );
+}
+
+export function VectorCountryFlag(props: {code: string}) {
+  const code = props.code === 'an' ? 'un' : props.code;
+  const src = VECTOR_FLAG_URLS[`../../node_modules/flag-icons/flags/4x3/${code}.svg`];
+  if (!src) {
+    return <FlagDisplay />;
+  }
+  return (
+    <span className="country-flag-display country-flag-display-vector">
+      <img className="country-flag-display-image" src={src} alt="" />
+    </span>
+  );
+}
+
+export function MemberFlag(props: {member: string | Pick<MemberData, 'name' | 'flag'>}) {
+  const member = typeof props.member === 'string' ? {name: props.member} : props.member;
+  if (member.flag?.value) {
+    return <FlagDisplay flag={member.flag} />;
+  }
+  return <VectorCountryFlag code={nameToFlagCode(member.name)} />;
+}
+
+export function memberByName(
+  members: Record<MemberID, MemberData> | undefined,
+  name: string
+): Pick<MemberData, 'name' | 'flag'> {
+  const canonicalName = canonicalCountryName(name);
+  return Object.values(members || {}).find(
+    member => canonicalCountryName(member.name) === canonicalName
+  ) ?? {name};
+}
+
+function memberToOption(member: MemberData): MemberOption {
+  return {
+    ...nameToMemberOption(member.name),
+    flag: <MemberFlag member={member} />
+  };
+}
+
 export function membersToOptions(members: Record<MemberID, MemberData> | undefined): MemberOption[] {
   const options = objectToList(members || {})
-    .map(x => nameToMemberOption(x.name));
+    .map(memberToOption);
 
   return _.sortBy(options, (option: MemberOption) => option.text);
 }
@@ -123,7 +188,7 @@ export function membersToOptions(members: Record<MemberID, MemberData> | undefin
 export function membersToPresentOptions(members: Record<MemberID, MemberData> | undefined): MemberOption[] {
   const options = objectToList(members || {})
     .filter(x => x.present)
-    .map(x => nameToMemberOption(x.name));
+    .map(memberToOption);
 
   return _.sortBy(options, (option: MemberOption) => option.text);
 }

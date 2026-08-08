@@ -283,6 +283,9 @@ export class Login extends React.Component<Props, State> {
           <Button as="a" href="/templates" basic fluid style={{marginTop: '0.75em'}}>
             <Icon name="file alternate outline" />{t('Manage templates')}
           </Button>
+          <Button as="a" href="/countries" basic fluid style={{marginTop: '0.75em'}}>
+            <Icon name="world" />{t('Country manager')}
+          </Button>
         </Card.Content>}
         <Card.Content extra key="extra">
           <Button basic color="red" fluid onClick={logout}>{t('Logout')}</Button>

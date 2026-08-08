@@ -6,7 +6,6 @@ import {
   DropdownProps,
   Feed,
   FeedEvent,
-  Flag,
   Form,
   Grid,
   Icon,
@@ -45,7 +44,7 @@ import {TimerData, Unit} from "../models/time";
 import {useAuthState} from "react-firebase-hooks/auth";
 import _ from "lodash";
 import {useObjectVal} from "react-firebase-hooks/database";
-import {displayMemberName, localizedMemberOptions, MemberData, MemberOption, membersToPresentOptions, nameToFlagCode} from "../modules/member";
+import {displayMemberName, localizedMemberOptions, memberByName, MemberData, MemberFlag, MemberOption, membersToPresentOptions} from "../modules/member";
 import {TimeSetter} from "../components/TimeSetter";
 import firebase from "firebase/compat/app";
 import {DragDropContext, Draggable, DraggableProvided, Droppable, DropResult} from "react-beautiful-dnd";
@@ -67,6 +66,7 @@ interface State {
 
 export function NextSpeaking(props: {
   caucus?: CaucusData;
+  members?: Record<string, MemberData>;
   speakerTimer: TimerData;
   fref: firebase.database.Reference;
   autoNextSpeaker: boolean;
@@ -261,6 +261,7 @@ export function NextSpeaking(props: {
       />
       <SpeakerFeed
         data={caucus ? caucus.queue : undefined}
+        members={props.members}
         queueFref={props.fref.child('queue')}
         speaking={caucus ? caucus.speaking : undefined}
         speakerTimer={props.speakerTimer}
@@ -282,6 +283,7 @@ function StanceIcon(props: { stance: Stance }) {
 
 class SpeakerFeedEntry extends React.PureComponent<{
   data?: SpeakerEvent,
+  members?: Record<string, MemberData>,
   speaking?: SpeakerEvent,
   fref: firebase.database.Reference,
   speakerTimer: TimerData,
@@ -323,7 +325,7 @@ class SpeakerFeedEntry extends React.PureComponent<{
       <Feed.Content>
         <Feed.Summary>
           <Feed.User>
-            {data && <Flag name={nameToFlagCode(data.who)}/>}
+            {data && <MemberFlag member={memberByName(this.props.members, data.who)} />}
             {data ? displayMemberName(data.who) : ''}
           </Feed.User>
           <Feed.Date>{data ? `${data.duration} ${t('seconds')}` : ''}</Feed.Date>
@@ -366,11 +368,12 @@ class SpeakerFeedEntry extends React.PureComponent<{
 
 function SpeakerFeed(props: {
   data?: Record<string, SpeakerEvent>,
+  members?: Record<string, MemberData>,
   queueFref: firebase.database.Reference,
   speaking?: SpeakerEvent,
   speakerTimer: TimerData
 }) {
-  const {data, queueFref, speaking, speakerTimer} = props;
+  const {data, members, queueFref, speaking, speakerTimer} = props;
   // TODO: Bandaid - I don't think the hook types nicely with the compat patch
   const [user] = useAuthState(firebase.auth() as any);
 
@@ -384,6 +387,7 @@ function SpeakerFeed(props: {
             draggableProvided={provided}
             key={key}
             data={events[key]}
+            members={members}
             fref={queueFref.child(key)}
             speaking={speaking}
             speakerTimer={speakerTimer}
@@ -616,7 +620,7 @@ export default class Caucus extends React.Component<Props, State> {
     );
   }
 
-  renderNowSpeaking =  (caucus?: CaucusData) => {
+  renderNowSpeaking =  (caucus?: CaucusData, members?: Record<string, MemberData>) => {
     const { speakerTimer } = this.state;
     
     const caucusFref = this.recoverCaucusFref();
@@ -627,7 +631,7 @@ export default class Caucus extends React.Component<Props, State> {
       <Segment loading={!caucus}>
         <Label attached="top left" size="large">{t('Now speaking')}</Label>
         <Feed size="large">
-          <SpeakerFeedEntry data={entryData} fref={caucusFref.child('speaking')} speakerTimer={speakerTimer}/>
+          <SpeakerFeedEntry data={entryData} members={members} fref={caucusFref.child('speaking')} speakerTimer={speakerTimer}/>
         </Feed>
       </Segment>
     );
@@ -699,6 +703,7 @@ export default class Caucus extends React.Component<Props, State> {
     const renderedCaucusNextSpeaking = (
       <NextSpeaking
         caucus={caucus} 
+        members={members}
         fref={caucusFref} 
         speakerTimer={speakerTimer} 
         autoNextSpeaker={autoNextSpeaker}
@@ -708,7 +713,7 @@ export default class Caucus extends React.Component<Props, State> {
     const body = !timersInSeparateColumns ? (
       <Grid.Row>
         <Grid.Column>
-          {renderNowSpeaking(caucus)}
+          {renderNowSpeaking(caucus, members)}
           {moveQueueUp && renderedCaucusQueuer}
           {renderedCaucusNextSpeaking}
           {!moveQueueUp && renderedCaucusQueuer}
@@ -722,7 +727,7 @@ export default class Caucus extends React.Component<Props, State> {
       <Grid.Row>
         <Grid.Column>
           {renderedSpeakerTimer}
-          {renderNowSpeaking(caucus)}
+          {renderNowSpeaking(caucus, members)}
           {renderedCaucusNextSpeaking}
         </Grid.Column>
         <Grid.Column>
@@ -735,7 +740,7 @@ export default class Caucus extends React.Component<Props, State> {
     return (
       <Container style={{ 'padding-bottom': '2em' }}>
         <Helmet>
-            <title>{`${localizeGeneratedName(caucus?.name ?? '')} - Muncoordinated`}</title>
+            <title>{`${localizeGeneratedName(caucus?.name ?? '')} - Quorum`}</title>
         </Helmet>
         <Grid columns="equal" stackable>
           {header}

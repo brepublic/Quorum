@@ -51,7 +51,7 @@ export default class Notes extends React.Component<Props, State> {
     return committee ? (
       <Container text style={{ padding: '1em 0em' }}>
         <Helmet>
-          <title>{`${t('Notes')} - Muncoordinated`}</title>
+          <title>{`${t('Notes')} - Quorum`}</title>
         </Helmet>
         <Form>
           <TextArea

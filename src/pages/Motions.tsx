@@ -1,7 +1,7 @@
 import * as React from 'react';
 import firebase from 'firebase/compat/app';
 import {RouteComponentProps} from 'react-router';
-import {Button, Card, Checkbox, Container, Divider, Flag, Form, Icon, Label, Message, Popup} from 'semantic-ui-react';
+import {Button, Card, Checkbox, Container, Divider, Form, Icon, Label, Message, Popup} from 'semantic-ui-react';
 import {
   checkboxHandler,
   stateDropdownHandler,
@@ -12,7 +12,7 @@ import {
 } from '../modules/handlers';
 import {implies,} from '../utils';
 import {TimeSetter} from '../components/TimeSetter';
-import {displayMemberName, localizedMemberOptions, nameToMemberOption, nameToFlagCode} from '../modules/member';
+import {displayMemberName, localizedMemberOptions, memberByName, MemberFlag, nameToMemberOption} from '../modules/member';
 import {
   CaucusData,
   CaucusStatus,
@@ -394,7 +394,7 @@ export class MotionsComponent extends React.Component<Props & Hooks, State> {
         <Label horizontal>
           {t('Proposer')}
         </Label>
-        <Flag name={nameToFlagCode(proposer || '')} /> {proposer ? displayMemberName(proposer) : ''}
+        <MemberFlag member={memberByName(committee?.members, proposer || '')} /> {proposer ? displayMemberName(proposer) : ''}
       </div>
     );
 
@@ -403,7 +403,7 @@ export class MotionsComponent extends React.Component<Props & Hooks, State> {
         <Label horizontal>
           {t('Seconder')}
         </Label>
-        <Flag name={nameToFlagCode(seconder || '')} /> {seconder ? displayMemberName(seconder) : ''}
+        <MemberFlag member={memberByName(committee?.members, seconder || '')} /> {seconder ? displayMemberName(seconder) : ''}
       </div>
     );
 
@@ -732,7 +732,7 @@ export class MotionsComponent extends React.Component<Props & Hooks, State> {
     return (
       <Container text style={{ padding: '1em 0em' }}>
         <Helmet>
-          <title>{`${t('Motions')} - Muncoordinated`}</title>
+          <title>{`${t('Motions')} - Quorum`}</title>
         </Helmet>
         {renderAdder(committee)}
         <Divider hidden />
