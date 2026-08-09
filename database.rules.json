@@ -2,6 +2,7 @@
   "rules": {
     "templates": {
       "$uid": {
+        ".indexOn": ["countryTemplateKey"],
         ".read": "auth != null && auth.uid === $uid",
         ".write": "auth != null && auth.uid === $uid"
       }

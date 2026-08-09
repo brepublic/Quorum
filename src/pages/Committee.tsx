@@ -341,8 +341,12 @@ export default class Committee extends React.Component<Props, State> {
   }
 
   firebaseCallback = (committee: firebase.database.DataSnapshot | null) => {
-    if (committee) {
-      this.setState({ committee: committee.val() });
+    const committeeData = committee?.val();
+
+    if (committeeData) {
+      this.setState({committee: committeeData});
+    } else {
+      this.props.history.replace('/');
     }
   }
 

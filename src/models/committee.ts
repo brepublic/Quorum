@@ -19,6 +19,7 @@ import {DEFAULT_TIMER, TimerData} from "./time";
 import {ResolutionData, ResolutionID} from "./resolution";
 import {DEFAULT_SETTINGS, SettingsData} from "./settings";
 import {StrawpollData, StrawpollID} from "./strawpoll";
+import type {CountryTemplateKey} from './country-template';
 
 export function recoverMemberOptions(committee?: CommitteeData): MemberOption[] {
   if (committee) {
@@ -113,6 +114,12 @@ export interface CommitteeData {
   conference: string;
   /** Display name of the built-in or user-created template used at creation. */
   template?: string;
+  /** Stable key of the committee template used at creation, when one exists. */
+  templateKey?: string;
+  /** Country template inherited from the committee template or chosen for manual setup. */
+  countryTemplateKey?: CountryTemplateKey;
+  /** True when this committee was created for manual setup rather than from a saved template. */
+  temporaryTemplate?: boolean;
   creatorUid: firebase.UserInfo['uid'];
   members?: Record<MemberID, MemberData>;
   caucuses?: Record<CaucusID, CaucusData>;
@@ -162,6 +169,35 @@ export const putCommittee =
 
     return ref;
   };
+
+async function deleteStorageTree(ref: firebase.storage.Reference): Promise<void> {
+  const contents = await ref.listAll();
+
+  await Promise.all([
+    ...contents.items.map(item => item.delete()),
+    ...contents.prefixes.map(prefix => deleteStorageTree(prefix))
+  ]);
+}
+
+/**
+ * Permanently deletes a committee's uploaded files and Realtime Database node.
+ * Account-level committee and country templates live under separate roots and
+ * are intentionally outside this operation.
+ */
+export async function deleteCommittee(committeeID: CommitteeID): Promise<void> {
+  const storageRef = firebase.storage()
+    .ref()
+    .child('committees')
+    .child(committeeID);
+
+  // Remove files first so a failed Storage delete leaves the committee record
+  // available for the director to retry instead of orphaning uploaded files.
+  await deleteStorageTree(storageRef);
+  await firebase.database()
+    .ref('committees')
+    .child(committeeID)
+    .remove();
+}
 
 // tslint:disable-next-line
 export const putUnmodTimer = (committeeID: CommitteeID, timerData: TimerData): Promise<any> => {

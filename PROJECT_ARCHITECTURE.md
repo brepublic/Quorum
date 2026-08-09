@@ -80,7 +80,8 @@ Realtime Database 的主根节点是：
 
 ```text
 committees/{committeeID}
-  creatorUid, name, chair, topic, conference, template
+  creatorUid, name, chair, topic, conference
+  template, templateKey, countryTemplateKey, temporaryTemplate
   members/{memberID}
   rollCall
     called/{memberID}: true
@@ -97,6 +98,7 @@ templates/{creatorUid}/{templateID}
   name
   defaultLanguage
   names/{languageCode}
+  countryTemplateKey
   members/{memberID}
     name, rank, present, voting, flag?/{type,value}
 
@@ -111,11 +113,14 @@ countryTemplates/{creatorUid}/{countryTemplateID}
 
 `src/models/committee.ts` 定义 `CommitteeData`、默认委员会和内置模板。`src/models/template.ts` 定义账号级自定义模板及其 Firebase 增删改辅助函数；模板成员复用委员会成员的四种 `Rank`、出席、必须投票字段，并可携带从国家模板取得的自定义国旗快照。`src/models/country-template.ts` 定义内置及账号级国家模板；上传的图片国旗在浏览器端等比缩放到最大 256×160 并转为 WebP data URL，随国家记录保存到 Realtime Database，不使用 Storage。把模板成员加入委员会时会继续保存国旗快照；对已有同名成员重新应用模板也会更新其自定义国旗。其余 `src/models/*.ts` 文件定义对应子资源（成员、动议、磋商、决议、调查、帖子、计时器和设置）及创建/更新辅助函数。页面通过 Firebase 引用的 `on('value')` 接收实时快照；`src/modules/handlers.ts` 将输入控件事件映射为字段级 Database 写入。计时相关更新使用 Realtime Database transaction，以减少并发更新冲突。
 
+每个委员会模板通过 `countryTemplateKey` 固定引用一个国家模板；多个委员会模板可以引用同一个国家模板，旧委员会模板缺少该字段时按 `builtin:default` 读取。模板编辑器允许更改这项引用，国家管理器删除自定义国家模板前会按该字段查询当前账号的委员会模板，若仍有引用则拒绝删除并列出占用模板；`database.rules.json` 为这项检查配置了索引。创建委员会时会把委员会模板及其国家模板引用一并快照到委员会；未选择现有委员会模板时，创建页必须要求选择国家模板，并以 `temporaryTemplate: true` 标记为手工设置的临时委员会模板。设置页随后按委员会保存的国家模板加载可选国家及国旗；从现有委员会模板追加成员时会同时把委员会切换到该模板及其国家模板引用。
+
 浏览器本地还会通过 `src/hooks.ts` 的 `useLocalStorage` 保存匿名投票者 ID；意向性投票使用它识别同一浏览器。动议投票则使用所选代表团的 `memberID`，以便将票与持久化的出席状态关联。
 
 ## 5. 身份、权限与文件
 
 - `src/components/auth.tsx` 使用 Firebase 邮箱密码认证，并查询 `creatorUid` 等于当前用户 UID 的委员会以显示“我的委员会”。
+- 登录后的“我的委员会”列表与委员会右上角账户弹窗共用同一账户组件；主任确认删除委员会后，客户端会先递归删除 `Storage/committees/{committeeID}` 下的附件，再删除 Realtime Database 的整个 `committees/{committeeID}` 节点。账号级 `templates` 与 `countryTemplates` 位于独立根节点，不参与委员会删除。
 - `database.rules.json` 允许读取委员会；常规写入要求登录用户是该委员会创建者。对公开队列、公开修正案、公开调查选项/投票和公开动议存在细粒度例外。公开发言排队、动议提出与动议投票会校验对应 `memberID` 的 `present` 状态，并校验公开提交的代表团名称与成员记录一致。
 - `templates/{creatorUid}` 仅允许 UID 对应的登录用户读写，自定义模板不会向其他账号或未登录访问者公开。
 - `countryTemplates/{creatorUid}` 同样仅允许 UID 对应的登录用户读写；内置默认国家模板随前端代码发布，不写入 Firebase。

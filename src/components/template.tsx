@@ -19,16 +19,19 @@ import {
 } from '../models/committee';
 import {
   templateDisplayName,
+  templateCountryTemplateKey,
   templateMembers,
   UserTemplateData,
   userTemplatesRef
 } from '../models/template';
 import {t} from '../i18n';
+import {DEFAULT_COUNTRY_TEMPLATE_KEY, type CountryTemplateKey} from '../models/country-template';
 
 export interface TemplateChoice {
   key: string;
   name: string;
   members: readonly TemplateMember[];
+  countryTemplateKey: CountryTemplateKey;
   custom: boolean;
 }
 
@@ -63,12 +66,14 @@ export function TemplatePicker(props: TemplatePickerProps) {
       key: `builtin:${name}`,
       name: t(name),
       members: TEMPLATE_TO_MEMBERS[name],
+      countryTemplateKey: DEFAULT_COUNTRY_TEMPLATE_KEY,
       custom: false
     })),
     ...Object.entries(customTemplates).map(([id, template]) => ({
       key: `custom:${id}`,
       name: templateDisplayName(template),
       members: templateMembers(template),
+      countryTemplateKey: templateCountryTemplateKey(template),
       custom: true
     }))
   ], [customTemplates]);
@@ -127,6 +132,12 @@ export function TemplateAdder(props: { committeeID: CommitteeID }) {
     event.preventDefault();
     if (template) {
       pushTemplateMembers(props.committeeID, template.members);
+      firebase.database().ref('committees').child(props.committeeID).update({
+        template: template.name,
+        templateKey: template.key,
+        countryTemplateKey: template.countryTemplateKey,
+        temporaryTemplate: false
+      });
     }
   };
 

@@ -1,6 +1,10 @@
 import firebase from 'firebase/compat/app';
 import {getLanguage, Language, SUPPORTED_LANGUAGES} from '../i18n';
 import {MemberData, MemberID} from '../modules/member';
+import {
+  CountryTemplateKey,
+  DEFAULT_COUNTRY_TEMPLATE_KEY
+} from './country-template';
 
 export type UserTemplateID = string;
 
@@ -9,8 +13,14 @@ export interface UserTemplateData {
   name: string;
   defaultLanguage?: Language;
   names?: Partial<Record<Language, string>>;
+  /** The one country template used to populate and edit this committee template. */
+  countryTemplateKey?: CountryTemplateKey;
   members: Record<MemberID, MemberData>;
 }
+
+export const templateCountryTemplateKey = (
+  template: Pick<UserTemplateData, 'countryTemplateKey'>
+): CountryTemplateKey => template.countryTemplateKey || DEFAULT_COUNTRY_TEMPLATE_KEY;
 
 export const templateDefaultLanguage = (
   template: UserTemplateData,

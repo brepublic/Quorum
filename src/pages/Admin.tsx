@@ -6,10 +6,10 @@ import {
   Rank,
   canonicalCountryName,
   displayMemberName,
-  localizedMemberOptions,
   MemberFlag,
   nameToMemberOption,
   MemberOption,
+  nameToCountryOption,
   searchCountryOptions
 } from '../modules/member';
 import { Dropdown, Table, Button, Checkbox,
@@ -20,11 +20,17 @@ import _ from 'lodash';
 import { URLParameters } from '../types';
 import { RouteComponentProps } from 'react-router';
 import { CommitteeSetupStatsTable } from '../modules/committee-stats';
-import {CommitteeData, CommitteeID, pushMember, Template} from '../models/committee';
+import {CommitteeData, CommitteeID, pushMember} from '../models/committee';
 import { TemplateAdder } from '../components/template';
 import {COUNTRY_OPTIONS} from "../constants";
 import { Helmet } from 'react-helmet';
 import { t } from '../i18n';
+import {
+  CountryFlag,
+  CountryTemplateChoice,
+  CountryTemplatePicker
+} from '../components/country-template';
+import {CountryData, countryDisplayName, isoCodeToEmoji} from '../models/country-template';
 
 interface Props extends RouteComponentProps<URLParameters> {
   committee: CommitteeData;
@@ -32,12 +38,22 @@ interface Props extends RouteComponentProps<URLParameters> {
 }
 
 interface State {
-  template?: Template;
   member: MemberOption;
   options: MemberOption[];
+  countryTemplate?: CountryTemplateChoice;
   rank: Rank;
   voting: MemberData['voting'];
 }
+
+type CountryMemberOption = MemberOption & {memberName: string; country?: CountryData};
+
+const customFlagSnapshot = (country?: CountryData): MemberData['flag'] => {
+  if (!country?.flag?.value) return undefined;
+  const builtInCountry = nameToCountryOption(country.name);
+  if (country.flag.type === 'emoji' && builtInCountry
+    && country.flag.value === isoCodeToEmoji(builtInCountry.value)) return undefined;
+  return country.flag;
+};
 
 const RANK_OPTIONS = [
   Rank.Standard,
@@ -108,11 +124,14 @@ export default class Admin extends React.Component<Props, State> {
     event.preventDefault();
 
     const committeeID: CommitteeID = this.props.match.params.committeeID;
+    const country = this.countryOptions().find(option => option.value === this.state.member.value)?.country;
+    const flag = customFlagSnapshot(country);
     const member: MemberData = {
       name: this.state.member.text,
       rank: this.state.rank,
       present: false,
-      voting: this.state.voting
+      voting: this.state.voting,
+      ...(flag ? {flag} : {})
     };
 
     pushMember(committeeID, member);
@@ -120,7 +139,7 @@ export default class Admin extends React.Component<Props, State> {
 
   setMember = (event: React.SyntheticEvent<HTMLElement>, data: DropdownProps) => {
     const { options: newOptions } = this.state;
-    const availableOptions: MemberOption[] = [...newOptions, ...COUNTRY_OPTIONS];
+    const availableOptions: MemberOption[] = [...newOptions, ...this.countryOptions()];
     const newMember = availableOptions.filter(c => c.value === data.value)[0];
 
     if (newMember) {
@@ -140,12 +159,41 @@ export default class Admin extends React.Component<Props, State> {
     // FSM looks sorta like the UN flag
     const newMember = nameToMemberOption((data.value as number | string).toString());
 
-    if (COUNTRY_OPTIONS.some(option => option.value === newMember.value)) {
-      this.setState({ member: newMember });
-    } else {
-      const newOptions = [ newMember, ...this.state.options ];
-      this.setState({ member: newMember, options: newOptions });
+    const newOptions = [newMember, ...this.state.options.filter(option => option.value !== newMember.value)];
+    this.setState({ member: newMember, options: newOptions });
+  }
+
+  countryOptions = (): CountryMemberOption[] => Object.entries(
+    this.state.countryTemplate?.template.countries || {}
+  ).map(([id, country]) => ({
+    key: `${this.state.countryTemplate?.key}:${id}`,
+    value: `${this.state.countryTemplate?.key}:${id}`,
+    flag: <CountryFlag country={country} />,
+    text: country.name,
+    memberName: country.name,
+    country
+  }));
+
+  resolveCountryTemplate = (choice?: CountryTemplateChoice) => {
+    this.setState({countryTemplate: choice});
+    const entries = choice ? Object.entries(choice.template.countries || {}) : [];
+    const selectedEntry = entries.find(([, country]) =>
+      canonicalCountryName(country.name) === canonicalCountryName(this.state.member.text)
+    ) || entries[0];
+    const selectedCountry = selectedEntry?.[1];
+    if (choice && selectedCountry) {
+      this.setState({member: {
+        key: `${choice.key}:${selectedEntry![0]}`,
+        value: `${choice.key}:${selectedEntry![0]}`,
+        flag: <CountryFlag country={selectedCountry} />,
+        text: selectedCountry.name
+      }});
     }
+  }
+
+  changeCountryTemplate = (choice: CountryTemplateChoice) => {
+    this.resolveCountryTemplate(choice);
+    this.props.fref.update({countryTemplateKey: choice.key, temporaryTemplate: true});
   }
 
   gotoRollCall = () => {
@@ -159,6 +207,9 @@ export default class Admin extends React.Component<Props, State> {
   renderAdder() {
     const { handleAdd, setMember, setRank, setVoting } = this;
     const { voting: newMemberVoting, options: newOptions, member } = this.state;
+    const countryOptions = this.countryOptions();
+    const dropdownOptions = [...newOptions.map(option => ({...option, text: displayMemberName(option.text)})),
+      ...countryOptions.map(option => ({...option, text: countryDisplayName(option.country!)}))];
 
     return (
       <Table.Row>
@@ -172,7 +223,7 @@ export default class Admin extends React.Component<Props, State> {
             fluid
             allowAdditions
             error={!this.canPushMember(member)}
-            options={localizedMemberOptions([...newOptions, ...COUNTRY_OPTIONS])}
+            options={dropdownOptions}
             onAddItem={handleAdd}
             onChange={setMember}
             value={member.key}
@@ -266,6 +317,14 @@ export default class Admin extends React.Component<Props, State> {
         <Grid columns="2" stackable>
           <Grid.Row>
             <Grid.Column width={9}>
+              <CountryTemplatePicker
+                required
+                disabled={committee.temporaryTemplate === false}
+                value={committee.countryTemplateKey}
+                placeholder={t('Select the country template for manual setup')}
+                onResolve={this.resolveCountryTemplate}
+                onChange={this.changeCountryTemplate}
+              />
               <TemplateAdder committeeID={this.props.match.params.committeeID} />
               {this.renderCommitteeMembers({ data: committee, fref })}
             </Grid.Column>

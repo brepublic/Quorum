@@ -43,6 +43,7 @@ import {
   deleteUserTemplate,
   putUserTemplate,
   templateDefaultLanguage,
+  templateCountryTemplateKey,
   templateDisplayName,
   UserTemplateData,
   userTemplatesRef
@@ -53,7 +54,13 @@ import {
   CountryTemplatePicker,
   DEFAULT_COUNTRY_TEMPLATE_CHOICE
 } from '../components/country-template';
-import {CountryData, countryDisplayName, isoCodeToEmoji} from '../models/country-template';
+import {
+  CountryData,
+  countryDisplayName,
+  CountryTemplateKey,
+  DEFAULT_COUNTRY_TEMPLATE_KEY,
+  isoCodeToEmoji
+} from '../models/country-template';
 import type {DropdownItemProps} from 'semantic-ui-react';
 
 type DraftMember = MemberData & {id: string};
@@ -85,7 +92,8 @@ export default function Templates() {
   const [members, setMembers] = useState<DraftMember[]>([]);
   const [memberName, setMemberName] = useState(COUNTRY_OPTIONS[0].text);
   const [customCountries, setCustomCountries] = useState<CountryMemberOption[]>([]);
-  const [countryTemplate, setCountryTemplate] = useState<CountryTemplateChoice>(DEFAULT_COUNTRY_TEMPLATE_CHOICE);
+  const [countryTemplate, setCountryTemplate] = useState<CountryTemplateChoice>();
+  const [countryTemplateKey, setCountryTemplateKey] = useState<CountryTemplateKey>(DEFAULT_COUNTRY_TEMPLATE_KEY);
   const [rank, setRank] = useState(Rank.Standard);
   const [present, setPresent] = useState(true);
   const [voting, setVoting] = useState(false);
@@ -109,9 +117,9 @@ export default function Templates() {
 
   const countryOptions = useMemo<CountryMemberOption[]>(() => [
     ...customCountries,
-    ...Object.entries(countryTemplate.template.countries || {}).map(([id, country]) => ({
-      key: `${countryTemplate.key}:${id}`,
-      value: `${countryTemplate.key}:${id}`,
+    ...Object.entries(countryTemplate?.template.countries || {}).map(([id, country]) => ({
+      key: `${countryTemplate?.key}:${id}`,
+      value: `${countryTemplate?.key}:${id}`,
       text: countryDisplayName(country),
       flag: <CountryFlag country={country} />,
       memberName: country.name,
@@ -126,6 +134,8 @@ export default function Templates() {
     setNameIsFallback(false);
     setLocalizedNames([]);
     setMembers([]);
+    setCountryTemplateKey(DEFAULT_COUNTRY_TEMPLATE_KEY);
+    setCountryTemplate(DEFAULT_COUNTRY_TEMPLATE_CHOICE);
     setSaved(false);
     setError(undefined);
   };
@@ -154,6 +164,8 @@ export default function Templates() {
       id: memberID,
       ...member
     })));
+    setCountryTemplate(undefined);
+    setCountryTemplateKey(templateCountryTemplateKey(template));
     setSaved(false);
     setError(undefined);
   };
@@ -218,7 +230,8 @@ export default function Templates() {
   };
 
   const save = async () => {
-    if (!user || !name.trim() || members.length === 0) {
+    if (!user || !name.trim() || members.length === 0
+      || countryTemplate?.key !== countryTemplateKey) {
       return;
     }
 
@@ -260,6 +273,7 @@ export default function Templates() {
         name: defaultName,
         defaultLanguage: savedDefaultLanguage,
         names,
+        countryTemplateKey,
         members: templateMembers
       });
       setSelectedID(ref.key ?? selectedID);
@@ -410,9 +424,12 @@ export default function Templates() {
                   )}
                 </div>
                 <CountryTemplatePicker
-                  value={countryTemplate.key}
+                  required
+                  value={countryTemplateKey}
+                  onResolve={setCountryTemplate}
                   onChange={choice => {
                     setCountryTemplate(choice);
+                    setCountryTemplateKey(choice.key);
                     const firstCountry = Object.values(choice.template.countries || {})[0];
                     if (firstCountry) setMemberName(firstCountry.name);
                   }}
@@ -499,7 +516,7 @@ export default function Templates() {
                 {members.length === 0 && <Message warning content={t('Add at least one committee member')} />}
                 <Message success content={t('Template saved')} />
                 {error && <Message error content={error} onDismiss={() => setError(undefined)} />}
-                <Button type="submit" primary disabled={!name.trim() || members.length === 0}>
+                <Button type="submit" primary disabled={!name.trim() || members.length === 0 || countryTemplate?.key !== countryTemplateKey}>
                   <Icon name="save" />{t('Save template')}
                 </Button>
                 {selectedID && (

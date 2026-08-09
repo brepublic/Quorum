@@ -1,10 +1,10 @@
 import * as React from 'react';
 import firebase from 'firebase/compat/app';
-import { Card, Button, Form, Message, Modal, Icon, List, Segment, Header } from 'semantic-ui-react';
+import { Card, Button, Confirm, Form, Message, Modal, Icon, List, Segment, Header } from 'semantic-ui-react';
 import _ from 'lodash';
 import Loading from './Loading';
 import { logCreateAccount, logLogin } from '../modules/analytics';
-import {CommitteeData, CommitteeID} from "../models/committee";
+import {CommitteeData, CommitteeID, deleteCommittee} from "../models/committee";
 import { t } from '../i18n';
 
 enum Mode {
@@ -25,6 +25,9 @@ interface State {
   resetting: boolean;
   unsubscribe?: () => void;
   committees?: Record<CommitteeID, CommitteeData>;
+  committeePendingDeletion?: CommitteeID;
+  deletingCommittee?: CommitteeID;
+  deleteError?: Error;
 }
 
 interface Props {
@@ -46,7 +49,15 @@ export class Login extends React.Component<Props, State> {
   }
 
   authStateChangedCallback = (user: firebase.User | null) => {
-    this.setState({ loggingIn: false, creating: false, user: user });
+    this.setState({
+      loggingIn: false,
+      creating: false,
+      user,
+      committees: user ? undefined : {},
+      committeePendingDeletion: undefined,
+      deletingCommittee: undefined,
+      deleteError: undefined
+    });
 
     if (user) {
       firebase.database()
@@ -172,9 +183,59 @@ export class Login extends React.Component<Props, State> {
     this.setState({ password: e.currentTarget.value })
   }
 
+  requestCommitteeDeletion = (committeeID: CommitteeID) => {
+    this.setState({committeePendingDeletion: committeeID, deleteError: undefined});
+  }
+
+  cancelCommitteeDeletion = () => {
+    this.setState({committeePendingDeletion: undefined});
+  }
+
+  confirmCommitteeDeletion = async () => {
+    const committeeID = this.state.committeePendingDeletion;
+    if (!committeeID) {
+      return;
+    }
+
+    this.setState({
+      committeePendingDeletion: undefined,
+      deletingCommittee: committeeID,
+      deleteError: undefined
+    });
+
+    try {
+      await deleteCommittee(committeeID);
+      this.setState(previous => {
+        const committees = {...(previous.committees || {})};
+        delete committees[committeeID];
+        return {committees, deletingCommittee: undefined};
+      });
+    } catch (error) {
+      this.setState({
+        deletingCommittee: undefined,
+        deleteError: error instanceof Error ? error : new Error(String(error))
+      });
+    }
+  }
+
   renderCommittee = (committeeID: CommitteeID, committee: CommitteeData) => {
+    const deleting = this.state.deletingCommittee === committeeID;
+
     return (
       <List.Item key={committeeID}>
+        <List.Content floated="right">
+          <Button
+            basic
+            negative
+            compact
+            icon="trash"
+            loading={deleting}
+            disabled={!!this.state.deletingCommittee}
+            aria-label={t('Delete committee {name}', {name: committee.name})}
+            title={t('Delete committee')}
+            onClick={() => this.requestCommitteeDeletion(committeeID)}
+          />
+        </List.Content>
         <List.Content>
           <List.Header as="a" href={`/committees/${committeeID}`}>
             {committee.name}
@@ -263,34 +324,51 @@ export class Login extends React.Component<Props, State> {
     const { allowNewCommittee } = this.props;
 
     return (
-      <Card centered fluid>
-        <Card.Content key="main">
-          <Card.Header>
-            {u.email}
-          </Card.Header>
-          <Card.Meta>
-            {t('Logged in')}
-          </Card.Meta>
-        </Card.Content>
-        <Card.Content key="committees" style={{ 
-          'maxHeight': '50vh',
-          'overflow' : 'auto'
-        }}>
-          {committees ? renderCommittees() : <Loading />}
-        </Card.Content>
-        {allowNewCommittee && <Card.Content key="create">
-          {renderNewCommitteeButton()}
-          <Button as="a" href="/templates" basic fluid style={{marginTop: '0.75em'}}>
-            <Icon name="file alternate outline" />{t('Manage templates')}
-          </Button>
-          <Button as="a" href="/countries" basic fluid style={{marginTop: '0.75em'}}>
-            <Icon name="world" />{t('Country manager')}
-          </Button>
-        </Card.Content>}
-        <Card.Content extra key="extra">
-          <Button basic color="red" fluid onClick={logout}>{t('Logout')}</Button>
-        </Card.Content>
-      </Card>
+      <>
+        <Card centered fluid>
+          <Card.Content key="main">
+            <Card.Header>
+              {u.email}
+            </Card.Header>
+            <Card.Meta>
+              {t('Logged in')}
+            </Card.Meta>
+          </Card.Content>
+          <Card.Content key="committees" style={{
+            'maxHeight': '50vh',
+            'overflow': 'auto'
+          }}>
+            {committees ? renderCommittees() : <Loading />}
+          </Card.Content>
+          {allowNewCommittee && <Card.Content key="create">
+            {renderNewCommitteeButton()}
+            <Button as="a" href="/templates" basic fluid style={{marginTop: '0.75em'}}>
+              <Icon name="file alternate outline" />{t('Manage templates')}
+            </Button>
+            <Button as="a" href="/countries" basic fluid style={{marginTop: '0.75em'}}>
+              <Icon name="world" />{t('Country manager')}
+            </Button>
+          </Card.Content>}
+          <Card.Content extra key="extra">
+            {this.state.deleteError && <Message
+              error
+              onDismiss={() => this.setState({deleteError: undefined})}
+              header={t('Could not delete committee')}
+              content={this.state.deleteError.message}
+            />}
+            <Button basic color="red" fluid onClick={logout}>{t('Logout')}</Button>
+          </Card.Content>
+        </Card>
+        <Confirm
+          open={!!this.state.committeePendingDeletion}
+          header={t('Delete committee?')}
+          content={t('This permanently deletes the committee and all of its records and uploaded files.')}
+          cancelButton={t('Cancel')}
+          confirmButton={{content: t('Delete committee'), negative: true}}
+          onCancel={this.cancelCommitteeDeletion}
+          onConfirm={this.confirmCommitteeDeletion}
+        />
+      </>
     );
   }
 
