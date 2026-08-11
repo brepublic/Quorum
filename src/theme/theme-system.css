@@ -1,0 +1,64 @@
+#quorum-app {
+  min-height: 100vh;
+}
+
+.quorum-theme-portal {
+  position: relative;
+  z-index: 2147483000;
+}
+
+.ui.button.quorum-theme-launcher {
+  align-items: center;
+  background: #1b1c1d;
+  bottom: max(1rem, env(safe-area-inset-bottom));
+  box-shadow: 0 0.2rem 1rem rgba(0, 0, 0, 0.32);
+  color: #fff;
+  display: flex;
+  height: 3.25rem;
+  justify-content: center;
+  margin: 0;
+  position: fixed;
+  right: max(1rem, env(safe-area-inset-right));
+  width: 3.25rem;
+  z-index: 2147483000;
+}
+
+.ui.button.quorum-theme-launcher:hover,
+.ui.button.quorum-theme-launcher:focus {
+  background: #2185d0;
+  color: #fff;
+}
+
+.quorum-theme-file-input {
+  display: none;
+}
+
+.quorum-theme-summary {
+  background: #f7f8f9;
+  border: 1px solid rgba(34, 36, 38, 0.12);
+  border-radius: 0.28571429rem;
+  display: grid;
+  gap: 0.35rem;
+  margin-top: 1rem;
+  padding: 1rem;
+}
+
+.quorum-theme-summary > span {
+  color: rgba(0, 0, 0, 0.58);
+}
+
+.quorum-theme-summary > p {
+  margin: 0.35rem 0 0;
+}
+
+@media only screen and (max-width: 767px) {
+  .ui.modal.quorum-theme-manager > .actions {
+    display: grid;
+    gap: 0.5rem;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ui.modal.quorum-theme-manager > .actions > .button {
+    margin: 0;
+  }
+}

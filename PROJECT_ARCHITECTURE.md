@@ -44,6 +44,8 @@ flowchart LR
 
 `src/i18n.tsx` 提供无外部运行时依赖的界面国际化层。当前支持英语和简体中文；英语原文同时作为稳定词条键，简体中文词条集中维护。`LanguageProvider` 在语言变更时重新挂载界面，使类组件与函数组件统一获取新文案，并集中覆盖 Semantic UI 的搜索空结果、可新增选项等默认文案；语言切换控件嵌入主页、创建页和委员会工作区的导航菜单。用户选择保存在浏览器 `localStorage` 的 `muncoordinated-language` 项中，首次访问则根据浏览器语言选择默认值。除用户模板、国家模板和国家名称外，业务数据（委员会名称、帖子正文等）不会被翻译或写回；这些可本地化名称均在 Firebase 中保存默认语言和语言到名称的映射，并按当前界面语言解析。内置默认国家模板从静态国家列表生成，包含英语、简体中文名称、Emoji 国旗和大洲；标准 ISO 国家在界面中使用本地打包的 `flag-icons` 独立 SVG 渲染，以保证放大后的清晰度，自定义 Emoji 与上传图片仍按保存值显示。
 
+`src/theme/` 提供纯前端外观主题系统。`ThemeProvider` 包裹整个应用，根据当前路由在 `#quorum-app` 写入稳定的页面/区域属性，并为常见 Semantic UI 节点补充组件类型令牌；当前内置样式是不附加覆盖的默认主题。自定义主题是单个 `.quorum-theme.json` 文件，其中包含版本化 manifest 和 CSS。导入、切换、删除与当前选择均只使用浏览器 `localStorage`，导出由浏览器下载触发，不改变 Firebase 模型、规则、路由或业务组件树。主题 CSS 在运行时通过 `@scope (#quorum-app)` 限定到应用根，主题管理器位于作用域外作为恢复入口；导入器拒绝脚本能力、外部资源 URL 和不兼容 API。完整主题包契约、页面/组件选择器与适配清单见 `THEME_ADAPTER_GUIDE.md`。
+
 简体中文排版由 `src/App.css` 中基于 `html[lang='zh-CN']` 的全局规则控制：统一中文字体回退、菜单/按钮/表头和术语列的防拆分规则，并通过 CSS 容器查询按栏宽调整表格密度；支持 `word-break: auto-phrase` 的浏览器会自动使用词组感知换行。新增页面通常无需为中文逐项添加排版补丁。
 
 ## 3. 路由与页面职责
@@ -147,6 +149,7 @@ system
 | `src/components/` | 可复用 UI、认证、计时器、通知、连接状态 |
 | `src/models/` | 数据类型、默认值和 Firebase 数据操作 |
 | `src/services/account-admin.ts` | 管理员 Callable Functions 的浏览器端类型与调用封装 |
+| `src/theme/` | 本地主题包校验、路由/组件适配钩子、主题切换与导入导出界面 |
 | `functions/` | Firebase Functions 管理端账号接口及独立 TypeScript 构建 |
 | `src/modules/` | 通用事件处理、成员转换、统计和埋点 |
 | `src/i18n.tsx` | 英语/简体中文词条、语言偏好与全局语言切换控件 |
