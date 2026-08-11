@@ -52,6 +52,17 @@ async function createTestUser({ projectId, authHost }) {
     }),
   });
 
+  await request(`http://${authHost}/identitytoolkit.googleapis.com/v1/projects/${projectId}/accounts:update`, {
+    method: 'POST',
+    headers: {
+      Authorization: 'Bearer owner',
+    },
+    body: JSON.stringify({
+      localId: user.localId,
+      customAttributes: JSON.stringify({managed: true, admin: true}),
+    }),
+  });
+
   return user.localId;
 }
 
@@ -123,6 +134,10 @@ async function seedRealtimeDatabase({ projectId, databaseHost, ownerUid }) {
       Authorization: 'Bearer owner',
     },
     body: JSON.stringify({
+      system: {
+        adminUid: ownerUid,
+        bootstrapComplete: true,
+      },
       committees: {
         [SANDBOX_COMMITTEE_ID]: sandboxCommittee(ownerUid),
       },

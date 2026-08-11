@@ -4,14 +4,14 @@
 
 ## 1. 项目定位与技术栈
 
-Quorum 是一个用于 Model UN（模拟联合国）委员会管理的单页 Web 应用。它基于开源项目 [Muncoordinated](https://github.com/MaxwellBo/Muncoordinated-2)，当前源码仓库为 [brepublic/Quorum](https://github.com/brepublic/Quorum)。它不包含自建 API 服务：浏览器中的 React 应用直接使用 Firebase 的身份认证、Realtime Database 和 Cloud Storage。
+Quorum 是一个用于 Model UN（模拟联合国）委员会管理的单页 Web 应用。它基于开源项目 [Muncoordinated](https://github.com/MaxwellBo/Muncoordinated-2)，当前源码仓库为 [brepublic/Quorum](https://github.com/brepublic/Quorum)。委员会业务仍由浏览器直接访问 Firebase；账号管理等需要服务端权限的少量操作由 Firebase Cloud Functions 执行，不包含常驻的自建 API 服务。
 
 | 层级 | 实现 | 责任 |
 | --- | --- | --- |
 | UI | React 18、Semantic UI React、flag-icons SVG、CSS | 页面、表单、响应式导航、计时器、提示、国旗与中英文界面 |
 | 路由 | React Router v5 + `history` | 客户端路由及页面切换 |
 | 状态/实时同步 | Firebase Realtime Database（兼容 API 为主） | 委员会及其所有业务数据的实时读取和写入 |
-| 身份认证 | Firebase Authentication | 邮箱注册、登录、登出、重置密码及写入权限身份 |
+| 身份认证 | Firebase Authentication + Cloud Functions | 邮箱登录、管理员初始化、管理员创建/重置/删除账号及写入权限身份 |
 | 文件 | Firebase Cloud Storage | 委员会附件上传、下载、删除 |
 | 可观测性 | Google Analytics、Sentry | 页面访问与客户端错误/性能上报（仅非本地模拟器模式） |
 | 构建/测试 | Vite、TypeScript、Vitest、Cypress、Firebase CLI | 开发服务器、生产构建、单元和端到端测试 |
@@ -28,16 +28,19 @@ flowchart LR
   Auth[Firebase Auth]
   RTDB[Firebase Realtime Database]
   Storage[Firebase Storage]
+  Functions[Firebase Functions]
   Obs[GA / Sentry]
 
   Browser --> Entry --> App --> Pages --> Models
   App --> Auth
   Pages --> RTDB
   Pages --> Storage
+  Pages --> Functions --> Auth
+  Functions --> RTDB
   Entry --> Obs
 ```
 
-`src/index.tsx` 初始化 Google Analytics、Sentry、浏览器 history 与 Semantic UI 样式，并把 `App` 挂载到 `#root`。`src/App.tsx` 初始化 Firebase；若 `VITE_USE_FIREBASE_EMULATORS=true`，则连接本机 Auth（9099）、Realtime Database（9000）和 Storage（9199），否则连接 `muncoordinated` Firebase 项目。
+`src/index.tsx` 初始化 Google Analytics、Sentry、浏览器 history 与 Semantic UI 样式，并把 `App` 挂载到 `#root`。`src/App.tsx` 初始化 Firebase，并在显示普通路由前调用 Functions 检查管理员是否完成初始化；未初始化时所有路径都会进入首次管理员创建程序。若 `VITE_USE_FIREBASE_EMULATORS=true`，则连接本机 Auth（9099）、Realtime Database（9000）、Storage（9199）和 Functions（5001），否则连接 `muncoordinated` Firebase 项目。
 
 `src/i18n.tsx` 提供无外部运行时依赖的界面国际化层。当前支持英语和简体中文；英语原文同时作为稳定词条键，简体中文词条集中维护。`LanguageProvider` 在语言变更时重新挂载界面，使类组件与函数组件统一获取新文案，并集中覆盖 Semantic UI 的搜索空结果、可新增选项等默认文案；语言切换控件嵌入主页、创建页和委员会工作区的导航菜单。用户选择保存在浏览器 `localStorage` 的 `muncoordinated-language` 项中，首次访问则根据浏览器语言选择默认值。除用户模板、国家模板和国家名称外，业务数据（委员会名称、帖子正文等）不会被翻译或写回；这些可本地化名称均在 Firebase 中保存默认语言和语言到名称的映射，并按当前界面语言解析。内置默认国家模板从静态国家列表生成，包含英语、简体中文名称、Emoji 国旗和大洲；标准 ISO 国家在界面中使用本地打包的 `flag-icons` 独立 SVG 渲染，以保证放大后的清晰度，自定义 Emoji 与上传图片仍按保存值显示。
 
@@ -51,6 +54,7 @@ flowchart LR
 | `/onboard`、`/committees` | `Onboard` | 登录后创建委员会 |
 | `/templates` | `Templates` | 管理当前登录账号的自定义委员会模板及模板成员 |
 | `/countries` | `Countries` | 管理账号级国家模板、国家多语言名称、Emoji/图片国旗和大洲 |
+| `/admin` | `AccountAdmin` | 首次创建唯一管理员，以及管理员创建账号、重置密码和删除账号 |
 | `/committees/:committeeID` | `Committee` | 订阅整个委员会数据、显示欢迎页及主导航 |
 | `.../setup` | `Admin` | 委员会基础资料与成员设置 |
 | `.../roll-call` | `RollCall` | 按代表团逐一记录出席状态、自动翻页并在点名完成后展示人数与议事门槛 |
@@ -109,6 +113,10 @@ countryTemplates/{creatorUid}/{countryTemplateID}
     name, defaultLanguage, names/{languageCode}
     continent
     flag/{type,value}
+
+system
+  adminUid
+  bootstrapComplete
 ```
 
 `src/models/committee.ts` 定义 `CommitteeData`、默认委员会和内置模板。`src/models/template.ts` 定义账号级自定义模板及其 Firebase 增删改辅助函数；模板成员复用委员会成员的四种 `Rank`、出席、必须投票字段，并可携带从国家模板取得的自定义国旗快照。`src/models/country-template.ts` 定义内置及账号级国家模板；上传的图片国旗在浏览器端等比缩放到最大 256×160 并转为 WebP data URL，随国家记录保存到 Realtime Database，不使用 Storage。把模板成员加入委员会时会继续保存国旗快照；对已有同名成员重新应用模板也会更新其自定义国旗。其余 `src/models/*.ts` 文件定义对应子资源（成员、动议、磋商、决议、调查、帖子、计时器和设置）及创建/更新辅助函数。页面通过 Firebase 引用的 `on('value')` 接收实时快照；`src/modules/handlers.ts` 将输入控件事件映射为字段级 Database 写入。计时相关更新使用 Realtime Database transaction，以减少并发更新冲突。
@@ -119,11 +127,13 @@ countryTemplates/{creatorUid}/{countryTemplateID}
 
 ## 5. 身份、权限与文件
 
-- `src/components/auth.tsx` 使用 Firebase 邮箱密码认证，并查询 `creatorUid` 等于当前用户 UID 的委员会以显示“我的委员会”。
+- `src/components/auth.tsx` 只提供 Firebase 邮箱密码登录，不提供网页端自行注册或找回密码入口，并查询 `creatorUid` 等于当前用户 UID 的委员会以显示“我的委员会”。管理员登录后还会显示账号管理入口。
+- 首次部署时，`App` 强制显示管理员创建程序。新账号登录后调用 `bootstrapAdmin`；该函数通过 `system/adminUid` 的 Realtime Database 事务确保只能有一个初始化胜者，随后为该 UID 写入 `admin: true` 与 `managed: true` 自定义声明并标记 `system/bootstrapComplete`。客户端无法写入这两个系统字段。
+- `functions/src/index.ts` 使用 Firebase Admin SDK 实现账号列表、创建、密码重置和删除。每个管理函数都同时校验调用者 ID token 中的 `admin` 声明与服务端保存的 `system/adminUid`；通过后台创建的普通账号带有 `managed: true` 声明。委员会、账号级模板与国家模板的 Database Rules 也要求该声明，因此绕过网页直接调用 Firebase Auth 注册接口得到的身份无法使用主任写入功能。管理员账号不能删除自身。账号删除仅删除 Authentication 身份，不级联删除委员会、模板或附件。
 - 登录后的“我的委员会”列表与委员会右上角账户弹窗共用同一账户组件；主任确认删除委员会后，客户端会先递归删除 `Storage/committees/{committeeID}` 下的附件，再删除 Realtime Database 的整个 `committees/{committeeID}` 节点。账号级 `templates` 与 `countryTemplates` 位于独立根节点，不参与委员会删除。
-- `database.rules.json` 允许读取委员会；常规写入要求登录用户是该委员会创建者。对公开队列、公开修正案、公开调查选项/投票和公开动议存在细粒度例外。公开发言排队、动议提出与动议投票会校验对应 `memberID` 的 `present` 状态，并校验公开提交的代表团名称与成员记录一致。
-- `templates/{creatorUid}` 仅允许 UID 对应的登录用户读写，自定义模板不会向其他账号或未登录访问者公开。
-- `countryTemplates/{creatorUid}` 同样仅允许 UID 对应的登录用户读写；内置默认国家模板随前端代码发布，不写入 Firebase。
+- `database.rules.json` 允许读取委员会；常规写入要求登录用户带有 `managed: true` 声明且是该委员会创建者。对公开队列、公开修正案、公开调查选项/投票和公开动议存在细粒度例外。公开发言排队、动议提出与动议投票会校验对应 `memberID` 的 `present` 状态，并校验公开提交的代表团名称与成员记录一致。
+- `templates/{creatorUid}` 仅允许 UID 对应的受管登录用户读写，自定义模板不会向其他账号或未登录访问者公开。
+- `countryTemplates/{creatorUid}` 同样仅允许 UID 对应的受管登录用户读写；内置默认国家模板随前端代码发布，不写入 Firebase。
 - `storage.rules` 允许公开读取 `committees/{committeeId}/{fileName}`；上传需写入委员会创建者 UID 元数据。文件拥有者或委员会主任可更新/删除。
 - `Files.tsx` 同时维护 Database 中的文件/帖子元数据和 Storage 中的二进制对象。
 
@@ -136,6 +146,8 @@ countryTemplates/{creatorUid}/{countryTemplateID}
 | `src/pages/` | 路由级业务页面 |
 | `src/components/` | 可复用 UI、认证、计时器、通知、连接状态 |
 | `src/models/` | 数据类型、默认值和 Firebase 数据操作 |
+| `src/services/account-admin.ts` | 管理员 Callable Functions 的浏览器端类型与调用封装 |
+| `functions/` | Firebase Functions 管理端账号接口及独立 TypeScript 构建 |
 | `src/modules/` | 通用事件处理、成员转换、统计和埋点 |
 | `src/i18n.tsx` | 英语/简体中文词条、语言偏好与全局语言切换控件 |
 | `cypress/` | 端到端用例、模拟器种子和支持代码 |
@@ -166,7 +178,7 @@ source scripts/wsl-env.sh
 pnpm start                         # Vite 开发服务器（localhost:5173）
 pnpm exec vitest run               # 一次性单元测试；pnpm test 是 watch 模式
 pnpm build                         # TypeScript 检查并生产构建
-pnpm emulators                     # Firebase Auth/RTDB/Storage 模拟器
+pnpm emulators                     # Firebase Auth/RTDB/Storage/Functions 模拟器
 VITE_USE_FIREBASE_EMULATORS=true pnpm start
 pnpm test:e2e                      # 模拟器 + Vite + Cypress 集成测试
 ```
@@ -179,3 +191,4 @@ Firebase Emulator Suite 需要 Java 21 或更高版本。端到端测试只能�
 2. 生产默认会连接真实 Firebase。任何本地手工测试应显式设置 `VITE_USE_FIREBASE_EMULATORS=true`。
 3. 不要把 Firebase 配置中公开的 Web 配置误判为服务端密钥；真正的访问控制由 Firebase Rules 和用户身份决定。
 4. 新增委员会字段或公开协作功能时，同步更新 TypeScript 模型、默认值、前端写入路径、规则和测试。
+5. 首次生产部署必须同时部署 Functions 与 Database Rules，再发布前端；否则前端无法检查或完成管理员初始化。管理员功能可用 `pnpm deploy:functions` 部署。

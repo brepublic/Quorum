@@ -9,7 +9,11 @@ const authMocks = vi.hoisted(() => {
     unsubscribe,
     signOut: vi.fn(),
     onAuthStateChanged: vi.fn((callback: (user: unknown) => void) => {
-      callback({uid: 'director-1', email: 'director@example.com'});
+      callback({
+        uid: 'director-1',
+        email: 'director@example.com',
+        getIdTokenResult: vi.fn(async () => ({claims: {managed: true}}))
+      });
       return unsubscribe;
     }),
     once: vi.fn(async () => ({
@@ -79,5 +83,16 @@ describe('committee deletion controls', () => {
     act(() => login!.cancelCommitteeDeletion());
     await renderLogin(true);
     expect(container.querySelector('button[aria-label="删除委员会“Security Council”"]')).toBeTruthy();
+  });
+
+  it('does not expose self-service registration or password recovery', async () => {
+    authMocks.onAuthStateChanged.mockImplementationOnce(callback => {
+      callback(null);
+      return authMocks.unsubscribe;
+    });
+    await renderLogin(false);
+    expect(container.textContent).not.toContain('创建账户');
+    expect(container.textContent).not.toContain('忘记密码');
+    expect(container.textContent).toContain('登录');
   });
 });

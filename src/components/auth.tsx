@@ -3,31 +3,22 @@ import firebase from 'firebase/compat/app';
 import { Card, Button, Confirm, Form, Message, Modal, Icon, List, Segment, Header } from 'semantic-ui-react';
 import _ from 'lodash';
 import Loading from './Loading';
-import { logCreateAccount, logLogin } from '../modules/analytics';
+import { logLogin } from '../modules/analytics';
 import {CommitteeData, CommitteeID, deleteCommittee} from "../models/committee";
 import { t } from '../i18n';
-
-enum Mode {
-  Login = 'Login',
-  CreateAccount = 'CreateAccount',
-  ForgotPassword = 'ForgotPassword'
-}
 
 interface State {
   user?: firebase.User | null;
   email: string;
   password: string;
   error?: Error;
-  success?: { name?: string, message?: string }; // like Error
   loggingIn: boolean;
-  creating: boolean;
-  mode: Mode;
-  resetting: boolean;
   unsubscribe?: () => void;
   committees?: Record<CommitteeID, CommitteeData>;
   committeePendingDeletion?: CommitteeID;
   deletingCommittee?: CommitteeID;
   deleteError?: Error;
+  isAdmin?: boolean;
 }
 
 interface Props {
@@ -41,33 +32,41 @@ export class Login extends React.Component<Props, State> {
     this.state = {
       email: '',
       password: '',
-      mode: Mode.Login,
       loggingIn: false,
-      creating: false,
-      resetting: false
     };
   }
 
   authStateChangedCallback = (user: firebase.User | null) => {
     this.setState({
       loggingIn: false,
-      creating: false,
       user,
       committees: user ? undefined : {},
       committeePendingDeletion: undefined,
       deletingCommittee: undefined,
-      deleteError: undefined
+      deleteError: undefined,
+      isAdmin: user ? undefined : false,
     });
 
     if (user) {
-      firebase.database()
-        .ref('committees')
-        .orderByChild('creatorUid')
-        .equalTo(user.uid)
-        .once('value').then(committees => {
-          // we need to || {} because this returns undefined when it can't find anything
-          this.setState({ committees: committees.val() || {} });
-        });
+      user.getIdTokenResult().then(token => {
+        if (token.claims.managed !== true) {
+          const error = Object.assign(new Error(t('This account was not issued by the administrator.')), {
+            code: 'auth/unauthorized-account'
+          });
+          this.setState({error, isAdmin: false});
+          firebase.auth().signOut().catch(() => undefined);
+          return;
+        }
+        this.setState({isAdmin: token.claims.admin === true});
+        firebase.database()
+          .ref('committees')
+          .orderByChild('creatorUid')
+          .equalTo(user.uid)
+          .once('value').then(committees => {
+            // we need to || {} because this returns undefined when it can't find anything
+            this.setState({ committees: committees.val() || {} });
+          });
+      }).catch(() => this.setState({isAdmin: false}));
     }
   }
 
@@ -108,71 +107,8 @@ export class Login extends React.Component<Props, State> {
     });
   }
 
-  createAccount = () => {
-    const { email, password } = this.state;
-    this.setState({ creating: true });
-
-    firebase.auth().createUserWithEmailAndPassword(email, password).then(credential => {
-
-      const success = { 
-        name: t('Account created'),
-        message: t('Your account was successfully created')
-      };
-
-      this.setState({ 
-        creating: false,
-        email: '',
-        password: '',
-        success 
-      });
-      logCreateAccount(credential.user?.uid)
-    }).catch(err => {
-      this.setState({ creating: false, error: err });
-    });
-  }
-
-  resetPassword = () => {
-    const { email } = this.state;
-    this.setState({ resetting: true });
-
-    firebase.auth().sendPasswordResetEmail(email).then(() => {
-      const success = {
-        name: t('Password reset'),
-        message: t('Check your inbox at {email} for further instructions', { email })
-      };
-
-      this.setState({ resetting: false, success });
-    }).catch(err => {
-      this.setState({ resetting: false, error: err });
-    });
-  }
-
   dismissError = () => {
     this.setState({ error: undefined });
-  }
-
-  dismissSuccess = () => {
-    this.setState({ success: undefined });
-  }
-
-  toLoginMode = () => {
-    this.setState( {
-      password: '',
-      mode: Mode.Login
-    });
-  }
-
-  toCreateAccountMode = () => {
-    this.setState({ 
-      mode: Mode.CreateAccount 
-    });
-  }
-
-  toForgotPasswordMode = () => {
-    this.setState({ 
-      password: '',
-      mode: Mode.ForgotPassword 
-    });
   }
 
   setEmail = (e: React.FormEvent<HTMLInputElement>) => {
@@ -301,23 +237,6 @@ export class Login extends React.Component<Props, State> {
     );
   }
 
-  renderSuccess = () => {
-    const { dismissSuccess } = this;
-
-    const succ = this.state.success;
-
-    return (
-      <Message
-        key="success"
-        success
-        onDismiss={dismissSuccess}
-      >
-        <Message.Header>{succ ? succ.name : ''}</Message.Header>
-        <Message.Content>{succ ? succ.message : ''}</Message.Content>
-      </Message>
-    );
-  }
-
   renderLoggedIn = (u: firebase.User) => {
     const { logout, renderCommittees, renderNewCommitteeButton } = this;
     const { committees } = this.state;
@@ -356,6 +275,9 @@ export class Login extends React.Component<Props, State> {
               header={t('Could not delete committee')}
               content={this.state.deleteError.message}
             />}
+            {this.state.isAdmin && <Button as="a" href="/admin" basic fluid style={{marginBottom: '0.75em'}}>
+              <Icon name="users" />{t('Account administration')}
+            </Button>}
             <Button basic color="red" fluid onClick={logout}>{t('Logout')}</Button>
           </Card.Content>
         </Card>
@@ -373,13 +295,13 @@ export class Login extends React.Component<Props, State> {
   }
 
   renderLogin = () => {
-    const { loggingIn, creating, user, resetting, email, password, mode } = this.state;
+    const { loggingIn, user, email, password } = this.state;
 
     const renderLogInButton = () => (
       <Button 
         primary 
+        fluid
         disabled={!email || !password}
-        onClick={this.login} 
         loading={loggingIn}
         type="submit"
       >
@@ -387,104 +309,27 @@ export class Login extends React.Component<Props, State> {
       </Button>
     );
 
-    const renderCreateAccountButton = () => (
-      <Button 
-        positive
-        onClick={this.toCreateAccountMode}
-      >
-        {t('Create account')} <Icon name="arrow right" />
-      </Button>
-    );
-
-    const renderSubmitCreateAccountButton = () => (
-      <Button 
-        positive
-        fluid
-        onClick={this.createAccount} 
-        loading={creating} 
-        disabled={!email || !password}
-        type="submit"
-      >
-        {t('Create account')}
-      </Button>
-    )
-
-    const renderForgotPasswordButton = () => (
-      // eslint-disable-next-line jsx-a11y/anchor-is-valid
-      <a 
-        onClick={this.toForgotPasswordMode} 
-        style={{'cursor': 'pointer'}}
-      >
-        {t('Forgot password?')}
-      </a>
-    );
-
-    const renderToLoginButton = () => (
-      <div style={{ marginBottom: '8px' }}>
-        {/* eslint-disable-next-line jsx-a11y/anchor-is-valid */}
-        <a 
-          onClick={this.toLoginMode} 
-          style={{
-            cursor: 'pointer',
-          }}
-        >
-          <Icon name="arrow left" />
-          {t('Back to login')}
-        </a>
-      </div>
-    );
-
-    const renderSendResetEmailButton = () => (
-      <Button 
-        primary
-        fluid
-        onClick={this.resetPassword} 
-        loading={resetting} 
-        disabled={!email}
-        type="submit"
-      >
-        {t('Send reset email')}
-      </Button>
-    );
-
     const err = this.state.error;
-    const succ = this.state.success;
     
     return (
       <React.Fragment>
-        {mode === Mode.Login && 
-          <Header as="h3" attached="top">
-            {t('Login')}
-            <Header.Subheader>
-              {t('to create a new committee, or access an older committee.')}
-            </Header.Subheader>
-          </Header>}
-        {mode === Mode.CreateAccount && 
-          <Header as="h3" attached="top">
-            {t('Create account')}
-            <Header.Subheader>
-                {t("Multiple directors may use the same account simultaneously. Choose a password you're willing to share.")}
-            </Header.Subheader>
-          </Header>}
-        {mode === Mode.ForgotPassword && 
-          <Header as="h3" attached="top">
-            {t('Reset password')}
-          </Header>}
+        <Header as="h3" attached="top">
+          {t('Login')}
+          <Header.Subheader>{t('Use an account issued by the administrator.')}</Header.Subheader>
+        </Header>
         <Segment attached="bottom">
-          {mode !== Mode.Login && renderToLoginButton()}
-          <Form error={!!err} success={!!succ} loading={user === undefined}>
+          <Form error={!!err} loading={user === undefined} onSubmit={this.login}>
             <Form.Input
               key="email"
               label={t('Email')}
-              error={mode === Mode.CreateAccount && !email}
-              required={mode === Mode.CreateAccount}
+              required
               placeholder="joe@schmoe.com"
               value={email}
               onChange={this.setEmail}
             >
               <input autoComplete="email" />
             </Form.Input>
-            {mode === Mode.Login && <Form.Input
+            <Form.Input
               key="current-password"
               label={t('Password')}
               type="password"
@@ -493,29 +338,9 @@ export class Login extends React.Component<Props, State> {
               onChange={this.setPassword}
             >
               <input autoComplete="current-password" />
-            </Form.Input>}
-            {mode === Mode.CreateAccount && <Form.Input
-              key="new-password"
-              label={t('Password')}
-              type="password"
-              error={!password}
-              required
-              placeholder="correct horse battery staple"
-              value={password}
-              onChange={this.setPassword}
-            >
-              <input autoComplete="new-password" />
-            </Form.Input>}
-            {this.renderSuccess()}
+            </Form.Input>
             {this.renderError()}
-            {mode === Mode.Login && <Button.Group fluid widths='2'>
-               {renderLogInButton()}
-               <Button.Or text={t('or')} />
-               {renderCreateAccountButton()}
-            </Button.Group>}
-            {mode === Mode.ForgotPassword && renderSendResetEmailButton()}
-            {mode === Mode.CreateAccount && renderSubmitCreateAccountButton()}
-            {mode === Mode.Login && renderForgotPasswordButton()}
+            {renderLogInButton()}
           </Form>
         </Segment>
       </React.Fragment>

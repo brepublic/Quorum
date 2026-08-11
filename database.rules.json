@@ -1,16 +1,26 @@
 {
   "rules": {
+    "system": {
+      "bootstrapComplete": {
+        ".read": true,
+        ".write": false
+      },
+      "$other": {
+        ".read": false,
+        ".write": false
+      }
+    },
     "templates": {
       "$uid": {
         ".indexOn": ["countryTemplateKey"],
-        ".read": "auth != null && auth.uid === $uid",
-        ".write": "auth != null && auth.uid === $uid"
+        ".read": "auth != null && auth.token.managed === true && auth.uid === $uid",
+        ".write": "auth != null && auth.token.managed === true && auth.uid === $uid"
       }
     },
     "countryTemplates": {
       "$uid": {
-        ".read": "auth != null && auth.uid === $uid",
-        ".write": "auth != null && auth.uid === $uid"
+        ".read": "auth != null && auth.token.managed === true && auth.uid === $uid",
+        ".write": "auth != null && auth.token.managed === true && auth.uid === $uid"
       }
     },
     "committees": {
@@ -18,7 +28,7 @@
       ".read": true,
       "$uid": {
         ".read": true,
-        ".write": "auth != null && (newData.child('creatorUid').val() === auth.uid || data.child('creatorUid').val() === auth.uid)",
+        ".write": "auth != null && auth.token.managed === true && (newData.child('creatorUid').val() === auth.uid || data.child('creatorUid').val() === auth.uid)",
         "caucuses": {
           "$cid": {
             "queue": {

@@ -139,7 +139,7 @@ export default class Onboard extends React.Component<Props, State> {
         {!user && <Message
           error
           attached="top"
-          content={t('Log in or create an account to continue')}
+          content={t('Log in with an account issued by the administrator to continue')}
         />}
         <Segment attached={!user ? 'bottom' : undefined} >
           <Form onSubmit={this.handleSubmit}>
@@ -227,8 +227,7 @@ export default class Onboard extends React.Component<Props, State> {
         </Menu>
         <Helmet>
           <title>{`${t('Create committee')} - Quorum`}</title>
-          <meta name="description" content="Login, create an account, or create
-                                      a committee with Quorum now!" />
+          <meta name="description" content="Log in and create a committee with Quorum." />
         </Helmet>
         <ConnectionStatus />
         <Grid
