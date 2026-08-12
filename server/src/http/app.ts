@@ -221,6 +221,40 @@ async function handleStage4Request(options: {
     const auth = await write(); const body = await readJson(request);
     sendJson(response, 200, success(await stage4.updateSeat(auth, seats[1] as string, seats[2], body, context), requestId)); return true;
   }
+
+  const notes = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/notes$/.exec(pathname);
+  if (notes && method === 'POST') {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 201, success(await stage4.createNote(auth, notes[1] as string, body,
+      idempotencyKey(request), context), requestId)); return true;
+  }
+  const note = /^\/api\/v1\/notes\/([0-9a-f-]{36})$/.exec(pathname);
+  if (note && (method === 'PUT' || method === 'DELETE')) {
+    const auth = await write(); const body = await readJson(request);
+    if (method === 'PUT') sendJson(response, 200, success(await stage4.updateNote(auth, note[1] as string, body, context), requestId));
+    else {
+      await stage4.deleteNote(auth, note[1] as string, integerField(body, 'baseRevision'), context);
+      sendJson(response, 200, success({deleted: true}, requestId));
+    }
+    return true;
+  }
+
+  const textPosts = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/text-posts$/.exec(pathname);
+  if (textPosts && method === 'POST') {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 201, success(await stage4.createTextPost(auth, textPosts[1] as string, body,
+      idempotencyKey(request), context), requestId)); return true;
+  }
+  const textPost = /^\/api\/v1\/text-posts\/([0-9a-f-]{36})$/.exec(pathname);
+  if (textPost && (method === 'PUT' || method === 'DELETE')) {
+    const auth = await write(); const body = await readJson(request);
+    if (method === 'PUT') sendJson(response, 200, success(await stage4.updateTextPost(auth, textPost[1] as string, body, context), requestId));
+    else {
+      await stage4.deleteTextPost(auth, textPost[1] as string, integerField(body, 'baseRevision'), context);
+      sendJson(response, 200, success({deleted: true}, requestId));
+    }
+    return true;
+  }
   return false;
 }
 

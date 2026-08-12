@@ -1,9 +1,11 @@
-import {randomUUID} from 'node:crypto';
+import {createHash, randomUUID} from 'node:crypto';
 import type {Pool, PoolClient, QueryResultRow} from 'pg';
 import type {
   CommitteeSummary,
   CommitteeTemplate,
   CommitteeTemplateInput,
+  CommitteeNote,
+  CommitteeTextPost,
   CountryTemplate,
   CountryTemplateInput,
   FlagSnapshot,
@@ -18,6 +20,7 @@ import {
   appendEvent,
   audit,
   idempotentTransaction,
+  isChair,
   lockedCommittee,
   requireBusinessIdentity,
   requireChair,
@@ -95,6 +98,67 @@ function requiredText(value: unknown, name: string, max = 200): string {
     throw new AppError({code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
   }
   return value.trim();
+}
+
+function optionalText(value: unknown, name: string, max: number): string {
+  if (value === undefined) return '';
+  if (typeof value !== 'string' || value.length > max) {
+    throw new AppError({code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
+  }
+  return value;
+}
+
+function textContent(value: unknown, max: number): string {
+  if (typeof value !== 'string' || value.length > max) {
+    throw new AppError({code: 'VALIDATION_FAILED', message: 'Content is invalid.'});
+  }
+  return value;
+}
+
+function sortOrder(value: unknown): number {
+  if (value === undefined) return 0;
+  if (!Number.isSafeInteger(value)) throw new AppError({code: 'VALIDATION_FAILED', message: 'Sort order is invalid.'});
+  return Number(value);
+}
+
+function contentSummary(content: string): {characterCount: number; sha256: string} {
+  return {characterCount: [...content].length, sha256: createHash('sha256').update(content).digest('hex')};
+}
+
+async function committeeAccess(client: PoolClient, row: Stage4CommitteeRow, userId: string): Promise<{
+  audience: 'OWNER' | 'CHAIR' | 'MEMBER'; capabilities: string[]; seatId: string | null;
+}> {
+  if (row.owner_user_id === userId) return {audience: 'OWNER', capabilities: ['COMMITTEE_OWNER'], seatId: null};
+  if (await isChair(client, row.id, userId)) return {audience: 'CHAIR', capabilities: ['CHAIR'], seatId: null};
+  const member = await client.query<{seat_id: string | null}>(`SELECT a.seat_id FROM committee_memberships m
+    LEFT JOIN seat_assignments a ON a.committee_id=m.committee_id AND a.user_id=m.user_id AND a.status='ACTIVE'
+    WHERE m.committee_id=$1 AND m.user_id=$2 AND m.status='ACTIVE'`, [row.id, userId]);
+  if (!member.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Committee not found.'});
+  return {audience: 'MEMBER', capabilities: ['MEMBER'], seatId: member.rows[0].seat_id};
+}
+
+interface NoteRow extends QueryResultRow {
+  id: string; committee_id: string; title: string; content: string; sort_order: number; revision: number;
+  created_by_user_id: string; created_at: Date; updated_at: Date; deleted_at: Date | null;
+}
+
+interface TextPostRow extends QueryResultRow {
+  id: string; committee_id: string; title: string; content: string; sort_order: number; revision: number;
+  author_seat_id: string | null; author_display_name: string; actor_user_id: string;
+  created_at: Date; updated_at: Date; deleted_at: Date | null;
+}
+
+function note(row: NoteRow): CommitteeNote {
+  return {id: row.id, title: row.title, content: row.content, sortOrder: row.sort_order, revision: row.revision,
+    createdByUserId: row.created_by_user_id, createdAt: row.created_at.toISOString(), updatedAt: row.updated_at.toISOString(),
+    deletedAt: row.deleted_at?.toISOString() ?? null};
+}
+
+function textPost(row: TextPostRow): CommitteeTextPost {
+  return {id: row.id, title: row.title, content: row.content, sortOrder: row.sort_order, revision: row.revision,
+    authorSeatId: row.author_seat_id, authorDisplayName: row.author_display_name, actorUserId: row.actor_user_id,
+    createdAt: row.created_at.toISOString(), updatedAt: row.updated_at.toISOString(),
+    deletedAt: row.deleted_at?.toISOString() ?? null};
 }
 
 async function countryTemplateById(client: PoolClient, ownerId: string, id: string, lock = false): Promise<CountryTemplateRow> {
@@ -505,5 +569,166 @@ export class Stage4Service {
           canVote, hasVeto, mustVote, sortOrder, active, flagType: seatFlag.type}});
       return result.rows[0] as Stage4CommitteeSeat;
     });
+  }
+
+  async createNote(auth: AuthenticatedSession, committeeId: string, input: Record<string, unknown>,
+    idempotencyKey: string, context: Stage4Context): Promise<CommitteeNote> {
+    requireBusinessIdentity(auth); assertExactBody(input, ['title', 'content', 'sortOrder']);
+    const title = optionalText(input.title, 'Title', 200); const content = textContent(input.content, 100000);
+    const order = sortOrder(input.sortOrder);
+    return idempotentTransaction({pool: this.pool, auth, route: `POST /api/v1/committees/${committeeId}/notes`,
+      key: idempotencyKey, request: input, status: 201, work: async client => {
+        const committee = await lockedCommittee(client, committeeId); requireEditable(committee);
+        const access = await committeeAccess(client, committee, auth.user.id); const id = randomUUID();
+        const result = await client.query<NoteRow>(`INSERT INTO committee_notes
+          (id,committee_id,title,content,sort_order,created_by_user_id) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+        [id, committeeId, title, content, order, auth.user.id]);
+        const summary = {...contentSummary(content), titleCharacterCount: [...title].length, sortOrder: order};
+        await appendEvent(client, committee, {type: 'note.created', resourceType: 'note', resourceId: id, revision: 1,
+          payload: summary});
+        await audit(client, context, {committeeId, actorUserId: auth.user.id, capabilities: access.capabilities,
+          action: 'proceedings.note_created', resourceType: 'note', resourceId: id, after: summary});
+        return note(result.rows[0] as NoteRow);
+      }});
+  }
+
+  async updateNote(auth: AuthenticatedSession, noteId: string, input: Record<string, unknown>,
+    context: Stage4Context): Promise<CommitteeNote> {
+    requireBusinessIdentity(auth); assertExactBody(input, ['baseRevision', 'patch']);
+    const baseRevision = positiveRevision(input.baseRevision); const patch = this.textPatch(input.patch, 100000);
+    return transaction(this.pool, async client => {
+      const found = await client.query<NoteRow>('SELECT * FROM committee_notes WHERE id=$1 FOR UPDATE', [noteId]);
+      const current = found.rows[0]; if (!current || current.deleted_at) throw new AppError({code: 'NOT_FOUND', message: 'Note not found.'});
+      const committee = await lockedCommittee(client, current.committee_id); requireEditable(committee);
+      const access = await committeeAccess(client, committee, auth.user.id);
+      if (current.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT', message: 'This note changed since it was loaded.',
+        details: {currentRevision: current.revision}});
+      const title = patch.title ?? current.title; const content = patch.content ?? current.content;
+      const order = patch.sortOrder ?? current.sort_order;
+      const result = await client.query<NoteRow>(`UPDATE committee_notes SET title=$2,content=$3,sort_order=$4,
+        revision=revision+1,updated_at=now() WHERE id=$1 RETURNING *`, [noteId, title, content, order]);
+      const before = {...contentSummary(current.content), revision: current.revision};
+      const after = {...contentSummary(content), revision: current.revision + 1, titleCharacterCount: [...title].length, sortOrder: order};
+      await appendEvent(client, committee, {type: 'note.updated', resourceType: 'note', resourceId: noteId,
+        revision: current.revision + 1, payload: after});
+      await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id, capabilities: access.capabilities,
+        action: 'proceedings.note_updated', resourceType: 'note', resourceId: noteId, before, after});
+      return note(result.rows[0] as NoteRow);
+    });
+  }
+
+  async deleteNote(auth: AuthenticatedSession, noteId: string, baseRevision: number,
+    context: Stage4Context): Promise<void> {
+    requireBusinessIdentity(auth); const revision = positiveRevision(baseRevision);
+    await transaction(this.pool, async client => {
+      const found = await client.query<NoteRow>('SELECT * FROM committee_notes WHERE id=$1 FOR UPDATE', [noteId]);
+      const current = found.rows[0]; if (!current || current.deleted_at) throw new AppError({code: 'NOT_FOUND', message: 'Note not found.'});
+      const committee = await lockedCommittee(client, current.committee_id); requireEditable(committee);
+      const access = await committeeAccess(client, committee, auth.user.id);
+      if (current.revision !== revision) throw new AppError({code: 'REVISION_CONFLICT', message: 'This note changed since it was loaded.',
+        details: {currentRevision: current.revision}});
+      await client.query(`UPDATE committee_notes SET title='',content='',revision=revision+1,updated_at=now(),deleted_at=now() WHERE id=$1`, [noteId]);
+      const before = {...contentSummary(current.content), revision: current.revision}; const after = {revision: current.revision + 1};
+      await appendEvent(client, committee, {type: 'note.deleted', resourceType: 'note', resourceId: noteId,
+        revision: current.revision + 1, payload: after});
+      await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id, capabilities: access.capabilities,
+        action: 'proceedings.note_deleted', resourceType: 'note', resourceId: noteId, before, after});
+    });
+  }
+
+  async createTextPost(auth: AuthenticatedSession, committeeId: string, input: Record<string, unknown>,
+    idempotencyKey: string, context: Stage4Context): Promise<CommitteeTextPost> {
+    requireBusinessIdentity(auth); assertExactBody(input, ['title', 'content', 'sortOrder', 'onBehalfOfSeatId']);
+    const title = optionalText(input.title, 'Title', 200); const content = textContent(input.content, 20000);
+    const order = sortOrder(input.sortOrder);
+    return idempotentTransaction({pool: this.pool, auth, route: `POST /api/v1/committees/${committeeId}/text-posts`,
+      key: idempotencyKey, request: input, status: 201, work: async client => {
+        const committee = await lockedCommittee(client, committeeId); requireEditable(committee);
+        const access = await committeeAccess(client, committee, auth.user.id);
+        let authorSeatId = access.seatId; let authorDisplayName = auth.user.displayName;
+        if (input.onBehalfOfSeatId !== undefined) {
+          if (access.audience !== 'CHAIR') throw new AppError({code: 'FORBIDDEN', message: 'Chair capability is required.'});
+          authorSeatId = requiredText(input.onBehalfOfSeatId, 'Seat ID');
+        }
+        if (authorSeatId) {
+          const seat = await client.query<{display_name: string}>(`SELECT display_name FROM committee_seats
+            WHERE id=$1 AND committee_id=$2 AND active=true`, [authorSeatId, committeeId]);
+          if (!seat.rows[0]) throw new AppError({code: 'VALIDATION_FAILED', message: 'Seat is invalid.'});
+          authorDisplayName = seat.rows[0].display_name;
+        }
+        const id = randomUUID(); const result = await client.query<TextPostRow>(`INSERT INTO committee_text_posts
+          (id,committee_id,title,content,sort_order,author_seat_id,author_display_name,actor_user_id)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+        [id, committeeId, title, content, order, authorSeatId, authorDisplayName, auth.user.id]);
+        const summary = {...contentSummary(content), titleCharacterCount: [...title].length, sortOrder: order,
+          authorSeatId, actedOnBehalf: Boolean(input.onBehalfOfSeatId)};
+        await appendEvent(client, committee, {type: 'text_post.created', resourceType: 'text_post', resourceId: id,
+          revision: 1, payload: summary});
+        await audit(client, context, {committeeId, actorUserId: auth.user.id, capabilities: access.capabilities,
+          onBehalfOfSeatId: authorSeatId ?? undefined, action: 'proceedings.text_post_created', resourceType: 'text_post',
+          resourceId: id, after: summary});
+        return textPost(result.rows[0] as TextPostRow);
+      }});
+  }
+
+  async updateTextPost(auth: AuthenticatedSession, postId: string, input: Record<string, unknown>,
+    context: Stage4Context): Promise<CommitteeTextPost> {
+    requireBusinessIdentity(auth); assertExactBody(input, ['baseRevision', 'patch']);
+    const baseRevision = positiveRevision(input.baseRevision); const patch = this.textPatch(input.patch, 20000);
+    return transaction(this.pool, async client => {
+      const found = await client.query<TextPostRow>('SELECT * FROM committee_text_posts WHERE id=$1 FOR UPDATE', [postId]);
+      const current = found.rows[0]; if (!current || current.deleted_at) throw new AppError({code: 'NOT_FOUND', message: 'Text post not found.'});
+      const committee = await lockedCommittee(client, current.committee_id); requireEditable(committee);
+      const access = await committeeAccess(client, committee, auth.user.id);
+      if (access.audience === 'MEMBER' && current.actor_user_id !== auth.user.id) {
+        throw new AppError({code: 'FORBIDDEN', message: 'You can only edit your own text posts.'});
+      }
+      if (current.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT', message: 'This text post changed since it was loaded.',
+        details: {currentRevision: current.revision}});
+      const title = patch.title ?? current.title; const content = patch.content ?? current.content;
+      const order = patch.sortOrder ?? current.sort_order;
+      const result = await client.query<TextPostRow>(`UPDATE committee_text_posts SET title=$2,content=$3,sort_order=$4,
+        revision=revision+1,updated_at=now() WHERE id=$1 RETURNING *`, [postId, title, content, order]);
+      const before = {...contentSummary(current.content), revision: current.revision};
+      const after = {...contentSummary(content), revision: current.revision + 1, titleCharacterCount: [...title].length, sortOrder: order};
+      await appendEvent(client, committee, {type: 'text_post.updated', resourceType: 'text_post', resourceId: postId,
+        revision: current.revision + 1, payload: after});
+      await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id, capabilities: access.capabilities,
+        action: 'proceedings.text_post_updated', resourceType: 'text_post', resourceId: postId, before, after});
+      return textPost(result.rows[0] as TextPostRow);
+    });
+  }
+
+  async deleteTextPost(auth: AuthenticatedSession, postId: string, baseRevision: number,
+    context: Stage4Context): Promise<void> {
+    requireBusinessIdentity(auth); const revision = positiveRevision(baseRevision);
+    await transaction(this.pool, async client => {
+      const found = await client.query<TextPostRow>('SELECT * FROM committee_text_posts WHERE id=$1 FOR UPDATE', [postId]);
+      const current = found.rows[0]; if (!current || current.deleted_at) throw new AppError({code: 'NOT_FOUND', message: 'Text post not found.'});
+      const committee = await lockedCommittee(client, current.committee_id); requireEditable(committee);
+      const access = await committeeAccess(client, committee, auth.user.id);
+      if (access.audience === 'MEMBER' && current.actor_user_id !== auth.user.id) {
+        throw new AppError({code: 'FORBIDDEN', message: 'You can only delete your own text posts.'});
+      }
+      if (current.revision !== revision) throw new AppError({code: 'REVISION_CONFLICT', message: 'This text post changed since it was loaded.',
+        details: {currentRevision: current.revision}});
+      await client.query(`UPDATE committee_text_posts SET title='',content='',revision=revision+1,updated_at=now(),deleted_at=now() WHERE id=$1`, [postId]);
+      const before = {...contentSummary(current.content), revision: current.revision}; const after = {revision: current.revision + 1};
+      await appendEvent(client, committee, {type: 'text_post.deleted', resourceType: 'text_post', resourceId: postId,
+        revision: current.revision + 1, payload: after});
+      await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id, capabilities: access.capabilities,
+        action: 'proceedings.text_post_deleted', resourceType: 'text_post', resourceId: postId, before, after});
+    });
+  }
+
+  private textPatch(value: unknown, contentLimit: number): {title?: string; content?: string; sortOrder?: number} {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new AppError({code: 'VALIDATION_FAILED', message: 'Text resource patch is invalid.'});
+    }
+    const patch = value as Record<string, unknown>; assertExactBody(patch, ['title', 'content', 'sortOrder'], 'Text resource patch');
+    if (Object.keys(patch).length === 0) throw new AppError({code: 'VALIDATION_FAILED', message: 'Text resource patch is empty.'});
+    return {title: patch.title === undefined ? undefined : optionalText(patch.title, 'Title', 200),
+      content: patch.content === undefined ? undefined : textContent(patch.content, contentLimit),
+      sortOrder: patch.sortOrder === undefined ? undefined : sortOrder(patch.sortOrder)};
   }
 }

@@ -35,7 +35,9 @@ function identity(): IdentityService {
 function domain(overrides: Record<string, unknown> = {}): Stage4Service {
   return {listCommittees: vi.fn(async () => []), createCommittee: vi.fn(async (_auth, body) => ({id: 'committee', name: body.name})),
     listCountryTemplates: vi.fn(async () => []), createCountryTemplate: vi.fn(async () => ({id: 'country-template'})),
-    deleteCountryTemplate: vi.fn(async () => undefined), createSeat: vi.fn(async () => ({id: 'seat'})), ...overrides} as unknown as Stage4Service;
+    deleteCountryTemplate: vi.fn(async () => undefined), createSeat: vi.fn(async () => ({id: 'seat'})),
+    createNote: vi.fn(async () => ({id: 'note'})), deleteNote: vi.fn(async () => undefined),
+    createTextPost: vi.fn(async () => ({id: 'post'})), deleteTextPost: vi.fn(async () => undefined), ...overrides} as unknown as Stage4Service;
 }
 
 async function request(stage4: Stage4Service, options: {path: string; method?: string; headers?: Record<string, string>; body?: unknown}) {
@@ -85,5 +87,35 @@ describe('stage 4 template and seat HTTP boundary', () => {
     const rejected = await request(stage4, {path: '/api/v1/country-templates/builtin%3Adefault', method: 'DELETE'});
     expect(rejected.status).toBe(403);
     expect(stage4.deleteCountryTemplate).not.toHaveBeenCalled();
+  });
+
+  it('routes plain-text resources with idempotency and revision commands', async () => {
+    const updateNote = vi.fn(async () => ({id: 'note', revision: 2}));
+    const deleteTextPost = vi.fn(async () => undefined); const stage4 = domain({updateNote, deleteTextPost});
+    const committeeId = '20000000-0000-4000-8000-000000000001';
+    const noteId = '30000000-0000-4000-8000-000000000001';
+    const postId = '40000000-0000-4000-8000-000000000001';
+    const created = await request(stage4, {path: `/api/v1/committees/${committeeId}/notes`, method: 'POST',
+      headers: protectedHeaders, body: {title: 'Agenda', content: 'Plain text'}});
+    expect(created.status).toBe(201);
+    expect(stage4.createNote).toHaveBeenCalledWith(authenticated, committeeId, {title: 'Agenda', content: 'Plain text'},
+      'request-one', expect.objectContaining({requestId: expect.any(String)}));
+    const updated = await request(stage4, {path: `/api/v1/notes/${noteId}`, method: 'PUT', headers: protectedHeaders,
+      body: {baseRevision: 1, patch: {content: 'Changed'}}});
+    expect(updated.status).toBe(200);
+    expect(updateNote).toHaveBeenCalledWith(authenticated, noteId, {baseRevision: 1, patch: {content: 'Changed'}},
+      expect.objectContaining({requestId: expect.any(String)}));
+    const deleted = await request(stage4, {path: `/api/v1/text-posts/${postId}`, method: 'DELETE',
+      headers: protectedHeaders, body: {baseRevision: 3}});
+    expect(deleted.status).toBe(200);
+    expect(deleteTextPost).toHaveBeenCalledWith(authenticated, postId, 3, expect.objectContaining({requestId: expect.any(String)}));
+  });
+
+  it('rejects attachment-shaped text-post payloads at the domain boundary', async () => {
+    const createTextPost = vi.fn(async () => { throw new AppError({code: 'VALIDATION_FAILED', message: 'Unexpected field.'}); });
+    const stage4 = domain({createTextPost}); const committeeId = '20000000-0000-4000-8000-000000000001';
+    const response = await request(stage4, {path: `/api/v1/committees/${committeeId}/text-posts`, method: 'POST',
+      headers: protectedHeaders, body: {content: 'Text', filename: 'secret.pdf'}});
+    expect(response.status).toBe(422);
   });
 });

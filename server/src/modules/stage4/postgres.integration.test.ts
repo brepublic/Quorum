@@ -117,4 +117,45 @@ integration('PostgreSQL stage 4 templates and seat snapshots', () => {
     await expect(stage4.updateSeat(chair, committee.id, seat.id, {baseRevision: 1, patch: {sortOrder: 4}}, context('stale-seat')))
       .rejects.toMatchObject({code: 'REVISION_CONFLICT', details: {currentRevision: 2}});
   });
+
+  it('keeps notes and text posts revisioned, plain-text, permissioned, and soft-deleted', async () => {
+    const owner = await user('textowner'); const chair = await user('textchair');
+    const firstMember = await user('textmemberone'); const secondMember = await user('textmembertwo');
+    const committee = await stage4.createCommittee(owner, {name: 'Text Council', visibility: 'PRIVATE',
+      countryTemplateKey: 'builtin:default'}, 'text-committee', context('text-committee'));
+    await stage3.setChair(owner, committee.id, chair.user.id, true, 1, context('text-chair'));
+    const firstSeat = await stage4.createSeat(chair, committee.id, {stableKey: 'one', displayName: 'First'},
+      'text-seat-one', context('text-seat-one'));
+    const secondSeat = await stage4.createSeat(chair, committee.id, {stableKey: 'two', displayName: 'Second'},
+      'text-seat-two', context('text-seat-two'));
+    await stage3.assignSeat(chair, committee.id, {seatId: firstSeat.id, userId: firstMember.user.id}, context('assign-one'));
+    await stage3.assignSeat(chair, committee.id, {seatId: secondSeat.id, userId: secondMember.user.id}, context('assign-two'));
+
+    const note = await stage4.createNote(firstMember, committee.id, {title: 'Agenda', content: '<b>plain</b>'},
+      'note-one', context('note-one'));
+    expect(note.content).toBe('<b>plain</b>');
+    const retried = await stage4.createNote(firstMember, committee.id, {title: 'Agenda', content: '<b>plain</b>'},
+      'note-one', context('note-retry'));
+    expect(retried.id).toBe(note.id);
+    const edited = await stage4.updateNote(secondMember, note.id, {baseRevision: 1, patch: {content: 'shared'}}, context('note-edit'));
+    expect(edited).toEqual(expect.objectContaining({content: 'shared', revision: 2}));
+    await expect(stage4.updateNote(firstMember, note.id, {baseRevision: 1, patch: {content: 'stale'}}, context('note-stale')))
+      .rejects.toMatchObject({code: 'REVISION_CONFLICT', details: {currentRevision: 2}});
+
+    const post = await stage4.createTextPost(firstMember, committee.id, {content: 'member post'},
+      'post-one', context('post-one'));
+    expect(post).toEqual(expect.objectContaining({authorSeatId: firstSeat.id, authorDisplayName: 'First'}));
+    await expect(stage4.updateTextPost(secondMember, post.id, {baseRevision: 1, patch: {content: 'takeover'}}, context('post-takeover')))
+      .rejects.toMatchObject({code: 'FORBIDDEN'});
+    const chairPost = await stage4.createTextPost(chair, committee.id, {content: 'dictated', onBehalfOfSeatId: secondSeat.id},
+      'post-chair', context('post-chair'));
+    expect(chairPost).toEqual(expect.objectContaining({authorSeatId: secondSeat.id, authorDisplayName: 'Second', actorUserId: chair.user.id}));
+    await stage4.deleteTextPost(owner, post.id, 1, context('post-delete'));
+    const stored = await pool?.query('SELECT title,content,revision,deleted_at IS NOT NULL AS deleted FROM committee_text_posts WHERE id=$1', [post.id]);
+    expect(stored?.rows).toEqual([{title: '', content: '', revision: 2, deleted: true}]);
+    const auditRows = await pool?.query(`SELECT before_summary,after_summary FROM audit_log
+      WHERE resource_id=$1 AND action='proceedings.text_post_deleted'`, [post.id]);
+    expect(auditRows?.rows[0]?.before_summary).not.toHaveProperty('content');
+    expect(auditRows?.rows[0]?.before_summary).toEqual(expect.objectContaining({characterCount: 11, sha256: expect.any(String)}));
+  });
 });
