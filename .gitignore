@@ -12,6 +12,9 @@
 
 # production
 /build
+/packages/*/dist
+/server/dist
+/server/node_modules
 
 # local tool and emulator caches
 /.firebase
@@ -25,6 +28,9 @@
 .env.development.local
 .env.test.local
 .env.production.local
+/deploy/.env
+/server/.env
+/server/.local
 
 # Firebase / Google Cloud service account keys
 *-firebase-adminsdk-*.json

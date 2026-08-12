@@ -1,6 +1,6 @@
 # Quorum 自托管目标架构
 
-本目录描述 Quorum 从 Firebase BaaS 迁移到完全自主托管后的目标架构。这里记录的是已经确认的产品和技术契约，不表示仓库当前已经完成迁移。当前运行架构仍以根目录的 [`PROJECT_ARCHITECTURE.md`](../../PROJECT_ARCHITECTURE.md) 为准。
+本目录描述 Quorum 从 Firebase BaaS 迁移到完全自主托管后的目标架构。阶段 0/1 的契约、规则 schema、后端和部署骨架已经落地，但身份与业务运行路径尚未迁移，不表示仓库已经完成自托管迁移。当前运行架构仍以根目录的 [`PROJECT_ARCHITECTURE.md`](../../PROJECT_ARCHITECTURE.md) 为准。
 
 ## 文档索引
 
@@ -11,6 +11,19 @@
 | [`DATA_API_SPEC.md`](./DATA_API_SPEC.md) | PostgreSQL 逻辑模型、HTTP 命令、错误与 SSE 事件契约 |
 | [`STORAGE_AGENT_SPEC.md`](./STORAGE_AGENT_SPEC.md) | 服务器文件卷、S3 和 Chair Local Agent 协议 |
 | [`IMPLEMENTATION_PLAN.md`](./IMPLEMENTATION_PLAN.md) | 分阶段实现顺序、迁移边界和验收门槛 |
+| [`CURRENT_BEHAVIOR_BASELINE.md`](./CURRENT_BEHAVIOR_BASELINE.md) | 阶段 0 当前行为清单、规则 fixture 差异和稳定注册表 |
+| [`MANUAL_ACCEPTANCE.md`](./MANUAL_ACCEPTANCE.md) | 当前环境无法自动执行的部署、浏览器和容量验收 |
+
+## 当前实施与验证约束
+
+- 在取得服务器前继续按 `IMPLEMENTATION_PLAN.md` 完成可离线开发的迁移阶段，不把缺少服务器作为停止编码的理由。
+- 每次只完成一个阶段。上一阶段的代码、自动测试和文档形成基线后再进入下一阶段，不在一个改动中跨越多个尚未验证的业务领域。
+- 能自动验证的要求必须写成单元、契约、HTTP、数据库集成或前端测试。不得仅把可自动化项目列为人工验收。
+- PostgreSQL 集成测试必须连接真实 PostgreSQL，并使用独立临时数据库。环境缺少数据库时可以明确跳过，但不得改用内存数据库冒充 PostgreSQL 验证。
+- 依赖真实服务器、Docker、Caddy、浏览器、TLS、持久卷或容量环境的项目统一记录在 [`MANUAL_ACCEPTANCE.md`](./MANUAL_ACCEPTANCE.md)。每项记录前置条件、步骤、通过条件、证据和状态。
+- 延期验收必须标明未执行原因。单元测试、mock、静态配置检查和构建成功不能替代容器、浏览器、网络、持久性或容量证据。
+- 取得服务器后按人工验收清单补测，不因后续阶段已经实现而跳过较早阶段的部署验收。
+- Firebase 旧栈与 PostgreSQL 新栈在迁移期间通过显式配置二选一。同一业务动作不得双写；只有全部纵向切片通过验收后才能删除 Firebase 运行路径。
 
 ## 已确认的产品决策
 

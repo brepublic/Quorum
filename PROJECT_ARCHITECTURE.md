@@ -2,7 +2,7 @@
 
 > 本文件是本仓库的维护入口。后续涉及代码、构建、测试或运行的工作，应先阅读本文件和 `AGENTS.md`，并以实际代码为准更新本文档。
 
-> Quorum 已完成从 Firebase 迁移到自主托管架构的产品设计，但目标架构尚未实现。已确认的 PostgreSQL、HTTP API、SSE、规则包和 Chair Local Agent 契约集中在 [`docs/self-hosted/`](./docs/self-hosted/README.md)。在相应代码落地前，本文件以下内容继续描述当前真实运行架构；不得把目标规格误写为已经可部署的功能。
+> Quorum 已完成从 Firebase 迁移到自主托管架构的产品设计，并已落地实施计划阶段 0/1 的共享契约、规则 schema、TypeScript 后端与部署骨架；身份、授权、委员会、SSE、业务命令和文件 provider 尚未迁移。已确认的完整目标契约集中在 [`docs/self-hosted/`](./docs/self-hosted/README.md)。现有页面仍全部使用 Firebase；不得把后端骨架误写为已经替代当前业务运行路径。
 
 ## 1. 项目定位与技术栈
 
@@ -17,6 +17,7 @@ Quorum 是一个用于 Model UN（模拟联合国）委员会管理的单页 Web
 | 文件 | Firebase Cloud Storage | 委员会附件上传、下载、删除 |
 | 可观测性 | Google Analytics、Sentry | 页面访问与客户端错误/性能上报（仅非本地模拟器模式） |
 | 构建/测试 | Vite、TypeScript、Vitest、Cypress、Firebase CLI | 开发服务器、生产构建、单元和端到端测试 |
+| 自托管骨架 | Node.js 22、PostgreSQL 16、Caddy、Docker Compose | 独立的 migration、健康/版本接口和未来 API 落点；当前不承载登录或业务页面数据 |
 
 ## 2. 运行时总体结构
 
@@ -43,6 +44,10 @@ flowchart LR
 ```
 
 `src/index.tsx` 初始化 Google Analytics、Sentry、浏览器 history 与 Semantic UI 样式，并把 `App` 挂载到 `#root`。`src/App.tsx` 初始化 Firebase，并在显示普通路由前调用 Functions 检查管理员是否完成初始化；未初始化时所有路径都会进入首次管理员创建程序。若 `VITE_USE_FIREBASE_EMULATORS=true`，则连接本机 Auth（9099）、Realtime Database（9000）、Storage（9199）和 Functions（5001），否则连接 `muncoordinated` Firebase 项目。
+
+`server/` 是尚未接入页面的自主托管模块化单体骨架。它启动时通过 PostgreSQL advisory lock 执行 `server/migrations/` 中按版本排序且带 SHA-256 校验和的 migration，重复启动只核对已应用记录；数据库包含仓库未知版本、已有 migration 被改写或存在待应用版本时不会通过 readiness。当前 HTTP 面只有 `/health/live`、`/health/ready` 和 `/api/v1/version`，所有响应携带 `X-Request-ID`，成功/失败使用 `packages/contracts` 的统一 envelope，服务日志以 JSON 行写入标准输出。`/health/ready` 同时检查数据库 migration 兼容性和持久存储目录可读写。
+
+`packages/contracts/` 保存未来浏览器、后端和 Agent 共用的错误码、SSE 事件、审计动作、响应类型与 JSON Schema；`packages/rule-schema/` 保存规则包 v1 的无服务器安全校验器、JSON Schema，以及 `Quorum Default` 和北京学术标准 fixture。当前 Firebase 前端不导入这两个包，阶段 0 行为基线见 [`docs/self-hosted/CURRENT_BEHAVIOR_BASELINE.md`](./docs/self-hosted/CURRENT_BEHAVIOR_BASELINE.md)。
 
 `src/i18n.tsx` 提供无外部运行时依赖的界面国际化层。当前支持英语和简体中文；英语原文同时作为稳定词条键，简体中文词条集中维护。`LanguageProvider` 在语言变更时重新挂载界面，使类组件与函数组件统一获取新文案，并集中覆盖 Semantic UI 的搜索空结果、可新增选项等默认文案；语言切换控件嵌入主页、创建页和委员会工作区的导航菜单。用户选择保存在浏览器 `localStorage` 的 `muncoordinated-language` 项中，首次访问则根据浏览器语言选择默认值。除用户模板、国家模板和国家名称外，业务数据（委员会名称、帖子正文等）不会被翻译或写回；这些可本地化名称均在 Firebase 中保存默认语言和语言到名称的映射，并按当前界面语言解析。内置默认国家模板从静态国家列表生成，包含英语、简体中文名称、Emoji 国旗和大洲；标准 ISO 国家在界面中使用本地打包的 `flag-icons` 独立 SVG 渲染，以保证放大后的清晰度，自定义 Emoji 与上传图片仍按保存值显示。
 
@@ -153,6 +158,10 @@ system
 | `src/services/account-admin.ts` | 管理员 Callable Functions 的浏览器端类型与调用封装 |
 | `src/theme/` | 本地主题包校验、路由/组件适配钩子、主题切换与导入导出界面 |
 | `functions/` | Firebase Functions 管理端账号接口及独立 TypeScript 构建 |
+| `server/` | 自托管 Node.js 后端骨架、PostgreSQL migration、健康检查及数据库集成测试 |
+| `packages/contracts/` | 浏览器、后端和 Agent 共享的 API 类型、schema 与稳定注册表 |
+| `packages/rule-schema/` | 规则包 v1 schema、无服务器校验器和内置 fixture |
+| `deploy/` | Caddy、应用、PostgreSQL Compose，自托管镜像与隔离测试数据库 |
 | `src/modules/` | 通用事件处理、成员转换、统计和埋点 |
 | `src/i18n.tsx` | 英语/简体中文词条、语言偏好与全局语言切换控件 |
 | `cypress/` | 端到端用例、模拟器种子和支持代码 |
@@ -186,6 +195,11 @@ pnpm build                         # TypeScript 检查并生产构建
 pnpm emulators                     # Firebase Auth/RTDB/Storage/Functions 模拟器
 VITE_USE_FIREBASE_EMULATORS=true pnpm start
 pnpm test:e2e                      # 模拟器 + Vite + Cypress 集成测试
+pnpm build:self-host               # 构建 contracts、规则 schema 和 TypeScript 后端
+pnpm test:self-host                # 阶段 0/1 单元与契约测试
+pnpm self-host:test-db:up          # 启动只绑定 127.0.0.1:55432 的隔离 PostgreSQL
+pnpm test:self-host:integration    # 空库 migration 与重复执行集成测试
+pnpm self-host:test-db:down        # 停止隔离测试数据库
 ```
 
 Firebase Emulator Suite 需要 Java 21 或更高版本。端到端测试只能连接本地模拟器，不能指向生产 Firebase 项目。Cypress 二进制若未预下载，可能因网络限制无法下载；此时至少运行 TypeScript 构建和 Vitest，并如实记录 E2E 未执行原因。
@@ -198,3 +212,4 @@ Firebase Emulator Suite 需要 Java 21 或更高版本。端到端测试只能�
 4. 新增委员会字段或公开协作功能时，同步更新 TypeScript 模型、默认值、前端写入路径、规则和测试。
 5. 首次生产部署必须同时部署 Functions 与 Database Rules，再发布前端；否则前端无法检查或完成管理员初始化。管理员功能可用 `pnpm deploy:functions` 部署。
 6. 自主托管迁移按 [`docs/self-hosted/IMPLEMENTATION_PLAN.md`](./docs/self-hosted/IMPLEMENTATION_PLAN.md) 的纵向切片推进。每个切片落地后同步更新本文件；只有全部运行依赖真正移除后，才删除 Firebase 相关架构和模拟器说明。
+7. 阶段 1 Compose 中只有 Caddy 暴露 80/443；PostgreSQL 只在内部网络，数据库与文件使用命名持久卷。`deploy/compose.test.yaml` 是独立项目且只把测试 PostgreSQL 绑定到回环地址，重建脚本不得指向生产 Compose 卷。

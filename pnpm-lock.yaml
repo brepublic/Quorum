@@ -143,6 +143,32 @@ importers:
         specifier: ^5.4.5
         version: 5.4.5
 
+  packages/contracts: {}
+
+  packages/rule-schema: {}
+
+  server:
+    dependencies:
+      '@quorum/contracts':
+        specifier: workspace:*
+        version: link:../packages/contracts
+      '@quorum/rule-schema':
+        specifier: workspace:*
+        version: link:../packages/rule-schema
+      pg:
+        specifier: ^8.13.1
+        version: 8.21.0
+    devDependencies:
+      '@types/node':
+        specifier: 20.14.2
+        version: 20.14.2
+      '@types/pg':
+        specifier: ^8.11.10
+        version: 8.21.0
+      typescript:
+        specifier: ^5.4.5
+        version: 5.4.5
+
 packages:
 
   '@ampproject/remapping@2.3.0':
@@ -1352,6 +1378,9 @@ packages:
 
   '@types/node@20.14.2':
     resolution: {integrity: sha512-xyu6WAMVwv6AKFLB+e/7ySZVr/0zLCzOa7rSpq6jNwpqOrUbcACDWC+53d4n2QHOnDou0fbIsg8wZu/sxrnI4Q==}
+
+  '@types/pg@8.21.0':
+    resolution: {integrity: sha512-AYdtudzabjLZgVgRZmAnU8bAnVUXzuJX2IYHeSIiIHm68olD+LgQYCGWdtcNYnP0uq9c4S4NibVG3Ni7VbKW7Q==}
 
   '@types/prop-types@15.7.3':
     resolution: {integrity: sha512-KfRL3PuHmqQLOG+2tGpRO26Ctg+Cq1E01D2DMriKEATHgWLfeNDmq9e29Q9WIky0dQ3NPkd1mzYH8Lm936Z9qw==}
@@ -5952,6 +5981,12 @@ snapshots:
   '@types/node@20.14.2':
     dependencies:
       undici-types: 5.26.5
+
+  '@types/pg@8.21.0':
+    dependencies:
+      '@types/node': 20.14.2
+      pg-protocol: 1.14.0
+      pg-types: 2.2.0
 
   '@types/prop-types@15.7.3': {}
 

@@ -1,0 +1,12 @@
+.git
+.tools
+build
+coverage
+cypress/downloads
+cypress/screenshots
+cypress/videos
+database-debug.log
+deploy/.env
+node_modules
+server/.local
+**/dist

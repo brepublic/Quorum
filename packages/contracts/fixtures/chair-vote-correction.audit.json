@@ -1,0 +1,14 @@
+{
+  "id": "bf8f2f97-03b2-4faf-bdc9-4ea0cd114804",
+  "requestId": "01JQUORUMEXAMPLE0000000002",
+  "committeeId": "d5943488-67d9-4f5c-864d-7a291d237487",
+  "actorUserId": "046323bc-75eb-4bf1-82df-b9b680cb321b",
+  "effectiveCapabilities": ["CHAIR"],
+  "onBehalfOfSeatId": "b76ba884-aa13-4f4e-b01b-ad93b7ff76ac",
+  "action": "voting.vote_corrected",
+  "resourceType": "ballot_vote",
+  "resourceId": "fb284106-a174-40aa-8122-d20e274786f8",
+  "result": "SUCCEEDED",
+  "reason": "Chair corrected a recording error.",
+  "createdAt": "2026-08-12T12:01:00.000Z"
+}

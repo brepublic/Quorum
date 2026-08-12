@@ -1,0 +1,12 @@
+# `@quorum/contracts`
+
+浏览器、Quorum 后端和未来 Chair Local Agent 共用的传输契约。这里仅包含类型、JSON Schema 和稳定注册表，不包含 React、数据库访问或服务端授权逻辑。
+
+- `ERROR_DEFINITIONS` 是公开错误码和默认 HTTP 状态注册表。
+- `COMMITTEE_EVENT_DEFINITIONS` 是 SSE 事件名注册表。
+- `AUDIT_ACTION_DEFINITIONS` 是关键审计动作注册表。
+- `API_*_SCHEMA` 可用于独立检查统一响应 envelope。
+- `COMMAND_ENVELOPE_SCHEMA`、`COMMITTEE_EVENT_SCHEMA` 和 `AUDIT_ENTRY_SCHEMA` 固定命令、事件与审计边界。
+- `fixtures/` 提供 revision 冲突、表决事件和主席更正审计示例。
+
+新增或重命名稳定值时必须同步修改规格、消费者和兼容性测试；已经发布的名字不能就地改变语义。

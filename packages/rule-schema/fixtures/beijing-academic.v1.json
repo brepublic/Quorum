@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "key": "builtin:beijing-academic",
+  "metadata": {
+    "defaultLanguage": "zh-CN",
+    "names": {
+      "zh-CN": "北京学术标准",
+      "en": "Beijing Academic Standard"
+    },
+    "description": {
+      "zh-CN": "阶段 0 已确认差异；新增学术参数须经审阅后以新版本发布。",
+      "en": "Confirmed phase 0 differences; further academic parameters require review and a new version."
+    }
+  },
+  "meeting": {
+    "operationMode": {"defaultValue": "CHAIR_OPERATED"}
+  },
+  "attendance": {
+    "responses": ["PRESENT", "PRESENT_AND_VOTING", "ABSENT"],
+    "quorum": {"formula": {"op": "ceil", "value": {"op": "multiply", "left": {"fact": "attendance.allVotingSeatCount"}, "right": 0.25}}},
+    "simpleMajority": {"formula": {"op": "ceil", "value": {"op": "multiply", "left": {"fact": "attendance.presentVotingSeatCount"}, "right": 0.5}}},
+    "twoThirdsMajority": {"formula": {"op": "ceil", "value": {"op": "multiply", "left": {"fact": "attendance.presentVotingSeatCount"}, "right": 0.6666666667}}}
+  },
+  "phases": [
+    {"id": "open-debate", "names": {"zh-CN": "正式辩论", "en": "Formal debate"}}
+  ],
+  "speakerLists": [
+    {
+      "id": "general-speakers-list",
+      "defaultDurationSeconds": 60,
+      "allowDelegateRequests": false,
+      "yieldMinimumRemainingSecondsExclusive": 1,
+      "yieldTypes": ["CHAIR", "DELEGATE", "QUESTION", "COMMENT"],
+      "allowRepeatedYield": false
+    },
+    {
+      "id": "moderated-caucus",
+      "defaultTotalDurationSeconds": 600,
+      "defaultSpeakerDurationSeconds": 60,
+      "closeWhenFullSpeechNoLongerFits": true
+    }
+  ],
+  "points": [
+    {"id": "point-of-order", "names": {"zh-CN": "程序性问题", "en": "Point of order"}, "interruptRequested": true},
+    {"id": "point-of-information", "names": {"zh-CN": "咨询性问题", "en": "Point of information"}, "interruptRequested": false},
+    {"id": "point-of-personal-privilege", "names": {"zh-CN": "个人特权问题", "en": "Point of personal privilege"}, "interruptRequested": true}
+  ],
+  "motions": [
+    {"id": "open-unmoderated-caucus", "procedural": true, "effects": [{"type": "START_TIMER"}]},
+    {"id": "open-moderated-caucus", "procedural": true, "effects": [{"type": "CREATE_CAUCUS"}]},
+    {"id": "introduce-draft-resolution", "requiredSecondCount": 1, "effects": [{"type": "SET_DOCUMENT_STATUS"}]},
+    {"id": "vote-on-resolution", "effects": [{"type": "START_BALLOT"}]}
+  ],
+  "ballots": {
+    "delegateMayChangeVote": false,
+    "chairMayCorrectVote": true,
+    "anonymousStrawpoll": false,
+    "mustCollectAllVotesWhenVetoSeatEligible": true
+  },
+  "documents": {
+    "amendmentsPublicByDefault": false
+  },
+  "terminology": {}
+}

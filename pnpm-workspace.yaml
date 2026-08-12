@@ -1,5 +1,7 @@
 packages:
   - functions
+  - packages/*
+  - server
 
 overrides:
   "@types/react": "18.3.3"

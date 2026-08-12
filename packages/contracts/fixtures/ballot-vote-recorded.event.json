@@ -1,0 +1,13 @@
+{
+  "committeeId": "d5943488-67d9-4f5c-864d-7a291d237487",
+  "sequence": 9183,
+  "eventType": "ballot.vote_recorded",
+  "resourceType": "ballot",
+  "resourceId": "4da3e85f-f66d-4e8d-955f-91335ee9db7f",
+  "resourceRevision": 13,
+  "audience": "CHAIR",
+  "payload": {
+    "seatId": "b76ba884-aa13-4f4e-b01b-ad93b7ff76ac"
+  },
+  "createdAt": "2026-08-12T12:00:00.000Z"
+}

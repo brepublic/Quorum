@@ -1,0 +1,69 @@
+// @vitest-environment node
+
+import {randomUUID} from 'node:crypto';
+import {resolve} from 'node:path';
+import pg from 'pg';
+import {afterEach, beforeEach, describe, expect, it} from 'vitest';
+import {migrationStatus, runMigrations} from './migrations';
+
+const {Client, Pool} = pg;
+const adminUrl = process.env.TEST_DATABASE_ADMIN_URL;
+const integration = adminUrl ? describe : describe.skip;
+let databaseName = '';
+let databaseUrl = '';
+
+function quoteIdentifier(value: string): string {
+  return `"${value.replaceAll('"', '""')}"`;
+}
+
+beforeEach(async () => {
+  if (!adminUrl) return;
+  databaseName = `quorum_test_${randomUUID().replaceAll('-', '')}`;
+  const url = new URL(adminUrl);
+  url.pathname = `/${databaseName}`;
+  databaseUrl = url.toString();
+
+  const client = new Client({connectionString: adminUrl});
+  await client.connect();
+  try {
+    await client.query(`CREATE DATABASE ${quoteIdentifier(databaseName)}`);
+  } finally {
+    await client.end();
+  }
+});
+
+afterEach(async () => {
+  if (!adminUrl || !databaseName) return;
+  const client = new Client({connectionString: adminUrl});
+  await client.connect();
+  try {
+    await client.query(`DROP DATABASE IF EXISTS ${quoteIdentifier(databaseName)} WITH (FORCE)`);
+  } finally {
+    await client.end();
+    databaseName = '';
+  }
+});
+
+integration('PostgreSQL migrations', () => {
+  it('migrates an empty database and is safe to run again', async () => {
+    const pool = new Pool({connectionString: databaseUrl});
+    const migrationsDirectory = resolve('server/migrations');
+    try {
+      const first = await runMigrations(pool, migrationsDirectory);
+      const second = await runMigrations(pool, migrationsDirectory);
+      const status = await migrationStatus(pool, migrationsDirectory);
+      const runtime = await pool.query<{schema_compatibility: number}>(
+        'SELECT schema_compatibility FROM quorum_meta.runtime_metadata WHERE singleton = true'
+      );
+      const applied = await pool.query('SELECT version FROM quorum_meta.schema_migrations');
+
+      expect(first).toEqual(expect.objectContaining({ready: true, latestAppliedVersion: 1}));
+      expect(second).toEqual(expect.objectContaining({ready: true, pendingVersions: []}));
+      expect(status.ready).toBe(true);
+      expect(runtime.rows[0]?.schema_compatibility).toBe(1);
+      expect(applied.rowCount).toBe(1);
+    } finally {
+      await pool.end();
+    }
+  });
+});

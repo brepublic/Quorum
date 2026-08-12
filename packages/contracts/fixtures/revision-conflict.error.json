@@ -1,0 +1,10 @@
+{
+  "error": {
+    "code": "REVISION_CONFLICT",
+    "message": "This item changed since it was loaded.",
+    "details": {
+      "currentRevision": 39
+    },
+    "requestId": "01JQUORUMEXAMPLE0000000001"
+  }
+}

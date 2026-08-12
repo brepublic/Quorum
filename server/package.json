@@ -1,0 +1,22 @@
+{
+  "name": "@quorum/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node --enable-source-maps dist/index.js",
+    "migrate": "node --enable-source-maps dist/db/migrate-cli.js"
+  },
+  "dependencies": {
+    "@quorum/contracts": "workspace:*",
+    "@quorum/rule-schema": "workspace:*",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@types/node": "20.14.2",
+    "@types/pg": "^8.11.10",
+    "typescript": "^5.4.5"
+  }
+}
