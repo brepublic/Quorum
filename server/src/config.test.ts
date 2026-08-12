@@ -24,4 +24,14 @@ describe('server configuration', () => {
   it('rejects incomplete database configuration', () => {
     expect(() => loadConfig({DB_HOST: 'postgres'})).toThrow('must be configured');
   });
+
+  it('accepts only exact HTTP origins for CSRF protection', () => {
+    const config = loadConfig({
+      DATABASE_URL: 'postgresql://localhost/quorum',
+      QUORUM_ALLOWED_ORIGINS: 'https://quorum.example.com,http://localhost:5173'
+    });
+    expect(config.allowedOrigins).toEqual(['https://quorum.example.com', 'http://localhost:5173']);
+    expect(() => loadConfig({DATABASE_URL: 'postgresql://localhost/quorum',
+      QUORUM_ALLOWED_ORIGINS: 'https://quorum.example.com/path'})).toThrow('HTTP origins');
+  });
 });

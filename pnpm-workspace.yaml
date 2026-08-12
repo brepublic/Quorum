@@ -8,6 +8,7 @@ overrides:
 
 onlyBuiltDependencies:
   - "@swc/core"
+  - argon2
   - cypress
   - esbuild
   - protobufjs

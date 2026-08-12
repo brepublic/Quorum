@@ -4,6 +4,8 @@ import plugin from './cypress/plugins/index.js'
 export default defineConfig({
   blockHosts: 'www.google-analytics.com',
   experimentalInteractiveRunEvents: true,
+  viewportWidth: 1440,
+  viewportHeight: 900,
   projectId: 'zxca1q',
   env: {
     firebaseProjectId: process.env.CYPRESS_FIREBASE_PROJECT_ID ?? 'muncoordinated',

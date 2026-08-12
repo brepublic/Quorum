@@ -22,11 +22,13 @@ import Committee from './pages/Committee';
 import Templates from './pages/Templates';
 import Countries from './pages/Countries';
 import AccountAdmin from './pages/AccountAdmin';
+import SelfHostedIdentity from './pages/SelfHostedIdentity';
 import { NotFound } from './components/NotFound';
 import Loading from './components/Loading';
 import {Button, Container, Message} from 'semantic-ui-react';
 import {getAdminBootstrapStatus} from './services/account-admin';
 import {t} from './i18n';
+import {runtimeMode} from './runtime-mode';
 
 const firebaseConfig = {
   apiKey: 'AIzaSyA9EuEf7m3YOTBhBNhoe7DcOIZJP2toL6w',
@@ -44,11 +46,11 @@ const emulatorState = window as typeof window & {
   __FIREBASE_EMULATORS_CONNECTED__?: boolean;
 };
 
-if (!firebase.apps.length) {
+if (runtimeMode === 'firebase' && !firebase.apps.length) {
   firebase.initializeApp(firebaseConfig);
 }
 
-if (useFirebaseEmulators && !emulatorState.__FIREBASE_EMULATORS_CONNECTED__) {
+if (runtimeMode === 'firebase' && useFirebaseEmulators && !emulatorState.__FIREBASE_EMULATORS_CONNECTED__) {
   firebase.auth().useEmulator('http://127.0.0.1:9099');
   connectDatabaseEmulator(getDatabase(), '127.0.0.1', 9000);
   connectStorageEmulator(getStorage(), '127.0.0.1', 9199);
@@ -56,11 +58,11 @@ if (useFirebaseEmulators && !emulatorState.__FIREBASE_EMULATORS_CONNECTED__) {
   emulatorState.__FIREBASE_EMULATORS_CONNECTED__ = true;
 }
 
-if (!useFirebaseEmulators) {
+if (runtimeMode === 'firebase' && !useFirebaseEmulators) {
   firebase.analytics();
 }
 
-function App() {
+function FirebaseApp() {
   const [initialized, setInitialized] = React.useState<boolean>();
   const [bootstrapError, setBootstrapError] = React.useState<string>();
 
@@ -100,6 +102,10 @@ function App() {
         </Route>
       </Switch>
   );
+}
+
+function App() {
+  return runtimeMode === 'self-hosted' ? <SelfHostedIdentity /> : <FirebaseApp />;
 }
 
 export default App;

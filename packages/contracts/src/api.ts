@@ -46,6 +46,29 @@ export interface VersionInfo {
   databaseMigrationVersion: number;
 }
 
+export type IdentityUserStatus = 'ACTIVE' | 'DISABLED' | 'ANONYMIZED';
+
+export interface CurrentIdentity {
+  id: string;
+  email: string;
+  displayName: string;
+  status: IdentityUserStatus;
+  isSystemAdmin: boolean;
+  sessionVersion: number;
+  mustChangePassword: boolean;
+  createdAt: string;
+  disabledAt: string | null;
+}
+
+export interface IdentitySessionData {
+  user: CurrentIdentity;
+  csrfToken: string;
+}
+
+export interface BootstrapStatus {
+  initialized: boolean;
+}
+
 export function success<T>(data: T, requestId: string): ApiSuccess<T> {
   return {data, meta: {requestId}};
 }

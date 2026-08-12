@@ -22,9 +22,21 @@ function serializeError(value: unknown): unknown {
   };
 }
 
+const SECRET_FIELD = /(password|secret|token|cookie|authorization)/i;
+
+function redact(key: string, value: unknown): unknown {
+  if (SECRET_FIELD.test(key)) return '[REDACTED]';
+  if (Array.isArray(value)) return value.map(item => redact('', item));
+  if (value && typeof value === 'object' && !(value instanceof Error)) {
+    return Object.fromEntries(Object.entries(value).map(([nestedKey, nestedValue]) =>
+      [nestedKey, redact(nestedKey, nestedValue)]));
+  }
+  return serializeError(value);
+}
+
 function sanitize(fields: LogFields): LogFields {
   return Object.fromEntries(
-    Object.entries(fields).map(([key, value]) => [key, serializeError(value)])
+    Object.entries(fields).map(([key, value]) => [key, redact(key, value)])
   );
 }
 

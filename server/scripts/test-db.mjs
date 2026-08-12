@@ -40,7 +40,7 @@ try {
       break;
     case 'test':
       await up();
-      await run('pnpm', ['exec', 'vitest', 'run', 'server/src/db/migrations.integration.test.ts'], {
+      await run('pnpm', ['test:self-host:integration'], {
         env: {
           TEST_DATABASE_ADMIN_URL: process.env.TEST_DATABASE_ADMIN_URL
             || 'postgresql://quorum_test:quorum_test@127.0.0.1:55432/postgres'

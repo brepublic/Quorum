@@ -5,6 +5,8 @@ import {runMigrations} from './db/migrations.js';
 import {createApp} from './http/app.js';
 import {createLogger} from './logger.js';
 import {createHealthService} from './operations/health.js';
+import {PostgresIdentityStore} from './modules/identity/postgres.js';
+import {IdentityService} from './modules/identity/service.js';
 
 const {Pool} = pg;
 const logger = createLogger();
@@ -30,11 +32,18 @@ async function main(): Promise<void> {
       migrationsDirectory: config.migrationsDirectory,
       storagePath: config.storagePath
     });
+    const identity = new IdentityService(new PostgresIdentityStore(pool));
+    const bootstrapSecret = await identity.ensureBootstrapSecret();
+    if (bootstrapSecret) {
+      process.stderr.write(`Quorum bootstrap secret (shown once): ${bootstrapSecret}\n`);
+    }
     const server = createApp({
       health,
       logger,
       version: config.version,
-      databaseMigrationVersion: migrationState.latestAvailableVersion
+      databaseMigrationVersion: migrationState.latestAvailableVersion,
+      identity,
+      allowedOrigins: config.allowedOrigins
     });
 
     server.listen(config.port, config.host, () => {

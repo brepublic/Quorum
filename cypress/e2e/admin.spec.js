@@ -35,7 +35,7 @@ describe('Add members and checks that the thresholds are sensible', function () 
   })
 
   it('navs to the admin page', () => {
-    cy.contains('Setup').realClick()
+    cy.contains('a:visible', 'Setup').realClick()
     cy.url().should('include', '/setup')
     cy.wait(2000)
   })
@@ -76,7 +76,7 @@ describe('Add members and checks that the thresholds are sensible', function () 
   })
 
   it('moves into roll call and records every delegation', function () {
-    cy.contains('a', 'Roll call').click()
+    cy.contains('a:visible', 'Roll call').click()
     cy.url().should('include', '/roll-call')
     cy.get('.roll-call-member.status-uncalled').should('have.length', 3)
 

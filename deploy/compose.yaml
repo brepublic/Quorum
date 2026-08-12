@@ -45,6 +45,7 @@ services:
       QUORUM_VERSION: ${QUORUM_VERSION:-0.1.0-self-hosted}
       QUORUM_MIGRATIONS_DIR: /app/server/migrations
       QUORUM_STORAGE_PATH: /var/lib/quorum/files
+      QUORUM_ALLOWED_ORIGINS: ${QUORUM_ALLOWED_ORIGINS}
     volumes:
       - quorum_files:/var/lib/quorum/files
     depends_on:

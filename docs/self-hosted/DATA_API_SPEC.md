@@ -397,8 +397,10 @@ created_at
 
 ```text
 POST /api/v1/bootstrap/admin
+GET  /api/v1/bootstrap/status
 POST /api/v1/auth/login
 POST /api/v1/auth/logout
+POST /api/v1/auth/elevate
 POST /api/v1/auth/change-password
 GET  /api/v1/auth/me
 
@@ -406,8 +408,11 @@ GET  /api/v1/admin/users
 POST /api/v1/admin/users
 POST /api/v1/admin/users/:id/reset-password
 POST /api/v1/admin/users/:id/disable
+POST /api/v1/admin/users/:id/revoke-sessions
 POST /api/v1/admin/users/:id/anonymize
 ```
+
+`bootstrap/status` 只返回是否已经初始化，不返回 secret。`auth/elevate` 在密码确认成功后轮换当前 Session ID。`admin/users/:id/anonymize` 属于阶段 8；阶段 2 没有实现该路由。
 
 ### 委员会与席位
 

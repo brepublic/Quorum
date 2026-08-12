@@ -13,7 +13,7 @@ COPY server/package.json server/package.json
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile
 
 COPY . .
-RUN pnpm build && pnpm build:self-host
+RUN pnpm build:self-host
 
 FROM node:22-bookworm-slim AS app-runtime
 ENV NODE_ENV=production

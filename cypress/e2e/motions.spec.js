@@ -21,9 +21,9 @@ function inspectModeratedCaucus(motion, name, proposer, duration) {
 
 function introduceDraftResolution(motion, proposer, seconder) {
   motion.get('button').contains('Passed').click()
-  motion.should('contain', 'Passed')
-  motion.find('button[aria-label="Delete"]').should('not.exist')
-  motion.get('button').contains('Draft resolution').click()
+  cy.get('.motion').first().should('contain', 'Passed')
+  cy.get('.motion').first().find('button[aria-label="Delete"]').should('not.exist')
+  cy.get('.motion').first().contains('.button', 'Draft resolution').click()
   cy.url().should('include', '/resolutions')
   cy.get('body').should('contain', proposer)
   cy.get('body').should('contain', seconder)
@@ -31,9 +31,9 @@ function introduceDraftResolution(motion, proposer, seconder) {
 
 function openModeratedCaucus(motion, name, proposer, caucusTime, speakerTime) {
   motion.get('button').contains('Passed').click()
-  motion.should('contain', 'Passed')
-  motion.find('button[aria-label="Delete"]').should('not.exist')
-  motion.get('button').contains('Caucuses').click()
+  cy.get('.motion').first().should('contain', 'Passed')
+  cy.get('.motion').first().find('button[aria-label="Delete"]').should('not.exist')
+  cy.get('.motion').first().contains('.button', 'Caucuses').click()
   cy.url().should('include', '/caucuses')
   cy.get('body').should('contain', name)
   cy.get('body').should('contain', proposer)
@@ -42,7 +42,7 @@ function openModeratedCaucus(motion, name, proposer, caucusTime, speakerTime) {
 }
 
 function gotoMotions() {
-  cy.contains('Motions').click()
+  cy.contains('a:visible', 'Motions').click()
   cy.url().should('include', '/motions')
 }
 
@@ -76,7 +76,7 @@ describe('Adds motions, checks that they\'re ranked properly, and entertains the
   })
 
   it('adds a motion for the introduction of a draft resolution', () => {
-    cy.contains('Seconder').siblings().find('input').click().type("Bolivia{enter}")
+    cy.contains('Seconder').siblings().find('input').type("Bolivia{enter}", {force: true})
 
     clickAddMotion()
 
@@ -91,7 +91,7 @@ describe('Adds motions, checks that they\'re ranked properly, and entertains the
   it('adds an 10/1 moderated caucus', () => {
     cy.contains('Type').siblings().children('input').click().type("Open moderated caucus{enter}")
     cy.contains('Name').siblings().find('input').click().type("Alpha{enter}")
-    cy.contains('Proposer').siblings().find('input').click().type("China{enter}")
+    cy.contains('Proposer').siblings().find('input').type("China{enter}", {force: true})
 
     // This wil fire the addition of the entry
     cy.contains('Duration').siblings().find('input').click().type("{backspace}{backspace}10{enter}")
@@ -115,7 +115,7 @@ describe('Adds motions, checks that they\'re ranked properly, and entertains the
   it('adds an 11/30 moderated caucus', () => {
     cy.get('.form > :nth-child(1) > .ui > input.search').type('Open moderated caucus{enter}')
     cy.contains('Name').siblings().find('input').click().type("Beta{enter}")
-    cy.contains('Proposer').siblings().find('input').click().type("Bolivia{enter}")
+    cy.contains('Proposer').siblings().find('input').type("Bolivia{enter}", {force: true})
     cy.contains('Duration').siblings().find('input').click().type("{backspace}{backspace}11")
     cy.contains('Speaking time').siblings().find('input').click().type("{backspace}{backspace}30")
 

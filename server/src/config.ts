@@ -8,6 +8,7 @@ export interface ServerConfig {
   migrationsDirectory: string;
   storagePath: string;
   shutdownGraceMs: number;
+  allowedOrigins: string[];
 }
 
 function databaseUrl(env: NodeJS.ProcessEnv): string {
@@ -40,6 +41,16 @@ function integer(value: string | undefined, fallback: number, name: string): num
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
+  const allowedOrigins = (env.QUORUM_ALLOWED_ORIGINS || 'http://localhost:3000')
+    .split(',')
+    .map(value => value.trim())
+    .filter(Boolean);
+  for (const origin of allowedOrigins) {
+    const parsed = new URL(origin);
+    if (parsed.origin !== origin || !['http:', 'https:'].includes(parsed.protocol)) {
+      throw new Error('QUORUM_ALLOWED_ORIGINS must contain comma-separated HTTP origins.');
+    }
+  }
   return {
     host: env.HOST || '0.0.0.0',
     port: integer(env.PORT, 3000, 'PORT'),
@@ -47,6 +58,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     databaseUrl: databaseUrl(env),
     migrationsDirectory: resolve(env.QUORUM_MIGRATIONS_DIR || 'server/migrations'),
     storagePath: resolve(env.QUORUM_STORAGE_PATH || 'server/.local/storage'),
-    shutdownGraceMs: integer(env.SHUTDOWN_GRACE_MS, 10_000, 'SHUTDOWN_GRACE_MS')
+    shutdownGraceMs: integer(env.SHUTDOWN_GRACE_MS, 10_000, 'SHUTDOWN_GRACE_MS'),
+    allowedOrigins
   };
 }

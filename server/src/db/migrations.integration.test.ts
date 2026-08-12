@@ -57,11 +57,11 @@ integration('PostgreSQL migrations', () => {
       );
       const applied = await pool.query('SELECT version FROM quorum_meta.schema_migrations');
 
-      expect(first).toEqual(expect.objectContaining({ready: true, latestAppliedVersion: 1}));
+      expect(first).toEqual(expect.objectContaining({ready: true, latestAppliedVersion: 2}));
       expect(second).toEqual(expect.objectContaining({ready: true, pendingVersions: []}));
       expect(status.ready).toBe(true);
-      expect(runtime.rows[0]?.schema_compatibility).toBe(1);
-      expect(applied.rowCount).toBe(1);
+      expect(runtime.rows[0]?.schema_compatibility).toBe(2);
+      expect(applied.rowCount).toBe(2);
     } finally {
       await pool.end();
     }

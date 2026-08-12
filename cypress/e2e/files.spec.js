@@ -14,12 +14,12 @@ describe('Uploads a file to committee posts', function () {
   })
 
   it('navs to the posts screen', () => {
-    cy.contains('Posts').click()
+    cy.contains('a:visible', 'Posts').click()
     cy.url().should('include', '/posts')
   })
 
   it('uploads a file as Afghanistan', () => {
-    cy.contains('.item', 'File').click()
+    cy.contains('.item:visible', 'File').click()
 
     cy.get('input[type="file"]').selectFile('cypress/fixtures/upload-test.txt', {
       force: true,

@@ -1,6 +1,15 @@
 # Quorum 自托管目标架构
 
-本目录描述 Quorum 从 Firebase BaaS 迁移到完全自主托管后的目标架构。阶段 0/1 的契约、规则 schema、后端和部署骨架已经落地，但身份与业务运行路径尚未迁移，不表示仓库已经完成自托管迁移。当前运行架构仍以根目录的 [`PROJECT_ARCHITECTURE.md`](../../PROJECT_ARCHITECTURE.md) 为准。
+本目录描述 Quorum 从 Firebase BaaS 迁移到完全自主托管后的目标架构。阶段 0/1/2 的契约、规则 schema、后端、部署骨架和自主托管身份切片已经落地；委员会及其他业务运行路径尚未迁移，不表示仓库已经完成自托管迁移。当前事实以根目录的 [`PROJECT_ARCHITECTURE.md`](../../PROJECT_ARCHITECTURE.md) 为准。
+
+## 当前阶段 2 边界
+
+- PostgreSQL migration 已建立身份、凭据、Session、系统设置、未来注册申请和身份审计表。
+- bootstrap secret 只保存哈希，并由 PostgreSQL 事务保证并发初始化只有一个成功；公开状态 API 不返回 secret。
+- 密码使用 Argon2id；Session token 只保存哈希；Cookie、CSRF、Origin、限流、锁定和 Session 轮换在服务端执行。
+- 自主托管前端已接入首次管理员、登录、强制修改临时密码、退出和账号管理。
+- `VITE_RUNTIME_MODE=self-hosted` 只启用自主托管身份；默认和 `firebase` 模式保持现有 Firebase 页面。委员会、席位、邀请码、规则包运行时和议事页面没有迁移，也没有双写。
+- PostgreSQL、TLS 浏览器和 Compose 实测尚未在当前环境执行，状态及取证要求见 [`MANUAL_ACCEPTANCE.md`](./MANUAL_ACCEPTANCE.md)。
 
 ## 文档索引
 

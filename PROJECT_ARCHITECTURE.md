@@ -2,7 +2,7 @@
 
 > 本文件是本仓库的维护入口。后续涉及代码、构建、测试或运行的工作，应先阅读本文件和 `AGENTS.md`，并以实际代码为准更新本文档。
 
-> Quorum 已完成从 Firebase 迁移到自主托管架构的产品设计，并已落地实施计划阶段 0/1 的共享契约、规则 schema、TypeScript 后端与部署骨架；身份、授权、委员会、SSE、业务命令和文件 provider 尚未迁移。已确认的完整目标契约集中在 [`docs/self-hosted/`](./docs/self-hosted/README.md)。现有页面仍全部使用 Firebase；不得把后端骨架误写为已经替代当前业务运行路径。
+> Quorum 已完成自主托管目标设计，并已落地实施计划阶段 0/1/2：共享契约、规则 schema、TypeScript 后端、部署骨架，以及自主托管身份与唯一系统管理员。委员会、席位、规则运行时、SSE、议事命令和文件 provider 尚未迁移。默认构建和全部现有业务页面仍使用 Firebase；不得把身份切片误写为已经替代委员会业务运行路径。
 
 ## 1. 项目定位与技术栈
 
@@ -17,7 +17,7 @@ Quorum 是一个用于 Model UN（模拟联合国）委员会管理的单页 Web
 | 文件 | Firebase Cloud Storage | 委员会附件上传、下载、删除 |
 | 可观测性 | Google Analytics、Sentry | 页面访问与客户端错误/性能上报（仅非本地模拟器模式） |
 | 构建/测试 | Vite、TypeScript、Vitest、Cypress、Firebase CLI | 开发服务器、生产构建、单元和端到端测试 |
-| 自托管骨架 | Node.js 22、PostgreSQL 16、Caddy、Docker Compose | 独立的 migration、健康/版本接口和未来 API 落点；当前不承载登录或业务页面数据 |
+| 自托管身份 | Node.js 22、PostgreSQL 16、Argon2id、Caddy、Docker Compose | migration、健康/版本、首次管理员、账号、Session、CSRF 与同源身份 API；尚不承载委员会业务 |
 
 ## 2. 运行时总体结构
 
@@ -43,9 +43,11 @@ flowchart LR
   Entry --> Obs
 ```
 
-`src/index.tsx` 初始化 Google Analytics、Sentry、浏览器 history 与 Semantic UI 样式，并把 `App` 挂载到 `#root`。`src/App.tsx` 初始化 Firebase，并在显示普通路由前调用 Functions 检查管理员是否完成初始化；未初始化时所有路径都会进入首次管理员创建程序。若 `VITE_USE_FIREBASE_EMULATORS=true`，则连接本机 Auth（9099）、Realtime Database（9000）、Storage（9199）和 Functions（5001），否则连接 `muncoordinated` Firebase 项目。
+`src/index.tsx` 初始化 Google Analytics、Sentry、浏览器 history 与 Semantic UI 样式，并把 `App` 挂载到 `#root`。`VITE_RUNTIME_MODE` 显式选择运行路径：未设置或为 `firebase` 时保持原行为，`src/App.tsx` 初始化 Firebase，并在显示普通路由前调用 Functions 检查管理员初始化；`VITE_USE_FIREBASE_EMULATORS=true` 时连接本机模拟器，否则连接 `muncoordinated`。只有 `VITE_RUNTIME_MODE=self-hosted` 时才显示 `SelfHostedIdentity`，调用同源身份 API 完成首次管理员、登录、强制改密、退出和账号管理；该分支目前不显示或写入委员会业务。
 
-`server/` 是尚未接入页面的自主托管模块化单体骨架。它启动时通过 PostgreSQL advisory lock 执行 `server/migrations/` 中按版本排序且带 SHA-256 校验和的 migration，重复启动只核对已应用记录；数据库包含仓库未知版本、已有 migration 被改写或存在待应用版本时不会通过 readiness。当前 HTTP 面只有 `/health/live`、`/health/ready` 和 `/api/v1/version`，所有响应携带 `X-Request-ID`，成功/失败使用 `packages/contracts` 的统一 envelope，服务日志以 JSON 行写入标准输出。`/health/ready` 同时检查数据库 migration 兼容性和持久存储目录可读写。
+`server/` 是自主托管模块化单体。它启动时通过 PostgreSQL advisory lock 执行带 SHA-256 校验和的 migration；数据库版本不兼容时 readiness 失败。阶段 2 migration 建立 `users`、`user_credentials`、`sessions`、`system_settings`、`registration_requests` 和身份审计表。首次启动生成高熵 bootstrap secret，只把 SHA-256 哈希写入数据库，并在专用控制台行显示一次；初始化事务锁定单行设置、创建唯一 `SYSTEM_ADMIN` 后清除哈希。密码使用固定参数 Argon2id；Session Cookie 为 `Secure`、`HttpOnly`、`SameSite=Lax`，数据库只保存 Session token 的 SHA-256；写请求同时校验允许 Origin 和双提交 CSRF token。登录、密码确认提权和改密会轮换 Session，重置密码、禁用账号和用户级撤销通过 `session_version` 与撤销时间立即使旧 Session 失效。
+
+身份 HTTP 面包括 bootstrap 状态与管理员创建、登录、退出、当前身份、提权、改密，以及管理员账号列表、创建、重置临时密码、禁用和 Session 撤销。`registration_requests` 只有表结构，没有公开创建路由。所有 API 继续使用 request ID、统一 envelope 和结构化日志；密码、临时密码与 token 不写入日志或身份审计。系统管理员没有任何委员会 `CHAIR` 能力，因为阶段 3 的委员会授权尚未实施。
 
 `packages/contracts/` 保存未来浏览器、后端和 Agent 共用的错误码、SSE 事件、审计动作、响应类型与 JSON Schema；`packages/rule-schema/` 保存规则包 v1 的无服务器安全校验器、JSON Schema，以及 `Quorum Default` 和北京学术标准 fixture。当前 Firebase 前端不导入这两个包，阶段 0 行为基线见 [`docs/self-hosted/CURRENT_BEHAVIOR_BASELINE.md`](./docs/self-hosted/CURRENT_BEHAVIOR_BASELINE.md)。
 
@@ -145,6 +147,7 @@ system
 - `countryTemplates/{creatorUid}` 同样仅允许 UID 对应的受管登录用户读写；内置默认国家模板随前端代码发布，不写入 Firebase。
 - `storage.rules` 允许公开读取 `committees/{committeeId}/{fileName}`；上传需写入委员会创建者 UID 元数据。文件拥有者或委员会主任可更新/删除。
 - `Files.tsx` 同时维护 Database 中的文件/帖子元数据和 Storage 中的二进制对象。
+- 自主托管模式的 `src/pages/SelfHostedIdentity.tsx` 不复用 Firebase 身份或 Callable。管理员创建普通账号时由服务端生成一次性临时密码；首次登录只能读取当前身份、退出或改密。管理员不能禁用唯一系统管理员；完整账号匿名化与资源转移仍属于后续阶段。
 
 因此，数据库规则和 Storage 元数据是产品的关键安全边界；变更前必须同时审查前端写入路径与这两份规则文件。
 
@@ -158,7 +161,7 @@ system
 | `src/services/account-admin.ts` | 管理员 Callable Functions 的浏览器端类型与调用封装 |
 | `src/theme/` | 本地主题包校验、路由/组件适配钩子、主题切换与导入导出界面 |
 | `functions/` | Firebase Functions 管理端账号接口及独立 TypeScript 构建 |
-| `server/` | 自托管 Node.js 后端骨架、PostgreSQL migration、健康检查及数据库集成测试 |
+| `server/` | 自托管 Node.js 后端、PostgreSQL migration、身份命令、HTTP 安全边界、健康检查及真实数据库集成测试 |
 | `packages/contracts/` | 浏览器、后端和 Agent 共享的 API 类型、schema 与稳定注册表 |
 | `packages/rule-schema/` | 规则包 v1 schema、无服务器校验器和内置 fixture |
 | `deploy/` | Caddy、应用、PostgreSQL Compose，自托管镜像与隔离测试数据库 |
@@ -195,10 +198,11 @@ pnpm build                         # TypeScript 检查并生产构建
 pnpm emulators                     # Firebase Auth/RTDB/Storage/Functions 模拟器
 VITE_USE_FIREBASE_EMULATORS=true pnpm start
 pnpm test:e2e                      # 模拟器 + Vite + Cypress 集成测试
-pnpm build:self-host               # 构建 contracts、规则 schema 和 TypeScript 后端
-pnpm test:self-host                # 阶段 0/1 单元与契约测试
+pnpm build:self-host               # 以 self-hosted 模式构建前端、contracts、规则 schema 和后端
+pnpm test:self-host                # 阶段 0/1/2 契约、服务、HTTP 与前端身份测试
 pnpm self-host:test-db:up          # 启动只绑定 127.0.0.1:55432 的隔离 PostgreSQL
-pnpm test:self-host:integration    # 空库 migration 与重复执行集成测试
+TEST_DATABASE_ADMIN_URL=postgresql://... pnpm test:self-host:integration
+                                      # 创建、测试并清理独立 PostgreSQL 临时数据库；未配置时明确 skip
 pnpm self-host:test-db:down        # 停止隔离测试数据库
 ```
 
@@ -213,3 +217,4 @@ Firebase Emulator Suite 需要 Java 21 或更高版本。端到端测试只能�
 5. 首次生产部署必须同时部署 Functions 与 Database Rules，再发布前端；否则前端无法检查或完成管理员初始化。管理员功能可用 `pnpm deploy:functions` 部署。
 6. 自主托管迁移按 [`docs/self-hosted/IMPLEMENTATION_PLAN.md`](./docs/self-hosted/IMPLEMENTATION_PLAN.md) 的纵向切片推进。每个切片落地后同步更新本文件；只有全部运行依赖真正移除后，才删除 Firebase 相关架构和模拟器说明。
 7. 阶段 1 Compose 中只有 Caddy 暴露 80/443；PostgreSQL 只在内部网络，数据库与文件使用命名持久卷。`deploy/compose.test.yaml` 是独立项目且只把测试 PostgreSQL 绑定到回环地址，重建脚本不得指向生产 Compose 卷。
+8. `VITE_RUNTIME_MODE` 不允许混合值。普通 `pnpm build` 默认 Firebase；`pnpm build:self-host` 明确构建自主托管身份路径。同一用户动作不存在 Firebase/PostgreSQL 双写。
