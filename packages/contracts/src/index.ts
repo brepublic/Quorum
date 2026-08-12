@@ -3,3 +3,4 @@ export * from './domain.js';
 export * from './registry.js';
 export * from './schemas.js';
 export * from './stage3.js';
+export * from './stage4.js';

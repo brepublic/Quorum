@@ -526,6 +526,181 @@ Chair 任免、归档、删除状态转换、运作模式和活动状态命令�
 
 `ONCE` 只保存该操作的裁决记录。`FUTURE` 从当前活动定义创建新的不可变委员会规则版本；它不会自动激活新版本。阶段 3 拒绝 `CURRENT_PROCESS`，也不会调用计时器、队列、动议或表决命令。
 
+## 11.2 阶段 4 低并发命令契约
+
+阶段 4 只实现委员会资料、账号模板、席位快照、笔记、普通文本帖子、会期、点名、出席事件和问题。HTTP 响应可以返回最新资源或委员会工作区快照；本阶段不开放 SSE，也不实现阶段 5 的议事资源。
+
+### 状态与权限矩阵
+
+`ACTIVE` 允许全部阶段 4 命令。`PAUSED` 允许资料、席位、模板、笔记和文本帖子管理，但拒绝会期、点名、出席和问题命令。`ARCHIVED` 与 `DELETING` 拒绝全部写入。读取仍按委员会可见性和访问者 audience 过滤。
+
+| 资源或命令 | member | Chair | Owner | `SYSTEM_ADMIN` |
+| --- | --- | --- | --- | --- |
+| 账号级委员会/国家模板 | 仅本人账号 | 仅本人账号 | 仅本人账号 | 仅本人账号，不可读取他人模板 |
+| 委员会资料 | 读 | 读 | 写 | 无隐式权限 |
+| 席位创建、编辑、停用和排序 | 读 | 写 | 无 Chair 时只读 | 无隐式权限 |
+| 笔记 | 读写 | 读写 | 读写 | 无隐式权限 |
+| 普通文本帖子 | 创建；编辑/删除本人帖子 | 创建；编辑/删除全部 | 创建；编辑/删除全部 | 无隐式权限 |
+| 会期、点名和出席事件 | 读 | 写 | 无 Chair 时只读 | 无隐式权限 |
+| `DELEGATE_OPERATED` 提出问题 | 仅自己的活动席位 | 可代任意活动席位 | 仅有活动席位时代表自己 | 无隐式权限 |
+| `CHAIR_OPERATED` 提出问题 | 只读 | 可代任意活动席位 | 只读，除非同时是 Chair | 无隐式权限 |
+| 主席回应 | 读 | 写 | 无 Chair 时只读 | 无隐式权限 |
+
+Owner、Chair、membership 与活动 assignment 始终分别判断。服务端从 Session 推导实际 actor；客户端不能提交 owner、actor、用户邮箱、capability 或代表名称。
+
+### 账号级国家模板
+
+```text
+GET    /api/v1/country-templates
+POST   /api/v1/country-templates
+GET    /api/v1/country-templates/:id
+PUT    /api/v1/country-templates/:id
+POST   /api/v1/country-templates/:id/clone
+DELETE /api/v1/country-templates/:id
+```
+
+列表包含只读 `builtin:default` 和当前账号自己的模板。自定义资源使用 UUID；API 的稳定 key 为 `custom:<uuid>`。创建请求为：
+
+```json
+{
+  "names": {"zh-CN": "默认国家", "en": "Default countries"},
+  "defaultLanguage": "zh-CN",
+  "countryLanguages": ["zh-CN", "en"],
+  "countries": [{
+    "stableKey": "china",
+    "names": {"zh-CN": "中国", "en": "China"},
+    "defaultLanguage": "zh-CN",
+    "continent": "Asia",
+    "sortOrder": 10,
+    "flag": {"type": "STANDARD", "value": "cn"}
+  }]
+}
+```
+
+`PUT` 使用 `{baseRevision, template}`，整体替换该账号模板的受控定义，但不接受未知字段或任意 JSON patch。国家语言必须作为 `countryLanguages` 的整列声明；每个国家至少有一个非空名称。显示名回退为当前界面语言、模板或国家的默认语言、其他非空名称。
+
+国旗类型只接受 `STANDARD`、`EMOJI` 和 `IMAGE`。标准国旗值是两个 ASCII 字母；Emoji 限 32 UTF-8 字节；图片必须是合法的 `data:image/webp;base64,...`，解码后不超过 256 KiB，VP8/VP8L/VP8X 尺寸不超过 256×160。服务端不接受浏览器声明的 MIME 或尺寸作为验证依据。
+
+内置模板可读取和克隆，修改或删除返回 403。删除被当前账号任一委员会模板引用的国家模板返回 `409 RESOURCE_CONFLICT`，`details.templates` 只列出调用者自己的占用模板 ID 和显示名。
+
+### 账号级委员会模板
+
+```text
+GET    /api/v1/committee-templates
+POST   /api/v1/committee-templates
+GET    /api/v1/committee-templates/:id
+PUT    /api/v1/committee-templates/:id
+POST   /api/v1/committee-templates/:id/clone
+DELETE /api/v1/committee-templates/:id
+```
+
+创建和 `PUT` 的 `template` 包含 `names`、`defaultLanguage`、`countryTemplateKey` 和 `members`。每个 member 包含稳定 key、多语言名称、`STANDARD|VETO|NGO|OBSERVER`、`canVote`、`hasVeto`、`mustVote`、排序和国旗。三项表决属性分别保存：`canVote` 表示正式表决资格，`hasVeto` 表示否决权，`mustVote` 表示出席并参与表决时不得弃权。
+
+同一账号的多个委员会模板可以引用同一个国家模板。引用必须指向 `builtin:default` 或当前账号仍存在的国家模板。克隆生成独立 UUID 和 revision 1；后续修改或删除源模板不改变克隆。
+
+委员会创建扩展为：
+
+```json
+{
+  "name": "联合国安全理事会",
+  "visibility": "PRIVATE",
+  "operationMode": "DELEGATE_OPERATED",
+  "committeeTemplateId": "可选 UUID",
+  "countryTemplateKey": "未选择委员会模板时必填"
+}
+```
+
+选择 `committeeTemplateId` 时，服务端在创建委员会的同一事务中复制模板成员、国旗和排序为席位快照。未选择委员会模板时必须提交可访问的 `countryTemplateKey`，委员会保留临时模板语义但不自动创建席位。阶段 4 不提供按显示名重新应用模板；既有委员会席位不会随模板变化。
+
+### 席位快照
+
+阶段 3 的创建席位请求扩展 `mustVote` 和 `flag`。编辑、停用与排序统一使用受控席位命令：
+
+```text
+PUT /api/v1/committees/:id/seats/:seatId
+```
+
+```json
+{
+  "baseRevision": 3,
+  "patch": {"displayName": "中华人民共和国", "sortOrder": 10}
+}
+```
+
+`patch` 只接受 `displayName`、`rank`、`canVote`、`hasVeto`、`mustVote`、`sortOrder`、`flag` 和 `active`。陈旧 revision 返回 409。历史点名、问题和出席记录保存 seat UUID 与当时显示名快照；不会反查当前模板或当前席位名称。
+
+### 笔记与普通文本帖子
+
+```text
+POST   /api/v1/committees/:id/notes
+PUT    /api/v1/notes/:id
+DELETE /api/v1/notes/:id
+
+POST   /api/v1/committees/:id/text-posts
+PUT    /api/v1/text-posts/:id
+DELETE /api/v1/text-posts/:id
+```
+
+创建接受 `title`、`content` 和可选 `sortOrder`；Chair 创建帖子时还可提交 `onBehalfOfSeatId`。笔记标题限 200 字符、正文限 100,000 字符；帖子标题限 200 字符、正文限 20,000 字符。UTF-8 请求正文仍受全局 payload 限制。接口拒绝 `html`、`file`、`filename`、`url`、附件和其他未知字段；正文按纯文本保存和渲染。
+
+更新请求为 `{baseRevision, patch}`，`patch` 只接受标题、正文和排序。删除采用软删除：资源正文清空并保存 `deleted_at`，事件与审计只记录 ID、revision、字符数和 SHA-256 摘要，不记录正文。普通 member 只能编辑或删除自己创建的帖子；Chair 与 Owner 可以管理全部文本帖子。所有 member、Chair 和 Owner 都可读写委员会笔记。
+
+创建命令要求 `Idempotency-Key`。相同用户、路由、key 与相同请求返回原响应；同 key 不同请求返回 `409 IDEMPOTENCY_CONFLICT`。
+
+### meeting session、点名和出席
+
+```text
+POST /api/v1/committees/:id/meeting-sessions
+POST /api/v1/meeting-sessions/:id/close
+POST /api/v1/committees/:id/roll-calls
+POST /api/v1/roll-calls/:id/record-response
+POST /api/v1/roll-calls/:id/undo
+POST /api/v1/roll-calls/:id/reset
+POST /api/v1/committees/:id/attendance-events
+```
+
+每个委员会最多一个 `OPEN` meeting session。创建请求可省略 `phaseId`；服务端选择活动规则包的第一项 phase，若规则包没有 phase 则使用稳定值 `open-debate`。会期冻结创建时的活动规则版本。关闭使用会期 `baseRevision`，只允许没有进行中点名的会期。
+
+开始点名请求为 `{meetingSessionId}`，要求 `Idempotency-Key`。同一会期最多一个 `IN_PROGRESS` 点名。点名冻结规则版本、`attendance.responses`、开始时的活动席位顺序和每个席位显示名。规则响应为空、重复或包含未知值时返回 422。
+
+记录请求为 `{baseRevision, seatId, response}`。只接受冻结名单中尚未记录的席位和冻结回答；每次成功递增 roll call revision 并移动 `currentSeatId`。最后一席成功后把点名标记为 `COMPLETED`，并为每席追加来源为 roll-call entry 的 `PRESENT` 或 `ABSENT` attendance event。`PRESENT_AND_VOTING` 映射为当前出席 `PRESENT`，但 entry 保留原回答。并发请求以 roll call 行锁和 revision 保证只有一个成功。
+
+`undo` 只撤销当前 `IN_PROGRESS` 点名的最后一个 entry：entry 保存撤销时间，不物理删除；点名恢复该席位为当前席位。完成后的点名不可撤销。`reset` 把当前点名标记 `ABANDONED` 并在同一会期创建新的 `IN_PROGRESS` 点名；旧 entries 保留。它不修改已完成点名或其 attendance events。
+
+出席事件请求为 `{meetingSessionId, seatId, type}`，type 为 `PRESENT`、`TEMPORARILY_LEFT`、`RETURNED` 或 `ABSENT`。仅 Chair 可提交；actor 来自 Session，`on_behalf_of_seat_id` 固定为目标席位。当前状态由最后一个有效事件物化为 `PRESENT`、`TEMPORARILY_LEFT` 或 `ABSENT`，并可按事件顺序重建。事件追加不改写点名 entry。
+
+### 问题及主席回应
+
+```text
+POST /api/v1/committees/:id/points
+POST /api/v1/points/:id/resolve
+```
+
+创建请求为 `{meetingSessionId, pointTypeId, content, onBehalfOfSeatId?}`。正文限 4,000 字符。服务端从会期冻结的已发布规则版本读取 `points`；未知、重复、停用或结构不兼容的类型返回 422。创建时冻结规则版本、问题类型 ID、是否请求打断及必要显示名。
+
+`DELEGATE_OPERATED` 下，普通 member 的席位由活动 assignment 推导，且不能提交 `onBehalfOfSeatId`。Chair 可以选择任意活动席位代录。`CHAIR_OPERATED` 下只有 Chair 可以创建，并必须选择活动席位。Chair 代办保存实际 `actor_user_id` 与 `on_behalf_of_seat_id`。
+
+回应请求为：
+
+```json
+{
+  "baseRevision": 1,
+  "status": "RESOLVED",
+  "chairResponse": "请秘书处调整会场温度。",
+  "attendanceChange": {"type": "TEMPORARILY_LEFT"}
+}
+```
+
+状态只接受 `UPHELD`、`OVERRULED`、`ANSWERED`、`RESOLVED` 和 `REJECTED`。只有 `PENDING` 问题可回应；再次回应返回 409。可选出席变化只允许规则类型为个人特权问题，且在问题、attendance event、当前出席状态、委员会事件和审计的同一事务中提交；attendance event 使用 `source_point_id` 关联，不修改点名历史。
+
+### 阶段 4 快照 audience
+
+`GET /api/v1/committees/:id/snapshot` 返回 `schemaVersion: 2`。所有受众都可见委员会公开资料、活动席位与国旗、当前会期的非敏感摘要、当前出席状态和已公开的问题状态。member 还可见完整进行中点名、未删除笔记和文本帖子；Chair 与 Owner 另见阶段 3 的 membership、Chair 和 assignment 管理字段。
+
+PUBLIC 匿名快照不返回 membership、assignment、用户 ID、actor、capability、笔记、帖子、问题正文、主席内部回应或审计。PRIVATE 委员会的未授权快照及其 note、post、roll call 或 point 子资源统一返回 404，不泄露对象是否存在。
+
+跨页面和跨浏览器一致性在阶段 4 通过重新读取快照、窗口重新聚焦时 revalidation、显式刷新和 409 后重新读取实现。本阶段不开放 `/events`、`Last-Event-ID`、心跳、轮询模拟实时或事件驱动 React store。
+
 ## 12. SSE 格式
 
 ```text
