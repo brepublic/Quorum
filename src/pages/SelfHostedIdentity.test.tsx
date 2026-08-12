@@ -2,6 +2,7 @@ import * as React from 'react';
 import {act} from 'react';
 import {createRoot, type Root} from 'react-dom/client';
 import {afterEach, describe, expect, it, vi} from 'vitest';
+import {MemoryRouter} from 'react-router-dom';
 import SelfHostedIdentity from './SelfHostedIdentity';
 import type {SelfHostedIdentityClient, SelfHostedUser} from '../services/self-hosted-identity';
 
@@ -51,7 +52,8 @@ async function renderClient(identityClient: SelfHostedIdentityClient): Promise<s
   document.body.append(container);
   root = createRoot(container);
   await act(async () => {
-    root?.render(<SelfHostedIdentity client={identityClient} />);
+    root?.render(<MemoryRouter initialEntries={['/']}><SelfHostedIdentity client={identityClient} /></MemoryRouter>);
+    await Promise.resolve();
     await Promise.resolve();
     await Promise.resolve();
   });

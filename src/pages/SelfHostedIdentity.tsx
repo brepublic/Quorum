@@ -1,5 +1,6 @@
 import * as React from 'react';
-import {Button, Container, Form, Header, Icon, Message, Segment, Table} from 'semantic-ui-react';
+import {Button, Container, Form, Header, Icon, Menu, Message, Segment, Table} from 'semantic-ui-react';
+import {Link, useLocation} from 'react-router-dom';
 import Loading from '../components/Loading';
 import {LanguageMenuItem, t} from '../i18n';
 import {
@@ -8,6 +9,7 @@ import {
   type SelfHostedIdentityClient,
   type SelfHostedUser
 } from '../services/self-hosted-identity';
+import SelfHostedWorkspace, {SelfHostedCommitteeWorkspace} from './SelfHostedWorkspace';
 
 type Screen = 'loading' | 'bootstrap' | 'login' | 'change-password' | 'home';
 
@@ -239,6 +241,7 @@ function AccountManager({client, currentUser, onLogout}: {
 }
 
 export default function SelfHostedIdentity({client = selfHostedIdentityClient}: {client?: SelfHostedIdentityClient}) {
+  const location = useLocation();
   const [screen, setScreen] = React.useState<Screen>('loading');
   const [user, setUser] = React.useState<SelfHostedUser>();
   const [error, setError] = React.useState<string>();
@@ -282,9 +285,13 @@ export default function SelfHostedIdentity({client = selfHostedIdentityClient}: 
   if (error) return <IdentityShell title={t('Authentication error')} icon="warning sign"><Message error content={error} /></IdentityShell>;
   if (screen === 'loading') return <Loading />;
   if (screen === 'bootstrap') return <BootstrapForm client={client} onAuthenticated={authenticated} />;
+  if (screen === 'login' && /^\/committees\/[^/]+/.test(location.pathname)) return <>
+    <Menu><Menu.Item header>Quorum</Menu.Item><Menu.Menu position="right"><Menu.Item as={Link} to="/login">{t('Login')}</Menu.Item></Menu.Menu></Menu>
+    <SelfHostedCommitteeWorkspace />
+  </>;
   if (screen === 'login') return <LoginForm client={client} onAuthenticated={authenticated} />;
   if (screen === 'change-password') return <ChangePasswordForm client={client} onAuthenticated={authenticated} />;
   if (!user) return <Loading />;
-  if (user.isSystemAdmin) return <AccountManager client={client} currentUser={user} onLogout={logout} />;
-  return <IdentityShell title={user.displayName} icon="user"><Button onClick={logout}>{t('Logout')}</Button></IdentityShell>;
+  return <SelfHostedWorkspace user={user} logout={logout}
+    accountManager={user.isSystemAdmin ? <AccountManager client={client} currentUser={user} onLogout={logout} /> : undefined} />;
 }
