@@ -266,6 +266,10 @@ export interface CommitteePoint {
   resolvedAt: string | null;
 }
 
+export type PublicCommitteePoint = Pick<CommitteePoint,
+  'id' | 'committeeId' | 'meetingSessionId' | 'pointTypeId' | 'raisedBySeatId' | 'raisedBySeatDisplayName' |
+  'interruptRequested' | 'status' | 'rulePackageVersionId' | 'revision' | 'createdAt' | 'resolvedAt'>;
+
 export interface CreatePointRequest {
   meetingSessionId: string;
   pointTypeId: string;
@@ -282,7 +286,7 @@ export interface ResolvePointRequest {
 
 export interface CommitteeWorkspaceSnapshot {
   schemaVersion: 2;
-  committee: CommitteeSummary;
+  committee: Omit<CommitteeSummary, 'ownerUserId'> & {ownerUserId?: string};
   seats: Stage4CommitteeSeat[];
   viewer: {audience: 'PUBLIC' | 'MEMBER' | 'CHAIR' | 'OWNER'; seatId: string | null};
   memberships?: Array<{userId: string; status: string}>;
@@ -291,7 +295,7 @@ export interface CommitteeWorkspaceSnapshot {
   meetingSession?: MeetingSession;
   rollCall?: RollCall;
   attendance: AttendanceState[];
-  points: CommitteePoint[];
+  points: Array<CommitteePoint | PublicCommitteePoint>;
   notes: CommitteeNote[];
   textPosts: CommitteeTextPost[];
   sync: {committeeEventSequence: number};

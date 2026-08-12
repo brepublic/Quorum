@@ -8,9 +8,12 @@ import type {
   CommitteeTextPost,
   AttendanceEvent,
   AttendanceEventType,
+  AttendanceState,
   CommitteePoint,
+  CommitteeWorkspaceSnapshot,
   MeetingSession,
   PointStatus,
+  PublicCommitteePoint,
   RollCall,
   RollCallEntry,
   CountryTemplate,
@@ -512,6 +515,84 @@ export class Stage4Service {
       WHERE c.status<>'DELETING' AND (c.owner_user_id=$1 OR m.user_id IS NOT NULL OR p.user_id IS NOT NULL)
       ORDER BY c.updated_at DESC,c.id`, [auth.user.id]);
     return result.rows.map(committeeSummary);
+  }
+
+  async snapshot(committeeId: string, auth?: AuthenticatedSession): Promise<CommitteeWorkspaceSnapshot> {
+    if (auth) requireBusinessIdentity(auth);
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+      const found = await client.query<Stage4CommitteeRow>('SELECT * FROM committees WHERE id=$1', [committeeId]);
+      const committee = found.rows[0];
+      if (!committee || committee.status === 'DELETING') throw new AppError({code: 'NOT_FOUND', message: 'Committee not found.'});
+      let viewer: CommitteeWorkspaceSnapshot['viewer'] = {audience: 'PUBLIC', seatId: null};
+      if (auth?.user.id === committee.owner_user_id) viewer = {audience: 'OWNER', seatId: await activeSeat(client, committeeId, auth.user.id)};
+      else if (auth && await isChair(client, committeeId, auth.user.id)) {
+        viewer = {audience: 'CHAIR', seatId: await activeSeat(client, committeeId, auth.user.id)};
+      } else if (auth) {
+        const member = await client.query<{seat_id: string | null}>(`SELECT a.seat_id FROM committee_memberships m
+          LEFT JOIN seat_assignments a ON a.committee_id=m.committee_id AND a.user_id=m.user_id AND a.status='ACTIVE'
+          WHERE m.committee_id=$1 AND m.user_id=$2 AND m.status='ACTIVE'`, [committeeId, auth.user.id]);
+        if (member.rows[0]) viewer = {audience: 'MEMBER', seatId: member.rows[0].seat_id};
+      }
+      if (viewer.audience === 'PUBLIC' && committee.visibility === 'PRIVATE') {
+        throw new AppError({code: 'NOT_FOUND', message: 'Committee not found.'});
+      }
+      const seats = await client.query<Stage4CommitteeSeat>(`SELECT id,stable_key AS "stableKey",display_name AS "displayName",rank,
+        can_vote AS "canVote",has_veto AS "hasVeto",must_vote AS "mustVote",sort_order AS "sortOrder",active,revision,
+        json_build_object('type',flag_type,'value',flag_value) AS flag FROM committee_seats
+        WHERE committee_id=$1 AND active=true ORDER BY sort_order,stable_key,id`, [committeeId]);
+      const sessionResult = await client.query<MeetingSessionRow>(`SELECT * FROM meeting_sessions WHERE committee_id=$1
+        ORDER BY (status='OPEN') DESC,created_at DESC,id DESC LIMIT 1`, [committeeId]);
+      const currentSession = sessionResult.rows[0];
+      let currentRollCall: RollCall | undefined; let attendance: AttendanceState[] = [];
+      let points: Array<CommitteePoint | PublicCommitteePoint> = [];
+      if (currentSession) {
+        if (viewer.audience !== 'PUBLIC') {
+          const rollCallResult = await client.query<RollCallRow>(`SELECT * FROM roll_calls WHERE meeting_session_id=$1
+            ORDER BY (status='IN_PROGRESS') DESC,started_at DESC,id DESC LIMIT 1`, [currentSession.id]);
+          if (rollCallResult.rows[0]) currentRollCall = await rollCall(client, rollCallResult.rows[0]);
+        }
+        const attendanceResult = await client.query<{seat_id: string; state: AttendanceState['state']; last_event_id: string; updated_at: Date}>(
+          `SELECT seat_id,state,last_event_id,updated_at FROM current_attendance WHERE meeting_session_id=$1 ORDER BY seat_id`, [currentSession.id]);
+        attendance = attendanceResult.rows.map(row => ({seatId: row.seat_id, state: row.state,
+          lastEventId: row.last_event_id, updatedAt: row.updated_at.toISOString()}));
+        const pointRows = await client.query<PointRow>(`SELECT * FROM points WHERE meeting_session_id=$1 ORDER BY created_at,id`, [currentSession.id]);
+        points = viewer.audience === 'PUBLIC' ? pointRows.rows.map(row => ({id: row.id, committeeId: row.committee_id,
+          meetingSessionId: row.meeting_session_id, pointTypeId: row.point_type_id, raisedBySeatId: row.raised_by_seat_id,
+          raisedBySeatDisplayName: row.raised_by_seat_display_name, interruptRequested: row.interrupt_requested,
+          status: row.status, rulePackageVersionId: row.rule_package_version_id, revision: row.revision,
+          createdAt: row.created_at.toISOString(), resolvedAt: row.resolved_at?.toISOString() ?? null})) : pointRows.rows.map(point);
+      }
+      const summary = committeeSummary(committee); const {ownerUserId: _ownerUserId, ...publicCommittee} = summary;
+      const result: CommitteeWorkspaceSnapshot = {schemaVersion: 2,
+        committee: viewer.audience === 'OWNER' || viewer.audience === 'CHAIR' ? summary : publicCommittee,
+        seats: seats.rows, viewer, attendance, points, notes: [], textPosts: [],
+        sync: {committeeEventSequence: Number(committee.next_event_sequence) - 1},
+        ...(currentSession ? {meetingSession: meetingSession(currentSession)} : {}),
+        ...(currentRollCall ? {rollCall: currentRollCall} : {})};
+      if (viewer.audience !== 'PUBLIC') {
+        const [notes, posts] = await Promise.all([
+          client.query<NoteRow>(`SELECT * FROM committee_notes WHERE committee_id=$1 AND deleted_at IS NULL ORDER BY sort_order,created_at,id`, [committeeId]),
+          client.query<TextPostRow>(`SELECT * FROM committee_text_posts WHERE committee_id=$1 AND deleted_at IS NULL ORDER BY sort_order,created_at,id`, [committeeId])
+        ]);
+        result.notes = notes.rows.map(note); result.textPosts = posts.rows.map(textPost);
+      }
+      if (viewer.audience === 'OWNER' || viewer.audience === 'CHAIR') {
+        const [memberships, chairs, assignments] = await Promise.all([
+          client.query<{userId: string; status: string}>(`SELECT user_id AS "userId",status FROM committee_memberships WHERE committee_id=$1 ORDER BY user_id`, [committeeId]),
+          client.query<{userId: string}>(`SELECT user_id AS "userId" FROM committee_capabilities
+            WHERE committee_id=$1 AND capability='CHAIR' AND revoked_at IS NULL ORDER BY user_id`, [committeeId]),
+          client.query<{id: string; seatId: string; userId: string; status: string}>(`SELECT id,seat_id AS "seatId",user_id AS "userId",status
+            FROM seat_assignments WHERE committee_id=$1 ORDER BY assigned_at,id`, [committeeId])
+        ]);
+        result.memberships = memberships.rows; result.chairs = chairs.rows; result.assignments = assignments.rows;
+      }
+      await client.query('COMMIT');
+      return result;
+    } catch (error) {
+      await client.query('ROLLBACK'); throw error;
+    } finally { client.release(); }
   }
 
   async createCommittee(auth: AuthenticatedSession, input: Record<string, unknown>, idempotencyKey: string,

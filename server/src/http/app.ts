@@ -152,6 +152,11 @@ async function handleStage4Request(options: {
     const auth = await write(); const body = await readJson(request);
     sendJson(response, 201, success(await stage4.createCommittee(auth, body, idempotencyKey(request), context), requestId)); return true;
   }
+  const snapshot = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/snapshot$/.exec(pathname);
+  if (method === 'GET' && snapshot) {
+    sendJson(response, 200, success(await stage4.snapshot(snapshot[1] as string,
+      await optionalAuthentication(request, identity)), requestId)); return true;
+  }
 
   if (pathname === '/api/v1/country-templates') {
     if (method === 'GET') {

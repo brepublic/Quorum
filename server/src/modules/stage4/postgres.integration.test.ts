@@ -247,4 +247,40 @@ integration('PostgreSQL stage 4 templates and seat snapshots', () => {
       pointTypeId: 'point-of-information', content: 'Blocked'}, 'point-blocked', context('point-blocked')))
       .rejects.toMatchObject({code: 'FORBIDDEN'});
   });
+
+  it('filters workspace snapshots by public, member, Chair, Owner, and system-admin audience', async () => {
+    const owner = await user('snapshotowner'); const chair = await user('snapshotchair'); const member = await user('snapshotmember');
+    const committee = await stage4.createCommittee(owner, {name: 'Public Snapshot', visibility: 'PUBLIC',
+      countryTemplateKey: 'builtin:default'}, 'snapshot-committee', context('snapshot-committee'));
+    await stage3.setChair(owner, committee.id, chair.user.id, true, 1, context('snapshot-chair'));
+    const seat = await stage4.createSeat(chair, committee.id, {stableKey: 'snapshot', displayName: 'Snapshot Seat'},
+      'snapshot-seat', context('snapshot-seat'));
+    await stage3.assignSeat(chair, committee.id, {seatId: seat.id, userId: member.user.id}, context('snapshot-assign'));
+    await stage4.createNote(member, committee.id, {content: 'members only'}, 'snapshot-note', context('snapshot-note'));
+
+    const publicView = await stage4.snapshot(committee.id);
+    expect(publicView.viewer).toEqual({audience: 'PUBLIC', seatId: null});
+    expect(publicView.committee).not.toHaveProperty('ownerUserId');
+    expect(publicView).toEqual(expect.objectContaining({schemaVersion: 2, notes: [], textPosts: [], attendance: [], points: []}));
+    expect(publicView.memberships).toBeUndefined();
+    const adminView = await stage4.snapshot(committee.id, administrator);
+    expect(adminView.viewer.audience).toBe('PUBLIC');
+
+    const memberView = await stage4.snapshot(committee.id, member);
+    expect(memberView.viewer).toEqual({audience: 'MEMBER', seatId: seat.id});
+    expect(memberView.notes).toEqual([expect.objectContaining({content: 'members only'})]);
+    expect(memberView.memberships).toBeUndefined();
+    const chairView = await stage4.snapshot(committee.id, chair);
+    expect(chairView.viewer.audience).toBe('CHAIR');
+    expect(chairView.memberships).toEqual(expect.arrayContaining([expect.objectContaining({userId: member.user.id})]));
+    expect(chairView.assignments).toEqual(expect.arrayContaining([expect.objectContaining({seatId: seat.id, userId: member.user.id})]));
+    const ownerView = await stage4.snapshot(committee.id, owner);
+    expect(ownerView.viewer.audience).toBe('OWNER');
+    expect(ownerView.committee).toHaveProperty('ownerUserId', owner.user.id);
+
+    const privateCommittee = await stage4.createCommittee(owner, {name: 'Private Snapshot', visibility: 'PRIVATE',
+      countryTemplateKey: 'builtin:default'}, 'private-snapshot', context('private-snapshot'));
+    await expect(stage4.snapshot(privateCommittee.id, administrator)).rejects.toMatchObject({code: 'NOT_FOUND'});
+    await expect(stage4.snapshot(privateCommittee.id)).rejects.toMatchObject({code: 'NOT_FOUND'});
+  });
 });

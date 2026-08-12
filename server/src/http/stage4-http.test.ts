@@ -33,7 +33,8 @@ function identity(): IdentityService {
 }
 
 function domain(overrides: Record<string, unknown> = {}): Stage4Service {
-  return {listCommittees: vi.fn(async () => []), createCommittee: vi.fn(async (_auth, body) => ({id: 'committee', name: body.name})),
+  return {listCommittees: vi.fn(async () => []), snapshot: vi.fn(async () => ({schemaVersion: 2})),
+    createCommittee: vi.fn(async (_auth, body) => ({id: 'committee', name: body.name})),
     listCountryTemplates: vi.fn(async () => []), createCountryTemplate: vi.fn(async () => ({id: 'country-template'})),
     deleteCountryTemplate: vi.fn(async () => undefined), createSeat: vi.fn(async () => ({id: 'seat'})),
     createNote: vi.fn(async () => ({id: 'note'})), deleteNote: vi.fn(async () => undefined),
@@ -149,5 +150,15 @@ describe('stage 4 template and seat HTTP boundary', () => {
     const response = await request(stage4, {path: `/api/v1/committees/${committeeId}/points`, method: 'POST',
       headers: protectedHeaders, body});
     expect(response.status).toBe(422);
+  });
+
+  it('allows an anonymous public snapshot while passing an authenticated viewer when present', async () => {
+    const snapshot = vi.fn(async () => ({schemaVersion: 2})); const stage4 = domain({snapshot});
+    const committeeId = '20000000-0000-4000-8000-000000000001';
+    expect((await request(stage4, {path: `/api/v1/committees/${committeeId}/snapshot`})).status).toBe(200);
+    expect(snapshot).toHaveBeenLastCalledWith(committeeId, undefined);
+    expect((await request(stage4, {path: `/api/v1/committees/${committeeId}/snapshot`,
+      headers: {cookie: '__Host-quorum_session=session'}})).status).toBe(200);
+    expect(snapshot).toHaveBeenLastCalledWith(committeeId, authenticated);
   });
 });
