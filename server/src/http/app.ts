@@ -8,6 +8,7 @@ import type {HealthService} from '../operations/health.js';
 import type {IdentityService, RequestIdentityContext, SessionResult} from '../modules/identity/service.js';
 import type {AuthenticatedSession} from '../modules/identity/store.js';
 import type {Stage3Service} from '../modules/stage3/service.js';
+import type {Stage4Service} from '../modules/stage4/service.js';
 import {AppError, normalizeError} from './errors.js';
 import {
   clearIdentityCookies,
@@ -29,11 +30,12 @@ export interface AppDependencies {
   now?: () => number;
   identity?: IdentityService;
   stage3?: Stage3Service;
+  stage4?: Stage4Service;
   allowedOrigins?: string[];
 }
 
 const SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
-const MAX_JSON_BODY_BYTES = 64 * 1024;
+const MAX_JSON_BODY_BYTES = 8 * 1024 * 1024;
 
 function requestIdFor(request: IncomingMessage): string {
   const supplied = request.headers['x-request-id'];
@@ -82,6 +84,12 @@ function singleHeader(value: string | string[] | undefined): string | undefined 
   return Array.isArray(value) ? value[0] : value;
 }
 
+function idempotencyKey(request: IncomingMessage): string {
+  const value = singleHeader(request.headers['idempotency-key']);
+  if (!value) throw new AppError({code: 'BAD_REQUEST', message: 'Idempotency-Key is required.'});
+  return value;
+}
+
 function requireOrigin(request: IncomingMessage, allowedOrigins: readonly string[]): void {
   const origin = singleHeader(request.headers.origin);
   if (!origin || !allowedOrigins.includes(origin)) {
@@ -126,6 +134,94 @@ function integerField(body: Record<string, unknown>, name: string): number {
 async function optionalAuthentication(request: IncomingMessage, identity: IdentityService): Promise<AuthenticatedSession | undefined> {
   const token = identityCookies(request).get(SESSION_COOKIE_NAME);
   return token ? identity.authenticate(token) : undefined;
+}
+
+async function handleStage4Request(options: {
+  request: IncomingMessage; response: ServerResponse; pathname: string; requestId: string;
+  identity: IdentityService; stage4: Stage4Service; allowedOrigins: readonly string[];
+}): Promise<boolean> {
+  const {request, response, pathname, requestId, identity, stage4, allowedOrigins} = options;
+  const method = request.method ?? 'GET'; const context = identityContext(request, requestId);
+  const read = () => identity.authenticate(identityCookies(request).get(SESSION_COOKIE_NAME));
+  const write = async () => { requireOrigin(request, allowedOrigins); return authenticatedWrite(request, identity); };
+
+  if (method === 'GET' && pathname === '/api/v1/committees') {
+    sendJson(response, 200, success({committees: await stage4.listCommittees(await read())}, requestId)); return true;
+  }
+  if (method === 'POST' && pathname === '/api/v1/committees') {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 201, success(await stage4.createCommittee(auth, body, idempotencyKey(request), context), requestId)); return true;
+  }
+
+  if (pathname === '/api/v1/country-templates') {
+    if (method === 'GET') {
+      sendJson(response, 200, success({countryTemplates: await stage4.listCountryTemplates(await read())}, requestId)); return true;
+    }
+    if (method === 'POST') {
+      const auth = await write(); const body = await readJson(request);
+      sendJson(response, 201, success(await stage4.createCountryTemplate(auth, body, idempotencyKey(request), context), requestId)); return true;
+    }
+  }
+  const countryTemplate = /^\/api\/v1\/country-templates\/([^/]+?)(?:\/(clone))?$/.exec(pathname);
+  if (countryTemplate) {
+    const id = decodeURIComponent(countryTemplate[1] as string);
+    if (method === 'GET' && !countryTemplate[2]) {
+      sendJson(response, 200, success(await stage4.getCountryTemplate(await read(), id), requestId)); return true;
+    }
+    if (method === 'PUT' && !countryTemplate[2]) {
+      const auth = await write(); const body = await readJson(request);
+      sendJson(response, 200, success(await stage4.updateCountryTemplate(auth, id, body, context), requestId)); return true;
+    }
+    if (method === 'POST' && countryTemplate[2] === 'clone') {
+      const auth = await write(); const body = await readJson(request);
+      sendJson(response, 201, success(await stage4.cloneCountryTemplate(auth, id, body, idempotencyKey(request), context), requestId)); return true;
+    }
+    if (method === 'DELETE' && !countryTemplate[2]) {
+      const auth = await write(); await stage4.deleteCountryTemplate(auth, id, context);
+      sendJson(response, 200, success({deleted: true}, requestId)); return true;
+    }
+  }
+
+  if (pathname === '/api/v1/committee-templates') {
+    if (method === 'GET') {
+      sendJson(response, 200, success({committeeTemplates: await stage4.listCommitteeTemplates(await read())}, requestId)); return true;
+    }
+    if (method === 'POST') {
+      const auth = await write(); const body = await readJson(request);
+      sendJson(response, 201, success(await stage4.createCommitteeTemplate(auth, body, idempotencyKey(request), context), requestId)); return true;
+    }
+  }
+  const committeeTemplate = /^\/api\/v1\/committee-templates\/([0-9a-f-]{36})(?:\/(clone))?$/.exec(pathname);
+  if (committeeTemplate) {
+    const id = committeeTemplate[1] as string;
+    if (method === 'GET' && !committeeTemplate[2]) {
+      sendJson(response, 200, success(await stage4.getCommitteeTemplate(await read(), id), requestId)); return true;
+    }
+    if (method === 'PUT' && !committeeTemplate[2]) {
+      const auth = await write(); const body = await readJson(request);
+      sendJson(response, 200, success(await stage4.updateCommitteeTemplate(auth, id, body, context), requestId)); return true;
+    }
+    if (method === 'POST' && committeeTemplate[2] === 'clone') {
+      const auth = await write(); const body = await readJson(request);
+      sendJson(response, 201, success(await stage4.cloneCommitteeTemplate(auth, id, body, idempotencyKey(request), context), requestId)); return true;
+    }
+    if (method === 'DELETE' && !committeeTemplate[2]) {
+      const auth = await write(); await stage4.deleteCommitteeTemplate(auth, id, context);
+      sendJson(response, 200, success({deleted: true}, requestId)); return true;
+    }
+  }
+
+  const seats = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/seats(?:\/([0-9a-f-]{36}))?$/.exec(pathname);
+  if (seats && method === 'POST' && !seats[2]) {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 201, success(await stage4.createSeat(auth, seats[1] as string, body,
+      idempotencyKey(request), context), requestId)); return true;
+  }
+  if (seats && method === 'PUT' && seats[2]) {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 200, success(await stage4.updateSeat(auth, seats[1] as string, seats[2], body, context), requestId)); return true;
+  }
+  return false;
 }
 
 async function handleStage3Request(options: {
@@ -424,6 +520,11 @@ export function createRequestHandler(dependencies: AppDependencies): RequestList
           pathname,
           requestId,
           identity: dependencies.identity,
+          allowedOrigins: dependencies.allowedOrigins ?? []
+        })) return;
+
+        if (dependencies.identity && dependencies.stage4 && await handleStage4Request({
+          request, response, pathname, requestId, identity: dependencies.identity, stage4: dependencies.stage4,
           allowedOrigins: dependencies.allowedOrigins ?? []
         })) return;
 

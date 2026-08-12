@@ -75,7 +75,7 @@ CREATE TABLE committee_template_members (
 );
 
 ALTER TABLE committees
-  ADD COLUMN source_committee_template_id uuid REFERENCES committee_templates(id),
+  ADD COLUMN source_committee_template_id uuid REFERENCES committee_templates(id) ON DELETE SET NULL,
   ADD COLUMN country_template_key text NOT NULL DEFAULT 'builtin:default'
     CHECK (length(country_template_key) BETWEEN 1 AND 200),
   ADD COLUMN temporary_template boolean NOT NULL DEFAULT true;

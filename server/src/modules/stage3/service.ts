@@ -442,6 +442,8 @@ export class Stage3Service {
 
   async createSeat(auth: AuthenticatedSession, committeeId: string, input: Record<string, unknown>, context: Context) {
     requireBusinessIdentity(auth);
+    const legacyRank = typeof input.rank === 'string' ? input.rank.toUpperCase() : 'STANDARD';
+    const rank = ['STANDARD', 'VETO', 'NGO', 'OBSERVER'].includes(legacyRank) ? legacyRank : 'STANDARD';
     return transaction(this.pool, async client => {
       const row = await lockedCommittee(client, committeeId); await requireChair(client, row, auth.user.id); requireEditable(row);
       const id = randomUUID();
@@ -450,7 +452,7 @@ export class Stage3Service {
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id,stable_key AS "stableKey",display_name AS "displayName",rank,
         can_vote AS "canVote",has_veto AS "hasVeto",sort_order AS "sortOrder",active,revision`,
       [id, committeeId, requiredString(input.stableKey, 'Seat stable key', 128), requiredString(input.displayName, 'Seat name'),
-        typeof input.rank === 'string' ? input.rank.slice(0, 80) : null, input.canVote !== false, input.hasVeto === true,
+        rank, input.canVote !== false, input.hasVeto === true,
         Number.isSafeInteger(input.sortOrder) ? input.sortOrder : 0]);
       await appendEvent(client, row, {type: 'seat.created', resourceType: 'seat', resourceId: id, revision: 1,
         payload: {seatId: id}});

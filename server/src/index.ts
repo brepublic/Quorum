@@ -8,6 +8,7 @@ import {createHealthService} from './operations/health.js';
 import {PostgresIdentityStore} from './modules/identity/postgres.js';
 import {IdentityService} from './modules/identity/service.js';
 import {Stage3Service} from './modules/stage3/service.js';
+import {Stage4Service} from './modules/stage4/service.js';
 
 const {Pool} = pg;
 const logger = createLogger();
@@ -35,6 +36,7 @@ async function main(): Promise<void> {
     });
     const identity = new IdentityService(new PostgresIdentityStore(pool));
     const stage3 = new Stage3Service(pool);
+    const stage4 = new Stage4Service(pool);
     await stage3.ensureBuiltins();
     const bootstrapSecret = await identity.ensureBootstrapSecret();
     if (bootstrapSecret) {
@@ -47,6 +49,7 @@ async function main(): Promise<void> {
       databaseMigrationVersion: migrationState.latestAvailableVersion,
       identity,
       stage3,
+      stage4,
       allowedOrigins: config.allowedOrigins
     });
 
