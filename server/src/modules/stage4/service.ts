@@ -8,7 +8,9 @@ import type {
   CommitteeTextPost,
   AttendanceEvent,
   AttendanceEventType,
+  CommitteePoint,
   MeetingSession,
+  PointStatus,
   RollCall,
   RollCallEntry,
   CountryTemplate,
@@ -24,6 +26,7 @@ import type {AuthenticatedSession} from '../identity/store.js';
 import {
   appendEvent,
   audit,
+  activeSeat,
   idempotentTransaction,
   isChair,
   lockedCommittee,
@@ -170,6 +173,13 @@ interface RollCallEntryRow extends QueryResultRow {
   on_behalf_of_seat_id: string; rule_package_version_id: string; recorded_at: Date; revision: number;
 }
 
+interface PointRow extends QueryResultRow {
+  id: string; committee_id: string; meeting_session_id: string; point_type_id: string; content: string;
+  raised_by_seat_id: string; raised_by_seat_display_name: string; actor_user_id: string; on_behalf_of_seat_id: string;
+  interrupt_requested: boolean; status: PointStatus; chair_response: string; resolved_by_user_id: string | null;
+  rule_package_version_id: string; revision: number; created_at: Date; resolved_at: Date | null;
+}
+
 function note(row: NoteRow): CommitteeNote {
   return {id: row.id, title: row.title, content: row.content, sortOrder: row.sort_order, revision: row.revision,
     createdByUserId: row.created_by_user_id, createdAt: row.created_at.toISOString(), updatedAt: row.updated_at.toISOString(),
@@ -226,6 +236,16 @@ async function insertAttendanceEvent(client: PoolClient, input: {
     seatDisplayName: input.seatDisplayName, type: input.type, actorUserId: input.actorUserId,
     onBehalfOfSeatId: input.seatId, sourceRollCallEntryId: input.sourceRollCallEntryId ?? null,
     sourcePointId: input.sourcePointId ?? null, createdAt: createdAt.toISOString()};
+}
+
+function point(row: PointRow): CommitteePoint {
+  return {id: row.id, committeeId: row.committee_id, meetingSessionId: row.meeting_session_id,
+    pointTypeId: row.point_type_id, content: row.content, raisedBySeatId: row.raised_by_seat_id,
+    raisedBySeatDisplayName: row.raised_by_seat_display_name, actorUserId: row.actor_user_id,
+    onBehalfOfSeatId: row.on_behalf_of_seat_id, interruptRequested: row.interrupt_requested, status: row.status,
+    chairResponse: row.chair_response, resolvedByUserId: row.resolved_by_user_id,
+    rulePackageVersionId: row.rule_package_version_id, revision: row.revision,
+    createdAt: row.created_at.toISOString(), resolvedAt: row.resolved_at?.toISOString() ?? null};
 }
 
 async function countryTemplateById(client: PoolClient, ownerId: string, id: string, lock = false): Promise<CountryTemplateRow> {
@@ -1034,6 +1054,125 @@ export class Stage4Service {
         action: 'proceedings.attendance_changed', resourceType: 'attendance_event', resourceId: event.id,
         after: {meetingSessionId: sessionId, seatId, type}});
       return event;
+    });
+  }
+
+  async createPoint(auth: AuthenticatedSession, committeeId: string, input: Record<string, unknown>,
+    idempotencyKey: string, context: Stage4Context): Promise<CommitteePoint> {
+    requireBusinessIdentity(auth); assertExactBody(input, ['meetingSessionId', 'pointTypeId', 'content', 'onBehalfOfSeatId']);
+    const meetingSessionId = requiredText(input.meetingSessionId, 'Meeting session ID');
+    const pointTypeId = requiredText(input.pointTypeId, 'Point type ID', 128);
+    const content = requiredText(input.content, 'Point content', 4000);
+    return idempotentTransaction({pool: this.pool, auth, route: `POST /api/v1/committees/${committeeId}/points`,
+      key: idempotencyKey, request: input, status: 201, work: async client => {
+        const committee = await lockedCommittee(client, committeeId); requireProceedingsActive(committee);
+        const access = await committeeAccess(client, committee, auth.user.id); const chair = await isChair(client, committeeId, auth.user.id);
+        const requestedSeatId = input.onBehalfOfSeatId === undefined ? null : requiredText(input.onBehalfOfSeatId, 'Seat ID');
+        let seatId: string | null = null; let actedOnBehalf = false;
+        if (committee.operation_mode === 'CHAIR_OPERATED') {
+          if (!chair) throw new AppError({code: 'FORBIDDEN', message: 'Chair capability is required.'});
+          if (!requestedSeatId) throw new AppError({code: 'VALIDATION_FAILED', message: 'A represented seat is required.'});
+          seatId = requestedSeatId; actedOnBehalf = true;
+        } else if (requestedSeatId) {
+          if (!chair) throw new AppError({code: 'FORBIDDEN', message: 'Only a Chair can act for another seat.'});
+          seatId = requestedSeatId; actedOnBehalf = true;
+        } else {
+          seatId = access.seatId ?? await activeSeat(client, committeeId, auth.user.id);
+          if (!seatId) throw new AppError({code: 'FORBIDDEN', message: 'An active seat assignment is required.'});
+        }
+        const session = await client.query<MeetingSessionRow>(`SELECT * FROM meeting_sessions
+          WHERE id=$1 AND committee_id=$2`, [meetingSessionId, committeeId]);
+        const meeting = session.rows[0];
+        if (!meeting) throw new AppError({code: 'NOT_FOUND', message: 'Meeting session not found.'});
+        if (meeting.status !== 'OPEN') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Meeting session is closed.'});
+        const seat = await client.query<{display_name: string}>(`SELECT display_name FROM committee_seats
+          WHERE id=$1 AND committee_id=$2 AND active=true`, [seatId, committeeId]);
+        if (!seat.rows[0]) throw new AppError({code: 'VALIDATION_FAILED', message: 'Seat is invalid.'});
+        const version = await client.query<{definition: {points?: unknown}}>(`SELECT definition FROM rule_package_versions
+          WHERE id=$1 AND status='PUBLISHED'`, [meeting.active_rule_package_version_id]);
+        const rawPoints = version.rows[0]?.definition.points;
+        if (!Array.isArray(rawPoints)) throw new AppError({code: 'VALIDATION_FAILED', message: 'The rule package has invalid point types.'});
+        const matching = rawPoints.filter(item => item && typeof item === 'object' && (item as {id?: unknown}).id === pointTypeId);
+        const definition = matching[0] as {id?: unknown; interruptRequested?: unknown; enabled?: unknown} | undefined;
+        if (matching.length !== 1 || !definition || typeof definition.interruptRequested !== 'boolean'
+          || definition.enabled === false) {
+          throw new AppError({code: 'VALIDATION_FAILED', message: 'Point type is not active in the meeting rule package.'});
+        }
+        const id = randomUUID(); const result = await client.query<PointRow>(`INSERT INTO points
+          (id,committee_id,meeting_session_id,point_type_id,content,raised_by_seat_id,raised_by_seat_display_name,
+           actor_user_id,on_behalf_of_seat_id,interrupt_requested,rule_package_version_id)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$6,$9,$10) RETURNING *`,
+        [id, committeeId, meetingSessionId, pointTypeId, content, seatId, seat.rows[0].display_name,
+          auth.user.id, definition.interruptRequested, meeting.active_rule_package_version_id]);
+        const summary = {meetingSessionId, pointTypeId, seatId, interruptRequested: definition.interruptRequested,
+          rulePackageVersionId: meeting.active_rule_package_version_id, actedOnBehalf, ...contentSummary(content)};
+        await appendEvent(client, committee, {type: 'point.raised', resourceType: 'point', resourceId: id,
+          revision: 1, payload: summary});
+        await audit(client, context, {committeeId, actorUserId: auth.user.id,
+          capabilities: chair ? ['CHAIR'] : access.capabilities, onBehalfOfSeatId: seatId,
+          action: 'proceedings.point_raised', resourceType: 'point', resourceId: id, after: summary});
+        if (actedOnBehalf) await audit(client, context, {committeeId, actorUserId: auth.user.id, capabilities: ['CHAIR'],
+          onBehalfOfSeatId: seatId, action: 'proceedings.chair_acted_on_behalf', resourceType: 'point', resourceId: id,
+          after: {command: 'point.raised', pointTypeId}});
+        return point(result.rows[0] as PointRow);
+      }});
+  }
+
+  async resolvePoint(auth: AuthenticatedSession, pointId: string, input: Record<string, unknown>,
+    context: Stage4Context): Promise<CommitteePoint> {
+    requireBusinessIdentity(auth); assertExactBody(input, ['baseRevision', 'status', 'chairResponse', 'attendanceChange']);
+    const baseRevision = positiveRevision(input.baseRevision);
+    const status = input.status as Exclude<PointStatus, 'PENDING'>;
+    if (!['UPHELD', 'OVERRULED', 'ANSWERED', 'RESOLVED', 'REJECTED'].includes(status)) {
+      throw new AppError({code: 'VALIDATION_FAILED', message: 'Point resolution status is invalid.'});
+    }
+    const chairResponse = optionalText(input.chairResponse, 'Chair response', 4000);
+    let attendanceType: AttendanceEventType | undefined;
+    if (input.attendanceChange !== undefined) {
+      if (!input.attendanceChange || typeof input.attendanceChange !== 'object' || Array.isArray(input.attendanceChange)) {
+        throw new AppError({code: 'VALIDATION_FAILED', message: 'Attendance change is invalid.'});
+      }
+      const change = input.attendanceChange as Record<string, unknown>; assertExactBody(change, ['type'], 'Attendance change');
+      attendanceType = change.type as AttendanceEventType;
+      if (!['PRESENT', 'TEMPORARILY_LEFT', 'RETURNED', 'ABSENT'].includes(attendanceType)) {
+        throw new AppError({code: 'VALIDATION_FAILED', message: 'Attendance event type is invalid.'});
+      }
+    }
+    return transaction(this.pool, async client => {
+      const found = await client.query<PointRow>('SELECT * FROM points WHERE id=$1 FOR UPDATE', [pointId]);
+      const current = found.rows[0]; if (!current) throw new AppError({code: 'NOT_FOUND', message: 'Point not found.'});
+      const committee = await lockedCommittee(client, current.committee_id); await requireChair(client, committee, auth.user.id);
+      requireProceedingsActive(committee);
+      if (current.status !== 'PENDING') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Point has already been resolved.'});
+      if (current.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT', message: 'This point changed since it was loaded.',
+        details: {currentRevision: current.revision}});
+      if (attendanceType && current.point_type_id !== 'point-of-personal-privilege') {
+        throw new AppError({code: 'VALIDATION_FAILED', message: 'Only a personal privilege point can change attendance.'});
+      }
+      const updated = await client.query<PointRow>(`UPDATE points SET status=$2,chair_response=$3,resolved_by_user_id=$4,
+        resolved_at=now(),revision=revision+1 WHERE id=$1 RETURNING *`, [pointId, status, chairResponse, auth.user.id]);
+      const after = {status, revision: current.revision + 1, responseCharacterCount: [...chairResponse].length,
+        responseSha256: createHash('sha256').update(chairResponse).digest('hex')};
+      await appendEvent(client, committee, {type: 'point.resolved', resourceType: 'point', resourceId: pointId,
+        revision: current.revision + 1, payload: {status}});
+      if (attendanceType) {
+        const event = await insertAttendanceEvent(client, {committeeId: current.committee_id,
+          meetingSessionId: current.meeting_session_id, seatId: current.raised_by_seat_id,
+          seatDisplayName: current.raised_by_seat_display_name, type: attendanceType, actorUserId: auth.user.id,
+          sourcePointId: pointId});
+        await appendEvent(client, committee, {type: 'attendance.changed', resourceType: 'attendance', resourceId: event.id,
+          revision: 1, payload: {meetingSessionId: current.meeting_session_id, seatId: current.raised_by_seat_id,
+            type: attendanceType, sourcePointId: pointId}});
+      }
+      await audit(client, context, {committeeId: current.committee_id, actorUserId: auth.user.id, capabilities: ['CHAIR'],
+        onBehalfOfSeatId: current.raised_by_seat_id, action: 'proceedings.point_resolved', resourceType: 'point',
+        resourceId: pointId, before: {status: current.status, revision: current.revision},
+        after: {...after, attendanceType: attendanceType ?? null}});
+      if (attendanceType) await audit(client, context, {committeeId: current.committee_id, actorUserId: auth.user.id,
+        capabilities: ['CHAIR'], onBehalfOfSeatId: current.raised_by_seat_id,
+        action: 'proceedings.attendance_changed', resourceType: 'point', resourceId: pointId,
+        after: {meetingSessionId: current.meeting_session_id, seatId: current.raised_by_seat_id, type: attendanceType}});
+      return point(updated.rows[0] as PointRow);
     });
   }
 

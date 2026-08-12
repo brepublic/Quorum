@@ -290,6 +290,18 @@ async function handleStage4Request(options: {
     sendJson(response, 201, success(await stage4.createAttendanceEvent(auth, attendanceEvents[1] as string, body, context), requestId));
     return true;
   }
+  const points = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/points$/.exec(pathname);
+  if (points && method === 'POST') {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 201, success(await stage4.createPoint(auth, points[1] as string, body,
+      idempotencyKey(request), context), requestId)); return true;
+  }
+  const resolvePoint = /^\/api\/v1\/points\/([0-9a-f-]{36})\/resolve$/.exec(pathname);
+  if (resolvePoint && method === 'POST') {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 200, success(await stage4.resolvePoint(auth, resolvePoint[1] as string, body, context), requestId));
+    return true;
+  }
   return false;
 }
 

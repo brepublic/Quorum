@@ -206,4 +206,45 @@ integration('PostgreSQL stage 4 templates and seat snapshots', () => {
     const closed = await stage4.closeMeetingSession(chair, session.id, {baseRevision: 1}, context('meeting-close'));
     expect(closed.status).toBe('CLOSED');
   });
+
+  it('enforces operation-mode point actors and resolves personal privilege with linked attendance', async () => {
+    const owner = await user('pointowner'); const chair = await user('pointchair'); const member = await user('pointmember');
+    const beijing = await pool?.query<{id: string}>(`SELECT v.id FROM rule_package_versions v JOIN rule_packages p ON p.id=v.package_id
+      WHERE p.stable_key='builtin:beijing-academic' AND v.status='PUBLISHED'`);
+    const committee = await stage4.createCommittee(owner, {name: 'Point Council', visibility: 'PRIVATE',
+      countryTemplateKey: 'builtin:default', activeRulePackageVersionId: beijing?.rows[0]?.id},
+    'point-committee', context('point-committee'));
+    await stage3.setChair(owner, committee.id, chair.user.id, true, 1, context('point-chair'));
+    const seat = await stage4.createSeat(chair, committee.id, {stableKey: 'delegate', displayName: 'Delegate'},
+      'point-seat', context('point-seat'));
+    await stage3.assignSeat(chair, committee.id, {seatId: seat.id, userId: member.user.id}, context('point-assign'));
+    const session = await stage4.startMeetingSession(chair, committee.id, {}, context('point-session'));
+    const order = await stage4.createPoint(member, committee.id, {meetingSessionId: session.id,
+      pointTypeId: 'point-of-order', content: 'Rules question'}, 'point-order', context('point-order'));
+    expect(order).toEqual(expect.objectContaining({raisedBySeatId: seat.id, actorUserId: member.user.id,
+      onBehalfOfSeatId: seat.id, interruptRequested: true, rulePackageVersionId: beijing?.rows[0]?.id}));
+    await expect(stage4.resolvePoint(chair, order.id, {baseRevision: 1, status: 'ANSWERED',
+      attendanceChange: {type: 'TEMPORARILY_LEFT'}}, context('point-invalid-attendance')))
+      .rejects.toMatchObject({code: 'VALIDATION_FAILED'});
+    const answered = await stage4.resolvePoint(chair, order.id,
+      {baseRevision: 1, status: 'ANSWERED', chairResponse: 'Follow rule 1.'}, context('point-answer'));
+    expect(answered).toEqual(expect.objectContaining({status: 'ANSWERED', revision: 2, resolvedByUserId: chair.user.id}));
+    await expect(stage4.resolvePoint(chair, order.id, {baseRevision: 2, status: 'RESOLVED'}, context('point-repeat')))
+      .rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
+
+    const privilege = await stage4.createPoint(chair, committee.id, {meetingSessionId: session.id,
+      pointTypeId: 'point-of-personal-privilege', content: 'Need to leave', onBehalfOfSeatId: seat.id},
+    'point-privilege', context('point-privilege'));
+    await stage4.resolvePoint(chair, privilege.id, {baseRevision: 1, status: 'RESOLVED',
+      chairResponse: 'Granted', attendanceChange: {type: 'TEMPORARILY_LEFT'}}, context('point-privilege-resolve'));
+    const linked = await pool?.query(`SELECT e.type,e.source_point_id,a.state FROM attendance_events e
+      JOIN current_attendance a ON a.last_event_id=e.id WHERE e.source_point_id=$1`, [privilege.id]);
+    expect(linked?.rows).toEqual([{type: 'TEMPORARILY_LEFT', source_point_id: privilege.id, state: 'TEMPORARILY_LEFT'}]);
+
+    const mode = await stage3.setOperationMode(chair, committee.id, 'CHAIR_OPERATED', 2, context('point-chair-operated'));
+    expect(mode.operationMode).toBe('CHAIR_OPERATED');
+    await expect(stage4.createPoint(member, committee.id, {meetingSessionId: session.id,
+      pointTypeId: 'point-of-information', content: 'Blocked'}, 'point-blocked', context('point-blocked')))
+      .rejects.toMatchObject({code: 'FORBIDDEN'});
+  });
 });

@@ -39,7 +39,8 @@ function domain(overrides: Record<string, unknown> = {}): Stage4Service {
     createNote: vi.fn(async () => ({id: 'note'})), deleteNote: vi.fn(async () => undefined),
     createTextPost: vi.fn(async () => ({id: 'post'})), deleteTextPost: vi.fn(async () => undefined),
     startMeetingSession: vi.fn(async () => ({id: 'session'})), startRollCall: vi.fn(async () => ({id: 'roll-call'})),
-    createAttendanceEvent: vi.fn(async () => ({id: 'attendance'})), ...overrides} as unknown as Stage4Service;
+    createAttendanceEvent: vi.fn(async () => ({id: 'attendance'})), createPoint: vi.fn(async () => ({id: 'point'})),
+    resolvePoint: vi.fn(async () => ({id: 'point', revision: 2})), ...overrides} as unknown as Stage4Service;
 }
 
 async function request(stage4: Stage4Service, options: {path: string; method?: string; headers?: Record<string, string>; body?: unknown}) {
@@ -138,5 +139,15 @@ describe('stage 4 template and seat HTTP boundary', () => {
       headers: {...protectedHeaders, 'idempotency-key': ''}, body: {meetingSessionId: '70000000-0000-4000-8000-000000000001'}});
     expect(response.status).toBe(400);
     expect(stage4.startRollCall).not.toHaveBeenCalled();
+  });
+
+  it('rejects client-supplied point actor identity at the domain boundary', async () => {
+    const createPoint = vi.fn(async () => { throw new AppError({code: 'VALIDATION_FAILED', message: 'Unexpected field.'}); });
+    const stage4 = domain({createPoint}); const committeeId = '20000000-0000-4000-8000-000000000001';
+    const body = {meetingSessionId: '70000000-0000-4000-8000-000000000001', pointTypeId: 'point-of-order',
+      content: '程序问题', actorUserId: 'attacker'};
+    const response = await request(stage4, {path: `/api/v1/committees/${committeeId}/points`, method: 'POST',
+      headers: protectedHeaders, body});
+    expect(response.status).toBe(422);
   });
 });
