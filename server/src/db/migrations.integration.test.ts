@@ -57,11 +57,16 @@ integration('PostgreSQL migrations', () => {
       );
       const applied = await pool.query('SELECT version FROM quorum_meta.schema_migrations');
 
-      expect(first).toEqual(expect.objectContaining({ready: true, latestAppliedVersion: 2}));
+      expect(first).toEqual(expect.objectContaining({ready: true, latestAppliedVersion: 3}));
       expect(second).toEqual(expect.objectContaining({ready: true, pendingVersions: []}));
       expect(status.ready).toBe(true);
-      expect(runtime.rows[0]?.schema_compatibility).toBe(2);
-      expect(applied.rowCount).toBe(2);
+      expect(runtime.rows[0]?.schema_compatibility).toBe(3);
+      expect(applied.rowCount).toBe(3);
+      const stage3Tables = await pool.query<{name: string}>(`SELECT table_name AS name FROM information_schema.tables
+        WHERE table_schema='public' AND table_name IN ('committees','committee_memberships','committee_capabilities',
+        'committee_seats','seat_assignments','seat_invitations','rule_packages','rule_package_versions',
+        'committee_rule_bindings','chair_rule_overrides','committee_events','audit_log')`);
+      expect(stage3Tables.rowCount).toBe(12);
     } finally {
       await pool.end();
     }

@@ -7,6 +7,7 @@ import {withRequestContext} from '../request-context.js';
 import type {HealthService} from '../operations/health.js';
 import type {IdentityService, RequestIdentityContext, SessionResult} from '../modules/identity/service.js';
 import type {AuthenticatedSession} from '../modules/identity/store.js';
+import type {Stage3Service} from '../modules/stage3/service.js';
 import {AppError, normalizeError} from './errors.js';
 import {
   clearIdentityCookies,
@@ -27,6 +28,7 @@ export interface AppDependencies {
   databaseMigrationVersion: number;
   now?: () => number;
   identity?: IdentityService;
+  stage3?: Stage3Service;
   allowedOrigins?: string[];
 }
 
@@ -111,6 +113,158 @@ async function authenticatedWrite(request: IncomingMessage, identity: IdentitySe
   const cookies = identityCookies(request);
   verifyCsrf(cookies.get(CSRF_COOKIE_NAME), singleHeader(request.headers['x-csrf-token']));
   return identity.authenticate(cookies.get(SESSION_COOKIE_NAME));
+}
+
+function integerField(body: Record<string, unknown>, name: string): number {
+  const value = body[name];
+  if (!Number.isSafeInteger(value) || Number(value) < 1) {
+    throw new AppError({code: 'BAD_REQUEST', message: `Field ${name} must be a positive integer.`});
+  }
+  return Number(value);
+}
+
+async function optionalAuthentication(request: IncomingMessage, identity: IdentityService): Promise<AuthenticatedSession | undefined> {
+  const token = identityCookies(request).get(SESSION_COOKIE_NAME);
+  return token ? identity.authenticate(token) : undefined;
+}
+
+async function handleStage3Request(options: {
+  request: IncomingMessage; response: ServerResponse; pathname: string; requestId: string;
+  identity: IdentityService; stage3: Stage3Service; allowedOrigins: readonly string[];
+}): Promise<boolean> {
+  const {request, response, pathname, requestId, identity, stage3, allowedOrigins} = options;
+  const method = request.method ?? 'GET';
+  const context = identityContext(request, requestId);
+  const write = async (): Promise<AuthenticatedSession> => {
+    requireOrigin(request, allowedOrigins);
+    return authenticatedWrite(request, identity);
+  };
+
+  if (method === 'POST' && pathname === '/api/v1/committees') {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 201, success(await stage3.createCommittee(auth, {
+      name: body.name, visibility: body.visibility, operationMode: body.operationMode,
+      activeRulePackageVersionId: body.activeRulePackageVersionId
+    }, context), requestId));
+    return true;
+  }
+
+  const snapshot = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/snapshot$/.exec(pathname);
+  if (method === 'GET' && snapshot) {
+    sendJson(response, 200, success(await stage3.snapshot(snapshot[1] as string,
+      await optionalAuthentication(request, identity)), requestId));
+    return true;
+  }
+
+  const committee = /^\/api\/v1\/committees\/([0-9a-f-]{36})$/.exec(pathname);
+  if (committee && (method === 'PATCH' || method === 'DELETE')) {
+    const auth = await write(); const body = await readJson(request); const id = committee[1] as string;
+    const result = method === 'PATCH'
+      ? await stage3.updateCommittee(auth, id, integerField(body, 'baseRevision'),
+        (body.patch && typeof body.patch === 'object' && !Array.isArray(body.patch) ? body.patch : {}) as Record<string, unknown>, context)
+      : await stage3.deleteCommittee(auth, id, integerField(body, 'baseRevision'), context);
+    sendJson(response, 200, success(result, requestId));
+    return true;
+  }
+
+  const archive = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/archive$/.exec(pathname);
+  if (method === 'POST' && archive) {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 200, success(await stage3.archiveCommittee(auth, archive[1] as string,
+      integerField(body, 'baseRevision'), context), requestId)); return true;
+  }
+
+  const chairs = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/chairs(?:\/([0-9a-f-]{36}))?$/.exec(pathname);
+  if (chairs && ((method === 'POST' && !chairs[2]) || (method === 'DELETE' && chairs[2]))) {
+    const auth = await write(); const body = await readJson(request);
+    const userId = chairs[2] ?? stringField(body, 'userId') as string;
+    sendJson(response, 200, success(await stage3.setChair(auth, chairs[1] as string, userId,
+      method === 'POST', integerField(body, 'baseRevision'), context), requestId)); return true;
+  }
+
+  const operationMode = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/operation-mode$/.exec(pathname);
+  if (method === 'POST' && operationMode) {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 200, success(await stage3.setOperationMode(auth, operationMode[1] as string,
+      body.operationMode, integerField(body, 'baseRevision'), context), requestId)); return true;
+  }
+
+  const committeeStatus = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/status$/.exec(pathname);
+  if (method === 'POST' && committeeStatus) {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 200, success(await stage3.setCommitteeStatus(auth, committeeStatus[1] as string,
+      body.status, integerField(body, 'baseRevision'), context), requestId)); return true;
+  }
+
+  const seats = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/seats$/.exec(pathname);
+  if (method === 'POST' && seats) {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 201, success(await stage3.createSeat(auth, seats[1] as string, body, context), requestId)); return true;
+  }
+
+  const assignments = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/seat-assignments$/.exec(pathname);
+  if (method === 'POST' && assignments) {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 201, success(await stage3.assignSeat(auth, assignments[1] as string, body, context), requestId)); return true;
+  }
+
+  const invitations = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/seat-invitations(?:\/([0-9a-f-]{36})\/revoke)?$/.exec(pathname);
+  if (method === 'POST' && invitations) {
+    const auth = await write(); const body = await readJson(request);
+    if (invitations[2]) {
+      await stage3.revokeInvitation(auth, invitations[1] as string, invitations[2], context);
+      sendJson(response, 200, success({revoked: true}, requestId));
+    } else sendJson(response, 201, success(await stage3.createInvitation(auth, invitations[1] as string, body, context), requestId));
+    return true;
+  }
+
+  if (method === 'POST' && pathname === '/api/v1/seat-invitations/redeem') {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 200, success(await stage3.redeemInvitation(auth, body.code, context), requestId)); return true;
+  }
+
+  if (method === 'GET' && pathname === '/api/v1/rule-packages') {
+    sendJson(response, 200, success({rulePackages: await stage3.listRulePackages(
+      await optionalAuthentication(request, identity))}, requestId)); return true;
+  }
+  if (method === 'POST' && pathname === '/api/v1/rule-packages/import') {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 201, success(await stage3.importRulePackage(auth, body, context), requestId)); return true;
+  }
+
+  const clone = /^\/api\/v1\/rule-packages\/([0-9a-f-]{36})\/clone$/.exec(pathname);
+  if (method === 'POST' && clone) {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 201, success(await stage3.cloneRulePackage(auth, clone[1] as string, body, context), requestId)); return true;
+  }
+  const versions = /^\/api\/v1\/rule-packages\/([0-9a-f-]{36})\/versions$/.exec(pathname);
+  if (method === 'POST' && versions) {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 201, success(await stage3.createRuleVersion(auth, versions[1] as string, body, context), requestId)); return true;
+  }
+  const ruleVersion = /^\/api\/v1\/rule-package-versions\/([0-9a-f-]{36})\/(validate|simulate)$/.exec(pathname);
+  if (method === 'POST' && ruleVersion) {
+    if (ruleVersion[2] === 'validate') {
+      const auth = await write();
+      sendJson(response, 200, success(await stage3.validateRuleVersion(auth, ruleVersion[1] as string), requestId));
+    } else {
+      const auth = await write(); const body = await readJson(request);
+      sendJson(response, 200, success(await stage3.simulateRuleVersion(auth, ruleVersion[1] as string, body.facts), requestId));
+    }
+    return true;
+  }
+  const activate = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/rules\/activate$/.exec(pathname);
+  if (method === 'POST' && activate) {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 200, success(await stage3.activateRules(auth, activate[1] as string,
+      stringField(body, 'rulePackageVersionId') as string, integerField(body, 'baseRevision'), context), requestId)); return true;
+  }
+  const override = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/rules\/overrides$/.exec(pathname);
+  if (method === 'POST' && override) {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 201, success(await stage3.overrideRule(auth, override[1] as string, body, context), requestId)); return true;
+  }
+  return false;
 }
 
 async function handleIdentityRequest(options: {
@@ -270,6 +424,11 @@ export function createRequestHandler(dependencies: AppDependencies): RequestList
           pathname,
           requestId,
           identity: dependencies.identity,
+          allowedOrigins: dependencies.allowedOrigins ?? []
+        })) return;
+
+        if (dependencies.identity && dependencies.stage3 && await handleStage3Request({
+          request, response, pathname, requestId, identity: dependencies.identity, stage3: dependencies.stage3,
           allowedOrigins: dependencies.allowedOrigins ?? []
         })) return;
 

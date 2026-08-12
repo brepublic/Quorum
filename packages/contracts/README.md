@@ -7,6 +7,7 @@
 - `AUDIT_ACTION_DEFINITIONS` 是关键审计动作注册表。
 - `API_*_SCHEMA` 可用于独立检查统一响应 envelope。
 - `COMMAND_ENVELOPE_SCHEMA`、`COMMITTEE_EVENT_SCHEMA` 和 `AUDIT_ENTRY_SCHEMA` 固定命令、事件与审计边界。
+- `stage3.ts` 固定委员会快照、席位、规则包、模拟结果和不可变规则评估快照。
 - `fixtures/` 提供 revision 冲突、表决事件和主席更正审计示例。
 
 新增或重命名稳定值时必须同步修改规格、消费者和兼容性测试；已经发布的名字不能就地改变语义。

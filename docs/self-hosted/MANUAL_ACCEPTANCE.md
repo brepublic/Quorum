@@ -115,3 +115,41 @@
 - 自动化覆盖情况：前端组件和 API client 测试覆盖状态分支；真实浏览器、Firebase emulator 回归和网络请求检查需人工或 E2E 执行。
 - 当前状态：因无服务器延期。
 - 需要保存的证据：关键页面截图、脱敏 HTTP 记录、Firebase emulator 结果和 PostgreSQL 查询。
+
+## 阶段 3：委员会、席位和规则包
+
+### SH-MAN-201 真实 PostgreSQL 空库 migration 与阶段 3 约束
+
+- 前置条件：PostgreSQL 16；`TEST_DATABASE_ADMIN_URL` 指向可创建和删除数据库的管理员连接。
+- 操作步骤：执行 `TEST_DATABASE_ADMIN_URL=postgresql://... pnpm test:self-host:integration`；确认测试创建随机临时数据库，从空库执行全部 migration，再执行一次；检查阶段 3 表、外键、部分唯一索引、邀请码约束、已发布规则版本和审计追加限制。
+- 通过条件：两次 migration 均成功；schema compatibility 为 3；12 个阶段 3 核心表存在；同一用户的第二个活动席位被拒绝；已发布规则版本和审计记录不能更新或删除；测试数据库最终清理。
+- 自动化覆盖情况：`server/src/db/migrations.integration.test.ts` 检查空库、重复执行和表清单；`server/src/modules/stage3/postgres.integration.test.ts` 检查索引、外键、历史行和不可变触发器。未配置 URL 时测试明确 skip。
+- 当前状态：因无服务器延期。
+- 需要保存的证据：测试输出、`quorum_meta.schema_migrations`、表与索引查询、触发器失败结果和临时数据库清理记录。
+
+### SH-MAN-202 并发席位分配与邀请码兑换
+
+- 前置条件：阶段 3 migration 已应用；至少一个 Committee Owner、一个 Chair、三个普通账号和两个席位。
+- 操作步骤：让两个请求并发为同一用户分配不同席位；结束成功 assignment 后分配新席位；创建只可使用一次的邀请码，再让两个未入会账号并发兑换；撤销另一个邀请码后尝试兑换。
+- 通过条件：同一用户始终最多一个活动席位；结束后可使用新席位，旧 assignment 保留为 `ENDED`；同一席位可绑定多个用户；争抢最后一次使用时只有一个请求成功；membership、assignment 和使用次数同时提交或同时回滚；撤销后立即失效。
+- 自动化覆盖情况：`server/src/modules/stage3/postgres.integration.test.ts` 使用真实 PostgreSQL 并发兑换并检查部分唯一索引、历史和事务结果。HTTP 层的 Origin、CSRF 与 Session 另由 `server/src/http/stage3-http.test.ts` 覆盖。
+- 当前状态：因无服务器延期。
+- 需要保存的证据：并发请求结果、脱敏 SQL 查询、邀请码 `code_hash`、assignment 历史、membership 和使用次数。证据不得包含邀请码明文。
+
+### SH-MAN-203 公开与私有委员会快照
+
+- 前置条件：通过 HTTPS 启动真实应用和 PostgreSQL；建立 PUBLIC 与 PRIVATE 委员会，并准备匿名、普通登录、member、Chair 和 Owner 五种访问者。
+- 操作步骤：分别请求两个委员会的 `/api/v1/committees/:id/snapshot`；检查状态码、viewer audience、席位、membership、assignment、revision 和事件序号；搜索响应中的邮箱、邀请码、哈希、capability 与审计字段。
+- 通过条件：PUBLIC 匿名请求成功且只含公开字段；PRIVATE 匿名和非 member 均返回不泄露存在性的 404；member 只收到自己的 membership 与 assignment；Chair 和 Owner 收到授权管理字段；所有响应均不含邮箱、秘密或审计。
+- 自动化覆盖情况：`server/src/http/stage3-http.test.ts` 覆盖匿名路由与统一安全响应；`server/src/modules/stage3/postgres.integration.test.ts` 覆盖 audience 和字段过滤。真实 Cookie、TLS、反向代理和跨请求 Session 仍需人工验证。
+- 当前状态：因无服务器延期。
+- 需要保存的证据：五种访问者的脱敏响应、状态码、request ID、代理日志和字段差异表。
+
+### SH-MAN-204 规则包导入、克隆、版本、校验、模拟和激活
+
+- 前置条件：真实阶段 3 实例；系统管理员、Committee Owner、Chair 和普通 member 各一；准备有效包和含未知字段、未知事实、循环继承、类型错误、除以零与超限表达式的无效包。
+- 操作步骤：列出两个内置包；分别导入 SYSTEM 与 COMMITTEE 包；克隆内置包；创建草稿和已发布版本；尝试修改已发布版本；校验并模拟有效及无效定义；由 Owner、系统管理员和 Chair 分别尝试激活和覆盖；创建 `ONCE` 与 `FUTURE` 覆盖。
+- 通过条件：两个内置包通过校验且不可修改；只有系统管理员可管理 SYSTEM 包，只有目标委员会 Chair 可管理、激活和覆盖委员会规则；无效包稳定返回 422；模拟不写业务状态；激活使用 revision；`FUTURE` 创建新版本但不自动激活；旧冻结规则快照保持不变。
+- 自动化覆盖情况：`packages/rule-schema/src/index.test.ts` 覆盖校验、表达式、复杂度、继承、模拟与解析顺序；`packages/contracts/src/stage3.test.ts` 覆盖冻结快照；`server/src/modules/stage3/postgres.integration.test.ts` 覆盖作用域、能力、版本、激活、覆盖和数据库不可变性。
+- 当前状态：因无服务器延期。
+- 需要保存的证据：脱敏 API 响应、数据库版本与绑定查询、模拟前后业务表计数、授权拒绝结果、规则快照比较和按 request ID 关联的审计。

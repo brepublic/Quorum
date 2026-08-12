@@ -428,8 +428,10 @@ DELETE /api/v1/committees/:id/chairs/:userId
 POST /api/v1/committees/:id/seats
 POST /api/v1/committees/:id/seat-assignments
 POST /api/v1/committees/:id/seat-invitations
+POST /api/v1/committees/:id/seat-invitations/:invitationId/revoke
 POST /api/v1/seat-invitations/redeem
 POST /api/v1/committees/:id/operation-mode
+POST /api/v1/committees/:id/status
 ```
 
 ### 议事命令
@@ -470,13 +472,59 @@ POST /api/v1/ballots/:id/reopen
 
 ```text
 GET  /api/v1/rule-packages
+POST /api/v1/rule-packages/import
 POST /api/v1/rule-packages/:id/clone
 POST /api/v1/rule-packages/:id/versions
 POST /api/v1/rule-package-versions/:id/validate
+POST /api/v1/rule-package-versions/:id/simulate
 POST /api/v1/committees/:id/rules/activate
+POST /api/v1/committees/:id/rules/overrides
 
 GET  /api/v1/committees/:id/events?after=:sequence
 ```
+
+## 11.1 阶段 3 命令契约
+
+阶段 3 的委员会写请求必须携带同源 Session、允许的 `Origin` 和匹配的 CSRF token。服务端从 Session 推导 actor；请求体不接受 owner、Chair 或 capability。创建委员会的最小请求为：
+
+```json
+{
+  "name": "联合国安全理事会",
+  "visibility": "PRIVATE",
+  "operationMode": "DELEGATE_OPERATED",
+  "activeRulePackageVersionId": "可选的已发布版本 UUID"
+}
+```
+
+省略规则版本时，服务端选择内置 `Quorum Default`。创建者成为 Committee Owner，但不会自动获得 Chair capability。`PATCH /committees/:id` 只接受 `{baseRevision, patch}`；`patch` 只可包含 `name`、`chairLabel`、`topic`、`conference` 和 `visibility`，不能修改 owner、状态、运作模式或规则绑定。
+
+Chair 任免、归档、删除状态转换、运作模式和活动状态命令都使用 `baseRevision`。`POST /status` 只接受 `ACTIVE` 或 `PAUSED`。删除命令把委员会转为 `DELETING`，不在阶段 3 物理删除历史。只有 Committee Owner 可任免 Chair、归档或删除；只有有效 Chair 可切换运作模式与活动状态。
+
+席位命令使用以下请求：
+
+```json
+{"stableKey":"china","displayName":"中国","rank":"VETO","canVote":true,"hasVeto":true,"sortOrder":1}
+{"seatId":"席位 UUID","userId":"用户 UUID"}
+{"action":"END","assignmentId":"席位分配 UUID"}
+{"seatId":"席位 UUID","maxUses":1,"expiresAt":"2026-08-13T00:00:00.000Z"}
+```
+
+同一席位可有多个活动用户；部分唯一索引限制一个用户在同一委员会最多一个活动席位。结束分配会保留历史行。创建邀请码时响应返回一次 `code`；后续查询、事件、审计和日志均不返回明文。`POST /seat-invitations/redeem` 只接受 `{code}`，目标委员会和席位来自邀请码记录。
+
+`GET /committees/:id/snapshot` 可匿名读取 PUBLIC 委员会。PRIVATE 委员会只允许 Owner、Chair 或活动 membership 读取；其他调用统一返回 404。匿名快照只含委员会公开字段、活动席位、`schemaVersion`、`revision` 和 `committeeEventSequence`。member 只额外收到自己的 membership 与活动 assignment；Chair 和 Owner 收到委员会的 membership、Chair 和 assignment 数据。任何快照都不含邮箱、邀请码、哈希、内部 capability 行、审计或 Session 数据。
+
+规则包导入请求为 `{scope, committeeId?, definition}`。`SYSTEM` 只允许系统管理员；`COMMITTEE` 只允许目标委员会 Chair。克隆请求补充新 `key` 和目标 scope；版本请求为 `{definition, publish}`。内置包不可创建版本，已发布版本由数据库触发器禁止更新或删除。
+
+校验返回 `{valid, issues}`。模拟请求为 `{facts}`，只返回已解析值、声明式 `plannedEffects` 和执行步数。模拟不写委员会业务状态。激活请求为 `{baseRevision, rulePackageVersionId}`，只允许 Chair 激活已发布且通过校验的版本。
+
+主席覆盖请求为：
+
+```json
+{"scope":"ONCE","path":"ballots.delegateMayChangeVote","value":true,"operationKey":"命令幂等标识"}
+{"scope":"FUTURE","path":"ballots.delegateMayChangeVote","value":true}
+```
+
+`ONCE` 只保存该操作的裁决记录。`FUTURE` 从当前活动定义创建新的不可变委员会规则版本；它不会自动激活新版本。阶段 3 拒绝 `CURRENT_PROCESS`，也不会调用计时器、队列、动议或表决命令。
 
 ## 12. SSE 格式
 

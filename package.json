@@ -58,7 +58,7 @@
     "serve": "vite preview",
     "test": "vitest",
     "test:self-host": "vitest run packages server src/runtime-mode.test.ts src/services/self-hosted-identity.test.ts src/pages/SelfHostedIdentity.test.tsx",
-    "test:self-host:integration": "vitest run server/src/db/migrations.integration.test.ts server/src/modules/identity/postgres.integration.test.ts",
+    "test:self-host:integration": "vitest run server/src/db/migrations.integration.test.ts server/src/modules/identity/postgres.integration.test.ts server/src/modules/stage3/postgres.integration.test.ts",
     "test:coverage": "vitest run --coverage --watch=false",
     "self-host:migrate": "pnpm build:self-host && pnpm --filter @quorum/server migrate",
     "self-host:start": "pnpm build:self-host && pnpm --filter @quorum/server start",

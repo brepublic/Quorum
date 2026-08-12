@@ -1,6 +1,6 @@
 # Quorum 自托管后端
 
-当前实现阶段 1 运维边界和阶段 2 身份切片：唯一系统管理员、Argon2id、服务端 Session、CSRF/Origin、登录限流、临时密码、账号禁用与 Session 撤销。委员会授权及议事模块尚未接入。
+当前实现阶段 1–3：后端与部署骨架、身份、委员会核心领域、Chair 能力、席位、邀请码和规则包。阶段 3 API 尚未接入现有 React 委员会页面，也不包含 SSE 或议事流程。
 
 本机运行：
 
@@ -25,6 +25,12 @@ POST /api/v1/auth/elevate
 POST /api/v1/auth/change-password
 POST /api/v1/auth/logout
 GET|POST /api/v1/admin/users
+POST /api/v1/committees
+GET  /api/v1/committees/:id/snapshot
+PATCH|DELETE /api/v1/committees/:id
+POST /api/v1/committees/:id/{archive,chairs,seats,seat-assignments,seat-invitations,operation-mode,status}
+POST /api/v1/seat-invitations/redeem
+GET|POST /api/v1/rule-packages...
 ```
 
 `/health/ready` 只有在数据库可访问、所有仓库 migration 已应用且存储目录可读写时返回 200。

@@ -2,7 +2,7 @@
 
 > 本文件是本仓库的维护入口。后续涉及代码、构建、测试或运行的工作，应先阅读本文件和 `AGENTS.md`，并以实际代码为准更新本文档。
 
-> Quorum 已完成自主托管目标设计，并已落地实施计划阶段 0/1/2：共享契约、规则 schema、TypeScript 后端、部署骨架，以及自主托管身份与唯一系统管理员。委员会、席位、规则运行时、SSE、议事命令和文件 provider 尚未迁移。默认构建和全部现有业务页面仍使用 Firebase；不得把身份切片误写为已经替代委员会业务运行路径。
+> Quorum 已完成自主托管目标设计，并已落地实施计划阶段 0/1/2/3：共享契约、后端与部署骨架、身份、委员会核心领域、席位和规则包。阶段 3 只提供 PostgreSQL 与同源 API；现有委员会页面仍使用 Firebase。SSE、低并发业务页面、议事命令、投票和文件 provider 尚未迁移。
 
 ## 1. 项目定位与技术栈
 
@@ -17,7 +17,7 @@ Quorum 是一个用于 Model UN（模拟联合国）委员会管理的单页 Web
 | 文件 | Firebase Cloud Storage | 委员会附件上传、下载、删除 |
 | 可观测性 | Google Analytics、Sentry | 页面访问与客户端错误/性能上报（仅非本地模拟器模式） |
 | 构建/测试 | Vite、TypeScript、Vitest、Cypress、Firebase CLI | 开发服务器、生产构建、单元和端到端测试 |
-| 自托管身份 | Node.js 22、PostgreSQL 16、Argon2id、Caddy、Docker Compose | migration、健康/版本、首次管理员、账号、Session、CSRF 与同源身份 API；尚不承载委员会业务 |
+| 自托管后端 | Node.js 22、PostgreSQL 16、Argon2id、Caddy、Docker Compose | migration、身份、委员会核心领域、席位、邀请码、规则包和同源 API；尚不承载现有业务页面 |
 
 ## 2. 运行时总体结构
 
@@ -45,11 +45,15 @@ flowchart LR
 
 `src/index.tsx` 初始化 Google Analytics、Sentry、浏览器 history 与 Semantic UI 样式，并把 `App` 挂载到 `#root`。`VITE_RUNTIME_MODE` 显式选择运行路径：未设置或为 `firebase` 时保持原行为，`src/App.tsx` 初始化 Firebase，并在显示普通路由前调用 Functions 检查管理员初始化；`VITE_USE_FIREBASE_EMULATORS=true` 时连接本机模拟器，否则连接 `muncoordinated`。只有 `VITE_RUNTIME_MODE=self-hosted` 时才显示 `SelfHostedIdentity`，调用同源身份 API 完成首次管理员、登录、强制改密、退出和账号管理；该分支目前不显示或写入委员会业务。
 
-`server/` 是自主托管模块化单体。它启动时通过 PostgreSQL advisory lock 执行带 SHA-256 校验和的 migration；数据库版本不兼容时 readiness 失败。阶段 2 migration 建立 `users`、`user_credentials`、`sessions`、`system_settings`、`registration_requests` 和身份审计表。首次启动生成高熵 bootstrap secret，只把 SHA-256 哈希写入数据库，并在专用控制台行显示一次；初始化事务锁定单行设置、创建唯一 `SYSTEM_ADMIN` 后清除哈希。密码使用固定参数 Argon2id；Session Cookie 为 `Secure`、`HttpOnly`、`SameSite=Lax`，数据库只保存 Session token 的 SHA-256；写请求同时校验允许 Origin 和双提交 CSRF token。登录、密码确认提权和改密会轮换 Session，重置密码、禁用账号和用户级撤销通过 `session_version` 与撤销时间立即使旧 Session 失效。
+`server/` 是自主托管模块化单体。它启动时通过 PostgreSQL advisory lock 执行带 SHA-256 校验和的 migration；数据库版本不兼容时 readiness 失败。阶段 2 migration 建立身份、凭据、Session、系统设置、注册申请预留和身份审计表。阶段 3 migration 建立委员会、membership、Chair capability、席位、席位历史、邀请码、规则包版本、规则绑定、主席覆盖、委员会事件和业务审计表，并用部分唯一索引限制同一用户在同一委员会最多一个活动席位。
 
-身份 HTTP 面包括 bootstrap 状态与管理员创建、登录、退出、当前身份、提权、改密，以及管理员账号列表、创建、重置临时密码、禁用和 Session 撤销。`registration_requests` 只有表结构，没有公开创建路由。所有 API 继续使用 request ID、统一 envelope 和结构化日志；密码、临时密码与 token 不写入日志或身份审计。系统管理员没有任何委员会 `CHAIR` 能力，因为阶段 3 的委员会授权尚未实施。
+首次启动生成高熵 bootstrap secret，只把 SHA-256 哈希写入数据库，并在专用控制台行显示一次；初始化事务锁定单行设置、创建唯一 `SYSTEM_ADMIN` 后清除哈希。密码使用固定参数 Argon2id；Session Cookie 为 `Secure`、`HttpOnly`、`SameSite=Lax`，数据库只保存 Session token 的 SHA-256；写请求同时校验允许 Origin 和双提交 CSRF token。登录、密码确认提权和改密会轮换 Session，重置密码、禁用账号和用户级撤销通过 `session_version` 与撤销时间立即使旧 Session 失效。
 
-`packages/contracts/` 保存未来浏览器、后端和 Agent 共用的错误码、SSE 事件、审计动作、响应类型与 JSON Schema；`packages/rule-schema/` 保存规则包 v1 的无服务器安全校验器、JSON Schema，以及 `Quorum Default` 和北京学术标准 fixture。当前 Firebase 前端不导入这两个包，阶段 0 行为基线见 [`docs/self-hosted/CURRENT_BEHAVIOR_BASELINE.md`](./docs/self-hosted/CURRENT_BEHAVIOR_BASELINE.md)。
+身份 HTTP 面包括 bootstrap、登录、退出、当前身份、提权、改密和管理员账号命令。阶段 3 API 提供委员会创建、资料修改、归档、删除状态转换、Chair 任免、运作模式、席位与席位历史、邀请码、公开或私有快照、规则包导入/克隆/版本/校验/模拟/激活和主席覆盖。系统管理员只能管理 `SYSTEM` 规则包，不自动获得委员会 `CHAIR`；Committee Owner 也不自动获得 `CHAIR`。所有阶段 3 变更从 Session 推导 actor，并在同一 PostgreSQL 事务中写入状态、委员会事件和业务审计。
+
+邀请码明文只在创建响应中返回一次，数据库只保存 SHA-256。兑换事务锁定邀请码，在同一事务内检查期限、撤销和剩余次数，再写 membership 与 assignment；客户端不能更换目标席位。规则运行时只接受受限 JSON AST，拒绝未知字段、未知事实、无效引用、继承循环、类型错误、除以零和复杂度超限。内置包和已发布版本不可原地修改；模拟只返回计算值与声明式计划效果，不写议事状态。
+
+`packages/contracts/` 保存浏览器、后端和 Agent 共用的错误码、事件、审计动作、阶段 3 响应类型和不可变规则评估快照；`packages/rule-schema/` 保存规则包 v1 校验、有限表达式求值、模拟、有效值解析，以及 `Quorum Default` 和北京学术标准 fixture。当前 Firebase 前端不导入这两个包，阶段 0 行为基线见 [`docs/self-hosted/CURRENT_BEHAVIOR_BASELINE.md`](./docs/self-hosted/CURRENT_BEHAVIOR_BASELINE.md)。
 
 `src/i18n.tsx` 提供无外部运行时依赖的界面国际化层。当前支持英语和简体中文；英语原文同时作为稳定词条键，简体中文词条集中维护。`LanguageProvider` 在语言变更时重新挂载界面，使类组件与函数组件统一获取新文案，并集中覆盖 Semantic UI 的搜索空结果、可新增选项等默认文案；语言切换控件嵌入主页、创建页和委员会工作区的导航菜单。用户选择保存在浏览器 `localStorage` 的 `muncoordinated-language` 项中，首次访问则根据浏览器语言选择默认值。除用户模板、国家模板和国家名称外，业务数据（委员会名称、帖子正文等）不会被翻译或写回；这些可本地化名称均在 Firebase 中保存默认语言和语言到名称的映射，并按当前界面语言解析。内置默认国家模板从静态国家列表生成，包含英语、简体中文名称、Emoji 国旗和大洲；标准 ISO 国家在界面中使用本地打包的 `flag-icons` 独立 SVG 渲染，以保证放大后的清晰度，自定义 Emoji 与上传图片仍按保存值显示。
 
@@ -161,7 +165,7 @@ system
 | `src/services/account-admin.ts` | 管理员 Callable Functions 的浏览器端类型与调用封装 |
 | `src/theme/` | 本地主题包校验、路由/组件适配钩子、主题切换与导入导出界面 |
 | `functions/` | Firebase Functions 管理端账号接口及独立 TypeScript 构建 |
-| `server/` | 自托管 Node.js 后端、PostgreSQL migration、身份命令、HTTP 安全边界、健康检查及真实数据库集成测试 |
+| `server/` | 自托管 Node.js 后端、PostgreSQL migration、身份、委员会、席位、规则包、HTTP 安全边界和真实数据库集成测试 |
 | `packages/contracts/` | 浏览器、后端和 Agent 共享的 API 类型、schema 与稳定注册表 |
 | `packages/rule-schema/` | 规则包 v1 schema、无服务器校验器和内置 fixture |
 | `deploy/` | Caddy、应用、PostgreSQL Compose，自托管镜像与隔离测试数据库 |

@@ -7,6 +7,7 @@ import {createLogger} from './logger.js';
 import {createHealthService} from './operations/health.js';
 import {PostgresIdentityStore} from './modules/identity/postgres.js';
 import {IdentityService} from './modules/identity/service.js';
+import {Stage3Service} from './modules/stage3/service.js';
 
 const {Pool} = pg;
 const logger = createLogger();
@@ -33,6 +34,8 @@ async function main(): Promise<void> {
       storagePath: config.storagePath
     });
     const identity = new IdentityService(new PostgresIdentityStore(pool));
+    const stage3 = new Stage3Service(pool);
+    await stage3.ensureBuiltins();
     const bootstrapSecret = await identity.ensureBootstrapSecret();
     if (bootstrapSecret) {
       process.stderr.write(`Quorum bootstrap secret (shown once): ${bootstrapSecret}\n`);
@@ -43,6 +46,7 @@ async function main(): Promise<void> {
       version: config.version,
       databaseMigrationVersion: migrationState.latestAvailableVersion,
       identity,
+      stage3,
       allowedOrigins: config.allowedOrigins
     });
 

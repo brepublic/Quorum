@@ -27,8 +27,18 @@ export const ERROR_HTTP_STATUS: Readonly<Record<ApiErrorCode, number>> = Object.
 );
 
 export const COMMITTEE_EVENT_DEFINITIONS = [
+  {name: 'committee.created', defaultAudience: 'MEMBER'},
   {name: 'committee.updated', defaultAudience: 'MEMBER'},
+  {name: 'committee.chair_granted', defaultAudience: 'MEMBER'},
+  {name: 'committee.chair_revoked', defaultAudience: 'MEMBER'},
   {name: 'operation_mode.changed', defaultAudience: 'MEMBER'},
+  {name: 'committee.status_changed', defaultAudience: 'MEMBER'},
+  {name: 'seat.created', defaultAudience: 'MEMBER'},
+  {name: 'seat.assignment_started', defaultAudience: 'MEMBER'},
+  {name: 'seat.assignment_ended', defaultAudience: 'MEMBER'},
+  {name: 'seat.invitation_created', defaultAudience: 'CHAIR'},
+  {name: 'seat.invitation_revoked', defaultAudience: 'CHAIR'},
+  {name: 'seat.invitation_redeemed', defaultAudience: 'MEMBER'},
   {name: 'attendance.changed', defaultAudience: 'MEMBER'},
   {name: 'point.raised', defaultAudience: 'MEMBER'},
   {name: 'point.resolved', defaultAudience: 'MEMBER'},
@@ -47,7 +57,10 @@ export const COMMITTEE_EVENT_DEFINITIONS = [
   {name: 'file.deleted', defaultAudience: 'MEMBER'},
   {name: 'storage_host.status_changed', defaultAudience: 'CHAIR'},
   {name: 'rule_package.activated', defaultAudience: 'MEMBER'},
-  {name: 'committee.archived', defaultAudience: 'MEMBER'}
+  {name: 'rule_package.version_created', defaultAudience: 'CHAIR'},
+  {name: 'rule_override.created', defaultAudience: 'CHAIR'},
+  {name: 'committee.archived', defaultAudience: 'MEMBER'},
+  {name: 'committee.deletion_started', defaultAudience: 'MEMBER'}
 ] as const;
 
 export type EventAudience = 'PUBLIC' | 'MEMBER' | 'CHAIR';
@@ -67,12 +80,23 @@ export const AUDIT_ACTION_DEFINITIONS = [
   'committee.created',
   'committee.updated',
   'committee.operation_mode_changed',
+  'committee.status_changed',
   'committee.chair_granted',
   'committee.chair_revoked',
   'committee.archived',
   'committee.deleted',
+  'committee.deletion_started',
+  'committee.seat_created',
+  'committee.seat_assigned',
+  'committee.seat_assignment_ended',
+  'committee.seat_invitation_created',
+  'committee.seat_invitation_revoked',
+  'committee.seat_invitation_redeemed',
   'proceedings.chair_acted_on_behalf',
   'rules.package_activated',
+  'rules.package_imported',
+  'rules.package_cloned',
+  'rules.version_created',
   'rules.chair_override_applied',
   'voting.vote_corrected',
   'voting.result_published',
