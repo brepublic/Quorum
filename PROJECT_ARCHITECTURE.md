@@ -2,6 +2,8 @@
 
 > 本文件是本仓库的维护入口。后续涉及代码、构建、测试或运行的工作，应先阅读本文件和 `AGENTS.md`，并以实际代码为准更新本文档。
 
+> Quorum 已完成从 Firebase 迁移到自主托管架构的产品设计，但目标架构尚未实现。已确认的 PostgreSQL、HTTP API、SSE、规则包和 Chair Local Agent 契约集中在 [`docs/self-hosted/`](./docs/self-hosted/README.md)。在相应代码落地前，本文件以下内容继续描述当前真实运行架构；不得把目标规格误写为已经可部署的功能。
+
 ## 1. 项目定位与技术栈
 
 Quorum 是一个用于 Model UN（模拟联合国）委员会管理的单页 Web 应用。它基于开源项目 [Muncoordinated](https://github.com/MaxwellBo/Muncoordinated-2)，当前源码仓库为 [brepublic/Quorum](https://github.com/brepublic/Quorum)。委员会业务仍由浏览器直接访问 Firebase；账号管理等需要服务端权限的少量操作由 Firebase Cloud Functions 执行，不包含常驻的自建 API 服务。
@@ -195,3 +197,4 @@ Firebase Emulator Suite 需要 Java 21 或更高版本。端到端测试只能�
 3. 不要把 Firebase 配置中公开的 Web 配置误判为服务端密钥；真正的访问控制由 Firebase Rules 和用户身份决定。
 4. 新增委员会字段或公开协作功能时，同步更新 TypeScript 模型、默认值、前端写入路径、规则和测试。
 5. 首次生产部署必须同时部署 Functions 与 Database Rules，再发布前端；否则前端无法检查或完成管理员初始化。管理员功能可用 `pnpm deploy:functions` 部署。
+6. 自主托管迁移按 [`docs/self-hosted/IMPLEMENTATION_PLAN.md`](./docs/self-hosted/IMPLEMENTATION_PLAN.md) 的纵向切片推进。每个切片落地后同步更新本文件；只有全部运行依赖真正移除后，才删除 Firebase 相关架构和模拟器说明。
