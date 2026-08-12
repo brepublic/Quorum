@@ -37,7 +37,9 @@ function domain(overrides: Record<string, unknown> = {}): Stage4Service {
     listCountryTemplates: vi.fn(async () => []), createCountryTemplate: vi.fn(async () => ({id: 'country-template'})),
     deleteCountryTemplate: vi.fn(async () => undefined), createSeat: vi.fn(async () => ({id: 'seat'})),
     createNote: vi.fn(async () => ({id: 'note'})), deleteNote: vi.fn(async () => undefined),
-    createTextPost: vi.fn(async () => ({id: 'post'})), deleteTextPost: vi.fn(async () => undefined), ...overrides} as unknown as Stage4Service;
+    createTextPost: vi.fn(async () => ({id: 'post'})), deleteTextPost: vi.fn(async () => undefined),
+    startMeetingSession: vi.fn(async () => ({id: 'session'})), startRollCall: vi.fn(async () => ({id: 'roll-call'})),
+    createAttendanceEvent: vi.fn(async () => ({id: 'attendance'})), ...overrides} as unknown as Stage4Service;
 }
 
 async function request(stage4: Stage4Service, options: {path: string; method?: string; headers?: Record<string, string>; body?: unknown}) {
@@ -117,5 +119,24 @@ describe('stage 4 template and seat HTTP boundary', () => {
     const response = await request(stage4, {path: `/api/v1/committees/${committeeId}/text-posts`, method: 'POST',
       headers: protectedHeaders, body: {content: 'Text', filename: 'secret.pdf'}});
     expect(response.status).toBe(422);
+  });
+
+  it('routes roll-call commands through explicit revision and authenticated actor boundaries', async () => {
+    const recordRollCallResponse = vi.fn(async () => ({id: 'roll-call', revision: 2}));
+    const stage4 = domain({recordRollCallResponse}); const rollCallId = '50000000-0000-4000-8000-000000000001';
+    const response = await request(stage4, {path: `/api/v1/roll-calls/${rollCallId}/record-response`, method: 'POST',
+      headers: protectedHeaders, body: {baseRevision: 1, seatId: '60000000-0000-4000-8000-000000000001', response: 'PRESENT'}});
+    expect(response.status).toBe(200);
+    expect(recordRollCallResponse).toHaveBeenCalledWith(authenticated, rollCallId,
+      {baseRevision: 1, seatId: '60000000-0000-4000-8000-000000000001', response: 'PRESENT'},
+      expect.objectContaining({requestId: expect.any(String)}));
+  });
+
+  it('requires idempotency for starting a roll call', async () => {
+    const stage4 = domain(); const committeeId = '20000000-0000-4000-8000-000000000001';
+    const response = await request(stage4, {path: `/api/v1/committees/${committeeId}/roll-calls`, method: 'POST',
+      headers: {...protectedHeaders, 'idempotency-key': ''}, body: {meetingSessionId: '70000000-0000-4000-8000-000000000001'}});
+    expect(response.status).toBe(400);
+    expect(stage4.startRollCall).not.toHaveBeenCalled();
   });
 });

@@ -158,4 +158,52 @@ integration('PostgreSQL stage 4 templates and seat snapshots', () => {
     expect(auditRows?.rows[0]?.before_summary).not.toHaveProperty('content');
     expect(auditRows?.rows[0]?.before_summary).toEqual(expect.objectContaining({characterCount: 11, sha256: expect.any(String)}));
   });
+
+  it('serializes roll calls, freezes seat and rule snapshots, and materializes append-only attendance', async () => {
+    const owner = await user('rollowner'); const chair = await user('rollchair');
+    const committee = await stage4.createCommittee(owner, {name: 'Roll Call Council', visibility: 'PRIVATE',
+      countryTemplateKey: 'builtin:default'}, 'roll-committee', context('roll-committee'));
+    await stage3.setChair(owner, committee.id, chair.user.id, true, 1, context('roll-chair'));
+    const first = await stage4.createSeat(chair, committee.id, {stableKey: 'first', displayName: 'First', sortOrder: 10},
+      'roll-seat-first', context('roll-seat-first'));
+    const second = await stage4.createSeat(chair, committee.id, {stableKey: 'second', displayName: 'Second', sortOrder: 20},
+      'roll-seat-second', context('roll-seat-second'));
+    const session = await stage4.startMeetingSession(chair, committee.id, {}, context('meeting-start'));
+    await expect(stage4.startMeetingSession(chair, committee.id, {}, context('meeting-duplicate')))
+      .rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
+    const started = await stage4.startRollCall(chair, committee.id, {meetingSessionId: session.id},
+      'roll-start', context('roll-start'));
+    expect(started).toEqual(expect.objectContaining({currentSeatId: first.id, allowedResponses: ['PRESENT', 'ABSENT']}));
+    await stage4.updateSeat(chair, committee.id, first.id, {baseRevision: 1, patch: {displayName: 'Renamed'}}, context('rename-after-freeze'));
+
+    const competing = await Promise.allSettled([
+      stage4.recordRollCallResponse(chair, started.id, {baseRevision: 1, seatId: first.id, response: 'PRESENT'}, context('response-a')),
+      stage4.recordRollCallResponse(chair, started.id, {baseRevision: 1, seatId: first.id, response: 'PRESENT'}, context('response-b'))
+    ]);
+    expect(competing.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+    expect(competing.filter(result => result.status === 'rejected')).toHaveLength(1);
+    const afterFirst = (competing.find(result => result.status === 'fulfilled') as PromiseFulfilledResult<Awaited<ReturnType<Stage4Service['recordRollCallResponse']>>>).value;
+    expect(afterFirst).toEqual(expect.objectContaining({revision: 2, currentSeatId: second.id}));
+    expect(afterFirst.entries[0]).toEqual(expect.objectContaining({seatDisplayName: 'First'}));
+    const undone = await stage4.undoRollCallResponse(chair, started.id, {baseRevision: 2}, context('roll-undo'));
+    expect(undone).toEqual(expect.objectContaining({revision: 3, currentSeatId: first.id, entries: []}));
+    const redone = await stage4.recordRollCallResponse(chair, started.id,
+      {baseRevision: 3, seatId: first.id, response: 'PRESENT'}, context('response-redone'));
+    const completed = await stage4.recordRollCallResponse(chair, started.id,
+      {baseRevision: redone.revision, seatId: second.id, response: 'ABSENT'}, context('response-final'));
+    expect(completed).toEqual(expect.objectContaining({status: 'COMPLETED', currentSeatId: null}));
+    const attendance = await pool?.query(`SELECT seat_id,state FROM current_attendance
+      WHERE meeting_session_id=$1 ORDER BY seat_id`, [session.id]);
+    expect(attendance?.rows).toEqual(expect.arrayContaining([
+      {seat_id: first.id, state: 'PRESENT'}, {seat_id: second.id, state: 'ABSENT'}
+    ]));
+    await stage4.createAttendanceEvent(chair, committee.id,
+      {meetingSessionId: session.id, seatId: second.id, type: 'RETURNED'}, context('attendance-returned'));
+    expect((await pool?.query(`SELECT state FROM current_attendance WHERE meeting_session_id=$1 AND seat_id=$2`,
+      [session.id, second.id]))?.rows).toEqual([{state: 'PRESENT'}]);
+    expect((await pool?.query(`SELECT type FROM attendance_events WHERE meeting_session_id=$1 AND seat_id=$2 ORDER BY created_at,id`,
+      [session.id, second.id]))?.rows).toEqual([{type: 'ABSENT'}, {type: 'RETURNED'}]);
+    const closed = await stage4.closeMeetingSession(chair, session.id, {baseRevision: 1}, context('meeting-close'));
+    expect(closed.status).toBe('CLOSED');
+  });
 });

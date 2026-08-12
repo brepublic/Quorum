@@ -255,6 +255,41 @@ async function handleStage4Request(options: {
     }
     return true;
   }
+
+  const meetingSessions = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/meeting-sessions$/.exec(pathname);
+  if (meetingSessions && method === 'POST') {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 201, success(await stage4.startMeetingSession(auth, meetingSessions[1] as string, body, context), requestId));
+    return true;
+  }
+  const closeMeetingSession = /^\/api\/v1\/meeting-sessions\/([0-9a-f-]{36})\/close$/.exec(pathname);
+  if (closeMeetingSession && method === 'POST') {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 200, success(await stage4.closeMeetingSession(auth, closeMeetingSession[1] as string, body, context), requestId));
+    return true;
+  }
+  const rollCalls = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/roll-calls$/.exec(pathname);
+  if (rollCalls && method === 'POST') {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 201, success(await stage4.startRollCall(auth, rollCalls[1] as string, body,
+      idempotencyKey(request), context), requestId)); return true;
+  }
+  const rollCallCommand = /^\/api\/v1\/roll-calls\/([0-9a-f-]{36})\/(record-response|undo|reset)$/.exec(pathname);
+  if (rollCallCommand && method === 'POST') {
+    const auth = await write(); const body = await readJson(request); const id = rollCallCommand[1] as string;
+    const result = rollCallCommand[2] === 'record-response'
+      ? await stage4.recordRollCallResponse(auth, id, body, context)
+      : rollCallCommand[2] === 'undo'
+        ? await stage4.undoRollCallResponse(auth, id, body, context)
+        : await stage4.resetRollCall(auth, id, body, context);
+    sendJson(response, 200, success(result, requestId)); return true;
+  }
+  const attendanceEvents = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/attendance-events$/.exec(pathname);
+  if (attendanceEvents && method === 'POST') {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 201, success(await stage4.createAttendanceEvent(auth, attendanceEvents[1] as string, body, context), requestId));
+    return true;
+  }
   return false;
 }
 
