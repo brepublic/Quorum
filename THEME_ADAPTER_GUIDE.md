@@ -1,256 +1,242 @@
-# Quorum 外观主题适配指南
+# Quorum 主题 API 2 指南
 
-本文档面向 Quorum 主题作者。主题 API 1 允许一个主题彻底改变现有页面的视觉语言：颜色、字体、留白、边框、阴影、动效、按钮形态，以及 Grid、Flex、定位等布局方式都可以覆盖。主题只控制表现层，不能执行 JavaScript、读写 Firebase、修改业务状态、增加路由或创建新页面。
+本文档定义 Quorum 声明式主题格式、能力边界和发布要求。主题 API 2 的目标不是让主题文件接管页面 CSS，而是在不破坏业务布局、语义和无障碍的前提下，允许作者定制一套完整、可验证的视觉语言。
 
-## 1. 最短上手路径
+旧版主题 API 1 仍可导入，但只作为兼容格式维护。新主题必须使用 API 2。
 
-1. 新建 UTF-8 JSON 文件，文件名建议以 `.quorum-theme.json` 结尾。
-2. 按下文填写 `manifest`，把全部主题 CSS 写入 `css` 字符串。
-3. 在 Quorum 任意页面右下角打开“外观主题”，选择“导入主题”。
-4. 修改文件后再次导入。同一个 `manifest.id` 会覆盖浏览器中已安装的旧版本并立即启用。
-5. 用“导出当前主题”触发浏览器下载，交付或备份这个单文件主题包。
+## 1. 能力边界
 
-最小的可导入示例：
+### API 2 可以控制
+
+- 浅色或深色模式；每个主题必须固定选择一种。
+- 画布、表面、正文、次要正文、强调、成功、警告、危险、边框和焦点颜色。
+- 系统、人文、圆体或等宽字体预设，以及小、标准、大三档字号比例。
+- 紧凑、舒适、宽松三档密度。
+- 页面和控件圆角预设。
+- 实色或半透明表面，以及平面、轻层级、强层级阴影。
+- 无、弱、标准、流畅四档动态预设。
+- 按钮、开关、导航和表格的受控外观变体。
+- 默认内容宽度，以及稳定页面 ID 的白名单宽度覆盖。
+
+### API 2 不能控制
+
+- 不能提供 CSS、选择器、HTML、JavaScript、图片、字体文件或外部 URL。
+- 不能隐藏、重排或重新定位关键业务控件。
+- 不能更改点名、表决、动议、计时器、权限、Firebase 数据或路由行为。
+- 不能改写业务文案、用伪元素制造状态，或只靠颜色替代真实状态。
+- 不能为任意类名设置页面布局；只能为文档列出的稳定页面选择内容宽度。
+- 不能修改主题管理器和右下角恢复入口。
+
+这些限制由解析器执行，而不是依赖作者自律。未知字段会被拒绝。
+
+## 2. 文件格式
+
+主题是一个 UTF-8 JSON 文件，建议以 `.quorum-theme.json` 结尾。完整示例：
 
 ```json
 {
   "schema": "quorum-theme",
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "manifest": {
-    "id": "example.midnight",
-    "name": "Midnight Assembly",
-    "version": "1.0.0",
+    "id": "example.daylight",
+    "name": "Daylight",
+    "version": "2.0.0",
     "author": "Your name",
-    "description": "A compact dark conference-room theme.",
-    "quorumThemeApi": "1",
-    "colorScheme": "dark"
+    "description": "A readable fixed light theme.",
+    "quorumThemeApi": "2",
+    "colorScheme": "light"
   },
-  "css": ":scope { --accent: #7dd3fc; min-height: 100vh; color: #e5eef8; background: #08111f; }\n[data-theme-component~='button'] { border-radius: 999px !important; }\n:scope[data-theme-page='committee-roll-call'] .roll-call-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }"
-}
-```
-
-JSON 字符串中的换行必须写成 `\n`，双引号必须写成 `\"`。实际制作时可以用构建脚本把单独的 CSS 文件转义进 JSON；最终交付物仍是一个文件。
-
-## 2. 主题包格式
-
-顶层字段：
-
-| 字段 | 类型 | 规则 |
-| --- | --- | --- |
-| `schema` | 字符串 | 必须是 `quorum-theme` |
-| `schemaVersion` | 数字 | 当前必须是 `1` |
-| `manifest` | 对象 | 主题身份和兼容信息 |
-| `css` | 字符串 | 主题的全部 CSS，最多 2 MiB |
-
-`manifest` 字段：
-
-| 字段 | 必填 | 说明 |
-| --- | --- | --- |
-| `id` | 是 | 2–64 个字母、数字、点、下划线或连字符；建议采用 `作者.主题名`，发布后不要更换 |
-| `name` | 是 | 显示名称，最多 80 字符 |
-| `version` | 是 | 主题版本，最多 32 字符；建议使用语义化版本 |
-| `author` | 是 | 作者，最多 80 字符 |
-| `description` | 否 | 简介，最多 500 字符 |
-| `quorumThemeApi` | 是 | 当前必须是字符串 `1` |
-| `colorScheme` | 否 | `light`、`dark` 或 `auto`，供原生控件和主题选择器使用 |
-
-完整文件不得超过 3 MiB。浏览器把导入主题保存在本机 `localStorage`；它不随账号同步，也不会写入 Firebase。不同浏览器或设备之间迁移时，先导出再导入。
-
-## 3. 作用域与根选择器
-
-Quorum 在应用主题时自动把 `css` 放进以下原生 CSS 作用域：
-
-```css
-@scope (#quorum-app) {
-  /* 主题包的 css 会出现在这里 */
-}
-```
-
-因此主题只能影响 `#quorum-app` 内的应用界面（包括 Quorum 的业务弹窗），不能影响作用域外的主题恢复按钮和主题管理弹窗。不要在主题文件中再写 `@scope (#quorum-app)`。
-
-主题 API 1 依赖浏览器原生 `@scope`。该能力从 2025 年 12 月起进入最新浏览器的 Baseline；Quorum 仍建议使用新版 Chrome。旧浏览器可能继续显示默认界面，却忽略自定义主题 CSS，详见 [MDN 的 `@scope` 兼容说明](https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/At-rules/%40scope)。
-
-作用域根本身用 `:scope` 选择：
-
-```css
-:scope {
-  --theme-accent: #8b5cf6;
-  background: #0f172a;
-  color: #e2e8f0;
-  font-family: Inter, system-ui, sans-serif;
-}
-
-:scope[data-theme-color-scheme='dark'] {
-  color-scheme: dark;
-}
-```
-
-主题 CSS 在 Quorum 内置 CSS 之后加载。遇到 Semantic UI 的高优先级规则或组件的行内样式时，可以增加选择器具体度；确有必要时才使用 `!important`。
-
-## 4. 页面适配钩子
-
-应用根会一直携带以下属性：
-
-```html
-<div id="quorum-app" data-theme-id="example.midnight"
-  data-theme-section="committee" data-theme-page="committee-roll-call"
-  data-theme-color-scheme="dark">
-```
-
-`data-theme-section` 的稳定值为 `public`、`account`、`committee`、`system`。`data-theme-page` 与现有页面的对应关系如下；这是主题 API 1 的稳定契约：
-
-| 页面 | `data-theme-page` |
-| --- | --- |
-| 首页 `/` | `home` |
-| 登录/创建委员会 `/onboard`、`/committees` | `onboard` |
-| 委员会模板 | `templates` |
-| 国家模板 | `countries` |
-| 账号管理 | `account-admin` |
-| 委员会欢迎页 | `committee-home` |
-| 委员会设置 | `committee-setup` |
-| 点名 | `committee-roll-call` |
-| 动议 | `committee-motions` |
-| 主发言名单或有主持核心磋商 | `committee-caucus` |
-| 自由磋商 | `committee-unmod` |
-| 决议草案及其全部标签页 | `committee-resolution` |
-| 意向性投票 | `committee-strawpoll` |
-| 笔记 | `committee-notes` |
-| 帖子与附件 | `committee-posts` |
-| 统计 | `committee-stats` |
-| 委员会行为设置 | `committee-settings` |
-| 帮助 | `committee-help` |
-| 未知委员会子路径 | `committee-unknown` |
-| 404 | `not-found` |
-
-页面专用规则必须把页面条件写在 `:scope` 上：
-
-```css
-:scope[data-theme-page='home'] .ui.vertical.segment {
-  min-height: 100svh !important;
-}
-
-:scope[data-theme-page='committee-resolution'] .resolution-voting-dashboard {
-  grid-template-columns: minmax(0, 2fr) minmax(18rem, 1fr);
-}
-```
-
-## 5. 通用组件适配钩子
-
-Quorum 会在界面挂载和动态更新后，为常见组件添加空格分隔的 `data-theme-component` 令牌。请使用 `~=`，不要使用严格等于：同一个节点可能同时属于多个类别。
-
-| 令牌 | 组件 |
-| --- | --- |
-| `button`、`button-group` | 按钮、按钮组 |
-| `container`、`grid`、`segment` | 容器、网格、内容段 |
-| `menu`、`sidebar` | 菜单、移动端侧栏 |
-| `form`、`input`、`checkbox`、`dropdown` | 表单控件 |
-| `table`、`list`、`feed`、`card` | 数据和内容集合 |
-| `modal`、`message` | 弹窗和消息 |
-| `heading`、`label`、`statistic`、`progress` | 标题、标签、统计和进度 |
-
-示例：
-
-```css
-[data-theme-component~='button'] {
-  background: linear-gradient(135deg, #14b8a6, #2563eb) !important;
-  border: 0 !important;
-  border-radius: 0.75rem !important;
-  box-shadow: 0 0.4rem 1rem rgb(2 132 199 / 24%) !important;
-  color: white !important;
-}
-
-[data-theme-component~='segment'] {
-  background: rgb(15 23 42 / 84%) !important;
-  border: 1px solid rgb(148 163 184 / 18%) !important;
-}
-```
-
-这些通用令牌适合建立整体设计语言。需要控制一个页面内的具体业务组件时，可继续使用源码已经提供的语义类名，例如：
-
-- 点名：`.roll-call-board`、`.roll-call-grid`、`.roll-call-member`、`.roll-call-current`、`.roll-call-summary-highlights`
-- 决议表决：`.resolution-voting-dashboard`、`.resolution-voting-grid`、`.resolution-voting-metric`、`.resolution-voting-actions`
-- 动议：`.motion`、`.motion-heading`、`.motion-vote-panel`、`.motion-vote-result`
-- 国家模板：`.country-manager-layout`、`.country-manager-sidebar`、`.country-editor-table`、`.country-flag-editor`
-- 模板选择：`.template-picker-row`、`.template-preview`、`.template-localized-name-row`
-- 委员会导航：`.committee-menu`
-
-通用 `data-theme-*` 是版本化主题 API；业务类名可提供更细的控制，但可能随对应功能重构而变化。发布主题前应在下方列出的所有页面复测。
-
-## 6. 彻底改变布局
-
-主题不能改 React 组件树，但可以利用 CSS Grid、Flex、`order`、`grid-template-areas`、`display: contents`、绝对/固定定位和容器查询重新组织现有组件。例如把点名界面改成“当前代表团居左、代表团矩阵居右”：
-
-```css
-:scope[data-theme-page='committee-roll-call'] .roll-call-board {
-  display: grid;
-  gap: 1.5rem;
-  grid-template-columns: minmax(16rem, 0.8fr) minmax(30rem, 2fr);
-}
-
-:scope[data-theme-page='committee-roll-call'] .roll-call-current {
-  grid-column: 1;
-  grid-row: 1 / span 2;
-}
-
-:scope[data-theme-page='committee-roll-call'] .roll-call-grid,
-:scope[data-theme-page='committee-roll-call'] .roll-call-pagination {
-  grid-column: 2;
-}
-
-@media (max-width: 800px) {
-  :scope[data-theme-page='committee-roll-call'] .roll-call-board {
-    grid-template-columns: 1fr;
+  "settings": {
+    "palette": {
+      "canvas": "#f5f5f7",
+      "surface": "#ffffff",
+      "surfaceRaised": "#ffffff",
+      "text": "#1d1d1f",
+      "textMuted": "#5f5f65",
+      "accent": "#0066cc",
+      "accentText": "#ffffff",
+      "success": "#187a34",
+      "successText": "#ffffff",
+      "warning": "#ffb340",
+      "warningText": "#1d1d1f",
+      "danger": "#b42318",
+      "dangerText": "#ffffff",
+      "border": "#8e8e93",
+      "focus": "#005fcc"
+    },
+    "typography": {"fontFamily": "system", "scale": "standard"},
+    "density": "comfortable",
+    "shape": {"radius": "rounded", "controls": "rounded"},
+    "materials": {"surface": "translucent", "depth": "subtle"},
+    "motion": {"preset": "fluid"},
+    "components": {
+      "buttons": "tinted",
+      "switches": "ios",
+      "navigation": "floating",
+      "tables": "cards"
+    },
+    "layout": {
+      "contentWidth": "wide",
+      "pageWidths": {"committee-resolution": "full"}
+    }
   }
 }
 ```
 
-CSS 不能把本来不存在的数据变出来，也不能改变事件处理器归属。不要用伪元素伪造业务文案或状态；主题隐藏关键操作时，功能虽然仍在代码中，但用户将无法使用。
+顶层只允许 `schema`、`schemaVersion`、`manifest` 和 `settings`。API 2 文件中出现 `css` 或其他未知字段会导入失败。
 
-## 7. 图片、字体与其他资源
+## 3. Manifest
 
-主题包是单文件。图片、小图标和字体必须以 base64 `data:` URL 内嵌：
+| 字段 | 规则 |
+| --- | --- |
+| `id` | 必填；2–64 个字母、数字、点、下划线或连字符；不能以 `builtin` 开头；发布后保持稳定 |
+| `name` | 必填；最多 80 字符 |
+| `version` | 必填；最多 32 字符；建议使用语义化版本 |
+| `author` | 必填；最多 80 字符 |
+| `description` | 可选；最多 500 字符 |
+| `quorumThemeApi` | 必须是字符串 `2` |
+| `colorScheme` | 必须是 `light` 或 `dark`；API 2 不接受 `auto` |
 
-```css
-:scope[data-theme-page='home'] {
-  background-image: url('data:image/webp;base64,UklGR...');
-}
-```
+浅色和深色应作为两个不同 ID 的主题发布。例如 `example.daylight` 和 `example.midnight`。这样用户的选择不依赖操作系统状态，导出、迁移和问题复现也更确定。
 
-主题导入器拒绝 `@import`、`@charset`、`@namespace`、外部/相对 URL、`http:`、`https:`、`file:`、`ftp:` 和 `blob:`，因此主题不会在应用之外静默加载资源。建议把图片转换为 WebP/AVIF，并控制体积；如果单个主题接近 3 MiB，应优先压缩素材而不是拆包，因为当前 API 1 的可移植交付格式就是一个 JSON 文件。
+## 4. Palette 与对比度
 
-如需字体，可优先使用系统字体栈。内嵌字体前确认浏览器允许在作用域规则中使用对应的 `@font-face` 写法，并在所有目标浏览器验证；大字体也很容易超过主题包上限。
+颜色必须是完整六位十六进制值，例如 `#0066cc`。不接受透明色、短十六进制、CSS 变量或函数。
 
-## 8. 状态、响应式与无障碍
+| 字段 | 用途 |
+| --- | --- |
+| `canvas` | 页面底层画布 |
+| `surface` | 卡片、内容段和普通面板 |
+| `surfaceRaised` | 输入框、下拉菜单、浮层和较高层级表面 |
+| `text` | 正文和主要标题 |
+| `textMuted` | 说明、元数据和次要标签 |
+| `accent` / `accentText` | 主操作、当前导航和焦点动作 |
+| `success` / `successText` | 成功、出席、赞成 |
+| `warning` / `warningText` | 警告、弃权、当前代表团 |
+| `danger` / `dangerText` | 错误、缺席、反对和危险操作 |
+| `border` | 控件和表面边界 |
+| `focus` | 键盘焦点环 |
 
-主题必须覆盖真实交互状态，而不只是静态截图：
+导入器会强制检查：
 
-- `:hover`、`:focus-visible`、`:active`、`:disabled`
-- Semantic UI 的 `.active`、`.loading`、`.error`、`.positive`、`.negative`、`.inverted`
-- 点名的 `.status-uncalled`、`.status-absent`、`.status-present`、`.is-current`
-- 投票的 `.vote-for`、`.vote-against`、`.vote-abstaining` 与禁用状态
-- 桌面、平板、手机宽度，长中文、长英文、动态列表和空状态
-- `prefers-reduced-motion: reduce` 与键盘焦点可见性
+- `text` 对 `canvas`、`surface`、`surfaceRaised` 至少 4.5:1。
+- `textMuted` 对 `canvas`、`surface` 至少 4.5:1。
+- 四组语义前景色对对应背景色至少 4.5:1。
+- `focus` 对 `canvas`、`surface` 至少 3:1。
 
-不要只依靠颜色传达出席、表决或错误状态。正文和控件应满足 WCAG AA 对比度；点击目标建议至少 44×44 CSS 像素。重新定位浮层时要检查下拉菜单、弹窗、侧栏和通知的 `z-index`。
+状态语义固定：主题不能把 `success` 改用于危险操作，也不能把所有语义按钮合并成强调色。
 
-## 9. 导入、覆盖、删除和恢复
+## 5. Typography、Density 与 Shape
 
-- 导入成功后主题立即启用；同 ID 导入会覆盖旧包。
-- 导出会下载当前主题的完整 JSON。内置默认主题也能导出；重新导入它会安全地切回内置默认样式。
-- 删除自定义主题后自动切回默认主题。
-- 主题解析失败、版本不兼容、资源 URL 不合规或本地存储空间不足时，不会替换当前主题。
-- 即使主题 CSS 写坏，右下角主题按钮和管理弹窗也位于作用域外，可用于切回 `Quorum Default`。
-- 清除站点数据会同时清除已安装主题和当前选择；重要主题请先导出。
+### `typography.fontFamily`
 
-## 10. 发布前适配清单
+- `system`：平台系统字体，推荐默认值。
+- `humanist`：人文无衬线字体栈。
+- `rounded`：平台圆体字体栈。
+- `monospace`：等宽字体栈，适合实验性或技术主题。
 
-1. JSON 能成功导入、覆盖、导出，并能在另一个浏览器重新导入。
-2. 首页、登录/创建委员会、委员会模板、国家模板和账号管理均已检查。
-3. 委员会欢迎、设置、点名、动议、两类磋商、决议全部标签、意向性投票、笔记、帖子、统计、行为设置和帮助均已检查。
-4. 普通、悬停、焦点、禁用、加载、错误、空数据与长数据状态均清晰可辨。
-5. 320 px 手机宽度到宽屏均无关键控件遮挡或不可达。
-6. 英语和简体中文均无溢出、拆词错误或不可读文本。
-7. 键盘可操作，焦点可见，减少动态效果偏好生效。
-8. 主题未隐藏关键业务控件，未用视觉内容冒充真实系统状态。
-9. 文件小于 3 MiB，CSS 小于 2 MiB，资源全部使用 base64 data URL。
-10. `quorumThemeApi` 仍为目标 Quorum 版本支持的 API；若未来升级主题 API，应按新的迁移说明更新。
+主题不能嵌入或下载字体。
+
+### `typography.scale`
+
+- `small`
+- `standard`
+- `large`
+
+字号档位会连同布局一起缩放；不能传入任意像素值。
+
+### `density`
+
+- `compact`
+- `comfortable`
+- `spacious`
+
+密度影响间距和控件高度，但不会把点击目标缩到不可操作。
+
+### `shape`
+
+- `radius`：`square`、`soft`、`rounded`。
+- `controls`：`rounded`、`pill`。
+
+复选框、单选框、Toggle 和 Slider 各自有独立形态规则。通用圆角设置不会覆盖 Toggle 的胶囊轨道或圆形滑块。iOS 开关的实际输入和标签点击区域至少为 44px，拇指使用可立即反向的 `transform` 过渡。
+
+## 6. Materials 与 Motion
+
+### `materials.surface`
+
+- `solid`：不透明表面。
+- `translucent`：由 Quorum 生成半透明表面和背景模糊；启用“减少透明度”时自动回退为实色。
+
+### `materials.depth`
+
+- `flat`
+- `subtle`
+- `elevated`
+
+### `motion.preset`
+
+- `none`：无主题附加动态。
+- `reduced`：短颜色和透明度反馈，不使用明显位移。
+- `standard`：克制的工作台动态。
+- `fluid`：更明显但仍受时长上限约束的界面动态。
+
+Quorum 使用统一的进入、移动和按压曲线。主题不能注入关键帧。系统启用 `prefers-reduced-motion` 时，位移和循环动画会被移除，但有助理解的短颜色反馈会保留。
+
+`fluid` 预设仍遵守 300ms 上限：状态颜色约 160ms、开关位移 200ms、下拉和通知进入 240ms、侧栏 300ms。首页与委员会侧栏共享同一 `push` 空间模型。通知不再使用 Semantic UI 默认的 500ms 多次回弹；弹窗使用 `scale(.97 → 1)`、透明度和材质模糊的同步进入效果。`reduced` 和系统减少动态模式会把这些位移改为短透明度反馈。
+
+决议结果标题的既有瞬时闪烁属于业务交互契约，不由主题预设改写。
+
+## 7. Components
+
+| 字段 | 可选值 | 控制范围 |
+| --- | --- | --- |
+| `buttons` | `filled`、`tinted` | 普通按钮的中性表面；主操作和语义按钮继续使用对应 palette |
+| `switches` | `ios`、`compact` | Toggle 和 Slider 的轨道、滑块和移动方式 |
+| `navigation` | `bar`、`floating` | 委员会导航是贴合栏还是浮动材质栏 |
+| `tables` | `plain`、`cards` | 表格是普通边界还是带圆角和层级的卡片表面 |
+
+组件设置不能删除标签、图标、禁用状态或焦点状态。
+
+## 8. Layout
+
+`layout.contentWidth` 是默认内容宽度：
+
+- `readable`：适合说明和表单的窄阅读宽度。
+- `wide`：适合管理界面的宽内容区。
+- `full`：不设主题最大宽度。
+
+`layout.pageWidths` 可以覆盖稳定页面，但值仍只能使用以上三档。允许的页面 ID：
+
+`home`、`onboard`、`templates`、`countries`、`account-admin`、`committee-home`、`committee-setup`、`committee-roll-call`、`committee-motions`、`committee-caucus`、`committee-unmod`、`committee-resolution`、`committee-strawpoll`、`committee-notes`、`committee-posts`、`committee-stats`、`committee-settings`、`committee-help`、`committee-unknown`、`not-found`。
+
+宽度只作用于非 `fluid` 内容容器。决议、点名、国家管理等业务页面自己声明的全宽容器不会被主题的普通内容宽度压缩。
+
+API 2 不允许设置 Grid 列数、`order`、固定定位、显示/隐藏或任意断点，从格式层保护点名矩阵、表决按钮对齐和手机单列布局。
+
+## 9. 导入、存储与兼容
+
+- 导入后立即启用；相同 ID 会覆盖旧版本。
+- 导入主题和当前选择只保存在浏览器 `localStorage`，不写入 Firebase。
+- 新运行时使用 v2 本地存储键，并会自动读取旧 v1 键中的主题和当前选择。
+- 导出会生成已规范化的完整主题包，包括补齐后的默认设置。
+- 右下角恢复入口和主题管理器始终位于主题作用域外。
+- 完整文件仍不得超过 3 MiB。
+
+### API 1 兼容层
+
+API 1 文件仍使用 `schemaVersion: 1`、`quorumThemeApi: "1"` 和 `css` 字符串。它会继续经过作用域、外部资源和大小检查，但任意 CSS 可能破坏布局或对比度。Quorum 会在主题管理器中标记它为“旧版 CSS 主题”。
+
+不提供 API 1 到 API 2 的自动转换，因为任意选择器和布局规则无法安全映射成有限设置。应人工提取颜色、排版、形状、材质和宽度意图，重新发布 API 2 主题。
+
+## 10. 发布检查清单
+
+1. 文件能成功导入、覆盖、导出并重新导入。
+2. 浅色和深色分别使用固定 `colorScheme` 和不同 ID。
+3. 所有 palette 对比度通过导入器校验。
+4. 首页、账号页、模板、国家管理和全部委员会页面都可读。
+5. 普通、悬停、焦点、禁用、加载、错误和空状态均可区分。
+6. Toggle、Slider、普通复选框和单选框形态正确且点击目标足够大。
+7. 320px 手机、平板和宽屏没有关键控件遮挡或不可达。
+8. 简体中文和英语长文本不会溢出。
+9. 减少动态、减少透明度和高对比度偏好仍可使用。
+10. 文件不包含 `css`、资源、脚本或未记录字段。

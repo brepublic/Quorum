@@ -62,3 +62,323 @@
     margin: 0;
   }
 }
+
+/* Theme API 2 is deliberately declarative. These rules are the only bridge
+ * from validated package settings to application CSS. Theme files cannot add
+ * selectors, hide controls, or change the business component tree. */
+#quorum-app[data-theme-api='2'] {
+  --q-theme-radius-sm: 0.5rem;
+  --q-theme-radius-md: 0.75rem;
+  --q-theme-radius-lg: 1rem;
+  --q-theme-control-radius: 0.625rem;
+  --q-theme-space: 1rem;
+  --q-theme-control-height: 2.75rem;
+  --q-theme-font-scale: 1;
+  --q-theme-duration-fast: 140ms;
+  --q-theme-duration-normal: 220ms;
+  --q-theme-duration-panel: 260ms;
+  --q-theme-duration-toggle: 180ms;
+  --q-theme-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --q-theme-ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --q-theme-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.06), 0 5px 18px rgba(0, 0, 0, 0.06);
+  --q-theme-shadow-lg: 0 18px 60px rgba(0, 0, 0, 0.18), 0 4px 16px rgba(0, 0, 0, 0.08);
+  min-height: 100vh;
+  color: var(--q-theme-text);
+  background: var(--q-theme-canvas);
+  font-family: var(--q-theme-font-family);
+  font-size: calc(1rem * var(--q-theme-font-scale));
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+#quorum-app[data-theme-api='2'][data-theme-font-scale='small'] { --q-theme-font-scale: 0.9375; }
+#quorum-app[data-theme-api='2'][data-theme-font-scale='large'] { --q-theme-font-scale: 1.0625; }
+#quorum-app[data-theme-api='2'][data-theme-density='compact'] { --q-theme-space: 0.75rem; --q-theme-control-height: 2.4rem; }
+#quorum-app[data-theme-api='2'][data-theme-density='spacious'] { --q-theme-space: 1.25rem; --q-theme-control-height: 3rem; }
+#quorum-app[data-theme-api='2'][data-theme-radius='square'] { --q-theme-radius-sm: 0; --q-theme-radius-md: 0; --q-theme-radius-lg: 0; }
+#quorum-app[data-theme-api='2'][data-theme-radius='soft'] { --q-theme-radius-sm: 0.25rem; --q-theme-radius-md: 0.4rem; --q-theme-radius-lg: 0.625rem; }
+#quorum-app[data-theme-api='2'][data-theme-control-shape='pill'] { --q-theme-control-radius: 999px; }
+#quorum-app[data-theme-api='2'][data-theme-motion='none'] { --q-theme-duration-fast: 0ms; --q-theme-duration-normal: 0ms; --q-theme-duration-panel: 0ms; --q-theme-duration-toggle: 0ms; }
+#quorum-app[data-theme-api='2'][data-theme-motion='reduced'] { --q-theme-duration-fast: 100ms; --q-theme-duration-normal: 160ms; --q-theme-duration-panel: 160ms; --q-theme-duration-toggle: 120ms; }
+#quorum-app[data-theme-api='2'][data-theme-motion='fluid'] { --q-theme-duration-fast: 160ms; --q-theme-duration-normal: 240ms; --q-theme-duration-panel: 300ms; --q-theme-duration-toggle: 200ms; }
+#quorum-app[data-theme-api='2'][data-theme-depth='flat'] { --q-theme-shadow-sm: none; --q-theme-shadow-lg: none; }
+#quorum-app[data-theme-api='2'][data-theme-depth='elevated'] {
+  --q-theme-shadow-sm: 0 2px 5px rgba(0, 0, 0, 0.08), 0 10px 30px rgba(0, 0, 0, 0.1);
+  --q-theme-shadow-lg: 0 26px 80px rgba(0, 0, 0, 0.25), 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+
+#quorum-app[data-theme-api='2'][data-theme-layout-width='readable'] .ui.container:not(.fluid) { max-width: 52rem !important; }
+#quorum-app[data-theme-api='2'][data-theme-layout-width='wide'] .ui.container:not(.fluid) { max-width: 80rem !important; }
+#quorum-app[data-theme-api='2'][data-theme-layout-width='full'] .ui.container:not(.fluid) { max-width: none !important; }
+
+#quorum-app[data-theme-api='2'] *,
+#quorum-app[data-theme-api='2'] *::before,
+#quorum-app[data-theme-api='2'] *::after { box-sizing: border-box; }
+
+#quorum-app[data-theme-api='2'] a { color: var(--q-theme-accent); text-underline-offset: 0.16em; }
+#quorum-app[data-theme-api='2'] ::selection { color: var(--q-theme-accent-text); background: var(--q-theme-accent); }
+#quorum-app[data-theme-api='2'] .ui.header,
+#quorum-app[data-theme-api='2'] [data-theme-component~='heading'] {
+  color: var(--q-theme-text) !important;
+  font-family: inherit !important;
+  letter-spacing: -0.018em;
+}
+#quorum-app[data-theme-api='2'] .ui.header .sub.header,
+#quorum-app[data-theme-api='2'] p,
+#quorum-app[data-theme-api='2'] .description,
+#quorum-app[data-theme-api='2'] .meta { color: var(--q-theme-text-muted) !important; }
+#quorum-app[data-theme-api='2'] .ui.card > .content > .header,
+#quorum-app[data-theme-api='2'] .ui.message .header,
+#quorum-app[data-theme-api='2'] .ui.list .list > .item .header,
+#quorum-app[data-theme-api='2'] .ui.list > .item .header { color: var(--q-theme-text) !important; }
+
+#quorum-app[data-theme-api='2'] [data-theme-component~='segment'],
+#quorum-app[data-theme-api='2'] [data-theme-component~='card'],
+#quorum-app[data-theme-api='2'] [data-theme-component~='modal'] {
+  color: var(--q-theme-text) !important;
+  background: var(--q-theme-surface) !important;
+  border-color: var(--q-theme-border) !important;
+  border-radius: var(--q-theme-radius-lg) !important;
+  box-shadow: var(--q-theme-shadow-sm) !important;
+}
+#quorum-app[data-theme-api='2'][data-theme-surface='translucent'] [data-theme-component~='segment'],
+#quorum-app[data-theme-api='2'][data-theme-surface='translucent'] [data-theme-component~='card'],
+#quorum-app[data-theme-api='2'][data-theme-surface='translucent'] [data-theme-component~='modal'],
+#quorum-app[data-theme-api='2'][data-theme-surface='translucent'] [data-theme-component~='menu'] {
+  background: color-mix(in srgb, var(--q-theme-surface) 82%, transparent) !important;
+  backdrop-filter: blur(22px) saturate(165%);
+  -webkit-backdrop-filter: blur(22px) saturate(165%);
+}
+#quorum-app[data-theme-api='2'] .ui.segments { overflow: hidden; border-color: var(--q-theme-border) !important; border-radius: var(--q-theme-radius-lg) !important; box-shadow: var(--q-theme-shadow-sm) !important; }
+#quorum-app[data-theme-api='2'] .ui.segments > .segment { border-radius: 0 !important; box-shadow: none !important; }
+
+#quorum-app[data-theme-api='2'] [data-theme-component~='button'] {
+  min-height: var(--q-theme-control-height);
+  color: var(--q-theme-text) !important;
+  background: var(--q-theme-surface-raised) !important;
+  border: 1px solid var(--q-theme-border) !important;
+  border-radius: var(--q-theme-control-radius) !important;
+  box-shadow: none !important;
+  font-family: inherit !important;
+  font-weight: 600 !important;
+  touch-action: manipulation;
+  transition: transform var(--q-theme-duration-fast) var(--q-theme-ease-out), background-color var(--q-theme-duration-fast) ease, color var(--q-theme-duration-fast) ease, box-shadow var(--q-theme-duration-fast) ease !important;
+}
+#quorum-app[data-theme-api='2'] [data-theme-component~='button']:active { transform: scale(0.97); }
+#quorum-app[data-theme-api='2'] [data-theme-component~='button']:focus-visible,
+#quorum-app[data-theme-api='2'] input:focus-visible,
+#quorum-app[data-theme-api='2'] textarea:focus-visible,
+#quorum-app[data-theme-api='2'] [tabindex]:focus-visible { outline: 3px solid var(--q-theme-focus) !important; outline-offset: 2px; }
+#quorum-app[data-theme-api='2'] .ui.primary.button,
+#quorum-app[data-theme-api='2'] .ui.blue.button { color: var(--q-theme-accent-text) !important; background: var(--q-theme-accent) !important; border-color: var(--q-theme-accent) !important; }
+#quorum-app[data-theme-api='2'] .ui.positive.button,
+#quorum-app[data-theme-api='2'] .ui.green.button { color: var(--q-theme-success-text) !important; background: var(--q-theme-success) !important; border-color: var(--q-theme-success) !important; }
+#quorum-app[data-theme-api='2'] .ui.negative.button,
+#quorum-app[data-theme-api='2'] .ui.red.button { color: var(--q-theme-danger-text) !important; background: var(--q-theme-danger) !important; border-color: var(--q-theme-danger) !important; }
+#quorum-app[data-theme-api='2'] .ui.orange.button,
+#quorum-app[data-theme-api='2'] .ui.yellow.button { color: var(--q-theme-warning-text) !important; background: var(--q-theme-warning) !important; border-color: var(--q-theme-warning) !important; }
+#quorum-app[data-theme-api='2'][data-theme-buttons='tinted'] .ui.button:not(.primary):not(.positive):not(.negative):not(.blue):not(.green):not(.red):not(.orange):not(.yellow) { background: color-mix(in srgb, var(--q-theme-accent) 12%, var(--q-theme-surface)) !important; color: var(--q-theme-text) !important; }
+#quorum-app[data-theme-api='2'] [data-theme-component~='button'].disabled,
+#quorum-app[data-theme-api='2'] [data-theme-component~='button']:disabled { opacity: 0.45 !important; transform: none !important; }
+
+#quorum-app[data-theme-api='2'] [data-theme-component~='menu'],
+#quorum-app[data-theme-api='2'] [data-theme-component~='sidebar'] {
+  color: var(--q-theme-text) !important;
+  background: var(--q-theme-surface) !important;
+  border-color: var(--q-theme-border) !important;
+  box-shadow: var(--q-theme-shadow-sm) !important;
+}
+#quorum-app[data-theme-api='2'] .ui.menu .item { min-height: var(--q-theme-control-height); color: var(--q-theme-text-muted) !important; }
+#quorum-app[data-theme-api='2'] .ui.menu .item::before { background: var(--q-theme-border) !important; }
+#quorum-app[data-theme-api='2'] .ui.menu .active.item { color: var(--q-theme-accent) !important; background: color-mix(in srgb, var(--q-theme-accent) 12%, var(--q-theme-surface)) !important; font-weight: 650 !important; }
+#quorum-app[data-theme-api='2'][data-theme-navigation='floating'] .committee-menu.ui.menu { position: sticky; top: 0.6rem; z-index: 30; margin: 0.6rem; border-radius: var(--q-theme-radius-md) !important; }
+#quorum-app[data-theme-api='2'] .ui.sidebar,
+#quorum-app[data-theme-api='2'] .pushable > .pusher,
+#quorum-app[data-theme-api='2'] .pushable > .fixed { transition: transform var(--q-theme-duration-panel) cubic-bezier(0.32, 0.72, 0, 1) !important; }
+#quorum-app[data-theme-api='2'] .pushable > .pusher::after { transition: opacity var(--q-theme-duration-panel) ease !important; }
+
+#quorum-app[data-theme-api='2'] .ui.form input:not([type='checkbox']):not([type='radio']),
+#quorum-app[data-theme-api='2'] .ui.form textarea,
+#quorum-app[data-theme-api='2'] [data-theme-component~='dropdown'] {
+  min-height: var(--q-theme-control-height) !important;
+  color: var(--q-theme-text) !important;
+  background: var(--q-theme-surface-raised) !important;
+  border: 1px solid var(--q-theme-border) !important;
+  border-radius: var(--q-theme-control-radius) !important;
+  font-family: inherit !important;
+}
+#quorum-app[data-theme-api='2'] .ui.form input:focus,
+#quorum-app[data-theme-api='2'] .ui.form textarea:focus,
+#quorum-app[data-theme-api='2'] [data-theme-component~='dropdown'].active { border-color: var(--q-theme-focus) !important; box-shadow: 0 0 0 3px color-mix(in srgb, var(--q-theme-focus) 35%, transparent) !important; }
+#quorum-app[data-theme-api='2'] .ui.form label { color: var(--q-theme-text) !important; font-family: inherit !important; font-weight: 600 !important; }
+#quorum-app[data-theme-api='2'] .ui.dropdown .menu { color: var(--q-theme-text) !important; background: var(--q-theme-surface-raised) !important; border-color: var(--q-theme-border) !important; border-radius: var(--q-theme-radius-md) !important; box-shadow: var(--q-theme-shadow-lg) !important; }
+#quorum-app[data-theme-api='2'] .ui.dropdown .menu > .item { color: var(--q-theme-text) !important; border-top-color: var(--q-theme-border) !important; }
+#quorum-app[data-theme-api='2'] .ui.dropdown > .visible.menu { transform-origin: top center; animation: q-theme-popover-in var(--q-theme-duration-normal) var(--q-theme-ease-out); }
+#quorum-app[data-theme-api='2'] .ui.transition[class*='fly left'].in { animation-name: q-theme-notification-in !important; animation-duration: var(--q-theme-duration-normal) !important; animation-timing-function: var(--q-theme-ease-out) !important; }
+#quorum-app[data-theme-api='2'] .ui.transition[class*='fly left'].out { animation-name: q-theme-notification-out !important; animation-duration: var(--q-theme-duration-fast) !important; animation-timing-function: var(--q-theme-ease-out) !important; }
+#quorum-app[data-theme-api='2'] .ui.modal.transition.visible.active[data-theme-component~='modal'] {
+  animation: q-theme-modal-in var(--q-theme-duration-normal) var(--q-theme-ease-out);
+  transform-origin: center;
+}
+#quorum-app[data-theme-api='2'] input::placeholder,
+#quorum-app[data-theme-api='2'] textarea::placeholder,
+#quorum-app[data-theme-api='2'] .ui.dropdown > .default.text,
+#quorum-app[data-theme-api='2'] .ui.dropdown .menu > .item > .description { color: var(--q-theme-text-muted) !important; opacity: 1; }
+
+#quorum-app[data-theme-api='2'] .ui.checkbox label { color: var(--q-theme-text) !important; }
+#quorum-app[data-theme-api='2'] .ui.checkbox:not(.toggle):not(.slider):not(.radio) label::before { background: var(--q-theme-surface-raised) !important; border-color: var(--q-theme-border) !important; border-radius: min(var(--q-theme-control-radius), 0.4rem) !important; }
+#quorum-app[data-theme-api='2'] .ui.checkbox:not(.toggle):not(.slider):not(.radio) input:checked ~ label::before { background: var(--q-theme-accent) !important; border-color: var(--q-theme-accent) !important; }
+#quorum-app[data-theme-api='2'] .ui.radio.checkbox label::before { background: var(--q-theme-surface-raised) !important; border-color: var(--q-theme-border) !important; border-radius: 50% !important; }
+#quorum-app[data-theme-api='2'] .ui.radio.checkbox input:checked ~ label::after { background: var(--q-theme-accent) !important; }
+
+#quorum-app[data-theme-api='2'][data-theme-switches='ios'] .ui.toggle.checkbox,
+#quorum-app[data-theme-api='2'][data-theme-switches='ios'] .ui.slider.checkbox { min-height: 2.75rem; display: inline-flex; align-items: center; }
+#quorum-app[data-theme-api='2'][data-theme-switches='ios'] .ui.toggle.checkbox input,
+#quorum-app[data-theme-api='2'][data-theme-switches='ios'] .ui.slider.checkbox input { width: 3.25rem; height: 2.75rem; }
+#quorum-app[data-theme-api='2'][data-theme-switches='ios'] .ui.toggle.checkbox label,
+#quorum-app[data-theme-api='2'][data-theme-switches='ios'] .ui.slider.checkbox label { min-height: 2.75rem; padding: 0.65rem 0 0 4rem; line-height: 1.45; }
+#quorum-app[data-theme-api='2'][data-theme-switches='ios'] .ui.toggle.checkbox label::before,
+#quorum-app[data-theme-api='2'][data-theme-switches='ios'] .ui.slider.checkbox label::before {
+  top: 0.375rem; left: 0; width: 3.25rem; height: 2rem; transform: none;
+  background: var(--q-theme-border) !important; border: 0 !important; border-radius: 999px !important;
+  transition: background-color var(--q-theme-duration-fast) ease !important;
+}
+#quorum-app[data-theme-api='2'][data-theme-switches='ios'] .ui.toggle.checkbox label::after,
+#quorum-app[data-theme-api='2'][data-theme-switches='ios'] .ui.slider.checkbox label::after {
+  top: 0.5625rem; left: 0.1875rem; width: 1.625rem; height: 1.625rem;
+  background: var(--q-theme-surface-raised) !important; border: 0 !important; border-radius: 50% !important;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25) !important;
+  transform: translateX(0);
+  transition: transform var(--q-theme-duration-toggle) cubic-bezier(0.32, 0.72, 0, 1) !important;
+}
+#quorum-app[data-theme-api='2'][data-theme-switches='ios'] .ui.toggle.checkbox input:checked ~ label::before,
+#quorum-app[data-theme-api='2'][data-theme-switches='ios'] .ui.slider.checkbox input:checked ~ label::before { background: var(--q-theme-accent) !important; }
+#quorum-app[data-theme-api='2'][data-theme-switches='ios'] .ui.toggle.checkbox input:checked ~ label::after,
+#quorum-app[data-theme-api='2'][data-theme-switches='ios'] .ui.slider.checkbox input:checked ~ label::after { transform: translateX(1.25rem); }
+#quorum-app[data-theme-api='2'][data-theme-switches='ios'] .ui.toggle.checkbox input:indeterminate ~ label::before,
+#quorum-app[data-theme-api='2'][data-theme-switches='ios'] .ui.slider.checkbox input:indeterminate ~ label::before { background: var(--q-theme-warning) !important; }
+#quorum-app[data-theme-api='2'][data-theme-switches='ios'] .ui.toggle.checkbox input:indeterminate ~ label::after,
+#quorum-app[data-theme-api='2'][data-theme-switches='ios'] .ui.slider.checkbox input:indeterminate ~ label::after { transform: translateX(0.625rem); }
+#quorum-app[data-theme-api='2'] .ui.checkbox input:focus-visible ~ label::before { box-shadow: 0 0 0 3px color-mix(in srgb, var(--q-theme-focus) 40%, transparent) !important; }
+#quorum-app[data-theme-api='2'][data-theme-switches='compact'] .ui.toggle.checkbox label::before,
+#quorum-app[data-theme-api='2'][data-theme-switches='compact'] .ui.slider.checkbox label::before { border-radius: var(--q-theme-control-radius) !important; }
+
+#quorum-app[data-theme-api='2'] [data-theme-component~='table'] { color: var(--q-theme-text) !important; background: var(--q-theme-surface) !important; border-color: var(--q-theme-border) !important; }
+#quorum-app[data-theme-api='2'] .ui.table thead th { color: var(--q-theme-text-muted) !important; background: var(--q-theme-surface-raised) !important; border-color: var(--q-theme-border) !important; }
+#quorum-app[data-theme-api='2'] .ui.table td { color: var(--q-theme-text) !important; border-color: var(--q-theme-border) !important; }
+#quorum-app[data-theme-api='2'][data-theme-tables='cards'] [data-theme-component~='table'] { overflow: hidden; border-radius: var(--q-theme-radius-md) !important; box-shadow: var(--q-theme-shadow-sm) !important; }
+
+#quorum-app[data-theme-api='2'] [data-theme-component~='label'] { color: var(--q-theme-text) !important; background: var(--q-theme-surface-raised) !important; border-color: var(--q-theme-border) !important; border-radius: var(--q-theme-control-radius) !important; }
+#quorum-app[data-theme-api='2'] .ui.blue.label,
+#quorum-app[data-theme-api='2'] .ui.teal.label,
+#quorum-app[data-theme-api='2'] .ui.purple.label { color: var(--q-theme-accent-text) !important; background: var(--q-theme-accent) !important; }
+#quorum-app[data-theme-api='2'] .ui.green.label { color: var(--q-theme-success-text) !important; background: var(--q-theme-success) !important; }
+#quorum-app[data-theme-api='2'] .ui.yellow.label,
+#quorum-app[data-theme-api='2'] .ui.orange.label { color: var(--q-theme-warning-text) !important; background: var(--q-theme-warning) !important; }
+#quorum-app[data-theme-api='2'] .ui.red.label { color: var(--q-theme-danger-text) !important; background: var(--q-theme-danger) !important; }
+#quorum-app[data-theme-api='2'] [data-theme-component~='message'] { color: var(--q-theme-text) !important; background: var(--q-theme-surface-raised) !important; border: 1px solid var(--q-theme-border) !important; border-radius: var(--q-theme-radius-md) !important; box-shadow: none !important; }
+#quorum-app[data-theme-api='2'] .ui.positive.message { border-left: 0.3rem solid var(--q-theme-success) !important; }
+#quorum-app[data-theme-api='2'] .ui.warning.message { border-left: 0.3rem solid var(--q-theme-warning) !important; }
+#quorum-app[data-theme-api='2'] .ui.negative.message,
+#quorum-app[data-theme-api='2'] .ui.error.message { border-left: 0.3rem solid var(--q-theme-danger) !important; }
+#quorum-app[data-theme-api='2'] [data-theme-component~='progress'] { background: var(--q-theme-border) !important; border-radius: 999px !important; box-shadow: none !important; }
+#quorum-app[data-theme-api='2'] .ui.progress .bar { background: var(--q-theme-accent) !important; border-radius: inherit !important; transition: width var(--q-theme-duration-normal) var(--q-theme-ease-out) !important; }
+#quorum-app[data-theme-api='2'] [data-theme-component~='statistic'] > .value { color: var(--q-theme-text) !important; font-family: inherit !important; }
+#quorum-app[data-theme-api='2'] [data-theme-component~='statistic'] > .label { color: var(--q-theme-text-muted) !important; font-family: inherit !important; }
+
+/* Business components keep their fixed information architecture. API 2 only
+ * supplies readable surfaces and semantic state colors. */
+#quorum-app[data-theme-api='2'] .roll-call-board,
+#quorum-app[data-theme-api='2'] .resolution-voting-board { background: var(--q-theme-surface) !important; border-top-color: var(--q-theme-accent) !important; }
+#quorum-app[data-theme-api='2'] .roll-call-member-name,
+#quorum-app[data-theme-api='2'] .resolution-voting-member-name,
+#quorum-app[data-theme-api='2'] .roll-call-summary-highlight,
+#quorum-app[data-theme-api='2'] .resolution-voting-metric { color: var(--q-theme-text) !important; background: var(--q-theme-surface-raised) !important; border-color: var(--q-theme-border) !important; }
+#quorum-app[data-theme-api='2'] .roll-call-current-label,
+#quorum-app[data-theme-api='2'] .resolution-voting-current-label,
+#quorum-app[data-theme-api='2'] .resolution-voting-metric span { color: var(--q-theme-text-muted) !important; }
+#quorum-app[data-theme-api='2'] .status-present,
+#quorum-app[data-theme-api='2'] .vote-for,
+#quorum-app[data-theme-api='2'] .metric-for { color: var(--q-theme-success) !important; }
+#quorum-app[data-theme-api='2'] .status-absent,
+#quorum-app[data-theme-api='2'] .vote-against,
+#quorum-app[data-theme-api='2'] .metric-against { color: var(--q-theme-danger) !important; }
+#quorum-app[data-theme-api='2'] .vote-abstaining,
+#quorum-app[data-theme-api='2'] .metric-abstaining { color: var(--q-theme-warning) !important; }
+#quorum-app[data-theme-api='2'] .roll-call-legend .status-uncalled,
+#quorum-app[data-theme-api='2'] .roll-call-member.status-uncalled .roll-call-status-light,
+#quorum-app[data-theme-api='2'] .resolution-voting-member.vote-unset .resolution-voting-status-light { background: var(--q-theme-border) !important; }
+#quorum-app[data-theme-api='2'] .roll-call-legend .status-present,
+#quorum-app[data-theme-api='2'] .roll-call-member.status-present .roll-call-status-light,
+#quorum-app[data-theme-api='2'] .resolution-voting-member.vote-for .resolution-voting-status-light { background: var(--q-theme-success) !important; }
+#quorum-app[data-theme-api='2'] .roll-call-legend .status-absent,
+#quorum-app[data-theme-api='2'] .roll-call-member.status-absent .roll-call-status-light,
+#quorum-app[data-theme-api='2'] .resolution-voting-member.vote-against .resolution-voting-status-light { background: var(--q-theme-danger) !important; }
+#quorum-app[data-theme-api='2'] .resolution-voting-member.vote-abstaining .resolution-voting-status-light { background: var(--q-theme-warning) !important; }
+#quorum-app[data-theme-api='2'] .roll-call-status-light,
+#quorum-app[data-theme-api='2'] .resolution-voting-status-light { transition: background-color var(--q-theme-duration-fast) ease !important; }
+#quorum-app[data-theme-api='2'] .roll-call-member.is-current .roll-call-member-name,
+#quorum-app[data-theme-api='2'] .resolution-voting-member.is-current .resolution-voting-member-name { color: var(--q-theme-warning-text) !important; background: var(--q-theme-warning) !important; box-shadow: inset 0 0 0 2px var(--q-theme-warning) !important; }
+
+@media (hover: hover) and (pointer: fine) {
+  #quorum-app[data-theme-api='2'] [data-theme-component~='button']:hover,
+  #quorum-app[data-theme-api='2'] .ui.menu .item:hover,
+  #quorum-app[data-theme-api='2'] .ui.dropdown .menu > .item:hover { filter: brightness(0.96); }
+}
+
+@keyframes q-theme-popover-in {
+  from { opacity: 0; transform: translateY(-0.25rem) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes q-theme-notification-in {
+  from { opacity: 0; transform: translateX(1rem); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes q-theme-notification-out {
+  from { opacity: 1; transform: translateX(0); }
+  to { opacity: 0; transform: translateX(1rem); }
+}
+
+@keyframes q-theme-modal-in {
+  from { opacity: 0; transform: scale(0.97); backdrop-filter: blur(12px) saturate(140%); }
+  to { opacity: 1; transform: scale(1); backdrop-filter: blur(22px) saturate(165%); }
+}
+
+#quorum-app[data-theme-api='2'][data-theme-motion='none'] .ui.dropdown > .visible.menu,
+#quorum-app[data-theme-api='2'][data-theme-motion='none'] .ui.transition[class*='fly left'],
+#quorum-app[data-theme-api='2'][data-theme-motion='none'] .ui.modal.transition.visible.active[data-theme-component~='modal'] {
+  animation: none !important;
+}
+
+#quorum-app[data-theme-api='2'][data-theme-motion='reduced'] [data-theme-component~='button']:active { transform: none; }
+#quorum-app[data-theme-api='2'][data-theme-motion='reduced'] .ui.dropdown > .visible.menu,
+#quorum-app[data-theme-api='2'][data-theme-motion='reduced'] .ui.transition[class*='fly left'].in,
+#quorum-app[data-theme-api='2'][data-theme-motion='reduced'] .ui.modal.transition.visible.active[data-theme-component~='modal'] {
+  animation-name: q-theme-fade-in !important;
+}
+#quorum-app[data-theme-api='2'][data-theme-motion='reduced'] .ui.transition[class*='fly left'].out { animation-name: q-theme-fade-out !important; }
+
+@keyframes q-theme-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes q-theme-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #quorum-app[data-theme-api='2'] { --q-theme-duration-fast: 120ms; --q-theme-duration-normal: 180ms; --q-theme-duration-panel: 0ms; --q-theme-duration-toggle: 120ms; }
+  #quorum-app[data-theme-api='2'] [data-theme-component~='button']:active { transform: none; }
+  #quorum-app[data-theme-api='2'] .ui.dropdown > .visible.menu,
+  #quorum-app[data-theme-api='2'] .ui.transition[class*='fly left'].in,
+  #quorum-app[data-theme-api='2'] .ui.modal.transition.visible.active[data-theme-component~='modal'] { animation-name: q-theme-fade-in !important; }
+  #quorum-app[data-theme-api='2'] .ui.transition[class*='fly left'].out { animation-name: q-theme-fade-out !important; }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  #quorum-app[data-theme-api='2'][data-theme-surface='translucent'] [data-theme-component] { background: var(--q-theme-surface) !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
+}

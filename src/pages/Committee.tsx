@@ -140,7 +140,7 @@ class MobileContainer extends React.Component<MobileContainerProps, MobileContai
     <MediaContextProvider>
       <Segment as={Media} basic lessThan="largeScreen" style={{padding: 0, margin: 0}}>
         <Sidebar.Pushable>
-          <Sidebar as={Menu} animation="uncover" stackable visible={sidebarOpened}>
+          <Sidebar as={Menu} animation="push" stackable visible={sidebarOpened}>
             {menu}
           </Sidebar>
 

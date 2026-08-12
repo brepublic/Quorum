@@ -9,7 +9,8 @@ import {
   Header,
   Icon,
   Message,
-  Modal
+  Modal,
+  Portal
 } from 'semantic-ui-react';
 import {t} from '../i18n';
 import {
@@ -17,15 +18,20 @@ import {
   DEFAULT_THEME,
   DEFAULT_THEME_ID,
   MAX_THEME_FILE_BYTES,
+  isTokenTheme,
   parseThemePackage,
   serializeThemePackage,
+  themeCss,
   themeFileName,
+  themeLayoutWidth,
   ThemePackage
 } from './theme-package';
 import './theme-system.css';
 
-const THEMES_STORAGE_KEY = 'quorum-themes-v1';
-const ACTIVE_THEME_STORAGE_KEY = 'quorum-active-theme-v1';
+const THEMES_STORAGE_KEY = 'quorum-themes-v2';
+const LEGACY_THEMES_STORAGE_KEY = 'quorum-themes-v1';
+const ACTIVE_THEME_STORAGE_KEY = 'quorum-active-theme-v2';
+const LEGACY_ACTIVE_THEME_STORAGE_KEY = 'quorum-active-theme-v1';
 const THEME_STYLE_ID = 'quorum-active-theme-styles';
 
 const COMPONENT_HOOKS: ReadonlyArray<readonly [string, string]> = [
@@ -54,7 +60,8 @@ const COMPONENT_HOOKS: ReadonlyArray<readonly [string, string]> = [
 
 function loadInstalledThemes(): ThemePackage[] {
   try {
-    const source = window.localStorage.getItem(THEMES_STORAGE_KEY);
+    const source = window.localStorage.getItem(THEMES_STORAGE_KEY)
+      ?? window.localStorage.getItem(LEGACY_THEMES_STORAGE_KEY);
     if (!source) return [];
     const parsed = JSON.parse(source);
     if (!Array.isArray(parsed)) return [];
@@ -72,7 +79,8 @@ function loadInstalledThemes(): ThemePackage[] {
 
 function loadActiveThemeId(themes: ThemePackage[]): string {
   try {
-    const saved = window.localStorage.getItem(ACTIVE_THEME_STORAGE_KEY);
+    const saved = window.localStorage.getItem(ACTIVE_THEME_STORAGE_KEY)
+      ?? window.localStorage.getItem(LEGACY_ACTIVE_THEME_STORAGE_KEY);
     return themes.some(theme => theme.manifest.id === saved) ? saved! : DEFAULT_THEME_ID;
   } catch {
     return DEFAULT_THEME_ID;
@@ -174,7 +182,7 @@ function ThemeManager(props: {
     >
       <Header icon="paint brush" content={t('Appearance themes')} />
       <Modal.Content>
-        <p>{t('Themes can completely restyle and rearrange the interface, but cannot change Quorum data or behavior.')}</p>
+        <p>{t('Theme API 2 controls approved colors, typography, shape, density, materials, motion, components, and page widths without changing Quorum data or behavior.')}</p>
         <Form>
           <Form.Field>
             <label>{t('Active theme')}</label>
@@ -193,12 +201,17 @@ function ThemeManager(props: {
         <div className="quorum-theme-summary">
           <strong>{props.activeThemeId === DEFAULT_THEME_ID ? t('Quorum Default') : props.activeTheme.manifest.name}</strong>
           <span>{t('Version')} {props.activeTheme.manifest.version} · {props.activeTheme.manifest.author}</span>
+          <span>
+            {props.activeThemeId === DEFAULT_THEME_ID
+              ? t('Built-in theme')
+              : `${t('Theme API')} ${props.activeTheme.manifest.quorumThemeApi}${isTokenTheme(props.activeTheme) ? '' : ` · ${t('Legacy CSS theme')}`}`}
+          </span>
           {props.activeTheme.manifest.description && <p>{props.activeThemeId === DEFAULT_THEME_ID
             ? t('The built-in Quorum interface. It inherits the application styles without adding overrides.')
             : props.activeTheme.manifest.description}</p>}
         </div>
         {notice && <Message error={notice.error} positive={!notice.error} content={notice.text} />}
-        <Message info content={t('Imported themes stay in this browser. Theme files contain CSS only and never write to Firebase.')} />
+        <Message info content={t('Imported themes stay in this browser. API 2 themes contain validated settings only and never write to Firebase. Legacy API 1 CSS themes remain supported for compatibility.')} />
         <input
           ref={inputRef}
           className="quorum-theme-file-input"
@@ -277,7 +290,8 @@ export function ThemeProvider(props: React.PropsWithChildren) {
       style.id = THEME_STYLE_ID;
       document.head.appendChild(style);
     }
-    style.textContent = activeTheme.css ? `@scope (#quorum-app) {\n${activeTheme.css}\n}` : '';
+    const css = themeCss(activeTheme);
+    style.textContent = css ? `@scope (#quorum-app) {\n${css}\n}` : '';
     document.documentElement.dataset.quorumTheme = activeTheme.manifest.id;
     document.documentElement.dataset.quorumThemeScheme = activeTheme.manifest.colorScheme ?? 'auto';
     return () => {
@@ -289,10 +303,14 @@ export function ThemeProvider(props: React.PropsWithChildren) {
     const mountNode = document.getElementById('quorum-theme-overlays');
     if (!mountNode) return;
     const modalComponent = Modal as typeof Modal & {defaultProps?: Record<string, unknown>};
+    const portalComponent = Portal as typeof Portal & {defaultProps?: Record<string, unknown>};
     const previousDefaultProps = modalComponent.defaultProps;
+    const previousPortalDefaultProps = portalComponent.defaultProps;
     modalComponent.defaultProps = {...previousDefaultProps, mountNode};
+    portalComponent.defaultProps = {...previousPortalDefaultProps, mountNode};
     return () => {
       modalComponent.defaultProps = previousDefaultProps;
+      portalComponent.defaultProps = previousPortalDefaultProps;
     };
   }, []);
 
@@ -323,6 +341,19 @@ export function ThemeProvider(props: React.PropsWithChildren) {
       data-theme-section={route.section}
       data-theme-id={activeTheme.manifest.id}
       data-theme-color-scheme={activeTheme.manifest.colorScheme ?? 'auto'}
+      data-theme-api={activeTheme.manifest.quorumThemeApi}
+      data-theme-density={isTokenTheme(activeTheme) ? activeTheme.settings.density : undefined}
+      data-theme-font-scale={isTokenTheme(activeTheme) ? activeTheme.settings.typography.scale : undefined}
+      data-theme-radius={isTokenTheme(activeTheme) ? activeTheme.settings.shape.radius : undefined}
+      data-theme-control-shape={isTokenTheme(activeTheme) ? activeTheme.settings.shape.controls : undefined}
+      data-theme-surface={isTokenTheme(activeTheme) ? activeTheme.settings.materials.surface : undefined}
+      data-theme-depth={isTokenTheme(activeTheme) ? activeTheme.settings.materials.depth : undefined}
+      data-theme-motion={isTokenTheme(activeTheme) ? activeTheme.settings.motion.preset : undefined}
+      data-theme-buttons={isTokenTheme(activeTheme) ? activeTheme.settings.components.buttons : undefined}
+      data-theme-switches={isTokenTheme(activeTheme) ? activeTheme.settings.components.switches : undefined}
+      data-theme-navigation={isTokenTheme(activeTheme) ? activeTheme.settings.components.navigation : undefined}
+      data-theme-tables={isTokenTheme(activeTheme) ? activeTheme.settings.components.tables : undefined}
+      data-theme-layout-width={themeLayoutWidth(activeTheme, route.page)}
     >
       {props.children}
       <div id="quorum-theme-overlays" data-theme-component="overlay-root" />

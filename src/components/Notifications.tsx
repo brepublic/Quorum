@@ -149,7 +149,7 @@ export default class Notifications extends React.Component<Props, State> {
     return (
       <TransitionablePortal
         open={notifications.length > 0}
-        transition={{ animation: 'fly left', duration: 500 }}
+        transition={{ animation: 'fly left', duration: 240 }}
       >
         <Card.Group 
           itemsPerRow={1} 
