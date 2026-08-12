@@ -9,7 +9,7 @@ Quorum 是一款用于模拟联合国（Model UN）委员会管理的免费开�
 ## 技术栈
 
 - React 18、TypeScript、Vite 与 Semantic UI React
-- Firebase Authentication、Realtime Database 与 Cloud Storage
+- Firebase Authentication、Realtime Database、Cloud Storage 与 Cloud Functions
 - Vitest 单元测试、Cypress 端到端测试
 - 英语与简体中文界面
 
@@ -44,7 +44,14 @@ pnpm emulators
 VITE_USE_FIREBASE_EMULATORS=true pnpm start
 ```
 
-模拟器端口为 Auth 9099、Realtime Database 9000、Storage 9199，管理界面位于 4000。
+模拟器端口为 Auth 9099、Realtime Database 9000、Storage 9199、Functions 5001，管理界面位于 4000。
+
+首次打开一套全新部署时，Quorum 会强制进入管理员账号创建程序。初始化完成后，网页只保留登录入口；新账号、密码重置和账号删除统一由管理员在 `/admin` 完成。后台创建的账号会获得受管账号声明，数据库规则会拒绝绕过网页自行注册的身份执行主任写入。生产发布前应先部署数据库规则和账号管理 Functions：
+
+```sh
+pnpm deploy:database-rules
+pnpm deploy:functions
+```
 
 ## 测试与构建
 

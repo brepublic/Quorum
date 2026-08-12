@@ -20,14 +20,20 @@ function inspectModeratedCaucus(motion, name, proposer, duration) {
 }
 
 function introduceDraftResolution(motion, proposer, seconder) {
-  motion.get('button').contains('Introduce').click()
+  motion.get('button').contains('Passed').click()
+  motion.should('contain', 'Passed')
+  motion.find('button[aria-label="Delete"]').should('not.exist')
+  motion.get('button').contains('Draft resolution').click()
   cy.url().should('include', '/resolutions')
   cy.get('body').should('contain', proposer)
   cy.get('body').should('contain', seconder)
 }
 
 function openModeratedCaucus(motion, name, proposer, caucusTime, speakerTime) {
-  motion.contains('Open').click()
+  motion.get('button').contains('Passed').click()
+  motion.should('contain', 'Passed')
+  motion.find('button[aria-label="Delete"]').should('not.exist')
+  motion.get('button').contains('Caucuses').click()
   cy.url().should('include', '/caucuses')
   cy.get('body').should('contain', name)
   cy.get('body').should('contain', proposer)
@@ -102,10 +108,8 @@ describe('Adds motions, checks that they\'re ranked properly, and entertains the
     openModeratedCaucus(moderatedCaucus10, 'Alpha', 'China', '10:00', '1:00')
     gotoMotions()
 
-    // Code below does not currently work because motions are are removed once opened
-    // Is that intentional?
-    //const draftResolution = cy.get('.motion').last()
-    //inspectDraftResolution(draftResolution)
+    const draftResolution = cy.get('.motion').last()
+    inspectDraftResolution(draftResolution, 'Afghanistan', 'Bolivia')
   })
 
   it('adds an 11/30 moderated caucus', () => {
@@ -120,13 +124,11 @@ describe('Adds motions, checks that they\'re ranked properly, and entertains the
     const moderatedCaucus11 = cy.get('.motion').first()
     inspectModeratedCaucus(moderatedCaucus11, 'Beta', 'Bolivia', '11 min')
 
-    // Does not work for the reasons above
-    //const moderatedCaucus10 = cy.get('.motion').eq(1)
-    //inspectModeratedCaucus(moderatedCaucus10, 'Alpha', 'China', '10 min')
+    const moderatedCaucus10 = cy.get('.motion').eq(1)
+    inspectModeratedCaucus(moderatedCaucus10, 'Alpha', 'China', '10 min')
 
-    // Does not work for the reasons above
-    //const draftResolution = cy.get('.motion').last()
-    //inspectDraftResolution(draftResolution, 'Afghanistan', 'Bolivia')
+    const draftResolution = cy.get('.motion').last()
+    inspectDraftResolution(draftResolution, 'Afghanistan', 'Bolivia')
 
     openModeratedCaucus(cy.get('.motion').first(), 'Beta', 'Bolivia', '11:00', '0:30')
   })

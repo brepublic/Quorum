@@ -1,6 +1,7 @@
 import {describe, expect, it} from 'vitest';
 import {
   cloneCountryTemplate,
+  committeeTemplatesUsingCountryTemplate,
   countryDisplayName,
   countryNameLanguages,
   countryTemplateDisplayName,
@@ -38,5 +39,17 @@ describe('country templates', () => {
     expect(isoCodeToEmoji('custom')).toBe('🏳️');
     expect(fitImageSize(1000, 500)).toEqual({width: 256, height: 128});
     expect(fitImageSize(64, 48)).toEqual({width: 64, height: 48});
+  });
+
+  it('finds every committee template that prevents deletion of a country template', () => {
+    expect(committeeTemplatesUsingCountryTemplate({
+      one: {name: 'One', countryTemplateKey: 'custom:countries-a'},
+      two: {name: 'Two', countryTemplateKey: 'custom:countries-a'},
+      other: {name: 'Other', countryTemplateKey: 'custom:countries-b'},
+      legacy: {name: 'Legacy'}
+    }, 'custom:countries-a')).toEqual([
+      {id: 'one', name: 'One'},
+      {id: 'two', name: 'Two'}
+    ]);
   });
 });

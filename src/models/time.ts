@@ -21,6 +21,19 @@ export interface TimerData {
   ticking: boolean | number;
 }
 
+export function advanceTimer(timer: TimerData, seconds: number): TimerData {
+  const remainingBeforeTick = Math.max(0, timer.remaining);
+  const elapsedNow = Math.min(remainingBeforeTick, Math.max(0, seconds));
+  const remaining = remainingBeforeTick - elapsedNow;
+
+  return {
+    ...timer,
+    elapsed: timer.elapsed + elapsedNow,
+    remaining,
+    ticking: remaining === 0 ? false : timer.ticking
+  };
+}
+
 export const DEFAULT_TIMER = {
   elapsed: 0,
   remaining: DEFAULT_SPEAKER_TIME_SECONDS,

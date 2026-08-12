@@ -9,6 +9,7 @@ import 'firebase/compat/database';
 import 'firebase/compat/firestore';
 import 'firebase/compat/storage';
 import 'firebase/compat/analytics';
+import 'firebase/compat/functions';
 import { connectDatabaseEmulator, getDatabase } from 'firebase/database';
 import { connectStorageEmulator, getStorage } from 'firebase/storage';
 
@@ -20,7 +21,12 @@ import Homepage from './pages/Homepage';
 import Committee from './pages/Committee';
 import Templates from './pages/Templates';
 import Countries from './pages/Countries';
+import AccountAdmin from './pages/AccountAdmin';
 import { NotFound } from './components/NotFound';
+import Loading from './components/Loading';
+import {Button, Container, Message} from 'semantic-ui-react';
+import {getAdminBootstrapStatus} from './services/account-admin';
+import {t} from './i18n';
 
 const firebaseConfig = {
   apiKey: 'AIzaSyA9EuEf7m3YOTBhBNhoe7DcOIZJP2toL6w',
@@ -46,6 +52,7 @@ if (useFirebaseEmulators && !emulatorState.__FIREBASE_EMULATORS_CONNECTED__) {
   firebase.auth().useEmulator('http://127.0.0.1:9099');
   connectDatabaseEmulator(getDatabase(), '127.0.0.1', 9000);
   connectStorageEmulator(getStorage(), '127.0.0.1', 9199);
+  firebase.functions().useEmulator('127.0.0.1', 5001);
   emulatorState.__FIREBASE_EMULATORS_CONNECTED__ = true;
 }
 
@@ -53,22 +60,46 @@ if (!useFirebaseEmulators) {
   firebase.analytics();
 }
 
-class App extends React.Component {
-  render() {
-    return (
+function App() {
+  const [initialized, setInitialized] = React.useState<boolean>();
+  const [bootstrapError, setBootstrapError] = React.useState<string>();
+
+  const checkBootstrap = React.useCallback(() => {
+    setBootstrapError(undefined);
+    setInitialized(undefined);
+    getAdminBootstrapStatus()
+      .then(setInitialized)
+      .catch(error => setBootstrapError(error instanceof Error ? error.message : String(error)));
+  }, []);
+
+  React.useEffect(checkBootstrap, [checkBootstrap]);
+
+  if (bootstrapError) {
+    return <Container text style={{padding: '3em 1em'}}>
+      <Message error header={t('Could not check administrator setup')} content={bootstrapError} />
+      <Button onClick={checkBootstrap}>{t('Retry')}</Button>
+    </Container>;
+  }
+
+  if (initialized === undefined) return <Loading />;
+  if (!initialized) {
+    return <AccountAdmin initialSetup onInitialized={() => window.location.assign('/admin')} />;
+  }
+
+  return (
       <Switch>
         <Route exact path="/" component={Homepage} />
         <Route exact path="/onboard" component={Onboard} />
         <Route exact path="/committees" component={Onboard} />
         <Route exact path="/templates" component={Templates} />
         <Route exact path="/countries" component={Countries} />
+        <Route exact path="/admin" component={AccountAdmin} />
         <Route path="/committees/:committeeID" component={Committee} />
         <Route path="*">
           <NotFound item="page" id="unknown" />
         </Route>
       </Switch>
-    );
-  }
+  );
 }
 
 export default App;

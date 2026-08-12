@@ -14,7 +14,57 @@ export function recoverDuration(caucus?: CaucusData): number | undefined {
   return caucus?.speakerDuration;
 }
 
+export function hasTimeForAnotherSpeaker(
+  caucusTimer: TimerData,
+  speakerDurationSeconds: number
+): boolean {
+  return caucusTimer.remaining >= speakerDurationSeconds;
+}
+
 export type CaucusID = string;
+
+export const GENERAL_SPEAKERS_LIST_ID: CaucusID = 'gsl';
+
+export function isGeneralSpeakersList(caucusID: CaucusID): boolean {
+  return caucusID === GENERAL_SPEAKERS_LIST_ID;
+}
+
+export function shouldAutoCloseCaucus(
+  caucusID: CaucusID,
+  caucusTimer: TimerData,
+  speakerDurationSeconds: number
+): boolean {
+  return !isGeneralSpeakersList(caucusID)
+    && !hasTimeForAnotherSpeaker(caucusTimer, speakerDurationSeconds);
+}
+
+export function shouldPauseCaucusTimerAfterSpeakerEnds(
+  caucusID: CaucusID,
+  speakerTimer: TimerData,
+  caucusTimer: TimerData
+): boolean {
+  return !isGeneralSpeakersList(caucusID)
+    && speakerTimer.remaining === 0
+    && !!caucusTimer.ticking;
+}
+
+export function canAdvanceSpeaker(caucusID: CaucusID, speakerTimer: TimerData): boolean {
+  return !isGeneralSpeakersList(caucusID) || !speakerTimer.ticking;
+}
+
+export function canOfferSpeakerYield(
+  caucusID: CaucusID,
+  speaker: SpeakerEvent | undefined,
+  speakerTimer: TimerData
+): boolean {
+  const hasStarted = !!speaker?.started || speakerTimer.elapsed > 0 || !!speakerTimer.ticking;
+  return isGeneralSpeakersList(caucusID)
+    && !!speaker
+    && hasStarted
+    && !speakerTimer.ticking
+    && speakerTimer.remaining > 1
+    && !speaker.isYieldedTime;
+}
 
 export enum CaucusStatus {
   Open = 'Open',
@@ -33,6 +83,7 @@ export interface CaucusData {
   speaking?: SpeakerEvent;
   queue?: Record<string, SpeakerEvent>;
   history?: Record<string, SpeakerEvent>;
+  logs?: Record<string, CaucusLogEntry>;
 }
 
 export const CAUCUS_STATUS_OPTIONS = [
@@ -46,11 +97,66 @@ export enum Stance {
   Against = 'Against'
 }
 
+export enum SpeechKind {
+  Speech = 'Speech',
+  Answer = 'Answer',
+  Comment = 'Comment'
+}
+
+export enum YieldType {
+  Chair = 'Chair',
+  Delegate = 'Delegate',
+  Question = 'Question',
+  Comment = 'Comment'
+}
+
 export interface SpeakerEvent {
   who: string;
   memberID?: MemberID;
   stance: Stance;
   duration: number;
+  started?: boolean;
+  isYieldedTime?: boolean;
+  speechKind?: SpeechKind;
+}
+
+export interface CaucusLogEntry {
+  message: string;
+  createdAt: number | object;
+}
+
+export function formatCaucusLogTime(seconds: number): string {
+  const safeSeconds = Math.max(0, Math.floor(seconds || 0));
+  const minutes = Math.floor(safeSeconds / 60);
+  return `${minutes}:${String(safeSeconds % 60).padStart(2, '0')}`;
+}
+
+export function speakerStartLog(speaker: SpeakerEvent, name: string): string {
+  switch (speaker.speechKind) {
+    case SpeechKind.Answer:
+      return `${name} 代表开始回答。`;
+    case SpeechKind.Comment:
+      return `${name} 代表开始评论。`;
+    default:
+      return `${name} 代表开始发言。`;
+  }
+}
+
+export function speakerCompletionLog(
+  speaker: SpeakerEvent,
+  name: string,
+  remaining: number
+): string {
+  if (speaker.speechKind === SpeechKind.Answer) {
+    return `${name} 代表回答完毕。让渡时间结束。`;
+  }
+  if (speaker.speechKind === SpeechKind.Comment) {
+    return `${name} 代表评论完毕。让渡时间结束。`;
+  }
+  if (speaker.isYieldedTime) {
+    return `${name} 代表发言完毕。让渡时间结束。`;
+  }
+  return `${name} 代表发言完毕。剩余时间为${formatCaucusLogTime(remaining)}。`;
 }
 
 export const DEFAULT_CAUCUS: CaucusData = {

@@ -1,0 +1,63 @@
+{
+  "schema": "quorum-theme",
+  "schemaVersion": 2,
+  "manifest": {
+    "id": "quorum.apple-fluid-light",
+    "name": "Apple Fluid Light",
+    "version": "2.0.0",
+    "author": "Quorum",
+    "description": "A fixed light theme with accessible semantic colors, translucent hierarchy, iOS-style switches, fluid motion, and protected page layouts.",
+    "quorumThemeApi": "2",
+    "colorScheme": "light"
+  },
+  "settings": {
+    "palette": {
+      "canvas": "#f5f5f7",
+      "surface": "#ffffff",
+      "surfaceRaised": "#ffffff",
+      "text": "#1d1d1f",
+      "textMuted": "#5f5f65",
+      "accent": "#0066cc",
+      "accentText": "#ffffff",
+      "success": "#187a34",
+      "successText": "#ffffff",
+      "warning": "#ffb340",
+      "warningText": "#1d1d1f",
+      "danger": "#b42318",
+      "dangerText": "#ffffff",
+      "border": "#8e8e93",
+      "focus": "#005fcc"
+    },
+    "typography": {
+      "fontFamily": "system",
+      "scale": "standard"
+    },
+    "density": "comfortable",
+    "shape": {
+      "radius": "rounded",
+      "controls": "rounded"
+    },
+    "materials": {
+      "surface": "translucent",
+      "depth": "subtle"
+    },
+    "motion": {
+      "preset": "fluid"
+    },
+    "components": {
+      "buttons": "tinted",
+      "switches": "ios",
+      "navigation": "floating",
+      "tables": "cards"
+    },
+    "layout": {
+      "contentWidth": "wide",
+      "pageWidths": {
+        "home": "full",
+        "countries": "full",
+        "committee-roll-call": "full",
+        "committee-resolution": "full"
+      }
+    }
+  }
+}

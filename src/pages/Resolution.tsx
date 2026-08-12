@@ -509,11 +509,14 @@ export default class Resolution extends React.Component<Props, State> {
       .map(key => members[key])
       .value();
 
-    const resolutionVetoed = !!vetoes[0];
-
     const votesByVoters = Object.keys(votes || {})
       .filter(k => sortedPresentAndCanVote.includes(k))
       .map(k => votes[k]);
+
+    const committeeHasVeto = sortedCanVote.some(key => members[key].rank === Rank.Veto);
+    const allEligibleVotesCast = votesByVoters.length >= sortedPresentAndCanVote.length;
+    const voteResultsReady = !committeeHasVeto || allEligibleVotesCast;
+    const resolutionVetoed = voteResultsReady && !!vetoes[0];
 
     const fors = votesByVoters.filter(v => v === Vote.For).length;
     const abstains = votesByVoters.filter(v => v === Vote.Abstaining).length;
@@ -527,6 +530,9 @@ export default class Resolution extends React.Component<Props, State> {
 
     const automaticResult = requiredMajority === Majority.TwoThirdsNoAbstentions
       ? (() => {
+          if (!voteResultsReady) {
+            return undefined;
+          }
           if (resolutionVetoed) {
             return undefined;
           }
@@ -546,7 +552,8 @@ export default class Resolution extends React.Component<Props, State> {
           votesFor: fors,
           votesCast: votesByVoters.length,
           threshold,
-          vetoed: resolutionVetoed
+          vetoed: resolutionVetoed,
+          requireAllVotes: committeeHasVeto
         });
     const resolutionPassed = automaticResult === 'passed';
     const resolutionFailed = automaticResult === 'failed';
@@ -667,7 +674,7 @@ export default class Resolution extends React.Component<Props, State> {
             <Statistic.Value>{t('Failed')}</Statistic.Value>
             <Statistic.Label>{t('There are insufficient votes remaining to achieve a {thresholdName}', { thresholdName: t(thresholdName) })}</Statistic.Label>
           </Statistic>}
-          {resolutionVetoed && <Statistic>
+          {resolutionVetoed && <Statistic className="resolution-result outcome-vetoed">
             <Statistic.Value>{t('Vetoed')}</Statistic.Value>
             <Statistic.Label>{t('{name} was the first to veto the resolution', { name: displayMemberName(vetoes[0].name) })}</Statistic.Label>
           </Statistic>}
@@ -929,8 +936,8 @@ export default class Resolution extends React.Component<Props, State> {
 
     return (
       <Container
-        className={isVotingTab ? 'resolution-page resolution-voting-page' : 'resolution-page'}
-        fluid={isVotingTab}
+        className="resolution-page"
+        fluid
         style={{ 'padding-bottom': '2em' }}
       >
         <Helmet>

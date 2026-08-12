@@ -35,6 +35,7 @@ import {
   countryDisplayName,
   countryNameLanguages,
   CountryTemplateData,
+  CountryTemplateInUseError,
   countryTemplateDefaultLanguage,
   countryTemplateDisplayName,
   DEFAULT_COUNTRY_TEMPLATE,
@@ -335,7 +336,11 @@ export default function Countries() {
       startNew();
     } catch (reason) {
       setDeleteOpen(false);
-      setError(reason instanceof Error ? reason.message : t('Could not delete country template'));
+      setError(reason instanceof CountryTemplateInUseError
+        ? t('This country template cannot be deleted because it is used by: {templates}', {
+          templates: reason.committeeTemplates.map(template => template.name).join(', ')
+        })
+        : reason instanceof Error ? reason.message : t('Could not delete country template'));
     }
   };
 

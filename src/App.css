@@ -250,6 +250,15 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   vertical-align: middle;
 }
 
+/* Semantic UI treats every image inside a Feed summary as a large avatar. */
+.ui.feed > .event > .content .summary .country-flag-display > img {
+  border-radius: 0;
+  display: block;
+  height: auto;
+  margin: 0;
+  width: 100%;
+}
+
 .ui.dropdown > .text:has(> .country-flag-display),
 .ui.dropdown .menu > .item:has(> .country-flag-display) {
   align-items: center;
@@ -563,6 +572,34 @@ html[lang='zh-CN'] .ui {
   margin-top: 1rem !important;
 }
 
+.motion-heading {
+  align-items: flex-start;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  justify-content: space-between;
+}
+
+.motion-heading > .header {
+  min-width: 0;
+}
+
+.motion-decision {
+  flex: 0 0 auto;
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin-left: auto;
+  text-align: right;
+}
+
+.motion-decision-passed {
+  color: #21ba45;
+}
+
+.motion-decision-failed {
+  color: #db2828;
+}
+
 .motion-vote-panel .ui.buttons {
   width: 100%;
 }
@@ -576,7 +613,7 @@ html[lang='zh-CN'] .ui {
   margin-top: 0.75rem;
 }
 
-.ui.fluid.container.resolution-voting-page {
+.ui.fluid.container.resolution-page {
   box-sizing: border-box;
   margin: 0 !important;
   max-width: none !important;
@@ -585,7 +622,7 @@ html[lang='zh-CN'] .ui {
   width: 100% !important;
 }
 
-.resolution-voting-page .ui.tab.segment {
+.resolution-page .ui.tab.segment {
   padding: clamp(1rem, 2vw, 2rem);
 }
 
@@ -809,7 +846,8 @@ html[lang='zh-CN'] .ui {
   color: #21ba45;
 }
 
-.resolution-voting-outcome .ui.statistic.outcome-failed > .value {
+.resolution-voting-outcome .ui.statistic.outcome-failed > .value,
+.resolution-voting-outcome .ui.statistic.outcome-vetoed > .value {
   color: #db2828;
 }
 

@@ -60,6 +60,7 @@
     "emulators": "node ./scripts/firebase-emulators.mjs start",
     "deploy:database-rules": "firebase deploy --only database --project muncoordinated",
     "deploy:storage-rules": "node ./scripts/deploy-firebase-rules.mjs --storage-only",
+    "deploy:functions": "pnpm --dir functions build && firebase deploy --only functions --project muncoordinated",
     "deploy:rules": "node ./scripts/deploy-firebase-rules.mjs",
     "cypress:run": "cypress run",
     "cypress:open": "cypress open",

@@ -8,14 +8,16 @@ import {
   FeedEvent,
   Form,
   Grid,
+  Header,
   Icon,
   Input,
   Label,
+  Message,
   Popup,
   Segment,
   TextArea
 } from 'semantic-ui-react';
-import Timer, {toggleTicking} from '../components/Timer';
+import Timer, {getTimeWithSkewCorrection} from '../components/Timer';
 import {RouteComponentProps} from 'react-router';
 import {
   checkboxHandler,
@@ -28,28 +30,36 @@ import {URLParameters} from '../types';
 import {NotFound} from '../components/NotFound';
 import {
   CAUCUS_STATUS_OPTIONS,
+  canAdvanceSpeaker,
+  canOfferSpeakerYield,
   CaucusData,
   CaucusID,
   CaucusStatus,
   DEFAULT_CAUCUS,
+  formatCaucusLogTime,
+  isGeneralSpeakersList,
   Lifecycle,
   recoverDuration,
   recoverUnit,
   runLifecycle,
+  speakerCompletionLog,
+  speakerStartLog,
+  SpeechKind,
+  shouldAutoCloseCaucus,
+  shouldPauseCaucusTimerAfterSpeakerEnds,
   SpeakerEvent,
-  Stance
+  Stance,
+  YieldType
 } from "../models/caucus";
 import {CommitteeData, recoverCaucus, recoverMembers, recoverSettings} from "../models/committee";
 import {TimerData, Unit} from "../models/time";
 import {useAuthState} from "react-firebase-hooks/auth";
 import _ from "lodash";
-import {useObjectVal} from "react-firebase-hooks/database";
-import {displayMemberName, isMemberPresent, localizedMemberOptions, memberByName, MemberData, MemberFlag, MemberOption, membersToAttendanceOptions} from "../modules/member";
+import {displayMemberName, isMemberPresent, localizedMemberOptions, memberByName, MemberData, MemberFlag, MemberOption, membersToAttendanceOptions, nameToCountryOption} from "../modules/member";
 import {TimeSetter} from "../components/TimeSetter";
 import firebase from "firebase/compat/app";
 import {DragDropContext, Draggable, DraggableProvided, Droppable, DropResult} from "react-beautiful-dnd";
 import { Helmet } from 'react-helmet';
-import { getDatabase, ref } from 'firebase/database';
 import { localizeGeneratedName, t } from '../i18n';
 
 interface Props extends RouteComponentProps<URLParameters> {
@@ -61,6 +71,9 @@ interface State {
   committee?: CommitteeData;
   committeeFref: firebase.database.Reference;
   loading: boolean;
+  yieldMode?: YieldType;
+  yieldTargetID?: string;
+  yieldNotice?: string;
 }
 
 const isSpeakerPresent = (
@@ -70,12 +83,29 @@ const isSpeakerPresent = (
   ? !!members?.[speaker.memberID]?.present
   : isMemberPresent(members, speaker.who));
 
+const caucusLogMemberName = (name: string): string => {
+  const country = nameToCountryOption(name);
+  if (!country || typeof Intl.DisplayNames !== 'function') {
+    return name;
+  }
+  try {
+    return new Intl.DisplayNames(['zh-CN'], {type: 'region'})
+      .of(country.value.toUpperCase()) ?? name;
+  } catch {
+    return name;
+  }
+};
+
 export function NextSpeaking(props: {
   caucus?: CaucusData;
   members?: Record<string, MemberData>;
   speakerTimer: TimerData;
   fref: firebase.database.Reference;
   autoNextSpeaker: boolean;
+  caucusID: CaucusID;
+  onNextSpeaker: () => void;
+  toggleTimers: (skew?: number) => void;
+  yieldDecisionActive: boolean;
 }) {
   // TODO: Bandaid - I don't think the hook types nicely with the compat patch
   const [user] = useAuthState(firebase.auth() as any);
@@ -83,7 +113,7 @@ export function NextSpeaking(props: {
   const handleKeyDown = (ev: KeyboardEvent) => {
     // if changing this, update Help
     if (ev.keyCode === 78 && ev.altKey) {
-      nextSpeaker();
+      props.onNextSpeaker();
     }
   };
 
@@ -116,57 +146,8 @@ export function NextSpeaking(props: {
     });
   };
 
-  const nextSpeaker = () => {
-    if (!props.caucus) {
-      return;
-    }
-
-    const q = props.caucus.queue || {};
-
-    const queueHeadKey = Object.keys(q)
-      .find(key => isSpeakerPresent(props.members, q[key]));
-
-    let queueHeadDetails = {};
-
-    if (queueHeadKey) {
-      queueHeadDetails = {
-        queueHeadData: q[queueHeadKey],
-        queueHead: props.fref.child('queue').child(queueHeadKey)
-      };
-    }
-
-    const duration = recoverDuration(props.caucus);
-
-    const speakerSeconds: number = duration
-      ? duration * (recoverUnit(props.caucus) === Unit.Minutes ? 60 : 1)
-      : 60;
-
-    const lifecycle: Lifecycle = {
-      history: props.fref.child('history'),
-      speakingData: props.caucus.speaking,
-      speaking: props.fref.child('speaking'),
-      timerData: props.speakerTimer,
-      timer: props.fref.child('speakerTimer'),
-      yielding: false,
-      timerResetSeconds: speakerSeconds
-    };
-
-    runLifecycle({...lifecycle, ...queueHeadDetails});
-  };
-
-  const db = getDatabase();
-  const [skew] = useObjectVal<number>(ref(db, '.info/serverTimeOffset'));
-  console.log("Got skew", skew, "millis");
-
   const startTimer = () => {
-    if (!isSpeakerPresent(props.members, props.caucus?.speaking)) {
-      return;
-    }
-    toggleTicking({
-      timerFref: props.fref.child('speakerTimer'),
-      timer: props.speakerTimer,
-      skew
-    });
+    props.toggleTimers();
   };
 
   const {caucus} = props;
@@ -180,6 +161,11 @@ export function NextSpeaking(props: {
   const hasNextSpeaking = queueLength > 0;
   const interlaceable = queueLength > 1;
   const nextable = hasNowSpeaking || hasNextSpeaking;
+  const speakersList = isGeneralSpeakersList(props.caucusID);
+  const hasStarted = !!caucus?.speaking?.started
+    || !!caucus?.speaking?.isYieldedTime
+    || props.speakerTimer.elapsed > 0
+    || !!props.speakerTimer.ticking;
 
   const stageButton = (
     <Button
@@ -187,7 +173,7 @@ export function NextSpeaking(props: {
       icon
       primary
       disabled={!nextable}
-      onClick={nextSpeaker}
+      onClick={props.onNextSpeaker}
     >
       <Icon name="arrow up"/>
       {t('Stage')}
@@ -212,8 +198,8 @@ export function NextSpeaking(props: {
       basic
       icon
       primary
-      disabled={!nextable}
-      onClick={nextSpeaker}
+      disabled={!nextable || (speakersList && (!!ticking || props.yieldDecisionActive))}
+      onClick={props.onNextSpeaker}
     >
       <Icon name="arrow up"/>
       {t('Next')}
@@ -226,11 +212,31 @@ export function NextSpeaking(props: {
       icon
       negative
       disabled={!nextable}
-      onClick={nextSpeaker}
+      onClick={props.onNextSpeaker}
     >
       <Icon name="hourglass end"/>
       {t('Stop')}
     </Button>
+  );
+
+  const pauseContinueButton = (
+    <Button
+      basic
+      icon
+      color={ticking ? 'orange' : 'green'}
+      disabled={props.yieldDecisionActive || (!ticking && props.speakerTimer.remaining === 0)}
+      onClick={startTimer}
+    >
+      <Icon name={ticking ? 'pause' : 'play'} />
+      {t(ticking ? 'Pause' : 'Continue')}
+    </Button>
+  );
+
+  const speakersListControls = (
+    <Button.Group>
+      {pauseContinueButton}
+      {nextButton}
+    </Button.Group>
   );
 
   const interlaceButton = (
@@ -252,6 +258,8 @@ export function NextSpeaking(props: {
     button = stageButton;
   } else if (hasNowSpeaking && !currentSpeakerPresent) {
     button = hasNextSpeaking ? nextButton : stopButton;
+  } else if (speakersList && hasNowSpeaking && hasStarted) {
+    button = speakersListControls;
   } else if (hasNowSpeaking && !ticking) {
     button = startButton;
   } else if (hasNowSpeaking && ticking && hasNextSpeaking) {
@@ -280,6 +288,7 @@ export function NextSpeaking(props: {
         queueFref={props.fref.child('queue')}
         speaking={caucus ? caucus.speaking : undefined}
         speakerTimer={props.speakerTimer}
+        allowLegacyYield={!speakersList}
       />
     </Segment>
   );
@@ -302,6 +311,7 @@ class SpeakerFeedEntry extends React.PureComponent<{
   speaking?: SpeakerEvent,
   fref: firebase.database.Reference,
   speakerTimer: TimerData,
+  allowLegacyYield?: boolean,
   draggableProvided?: DraggableProvided
 }> {
 
@@ -355,7 +365,7 @@ class SpeakerFeedEntry extends React.PureComponent<{
           {data && <Label size="mini" as="a" onClick={() => fref.remove()}>
               {t('Remove')}
           </Label>}
-          {data && speaking && !absent && (<Label size="mini" as="a" onClick={this.yieldHandler}>
+          {this.props.allowLegacyYield && data && speaking && !absent && (<Label size="mini" as="a" onClick={this.yieldHandler}>
             {t('Yield')}
           </Label>)}
         </Feed.Meta>
@@ -389,9 +399,10 @@ function SpeakerFeed(props: {
   members?: Record<string, MemberData>,
   queueFref: firebase.database.Reference,
   speaking?: SpeakerEvent,
-  speakerTimer: TimerData
+  speakerTimer: TimerData,
+  allowLegacyYield: boolean
 }) {
-  const {data, members, queueFref, speaking, speakerTimer} = props;
+  const {allowLegacyYield, data, members, queueFref, speaking, speakerTimer} = props;
   // TODO: Bandaid - I don't think the hook types nicely with the compat patch
   const [user] = useAuthState(firebase.auth() as any);
 
@@ -409,6 +420,7 @@ function SpeakerFeed(props: {
             fref={queueFref.child(key)}
             speaking={speaking}
             speakerTimer={speakerTimer}
+            allowLegacyYield={allowLegacyYield}
           />
         }
       </Draggable>
@@ -475,6 +487,59 @@ function SpeakerFeed(props: {
     </DragDropContext>
   );
 };
+
+function YieldCard(props: {
+  mode?: YieldType;
+  targetID?: string;
+  options: MemberOption[];
+  onChooseMode: (mode: YieldType) => void;
+  onChooseTarget: (memberID: string) => void;
+  onAccept: () => void;
+  onReject: () => void;
+}) {
+  const modeLabel = props.mode === YieldType.Question
+    ? 'Ask a question'
+    : props.mode === YieldType.Comment
+      ? 'Comment'
+      : 'Yield';
+
+  const setTarget = (_event: React.SyntheticEvent<HTMLElement>, data: DropdownProps) => {
+    props.onChooseTarget(String(data.value));
+  };
+
+  return (
+    <Segment raised textAlign="center">
+      <Label attached="top left" size="large">{t('Yield')}</Label>
+      {!props.mode ? (
+        <Button.Group vertical fluid>
+          <Button onClick={() => props.onChooseMode(YieldType.Chair)}>{t('Yield to the chair')}</Button>
+          <Button onClick={() => props.onChooseMode(YieldType.Delegate)}>{t('Yield to another delegate')}</Button>
+          <Button onClick={() => props.onChooseMode(YieldType.Question)}>{t('Yield to questions')}</Button>
+          <Button onClick={() => props.onChooseMode(YieldType.Comment)}>{t('Yield to comments')}</Button>
+        </Button.Group>
+      ) : (
+        <Form>
+          <Header size="small">{t(modeLabel)}</Header>
+          <Form.Dropdown
+            icon="search"
+            search
+            selection
+            value={props.targetID}
+            placeholder={t('Select a delegation')}
+            onChange={setTarget}
+            options={localizedMemberOptions(props.options)}
+          />
+          {props.mode === YieldType.Delegate && props.targetID && (
+            <Button.Group fluid>
+              <Button positive onClick={props.onAccept}>{t('Accept')}</Button>
+              <Button negative onClick={props.onReject}>{t('Reject')}</Button>
+            </Button.Group>
+          )}
+        </Form>
+      )}
+    </Segment>
+  );
+}
 
 function Queuer(props: {
   caucus?: CaucusData;
@@ -604,8 +669,263 @@ export default class Caucus extends React.Component<Props, State> {
       .child(caucusID);
   }
 
+  appendLogs = (messages: string[]) => {
+    const logsRef = this.recoverCaucusFref().child('logs');
+    messages.forEach(message => {
+      logsRef.push().set({
+        message,
+        createdAt: firebase.database.ServerValue.TIMESTAMP
+      });
+    });
+  }
+
+  currentSpeakerName = (speaker: SpeakerEvent) => caucusLogMemberName(speaker.who);
+
+  advanceSpeaker = ({
+    additionalLogs = [],
+    force = false,
+    logCompletion = true
+  }: {
+    additionalLogs?: string[];
+    force?: boolean;
+    logCompletion?: boolean;
+  } = {}) => {
+    const {caucusTimer, committee, speakerTimer} = this.state;
+    const caucusID = this.props.match.params.caucusID;
+    const caucus = recoverCaucus(committee, caucusID);
+
+    if (!caucus || (!canAdvanceSpeaker(caucusID, speakerTimer) && !force)) {
+      return;
+    }
+
+    const q = caucus.queue || {};
+    const members = recoverMembers(committee);
+    const queueHeadKey = Object.keys(q).find(key => isSpeakerPresent(members, q[key]));
+    const duration = recoverDuration(caucus);
+    const speakerSeconds = duration
+      ? duration * (recoverUnit(caucus) === Unit.Minutes ? 60 : 1)
+      : 60;
+    const lifecycle: Lifecycle = {
+      history: this.recoverCaucusFref().child('history'),
+      speakingData: caucus.speaking,
+      speaking: this.recoverCaucusFref().child('speaking'),
+      timerData: speakerTimer,
+      timer: this.recoverCaucusFref().child('speakerTimer'),
+      yielding: false,
+      timerResetSeconds: speakerSeconds,
+      ...(queueHeadKey ? {
+        queueHeadData: q[queueHeadKey],
+        queueHead: this.recoverCaucusFref().child('queue').child(queueHeadKey)
+      } : {})
+    };
+
+    if (isGeneralSpeakersList(caucusID) && caucus.speaking) {
+      const messages = logCompletion
+        ? [speakerCompletionLog(
+          caucus.speaking,
+          this.currentSpeakerName(caucus.speaking),
+          speakerTimer.remaining
+        ), ...additionalLogs]
+        : additionalLogs;
+      this.appendLogs(messages);
+    }
+
+    if (!isGeneralSpeakersList(caucusID) && caucus.speaking) {
+      this.recoverCaucusFref().child('caucusTimer').set({...caucusTimer, ticking: false});
+      if (shouldAutoCloseCaucus(caucusID, caucusTimer, speakerSeconds)) {
+        runLifecycle(lifecycle);
+        this.recoverCaucusFref().child('status').set(CaucusStatus.Closed);
+        return;
+      }
+    }
+
+    runLifecycle(lifecycle);
+    this.setState({yieldMode: undefined, yieldTargetID: undefined});
+  }
+
+  replaceCurrentSpeaker = (
+    target: MemberOption,
+    speechKind: SpeechKind,
+    messages: string[],
+    notice: string
+  ) => {
+    const caucusID = this.props.match.params.caucusID;
+    const caucus = recoverCaucus(this.state.committee, caucusID);
+    const source = caucus?.speaking;
+    if (!source || !target.memberID) {
+      return;
+    }
+
+    const historyKey = this.recoverCaucusFref().child('history').push().key;
+    const updates: Record<string, unknown> = {
+      speaking: {
+        who: target.text,
+        memberID: target.memberID,
+        stance: Stance.Neutral,
+        duration: this.state.speakerTimer.remaining,
+        started: false,
+        isYieldedTime: true,
+        speechKind
+      },
+      speakerTimer: {
+        elapsed: 0,
+        remaining: this.state.speakerTimer.remaining,
+        ticking: false
+      }
+    };
+
+    if (historyKey) {
+      updates[`history/${historyKey}`] = {...source, duration: this.state.speakerTimer.elapsed};
+    }
+    Object.entries(caucus?.queue || {}).forEach(([key, queued]) => {
+      if (queued.memberID === target.memberID) {
+        updates[`queue/${key}`] = null;
+      }
+    });
+
+    this.appendLogs([
+      speakerCompletionLog(source, this.currentSpeakerName(source), this.state.speakerTimer.remaining),
+      ...messages
+    ]);
+    this.recoverCaucusFref().update(updates);
+    this.setState({
+      yieldMode: undefined,
+      yieldTargetID: undefined,
+      yieldNotice: notice
+    });
+  }
+
+  chooseYieldMode = (mode: YieldType) => {
+    const caucus = recoverCaucus(this.state.committee, this.props.match.params.caucusID);
+    const source = caucus?.speaking;
+    if (!source || source.isYieldedTime || this.state.speakerTimer.ticking || this.state.speakerTimer.remaining <= 1) {
+      return;
+    }
+
+    if (mode === YieldType.Chair) {
+      const sourceName = this.currentSpeakerName(source);
+      this.advanceSpeaker({
+        additionalLogs: [`${sourceName} 代表选择让渡给主席。`],
+        force: true
+      });
+      this.setState({yieldNotice: t('The remaining time was yielded to the chair. The next delegate may prepare to speak.')});
+      return;
+    }
+
+    this.setState({yieldMode: mode, yieldTargetID: undefined, yieldNotice: undefined});
+  }
+
+  yieldOptions = (): MemberOption[] => {
+    const caucus = recoverCaucus(this.state.committee, this.props.match.params.caucusID);
+    return membersToAttendanceOptions(recoverMembers(this.state.committee))
+      .filter(option => option.memberID !== caucus?.speaking?.memberID && option.text !== caucus?.speaking?.who);
+  }
+
+  chooseYieldTarget = (targetValue: string) => {
+    const target = this.yieldOptions().find(option => option.value === targetValue && !option.disabled);
+    const caucus = recoverCaucus(this.state.committee, this.props.match.params.caucusID);
+    const source = caucus?.speaking;
+    const mode = this.state.yieldMode;
+    if (!target || !source || !mode) {
+      return;
+    }
+
+    if (mode === YieldType.Delegate) {
+      this.setState({yieldTargetID: targetValue});
+      return;
+    }
+
+    const sourceName = this.currentSpeakerName(source);
+    const targetName = caucusLogMemberName(target.text);
+    const targetDisplayName = displayMemberName(target.text);
+    if (mode === YieldType.Comment) {
+      this.replaceCurrentSpeaker(
+        target,
+        SpeechKind.Comment,
+        [`${sourceName} 代表让渡给评论。由 ${targetName} 代表评论。`],
+        t('{name} will use the remaining time to comment.', {name: targetDisplayName})
+      );
+      return;
+    }
+
+    const historyKey = this.recoverCaucusFref().child('history').push().key;
+    const updates: Record<string, unknown> = {
+      speaking: {
+        ...source,
+        duration: this.state.speakerTimer.remaining,
+        started: false,
+        isYieldedTime: true,
+        speechKind: SpeechKind.Answer
+      },
+      speakerTimer: {
+        elapsed: 0,
+        remaining: this.state.speakerTimer.remaining,
+        ticking: false
+      }
+    };
+    if (historyKey) {
+      updates[`history/${historyKey}`] = {...source, duration: this.state.speakerTimer.elapsed};
+    }
+    this.appendLogs([
+      speakerCompletionLog(source, sourceName, this.state.speakerTimer.remaining),
+      `${sourceName} 代表让渡给问题。由 ${targetName} 代表提问。`
+    ]);
+    this.recoverCaucusFref().update(updates);
+    this.setState({
+      yieldMode: undefined,
+      yieldTargetID: undefined,
+      yieldNotice: t('{name} may ask a question. The chair may continue the timer when the answer begins.', {name: targetDisplayName})
+    });
+  }
+
+  acceptDelegateYield = () => {
+    const target = this.yieldOptions().find(
+      option => option.value === this.state.yieldTargetID && !option.disabled
+    );
+    const caucus = recoverCaucus(this.state.committee, this.props.match.params.caucusID);
+    const source = caucus?.speaking;
+    if (!target || !source) {
+      return;
+    }
+    const sourceName = this.currentSpeakerName(source);
+    const targetName = caucusLogMemberName(target.text);
+    const targetDisplayName = displayMemberName(target.text);
+    this.replaceCurrentSpeaker(
+      target,
+      SpeechKind.Speech,
+      [
+        `${sourceName} 代表选择让渡给 ${targetName} 代表。`,
+        `${targetName} 代表接受此让渡。`
+      ],
+      t('{name} accepted the yield and inherited the remaining time.', {name: targetDisplayName})
+    );
+  }
+
+  rejectDelegateYield = () => {
+    const target = this.yieldOptions().find(option => option.value === this.state.yieldTargetID);
+    const caucus = recoverCaucus(this.state.committee, this.props.match.params.caucusID);
+    const source = caucus?.speaking;
+    if (!target || !source) {
+      return;
+    }
+    const sourceName = this.currentSpeakerName(source);
+    const targetName = caucusLogMemberName(target.text);
+    const targetDisplayName = displayMemberName(target.text);
+    this.advanceSpeaker({
+      additionalLogs: [
+        `${sourceName} 代表选择让渡给 ${targetName} 代表。`,
+        `${targetName} 代表拒绝此让渡。剩余时间由主席收回。`
+      ],
+      force: true
+    });
+    this.setState({
+      yieldNotice: t('{name} rejected the yield. The chair reclaimed the remaining time.', {name: targetDisplayName})
+    });
+  }
+
   renderHeader = (caucus?: CaucusData) => {
     const caucusFref = this.recoverCaucusFref();
+    const speakersList = isGeneralSpeakersList(this.props.match.params.caucusID);
 
     const statusDropdown = (
       <Dropdown 
@@ -626,7 +946,7 @@ export default class Caucus extends React.Component<Props, State> {
           attatched="top"
           size="massive"
           fluid
-          placeholder={t('Set caucus name')}
+          placeholder={t(speakersList ? 'Set speakers list name' : 'Set caucus name')}
         />
         <Form loading={!caucus}>
           <TextArea
@@ -635,7 +955,7 @@ export default class Caucus extends React.Component<Props, State> {
             onChange={textAreaHandler<CaucusData>(caucusFref, 'topic')}
             attatched="top"
             rows={1}
-            placeholder={t('Set caucus details')}
+            placeholder={t(speakersList ? 'Set speakers list details' : 'Set caucus details')}
           />
         </Form>
       </>
@@ -660,6 +980,15 @@ export default class Caucus extends React.Component<Props, State> {
   }
 
   setSpeakerTimer = (timer: TimerData) => {
+    const caucusID = this.props.match.params.caucusID;
+
+    if (shouldPauseCaucusTimerAfterSpeakerEnds(caucusID, timer, this.state.caucusTimer)) {
+      this.recoverCaucusFref().child('caucusTimer').set({
+        ...this.state.caucusTimer,
+        ticking: false
+      });
+    }
+
     this.setState({ speakerTimer: timer });
   }
 
@@ -667,12 +996,89 @@ export default class Caucus extends React.Component<Props, State> {
     this.setState({ caucusTimer: timer });
   }
 
+  toggleTimers = (skew?: number) => {
+    const {caucusTimer, committee, speakerTimer} = this.state;
+    const caucusID: CaucusID = this.props.match.params.caucusID;
+    const caucus = recoverCaucus(committee, caucusID);
+    const speakersList = isGeneralSpeakersList(caucusID);
+
+    if (!caucus || caucus.status === CaucusStatus.Closed) {
+      return;
+    }
+
+    const timersAreRunning = !!speakerTimer.ticking || (!speakersList && !!caucusTimer.ticking);
+
+    if (speakersList && this.state.yieldMode) {
+      return;
+    }
+
+    if (speakersList && !timersAreRunning && speakerTimer.remaining === 0) {
+      return;
+    }
+
+    if (!timersAreRunning) {
+      const members = recoverMembers(committee);
+      if (!isSpeakerPresent(members, caucus.speaking)) {
+        return;
+      }
+
+      const speakerSeconds = recoverDuration(caucus)
+        ? Number(recoverDuration(caucus)) * (recoverUnit(caucus) === Unit.Minutes ? 60 : 1)
+        : 60;
+
+      if (shouldAutoCloseCaucus(caucusID, caucusTimer, speakerSeconds)) {
+        this.recoverCaucusFref().child('status').set(CaucusStatus.Closed);
+        return;
+      }
+    }
+
+    const ticking = timersAreRunning ? false : getTimeWithSkewCorrection(skew);
+
+    if (speakersList && caucus.speaking) {
+      const speakerName = this.currentSpeakerName(caucus.speaking);
+      const speechAction = caucus.speaking.speechKind === SpeechKind.Answer
+        ? '回答'
+        : caucus.speaking.speechKind === SpeechKind.Comment
+          ? '评论'
+          : '发言';
+      if (timersAreRunning) {
+        this.appendLogs([
+          `${speakerName} 代表暂停${speechAction}。剩余时间为${formatCaucusLogTime(speakerTimer.remaining)}。`
+        ]);
+      } else if (!caucus.speaking.started) {
+        this.appendLogs([speakerStartLog(caucus.speaking, speakerName)]);
+      } else {
+        this.appendLogs([
+          `${speakerName} 代表继续${speechAction}。`
+        ]);
+      }
+    }
+
+    const timerUpdate = speakersList
+      ? {
+        speakerTimer: {...speakerTimer, ticking},
+        ...(!timersAreRunning && caucus.speaking && !caucus.speaking.started
+          ? {'speaking/started': true}
+          : {})
+      }
+      : {
+        caucusTimer: {...caucusTimer, ticking},
+        speakerTimer: {...speakerTimer, ticking}
+      };
+
+    this.recoverCaucusFref().update(timerUpdate);
+    if (speakersList && !timersAreRunning) {
+      this.setState({yieldNotice: undefined});
+    }
+  }
+
   renderCaucus = (caucus?: CaucusData) => {
     const { renderNowSpeaking, renderHeader, recoverCaucusFref } = this;
-    const { speakerTimer, committee } = this.state;
+    const { caucusTimer, speakerTimer, committee } = this.state;
 
     const { caucusID } = this.props.match.params;
     const caucusFref = recoverCaucusFref();
+    const speakersList = isGeneralSpeakersList(caucusID);
 
     const members = recoverMembers(committee);
 
@@ -682,6 +1088,7 @@ export default class Caucus extends React.Component<Props, State> {
         timerFref={caucusFref.child('speakerTimer')}
         key={caucusID + 'speakerTimer'}
         onChange={this.setSpeakerTimer}
+        onToggle={this.toggleTimers}
         toggleKeyCode={83} // S - if changing this, update Help
         defaultUnit={recoverUnit(caucus)}
         defaultDuration={recoverDuration(caucus) || 60}
@@ -694,6 +1101,7 @@ export default class Caucus extends React.Component<Props, State> {
         timerFref={caucusFref.child('caucusTimer')}
         key={caucusID + 'caucusTimer'}
         onChange={this.setCaucusTimer}
+        onToggle={this.toggleTimers}
         toggleKeyCode={67} // C - if changing this, update Help
         defaultUnit={Unit.Minutes}
         defaultDuration={10}
@@ -729,10 +1137,51 @@ export default class Caucus extends React.Component<Props, State> {
         fref={caucusFref} 
         speakerTimer={speakerTimer} 
         autoNextSpeaker={autoNextSpeaker}
+        caucusID={caucusID}
+        onNextSpeaker={() => this.advanceSpeaker()}
+        toggleTimers={this.toggleTimers}
+        yieldDecisionActive={!!this.state.yieldMode}
       />
     );
 
-    const body = !timersInSeparateColumns ? (
+    const yieldAvailable = canOfferSpeakerYield(caucusID, caucus?.speaking, speakerTimer);
+    const renderedYieldCard = (yieldAvailable || !!this.state.yieldMode) ? (
+      <YieldCard
+        mode={this.state.yieldMode}
+        targetID={this.state.yieldTargetID}
+        options={this.yieldOptions()}
+        onChooseMode={this.chooseYieldMode}
+        onChooseTarget={this.chooseYieldTarget}
+        onAccept={this.acceptDelegateYield}
+        onReject={this.rejectDelegateYield}
+      />
+    ) : null;
+    const renderedYieldNotice = this.state.yieldNotice ? (
+      <Message info content={this.state.yieldNotice} />
+    ) : null;
+
+    const completedBody = (
+      <Grid.Row>
+        <Grid.Column>
+          <Segment placeholder textAlign="center">
+            <Header icon>
+              <Icon name="check circle outline" />
+              {t(speakersList ? 'Speakers list complete' : 'Moderated caucus complete')}
+            </Header>
+            <Button
+              primary
+              size="large"
+              onClick={() => this.props.history.push(`/committees/${this.props.match.params.committeeID}/motions`)}
+            >
+              {t('Go to motions')}
+              <Icon name="arrow right" />
+            </Button>
+          </Segment>
+        </Grid.Column>
+      </Grid.Row>
+    );
+
+    const combinedTimerBody = (
       <Grid.Row>
         <Grid.Column>
           {renderNowSpeaking(caucus, members)}
@@ -742,10 +1191,14 @@ export default class Caucus extends React.Component<Props, State> {
         </Grid.Column>
         <Grid.Column>
           {renderedSpeakerTimer}
-          {renderedCaucusTimer}
+          {!speakersList && renderedCaucusTimer}
+          {speakersList && renderedYieldCard}
+          {speakersList && renderedYieldNotice}
         </Grid.Column>
       </Grid.Row>
-    ) : (
+    );
+
+    const separateTimerBody = (
       <Grid.Row>
         <Grid.Column>
           {renderedSpeakerTimer}
@@ -759,6 +1212,10 @@ export default class Caucus extends React.Component<Props, State> {
       </Grid.Row>
     );
 
+    const body = speakersList || !timersInSeparateColumns
+      ? combinedTimerBody
+      : separateTimerBody;
+
     return (
       <Container style={{ 'padding-bottom': '2em' }}>
         <Helmet>
@@ -766,7 +1223,7 @@ export default class Caucus extends React.Component<Props, State> {
         </Helmet>
         <Grid columns="equal" stackable>
           {header}
-          {body}
+          {caucus?.status === CaucusStatus.Closed ? completedBody : body}
         </Grid >
       </Container>
     );

@@ -31,6 +31,11 @@ export enum MotionVote {
   Against = 'Against'
 }
 
+export enum MotionResult {
+  Passed = 'passed',
+  Failed = 'failed'
+}
+
 export interface MotionData {
   proposal: string;
   proposer?: string;
@@ -45,7 +50,10 @@ export interface MotionData {
   caucusTarget?: CaucusID;
   resolutionTarget?: ResolutionID;
   deleted?: boolean;
-  votes?: Record<MemberID, MotionVote>
+  votes?: Record<MemberID, MotionVote>;
+  result?: MotionResult;
+  decidedAt?: number;
+  destination?: string;
 }
 
 export const MOTION_TYPE_OPTIONS = [

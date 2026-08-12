@@ -54,6 +54,42 @@ describe('getAutomaticVoteResult', () => {
     })).toBeUndefined();
   });
 
+  it('waits for every eligible delegation when a complete vote is required', () => {
+    expect(getAutomaticVoteResult({
+      eligibleVoters: 10,
+      votesFor: 7,
+      votesCast: 8,
+      threshold: 7,
+      requireAllVotes: true
+    })).toBeUndefined();
+
+    expect(getAutomaticVoteResult({
+      eligibleVoters: 10,
+      votesFor: 7,
+      votesCast: 10,
+      threshold: 7,
+      requireAllVotes: true
+    })).toBe('passed');
+  });
+
+  it('also withholds an inevitable failure until every required vote is cast', () => {
+    expect(getAutomaticVoteResult({
+      eligibleVoters: 10,
+      votesFor: 1,
+      votesCast: 8,
+      threshold: 7,
+      requireAllVotes: true
+    })).toBeUndefined();
+
+    expect(getAutomaticVoteResult({
+      eligibleVoters: 10,
+      votesFor: 1,
+      votesCast: 10,
+      threshold: 7,
+      requireAllVotes: true
+    })).toBe('failed');
+  });
+
   it('fails when there are no eligible voters', () => {
     expect(getAutomaticVoteResult({
       eligibleVoters: 0,

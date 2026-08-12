@@ -1,6 +1,11 @@
 import {describe, expect, it} from 'vitest';
 import {Rank} from '../modules/member';
-import {templateDefaultLanguage, templateDisplayName, templateMembers} from './template';
+import {
+  templateCountryTemplateKey,
+  templateDefaultLanguage,
+  templateDisplayName,
+  templateMembers
+} from './template';
 
 describe('user templates', () => {
   it('converts Firebase member records to a member list', () => {
@@ -57,5 +62,11 @@ describe('user templates', () => {
 
     expect(templateDisplayName(incompleteTemplate, 'en')).toBe('唯一名称');
     expect(templateDefaultLanguage(incompleteTemplate, 'zh-CN')).toBe('en');
+  });
+
+  it('loads the associated country template and defaults legacy templates safely', () => {
+    expect(templateCountryTemplateKey({countryTemplateKey: 'custom:countries-a'}))
+      .toBe('custom:countries-a');
+    expect(templateCountryTemplateKey({})).toBe('builtin:default');
   });
 });

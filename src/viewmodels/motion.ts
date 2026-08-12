@@ -103,6 +103,29 @@ export const approvable = (motionType: MotionType): boolean => {
       return false;
   }
 };
+
+export const destinationName = (motionType: MotionType): string | undefined => {
+  switch (motionType) {
+    case MotionType.OpenModeratedCaucus:
+    case MotionType.ExtendModeratedCaucus:
+    case MotionType.CloseModeratedCaucus:
+      return 'Caucuses';
+    case MotionType.OpenUnmoderatedCaucus:
+    case MotionType.ExtendUnmoderatedCaucus:
+    case MotionType.AddWorkingPaper:
+      return 'Unmod';
+    case MotionType.IntroduceDraftResolution:
+      return 'Draft resolution';
+    case MotionType.IntroduceAmendment:
+      return 'Amendments';
+    case MotionType.VoteOnResolution:
+      return 'Voting';
+    case MotionType.ProposeStrawpoll:
+      return 'Strawpolls';
+    default:
+      return undefined;
+  }
+};
 export const hasSpeakers = (motionType: MotionType): boolean => {
   switch (motionType) {
     case MotionType.OpenModeratedCaucus:

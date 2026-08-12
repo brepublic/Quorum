@@ -3,6 +3,8 @@ import {COUNTRY_OPTIONS} from '../constants';
 import {getLanguage, Language, SUPPORTED_LANGUAGES} from '../i18n';
 
 export type CountryTemplateID = string;
+export type CountryTemplateKey = 'builtin:default' | `custom:${CountryTemplateID}`;
+export const DEFAULT_COUNTRY_TEMPLATE_KEY: CountryTemplateKey = 'builtin:default';
 export type Continent =
   | 'Africa'
   | 'Antarctica'
@@ -158,7 +160,32 @@ export const putUserCountryTemplate = (
 export const deleteUserCountryTemplate = (
   uid: string,
   templateID: CountryTemplateID
-): Promise<void> => userCountryTemplatesRef(uid).child(templateID).remove();
+): Promise<void> => {
+  const countryTemplateKey: CountryTemplateKey = `custom:${templateID}`;
+  return firebase.database().ref('templates').child(uid)
+    .orderByChild('countryTemplateKey').equalTo(countryTemplateKey).once('value').then(snapshot => {
+      const users = committeeTemplatesUsingCountryTemplate(snapshot.val() || {}, countryTemplateKey);
+
+      if (users.length > 0) {
+        throw new CountryTemplateInUseError(users);
+      }
+      return userCountryTemplatesRef(uid).child(templateID).remove();
+    });
+};
+
+export const committeeTemplatesUsingCountryTemplate = (
+  committeeTemplates: Record<string, {name?: string; countryTemplateKey?: string}>,
+  countryTemplateKey: CountryTemplateKey
+): Array<{id: string; name: string}> => Object.entries(committeeTemplates)
+  .filter(([, template]) => template.countryTemplateKey === countryTemplateKey)
+  .map(([id, template]) => ({id, name: template.name || id}));
+
+export class CountryTemplateInUseError extends Error {
+  constructor(public readonly committeeTemplates: Array<{id: string; name: string}>) {
+    super('Country template is used by committee templates');
+    this.name = 'CountryTemplateInUseError';
+  }
+}
 
 export const cloneCountryTemplate = (
   template: CountryTemplateData,

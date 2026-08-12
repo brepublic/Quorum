@@ -20,9 +20,20 @@ export function getAutomaticVoteResult(input: {
   votesCast: number;
   threshold: number;
   vetoed?: boolean;
+  requireAllVotes?: boolean;
 }): AutomaticVoteResult {
-  const {eligibleVoters, votesFor, votesCast, threshold, vetoed = false} = input;
+  const {
+    eligibleVoters,
+    votesFor,
+    votesCast,
+    threshold,
+    vetoed = false,
+    requireAllVotes = false
+  } = input;
 
+  if (requireAllVotes && votesCast < eligibleVoters) {
+    return undefined;
+  }
   if (vetoed) {
     return undefined;
   }

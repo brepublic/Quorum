@@ -31,13 +31,13 @@ const firebaseArgs = mode === 'test'
   ? [
       'emulators:exec',
       '--only',
-      'auth,database,storage',
+      'auth,database,storage,functions',
       'node ./scripts/run-cypress-with-emulators.mjs run',
     ]
   : [
       'emulators:start',
       '--only',
-      'auth,database,storage',
+      'auth,database,storage,functions',
     ];
 
 const firebase = spawn('firebase', firebaseArgs, {

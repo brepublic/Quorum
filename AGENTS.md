@@ -33,3 +33,37 @@ boundary, or deployment model.
 - The Firebase web config in `src/App.tsx` is a hardcoded public config, so no secrets are needed. By default the app talks to the real `muncoordinated` Firebase project; set `VITE_USE_FIREBASE_EMULATORS=true` to wire it to the local emulators (Auth 9099, DB 9000, Storage 9199, UI 4000). Prefer emulators for local testing to avoid writing to production.
 - Emulator startup logs `gcp-metadata` `ECONNRESET` and "Unable to fetch the CLI MOTD" warnings due to restricted egress; these are non-fatal and the emulators still start.
 - Cypress e2e (`pnpm test:e2e`, `pnpm cypress:run`) is blocked in this environment: the Cypress binary is not downloaded by `pnpm install`, and fetching it from `download.cypress.io` is blocked by network egress. Unit tests and manual/emulator testing work without it.
+
+## User-facing copy
+
+Treat UI text as scarce. The interface is not documentation.
+
+Default to no explanatory text.
+
+Every user-facing sentence must do at least one of the following:
+
+- help the user make a decision;
+- prevent a plausible and consequential mistake;
+- communicate information the UI cannot otherwise express;
+- satisfy a necessary legal, security, privacy, or accessibility requirement.
+
+Otherwise, remove it.
+
+Do not add defensive or reassuring copy such as:
+
+- "This only affects..."
+- "This will not..."
+- "Don't worry..."
+- "Your other settings remain unchanged..."
+- "You can always change this later..."
+
+unless the distinction is genuinely non-obvious and matters to the user's decision.
+
+Do not explain what a control obviously does.
+Do not restate labels, headings, selected values, or visible state.
+
+Prefer:
+
+control alone > short label > short helper text > paragraph.
+
+Before finishing any UI task, audit all user-facing strings and remove copy that does not change user behavior or understanding.

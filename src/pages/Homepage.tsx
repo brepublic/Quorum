@@ -14,7 +14,7 @@ import {
   Sidebar,
   Visibility,
 } from 'semantic-ui-react';
-import { logClickCreateACommitteeButton, logClickLogInButton, logClickSignupButton } from '../modules/analytics';
+import { logClickCreateACommitteeButton, logClickLogInButton } from '../modules/analytics';
 import Loading from '../components/Loading';
 import { ShareCapabilities } from '../components/share-hints';
 import { t } from '../i18n';
@@ -135,9 +135,6 @@ class DesktopContainer extends React.Component<DesktopContainerProps, DesktopCon
                     <Button as="a" href="/onboard" inverted={!fixed} onClick={logClickLogInButton}>
                       {t('Log in')}
                     </Button>
-                    <Button as="a" href="/onboard" inverted={!fixed} primary={fixed} style={{ marginLeft: '0.5em' }} onClick={logClickSignupButton}>
-                      {t('Sign up')}
-                    </Button>
                   </Menu.Item>
                 </Menu.Menu>
               </Container>
@@ -191,7 +188,6 @@ class MobileContainer extends React.Component<MobileContainerProps, MobileContai
             <Menu.Item as="a" active>{t('Home')}</Menu.Item>
             <LanguageMenuItem />
             <Menu.Item as="a" href="/onboard" onClick={logClickLogInButton}>{t('Log in')}</Menu.Item>
-            <Menu.Item as="a" href="/onboard" onClick={logClickSignupButton}>{t('Sign up')}</Menu.Item>
           </Sidebar>
 
           <Sidebar.Pusher dimmed={sidebarOpened} onClick={this.handlePusherClick} style={{ minHeight: '100vh' }}>
@@ -205,9 +201,6 @@ class MobileContainer extends React.Component<MobileContainerProps, MobileContai
                   <Menu.Item position="right">
                     <Button as="a" inverted size="small" href="/onboard" onClick={logClickLogInButton}>
                       {t('Log in')}
-                    </Button>
-                    <Button as="a" inverted primary size="small" href="/onboard" style={{ marginLeft: '0.5em' }} onClick={logClickSignupButton}>
-                      {t('Sign up')}
                     </Button>
                   </Menu.Item>
                 </Menu>

@@ -1,4 +1,4 @@
-import { purge, enterUsername, enterCurrentPassword, enterNewPassword } from './utils'
+import { purge, enterUsername, enterCurrentPassword } from './utils'
 
 const TEMPLATE = 'UN Security Council'
 const TOPIC = 'Test topic'
@@ -15,21 +15,10 @@ describe('Run through creating a new committee', function () {
     cy.url().should('include', '/onboard')
   })
 
-  it('attempts to create an account that is already in use, and then logs in', function () {
+  it('logs in with an account created by the administrator', function () {
     cy.get('button').contains('Log in').then(() => {
-      cy.contains('Create account').click()
-
       enterUsername()
-      enterNewPassword()
-
-      cy.get('button').contains('Create account').click()
-
-      cy.contains('in use by another account')
-
-      cy.get('a').contains('Back to login').click()
-
       enterCurrentPassword()
-
       cy.get('button').contains('Log in').click()
     })
   })

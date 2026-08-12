@@ -15,6 +15,11 @@ import {TemplateChoice, TemplatePicker, TemplatePreview} from '../components/tem
 import { Helmet } from 'react-helmet';
 import { t } from '../i18n';
 import { LanguageMenuItem } from '../i18n';
+import {
+  CountryTemplateChoice,
+  CountryTemplatePicker
+} from '../components/country-template';
+import type {CountryTemplateKey} from '../models/country-template';
 
 interface Props extends RouteComponentProps<URLParameters> {
 }
@@ -26,6 +31,8 @@ interface State {
   conference: string;
   user: firebase.User | null;
   template?: TemplateChoice,
+  countryTemplateKey?: CountryTemplateKey;
+  countryTemplateResolved: boolean;
   committeesFref: firebase.database.Reference;
   unsubscribe?: () => void;
 }
@@ -40,6 +47,7 @@ export default class Onboard extends React.Component<Props, State> {
       chair: '',
       conference: '',
       user: null,
+      countryTemplateResolved: false,
       committeesFref: firebase.database().ref('committees')
     };
   }
@@ -72,28 +80,43 @@ export default class Onboard extends React.Component<Props, State> {
   onChangeTemplate = (template?: TemplateChoice): void => {
     this.setState(old => ({
       template,
+      countryTemplateKey: template?.countryTemplateKey,
+      countryTemplateResolved: false,
       // don't clear the name if the template is deselected
       name: template?.name || old.name
     }));
   }
 
-  handleSubmit = () => {
-    const { name, topic, chair, conference, template, user } = this.state;
+  onChangeCountryTemplate = (choice: CountryTemplateChoice): void => {
+    this.setState({countryTemplateKey: choice.key, countryTemplateResolved: true});
+  }
 
-    if (user) {
+  onResolveCountryTemplate = (choice?: CountryTemplateChoice): void => {
+    this.setState(({countryTemplateKey}) => ({
+      countryTemplateResolved: !!choice && choice.key === countryTemplateKey
+    }));
+  }
+
+  handleSubmit = () => {
+    const { name, topic, chair, conference, template, countryTemplateKey, user } = this.state;
+
+    if (user && countryTemplateKey && this.state.countryTemplateResolved) {
       const newCommittee: CommitteeData = {
         ...DEFAULT_COMMITTEE,
         name,
         topic,
         chair,
         conference,
-        creatorUid: user.uid
+        creatorUid: user.uid,
+        countryTemplateKey,
+        temporaryTemplate: !template
       };
 
       // We can't send `undefined` properties to Firebase or it will complain
       // so we only set this property if the template exists
       if (template) {
         newCommittee.template = template.name;
+        newCommittee.templateKey = template.key;
       }
 
       const newCommitteeRef = putCommittee(meetId(), newCommittee)
@@ -116,7 +139,7 @@ export default class Onboard extends React.Component<Props, State> {
         {!user && <Message
           error
           attached="top"
-          content={t('Log in or create an account to continue')}
+          content={t('Log in with an account issued by the administrator to continue')}
         />}
         <Segment attached={!user ? 'bottom' : undefined} >
           <Form onSubmit={this.handleSubmit}>
@@ -142,6 +165,14 @@ export default class Onboard extends React.Component<Props, State> {
                 </Popup.Content>
               </Popup>
             </Form.Group>
+            <CountryTemplatePicker
+              required
+              disabled={!!template}
+              value={this.state.countryTemplateKey}
+              placeholder={t('Select the country template for manual setup')}
+              onResolve={this.onResolveCountryTemplate}
+              onChange={this.onChangeCountryTemplate}
+            />
             <Form.Input
               label={t('Name')}
               name="name"
@@ -171,7 +202,7 @@ export default class Onboard extends React.Component<Props, State> {
             <Form.Button
               primary
               fluid
-              disabled={!this.state.user || this.state.name === ''}
+              disabled={!this.state.user || this.state.name === '' || !this.state.countryTemplateResolved}
             >
               {t('Create committee')}
               <Icon name="arrow right" />
@@ -196,8 +227,7 @@ export default class Onboard extends React.Component<Props, State> {
         </Menu>
         <Helmet>
           <title>{`${t('Create committee')} - Quorum`}</title>
-          <meta name="description" content="Login, create an account, or create
-                                      a committee with Quorum now!" />
+          <meta name="description" content="Log in and create a committee with Quorum." />
         </Helmet>
         <ConnectionStatus />
         <Grid
