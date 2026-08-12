@@ -57,16 +57,22 @@ integration('PostgreSQL migrations', () => {
       );
       const applied = await pool.query('SELECT version FROM quorum_meta.schema_migrations');
 
-      expect(first).toEqual(expect.objectContaining({ready: true, latestAppliedVersion: 3}));
+      expect(first).toEqual(expect.objectContaining({ready: true, latestAppliedVersion: 4}));
       expect(second).toEqual(expect.objectContaining({ready: true, pendingVersions: []}));
       expect(status.ready).toBe(true);
-      expect(runtime.rows[0]?.schema_compatibility).toBe(3);
-      expect(applied.rowCount).toBe(3);
+      expect(runtime.rows[0]?.schema_compatibility).toBe(4);
+      expect(applied.rowCount).toBe(4);
       const stage3Tables = await pool.query<{name: string}>(`SELECT table_name AS name FROM information_schema.tables
         WHERE table_schema='public' AND table_name IN ('committees','committee_memberships','committee_capabilities',
         'committee_seats','seat_assignments','seat_invitations','rule_packages','rule_package_versions',
         'committee_rule_bindings','chair_rule_overrides','committee_events','audit_log')`);
       expect(stage3Tables.rowCount).toBe(12);
+      const stage4Tables = await pool.query<{name: string}>(`SELECT table_name AS name FROM information_schema.tables
+        WHERE table_schema='public' AND table_name IN ('country_templates','country_template_countries',
+        'committee_templates','committee_template_members','committee_notes','committee_text_posts',
+        'meeting_sessions','roll_calls','roll_call_seats','roll_call_entries','attendance_events',
+        'current_attendance','points','idempotency_keys')`);
+      expect(stage4Tables.rowCount).toBe(14);
     } finally {
       await pool.end();
     }
