@@ -362,6 +362,17 @@ export class Stage6StorageService {
       before: versionNumber === 1 ? null : {revision: (entry?.revision ?? 2) - 1},
       after: {status: 'UPLOAD_COMPLETE', revision: entry?.revision ?? 1, versionNumber,
         sizeBytes: verifiedSize, sha256: verifiedHash}});
+    await client.query('UPDATE committees SET file_manifest_revision=file_manifest_revision+1 WHERE id=$1',
+      [committee.id]);
+    const migrations = await client.query<{id: string; revision: number}>(`UPDATE storage_migrations
+      SET status='FAILED',ready_at=NULL,revision=revision+1,failure_code='MANIFEST_CHANGED',
+        failure_reason='The file manifest changed during copying.',updated_at=now()
+      WHERE committee_id=$1 AND status IN ('COPYING','READY_TO_CONFIRM') RETURNING id,revision`, [committee.id]);
+    for (const migration of migrations.rows) {
+      await appendEvent(client, committee, {type: 'storage.migration_failed', resourceType: 'storage_migration',
+        resourceId: migration.id, revision: migration.revision, audience: 'CHAIR',
+        payload: {status: 'FAILED', failureCode: 'MANIFEST_CHANGED'}});
+    }
     return fileState(client, entry as FileEntryRow);
   }
 
@@ -391,14 +402,35 @@ export class Stage6StorageService {
         (id,committee_id,file_entry_id,last_content_revision,deleted_by_user_id,deleted_at)
         VALUES ($1,$2,$3,$4,$5,$6)`,
       [tombstoneId, committee.id, entry.id, entry.revision, auth.user.id, deleted.rows[0]?.deleted_at]);
-      await client.query(`UPDATE file_blobs b SET durability_state='DELETE_PENDING',updated_at=now()
-        FROM file_versions v WHERE v.file_entry_id=$1 AND v.blob_id=b.id AND b.durability_state='COMMITTED'`, [entry.id]);
-      const deleteBlobs = await client.query<{blob_id: string}>(
+      const contentBlobs = await client.query<{blob_id: string}>(
         'SELECT blob_id FROM file_versions WHERE file_entry_id=$1', [entry.id]);
+      const contentIds = contentBlobs.rows.map(row => row.blob_id);
+      const deleteBlobs = await client.query<{blob_id: string}>(`SELECT blob_id FROM file_versions
+        WHERE file_entry_id=$1 UNION SELECT c.copy_blob_id FROM file_blob_copies c
+        WHERE c.content_blob_id=ANY($2::uuid[])`, [entry.id, contentIds]);
+      await client.query(`DELETE FROM file_blob_copies WHERE content_blob_id=ANY($1::uuid[])`, [contentIds]);
+      await client.query(`UPDATE file_blobs SET durability_state='DELETE_PENDING',updated_at=now()
+        WHERE id=ANY($1::uuid[]) AND durability_state='COMMITTED'`, [deleteBlobs.rows.map(row => row.blob_id)]);
+      await client.query(`UPDATE storage_migration_items item SET status='CANCELLED',claimed_at=NULL,claim_token=NULL,
+        completed_at=NULL,failure_code=NULL,failure_reason=NULL,updated_at=now()
+        FROM storage_migrations migration WHERE item.migration_id=migration.id
+          AND item.content_blob_id=ANY($1::uuid[]) AND item.status<>'CANCELLED'
+          AND migration.status IN ('COPYING','READY_TO_CONFIRM','FAILED')`, [contentIds]);
       for (const blob of deleteBlobs.rows) {
         await client.query(`INSERT INTO file_blob_delete_jobs (id,committee_id,file_entry_id,blob_id)
           VALUES ($1,$2,$3,$4) ON CONFLICT (blob_id) DO NOTHING`,
         [randomUUID(), committee.id, entry.id, blob.blob_id]);
+      }
+      await client.query('UPDATE committees SET file_manifest_revision=file_manifest_revision+1 WHERE id=$1',
+        [committee.id]);
+      const migrations = await client.query<{id: string; revision: number}>(`UPDATE storage_migrations
+        SET status='FAILED',ready_at=NULL,revision=revision+1,failure_code='MANIFEST_CHANGED',
+          failure_reason='The file manifest changed during copying.',updated_at=now()
+        WHERE committee_id=$1 AND status IN ('COPYING','READY_TO_CONFIRM') RETURNING id,revision`, [committee.id]);
+      for (const migration of migrations.rows) {
+        await appendEvent(client, committee, {type: 'storage.migration_failed', resourceType: 'storage_migration',
+          resourceId: migration.id, revision: migration.revision, audience: 'CHAIR',
+          payload: {status: 'FAILED', failureCode: 'MANIFEST_CHANGED'}});
       }
       await appendEvent(client, committee, {type: 'file.deleted', resourceType: 'file_entry', resourceId: entry.id,
         revision: entry.revision + 1, payload: {status: 'DELETED'}});

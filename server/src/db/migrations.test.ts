@@ -191,6 +191,21 @@ describe('migration discovery', () => {
     expect(review?.sql).toContain('schema_compatibility = 17');
   });
 
+  it('adds fenced provider migrations and immutable blob-copy locations', async () => {
+    const migrations = await loadMigrations(resolve('server/migrations'));
+    const switching = migrations.find(migration => migration.version === 18);
+    expect(switching?.name).toBe('storage_provider_migrations');
+    expect(switching?.sql).toContain('file_manifest_revision');
+    expect(switching?.sql).toContain('verified_revision');
+    expect(switching?.sql).toContain('CREATE TABLE storage_migrations');
+    expect(switching?.sql).toContain('CREATE TABLE storage_migration_items');
+    expect(switching?.sql).toContain('CREATE TABLE file_blob_copies');
+    expect(switching?.sql).toContain('claim_token uuid');
+    expect(switching?.sql).toContain('storage_migrations_one_open_per_committee');
+    expect(switching?.sql).toContain('enforce_file_blob_copy_integrity');
+    expect(switching?.sql).toContain('schema_compatibility = 18');
+  });
+
   it('rejects SQL files outside the versioned naming contract', async () => {
     const directory = await temporaryDirectory();
     await writeFile(join(directory, 'first.sql'), 'SELECT 1;\n');

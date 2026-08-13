@@ -183,6 +183,10 @@ Agent 重连后先拉取墓碑和服务端 manifest，再上报本地变化，�
 
 复制期间旧 provider 继续提供服务。数据库中的文件记录只在整个切换成功后指向新 binding。
 
+阶段 6.6 已实现服务器卷与 S3 compatible provider 之间的切换。实际模型不改写追加保存的 `file_versions`：每个版本仍指向逻辑内容 blob，`file_blob_copies` 保存同一大小/SHA-256 在各 binding 上的已验证副本；下载按委员会活动 binding 解析副本。后台 worker 通过服务器生成的 durable staging key 流式复制，claim token 和 manifest revision 分别防止 stale worker 与复制期间内容变化。只有全部历史版本副本完成目标重读校验后，确认事务才切换 binding。
+
+S3 目标要求当前配置 revision 已由系统管理员完成连通性验证。复制失败或 manifest 变化保留旧 binding 并进入显式重试；取消只清理目标副本。成功后退休源副本暂时保留，避免切换确认与危险物理删除耦合；后续容量清理必须先证明目标仍是完整有效副本。
+
 ## 10. 配额和运行保护
 
 - 默认单文件限制 20 MiB，由系统管理员调高。

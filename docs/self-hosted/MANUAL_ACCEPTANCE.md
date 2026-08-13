@@ -122,7 +122,7 @@
 
 - 前置条件：PostgreSQL 16；`TEST_DATABASE_ADMIN_URL` 指向可创建和删除数据库的管理员连接。
 - 操作步骤：执行 `TEST_DATABASE_ADMIN_URL=postgresql://... pnpm test:self-host:integration`；确认测试创建随机临时数据库，从空库执行全部 migration，再执行一次；检查阶段 3 表、外键、部分唯一索引、邀请码约束、已发布规则版本和审计追加限制。
-- 通过条件：两次 migration 均成功；当前 schema compatibility 为 16，且 12 个阶段 3 核心表继续存在；同一用户的第二个活动席位被拒绝；已发布规则版本和审计记录不能更新或删除；测试数据库最终清理。
+- 通过条件：两次 migration 均成功；当前 schema compatibility 为 18，且 12 个阶段 3 核心表继续存在；同一用户的第二个活动席位被拒绝；已发布规则版本和审计记录不能更新或删除；测试数据库最终清理。
 - 自动化覆盖情况：`server/src/db/migrations.integration.test.ts` 检查空库、重复执行和表清单；`server/src/modules/stage3/postgres.integration.test.ts` 检查索引、外键、历史行和不可变触发器。未配置 URL 时测试明确 skip。
 - 当前状态：因无服务器延期。
 - 需要保存的证据：测试输出、`quorum_meta.schema_migrations`、表与索引查询、触发器失败结果和临时数据库清理记录。
@@ -160,7 +160,7 @@
 
 - 前置条件：PostgreSQL 16；`TEST_DATABASE_ADMIN_URL` 指向可创建和删除数据库的管理员连接。
 - 操作步骤：执行 `TEST_DATABASE_ADMIN_URL=postgresql://... pnpm test:self-host:integration`；检查 migration 4、模板隔离、幂等键、revision 冲突、软删除、并发点名和追加式出席事件用例。
-- 通过条件：schema compatibility 为 16；migration 4 的表、外键、唯一索引和追加式触发器均生效；并发写只有一个符合 revision 的请求成功；临时数据库最终清理。
+- 通过条件：schema compatibility 为 18；migration 4 的表、外键、唯一索引和追加式触发器均生效；并发写只有一个符合 revision 的请求成功；临时数据库最终清理。
 - 自动化覆盖情况：migration 与 `server/src/modules/stage4/postgres.integration.test.ts` 已实现；当前环境未提供 PostgreSQL，因此明确 skip。
 - 当前状态：因无服务器延期。
 - 需要保存的证据：测试输出、migration 表、阶段 4 表与索引查询、并发结果和临时数据库清理记录。
@@ -209,7 +209,7 @@
 
 - 前置条件：PostgreSQL 16；`TEST_DATABASE_ADMIN_URL` 指向可创建和删除数据库的管理员连接。
 - 操作步骤：执行 `TEST_DATABASE_ADMIN_URL=postgresql://... pnpm test:self-host:integration`；保留 migration 5–12、两名 Chair 并发重排和同席位两名代表并发投票的输出。
-- 通过条件：schema compatibility 为 16；空库 migration 和重复执行成功；并发重排只有一个 revision 成功且活动位置唯一；同席位并发投票只有一张当前票；临时数据库被清理。
+- 通过条件：schema compatibility 为 18；空库 migration 和重复执行成功；并发重排只有一个 revision 成功且活动位置唯一；同席位并发投票只有一张当前票；临时数据库被清理。
 - 自动化覆盖情况：`server/src/db/migrations.integration.test.ts` 与 `server/src/modules/stage5/postgres.integration.test.ts` 已实现；未配置 URL 时明确 skip。
 - 当前状态：因无服务器延期。
 - 需要保存的证据：完整测试输出、`quorum_meta.schema_migrations`、相关唯一索引和触发器查询、两组并发结果及临时数据库清理记录。
@@ -279,13 +279,13 @@
 
 ## 阶段 6：服务器卷和 S3 文件
 
-当前环境未提供 `TEST_DATABASE_ADMIN_URL`、PostgreSQL 客户端、Docker 持久卷、S3 兼容测试桶或 TLS 浏览器。阶段 6.1–6.5 的真实 PostgreSQL 集成测试已编写但明确 skip；以下项目尚未通过。
+当前环境未提供 `TEST_DATABASE_ADMIN_URL`、PostgreSQL 客户端、Docker 持久卷、S3 兼容测试桶或 TLS 浏览器。阶段 6.1–6.6 的真实 PostgreSQL 集成测试已编写但明确 skip；以下项目尚未通过。
 
 ### SH-MAN-501 文件版本、绑定、事务和墓碑
 
 - 前置条件：PostgreSQL 16；`TEST_DATABASE_ADMIN_URL` 指向可创建和删除数据库的管理员连接。
 - 操作步骤：执行 `TEST_DATABASE_ADMIN_URL=postgresql://... pnpm test:self-host:integration`；检查 migration 13；创建服务器卷绑定和两个文件版本；注入审计写入失败；删除文件后尝试修改版本、删除墓碑和追加旧文件版本。
-- 通过条件：schema compatibility 为 17；一个委员会最多一个活动 binding；版本保存服务端大小和 SHA-256 且不可修改；故障时文件、事件、审计和幂等记录全部回滚；删除立即清除当前版本、追加唯一墓碑并标记 blob 待删；旧副本不能追加版本；系统管理员没有隐式 Chair 权限。
+- 通过条件：schema compatibility 为 18；一个委员会最多一个活动 binding；版本保存服务端大小和 SHA-256 且不可修改；故障时文件、事件、审计和幂等记录全部回滚；删除立即清除当前版本、追加唯一墓碑并标记 blob 待删；旧副本不能追加版本；系统管理员没有隐式 Chair 权限。
 - 自动化覆盖情况：migration 静态测试和无数据库校验已通过；`server/src/modules/storage/postgres.integration.test.ts` 覆盖真实 PostgreSQL 事务、追加历史、故障回滚和删除防复活，未配置 URL 时明确 skip。
 - 当前状态：因无服务器延期。
 - 需要保存的证据：完整测试输出、migration 13 表/约束/触发器查询、file entry/version/blob/tombstone 脱敏查询、事件与审计计数、故障注入回滚结果和临时数据库清理记录。证据不得包含二进制内容或 provider 密钥。
@@ -325,3 +325,12 @@
 - 自动化覆盖情况：migration、下载头、HTTP 路由、SERVER_VOLUME/S3 删除原语和共享契约测试已在当前 WSL 通过；真实 PostgreSQL 用例覆盖角色、公开/私有可见性、revision、幂等重放、暂停、状态/事件/审计原子性、服务器卷/S3 下载、逻辑删除、删除任务完成/重试/stale claim 和停用配置读取，未配置 URL 时明确 skip。真实 TLS 浏览器的响应头执行隔离、大文件下载内存、真实 S3 停用配置、进程终止、数据库完成故障和持久卷重启尚未执行。
 - 当前状态：因无服务器、真实 PostgreSQL、测试桶和 TLS 浏览器延期。
 - 需要保存的证据：各角色脱敏响应矩阵、浏览器 Network/Security 截图、`Content-Disposition`/`Content-Type`/安全头、下载 SHA-256、file entry/version/blob/tombstone/delete-job/event/audit/idempotency 脱敏查询、provider 对象前后清单、每次故障与重启的时间线及 worker 日志。不得保存文件正文、Session、CSRF token、S3 凭据或 master key。
+
+### SH-MAN-506 provider 切换、回退与进程恢复
+
+- 前置条件：真实 PostgreSQL 16；一个持久 `SERVER_VOLUME`；至少两个独立、当前 revision 已验证的 S3 compatible 配置；Owner、Chair、普通 member 和系统管理员账号；可篡改或删除测试对象、暂停委员会、终止应用进程并并行启动两个应用实例的隔离环境。
+- 操作步骤：创建含多个文件和历史版本的委员会，分别执行 `SERVER_VOLUME→S3`、`S3→SERVER_VOLUME` 和两个 S3 配置间的迁移；复制期间持续下载并核对仍由源 binding 服务；分别制造源短写/长写/哈希错误、目标 PUT/GET 失败、目标对象损坏、数据库 item 完成事务失败，以及目标写成功后立即终止进程；等待 stale claim 后恢复并重试。复制期间新增版本和删除文件，确认 manifest 冲突后重新规划；在 `READY_TO_CONFIRM` 后损坏目标再确认；分别测试陈旧 revision、重复幂等键、不同请求复用同一键、错误角色、只有系统管理员角色、暂停/归档状态、并发创建、取消及取消后晚到完成。最后确认成功迁移并下载全部当前版本，再停用源 S3 配置检查退休源副本仍可供受控恢复。
+- 通过条件：复制、失败和重试期间 `committees.active_storage_binding_id` 与下载来源始终保持旧 provider；目标 key 和 durable staging key 不含用户文件名；每个目标副本重读后的大小和 SHA-256 与逻辑内容一致；失败、进程终止、stale claim 或数据库回滚不会产生部分 binding 切换或重复逻辑版本；manifest 变化要求显式 retry，确认前再次损坏目标会拒绝切换；成功确认在一个事务内退役源 binding、激活目标 binding、更新委员会和完成 migration，历史 `file_versions.blob_id` 保持不变；取消保持源内容，目标副本和取消后晚到写入只进入 durable delete job；Owner/Chair 以外角色、暂停/归档状态和陈旧 revision 被拒绝，系统管理员没有隐式 Chair 权限；同一幂等请求精确重放，冲突请求被拒绝；两个应用实例可以通过 claim token 协作且旧 worker 不能覆盖新 claim。
+- 自动化覆盖情况：当前 WSL 的 migration 静态、copy streaming、HTTP、worker 和共享契约测试已通过；真实 PostgreSQL 用例覆盖双向 provider 切换、故障/重试、manifest 变化、取消、权限、暂停、revision、幂等与事务原子性，未配置 `TEST_DATABASE_ADMIN_URL` 时明确 skip。真实 S3、持久卷、进程终止、两个应用实例、网络故障和退休源恢复尚未执行。
+- 当前状态：因无真实 PostgreSQL、持久卷、S3 compatible 测试桶和多实例环境延期。
+- 需要保存的证据：迁移/item/copy/binding/file blob/event/audit/idempotency 脱敏查询、源与目标对象清单和 SHA-256、下载来源与结果、每个故障点的时间线、进程终止及 stale claim 恢复日志、两个实例的 claim token 记录和最终 active binding。不得保存文件正文、Session、CSRF token、S3 凭据或 master key。

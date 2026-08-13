@@ -6,10 +6,10 @@
 
 - 更新时间：2026-08-13
 - 分支：`self-host`
-- 已确认基线：`de214c1 stage 6.4: add S3 compatible storage`
-- 当前阶段：6.5 文件审核、发布、授权下载和永久删除已完成并单独提交。
-- 当前工作：按 `STAGE_6_6_HANDOFF_PROMPT.md` 开始实施 provider 切换与失败回退。
-- 下一步：复跑 6.5 针对性测试和 `pnpm build:self-host`，再建立 durable provider migration 与逐 blob copy worker。
+- 已确认基线：`3fe305d stage 6.5: publish and delete stored files`
+- 当前阶段：6.6 provider 切换与失败回退已实现并通过当前 WSL 可执行的验证。
+- 当前工作：单独提交阶段 6.6。
+- 下一步：按 `STAGE_6_7_HANDOFF_PROMPT.md` 复跑 6.6 基线，然后实施磁盘阈值和后台清理。
 
 ## 已完成与验证
 
@@ -46,6 +46,7 @@
 - `1119c2a`：阶段 6.3 `SERVER_VOLUME` provider。
 - `de214c1`：阶段 6.4 `S3_COMPATIBLE` provider。
 - 阶段 6.5 文件审核、授权下载和永久删除任务：提交以当前 `git log` 为准。
+- 阶段 6.6 provider 切换与失败回退：提交以当前 `git log` 为准。
 
 ### 2026-08-13：阶段 6.3 SERVER_VOLUME provider
 
@@ -93,3 +94,20 @@
 - `git diff --check`：通过。
 - 当前 WSL 仍没有真实 PostgreSQL、持久卷、S3 compatible 测试桶或 TLS 浏览器；角色矩阵、危险类型浏览器隔离、真实 provider 下载/删除、进程终止和 stale claim 恢复记录在 `MANUAL_ACCEPTANCE.md` 的 SH-MAN-505。
 - 阶段 6.5 已单独提交；提交以当前 `git log` 为准。
+
+### 2026-08-13：阶段 6.6 provider 切换与失败回退
+
+- migration 18 增加 provider migration、逐内容 copy item、同内容跨 binding 已验证副本、manifest revision、claim token 和 S3 配置 revision 验证状态；schema compatibility 为 18。
+- Owner 或 Chair 可创建、重试、确认和取消切换；同源 HTTP 保持 Session、Origin、CSRF、revision、幂等键和暂停状态边界，系统管理员不自动获得 Chair 权限。
+- 目标 binding 在复制期保持 `MIGRATING`，旧 binding 继续为活动读取来源。常驻 worker 从源 provider 校验读取，经服务器生成的 durable staging key 流式复制，再从目标重读校验大小和 SHA-256。
+- `file_versions.blob_id` 保持不可变；`file_blob_copies` 保存逻辑内容在目标 binding 上的物理副本。只有 manifest 未变且所有历史版本目标副本再次验证，确认事务才同时退役源 binding、激活目标 binding、更新委员会并完成 migration。
+- 新版本和逻辑删除递增 manifest revision 并使进行中的 migration 以 `MANIFEST_CHANGED` 失败；retry 补齐新内容并取消已删除内容。provider/数据库故障、stale claim 和取消都保持源 binding 生效；取消和晚到目标写入进入 durable delete job。
+- S3 迁移目标必须是活动且当前 revision 已验证的配置；配置更新会清除验证状态。已停用 S3 配置仍可读取和删除已有 blob。
+- 阶段 6.5 基线复跑：针对性 Vitest 47 项通过、20 项 PostgreSQL 用例明确 skip；`pnpm build:self-host` 通过，仅有既有 Vite 大分块警告。
+- 最终针对性 Vitest：5 个文件、34 项通过；1 个 PostgreSQL 文件、26 项因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip。
+- `pnpm test:self-host`：38 个文件、173 项通过；6 个 PostgreSQL 集成文件、43 项明确 skip。仅出现既有 React/Semantic UI 弃用警告。
+- `pnpm build:self-host`：通过；contracts、前端、rule-schema 和 server 均构建成功，Vite 仅报告既有的大分块警告。
+- `pnpm test:self-host:integration`：6 个文件、43 项因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip。
+- `git diff --check`：通过。
+- 当前 WSL 仍没有真实 PostgreSQL、持久卷、S3 compatible 测试桶、多实例或 TLS 浏览器；双向迁移、真实 provider 故障、进程终止、stale claim 和确认前目标损坏记录在 `MANUAL_ACCEPTANCE.md` 的 SH-MAN-506。
+- 阶段 6.6 已完成当前 WSL 可执行的验证；单独提交后直接进入 6.7。

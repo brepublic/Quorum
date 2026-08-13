@@ -11,6 +11,7 @@ import type {Stage6ProviderCommitService} from '../modules/storage/provider-comm
 import type {Stage6S3ConfigService} from '../modules/storage/s3-config-service';
 import type {Stage6StorageService} from '../modules/storage/service';
 import type {Stage6FileService} from '../modules/storage/file-service';
+import type {Stage6MigrationService} from '../modules/storage/migration-service';
 import {createRequestHandler} from './app';
 
 const authenticated = {sessionId: 'session', user: {id: '10000000-0000-4000-8000-000000000001',
@@ -30,6 +31,7 @@ async function send(uploads: Stage6UploadService, options: {
   method: 'GET' | 'POST' | 'PUT' | 'DELETE'; path: string; chunks: Buffer[]; headers?: Record<string, string>;
 }, providerCommits?: Stage6ProviderCommitService, extras: {
   s3Configs?: Stage6S3ConfigService; storage?: Stage6StorageService; files?: Stage6FileService;
+  storageMigrations?: Stage6MigrationService;
 } = {}) {
   const identity = {authenticate: vi.fn(async () => authenticated)} as unknown as IdentityService;
   const handler = createRequestHandler({health: {ready: async () => ({ready: true, checks: {
@@ -174,5 +176,36 @@ describe('stage 6 upload HTTP boundary', () => {
     expect(response.headers.get('content-type')).toBe('application/octet-stream');
     expect(response.headers.get('content-disposition')).toBe('attachment; filename="download.svg"');
     expect(download).toHaveBeenCalledWith(authenticated, fileId);
+  });
+
+  it('routes provider migration creation and commands through the same write boundary', async () => {
+    const committeeId = '20000000-0000-4000-8000-000000000001';
+    const migrationId = '50000000-0000-4000-8000-000000000001';
+    const list = vi.fn(async () => [{id: migrationId}]);
+    const create = vi.fn(async () => ({id: migrationId, status: 'COPYING'}));
+    const retry = vi.fn(async () => ({id: migrationId, status: 'COPYING'}));
+    const confirm = vi.fn(async () => ({id: migrationId, status: 'COMPLETED'}));
+    const cancel = vi.fn(async () => ({id: migrationId, status: 'CANCELLED'}));
+    const service = {list, create, retry, confirm, cancel} as unknown as Stage6MigrationService;
+    const listed = await send({} as Stage6UploadService, {method: 'GET',
+      path: `/api/v1/committees/${committeeId}/storage-migrations`, chunks: []}, undefined,
+    {storageMigrations: service});
+    expect(listed.statusCode).toBe(200);
+    expect(list).toHaveBeenCalledWith(authenticated, committeeId);
+
+    const createBody = {baseRevision: 4, targetProviderType: 'S3_COMPATIBLE',
+      targetProviderConfigId: '60000000-0000-4000-8000-000000000001'};
+    await send({} as Stage6UploadService, {method: 'POST',
+      path: `/api/v1/committees/${committeeId}/storage-migrations`,
+      chunks: [Buffer.from(JSON.stringify(createBody))]}, undefined, {storageMigrations: service});
+    expect(create).toHaveBeenCalledWith(authenticated, committeeId, createBody, 'upload-key', expect.anything());
+
+    for (const [command, method] of [['retry', retry], ['confirm', confirm], ['cancel', cancel]] as const) {
+      const body = {baseRevision: 2};
+      await send({} as Stage6UploadService, {method: 'POST',
+        path: `/api/v1/storage-migrations/${migrationId}/${command}`,
+        chunks: [Buffer.from(JSON.stringify(body))]}, undefined, {storageMigrations: service});
+      expect(method).toHaveBeenCalledWith(authenticated, migrationId, body, 'upload-key', expect.anything());
+    }
   });
 });

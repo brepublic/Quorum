@@ -34,6 +34,7 @@ export interface S3ProviderConfigSummary {
   allowPrivateNetwork: boolean;
   status: 'ACTIVE' | 'DISABLED';
   credentialKeyVersion: number;
+  verifiedAt: string | null;
   revision: number;
   createdAt: string;
   updatedAt: string;
@@ -72,6 +73,33 @@ export interface FileBlobDeleteJob {
   status: 'PENDING' | 'IN_PROGRESS' | 'RETRY' | 'COMPLETED';
   attempts: number;
   nextAttemptAt: string;
+  failureCode: string | null;
+}
+
+export type StorageMigrationStatus = 'COPYING' | 'READY_TO_CONFIRM' | 'FAILED' | 'COMPLETED' | 'CANCELLED';
+
+export interface StorageMigration {
+  id: string;
+  committeeId: string;
+  sourceBindingId: string;
+  targetBindingId: string;
+  status: StorageMigrationStatus;
+  manifestRevision: number;
+  revision: number;
+  totalItems: number;
+  completedItems: number;
+  failureCode: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface StorageMigrationItem {
+  id: string;
+  migrationId: string;
+  contentBlobId: string;
+  targetBlobId: string;
+  status: 'PENDING' | 'IN_PROGRESS' | 'RETRY' | 'COMPLETED' | 'CANCELLED';
+  attempts: number;
   failureCode: string | null;
 }
 

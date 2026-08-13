@@ -59,8 +59,14 @@ const FILE_SELECT = `SELECT e.id,e.committee_id,e.logical_name,e.media_type AS e
   v.id AS version_id,v.version_number,v.original_name,v.media_type AS version_media_type,
   v.size_bytes,encode(v.sha256,'hex') AS sha256_hex,v.blob_id,v.created_at AS version_created_at,
   b.storage_key,sb.provider_type,sb.provider_config_id
-  FROM file_entries e JOIN file_versions v ON v.id=e.current_version_id
-  JOIN file_blobs b ON b.id=v.blob_id JOIN storage_bindings sb ON sb.id=b.storage_binding_id`;
+  FROM file_entries e JOIN committees committee ON committee.id=e.committee_id
+  JOIN file_versions v ON v.id=e.current_version_id JOIN file_blobs content ON content.id=v.blob_id
+  LEFT JOIN file_blob_copies location ON location.content_blob_id=content.id
+    AND location.storage_binding_id=committee.active_storage_binding_id
+  LEFT JOIN file_blobs replica ON replica.id=location.copy_blob_id AND replica.durability_state='COMMITTED'
+  JOIN file_blobs b ON b.id=CASE WHEN content.storage_binding_id=committee.active_storage_binding_id
+    THEN content.id ELSE replica.id END
+  JOIN storage_bindings sb ON sb.id=b.storage_binding_id`;
 
 function mapFile(row: FileRow): FileEntry {
   return {id: row.id, committeeId: row.committee_id, logicalName: row.logical_name,

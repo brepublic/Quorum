@@ -23,6 +23,8 @@ interface ConfigRow extends QueryResultRow {
   credentials_nonce: Buffer;
   credentials_auth_tag: Buffer;
   credential_key_version: number;
+  verified_revision: number | null;
+  verified_at: Date | null;
   revision: number;
   created_at: Date;
   updated_at: Date;
@@ -70,6 +72,7 @@ function summary(row: ConfigRow): S3ProviderConfigSummary {
     allowPrivateNetwork: row.allow_private_network,
     status: row.status,
     credentialKeyVersion: row.credential_key_version,
+    verifiedAt: row.verified_revision === row.revision ? row.verified_at?.toISOString() ?? null : null,
     revision: row.revision,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString()
@@ -153,7 +156,7 @@ export class Stage6S3ConfigService {
         const updated = await client.query<ConfigRow>(`UPDATE storage_provider_configs SET display_name=$2,
           endpoint=$3,region=$4,bucket=$5,key_prefix=$6,force_path_style=$7,allow_private_network=$8,status=$9,
           credentials_ciphertext=$10,credentials_nonce=$11,credentials_auth_tag=$12,credential_key_version=$13,
-          revision=revision+1,updated_at=now() WHERE id=$1 RETURNING *`,
+          verified_revision=NULL,verified_at=NULL,revision=revision+1,updated_at=now() WHERE id=$1 RETURNING *`,
         [id, input.displayName, input.endpoint, input.region, input.bucket, input.prefix, input.forcePathStyle,
           input.allowPrivateNetwork, value.status, encrypted.ciphertext, encrypted.nonce, encrypted.authTag,
           encrypted.keyVersion]);
@@ -177,11 +180,17 @@ export class Stage6S3ConfigService {
     return idempotentTransaction({pool: this.pool, auth,
       route: `/api/v1/admin/storage-provider-configs/${id}/verify`, key: idempotencyKey,
       request: {}, status: 200, work: async client => {
+        const verified = await client.query<ConfigRow>(`UPDATE storage_provider_configs
+          SET verified_revision=revision,verified_at=now(),updated_at=now()
+          WHERE id=$1 AND revision=$2 RETURNING *`, [id, row.revision]);
+        if (!verified.rows[0]) {
+          throw new AppError({code: 'REVISION_CONFLICT', message: 'This provider config changed during verification.'});
+        }
         await audit(client, context, {actorUserId: auth.user.id,
           capabilities: ['SYSTEM_ADMIN'], action: 'storage.provider_config_verified',
           resourceType: 'storage_provider_config', resourceId: id,
           after: {status: row.status, revision: row.revision}});
-        return summary(row);
+        return summary(verified.rows[0]);
       }});
   }
 
@@ -191,6 +200,10 @@ export class Stage6S3ConfigService {
 
   async providerForStoredBlob(configId: string): Promise<S3ProviderConfig> {
     return this.provider(await this.loadRow(configId, false));
+  }
+
+  async providerForMigrationTarget(configId: string): Promise<S3ProviderConfig> {
+    return this.provider(await this.loadRow(configId, true, true));
   }
 
   private provider(row: ConfigRow): S3ProviderConfig {
@@ -204,9 +217,11 @@ export class Stage6S3ConfigService {
     return {...endpoint, credentials};
   }
 
-  private async loadRow(id: string, activeOnly: boolean): Promise<ConfigRow> {
+  private async loadRow(id: string, activeOnly: boolean, verifiedOnly = false): Promise<ConfigRow> {
     const result = await this.pool.query<ConfigRow>(`SELECT * FROM storage_provider_configs WHERE id=$1
-      AND provider_type='S3_COMPATIBLE' AND ($2::boolean=false OR status='ACTIVE')`, [id, activeOnly]);
+      AND provider_type='S3_COMPATIBLE' AND ($2::boolean=false OR status='ACTIVE')
+      AND ($3::boolean=false OR (verified_revision=revision AND verified_at IS NOT NULL))`,
+    [id, activeOnly, verifiedOnly]);
     if (!result.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'S3 provider config not found.'});
     return result.rows[0];
   }

@@ -814,6 +814,24 @@ DELETE /api/v1/files/:id
 
 逻辑删除在一个 PostgreSQL 幂等事务中清除当前版本、增加 revision、追加不含内容的墓碑、把所有版本 blob 标为 `DELETE_PENDING`、为每个 blob 创建唯一 `file_blob_delete_job`，并写入事件和审计；事务失败时全部回滚。文件随后立即从列表、详情和下载消失。worker 原语使用 `FOR UPDATE SKIP LOCKED` 一次 claim 一个任务，在记录该 blob 的原 provider 上执行幂等删除；成功后原子标记 job `COMPLETED` 和 blob `DELETED`，失败保存稳定 failure code 并指数退避。进程崩溃遗留超过五分钟的 `IN_PROGRESS` claim 可重新领取；不存在的 provider 对象视为成功。阶段 6.5 尚未启动阶段 6.7 的常驻清理调度循环。
 
+## 11.8 阶段 6.6 provider 切换与失败回退契约
+
+```text
+GET  /api/v1/committees/:id/storage-migrations
+POST /api/v1/committees/:id/storage-migrations
+POST /api/v1/storage-migrations/:id/retry
+POST /api/v1/storage-migrations/:id/confirm
+POST /api/v1/storage-migrations/:id/cancel
+```
+
+Owner 或 Chair 以 `{baseRevision,targetProviderType,targetProviderConfigId?}` 创建切换；写命令继续要求 Session、允许的 Origin、匹配的 CSRF token、`Idempotency-Key` 和 revision。`SYSTEM_ADMIN` 不自动获得委员会权限。目标 binding 先进入 `MIGRATING`，源 binding 与 `committees.active_storage_binding_id` 保持 `ACTIVE`。S3 目标必须为活动配置，且系统管理员对当前配置 revision 完成 HEAD 验证；配置修改会清除验证状态。
+
+`storage_migrations` 冻结 `file_manifest_revision`，`storage_migration_items` 为每个未删除文件的所有不可变历史版本内容建立一个服务器生成的 target blob ID 和 durable staging key。后台 worker 从源 binding 解析原始或先前验证的副本，先校验源大小/SHA-256并逐块写入 durable staging，再提交目标 provider 和重读校验；用户文件名不参与路径。claim token 防止超时旧 worker 覆盖新 claim，五分钟 stale claim 可回收；失败保存稳定 code 并退避。目标副本以 `file_blob_copies(content_blob_id,storage_binding_id)` 关联，`file_versions.blob_id` 不改写。
+
+新版本或逻辑删除递增 manifest revision，并把进行中或待确认的 migration 标为 `FAILED/MANIFEST_CHANGED`。`retry` 重新快照：补充缺失内容，取消已删除内容的 item，并复用已完成目标副本。所有 item 完成且 manifest 未变时进入 `READY_TO_CONFIRM`。`confirm` 再次读取并校验全部目标副本，然后在一个 PostgreSQL 幂等事务中锁定委员会、migration 和两个 binding，重新检查 manifest/配置/副本集合，同时把源 binding 设为 `RETIRED`、目标设为 `ACTIVE`、更新活动 binding、完成 migration，并写事件和审计。任一失败都不改变活动源。
+
+`cancel` 保持源 binding 有效，把目标 binding 退役；已落地目标副本和取消后晚到的 provider 成功写入都标为 `DELETE_PENDING` 并进入阶段 6.5 的 durable delete job。源内容和墓碑不删除。完成切换后保留退休源副本作为安全冗余；其容量策略属于阶段 6.7，不在确认事务中冒险删除。
+
 ## 12. SSE 格式
 
 ```text

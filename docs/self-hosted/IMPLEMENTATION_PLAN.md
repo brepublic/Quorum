@@ -157,7 +157,7 @@ deploy/
 
 ## 9. 阶段 6：服务器卷和 S3 文件
 
-状态：6.1–6.5 的 PostgreSQL schema、共享契约、durable staging、流式上传、`SERVER_VOLUME`、`S3_COMPATIBLE`、文件审核/发布、授权下载和 durable 物理删除任务已完成；真实 PostgreSQL、持久卷和 S3 compatible 服务验收因当前环境未提供相应服务而延期。6.6–6.8 尚未实施。
+状态：6.1–6.6 的 PostgreSQL schema、共享契约、durable staging、流式上传、`SERVER_VOLUME`、`S3_COMPATIBLE`、文件审核/发布、授权下载、durable 物理删除任务和 provider 切换已完成；真实 PostgreSQL、持久卷和 S3 compatible 服务验收因当前环境未提供相应服务而延期。6.7–6.8 尚未实施。
 
 交付：
 
@@ -234,4 +234,4 @@ deploy/
 
 ## 14. 首个实现里程碑
 
-下一步只实施阶段 6.6：provider 切换与失败回退。复制期间旧 binding 必须继续提供读取；只有全部当前 blob 在目标 provider 完整复制并校验后才可原子切换，失败保留旧 binding 和可重试任务。保持 Firebase 默认运行时、同源安全边界和阶段 6.5 下载/删除语义不变，不提前实现磁盘阈值、Chair Local Agent、归档或 Firebase 移除。
+下一步只实施阶段 6.7：磁盘阈值和后台清理。80% 产生容量告警，90% 拒绝新内容上传但不影响下载或议事；只清理已提交、明确取消或失败且过期的 upload/staging，以及已有 durable delete job。任务必须幂等、有指标/审计、可恢复 claim，并让 readiness 准确反映必要存储不可用。保持 Firebase 默认运行时和阶段 6.6 provider 迁移语义，不提前实现文件 UI、Chair Local Agent、归档或 Firebase 移除。

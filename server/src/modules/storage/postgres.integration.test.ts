@@ -22,6 +22,7 @@ import {Stage6S3ConfigService} from './s3-config-service';
 import {Stage6S3CommitService} from './s3-commit-service';
 import {S3CompatibleStore, type S3Request, type S3Response, type S3Transport} from './s3-store';
 import {Stage6FileService} from './file-service';
+import {Stage6MigrationService} from './migration-service';
 
 const {Client, Pool} = pg;
 const adminUrl = process.env.TEST_DATABASE_ADMIN_URL;
@@ -39,6 +40,7 @@ let volume: ServerVolumeStore;
 let serverVolume: Stage6ServerVolumeService;
 let files: Stage6FileService;
 let fileS3Configs: Stage6S3ConfigService;
+let storageMigrations: Stage6MigrationService;
 let administrator: AuthenticatedSession;
 
 function quoteIdentifier(value: string): string {
@@ -77,6 +79,8 @@ beforeEach(async () => {
   fileS3Configs = new Stage6S3ConfigService(pool, new StorageCredentialCipher(Buffer.alloc(32, 7), 1),
     () => new IntegrationS3Transport());
   files = new Stage6FileService(pool, volume, fileS3Configs,
+    config => new S3CompatibleStore(config, new IntegrationS3Transport(), 20 * 1024 * 1024));
+  storageMigrations = new Stage6MigrationService(pool, staging, volume, fileS3Configs,
     config => new S3CompatibleStore(config, new IntegrationS3Transport(), 20 * 1024 * 1024));
   await stage3.ensureBuiltins();
   const secret = await identity.ensureBootstrapSecret();
@@ -132,16 +136,19 @@ async function storageFixture(visibility: 'PUBLIC' | 'PRIVATE' = 'PUBLIC') {
 
 class IntegrationS3Transport implements S3Transport {
   readonly objects = new Map<string, Buffer>();
+  failPut = false;
   failDelete = false;
+  corruptReads = false;
   async request(input: S3Request): Promise<S3Response> {
     if (input.method === 'PUT') {
+      if (this.failPut) throw new Error('put unavailable');
       const chunks: Buffer[] = [];
       for await (const chunk of input.body as AsyncIterable<Uint8Array>) chunks.push(Buffer.from(chunk));
       this.objects.set(input.key, Buffer.concat(chunks));
       return {statusCode: 200, headers: {}, body: (async function* () {})()};
     }
     if (input.method === 'GET') {
-      const content = this.objects.get(input.key);
+      const content = this.corruptReads ? Buffer.from('corrupt') : this.objects.get(input.key);
       return {statusCode: content ? 200 : 404, headers: {}, body: (async function* () {if (content) yield content;})()};
     }
     if (this.failDelete) throw new Error('delete unavailable');
@@ -169,6 +176,15 @@ async function s3Fixture() {
   const binding = await storage.createS3Binding(chair, committee.id,
     {baseRevision: committee.revision, providerConfigId: config.id}, 's3-binding', context('s3-binding'));
   return {owner, chair, member, committee, config, binding, configs};
+}
+
+async function createMigrationS3Config(name: string) {
+  const created = await fileS3Configs.create(administrator, {displayName: name, endpoint: 'https://s3.example.com',
+    region: 'ap-shanghai', bucket: 'quorum-files', prefix: name.toLowerCase().replaceAll(' ', '-'),
+    forcePathStyle: true, allowPrivateNetwork: false,
+    credentials: {accessKeyId: `${name}-access`, secretAccessKey: `${name}-secret`}},
+  `${name}-config`, context(`${name}-config`));
+  return fileS3Configs.verify(administrator, created.id, `${name}-verify`, context(`${name}-verify`));
 }
 
 async function committedServerFile(fixture: Awaited<ReturnType<typeof storageFixture>>, content: string,
@@ -767,5 +783,247 @@ integration('PostgreSQL stage 6 file metadata', () => {
       context('s3-delete'));
     expect((await s3Files.processNextDeleteJob())?.status).toBe('COMPLETED');
     expect(transport.objects.size).toBe(0);
+  });
+
+  it('copies SERVER_VOLUME blobs to S3 while the source stays active, then switches atomically', async () => {
+    const fixture = await storageFixture();
+    const content = 'provider migration content';
+    const file = await committedServerFile(fixture, content, 'migration-success');
+    const config = await createMigrationS3Config('Migration Success');
+    const transport = new IntegrationS3Transport();
+    const migrations = new Stage6MigrationService(pool as pg.Pool, staging, volume, fileS3Configs,
+      provider => new S3CompatibleStore(provider, transport, 20 * 1024 * 1024));
+    const created = await migrations.create(fixture.chair, fixture.committee.id, {
+      baseRevision: fixture.committee.revision + 1, targetProviderType: 'S3_COMPATIBLE',
+      targetProviderConfigId: config.id
+    }, 'create-migration-success', context('create-migration-success'));
+    expect(created).toEqual(expect.objectContaining({status: 'COPYING', totalItems: 1, completedItems: 0}));
+    expect((await files.download(fixture.member, file.id)).file.id).toBe(file.id);
+    const before = await pool?.query(`SELECT active_storage_binding_id FROM committees WHERE id=$1`,
+      [fixture.committee.id]);
+    expect(before?.rows[0]?.active_storage_binding_id).toBe(fixture.binding.id);
+
+    expect(await migrations.processNextCopyItem()).toEqual(expect.objectContaining({status: 'COMPLETED'}));
+    const ready = (await migrations.list(fixture.chair, fixture.committee.id))[0];
+    expect(ready).toEqual(expect.objectContaining({status: 'READY_TO_CONFIRM', completedItems: 1}));
+    transport.corruptReads = true;
+    await expect(migrations.confirm(fixture.chair, created.id, {baseRevision: ready?.revision},
+      'confirm-corrupt-target', context('confirm-corrupt-target'))).rejects.toMatchObject({code: 'SERVICE_NOT_READY'});
+    expect((await pool?.query('SELECT active_storage_binding_id FROM committees WHERE id=$1',
+      [fixture.committee.id]))?.rows[0]?.active_storage_binding_id).toBe(fixture.binding.id);
+    transport.corruptReads = false;
+    const completed = await migrations.confirm(fixture.chair, created.id, {baseRevision: ready?.revision},
+      'confirm-migration-success', context('confirm-migration-success'));
+    expect(completed.status).toBe('COMPLETED');
+    const bindings = await pool?.query(`SELECT id,status FROM storage_bindings WHERE committee_id=$1 ORDER BY id`,
+      [fixture.committee.id]);
+    expect(bindings?.rows).toEqual(expect.arrayContaining([
+      {id: fixture.binding.id, status: 'RETIRED'}, {id: created.targetBindingId, status: 'ACTIVE'}
+    ]));
+    const migratedFiles = new Stage6FileService(pool as pg.Pool, volume, fileS3Configs,
+      provider => new S3CompatibleStore(provider, transport, 20 * 1024 * 1024));
+    const download = await migratedFiles.download(fixture.member, file.id);
+    const chunks: Buffer[] = [];
+    for await (const chunk of download.content) chunks.push(chunk);
+    expect(Buffer.concat(chunks).toString()).toBe(content);
+    const immutable = await pool?.query(`SELECT v.blob_id,c.copy_blob_id FROM file_versions v
+      JOIN file_blob_copies c ON c.content_blob_id=v.blob_id WHERE v.file_entry_id=$1`, [file.id]);
+    expect(immutable?.rows[0]).toEqual({blob_id: file.currentVersion.blobId,
+      copy_blob_id: expect.not.stringContaining(file.currentVersion.blobId)});
+  });
+
+  it('keeps the source active on copy failure and resumes with the same target blob', async () => {
+    const fixture = await storageFixture();
+    const file = await committedServerFile(fixture, 'retry migration content', 'migration-retry');
+    const config = await createMigrationS3Config('Migration Retry');
+    const transport = new IntegrationS3Transport(); transport.failPut = true;
+    const migrations = new Stage6MigrationService(pool as pg.Pool, staging, volume, fileS3Configs,
+      provider => new S3CompatibleStore(provider, transport, 20 * 1024 * 1024));
+    const created = await migrations.create(fixture.owner, fixture.committee.id, {
+      baseRevision: fixture.committee.revision + 1, targetProviderType: 'S3_COMPATIBLE',
+      targetProviderConfigId: config.id
+    }, 'create-migration-retry', context('create-migration-retry'));
+    const failedItem = await migrations.processNextCopyItem();
+    expect(failedItem).toEqual(expect.objectContaining({status: 'RETRY', attempts: 1}));
+    const failed = (await migrations.list(fixture.owner, fixture.committee.id))[0];
+    expect(failed).toEqual(expect.objectContaining({status: 'FAILED', failureCode: 'S3_WRITE_FAILED'}));
+    expect((await files.get(fixture.member, file.id)).id).toBe(file.id);
+    expect((await pool?.query('SELECT active_storage_binding_id FROM committees WHERE id=$1',
+      [fixture.committee.id]))?.rows[0]?.active_storage_binding_id).toBe(fixture.binding.id);
+    transport.failPut = false;
+    const retried = await migrations.retry(fixture.owner, created.id, {baseRevision: failed?.revision},
+      'retry-migration', context('retry-migration'));
+    expect(retried.status).toBe('COPYING');
+    const targetBefore = failedItem?.targetBlobId;
+    const copied = await migrations.processNextCopyItem();
+    expect(copied).toEqual(expect.objectContaining({status: 'COMPLETED', targetBlobId: targetBefore}));
+  });
+
+  it('refreshes a changed manifest before allowing provider confirmation', async () => {
+    const fixture = await storageFixture();
+    await committedServerFile(fixture, 'first manifest file', 'manifest-first');
+    const config = await createMigrationS3Config('Manifest Refresh');
+    const transport = new IntegrationS3Transport();
+    const migrations = new Stage6MigrationService(pool as pg.Pool, staging, volume, fileS3Configs,
+      provider => new S3CompatibleStore(provider, transport, 20 * 1024 * 1024));
+    const created = await migrations.create(fixture.chair, fixture.committee.id, {
+      baseRevision: fixture.committee.revision + 1, targetProviderType: 'S3_COMPATIBLE',
+      targetProviderConfigId: config.id
+    }, 'create-manifest-migration', context('create-manifest-migration'));
+    await committedServerFile(fixture, 'second manifest file', 'manifest-second');
+    const failed = (await migrations.list(fixture.chair, fixture.committee.id))[0];
+    expect(failed).toEqual(expect.objectContaining({status: 'FAILED', failureCode: 'MANIFEST_CHANGED'}));
+    const refreshed = await migrations.retry(fixture.chair, created.id, {baseRevision: failed?.revision},
+      'refresh-manifest-migration', context('refresh-manifest-migration'));
+    expect(refreshed).toEqual(expect.objectContaining({status: 'COPYING', totalItems: 2}));
+    await migrations.processNextCopyItem(); await migrations.processNextCopyItem();
+    const ready = (await migrations.list(fixture.chair, fixture.committee.id))[0];
+    expect(ready).toEqual(expect.objectContaining({status: 'READY_TO_CONFIRM', completedItems: 2}));
+    expect((await migrations.confirm(fixture.chair, created.id, {baseRevision: ready?.revision},
+      'confirm-refreshed-migration', context('confirm-refreshed-migration'))).status).toBe('COMPLETED');
+  });
+
+  it('cancels verified target copies into durable delete jobs without touching the source', async () => {
+    const fixture = await storageFixture();
+    const file = await committedServerFile(fixture, 'cancel migration content', 'migration-cancel');
+    const config = await createMigrationS3Config('Migration Cancel');
+    const transport = new IntegrationS3Transport();
+    const migrations = new Stage6MigrationService(pool as pg.Pool, staging, volume, fileS3Configs,
+      provider => new S3CompatibleStore(provider, transport, 20 * 1024 * 1024));
+    const created = await migrations.create(fixture.chair, fixture.committee.id, {
+      baseRevision: fixture.committee.revision + 1, targetProviderType: 'S3_COMPATIBLE',
+      targetProviderConfigId: config.id
+    }, 'create-cancel-migration', context('create-cancel-migration'));
+    await migrations.processNextCopyItem();
+    const ready = (await migrations.list(fixture.chair, fixture.committee.id))[0];
+    const cancelled = await migrations.cancel(fixture.chair, created.id, {baseRevision: ready?.revision},
+      'cancel-migration', context('cancel-migration'));
+    expect(cancelled.status).toBe('CANCELLED');
+    expect((await pool?.query('SELECT active_storage_binding_id FROM committees WHERE id=$1',
+      [fixture.committee.id]))?.rows[0]?.active_storage_binding_id).toBe(fixture.binding.id);
+    expect((await files.get(fixture.member, file.id)).id).toBe(file.id);
+    const deletion = await pool?.query(`SELECT j.status,b.durability_state FROM file_blob_delete_jobs j
+      JOIN file_blobs b ON b.id=j.blob_id WHERE b.storage_binding_id=$1`, [created.targetBindingId]);
+    expect(deletion?.rows[0]).toEqual({status: 'PENDING', durability_state: 'DELETE_PENDING'});
+    const migratedFiles = new Stage6FileService(pool as pg.Pool, volume, fileS3Configs,
+      provider => new S3CompatibleStore(provider, transport, 20 * 1024 * 1024));
+    expect((await migratedFiles.processNextDeleteJob())?.status).toBe('COMPLETED');
+    expect(transport.objects.size).toBe(0);
+  });
+
+  it('migrates an S3 source to SERVER_VOLUME and keeps immutable content identity', async () => {
+    const fixture = await s3Fixture();
+    const content = 'S3 to server migration';
+    const upload = await uploads.createUpload(fixture.member, fixture.committee.id, {
+      logicalName: 'S3 源文件', originalName: 'source.bin', mediaType: 'application/octet-stream',
+      expectedSizeBytes: Buffer.byteLength(content), sha256: digest(content)
+    }, 's3-source-upload', context('s3-source-upload'));
+    await uploads.receiveContent(fixture.member, upload.id, (async function* () {yield content;})(),
+      's3-source-content', Buffer.byteLength(content), context('s3-source-content'));
+    const transport = new IntegrationS3Transport();
+    const commits = new Stage6S3CommitService(pool as pg.Pool, storage, staging, fixture.configs,
+      provider => new S3CompatibleStore(provider, transport, 20 * 1024 * 1024));
+    const file = await commits.commitUpload(fixture.member, upload.id, {}, 's3-source-commit',
+      context('s3-source-commit'));
+    const migrations = new Stage6MigrationService(pool as pg.Pool, staging, volume, fixture.configs,
+      provider => new S3CompatibleStore(provider, transport, 20 * 1024 * 1024));
+    const created = await migrations.create(fixture.owner, fixture.committee.id, {
+      baseRevision: fixture.committee.revision + 1, targetProviderType: 'SERVER_VOLUME'
+    }, 's3-to-volume', context('s3-to-volume'));
+    await migrations.processNextCopyItem();
+    const ready = (await migrations.list(fixture.owner, fixture.committee.id))[0];
+    await migrations.confirm(fixture.owner, created.id, {baseRevision: ready?.revision},
+      'confirm-s3-to-volume', context('confirm-s3-to-volume'));
+    const download = await files.download(fixture.member, file.id);
+    const chunks: Buffer[] = [];
+    for await (const chunk of download.content) chunks.push(chunk);
+    expect(Buffer.concat(chunks).toString()).toBe(content);
+    expect(download.file.currentVersion.blobId).toBe(file.currentVersion.blobId);
+  });
+
+  it('migrates between distinct S3 configs with independently derived object keys', async () => {
+    const fixture = await s3Fixture();
+    const content = 'S3 config to S3 config migration';
+    const upload = await uploads.createUpload(fixture.member, fixture.committee.id, {
+      logicalName: 'S3 配置迁移', originalName: '../config-migration.bin', mediaType: 'application/octet-stream',
+      expectedSizeBytes: Buffer.byteLength(content), sha256: digest(content)
+    }, 's3-config-source-upload', context('s3-config-source-upload'));
+    await uploads.receiveContent(fixture.member, upload.id, (async function* () {yield content;})(),
+      's3-config-source-content', Buffer.byteLength(content), context('s3-config-source-content'));
+    const transport = new IntegrationS3Transport();
+    const commits = new Stage6S3CommitService(pool as pg.Pool, storage, staging, fixture.configs,
+      provider => new S3CompatibleStore(provider, transport, 20 * 1024 * 1024));
+    const file = await commits.commitUpload(fixture.member, upload.id, {}, 's3-config-source-commit',
+      context('s3-config-source-commit'));
+    const targetDraft = await fixture.configs.create(administrator, {
+      displayName: 'S3 Target Config', endpoint: 'https://s3-target.example.com', region: 'ap-shanghai',
+      bucket: 'quorum-target', prefix: 'target-config', forcePathStyle: true, allowPrivateNetwork: false,
+      credentials: {accessKeyId: 'target-access', secretAccessKey: 'target-secret'}
+    }, 's3-target-config', context('s3-target-config'));
+    const target = await fixture.configs.verify(administrator, targetDraft.id, 's3-target-verify',
+      context('s3-target-verify'));
+    const migrations = new Stage6MigrationService(pool as pg.Pool, staging, volume, fixture.configs,
+      provider => new S3CompatibleStore(provider, transport, 20 * 1024 * 1024));
+    const created = await migrations.create(fixture.owner, fixture.committee.id, {
+      baseRevision: fixture.committee.revision + 1, targetProviderType: 'S3_COMPATIBLE',
+      targetProviderConfigId: target.id
+    }, 's3-config-migration', context('s3-config-migration'));
+    await migrations.processNextCopyItem();
+    const ready = (await migrations.list(fixture.owner, fixture.committee.id))[0];
+    await migrations.confirm(fixture.owner, created.id, {baseRevision: ready?.revision},
+      'confirm-s3-config-migration', context('confirm-s3-config-migration'));
+    const keys = await pool?.query<{storage_key: string; provider_config_id: string}>(`SELECT b.storage_key,
+      binding.provider_config_id FROM file_blobs b JOIN storage_bindings binding ON binding.id=b.storage_binding_id
+      WHERE b.id=$1 OR b.id=(SELECT copy_blob_id FROM file_blob_copies WHERE content_blob_id=$1)
+      ORDER BY binding.provider_config_id`, [file.currentVersion.blobId]);
+    expect(keys?.rows).toHaveLength(2);
+    expect(new Set(keys?.rows.map(row => row.provider_config_id))).toEqual(new Set([fixture.config.id, target.id]));
+    expect(keys?.rows.some(row => row.storage_key.startsWith('target-config/blobs/'))).toBe(true);
+    const migratedFiles = new Stage6FileService(pool as pg.Pool, volume, fixture.configs,
+      provider => new S3CompatibleStore(provider, transport, 20 * 1024 * 1024));
+    const download = await migratedFiles.download(fixture.member, file.id);
+    const chunks: Buffer[] = [];
+    for await (const chunk of download.content) chunks.push(chunk);
+    expect(Buffer.concat(chunks).toString()).toBe(content);
+  });
+
+  it('keeps migration roles, pause state, revision, event, audit, and confirmation atomic', async () => {
+    const fixture = await storageFixture();
+    await committedServerFile(fixture, 'atomic migration', 'migration-atomic');
+    const config = await createMigrationS3Config('Migration Atomic');
+    const transport = new IntegrationS3Transport();
+    const migrations = new Stage6MigrationService(pool as pg.Pool, staging, volume, fileS3Configs,
+      provider => new S3CompatibleStore(provider, transport, 20 * 1024 * 1024));
+    const body = {baseRevision: fixture.committee.revision + 1, targetProviderType: 'S3_COMPATIBLE',
+      targetProviderConfigId: config.id};
+    await expect(migrations.create(fixture.member, fixture.committee.id, body, 'member-migration',
+      context('member-migration'))).rejects.toMatchObject({code: 'FORBIDDEN'});
+    await expect(migrations.create(administrator, fixture.committee.id, body, 'admin-migration',
+      context('admin-migration'))).rejects.toMatchObject({code: 'FORBIDDEN'});
+    const created = await migrations.create(fixture.chair, fixture.committee.id, body,
+      'atomic-migration', context('atomic-migration'));
+    expect(await migrations.create(fixture.chair, fixture.committee.id, body,
+      'atomic-migration', context('atomic-migration-replay'))).toEqual(created);
+    await migrations.processNextCopyItem();
+    const ready = (await migrations.list(fixture.chair, fixture.committee.id))[0];
+    await pool?.query(`CREATE FUNCTION fail_stage6_migration_audit() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF NEW.action='storage.migration_completed' THEN RAISE EXCEPTION 'injected migration audit failure'; END IF;
+        RETURN NEW;
+      END; $$`);
+    await pool?.query(`CREATE TRIGGER fail_stage6_migration_audit BEFORE INSERT ON audit_log
+      FOR EACH ROW EXECUTE FUNCTION fail_stage6_migration_audit()`);
+    await expect(migrations.confirm(fixture.chair, created.id, {baseRevision: ready?.revision},
+      'atomic-confirm', context('atomic-confirm'))).rejects.toThrow('injected migration audit failure');
+    const state = await pool?.query(`SELECT m.status,source.status AS source_status,target.status AS target_status,
+      c.active_storage_binding_id,
+      (SELECT count(*)::int FROM committee_events WHERE resource_id=m.id
+        AND event_type='storage.migration_completed') AS events,
+      (SELECT count(*)::int FROM idempotency_keys WHERE key='atomic-confirm') AS idempotency
+      FROM storage_migrations m JOIN storage_bindings source ON source.id=m.source_binding_id
+      JOIN storage_bindings target ON target.id=m.target_binding_id JOIN committees c ON c.id=m.committee_id
+      WHERE m.id=$1`, [created.id]);
+    expect(state?.rows[0]).toEqual({status: 'READY_TO_CONFIRM', source_status: 'ACTIVE',
+      target_status: 'MIGRATING', active_storage_binding_id: fixture.binding.id, events: 0, idempotency: 0});
   });
 });

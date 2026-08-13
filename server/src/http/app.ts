@@ -16,6 +16,7 @@ import type {Stage6ProviderCommitService} from '../modules/storage/provider-comm
 import type {Stage6S3ConfigService} from '../modules/storage/s3-config-service.js';
 import type {Stage6StorageService} from '../modules/storage/service.js';
 import type {Stage6FileService} from '../modules/storage/file-service.js';
+import type {Stage6MigrationService} from '../modules/storage/migration-service.js';
 import {AppError, normalizeError} from './errors.js';
 import {
   clearIdentityCookies,
@@ -46,6 +47,7 @@ export interface AppDependencies {
   s3Configs?: Stage6S3ConfigService;
   storage?: Stage6StorageService;
   files?: Stage6FileService;
+  storageMigrations?: Stage6MigrationService;
   allowedOrigins?: string[];
 }
 
@@ -346,13 +348,36 @@ async function handleStage6UploadRequest(options: {
   request: IncomingMessage; response: ServerResponse; pathname: string; requestId: string;
   identity: IdentityService; uploads: Stage6UploadService; providerCommits?: Stage6ProviderCommitService;
   s3Configs?: Stage6S3ConfigService; storage?: Stage6StorageService; files?: Stage6FileService;
+  storageMigrations?: Stage6MigrationService;
   allowedOrigins: readonly string[];
 }): Promise<boolean> {
   const {request, response, pathname, requestId, identity, uploads, providerCommits, s3Configs, storage, files,
-    allowedOrigins} = options;
+    storageMigrations, allowedOrigins} = options;
   const method = request.method ?? 'GET';
   const context = identityContext(request, requestId);
   const write = async () => { requireOrigin(request, allowedOrigins); return authenticatedWrite(request, identity); };
+  const committeeMigrations = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/storage-migrations$/.exec(pathname);
+  if (method === 'GET' && committeeMigrations && storageMigrations) {
+    const auth = await authenticatedRead(request, identity);
+    sendJson(response, 200, success(await storageMigrations.list(auth, committeeMigrations[1] as string), requestId));
+    return true;
+  }
+  if (method === 'POST' && committeeMigrations && storageMigrations) {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 201, success(await storageMigrations.create(auth, committeeMigrations[1] as string, body,
+      idempotencyKey(request), context), requestId)); return true;
+  }
+  const migrationCommand = /^\/api\/v1\/storage-migrations\/([0-9a-f-]{36})\/(retry|confirm|cancel)$/.exec(pathname);
+  if (method === 'POST' && migrationCommand && storageMigrations) {
+    const auth = await write(); const body = await readJson(request);
+    const id = migrationCommand[1] as string; const key = idempotencyKey(request);
+    const result = migrationCommand[2] === 'retry'
+      ? await storageMigrations.retry(auth, id, body, key, context)
+      : migrationCommand[2] === 'confirm'
+        ? await storageMigrations.confirm(auth, id, body, key, context)
+        : await storageMigrations.cancel(auth, id, body, key, context);
+    sendJson(response, 200, success(result, requestId)); return true;
+  }
   const committeeFiles = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/files$/.exec(pathname);
   if (method === 'GET' && committeeFiles && files) {
     sendJson(response, 200, success(await files.list(await optionalAuthentication(request, identity),
@@ -877,7 +902,7 @@ export function createRequestHandler(dependencies: AppDependencies): RequestList
         if (dependencies.identity && dependencies.uploads && await handleStage6UploadRequest({
           request, response, pathname, requestId, identity: dependencies.identity, uploads: dependencies.uploads,
           providerCommits: dependencies.providerCommits, s3Configs: dependencies.s3Configs,
-          storage: dependencies.storage, files: dependencies.files,
+          storage: dependencies.storage, files: dependencies.files, storageMigrations: dependencies.storageMigrations,
           allowedOrigins: dependencies.allowedOrigins ?? []
         })) return;
 
