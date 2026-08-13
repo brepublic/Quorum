@@ -6,10 +6,10 @@
 
 - 更新时间：2026-08-13
 - 分支：`self-host`
-- 已确认基线：`33e5548 docs: advance self-host log to stage 7.6`
-- 当前阶段：7.6 Chair Local Agent 桌面发布包已完成 WSL 可执行的实现与验证，等待单独提交。
-- 当前工作：复核最终差异并提交阶段 7.6。
-- 下一步：提交 7.6 后直接实施阶段 8 的委员会归档、导出、永久删除、资源处置、保留策略和运维能力。
+- 已确认基线：`458de03 stage 7.6: package chair storage agent`
+- 当前阶段：8 归档、删除与运维正在实施。
+- 当前工作：审计既有 `ARCHIVED`/`DELETING` 状态、账号生命周期、文件删除任务、审计和运维接口，拆分阶段 8 的事务边界。
+- 下一步：先实现委员会只读归档与授权导出，再分别提交永久删除、账号资源处置、保留策略和运维恢复能力。
 
 ## 已完成与验证
 
@@ -265,3 +265,4 @@
 - `pnpm test:self-host`：54 个文件、299 项通过；7 个 PostgreSQL 文件、63 项因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip。`pnpm exec vitest run`：73 个文件、454 项通过；相同 7 个文件、63 项明确 skip。仅出现既有 React/Semantic UI 弃用警告。
 - `pnpm build:self-host` 与默认 `pnpm build`：通过；Vite 仅报告既有大分块警告。`pnpm test:self-host:integration`：7 个文件、63 项明确 skip；`git diff --check` 通过。
 - 当前 WSL 没有 Windows SDK/证书存储、NTFS ACL、SmartScreen、macOS `codesign`/Xcode keychain、APFS、Gatekeeper、Apple 公证服务或系统启动项环境；真实签名、公证、安装、升级、卸载、重启和原生 watcher 验收记录在 `MANUAL_ACCEPTANCE.md` 的 SH-MAN-514，未伪造成功。
+- 阶段 7.6 已单独提交为 `458de03`；阶段 7 完成，继续阶段 8。
