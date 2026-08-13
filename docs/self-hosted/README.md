@@ -1,8 +1,8 @@
 # Quorum 自托管目标架构
 
-本目录描述 Quorum 从 Firebase BaaS 迁移到完全自主托管后的目标架构。阶段 0–6 和 Chair Local Agent 7.1–7.4 已落地：一次性配对、单活动主机 fencing、manifest/task、`CHAIR_AGENT` provider、桌面安全目录、墓碑优先同步、原子落盘、周期扫描与中断恢复均已接入。图形管理界面、冲突裁决和 Windows/macOS 发布包尚未实施；仓库仍未完成全部迁移。当前事实以根目录的 [`PROJECT_ARCHITECTURE.md`](../../PROJECT_ARCHITECTURE.md) 为准。
+本目录描述 Quorum 从 Firebase BaaS 迁移到完全自主托管后的目标架构。阶段 0–6 和 Chair Local Agent 7.1–7.5 已落地：一次性配对、单活动主机 fencing、manifest/task、`CHAIR_AGENT` provider、桌面安全目录、恢复同步、主机管理和显式冲突裁决均已接入。Windows/macOS 发布包尚未实施；仓库仍未完成全部迁移。当前事实以根目录的 [`PROJECT_ARCHITECTURE.md`](../../PROJECT_ARCHITECTURE.md) 为准。
 
-## 当前阶段 7.4 边界
+## 当前阶段 7.5 边界
 
 - PostgreSQL migration 已建立身份、凭据、Session、系统设置、未来注册申请和身份审计表。
 - bootstrap secret 只保存哈希，并由 PostgreSQL 事务保证并发初始化只有一个成功；公开状态 API 不返回 secret。
@@ -13,7 +13,7 @@
 - 同源 API 已提供阶段 3 委员会、席位、邀请码、快照和规则包命令。所有写入继续执行 Session、CSRF 和 Origin 校验。
 - Committee Owner、Chair、membership、seat assignment 和 `SYSTEM_ADMIN` 分别授权。系统管理员和 Committee Owner 都不会隐式获得 Chair 能力。
 - 邀请码只保存哈希；规则模拟不写议事状态；内置包和已发布版本不可原地修改。
-- schema compatibility 22 覆盖阶段 4–5 业务表、完整阶段 6 文件能力，以及 Agent 配对、storage host、lease generation、manifest、durable task、Chair binding、本地变化和冲突。
+- schema compatibility 23 覆盖阶段 4–5 业务表、完整阶段 6 文件能力，以及 Agent 配对、storage host、lease generation、manifest、durable task、Chair binding、本地变化和不可变冲突裁决。
 - 自托管 React 页面只调用同源 API；一浏览器一委员会一条 SSE，游标过期、序号缺口或未知事件回退完整快照。
 - 服务器时间是计时真相；PostgreSQL 唯一约束和行锁保护队列顺序、当前发言人及一席一票。
 - 正式 ballot 冻结资格、门槛、must-vote、否决席位和规则版本；票更正追加历史，匿名意向性投票不保存投票人与选项关联。
@@ -52,7 +52,7 @@
 - 冲突保存为 durable 记录并返回 `CHAIR_DECISION_REQUIRED`；删除墓碑优先。主机转移取消旧 task、重排浏览器待提交 upload 和完整最新 manifest，既有文件在新 host 确认前保持 `OUT_OF_SYNC`。
 - Chair 内容仅在服务器仍有已验证暂存副本时可授权下载；浏览器不会获得 Agent 地址、设备凭据、本地路径或正文。
 - 独立 `packages/storage-agent` 已实现 HTTPS-only Agent client、私有配置、安全共享目录、墓碑优先 task 消费、完整性校验后的原子落盘、watcher 提示与周期全量扫描、本地变化上报、pending task 重放及 lease fencing。并发本地编辑与不安全路径 fail closed，不被静默覆盖。
-- Agent GUI、浏览器配对/转移/冲突裁决界面与 Windows/macOS 发布包尚未实施。
+- 浏览器配对、转移、撤销和冲突裁决界面已实施；Windows/macOS 发布包、安装器与签名尚未实施。
 - PostgreSQL、TLS 浏览器和 Compose 实测尚未在当前环境执行，状态及取证要求见 [`MANUAL_ACCEPTANCE.md`](./MANUAL_ACCEPTANCE.md)。
 
 ## 文档索引
@@ -77,7 +77,8 @@
 | [`STAGE_7_2_HANDOFF_PROMPT.md`](./STAGE_7_2_HANDOFF_PROMPT.md) | 已完成阶段 7.2 Agent task 与 manifest 的历史交接 Prompt |
 | [`STAGE_7_3_HANDOFF_PROMPT.md`](./STAGE_7_3_HANDOFF_PROMPT.md) | 已完成阶段 7.3 Chair Agent provider 与恢复编排的历史交接 Prompt |
 | [`STAGE_7_4_HANDOFF_PROMPT.md`](./STAGE_7_4_HANDOFF_PROMPT.md) | 已完成阶段 7.4 桌面 Agent 文件系统核心的历史交接 Prompt |
-| [`STAGE_7_5_HANDOFF_PROMPT.md`](./STAGE_7_5_HANDOFF_PROMPT.md) | 下一步阶段 7.5 Agent 管理与冲突裁决 UI 交接 Prompt |
+| [`STAGE_7_5_HANDOFF_PROMPT.md`](./STAGE_7_5_HANDOFF_PROMPT.md) | 已完成阶段 7.5 Agent 管理与冲突裁决 UI 的历史交接 Prompt |
+| [`STAGE_7_6_HANDOFF_PROMPT.md`](./STAGE_7_6_HANDOFF_PROMPT.md) | 下一步阶段 7.6 桌面发布包交接 Prompt |
 | [`RUNNING_LOG.md`](./RUNNING_LOG.md) | 长任务当前进度、验证结果和下一步恢复点 |
 
 ## 当前实施与验证约束

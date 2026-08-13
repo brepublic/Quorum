@@ -269,6 +269,17 @@ describe('migration discovery', () => {
     expect(provider?.sql).toContain('schema_compatibility=22');
   });
 
+  it('adds fenced and immutable Chair conflict resolutions', async () => {
+    const migrations = await loadMigrations(resolve('server/migrations'));
+    const resolution = migrations.find(item => item.version === 23);
+    expect(resolution?.sql).toContain("storage_agent_conflict_resolution AS ENUM ('KEEP_SERVER','ACCEPT_LOCAL','SAVE_AS_NEW')");
+    expect(resolution?.sql).toContain('resolution_conflict_id uuid REFERENCES storage_agent_conflicts(id)');
+    expect(resolution?.sql).toContain('prevent_storage_agent_conflict_mutation');
+    expect(resolution?.sql).toContain('CREATE TABLE storage_agent_conflict_applications');
+    expect(resolution?.sql).toContain('storage Agent conflict applications are immutable');
+    expect(resolution?.sql).toContain('schema_compatibility=23');
+  });
+
   it('rejects SQL files outside the versioned naming contract', async () => {
     const directory = await temporaryDirectory();
     await writeFile(join(directory, 'first.sql'), 'SELECT 1;\n');

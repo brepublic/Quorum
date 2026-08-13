@@ -100,6 +100,7 @@ export const COMMITTEE_EVENT_DEFINITIONS = [
   {name: 'storage_host.status_changed', defaultAudience: 'CHAIR'},
   {name: 'storage_agent.task_changed', defaultAudience: 'CHAIR'},
   {name: 'storage_agent.conflict_created', defaultAudience: 'CHAIR'},
+  {name: 'storage_agent.conflict_resolved', defaultAudience: 'CHAIR'},
   {name: 'rule_package.activated', defaultAudience: 'MEMBER'},
   {name: 'rule_package.version_created', defaultAudience: 'CHAIR'},
   {name: 'rule_override.created', defaultAudience: 'CHAIR'},
@@ -230,6 +231,7 @@ export const AUDIT_ACTION_DEFINITIONS = [
   'storage.agent_task_failed',
   'storage.agent_local_change_applied',
   'storage.agent_conflict_created',
+  'storage.agent_conflict_resolved',
   'storage.file_deleted'
 ] as const;
 

@@ -20,6 +20,7 @@ import {Stage7StorageAgentService} from './service';
 import {Stage7StorageTaskService} from './task-service';
 import {Stage7ChairAgentProviderService} from './chair-provider-service';
 import {Stage7LocalChangeService} from './local-change-service';
+import {Stage7ConflictService} from './conflict-service';
 
 const {Client, Pool} = pg;
 const adminUrl = process.env.TEST_DATABASE_ADMIN_URL;
@@ -35,6 +36,7 @@ let tasks: Stage7StorageTaskService;
 let uploads: Stage6UploadService;
 let chairProvider: Stage7ChairAgentProviderService;
 let localChanges: Stage7LocalChangeService;
+let conflicts: Stage7ConflictService;
 let staging: DurableStagingStore;
 let stagingRoot = '';
 let administrator: AuthenticatedSession;
@@ -62,6 +64,7 @@ beforeEach(async () => {
   chairProvider = new Stage7ChairAgentProviderService(pool, storage);
   tasks = new Stage7StorageTaskService(agent, staging, {} as Stage6FileService, undefined, chairProvider);
   localChanges = new Stage7LocalChangeService(agent);
+  conflicts = new Stage7ConflictService(pool, agent);
   await stage3.ensureBuiltins();
   const secret = await identity.ensureBootstrapSecret();
   const session = await identity.bootstrapAdmin({secret: secret as string, email: 'admin@example.com',
@@ -453,5 +456,79 @@ integration('PostgreSQL stage 7 storage Agent identity', () => {
       (SELECT count(*)::int FROM file_versions WHERE file_entry_id=$2) AS versions`,
     [value.committee.id, completed.fileEntryId]);
     expect(state?.rows[0]).toEqual({conflicts: 1, file_status: 'DELETED', versions: 1});
+  });
+
+  it('fences, records, and applies a Chair save-as-new decision exactly once', async () => {
+    const value = await fixture(); const chair = await chairStorage(value.owner, value.committee.id);
+    const local = {kind: 'UPSERT' as const, logicalName: '私人目录/本地草案.txt', originalName: 'local.txt',
+      mediaType: 'text/plain', sizeBytes: 5, sha256: createHash('sha256').update('local').digest('hex')};
+    await expect(localChanges.submit(chair.paired.credential, {leaseGeneration: chair.paired.host.leaseGeneration,
+      requestId: randomUUID(), manifestSequence: 99, change: local}, context('resolution-conflict')))
+      .rejects.toMatchObject({code: 'CHAIR_DECISION_REQUIRED'});
+    await expect(conflicts.list(value.member, value.committee.id)).rejects.toMatchObject({code: 'FORBIDDEN'});
+    const pending = (await conflicts.list(value.chair, value.committee.id))[0]!;
+    expect(pending).toMatchObject({status: 'PENDING', reasonCode: 'MANIFEST_STALE', revision: 1,
+      change: {logicalName: '本地草案.txt'}});
+    await expect(conflicts.resolve(value.owner, value.committee.id, pending.id, {baseRevision: 1,
+      leaseGeneration: chair.paired.host.leaseGeneration, fileRevision: null, action: 'SAVE_AS_NEW',
+      logicalName: '../escape.txt'}, randomUUID(), context('unsafe-resolution')))
+      .rejects.toMatchObject({code: 'VALIDATION_FAILED'});
+    const key = randomUUID(); const resolved = await conflicts.resolve(value.owner, value.committee.id, pending.id,
+      {baseRevision: 1, leaseGeneration: chair.paired.host.leaseGeneration, fileRevision: null,
+        action: 'SAVE_AS_NEW', logicalName: '裁决/本地草案.txt'}, key, context('resolve-save'));
+    expect(resolved).toMatchObject({status: 'RESOLVED', revision: 2, resolutionAction: 'SAVE_AS_NEW',
+      resolutionLogicalName: '裁决/本地草案.txt'});
+    await expect(conflicts.resolve(value.owner, value.committee.id, pending.id, {baseRevision: 1,
+      leaseGeneration: chair.paired.host.leaseGeneration, fileRevision: null, action: 'SAVE_AS_NEW',
+      logicalName: '裁决/本地草案.txt'}, key, context('resolve-replay'))).resolves.toEqual(resolved);
+    await expect(conflicts.listForAgent(chair.paired.credential, chair.paired.host.leaseGeneration))
+      .resolves.toEqual([expect.objectContaining({id: resolved.id, status: 'RESOLVED', change: local})]);
+    const requestId = randomUUID();
+    const applied = await localChanges.submit(chair.paired.credential, {
+      leaseGeneration: chair.paired.host.leaseGeneration, requestId, manifestSequence: 99, change: local,
+      resolutionConflictId: pending.id}, context('apply-resolution'));
+    expect(applied).toMatchObject({status: 'PENDING_CONTENT', task: {resolutionConflictId: null}});
+    await expect(localChanges.submit(chair.paired.credential, {
+      leaseGeneration: chair.paired.host.leaseGeneration, requestId, manifestSequence: 99, change: local,
+      resolutionConflictId: pending.id}, context('apply-resolution-replay'))).resolves.toEqual(applied);
+    await expect(localChanges.submit(chair.paired.credential, {
+      leaseGeneration: chair.paired.host.leaseGeneration, requestId: randomUUID(), manifestSequence: 99,
+      change: local, resolutionConflictId: pending.id}, context('apply-resolution-twice')))
+      .rejects.toMatchObject({code: 'IDEMPOTENCY_CONFLICT'});
+    const state = await pool?.query(`SELECT
+      (SELECT count(*)::int FROM storage_agent_conflict_applications WHERE conflict_id=$1) AS applications,
+      (SELECT count(*)::int FROM storage_agent_tasks WHERE source_upload_id IS NOT NULL) AS tasks,
+      (SELECT logical_name FROM file_uploads WHERE id=(SELECT source_upload_id FROM storage_agent_tasks
+        WHERE source_upload_id IS NOT NULL LIMIT 1)) AS logical_name,
+      (SELECT count(*)::int FROM committee_events WHERE resource_id=$1
+        AND event_type='storage_agent.conflict_resolved') AS events,
+      (SELECT count(*)::int FROM audit_log WHERE resource_id=$1
+        AND action='storage.agent_conflict_resolved') AS audits`, [pending.id]);
+    expect(state?.rows[0]).toEqual({applications: 1, tasks: 1, logical_name: '裁决/本地草案.txt',
+      events: 1, audits: 1});
+  });
+
+  it('rolls a failed conflict decision back without exposing a resolution task', async () => {
+    const value = await fixture(); const chair = await chairStorage(value.owner, value.committee.id);
+    const local = {kind: 'UPSERT' as const, logicalName: '冲突.txt', originalName: 'conflict.txt',
+      mediaType: 'text/plain', sizeBytes: 1, sha256: createHash('sha256').update('x').digest('hex')};
+    await expect(localChanges.submit(chair.paired.credential, {leaseGeneration: chair.paired.host.leaseGeneration,
+      requestId: randomUUID(), manifestSequence: 99, change: local}, context('atomic-conflict')))
+      .rejects.toMatchObject({code: 'CHAIR_DECISION_REQUIRED'});
+    const pending = (await conflicts.list(value.owner, value.committee.id))[0]!;
+    await pool?.query(`CREATE FUNCTION fail_conflict_resolution_audit() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN IF NEW.action='storage.agent_conflict_resolved' THEN RAISE EXCEPTION 'injected resolution failure'; END IF;
+      RETURN NEW; END; $$;
+      CREATE TRIGGER fail_conflict_resolution_audit BEFORE INSERT ON audit_log
+      FOR EACH ROW EXECUTE FUNCTION fail_conflict_resolution_audit()`);
+    await expect(conflicts.resolve(value.owner, value.committee.id, pending.id, {baseRevision: 1,
+      leaseGeneration: chair.paired.host.leaseGeneration, fileRevision: null, action: 'KEEP_SERVER'},
+    randomUUID(), context('atomic-resolution'))).rejects.toThrow();
+    const state = await pool?.query(`SELECT
+      (SELECT status::text FROM storage_agent_conflicts WHERE id=$1) AS status,
+      (SELECT count(*)::int FROM storage_agent_tasks WHERE resolution_conflict_id=$1) AS tasks,
+      (SELECT count(*)::int FROM committee_events WHERE resource_id=$1
+        AND event_type='storage_agent.conflict_resolved') AS events`, [pending.id]);
+    expect(state?.rows[0]).toEqual({status: 'PENDING', tasks: 0, events: 0});
   });
 });

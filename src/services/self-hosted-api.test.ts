@@ -75,6 +75,20 @@ describe('self-hosted stage 4 API client', () => {
         headers: expect.objectContaining({'x-csrf-token': 'csrf-token'})})]);
   });
 
+  it('sends a fenced and idempotent Chair conflict decision', async () => {
+    const fetchMock = vi.fn(async () => ({ok: true, status: 200,
+      json: async () => ({data: {id: 'conflict', status: 'RESOLVED'}, meta: {requestId: 'conflict'}})}));
+    vi.stubGlobal('fetch', fetchMock);
+    await selfHostedApi.resolveStorageAgentConflict('committee', 'conflict', {baseRevision: 1,
+      leaseGeneration: 7, fileRevision: 3, action: 'ACCEPT_LOCAL'}, 'resolution-key');
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/committees/committee/storage-agent-conflicts/conflict/resolve', expect.objectContaining({
+        method: 'POST', body: JSON.stringify({baseRevision: 1, leaseGeneration: 7, fileRevision: 3,
+          action: 'ACCEPT_LOCAL'}), headers: expect.objectContaining({'x-csrf-token': 'csrf-token',
+          'idempotency-key': 'resolution-key'})
+      }));
+  });
+
   it('streams a File through XHR with Cookie credentials, CSRF, progress, cancellation support, and a caller key', async () => {
     class FakeRequest {
       static latest: FakeRequest;

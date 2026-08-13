@@ -1,5 +1,5 @@
 import {createReadStream} from 'node:fs';
-import type {StorageAgentLocalChange, StorageAgentLocalChangeResult, StorageAgentPairingResult,
+import type {StorageAgentConflict, StorageAgentLocalChange, StorageAgentLocalChangeResult, StorageAgentPairingResult,
   StorageAgentTask, StorageAgentTaskPage, StorageManifestPage} from '@quorum/contracts';
 import {AgentApiError} from './errors.js';
 
@@ -75,10 +75,10 @@ export class StorageAgentHttpClient {
   }
 
   async localChange(leaseGeneration: number, requestId: string, manifestSequence: number,
-    change: StorageAgentLocalChange): Promise<StorageAgentLocalChangeResult> {
+    change: StorageAgentLocalChange, resolutionConflictId?: string): Promise<StorageAgentLocalChangeResult> {
     try {
       return await this.json('/api/v1/storage-agent/local-changes', {method: 'POST', body: {
-        leaseGeneration, requestId, manifestSequence, change}});
+        leaseGeneration, requestId, manifestSequence, change, ...(resolutionConflictId ? {resolutionConflictId} : {})}});
     } catch (caught) {
       if (caught instanceof AgentApiError && caught.code === 'CHAIR_DECISION_REQUIRED'
         && caught.details && typeof caught.details === 'object'
@@ -87,6 +87,11 @@ export class StorageAgentHttpClient {
       }
       throw caught;
     }
+  }
+
+  conflicts(leaseGeneration: number): Promise<StorageAgentConflict[]> {
+    return this.json('/api/v1/storage-agent/conflicts', {method: 'GET',
+      headers: {'x-storage-lease-generation': String(leaseGeneration)}});
   }
 
   async download(task: StorageAgentTask, claimToken: string): Promise<AsyncIterable<Uint8Array>> {

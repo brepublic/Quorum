@@ -183,6 +183,10 @@ Agent 使用操作系统文件监测作为快速提示，同时定期完整扫�
 
 下载先进入根目录内保留的 0600 临时目录，短写、长写、哈希错误、断流、符号链接、硬链接、设备文件和并发本地修改均不会成为完整目标。发布前再次检查目标与旧内容，原子重命名后重读校验；进程重启会清理普通临时残片，遇到非普通临时条目则拒绝启动。待上传内容、稳定 request ID、task ID 和 manifest sequence 在本地元数据中原子保存；服务器先完成而本地未保存时可重放恢复。冲突保留本地文件并由现有 `local-changes` 形成 durable conflict，不静默覆盖。`STALE_STORAGE_LEASE` 立即终止循环；其他暂时故障指数退避。
 
+阶段 7.5 把 conflict revision、当前 lease generation、当前 file revision 和裁决动作保存在服务端不可变记录中。Owner/Chair 可以保留服务端状态、采用本地变化或把本地内容另存为新文件；墓碑不能通过采用本地复活。浏览器只收到冲突文件名，Agent 相对目录只返回当前 Agent。Agent 持久保存裁决 request ID，在重启或响应丢失后精确重放；另存或名称冲突改名只移动经过大小/SHA-256 复验的 conflict 文件。保留服务端的 force apply 仅能替换 conflict 路径或已有 tracked 路径，其他本地目标仍返回冲突。磁盘或网络故障保持 task 可重试；裁决后再次出现的本地编辑不会被覆盖，而是形成新的 durable conflict。
+
+命令 `quorum-storage-agent status --config <path>` 只输出 lease generation、manifest sequence、tracked file 数、pending upload 数和 pending conflict 数。输出不含 committee/device ID、凭据、私钥、文件名、绝对路径、哈希或正文。
+
 ## 8. 离线与降级
 
 Agent 心跳超过宽限期后，存储状态变为 `STORAGE_DEGRADED`，但不自动暂停会议：
@@ -196,7 +200,7 @@ Agent 心跳超过宽限期后，存储状态变为 `STORAGE_DEGRADED`，但不�
 
 Agent 重连后先拉取墓碑和服务端 manifest，再上报本地变化，防止删除文件复活。
 
-阶段 7.1 的常驻 monitor 默认以 45 秒为宽限期，只把 host 从 `ACTIVE` 改为 `DEGRADED` 并发送 `storage_host.status_changed`；不会修改委员会 `ACTIVE`/`PAUSED` 状态。持有当前 generation 的有效 heartbeat 会恢复 `ACTIVE`。阶段 7.3 会在恢复或转移时按完整最新 manifest 重排任务；浏览器待提交 upload 保持唯一 staging，新 host 未确认的既有文件标记 `OUT_OF_SYNC`，旧 host 独有的未上传本地内容转成显式冲突。阶段 7.4 Agent 重连后严格执行心跳、完整 manifest、墓碑、task、pending recovery、本地变化顺序。
+阶段 7.1 的常驻 monitor 默认以 45 秒为宽限期，只把 host 从 `ACTIVE` 改为 `DEGRADED` 并发送 `storage_host.status_changed`；不会修改委员会 `ACTIVE`/`PAUSED` 状态。持有当前 generation 的有效 heartbeat 会恢复 `ACTIVE`。阶段 7.3 会在恢复或转移时按完整最新 manifest 重排任务；浏览器待提交 upload 保持唯一 staging，新 host 未确认的既有文件标记 `OUT_OF_SYNC`，旧 host 独有的未上传本地内容转成显式冲突。阶段 7.4 Agent 重连后严格执行心跳、完整 manifest、墓碑、task、pending recovery、本地变化顺序。阶段 7.5 文件页显示当前 host、在线状态、最后在线时间和待 host 提交文件；Owner/Chair 可生成一次性配对/转移码、撤销主机并处理冲突。离线状态不改变委员会议事状态。
 
 ## 9. 存储切换
 

@@ -355,7 +355,7 @@
 
 ## 阶段 7：Chair Local Agent
 
-当前环境未提供 `TEST_DATABASE_ADMIN_URL`、自托管 TLS 实例、第二台真实设备或桌面发布/签名环境。阶段 7.1–7.4 的自动验证已在 WSL 执行，PostgreSQL 集成测试明确 skip；以下实机项目尚未通过。
+当前环境未提供 `TEST_DATABASE_ADMIN_URL`、自托管 TLS 实例、第二台真实设备或桌面发布/签名环境。阶段 7.1–7.5 的自动验证已在 WSL 执行，PostgreSQL 集成测试明确 skip；以下实机项目尚未通过。
 
 ### SH-MAN-509 Agent 配对、单主机 fencing 与离线降级
 
@@ -389,6 +389,15 @@
 - 前置条件：Windows 11 x86-64 的 NTFS 与受支持 macOS 的 APFS 真机；各一份可执行 Agent 构建；TLS 自托管实例和真实 PostgreSQL；可用的 Chair 账号与测试委员会；可断网、终止进程、重启系统、制造磁盘满/只读和修改目录 ACL。测试根目录不得包含个人文件。
 - 操作步骤：分别完成配对、选择空目录并同步含嵌套中文名的文件；创建、修改、移动和删除本地文件，验证 watcher 唤醒与周期全量扫描结果。尝试绝对路径、`..`、Windows 保留名、尾随点/空格、符号链接、junction、alias、硬链接、FIFO/设备文件和指向根目录外的父目录。下载期间制造短写、长写、断流、哈希错误、目标碰撞、并发本地编辑、只读目录和满盘；在临时文件写入、rename、task complete 和本地状态写入前后分别强制终止进程并重启。断网期间执行服务端删除和本地修改，再恢复；最后转移 host，确认旧进程因 stale lease 停止。检查共享目录元数据、私有配置权限、进程参数、控制台和日志。
 - 通过条件：共享目录只有不含秘密和绝对根路径的 `.quorum-storage.json` 与内部临时目录；凭据、私钥和配对码不出现在目录元数据、进程参数或日志，私有配置仅当前用户可读。所有解析后的路径保持在根目录内，链接、非普通文件和平台保留路径 fail closed。服务端内容只有在完整大小/SHA-256 校验后原子出现；失败或断电最多留下可在重启时安全清理的内部临时文件，不把半文件识别为完整版本。本地编辑永不被服务端静默覆盖，墓碑先于扫描处理，冲突可恢复；同一 pending task 重启后重放而不产生重复版本。watcher 丢事件时周期扫描仍收敛。旧 lease 立即停止，临时网络故障退避重试且不泄露路径或秘密。
-- 自动化覆盖情况：当前 WSL 中 `packages/storage-agent` 的 5 个测试文件覆盖 portable 路径、元数据 no-follow、原子状态故障、符号链接/硬链接、非普通目标、0600 配置、临时残片、短写/长写/哈希/断流、原子发布、本地编辑保护、墓碑优先、扫描/重命名、pending task 重放、watcher 提示、未知协议 fail closed、stale lease 和日志脱敏；共 48 项通过。Node/TypeScript 构建已通过。WSL 的 ext4/DrvFs 行为不能替代 NTFS/APFS、原生 watcher、Windows ACL、macOS 权限、原生进程终止或发布包验证。
+- 自动化覆盖情况：当前 WSL 中 `packages/storage-agent` 的测试覆盖 portable 路径、元数据 no-follow、原子状态故障、符号链接/硬链接、非普通目标、0600 配置、临时残片、短写/长写/哈希/断流、原子发布、本地编辑保护、墓碑优先、扫描/重命名、pending task 和 conflict 裁决重放、watcher 提示、未知协议 fail closed、stale lease、状态聚合和日志脱敏。Node/TypeScript 构建已通过。WSL 的 ext4/DrvFs 行为不能替代 NTFS/APFS、原生 watcher、Windows ACL、macOS 权限、原生进程终止或发布包验证。
 - 当前状态：因无 Windows/macOS Agent 构建、TLS/PostgreSQL 实例和两台真机延期。
 - 需要保存的证据：每个平台版本与文件系统、Agent 构建哈希/签名、目录树和权限的脱敏输出、任务/manifest/conflict 脱敏时间线、网络与进程终止矩阵、各故障后的文件 SHA-256/大小、重启恢复结果和秘密搜索结果。不得保存配对码、设备凭据、私钥、claim token、本地绝对路径或文件正文。
+
+### SH-MAN-513 Agent 管理与冲突裁决
+
+- 前置条件：真实 PostgreSQL 16；TLS 自托管实例；Owner、Chair、member 和仅有 `SYSTEM_ADMIN` 的账号；两台隔离 Chair Agent 主机；可注入数据库事务失败、Agent 断网、磁盘只读/满盘和进程终止；至少包含本地新增、修改、重命名、删除、同名和 host transfer 冲突。
+- 操作步骤：逐角色打开文件页，创建初始配对码和转移码，检查当前主机、在线/离线状态、最后在线时间、关闭配对码和撤销操作。制造五类 conflict，分别选择保留服务端、采用本地和另存为新文件；名称冲突输入新名称。每次在裁决前并发修改 conflict、host generation 或 file revision，并重复相同幂等键及用不同 body 复用 key。对已删除文件尝试采用本地，对旧 host 内容尝试非丢弃裁决。分别在裁决事件、审计、Agent 本地状态保存、文件移动、下载/上传和 task 完成前注入失败并重启。运行 `quorum-storage-agent status`；搜索全链路中的设备秘密和绝对路径，并确认 Agent status/stdout/stderr 不含文件名、哈希或正文。最后只用键盘处理冲突，并检查窄屏、焦点和简体中文长名称。
+- 通过条件：只有 Owner/Chair 能查看和执行主机管理与裁决；member 和系统管理员没有隐式权限。裁决绑定 conflict revision、当前 lease generation 和 file revision；陈旧请求返回稳定冲突并保留待裁决状态。相同请求精确重放，不同请求不能重复应用同一 conflict；状态、事件、审计、幂等响应和裁决 task 共同提交或回滚。墓碑不能被采用本地复活，旧 host 不能提交内容。Agent 重启后使用同一 request ID 收敛，裁决写失败保持可重试；force apply 不能覆盖无关本地文件，另存/改名目标经过 portable path 和内容复验。状态命令只输出 generation、manifest sequence 和聚合计数。浏览器和日志不出现设备秘密、本地绝对路径或文件正文。
+- 自动化覆盖情况：migration 23 静态契约、共享类型、Agent HTTP client/runtime/filesystem/status、HTTP 认证分离、API client 和文件页交互测试已在 WSL 通过。真实 PostgreSQL 用例覆盖 Owner/Chair 权限、路径拒绝、revision/lease/file fencing、幂等重放、一次性裁决应用以及 event/audit 故障回滚；未配置 `TEST_DATABASE_ADMIN_URL` 时明确 skip。`pnpm test:self-host` 为 53 个文件、295 项通过，7 个 PostgreSQL 文件、63 项明确 skip；默认构建与自托管构建通过。真实 PostgreSQL、TLS、双设备、原生目录、浏览器视觉/键盘/辅助功能和故障注入尚未执行。
+- 当前状态：因无真实 PostgreSQL、TLS 自托管实例、第二设备、原生桌面目录和浏览器验收环境延期。
+- 需要保存的证据：migration 23 enum/列/约束/触发器与 application 表；脱敏 conflict/change/task/event/audit/idempotency 查询；三种裁决及五类原因时间线；故障前后 revision、task 和本地 SHA-256；角色、窄屏、焦点与键盘截图；status 和全链路秘密搜索结果。不得保存配对码、设备凭据、私钥、claim token、Session、CSRF token、本地绝对路径或正文。

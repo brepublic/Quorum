@@ -57,11 +57,11 @@ integration('PostgreSQL migrations', () => {
       );
       const applied = await pool.query('SELECT version FROM quorum_meta.schema_migrations');
 
-      expect(first).toEqual(expect.objectContaining({ready: true, latestAppliedVersion: 22}));
+      expect(first).toEqual(expect.objectContaining({ready: true, latestAppliedVersion: 23}));
       expect(second).toEqual(expect.objectContaining({ready: true, pendingVersions: []}));
       expect(status.ready).toBe(true);
-      expect(runtime.rows[0]?.schema_compatibility).toBe(22);
-      expect(applied.rowCount).toBe(22);
+      expect(runtime.rows[0]?.schema_compatibility).toBe(23);
+      expect(applied.rowCount).toBe(23);
       const stage3Tables = await pool.query<{name: string}>(`SELECT table_name AS name FROM information_schema.tables
         WHERE table_schema='public' AND table_name IN ('committees','committee_memberships','committee_capabilities',
         'committee_seats','seat_assignments','seat_invitations','rule_packages','rule_package_versions',
@@ -81,8 +81,8 @@ integration('PostgreSQL migrations', () => {
       const stage7Tables = await pool.query<{name: string}>(`SELECT table_name AS name FROM information_schema.tables
         WHERE table_schema='public' AND table_name IN
           ('storage_pairing_codes','storage_hosts','storage_manifest_events','storage_agent_tasks',
-           'storage_agent_change_requests','storage_agent_conflicts')`);
-      expect(stage7Tables.rowCount).toBe(6);
+           'storage_agent_change_requests','storage_agent_conflicts','storage_agent_conflict_applications')`);
+      expect(stage7Tables.rowCount).toBe(7);
     } finally {
       await pool.end();
     }

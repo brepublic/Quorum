@@ -57,6 +57,7 @@ interface TaskRow extends QueryResultRow {
   terminal_request_id: string | null;
   terminal_outcome: 'COMPLETED' | 'FAILED' | null;
   failure_code: string | null;
+  resolution_conflict_id: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -71,7 +72,7 @@ export interface StorageAgentTaskCompletionFinalizer {
     id: string; committeeId: string; hostId: string; leaseGeneration: number;
     type: StorageAgentTask['type']; fileEntryId: string; fileRevision: number;
     blobId: string | null; expectedSizeBytes: number | null; expectedSha256: string | null;
-    contentStagingKey: string | null; sourceUploadId: string | null;
+    contentStagingKey: string | null; sourceUploadId: string | null; resolutionConflictId: string | null;
   }, committee: Stage4CommitteeRow, context: Stage4Context): Promise<void>;
 }
 
@@ -143,6 +144,7 @@ function task(row: TaskRow): StorageAgentTask {
     attempts: row.attempts,
     claimToken: row.claim_token,
     failureCode: row.failure_code,
+    resolutionConflictId: row.resolution_conflict_id,
     nextAttemptAt: row.next_attempt_at.toISOString(),
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString()
@@ -409,7 +411,7 @@ export class Stage7StorageTaskService {
           fileRevision: row.file_revision, blobId: row.blob_id,
           expectedSizeBytes: row.expected_size_bytes === null ? null : Number(row.expected_size_bytes),
           expectedSha256: row.expected_sha256_hex, contentStagingKey: row.content_staging_key,
-          sourceUploadId: row.source_upload_id}, committee, context);
+          sourceUploadId: row.source_upload_id, resolutionConflictId: row.resolution_conflict_id}, committee, context);
       }
       const updated = await client.query<TaskRow>(`UPDATE storage_agent_tasks SET status=$2,
         terminal_request_id=$3,terminal_outcome=$2,completed_at=CASE WHEN $2='COMPLETED' THEN now() ELSE NULL END,

@@ -933,11 +933,23 @@ POST /api/v1/storage-agent/local-changes
 
 请求固定为 `{leaseGeneration,requestId,manifestSequence,change}`。`change` 是携带 file revision 的 `UPSERT`、`RENAME` 或 `DELETE`；`UPSERT` 另带逻辑名、原始名、媒体类型、大小和 SHA-256。服务器先复核当前 lease、活动 Chair binding、委员会可写状态和完整最新 manifest sequence，再以墓碑、当前 file revision 和同委员会名称唯一性判断。新增/修改创建服务器 UUID 派生的 `UPLOAD_BLOB` task；完整内容经 7.2 流式边界进入 `STAGED` 后，task 完成事务才发布版本。重命名和删除是显式 revision 命令；删除同时写墓碑、Agent 删除 task 和物理删除 job。
 
-相同 host/request ID 精确重放 pending 或 completed 结果。manifest、墓碑、revision、名称或 host transfer 冲突先写入 durable change/conflict、Chair 事件和审计，再返回 `422 CHAIR_DECISION_REQUIRED` 及冲突 ID/原因；不会复活已删除文件或自动选择任一副本。冲突裁决 UI 尚未实施。
+相同 host/request ID 精确重放 pending 或 completed 结果。manifest、墓碑、revision、名称或 host transfer 冲突先写入 durable change/conflict、Chair 事件和审计，再返回 `422 CHAIR_DECISION_REQUIRED` 及冲突 ID/原因；不会复活已删除文件或自动选择任一副本。
+
+阶段 7.5 增加以下裁决路由：
+
+```text
+GET  /api/v1/committees/:id/storage-agent-conflicts
+POST /api/v1/committees/:id/storage-agent-conflicts/:conflictId/resolve
+GET  /api/v1/storage-agent/conflicts
+```
+
+浏览器读取和裁决只允许 Owner/Chair。浏览器 conflict 响应把 Agent 逻辑路径裁成文件名；完整相对路径只返回当前 Agent。写请求继续要求 Session、Origin、CSRF 和幂等键；body 固定携带 conflict revision、当前 lease generation、当前 file revision、裁决动作和按需逻辑名。事务锁定委员会、当前 host、conflict 和 file entry，任何陈旧状态返回 `REVISION_CONFLICT`。`KEEP_SERVER`、`ACCEPT_LOCAL` 和 `SAVE_AS_NEW` 都写入不可变裁决、Chair 事件与审计；名称先按跨平台 Agent 相对路径规则校验。墓碑或已删除文件不能通过 `ACCEPT_LOCAL` 复活，旧 host 独有内容只能丢弃。
+
+Agent 只以当前 `QuorumAgent` 凭据和 generation 拉取已裁决 conflict。采用本地或另存流程复用本地持久 request ID；不可修改的 `storage_agent_conflict_applications` 保证一个 conflict 只应用一次。保留服务端产生关联 task；磁盘或网络故障保持已领取状态供同一 claim 重试。若文件在 Chair 决定后再次变化，旧 task 失败并把新内容上报为新 conflict。裁决 task 不能覆盖 conflict 路径和既有 tracked 路径以外的本地文件。
 
 主机转移事务把活动 Chair binding 指向新 host，取消旧 generation 的非终态 task，为浏览器 `STORE_BLOB` 待提交 upload 重新创建新 generation task，并按每个文件最新 manifest 为新 host 补建任务。未完成的本地 `UPLOAD_BLOB` 因内容仍只在旧 host 而转成 `HOST_TRANSFERRED` 冲突。既有文件在转移时成为 `OUT_OF_SYNC`，相同 revision 的新 host task 完成后恢复 `SYNCED`。旧凭据、claim、内容上传和 local change 继续由 lease fencing 拒绝。
 
-`CHAIR_AGENT` blob 不交给服务器 provider delete worker；当前 Agent 完成 `DELETE_FILE` 后才把对应 blob/delete job 标为完成。下载只在服务器仍保存并复验关联 upload staging 时可用；否则返回稳定 `SERVICE_NOT_READY`，浏览器从不直连 Agent。桌面文件系统 watcher、周期扫描、路径落盘和发布包留在后续阶段。
+`CHAIR_AGENT` blob 不交给服务器 provider delete worker；当前 Agent 完成 `DELETE_FILE` 后才把对应 blob/delete job 标为完成。下载只在服务器仍保存并复验关联 upload staging 时可用；否则返回稳定 `SERVICE_NOT_READY`，浏览器从不直连 Agent。桌面文件系统 watcher、周期扫描和路径落盘已由 Agent 实现；Windows/macOS 发布包留到阶段 7.6。
 
 ## 12. SSE 格式
 

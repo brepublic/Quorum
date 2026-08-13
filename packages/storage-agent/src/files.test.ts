@@ -34,7 +34,7 @@ describe('Chair Agent storage root', () => {
     const value = await fixture();
     const metadata = JSON.parse(await readFile(join(value.root, AGENT_METADATA_FILE), 'utf8'));
     expect(metadata).toEqual({schemaVersion: 1, committeeId, deviceId, manifestSequence: 0,
-      files: {}, pendingUploads: {}});
+      files: {}, pendingUploads: {}, conflicts: {}});
     expect(JSON.stringify(metadata)).not.toContain(value.root);
     expect(JSON.stringify(metadata)).not.toContain('credential');
     expect((await lstat(join(value.root, AGENT_TEMP_DIRECTORY))).isDirectory()).toBe(true);
@@ -133,6 +133,27 @@ describe('Chair Agent verified atomic apply', () => {
     await expect(value.files.applyUpsert(upsert('new', 'safe/symbolic.txt'), (async function* () {yield 'new';})()))
       .rejects.toMatchObject({code: 'LOCAL_CONTENT_CONFLICT'});
     expect(await readFile(source, 'utf8')).toBe('outside alias');
+  });
+
+  it('limits an explicit conflict overwrite to the path named by that conflict', async () => {
+    const value = await fixture(); await writeFile(join(value.root, 'unrelated.txt'), 'keep me');
+    const event = upsert('server', 'unrelated.txt');
+    await expect(value.files.applyUpsert(event, (async function* () {yield 'server';})(),
+      {force: true, conflictPath: 'different.txt'})).rejects.toMatchObject({code: 'LOCAL_CONTENT_CONFLICT'});
+    expect(await readFile(join(value.root, 'unrelated.txt'), 'utf8')).toBe('keep me');
+    expect(value.state.snapshot().files).toEqual({});
+  });
+
+  it('rejects a force apply when the conflict changed after the Chair decision', async () => {
+    const value = await fixture(); const first = upsert('server');
+    await value.files.applyUpsert(first, (async function* () {yield 'server';})());
+    await writeFile(join(value.root, '文件', '工作文件.txt'), 'newer local edit');
+    const next = {...upsert('server next', '文件/工作文件.txt', 2), fileRevision: 2};
+    await expect(value.files.applyUpsert(next, (async function* () {yield 'server next';})(), {
+      force: true, conflictPath: '文件/工作文件.txt',
+      conflictExpected: {sizeBytes: 10, sha256: digest('local edit')}}))
+      .rejects.toMatchObject({code: 'LOCAL_CONTENT_CONFLICT'});
+    expect(await readFile(join(value.root, '文件', '工作文件.txt'), 'utf8')).toBe('newer local edit');
   });
 
   it('applies a tombstone idempotently before a stale upsert can be scanned', async () => {

@@ -28,7 +28,8 @@ function task(type: StorageAgentTask['type'], overrides: Partial<StorageAgentTas
     blobId: type === 'DELETE_FILE' ? null : blobId, expectedSizeBytes: type === 'DELETE_FILE' ? null : 3,
     expectedSha256: type === 'DELETE_FILE' ? null : digest('new'), contentState: 'NONE', receivedSizeBytes: null,
     actualSha256: null, leaseGeneration: 1, status: 'PENDING', revision: 1, attempts: 0, claimToken: null,
-    failureCode: null, nextAttemptAt: '2026-08-13T00:00:00.000Z', createdAt: '2026-08-13T00:00:00.000Z',
+    failureCode: null, resolutionConflictId: null, nextAttemptAt: '2026-08-13T00:00:00.000Z',
+    createdAt: '2026-08-13T00:00:00.000Z',
     updatedAt: '2026-08-13T00:00:00.000Z', ...overrides};
 }
 
@@ -41,6 +42,7 @@ async function fixture(clientOverrides: Record<string, unknown> = {}) {
     claim: vi.fn(async (value: StorageAgentTask) => ({...value, status: 'IN_PROGRESS',
       claimToken: '50000000-0000-4000-8000-000000000001'})), complete: vi.fn(async (value: StorageAgentTask) => value),
     fail: vi.fn(async (value: StorageAgentTask) => value), download: vi.fn(), upload: vi.fn(), localChange: vi.fn(),
+    conflicts: vi.fn(async () => []),
     ...clientOverrides} as unknown as StorageAgentHttpClient;
   return {root, state, files, scanner, client,
     runtime: new StorageAgentRuntime(client, 1, state, files, scanner)};
@@ -124,6 +126,100 @@ describe('Chair Agent recovery loop', () => {
       expect.objectContaining({kind: 'UPSERT', fileEntryId, baseRevision: 1}));
     expect(value.client.fail).toHaveBeenCalledWith(expect.anything(), expect.any(String), expect.any(String),
       'LOCAL_CONTENT_CONFLICT');
+    expect(Object.values(value.state.snapshot().conflicts)).toEqual([
+      expect.objectContaining({relativePath: 'draft.txt', change: expect.objectContaining({kind: 'UPSERT'})})
+    ]);
+  });
+
+  it('suppresses a durable conflict until a save-as-new decision is consumed with one stable request', async () => {
+    const value = await fixture(); await writeFile(join(value.root, 'local.txt'), 'local');
+    const conflictId = '70000000-0000-4000-8000-000000000001';
+    const uploadTask = task('UPLOAD_BLOB', {expectedSizeBytes: 5, expectedSha256: digest('local')});
+    vi.mocked(value.client.localChange).mockResolvedValueOnce({status: 'CONFLICT', changeRequestId: randomUUID(),
+      conflictId, reasonCode: 'MANIFEST_STALE'}).mockResolvedValueOnce({status: 'PENDING_CONTENT',
+      changeRequestId: randomUUID(), task: uploadTask});
+    await value.runtime.synchronizeOnce();
+    expect(value.state.snapshot().conflicts[conflictId]).toBeTruthy();
+    await expect(value.scanner.detectOne()).resolves.toBeNull();
+    vi.mocked(value.client.conflicts).mockResolvedValue([{id: conflictId, committeeId, hostId: deviceId,
+      fileEntryId: null, serverRevision: null, localBaseRevision: null, reasonCode: 'MANIFEST_STALE',
+      status: 'RESOLVED', revision: 2, change: value.state.snapshot().conflicts[conflictId]!.change,
+      resolutionAction: 'SAVE_AS_NEW', resolutionLogicalName: '另存文件.txt', resolutionLeaseGeneration: 1,
+      resolutionFileRevision: null, createdAt: '2026-08-13T00:00:00.000Z',
+      resolvedAt: '2026-08-13T00:01:00.000Z'}]);
+    await value.runtime.synchronizeOnce();
+    expect(await readFile(join(value.root, '另存文件.txt'), 'utf8')).toBe('local');
+    expect(value.state.snapshot().conflicts).toEqual({});
+    expect(value.state.snapshot().pendingUploads[uploadTask.id]).toMatchObject({relativePath: '另存文件.txt'});
+    const resolutionCall = vi.mocked(value.client.localChange).mock.calls[1]!;
+    expect(resolutionCall[4]).toBe(conflictId);
+  });
+
+  it('applies a Chair keep-server task with explicit force and then clears the local conflict', async () => {
+    const value = await fixture();
+    const server: Extract<StorageManifestEvent, {kind: 'UPSERT'}> = {sequence: 1, kind: 'UPSERT', fileEntryId,
+      fileRevision: 1, versionId: randomUUID(), blobId, logicalName: 'draft.txt', originalName: 'draft.txt',
+      mediaType: 'text/plain', sizeBytes: 3, sha256: digest('old'), createdAt: '2026-08-13T00:00:00.000Z'};
+    await value.files.applyUpsert(server, (async function* () {yield 'old';})());
+    await writeFile(join(value.root, 'draft.txt'), 'local edit');
+    const conflictId = '70000000-0000-4000-8000-000000000001';
+    vi.mocked(value.client.manifest).mockResolvedValue({events: [server], nextSequence: 1, hasMore: false});
+    vi.mocked(value.client.localChange).mockResolvedValue({status: 'CONFLICT', changeRequestId: randomUUID(),
+      conflictId, reasonCode: 'REVISION_CONFLICT'});
+    await value.runtime.synchronizeOnce();
+    const stored = value.state.snapshot().conflicts[conflictId]!;
+    vi.mocked(value.client.conflicts).mockResolvedValue([{id: conflictId, committeeId, hostId: deviceId,
+      fileEntryId, serverRevision: 1, localBaseRevision: 1, reasonCode: 'REVISION_CONFLICT', status: 'RESOLVED',
+      revision: 2, change: stored.change, resolutionAction: 'KEEP_SERVER', resolutionLogicalName: null,
+      resolutionLeaseGeneration: 1, resolutionFileRevision: 1, createdAt: '2026-08-13T00:00:00.000Z',
+      resolvedAt: '2026-08-13T00:01:00.000Z'}]);
+    const resolutionTask = task('STORE_BLOB', {fileEntryId, fileRevision: 1, expectedSizeBytes: 3,
+      expectedSha256: digest('old'), resolutionConflictId: conflictId});
+    vi.mocked(value.client.tasks).mockResolvedValue({tasks: [resolutionTask], nextSequence: 1, hasMore: false});
+    vi.mocked(value.client.download).mockResolvedValue((async function* () {yield Buffer.from('old');})());
+    await value.runtime.synchronizeOnce();
+    expect(await readFile(join(value.root, 'draft.txt'), 'utf8')).toBe('old');
+    expect(value.state.snapshot().conflicts).toEqual({});
+    expect(value.client.complete).toHaveBeenCalledOnce();
+  });
+
+  it('leaves a failed conflict-resolution task claimed so the same task can retry', async () => {
+    const value = await fixture(); await writeFile(join(value.root, 'local.txt'), 'local');
+    const conflictId = '70000000-0000-4000-8000-000000000001';
+    await value.state.update(state => { state.conflicts[conflictId] = {conflictId, relativePath: 'local.txt',
+      change: {kind: 'UPSERT', logicalName: 'local.txt', originalName: 'local.txt', mediaType: 'text/plain',
+        sizeBytes: 5, sha256: digest('local')}}; });
+    const resolutionTask = task('DELETE_FILE', {resolutionConflictId: conflictId});
+    vi.mocked(value.client.tasks).mockResolvedValue({tasks: [resolutionTask], nextSequence: 1, hasMore: false});
+    vi.spyOn(value.files, 'discardConflict').mockRejectedValueOnce(new Error('temporary disk failure'));
+    await expect(value.runtime.synchronizeOnce()).rejects.toThrow('temporary disk failure');
+    expect(value.client.fail).not.toHaveBeenCalled();
+    expect(value.state.snapshot().conflicts[conflictId]).toBeTruthy();
+  });
+
+  it('turns a post-decision local edit into a new durable conflict instead of overwriting it', async () => {
+    const value = await fixture();
+    const server: Extract<StorageManifestEvent, {kind: 'UPSERT'}> = {sequence: 1, kind: 'UPSERT', fileEntryId,
+      fileRevision: 1, versionId: randomUUID(), blobId, logicalName: 'draft.txt', originalName: 'draft.txt',
+      mediaType: 'text/plain', sizeBytes: 3, sha256: digest('old'), createdAt: '2026-08-13T00:00:00.000Z'};
+    await value.files.applyUpsert(server, (async function* () {yield 'old';})());
+    const conflictId = '70000000-0000-4000-8000-000000000001';
+    await value.state.update(state => { state.conflicts[conflictId] = {conflictId, relativePath: 'draft.txt',
+      change: {kind: 'UPSERT', fileEntryId, baseRevision: 1, logicalName: 'draft.txt', originalName: 'draft.txt',
+        mediaType: 'text/plain', sizeBytes: 10, sha256: digest('local edit')}}; });
+    await writeFile(join(value.root, 'draft.txt'), 'later edit');
+    const replacementId = '80000000-0000-4000-8000-000000000001';
+    vi.mocked(value.client.manifest).mockResolvedValue({events: [server], nextSequence: 1, hasMore: false});
+    vi.mocked(value.client.tasks).mockResolvedValue({tasks: [task('STORE_BLOB', {resolutionConflictId: conflictId,
+      expectedSha256: server.sha256})], nextSequence: 1, hasMore: false});
+    vi.mocked(value.client.download).mockResolvedValue((async function* () {yield Buffer.from('old');})());
+    vi.mocked(value.client.localChange).mockResolvedValue({status: 'CONFLICT', changeRequestId: randomUUID(),
+      conflictId: replacementId, reasonCode: 'REVISION_CONFLICT'});
+    await expect(value.runtime.synchronizeOnce()).rejects.toMatchObject({code: 'LOCAL_CONTENT_CONFLICT'});
+    expect(await readFile(join(value.root, 'draft.txt'), 'utf8')).toBe('later edit');
+    expect(value.client.fail).toHaveBeenCalledOnce();
+    expect(value.state.snapshot().conflicts[conflictId]).toBeUndefined();
+    expect(value.state.snapshot().conflicts[replacementId]).toBeTruthy();
   });
 
   it('uses a filesystem notification as a fast hint while retaining periodic scan fallback', async () => {

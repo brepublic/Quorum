@@ -9,6 +9,7 @@ import type {IdentityService} from '../modules/identity/service';
 import type {Stage7StorageAgentService} from '../modules/storage-agent/service';
 import type {Stage7StorageTaskService} from '../modules/storage-agent/task-service';
 import type {Stage7LocalChangeService} from '../modules/storage-agent/local-change-service';
+import type {Stage7ConflictService} from '../modules/storage-agent/conflict-service';
 import {createRequestHandler} from './app';
 import {AppError} from './errors';
 
@@ -29,6 +30,7 @@ class TestResponse extends EventEmitter {
 async function send(storageAgent: Stage7StorageAgentService, options: {
   method: 'GET' | 'POST'; path: string; body?: unknown; rawBody?: Buffer; headers?: Record<string, string>;
   identity?: IdentityService; storageTasks?: Stage7StorageTaskService; storageLocalChanges?: Stage7LocalChangeService;
+  storageConflicts?: Stage7ConflictService;
 }) {
   const identity = options.identity ?? ({authenticate: vi.fn(async () => authenticated)} as unknown as IdentityService);
   const logs: string[] = [];
@@ -36,6 +38,7 @@ async function send(storageAgent: Stage7StorageAgentService, options: {
     database: {status: 'ok', migrationVersion: 20}, storage: {status: 'ok'}}})},
   logger: createLogger(line => logs.push(line)), version: 'test', databaseMigrationVersion: 20,
   identity, storageAgent, storageTasks: options.storageTasks, storageLocalChanges: options.storageLocalChanges,
+  storageConflicts: options.storageConflicts,
   allowedOrigins: ['https://quorum.example.com']});
   const chunks = options.rawBody ? [options.rawBody]
     : options.body === undefined ? [] : [Buffer.from(JSON.stringify(options.body))];
@@ -140,6 +143,30 @@ describe('stage 7 storage Agent HTTP boundary', () => {
     expect(submit).toHaveBeenCalledWith('qsa1.device.secret', body,
       expect.objectContaining({requestId: expect.any(String)}));
     expect(identity.authenticate).not.toHaveBeenCalled();
+  });
+
+  it('separates Agent conflict polling from CSRF-protected Chair resolution', async () => {
+    const committeeId = '20000000-0000-4000-8000-000000000001';
+    const conflictId = '30000000-0000-4000-8000-000000000001';
+    const listForAgent = vi.fn(async () => [{id: conflictId, status: 'RESOLVED'}]);
+    const list = vi.fn(async () => [{id: conflictId, status: 'PENDING'}]);
+    const resolve = vi.fn(async () => ({id: conflictId, status: 'RESOLVED'}));
+    const storageConflicts = {listForAgent, list, resolve} as unknown as Stage7ConflictService;
+    const agent = await send({} as Stage7StorageAgentService, {method: 'GET',
+      path: '/api/v1/storage-agent/conflicts', headers: {authorization: 'QuorumAgent qsa1.device.secret',
+        'x-storage-lease-generation': '7'}, storageConflicts});
+    expect(agent.response.statusCode).toBe(200);
+    expect(listForAgent).toHaveBeenCalledWith('qsa1.device.secret', 7);
+    const browser = await send({} as Stage7StorageAgentService, {method: 'GET',
+      path: `/api/v1/committees/${committeeId}/storage-agent-conflicts`, storageConflicts});
+    expect(browser.response.statusCode).toBe(200); expect(list).toHaveBeenCalledWith(authenticated, committeeId);
+    const body = {baseRevision: 1, leaseGeneration: 7, fileRevision: 3, action: 'ACCEPT_LOCAL'};
+    const decided = await send({} as Stage7StorageAgentService, {method: 'POST',
+      path: `/api/v1/committees/${committeeId}/storage-agent-conflicts/${conflictId}/resolve`, body,
+      headers: {'idempotency-key': 'resolve-key'}, storageConflicts});
+    expect(decided.response.statusCode).toBe(200);
+    expect(resolve).toHaveBeenCalledWith(authenticated, committeeId, conflictId, body, 'resolve-key',
+      expect.objectContaining({requestId: expect.any(String)}));
   });
 
   it('streams Agent upload bytes and provider blob bytes through task-scoped headers', async () => {

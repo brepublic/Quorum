@@ -30,6 +30,13 @@ export interface PendingAgentUpload {
   sha256: string;
 }
 
+export interface PendingAgentConflict {
+  conflictId: string;
+  relativePath: string;
+  change: StorageAgentLocalChange;
+  resolutionRequestId?: string;
+}
+
 export interface AgentDirectoryState {
   schemaVersion: 1;
   committeeId: string;
@@ -37,6 +44,7 @@ export interface AgentDirectoryState {
   manifestSequence: number;
   files: Record<string, TrackedAgentFile>;
   pendingUploads: Record<string, PendingAgentUpload>;
+  conflicts: Record<string, PendingAgentConflict>;
 }
 
 function validUuid(value: unknown): value is string {
@@ -49,10 +57,12 @@ function validateState(value: unknown): AgentDirectoryState {
     throw new AgentFileSystemError('INVALID_STORAGE_ROOT', 'Agent directory metadata is invalid.');
   }
   const state = value as Partial<AgentDirectoryState>;
+  if (state.conflicts === undefined) state.conflicts = {};
   if (state.schemaVersion !== 1 || !validUuid(state.committeeId) || !validUuid(state.deviceId)
     || !Number.isSafeInteger(state.manifestSequence) || Number(state.manifestSequence) < 0
     || !state.files || typeof state.files !== 'object' || Array.isArray(state.files)
-    || !state.pendingUploads || typeof state.pendingUploads !== 'object' || Array.isArray(state.pendingUploads)) {
+    || !state.pendingUploads || typeof state.pendingUploads !== 'object' || Array.isArray(state.pendingUploads)
+    || !state.conflicts || typeof state.conflicts !== 'object' || Array.isArray(state.conflicts)) {
     throw new AgentFileSystemError('INVALID_STORAGE_ROOT', 'Agent directory metadata is invalid.');
   }
   return state as AgentDirectoryState;
@@ -117,7 +127,7 @@ export class AgentStateStore {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
       state = {schemaVersion: 1, committeeId: identity.committeeId, deviceId: identity.deviceId,
-        manifestSequence: 0, files: {}, pendingUploads: {}};
+        manifestSequence: 0, files: {}, pendingUploads: {}, conflicts: {}};
       const store = new AgentStateStore(canonicalRoot, state);
       await store.save(state);
       return store;

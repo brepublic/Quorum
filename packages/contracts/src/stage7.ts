@@ -62,9 +62,36 @@ export interface StorageAgentTask {
   attempts: number;
   claimToken: string | null;
   failureCode: string | null;
+  resolutionConflictId: string | null;
   nextAttemptAt: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export const STORAGE_AGENT_CONFLICT_REASONS = [
+  'MANIFEST_STALE', 'FILE_DELETED', 'REVISION_CONFLICT', 'NAME_CONFLICT', 'HOST_TRANSFERRED'
+] as const;
+export type StorageAgentConflictReason = typeof STORAGE_AGENT_CONFLICT_REASONS[number];
+export const STORAGE_AGENT_CONFLICT_RESOLUTIONS = ['KEEP_SERVER', 'ACCEPT_LOCAL', 'SAVE_AS_NEW'] as const;
+export type StorageAgentConflictResolution = typeof STORAGE_AGENT_CONFLICT_RESOLUTIONS[number];
+
+export interface StorageAgentConflict {
+  id: string;
+  committeeId: string;
+  hostId: string;
+  fileEntryId: string | null;
+  serverRevision: number | null;
+  localBaseRevision: number | null;
+  reasonCode: StorageAgentConflictReason;
+  status: 'PENDING' | 'RESOLVED';
+  revision: number;
+  change: StorageAgentLocalChange;
+  resolutionAction: StorageAgentConflictResolution | null;
+  resolutionLogicalName: string | null;
+  resolutionLeaseGeneration: number | null;
+  resolutionFileRevision: number | null;
+  createdAt: string;
+  resolvedAt: string | null;
 }
 
 export interface StorageAgentTaskPage {
@@ -134,5 +161,5 @@ export type StorageAgentLocalChangeResult = {
   status: 'CONFLICT';
   changeRequestId: string;
   conflictId: string;
-  reasonCode: 'MANIFEST_STALE' | 'FILE_DELETED' | 'REVISION_CONFLICT' | 'NAME_CONFLICT' | 'HOST_TRANSFERRED';
+  reasonCode: StorageAgentConflictReason;
 };

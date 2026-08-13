@@ -51,6 +51,7 @@ export class AgentDirectoryScanner {
     await scanDirectory(this.state.rootPath, this.state.rootPath, this.files, scanned);
     const paths = trackedByPath(snapshot);
     const pendingPaths = new Set(Object.values(snapshot.pendingUploads).map(item => item.relativePath));
+    for (const item of Object.values(snapshot.conflicts)) pendingPaths.add(item.relativePath);
     const missing = Object.values(snapshot.files).filter(file => !scanned.has(file.relativePath))
       .sort((left, right) => left.relativePath.localeCompare(right.relativePath));
     const untracked = [...scanned.values()].filter(file => !paths.has(file.relativePath) && !pendingPaths.has(file.relativePath))
@@ -82,7 +83,11 @@ export class AgentDirectoryScanner {
 
   async recordResult(detected: DetectedLocalChange, requestId: string, manifestSequence: number,
     result: StorageAgentLocalChangeResult): Promise<void> {
-    if (result.status === 'CONFLICT') return;
+    if (result.status === 'CONFLICT') {
+      await this.state.update(state => { state.conflicts[result.conflictId] = {
+        conflictId: result.conflictId, relativePath: detected.relativePath, change: detected.change}; });
+      return;
+    }
     if (result.status === 'PENDING_CONTENT') {
       if (detected.change.kind !== 'UPSERT' || result.task.expectedSizeBytes === null || !result.task.expectedSha256) {
         throw new AgentFileSystemError('LOCAL_CONTENT_INVALID', 'Agent upload task does not match its local change.');
@@ -126,5 +131,21 @@ export class AgentDirectoryScanner {
         blobId, sizeBytes: inspected.sizeBytes, sha256: inspected.sha256, modifiedTimeMs: inspected.modifiedTimeMs};
       delete state.pendingUploads[taskId];
     });
+  }
+
+  async moveConflict(conflictId: string, logicalName: string): Promise<void> {
+    const pending = this.state.snapshot().conflicts[conflictId];
+    if (!pending) return;
+    const expected = pending.change.kind === 'UPSERT'
+      ? {sizeBytes: pending.change.sizeBytes, sha256: pending.change.sha256}
+      : pending.change.kind === 'RENAME' ? this.state.snapshot().files[pending.change.fileEntryId] : undefined;
+    if (!expected) throw new AgentFileSystemError('LOCAL_CONTENT_CONFLICT', 'Conflict content is unavailable.');
+    if (pending.relativePath !== logicalName) await this.files.moveConflict(pending.relativePath, logicalName, expected);
+    await this.state.update(state => { const current = state.conflicts[conflictId];
+      if (current) current.relativePath = logicalName; });
+  }
+
+  async completeConflict(conflictId: string): Promise<void> {
+    await this.state.update(state => { delete state.conflicts[conflictId]; });
   }
 }

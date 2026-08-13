@@ -68,6 +68,7 @@ describe('Chair Agent periodic full scan', () => {
       sequence: 1, type: 'UPLOAD_BLOB', fileEntryId, fileRevision: 1, blobId, expectedSizeBytes: 7,
       expectedSha256: digest('pending'), contentState: 'NONE', receivedSizeBytes: null, actualSha256: null,
       leaseGeneration: 1, status: 'PENDING', revision: 1, attempts: 0, claimToken: null, failureCode: null,
+      resolutionConflictId: null,
       nextAttemptAt: '2026-08-13T00:00:00.000Z', createdAt: '2026-08-13T00:00:00.000Z',
       updatedAt: '2026-08-13T00:00:00.000Z'}} satisfies StorageAgentLocalChangeResult;
     await value.scanner.recordResult(detected, requestId, 0, result);

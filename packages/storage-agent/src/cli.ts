@@ -8,6 +8,7 @@ import {AgentFileStore} from './files.js';
 import {StorageAgentRuntime, type AgentRuntimeLogger} from './runtime.js';
 import {AgentDirectoryScanner} from './scanner.js';
 import {AgentStateStore} from './state.js';
+import {publicAgentStatus} from './status.js';
 
 function argumentsFor(values: string[]): Map<string, string> {
   const result = new Map<string, string>();
@@ -60,11 +61,19 @@ async function start(values: Map<string, string>): Promise<void> {
   logger.info('storage_agent.stopped');
 }
 
+async function status(values: Map<string, string>): Promise<void> {
+  const config = await readAgentConfig(resolve(required(values, 'config')));
+  const state = await AgentStateStore.initialize(config.rootPath,
+    {committeeId: config.committeeId, deviceId: config.deviceId});
+  logger.info('storage_agent.status', {...publicAgentStatus(state.snapshot(), config.leaseGeneration)});
+}
+
 async function main(): Promise<void> {
   const [command, ...rest] = process.argv.slice(2); const values = argumentsFor(rest);
   if (command === 'pair') await pair(values);
   else if (command === 'start') await start(values);
-  else throw new Error('Use `pair` or `start`.');
+  else if (command === 'status') await status(values);
+  else throw new Error('Use `pair`, `start`, or `status`.');
 }
 
 main().catch(error => {

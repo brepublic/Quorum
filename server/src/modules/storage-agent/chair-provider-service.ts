@@ -140,6 +140,7 @@ export class Stage7ChairAgentProviderService implements StorageAgentTaskCompleti
 
   async finalize(client: PoolClient, task: Parameters<StorageAgentTaskCompletionFinalizer['finalize']>[1],
     committee: Stage4CommitteeRow, context: Stage4Context): Promise<void> {
+    if (task.resolutionConflictId) return;
     if (task.type === 'DELETE_FILE') {
       const binding = await client.query<{id: string}>(`SELECT id FROM storage_bindings WHERE committee_id=$1
         AND storage_host_id=$2 AND provider_type='CHAIR_AGENT' AND status='ACTIVE' FOR UPDATE`,

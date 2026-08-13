@@ -19,6 +19,16 @@ describe('Chair Agent HTTP client', () => {
     expect(url.toString()).not.toContain(credential);
   });
 
+  it('polls resolved conflicts with the same device credential and lease fence', async () => {
+    const fetcher = vi.fn(async () => success([]));
+    const client = new StorageAgentHttpClient('https://quorum.example.com', credential, fetcher as typeof fetch);
+    await client.conflicts(7);
+    const [url, options] = fetcher.mock.calls[0] as unknown as [URL, RequestInit];
+    expect(url.toString()).toBe('https://quorum.example.com/api/v1/storage-agent/conflicts');
+    expect(options.headers).toMatchObject({authorization: `QuorumAgent ${credential}`,
+      'x-storage-lease-generation': '7'});
+  });
+
   it('turns a durable Chair conflict response back into its typed result', async () => {
     const details = {status: 'CONFLICT', changeRequestId: 'change', conflictId: 'conflict',
       reasonCode: 'REVISION_CONFLICT'};

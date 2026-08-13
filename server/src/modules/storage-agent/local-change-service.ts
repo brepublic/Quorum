@@ -77,6 +77,7 @@ function task(row: QueryResultRow): StorageAgentTask {
     receivedSizeBytes: row.received_size_bytes === null ? null : Number(row.received_size_bytes),
     actualSha256: row.actual_sha256_hex, leaseGeneration: Number(row.lease_generation), status: row.status,
     revision: row.revision, attempts: row.attempts, claimToken: row.claim_token, failureCode: row.failure_code,
+    resolutionConflictId: row.resolution_conflict_id ?? null,
     nextAttemptAt: row.next_attempt_at.toISOString(), createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString()};
 }
@@ -94,12 +95,15 @@ export class Stage7LocalChangeService {
   constructor(private readonly agent: Stage7StorageAgentService) {}
 
   async submit(credential: string, body: unknown, context: Stage4Context): Promise<StorageAgentLocalChangeResult> {
-    assertExactBody(body as Record<string, unknown>, ['leaseGeneration', 'requestId', 'manifestSequence', 'change']);
+    assertExactBody(body as Record<string, unknown>,
+      ['leaseGeneration', 'requestId', 'manifestSequence', 'change', 'resolutionConflictId']);
     const input = body as Record<string, unknown>;
     const generation = integer(input.leaseGeneration, 'Lease generation');
     const requestId = uuid(input.requestId, 'Request ID');
-    const manifestSequence = integer(input.manifestSequence, 'Manifest sequence', true);
-    const local = change(input.change);
+    let manifestSequence = integer(input.manifestSequence, 'Manifest sequence', true);
+    let local = change(input.change);
+    const resolutionConflictId = input.resolutionConflictId === undefined ? undefined
+      : uuid(input.resolutionConflictId, 'Conflict ID');
     const result = await this.agent.withCurrentLease(credential, generation, async (client, lease, committee) => {
       requireProceedingsActive(committee);
       const replay = await client.query<{result: StorageAgentLocalChangeResult}>(`SELECT result
@@ -112,7 +116,52 @@ export class Stage7LocalChangeService {
         throw new AppError({code: 'STALE_STORAGE_LEASE', message: 'Storage host lease is no longer current.'});
       }
       const latestManifest = Number(committee.next_storage_manifest_sequence) - 1;
-      if (manifestSequence !== latestManifest) {
+      let acceptedResolution: {action: 'ACCEPT_LOCAL' | 'SAVE_AS_NEW'; fileRevision: number | null;
+        logicalName: string | null} | undefined;
+      if (resolutionConflictId) {
+        const resolved = await client.query<QueryResultRow>(`SELECT conflict.resolution_action,
+          conflict.resolution_logical_name,conflict.resolution_lease_generation,conflict.resolution_file_revision,
+          change.kind,change.file_entry_id,change.base_revision,change.logical_name,change.original_name,
+          change.media_type,change.size_bytes,encode(change.sha256,'hex') AS sha256_hex
+          FROM storage_agent_conflicts conflict JOIN storage_agent_change_requests change
+            ON change.id=conflict.change_request_id
+          WHERE conflict.id=$1 AND conflict.committee_id=$2 AND conflict.host_id=$3
+            AND conflict.status='RESOLVED' FOR UPDATE OF conflict`,
+        [resolutionConflictId, committee.id, lease.hostId]);
+        const approved = resolved.rows[0];
+        if (!approved || !['ACCEPT_LOCAL', 'SAVE_AS_NEW'].includes(approved.resolution_action)
+          || Number(approved.resolution_lease_generation) !== generation) {
+          throw new AppError({code: 'REVISION_CONFLICT', message: 'Conflict resolution is no longer applicable.'});
+        }
+        const original = approved.kind === 'UPSERT' ? {kind: 'UPSERT',
+          ...(approved.file_entry_id ? {fileEntryId: approved.file_entry_id, baseRevision: approved.base_revision} : {}),
+          logicalName: approved.logical_name, originalName: approved.original_name, mediaType: approved.media_type,
+          sizeBytes: Number(approved.size_bytes), sha256: approved.sha256_hex}
+          : approved.kind === 'RENAME' ? {kind: 'RENAME', fileEntryId: approved.file_entry_id,
+            baseRevision: approved.base_revision, logicalName: approved.logical_name}
+            : {kind: 'DELETE', fileEntryId: approved.file_entry_id, baseRevision: approved.base_revision};
+        if (JSON.stringify(original) !== JSON.stringify(local)) {
+          throw new AppError({code: 'IDEMPOTENCY_CONFLICT', message: 'Local content no longer matches the resolution.'});
+        }
+        await client.query(`INSERT INTO storage_agent_conflict_applications (conflict_id,request_id)
+          VALUES ($1,$2) ON CONFLICT (conflict_id) DO NOTHING`, [resolutionConflictId, requestId]);
+        const application = await client.query<{request_id: string}>(
+          'SELECT request_id FROM storage_agent_conflict_applications WHERE conflict_id=$1', [resolutionConflictId]);
+        if (application.rows[0]?.request_id !== requestId) {
+          throw new AppError({code: 'IDEMPOTENCY_CONFLICT', message: 'Conflict resolution was already applied.'});
+        }
+        acceptedResolution = {action: approved.resolution_action,
+          fileRevision: approved.resolution_file_revision, logicalName: approved.resolution_logical_name};
+        manifestSequence = latestManifest;
+        if (approved.resolution_action === 'SAVE_AS_NEW') {
+          if (local.kind !== 'UPSERT') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Resolution content is invalid.'});
+          local = {...local, fileEntryId: undefined, baseRevision: undefined,
+            logicalName: approved.resolution_logical_name};
+        } else if (approved.resolution_logical_name && local.kind !== 'DELETE') {
+          local = {...local, logicalName: approved.resolution_logical_name};
+        }
+      }
+      if (!acceptedResolution && manifestSequence !== latestManifest) {
         return this.conflict(client, lease.hostId, committee, requestId, manifestSequence, local,
           'MANIFEST_STALE', null, context);
       }
@@ -126,6 +175,10 @@ export class Stage7LocalChangeService {
           return this.conflict(client, lease.hostId, committee, requestId, manifestSequence, local,
             'FILE_DELETED', entry?.revision ?? null, context);
         }
+        if (acceptedResolution && entry.revision !== acceptedResolution.fileRevision) {
+          throw new AppError({code: 'REVISION_CONFLICT', message: 'File changed after the conflict was resolved.'});
+        }
+        if (acceptedResolution) local = {...local, baseRevision: entry.revision} as StorageAgentLocalChange;
         if (entry.revision !== local.baseRevision) {
           return this.conflict(client, lease.hostId, committee, requestId, manifestSequence, local,
             'REVISION_CONFLICT', entry.revision, context);

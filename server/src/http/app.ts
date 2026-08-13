@@ -21,6 +21,7 @@ import type {StorageMetricsProvider} from '../modules/storage/maintenance-servic
 import type {Stage7StorageAgentService} from '../modules/storage-agent/service.js';
 import type {Stage7StorageTaskService} from '../modules/storage-agent/task-service.js';
 import type {Stage7LocalChangeService} from '../modules/storage-agent/local-change-service.js';
+import type {Stage7ConflictService} from '../modules/storage-agent/conflict-service.js';
 import {AppError, normalizeError} from './errors.js';
 import {
   clearIdentityCookies,
@@ -56,6 +57,7 @@ export interface AppDependencies {
   storageAgent?: Stage7StorageAgentService;
   storageTasks?: Stage7StorageTaskService;
   storageLocalChanges?: Stage7LocalChangeService;
+  storageConflicts?: Stage7ConflictService;
   allowedOrigins?: string[];
 }
 
@@ -211,9 +213,10 @@ async function handleStage7AgentRequest(options: {
   request: IncomingMessage; response: ServerResponse; pathname: string; requestId: string;
   storageAgent: Stage7StorageAgentService; storageTasks?: Stage7StorageTaskService;
   storageLocalChanges?: Stage7LocalChangeService;
+  storageConflicts?: Stage7ConflictService;
   identity?: IdentityService; allowedOrigins: readonly string[];
 }): Promise<boolean> {
-  const {request, response, pathname, requestId, storageAgent, storageTasks, storageLocalChanges,
+  const {request, response, pathname, requestId, storageAgent, storageTasks, storageLocalChanges, storageConflicts,
     identity, allowedOrigins} = options;
   const method = request.method ?? 'GET';
   const context = identityContext(request, requestId);
@@ -274,6 +277,11 @@ async function handleStage7AgentRequest(options: {
       requestId));
     return true;
   }
+  if (storageConflicts && method === 'GET' && pathname === '/api/v1/storage-agent/conflicts') {
+    sendJson(response, 200, success(await storageConflicts.listForAgent(storageAgentCredential(request),
+      positiveHeader(request, 'x-storage-lease-generation')), requestId));
+    return true;
+  }
   const agentBlob = /^\/api\/v1\/storage-agent\/blobs\/([0-9a-f-]{36})$/.exec(pathname);
   if (storageTasks && method === 'GET' && agentBlob) {
     await storageTasks.streamBlob(storageAgentCredential(request), {
@@ -297,6 +305,20 @@ async function handleStage7AgentRequest(options: {
   if (method === 'GET' && hosts && identity) {
     sendJson(response, 200, success(await storageAgent.listHosts(await authenticatedRead(request, identity),
       hosts[1] as string), requestId));
+    return true;
+  }
+  const conflicts = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/storage-agent-conflicts$/.exec(pathname);
+  if (storageConflicts && method === 'GET' && conflicts && identity) {
+    sendJson(response, 200, success(await storageConflicts.list(await authenticatedRead(request, identity),
+      conflicts[1] as string), requestId));
+    return true;
+  }
+  const resolveConflict = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/storage-agent-conflicts\/([0-9a-f-]{36})\/resolve$/.exec(pathname);
+  if (storageConflicts && method === 'POST' && resolveConflict && identity) {
+    requireOrigin(request, allowedOrigins);
+    const auth = await authenticatedWrite(request, identity); const body = await readJson(request);
+    sendJson(response, 200, success(await storageConflicts.resolve(auth, resolveConflict[1] as string,
+      resolveConflict[2] as string, body, idempotencyKey(request), context), requestId));
     return true;
   }
   const pairing = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/storage-agent\/pairing-codes$/.exec(pathname);
@@ -1061,6 +1083,7 @@ export function createRequestHandler(dependencies: AppDependencies): RequestList
         if (dependencies.storageAgent && await handleStage7AgentRequest({request, response, pathname, requestId,
           storageAgent: dependencies.storageAgent, storageTasks: dependencies.storageTasks, identity: dependencies.identity,
           storageLocalChanges: dependencies.storageLocalChanges,
+          storageConflicts: dependencies.storageConflicts,
           allowedOrigins: dependencies.allowedOrigins ?? []})) return;
 
         if (dependencies.identity && await handleIdentityRequest({

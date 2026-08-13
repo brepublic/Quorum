@@ -5,4 +5,5 @@ export * from './files.js';
 export * from './paths.js';
 export * from './scanner.js';
 export * from './state.js';
+export * from './status.js';
 export * from './runtime.js';

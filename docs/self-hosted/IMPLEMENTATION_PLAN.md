@@ -179,7 +179,7 @@ deploy/
 
 ## 10. 阶段 7：Chair Local Agent
 
-状态：7.1 的配对与 lease fencing、7.2 的 manifest/task、7.3 的 `CHAIR_AGENT` provider 编排，以及 7.4 的桌面 Agent 文件系统与恢复循环已完成。图形管理界面、冲突裁决和 Windows/macOS 发布包尚未完成。
+状态：7.1 的配对与 lease fencing、7.2 的 manifest/task、7.3 的 `CHAIR_AGENT` provider 编排、7.4 的桌面 Agent 文件系统与恢复循环，以及 7.5 的主机管理和显式冲突裁决已完成。Windows/macOS 发布包尚未完成。
 
 交付：
 
@@ -237,4 +237,4 @@ deploy/
 
 ## 14. 首个实现里程碑
 
-下一步实施 7.5：补齐 Chair/Owner 的 Agent 配对、离线/恢复、主机转移和 durable conflict 裁决界面，并为本地 Agent 提供不泄露秘密的状态输出；所有裁决必须是显式、revision-fenced 的服务端命令。发布签名与安装器留到 7.6，归档、备份和 Firebase 移除仍不得提前实施。
+下一步实施 7.6：为 Windows x86-64 和 macOS 生成可复现发布包、安装/升级/卸载流程、签名配置入口和发布校验清单。不得提交签名私钥、公证凭据或平台证书；归档、备份和 Firebase 移除仍不得提前实施。

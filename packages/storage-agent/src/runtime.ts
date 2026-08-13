@@ -1,6 +1,6 @@
 import {randomUUID} from 'node:crypto';
 import {watch, type FSWatcher} from 'node:fs';
-import type {StorageAgentTask, StorageManifestEvent} from '@quorum/contracts';
+import type {StorageAgentConflict, StorageAgentTask, StorageManifestEvent} from '@quorum/contracts';
 import {StorageAgentHttpClient} from './client.js';
 import {AgentApiError, AgentFileSystemError} from './errors.js';
 import {AgentFileStore} from './files.js';
@@ -25,6 +25,16 @@ function due(task: StorageAgentTask, now = Date.now()): boolean {
 function safeReason(error: unknown): string {
   if (error instanceof AgentFileSystemError || error instanceof AgentApiError) return error.code;
   return 'AGENT_OPERATION_FAILED';
+}
+
+function conflictExpected(state: ReturnType<AgentStateStore['snapshot']>, conflictId: string):
+  {sizeBytes: number; sha256: string} | undefined {
+  const pending = state.conflicts[conflictId];
+  if (!pending) return undefined;
+  if (pending.change.kind === 'UPSERT') {
+    return {sizeBytes: pending.change.sizeBytes, sha256: pending.change.sha256};
+  }
+  return pending.change.kind === 'RENAME' ? state.files[pending.change.fileEntryId] : undefined;
 }
 
 export interface AgentRuntimeLogger {
@@ -54,6 +64,7 @@ export class StorageAgentRuntime {
         if (!(error instanceof AgentFileSystemError) || error.code !== 'LOCAL_CONTENT_CONFLICT') throw error;
       }
     }
+    await this.applyConflictResolutions(await this.client.conflicts(this.leaseGeneration));
     const tasks = await this.loadTasks();
     tasks.sort((left, right) => {
       const order = {DELETE_FILE: 0, STORE_BLOB: 1, UPLOAD_BLOB: 2};
@@ -121,17 +132,31 @@ export class StorageAgentRuntime {
     try {
       if (claimed.type === 'DELETE_FILE') {
         const event = this.manifest.get(claimed.fileEntryId);
-        if (!event || event.kind !== 'DELETE' || event.fileRevision !== claimed.fileRevision) {
+        if ((!event || event.kind !== 'DELETE' || event.fileRevision !== claimed.fileRevision)
+          && !claimed.resolutionConflictId) {
           throw new AgentFileSystemError('LOCAL_CONTENT_INVALID', 'Delete task does not match the latest manifest.');
         }
-        await this.files.applyDelete(event);
+        if (claimed.resolutionConflictId && (!event || event.kind !== 'DELETE')) {
+          const snapshot = this.state.snapshot(); const pending = snapshot.conflicts[claimed.resolutionConflictId];
+          if (pending) await this.files.discardConflict(pending.relativePath,
+            conflictExpected(snapshot, claimed.resolutionConflictId));
+        } else await this.files.applyDelete(event as Extract<StorageManifestEvent, {kind: 'DELETE'}>,
+          {force: Boolean(claimed.resolutionConflictId)});
       } else if (claimed.type === 'STORE_BLOB') {
         const event = this.manifest.get(claimed.fileEntryId);
         if (!event || event.kind !== 'UPSERT' || event.fileRevision !== claimed.fileRevision
           || event.blobId !== claimed.blobId) {
           throw new AgentFileSystemError('LOCAL_CONTENT_INVALID', 'Store task does not match the latest manifest.');
         }
-        await this.files.applyUpsert(event, await this.client.download(claimed, token));
+        const snapshot = this.state.snapshot();
+        const pending = claimed.resolutionConflictId ? snapshot.conflicts[claimed.resolutionConflictId] : undefined;
+        const expected = claimed.resolutionConflictId
+          ? conflictExpected(snapshot, claimed.resolutionConflictId) : undefined;
+        await this.files.applyUpsert(event, await this.client.download(claimed, token),
+          {force: Boolean(pending), conflictPath: pending?.relativePath, conflictExpected: expected});
+        if (pending && pending.relativePath !== event.logicalName) {
+          await this.files.discardConflict(pending.relativePath, expected);
+        }
       } else {
         const pending = this.state.snapshot().pendingUploads[claimed.id];
         if (!pending || pending.fileRevision !== claimed.fileRevision || pending.sha256 !== claimed.expectedSha256) {
@@ -145,14 +170,47 @@ export class StorageAgentRuntime {
         await this.client.upload(claimed, token, target.absolutePath);
       }
       await this.client.complete(claimed, token, randomUUID());
+      if (claimed.resolutionConflictId) await this.scanner.completeConflict(claimed.resolutionConflictId);
       if (claimed.type === 'UPLOAD_BLOB') await this.recoverCompletedUpload(claimed);
     } catch (error) {
       const code = safeReason(error);
+      if (claimed.resolutionConflictId) {
+        if (error instanceof AgentFileSystemError && error.code === 'LOCAL_CONTENT_CONFLICT') {
+          await this.client.fail(claimed, token, randomUUID(), code).catch(() => undefined);
+          await this.scanner.completeConflict(claimed.resolutionConflictId);
+          await this.reportOneLocalChange();
+        }
+        throw error;
+      }
       if (error instanceof AgentFileSystemError && error.code === 'LOCAL_CONTENT_CONFLICT') {
         await this.reportOneLocalChange();
       }
       await this.client.fail(claimed, token, randomUUID(), code).catch(() => undefined);
       throw error;
+    }
+  }
+
+  private async applyConflictResolutions(conflicts: StorageAgentConflict[]): Promise<void> {
+    for (const resolved of conflicts) {
+      const pending = this.state.snapshot().conflicts[resolved.id];
+      if (!pending || resolved.status !== 'RESOLVED' || resolved.resolutionLeaseGeneration !== this.leaseGeneration) continue;
+      if (resolved.resolutionAction === 'KEEP_SERVER') continue;
+      if (resolved.resolutionLogicalName) {
+        await this.scanner.moveConflict(resolved.id, resolved.resolutionLogicalName);
+      }
+      let requestId = this.state.snapshot().conflicts[resolved.id]?.resolutionRequestId;
+      if (!requestId) {
+        requestId = randomUUID();
+        await this.state.update(state => { const current = state.conflicts[resolved.id];
+          if (current) current.resolutionRequestId = requestId; });
+      }
+      const manifestSequence = Math.max(0,
+        ...[...this.manifest.values()].map(event => event.sequence));
+      const result = await this.client.localChange(this.leaseGeneration, requestId,
+        manifestSequence, pending.change, resolved.id);
+      await this.scanner.recordResult({...pending, relativePath: this.state.snapshot().conflicts[resolved.id]?.relativePath
+        ?? pending.relativePath}, requestId, manifestSequence, result);
+      if (result.status !== 'CONFLICT') await this.scanner.completeConflict(resolved.id);
     }
   }
 

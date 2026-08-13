@@ -2,6 +2,8 @@
 
 import {describe, expect, it} from 'vitest';
 import {
+  STORAGE_AGENT_CONFLICT_REASONS,
+  STORAGE_AGENT_CONFLICT_RESOLUTIONS,
   STORAGE_AGENT_TASK_STATUSES,
   STORAGE_AGENT_TASK_TYPES,
   STORAGE_HOST_STATUSES,
@@ -12,6 +14,13 @@ describe('stage 7 Agent contracts', () => {
   it('freezes durable host and pairing states', () => {
     expect(STORAGE_HOST_STATUSES).toEqual(['ACTIVE', 'DEGRADED', 'REVOKED']);
     expect(STORAGE_PAIRING_PURPOSES).toEqual(['INITIAL', 'TRANSFER']);
+  });
+
+  it('freezes explicit Agent conflict reasons and Chair resolutions', () => {
+    expect(STORAGE_AGENT_CONFLICT_REASONS).toEqual([
+      'MANIFEST_STALE', 'FILE_DELETED', 'REVISION_CONFLICT', 'NAME_CONFLICT', 'HOST_TRANSFERRED'
+    ]);
+    expect(STORAGE_AGENT_CONFLICT_RESOLUTIONS).toEqual(['KEEP_SERVER', 'ACCEPT_LOCAL', 'SAVE_AS_NEW']);
   });
 
   it('freezes durable task types and explicit retry states', () => {

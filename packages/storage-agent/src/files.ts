@@ -51,6 +51,18 @@ async function requireUnchanged(rootPath: string, tracked: TrackedAgentFile): Pr
   }
 }
 
+async function requireExpected(rootPath: string, relativePath: string,
+  expected: {sizeBytes: number; sha256: string}): Promise<void> {
+  const target = await secureAgentTarget(rootPath, relativePath);
+  if (await missing(target.absolutePath)) {
+    throw new AgentFileSystemError('LOCAL_CONTENT_CONFLICT', 'Conflict content is missing.');
+  }
+  const actual = await hashRegularFile(target.absolutePath);
+  if (actual.sizeBytes !== expected.sizeBytes || actual.sha256 !== expected.sha256) {
+    throw new AgentFileSystemError('LOCAL_CONTENT_CONFLICT', 'Conflict content changed after the decision.');
+  }
+}
+
 async function writeVerified(path: string, source: AsyncIterable<Uint8Array | string>, expectedSize: number,
   expectedSha256: string): Promise<void> {
   const handle = await open(path, fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_WRONLY
@@ -94,12 +106,12 @@ export class AgentFileStore {
     }
   }
 
-  async applyDelete(event: Extract<StorageManifestEvent, {kind: 'DELETE'}>): Promise<void> {
+  async applyDelete(event: Extract<StorageManifestEvent, {kind: 'DELETE'}>, options: {force?: boolean} = {}): Promise<void> {
     const tracked = this.state.snapshot().files[event.fileEntryId];
     if (tracked) {
       const target = await secureAgentTarget(this.rootPath, tracked.relativePath);
       if (!await missing(target.absolutePath)) {
-        await requireUnchanged(this.rootPath, tracked);
+        if (!options.force) await requireUnchanged(this.rootPath, tracked);
         await unlink(target.absolutePath);
       }
     }
@@ -110,12 +122,17 @@ export class AgentFileStore {
   }
 
   async applyUpsert(event: Extract<StorageManifestEvent, {kind: 'UPSERT'}>,
-    source: AsyncIterable<Uint8Array | string>): Promise<void> {
+    source: AsyncIterable<Uint8Array | string>, options: {force?: boolean; conflictPath?: string;
+      conflictExpected?: {sizeBytes: number; sha256: string}} = {}): Promise<void> {
     const snapshot = this.state.snapshot(); const tracked = snapshot.files[event.fileEntryId];
-    if (tracked) await requireUnchanged(this.rootPath, tracked);
+    if (tracked && !options.force) await requireUnchanged(this.rootPath, tracked);
+    if (options.force && options.conflictPath === event.logicalName && options.conflictExpected) {
+      await requireExpected(this.rootPath, options.conflictPath, options.conflictExpected);
+    }
     const target = await secureAgentTarget(this.rootPath, event.logicalName, {createParents: true});
     const sameTarget = tracked?.relativePath === target.relativePath;
-    if (!sameTarget && !await missing(target.absolutePath)) {
+    const resolvedTarget = options.force && options.conflictPath === target.relativePath;
+    if (!sameTarget && !await missing(target.absolutePath) && !resolvedTarget) {
       throw new AgentFileSystemError('LOCAL_CONTENT_CONFLICT', 'Server content collides with an untracked local file.');
     }
     if (sameTarget && !await missing(target.absolutePath)) {
@@ -128,8 +145,11 @@ export class AgentFileStore {
     try {
       await writeVerified(temporary, source, event.sizeBytes, event.sha256);
       await secureAgentTarget(this.rootPath, event.logicalName, {createParents: true});
-      if (tracked) await requireUnchanged(this.rootPath, tracked);
-      if (!sameTarget && !await missing(target.absolutePath)) {
+      if (tracked && !options.force) await requireUnchanged(this.rootPath, tracked);
+      if (options.force && options.conflictPath === event.logicalName && options.conflictExpected) {
+        await requireExpected(this.rootPath, options.conflictPath, options.conflictExpected);
+      }
+      if (!sameTarget && !await missing(target.absolutePath) && !resolvedTarget) {
         throw new AgentFileSystemError('LOCAL_CONTENT_CONFLICT', 'Server target changed during download.');
       }
       await rename(temporary, target.absolutePath);
@@ -155,5 +175,37 @@ export class AgentFileStore {
   async inspect(relativePath: string): Promise<{sizeBytes: number; sha256: string; modifiedTimeMs: number}> {
     const target = await secureAgentTarget(this.rootPath, relativePath);
     return hashRegularFile(target.absolutePath);
+  }
+
+  async discardConflict(relativePath: string, expected?: {sizeBytes: number; sha256: string}): Promise<void> {
+    const target = await secureAgentTarget(this.rootPath, relativePath);
+    if (await missing(target.absolutePath)) return;
+    if (expected) await requireExpected(this.rootPath, relativePath, expected);
+    else await hashRegularFile(target.absolutePath);
+    await unlink(target.absolutePath);
+  }
+
+  async moveConflict(relativePath: string, targetPath: string,
+    expected: {sizeBytes: number; sha256: string}): Promise<void> {
+    const source = await secureAgentTarget(this.rootPath, relativePath);
+    const target = await secureAgentTarget(this.rootPath, targetPath, {createParents: true});
+    if (await missing(source.absolutePath)) {
+      if (await missing(target.absolutePath)) {
+        throw new AgentFileSystemError('LOCAL_CONTENT_CONFLICT', 'Conflict content is missing.');
+      }
+      const recovered = await hashRegularFile(target.absolutePath);
+      if (recovered.sizeBytes !== expected.sizeBytes || recovered.sha256 !== expected.sha256) {
+        throw new AgentFileSystemError('LOCAL_CONTENT_CONFLICT', 'Conflict target does not match the pending content.');
+      }
+      return;
+    }
+    const inspected = await hashRegularFile(source.absolutePath);
+    if (inspected.sizeBytes !== expected.sizeBytes || inspected.sha256 !== expected.sha256) {
+      throw new AgentFileSystemError('LOCAL_CONTENT_CONFLICT', 'Conflict content changed after the decision.');
+    }
+    if (!await missing(target.absolutePath)) {
+      throw new AgentFileSystemError('LOCAL_CONTENT_CONFLICT', 'Conflict target already exists.');
+    }
+    await rename(source.absolutePath, target.absolutePath);
   }
 }

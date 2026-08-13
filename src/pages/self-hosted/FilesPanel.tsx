@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type {CommitteeWorkspaceSnapshot, FileEntry, FileUpload, StorageMigration,
-  StoragePairingCode, StorageProviderType} from '@quorum/contracts';
+  StorageAgentConflict, StorageAgentConflictResolution, StoragePairingCode, StorageProviderType} from '@quorum/contracts';
 import {Button, Card, Form, Header, Label, Message, Progress, Segment} from 'semantic-ui-react';
 import {SelfHostedApiError, newIdempotencyKey, type SelfHostedApi} from '../../services/self-hosted-api';
 import {sha256File} from '../../services/sha256';
@@ -12,6 +12,10 @@ const MIGRATION_STATUS: Record<StorageMigration['status'], string> = {
   COPYING: '正在复制', READY_TO_CONFIRM: '等待确认', FAILED: '迁移失败', COMPLETED: '迁移完成', CANCELLED: '已取消'
 };
 const HOST_STATUS = {ACTIVE: '在线', DEGRADED: '离线', REVOKED: '已撤销'} as const;
+const CONFLICT_REASON: Record<StorageAgentConflict['reasonCode'], string> = {
+  MANIFEST_STALE: '同步状态已更新', FILE_DELETED: '文件已删除', REVISION_CONFLICT: '文件已有新版本',
+  NAME_CONFLICT: '文件名冲突', HOST_TRANSFERRED: '主席电脑已转移'
+};
 
 function migrationFailureText(code: string): string {
   if (code === 'MANIFEST_CHANGED') return '文件列表已变更，请重试迁移。';
@@ -58,6 +62,8 @@ export default function FilesPanel({snapshot, api, currentUserId}: {
   const [migrations, setMigrations] = React.useState<StorageMigration[]>([]);
   const [hosts, setHosts] = React.useState<Awaited<ReturnType<SelfHostedApi['listStorageHosts']>>>([]);
   const [pairing, setPairing] = React.useState<StoragePairingCode>();
+  const [conflicts, setConflicts] = React.useState<StorageAgentConflict[]>([]);
+  const [conflictNames, setConflictNames] = React.useState<Record<string, string>>({});
   const [selectedFile, setSelectedFile] = React.useState<File>();
   const [logicalName, setLogicalName] = React.useState('');
   const [targetType, setTargetType] = React.useState<StorageProviderType>('SERVER_VOLUME');
@@ -74,11 +80,14 @@ export default function FilesPanel({snapshot, api, currentUserId}: {
       ]);
       setFiles(nextFiles); setPendingHostCommits(nextPendingHostCommits);
       if (canManage) {
-        const [nextBindings, nextConfigs, nextMigrations, nextHosts] = await Promise.all([
+        const [nextBindings, nextConfigs, nextMigrations, nextHosts, nextConflicts] = await Promise.all([
           api.listStorageBindings(committeeId), api.listS3ProviderConfigs(), api.listStorageMigrations(committeeId),
-          api.listStorageHosts(committeeId)
+          api.listStorageHosts(committeeId), api.listStorageAgentConflicts(committeeId)
         ]);
         setBindings(nextBindings); setConfigs(nextConfigs); setMigrations(nextMigrations); setHosts(nextHosts);
+        setConflicts(nextConflicts);
+        setConflictNames(current => Object.fromEntries(nextConflicts.flatMap(item => item.change.kind === 'DELETE'
+          ? [] : [[item.id, current[item.id] ?? item.change.logicalName]])));
         const active = nextBindings.find(binding => binding.status === 'ACTIVE');
         const availableS3 = nextConfigs.filter(config => config.status === 'ACTIVE'
           && config.id !== active?.providerConfigId);
@@ -100,7 +109,7 @@ export default function FilesPanel({snapshot, api, currentUserId}: {
             ? current : availableS3[0]?.id || '');
         }
       } else {
-        setBindings([]); setConfigs([]); setMigrations([]); setHosts([]);
+        setBindings([]); setConfigs([]); setMigrations([]); setHosts([]); setConflicts([]);
       }
       if (clearError) setError(undefined);
     } catch (caught) { setError(storageErrorText(caught)); }
@@ -158,6 +167,15 @@ export default function FilesPanel({snapshot, api, currentUserId}: {
     try { setPairing(await api.createStoragePairingCode(committeeId, snapshot.committee.revision, purpose)); }
     catch (caught) { setError(storageErrorText(caught)); await refresh(false); }
     finally { setWorking(false); }
+  };
+  const resolveConflict = (item: StorageAgentConflict, action: StorageAgentConflictResolution) => {
+    if (!activeHost) return Promise.reject(new Error('当前没有主席电脑。'));
+    const resolvedName = item.change.kind === 'DELETE' ? ''
+      : conflictNames[item.id] ?? item.change.logicalName;
+    return api.resolveStorageAgentConflict(committeeId, item.id, {baseRevision: item.revision,
+      leaseGeneration: activeHost.leaseGeneration, fileRevision: item.serverRevision, action,
+      ...((action === 'SAVE_AS_NEW' || (action === 'ACCEPT_LOCAL' && item.reasonCode === 'NAME_CONFLICT'))
+        ? {logicalName: resolvedName} : {})}, newIdempotencyKey());
   };
   const targetOptions = [
     ...(!activeBinding || (activeBinding.providerType !== 'SERVER_VOLUME' && activeBinding.providerType !== 'CHAIR_AGENT')
@@ -246,6 +264,29 @@ export default function FilesPanel({snapshot, api, currentUserId}: {
           void run(() => api.revokeStorageHost(committeeId, activeHost.id, snapshot.committee.revision));
         }
       }}>撤销主席电脑</Button>}
+      {conflicts.some(item => item.status === 'PENDING') && <div className="self-hosted-storage-conflicts">
+        <Header as="h4">同步冲突</Header>
+        {conflicts.filter(item => item.status === 'PENDING').map(item => <Card key={item.id} fluid>
+          <Card.Content><Card.Header>{item.change.kind === 'DELETE' ? '本地删除' : item.change.logicalName}</Card.Header>
+            <Card.Meta>{CONFLICT_REASON[item.reasonCode]}</Card.Meta>
+            {(item.change.kind === 'UPSERT' || item.reasonCode === 'NAME_CONFLICT')
+              && item.change.kind !== 'DELETE' && <Form.Input label={item.reasonCode === 'NAME_CONFLICT'
+                ? '新文件名称' : '另存名称'} aria-label={item.reasonCode === 'NAME_CONFLICT' ? '新文件名称' : '另存名称'}
+              value={conflictNames[item.id] ?? item.change.logicalName}
+              onChange={event => { const value = event.currentTarget.value;
+                setConflictNames(current => ({...current, [item.id]: value})); }} />}
+          </Card.Content><Card.Content extra>
+            <Button size="small" onClick={() => void run(() => resolveConflict(item, 'KEEP_SERVER'))}>
+              保留服务端版本
+            </Button>
+            {!['FILE_DELETED', 'HOST_TRANSFERRED'].includes(item.reasonCode) && <Button primary size="small"
+              disabled={item.reasonCode === 'NAME_CONFLICT' && !conflictNames[item.id]?.trim()}
+              onClick={() => void run(() => resolveConflict(item, 'ACCEPT_LOCAL'))}>采用本地版本</Button>}
+            {item.change.kind === 'UPSERT' && item.reasonCode !== 'HOST_TRANSFERRED' && <Button size="small"
+              disabled={!conflictNames[item.id]?.trim()}
+              onClick={() => void run(() => resolveConflict(item, 'SAVE_AS_NEW'))}>另存为新文件</Button>}
+          </Card.Content></Card>)}
+      </div>}
       {activeBinding && <p>当前：{activeBinding.providerType === 'SERVER_VOLUME' ? '服务器卷'
         : activeBinding.providerType === 'CHAIR_AGENT' ? '主席电脑'
           : `S3 · ${configs.find(config => config.id === activeBinding.providerConfigId)?.displayName ?? '已配置存储'}`}</p>}

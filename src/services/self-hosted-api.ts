@@ -29,7 +29,9 @@ import type {
   StorageMigration,
   StoragePairingCode,
   StorageProviderType,
-  StorageHost
+  StorageHost,
+  StorageAgentConflict,
+  StorageAgentConflictResolution
 } from '@quorum/contracts';
 import {COMMITTEE_EVENT_DEFINITIONS, type RealtimeSyncState} from '@quorum/contracts';
 
@@ -464,6 +466,17 @@ export const selfHostedApi = {
     return request<StorageHost>(`/api/v1/committees/${committeeId}/storage-hosts/${hostId}/revoke`, {
       method: 'POST', body: {baseRevision}
     });
+  },
+  listStorageAgentConflicts(committeeId: string) {
+    return request<StorageAgentConflict[]>(`/api/v1/committees/${committeeId}/storage-agent-conflicts`);
+  },
+  resolveStorageAgentConflict(committeeId: string, conflictId: string, input: {baseRevision: number;
+    leaseGeneration: number; fileRevision: number | null; action: StorageAgentConflictResolution;
+    logicalName?: string}, idempotencyKey = key()) {
+    return request<StorageAgentConflict>(
+      `/api/v1/committees/${committeeId}/storage-agent-conflicts/${conflictId}/resolve`, {
+        method: 'POST', body: input as unknown as Record<string, unknown>, idempotencyKey
+      });
   },
   listS3ProviderConfigs() {
     return request<S3ProviderConfigSummary[]>('/api/v1/storage-provider-configs/s3');

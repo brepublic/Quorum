@@ -27,6 +27,7 @@ function api(overrides: Partial<SelfHostedApi> = {}): SelfHostedApi {
     listPendingHostCommits: vi.fn(async () => []),
     listStorageBindings: vi.fn(async () => []), listS3ProviderConfigs: vi.fn(async () => []),
     listStorageHosts: vi.fn(async () => []),
+    listStorageAgentConflicts: vi.fn(async () => []),
     listStorageMigrations: vi.fn(async () => []), ...overrides} as unknown as SelfHostedApi;
 }
 
@@ -187,6 +188,51 @@ describe('self-hosted stage 6 file panel', () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     await act(async () => {button('撤销主席电脑')?.click(); await new Promise(resolve => setTimeout(resolve, 0));});
     expect(revokeStorageHost).toHaveBeenCalledWith(committeeId, 'host', 2);
+  });
+
+  it('shows durable conflicts and sends the loaded conflict, lease, and file revisions', async () => {
+    const host = {id: 'host', committeeId, deviceId: 'device', deviceLabel: '主席电脑', leaseGeneration: 7,
+      status: 'ACTIVE' as const, revision: 1, lastSeenAt: '2026-08-13T00:00:00.000Z',
+      pairedAt: '2026-08-13T00:00:00.000Z', revokedAt: null};
+    const conflict = {id: 'conflict', committeeId, hostId: 'host', fileEntryId: file.id, serverRevision: 3,
+      localBaseRevision: 2, reasonCode: 'REVISION_CONFLICT' as const, status: 'PENDING' as const, revision: 1,
+      change: {kind: 'UPSERT' as const, fileEntryId: file.id, baseRevision: 2, logicalName: '工作文件一',
+        originalName: 'draft.txt', mediaType: 'text/plain', sizeBytes: 3, sha256: 'b'.repeat(64)},
+      resolutionAction: null, resolutionLogicalName: null, resolutionLeaseGeneration: null,
+      resolutionFileRevision: null, createdAt: '2026-08-13T00:00:00.000Z', resolvedAt: null};
+    const resolveStorageAgentConflict = vi.fn(async () => ({...conflict, status: 'RESOLVED' as const,
+      revision: 2, resolutionAction: 'ACCEPT_LOCAL' as const}));
+    const view = await render('CHAIR', api({listFiles: vi.fn(async () => []),
+      listStorageHosts: vi.fn(async () => [host]), listStorageAgentConflicts: vi.fn(async () => [conflict]),
+      resolveStorageAgentConflict}), 'chair');
+    expect(view.textContent).toContain('文件已有新版本');
+    await act(async () => {button('采用本地版本')?.click(); await new Promise(resolve => setTimeout(resolve, 0));});
+    expect(resolveStorageAgentConflict).toHaveBeenCalledWith(committeeId, 'conflict', {
+      baseRevision: 1, leaseGeneration: 7, fileRevision: 3, action: 'ACCEPT_LOCAL'
+    }, expect.any(String));
+  });
+
+  it('sends an explicit replacement name when accepting a local name conflict', async () => {
+    const host = {id: 'host', committeeId, deviceId: 'device', deviceLabel: '主席电脑', leaseGeneration: 7,
+      status: 'ACTIVE' as const, revision: 1, lastSeenAt: null,
+      pairedAt: '2026-08-13T00:00:00.000Z', revokedAt: null};
+    const conflict = {id: 'name-conflict', committeeId, hostId: 'host', fileEntryId: file.id, serverRevision: 3,
+      localBaseRevision: 2, reasonCode: 'NAME_CONFLICT' as const, status: 'PENDING' as const, revision: 1,
+      change: {kind: 'RENAME' as const, fileEntryId: file.id, baseRevision: 2, logicalName: '重名文件.txt'},
+      resolutionAction: null, resolutionLogicalName: null, resolutionLeaseGeneration: null,
+      resolutionFileRevision: null, createdAt: '2026-08-13T00:00:00.000Z', resolvedAt: null};
+    const resolveStorageAgentConflict = vi.fn(async () => ({...conflict, status: 'RESOLVED' as const,
+      revision: 2, resolutionAction: 'ACCEPT_LOCAL' as const}));
+    const view = await render('CHAIR', api({listFiles: vi.fn(async () => []),
+      listStorageHosts: vi.fn(async () => [host]), listStorageAgentConflicts: vi.fn(async () => [conflict]),
+      resolveStorageAgentConflict}), 'chair');
+    const name = view.querySelector('input[aria-label="新文件名称"]') as HTMLInputElement;
+    await act(async () => {Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+      ?.call(name, '改名文件.txt'); name.dispatchEvent(new Event('input', {bubbles: true}));});
+    await act(async () => {button('采用本地版本')?.click(); await new Promise(resolve => setTimeout(resolve, 0));});
+    expect(resolveStorageAgentConflict).toHaveBeenCalledWith(committeeId, 'name-conflict', {
+      baseRevision: 1, leaseGeneration: 7, fileRevision: 3, action: 'ACCEPT_LOCAL', logicalName: '改名文件.txt'
+    }, expect.any(String));
   });
 
   it('cancels an in-flight upload through AbortSignal without clearing the selected file', async () => {

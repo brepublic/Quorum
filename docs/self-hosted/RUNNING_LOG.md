@@ -6,10 +6,10 @@
 
 - 更新时间：2026-08-13
 - 分支：`self-host`
-- 已确认基线：`3af6b1a stage 7.4: add chair agent filesystem core`
+- 已确认基线：`cf8002c stage 7.5a: manage chair storage hosts`
 - 当前阶段：7.5 Agent 管理、离线恢复和冲突裁决 UI 正在实施。
-- 当前工作：7.5a Chair/Owner 主机配对、转移与撤销界面已完成定向验证，等待小任务提交。
-- 下一步：提交 7.5a，再增加 migration 23 与 revision-fenced 冲突裁决协议。
+- 当前工作：7.5b durable 冲突裁决、Agent 恢复和安全状态输出已完成当前 WSL 验证，等待单独提交。
+- 下一步：提交 7.5b 并收尾阶段 7.5；随后按 `STAGE_7_6_HANDOFF_PROMPT.md` 实施 Windows/macOS 发布包。
 
 ## 已完成与验证
 
@@ -52,6 +52,8 @@
 - `a7dd0fd`：阶段 7.1 Agent 配对、设备身份与单主机 fencing。
 - `887ce8b`：阶段 7.2 durable Agent task、manifest 与流式内容边界。
 - `ccf6f6a`：阶段 7.3 `CHAIR_AGENT` provider、本地变化和恢复编排。
+- `3af6b1a`：阶段 7.4 Chair Agent 文件系统核心与恢复循环。
+- `cf8002c`：阶段 7.5a Chair/Owner 主机管理界面。
 
 ### 2026-08-13：阶段 6.3 SERVER_VOLUME provider
 
@@ -233,3 +235,18 @@
 - 一次性配对码只保存在当前页面内存，显示过期时间并可复制；关闭后不进入浏览器持久状态。创建、转移和撤销复用既有 Session、Origin、CSRF 与 committee revision 服务端边界。
 - API client 与文件页定向验证：2 个测试文件、24 项通过；`pnpm build:self-host` 通过，Vite 仅报告既有的大分块警告。
 - 本小任务没有改变数据库、Agent 协议或冲突状态；下一小任务继续实现 durable conflict 裁决。
+
+### 2026-08-13：阶段 7.5b durable 冲突裁决与恢复
+
+- migration 23 增加 `KEEP_SERVER`、`ACCEPT_LOCAL`、`SAVE_AS_NEW`、conflict revision、裁决 lease/file revision、关联 task 和一次性 application 记录；已裁决 conflict 及 task 身份不可修改，schema compatibility 为 23。
+- Owner/Chair 可读取冲突并提交显式裁决。服务端在一个幂等事务内锁定委员会、当前 host、conflict 和 file entry，检查 conflict revision、lease generation、file revision、暂停状态和权限，再共同提交裁决、Chair 事件与审计。member 和仅有系统管理员身份的用户无隐式权限。
+- 墓碑或已删除文件不能通过“采用本地版本”复活；旧 host 独有内容只能保留服务端状态。另存和名称冲突改名拒绝绝对路径、`..`、保留目录、Windows 保留名、尾随点/空格和冒号。
+- 浏览器 conflict 响应只返回文件名，不暴露 Agent 相对目录；完整路径只返回持有当前 generation 的 Agent。
+- Agent 轮询当前 generation 的已裁决 conflict，持久保存 resolution request ID，并对采用本地或另存精确重放。另存/改名先复验大小与 SHA-256；本地状态写入失败后可从已移动目标恢复。保留服务端的 force apply 只允许 conflict 或 tracked 路径；磁盘/网络故障保持 task 可重试，裁决后的新本地编辑形成新 conflict。
+- `quorum-storage-agent status --config <path>` 只输出 lease generation、manifest sequence 与 tracked/pending 聚合计数，不输出设备身份、凭据、文件名、路径、哈希或正文。
+- Agent/UI/HTTP/migration 定向验证最终结果为 12 个测试文件、119 项通过；阶段 7 PostgreSQL 文件的 15 项因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip。contracts、Agent 和 server TypeScript build 通过。
+- `pnpm test:self-host`：53 个文件、295 项通过；7 个 PostgreSQL 文件、63 项明确 skip。仅出现既有 React/Semantic UI 弃用警告。
+- `pnpm build:self-host` 与默认 `pnpm build`：通过；Vite 仅报告既有大分块警告。
+- `pnpm test:self-host:integration`：7 个文件、63 项因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip；`git diff --check` 通过。
+- 当前 WSL 没有真实 PostgreSQL、TLS 自托管实例、第二设备、NTFS/APFS 原生目录或浏览器视觉/键盘/辅助功能环境；实机步骤与证据记录在 `MANUAL_ACCEPTANCE.md` 的 SH-MAN-513。
+- 已撰写 `STAGE_7_6_HANDOFF_PROMPT.md`；7.6 只实施桌面发布包、安装流程与签名配置入口，归档、备份和 Firebase 移除不得提前实施。
