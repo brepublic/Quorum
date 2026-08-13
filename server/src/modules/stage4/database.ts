@@ -18,6 +18,7 @@ export interface Stage4CommitteeRow extends QueryResultRow {
   active_rule_package_version_id: string;
   active_storage_binding_id: string | null;
   file_manifest_revision: number;
+  storage_lease_generation: string | number;
   revision: number;
   next_event_sequence: string | number;
 }

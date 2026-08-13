@@ -122,7 +122,7 @@
 
 - 前置条件：PostgreSQL 16；`TEST_DATABASE_ADMIN_URL` 指向可创建和删除数据库的管理员连接。
 - 操作步骤：执行 `TEST_DATABASE_ADMIN_URL=postgresql://... pnpm test:self-host:integration`；确认测试创建随机临时数据库，从空库执行全部 migration，再执行一次；检查阶段 3 表、外键、部分唯一索引、邀请码约束、已发布规则版本和审计追加限制。
-- 通过条件：两次 migration 均成功；当前 schema compatibility 为 19，且 12 个阶段 3 核心表继续存在；同一用户的第二个活动席位被拒绝；已发布规则版本和审计记录不能更新或删除；测试数据库最终清理。
+- 通过条件：两次 migration 均成功；当前 schema compatibility 为 20，且 12 个阶段 3 核心表继续存在；同一用户的第二个活动席位被拒绝；已发布规则版本和审计记录不能更新或删除；测试数据库最终清理。
 - 自动化覆盖情况：`server/src/db/migrations.integration.test.ts` 检查空库、重复执行和表清单；`server/src/modules/stage3/postgres.integration.test.ts` 检查索引、外键、历史行和不可变触发器。未配置 URL 时测试明确 skip。
 - 当前状态：因无服务器延期。
 - 需要保存的证据：测试输出、`quorum_meta.schema_migrations`、表与索引查询、触发器失败结果和临时数据库清理记录。
@@ -160,7 +160,7 @@
 
 - 前置条件：PostgreSQL 16；`TEST_DATABASE_ADMIN_URL` 指向可创建和删除数据库的管理员连接。
 - 操作步骤：执行 `TEST_DATABASE_ADMIN_URL=postgresql://... pnpm test:self-host:integration`；检查 migration 4、模板隔离、幂等键、revision 冲突、软删除、并发点名和追加式出席事件用例。
-- 通过条件：schema compatibility 为 19；migration 4 的表、外键、唯一索引和追加式触发器均生效；并发写只有一个符合 revision 的请求成功；临时数据库最终清理。
+- 通过条件：schema compatibility 为 20；migration 4 的表、外键、唯一索引和追加式触发器均生效；并发写只有一个符合 revision 的请求成功；临时数据库最终清理。
 - 自动化覆盖情况：migration 与 `server/src/modules/stage4/postgres.integration.test.ts` 已实现；当前环境未提供 PostgreSQL，因此明确 skip。
 - 当前状态：因无服务器延期。
 - 需要保存的证据：测试输出、migration 表、阶段 4 表与索引查询、并发结果和临时数据库清理记录。
@@ -209,7 +209,7 @@
 
 - 前置条件：PostgreSQL 16；`TEST_DATABASE_ADMIN_URL` 指向可创建和删除数据库的管理员连接。
 - 操作步骤：执行 `TEST_DATABASE_ADMIN_URL=postgresql://... pnpm test:self-host:integration`；保留 migration 5–12、两名 Chair 并发重排和同席位两名代表并发投票的输出。
-- 通过条件：schema compatibility 为 19；空库 migration 和重复执行成功；并发重排只有一个 revision 成功且活动位置唯一；同席位并发投票只有一张当前票；临时数据库被清理。
+- 通过条件：schema compatibility 为 20；空库 migration 和重复执行成功；并发重排只有一个 revision 成功且活动位置唯一；同席位并发投票只有一张当前票；临时数据库被清理。
 - 自动化覆盖情况：`server/src/db/migrations.integration.test.ts` 与 `server/src/modules/stage5/postgres.integration.test.ts` 已实现；未配置 URL 时明确 skip。
 - 当前状态：因无服务器延期。
 - 需要保存的证据：完整测试输出、`quorum_meta.schema_migrations`、相关唯一索引和触发器查询、两组并发结果及临时数据库清理记录。
@@ -273,8 +273,8 @@
 - 前置条件：Java 21、Firebase Emulator Suite、已安装 Cypress 二进制，以及独立自托管测试实例。
 - 操作步骤：运行 `pnpm test:e2e`；分别构建默认与 `VITE_RUNTIME_MODE=self-hosted`；在两个浏览器检查网络请求和相同业务动作。
 - 通过条件：Firebase emulator/Cypress 既有用例通过；默认构建仍只走 Firebase；自托管构建只走同源 API/SSE；任何动作都不双写；简体中文议事控件和状态可读。
-- 自动化覆盖情况：两个生产构建和 runtime 静态测试已实现；当前环境缺少 Cypress 二进制及真实浏览器，未执行 E2E。
-- 当前状态：因无服务器延期。
+- 自动化覆盖情况：两个生产构建和 runtime 静态测试已实现。当前 WSL 已在 Firebase Auth、Database、Storage、Functions emulators 与 Electron 118 上运行 Cypress 13.11.0，4 个 spec、22 项全部通过；该套件只验证既有 Firebase 运行时，不能替代自托管 PostgreSQL 网络与视觉验收。
+- 当前状态：Firebase emulator/Cypress 回归已通过；自托管 TLS、多浏览器网络和双写检查因无服务器延期。
 - 需要保存的证据：Cypress 输出、两个构建日志、两份 HAR、浏览器截图及 Firebase/PostgreSQL 写入对比。
 
 ## 阶段 6：服务器卷和 S3 文件
@@ -285,7 +285,7 @@
 
 - 前置条件：PostgreSQL 16；`TEST_DATABASE_ADMIN_URL` 指向可创建和删除数据库的管理员连接。
 - 操作步骤：执行 `TEST_DATABASE_ADMIN_URL=postgresql://... pnpm test:self-host:integration`；检查 migration 13；创建服务器卷绑定和两个文件版本；注入审计写入失败；删除文件后尝试修改版本、删除墓碑和追加旧文件版本。
-- 通过条件：schema compatibility 为 19；一个委员会最多一个活动 binding；版本保存服务端大小和 SHA-256 且不可修改；故障时文件、事件、审计和幂等记录全部回滚；删除立即清除当前版本、追加唯一墓碑并标记 blob 待删；旧副本不能追加版本；系统管理员没有隐式 Chair 权限。
+- 通过条件：schema compatibility 为 20；一个委员会最多一个活动 binding；版本保存服务端大小和 SHA-256 且不可修改；故障时文件、事件、审计和幂等记录全部回滚；删除立即清除当前版本、追加唯一墓碑并标记 blob 待删；旧副本不能追加版本；系统管理员没有隐式 Chair 权限。
 - 自动化覆盖情况：migration 静态测试和无数据库校验已通过；`server/src/modules/storage/postgres.integration.test.ts` 覆盖真实 PostgreSQL 事务、追加历史、故障回滚和删除防复活，未配置 URL 时明确 skip。
 - 当前状态：因无服务器延期。
 - 需要保存的证据：完整测试输出、migration 13 表/约束/触发器查询、file entry/version/blob/tombstone 脱敏查询、事件与审计计数、故障注入回滚结果和临时数据库清理记录。证据不得包含二进制内容或 provider 密钥。
@@ -349,6 +349,19 @@
 - 前置条件：通过 Caddy TLS 提供 `VITE_RUNTIME_MODE=self-hosted` 构建；真实 PostgreSQL 16、持久 `SERVER_VOLUME` 和独立 S3 compatible 测试桶；PUBLIC 与 PRIVATE 委员会；未登录、非 member、member、Chair、Owner 和仅有 `SYSTEM_ADMIN` 的账号；Chromium、Firefox、Safari，以及窄屏触控设备或模拟器；准备大文件、中文长文件名、HTML、JavaScript、SVG、PDF 和普通二进制文件，并可制造 90% 容量、容量未知、provider 中断、暂停委员会与陈旧 revision。
 - 操作步骤：逐角色进入委员会“文件”视图并记录可见文件和操作；member 选择大文件，观察分块校验、真实上传进度、取消、失败后重试和成功后的“上传完成”；提交审核后确认“待审核”，由 Chair/Owner 发布并确认“已发布”；在另一浏览器同步观察列表刷新。下载每种文件并检查 Network 响应头，确认页面未创建 iframe、object、embed、data URL 或内联预览。确认永久删除后立即再次列表和下载。由 Chair/Owner 初始化服务器卷或 S3，执行 `COPYING`、`FAILED`、`READY_TO_CONFIRM`、`COMPLETED` 和 `CANCELLED` 迁移流程。由系统管理员创建、编辑、停用和验证 S3 配置，检查密码字段、DOM、Network、控制台和日志。分别触发 90% 容量、容量未知、provider 故障、revision/幂等冲突、暂停与权限拒绝。最后用键盘完成文件选择以外的全部操作，检查焦点、可访问名称、44 px 触控目标、窄屏换行和简体中文长文本。
 - 通过条件：PUBLIC 只显示公开委员会已发布文件；member、Chair、Owner 和系统管理员显示/操作矩阵与服务端一致，系统管理员没有隐式 Chair 控件。浏览器校验和上传不复制完整大文件到多份内存，进度对应实际字节，可取消且失败后可重试；成功依次显示“上传完成”“待审核”“已发布”。409 后重新读取权威状态，不静默覆盖。下载只走 attachment 路由，危险 MIME 不在同源页面执行。永久删除后文件立即不可见且下载返回 404。只有系统管理员可编辑 endpoint 和凭据，已保存凭据不在响应、DOM、控制台或日志中回显。迁移操作、错误恢复、键盘、焦点、窄屏和触控均可用。
-- 自动化覆盖情况：当前 WSL 的 API client、增量 SHA-256、XHR 进度/取消、角色矩阵、危险 MIME 无预览、上传成功/失败重试、审核发布删除刷新、迁移状态、S3 凭据不回填、HTTP binding 和共享契约测试已通过；真实 PostgreSQL binding 权限用例未配置 URL 时明确 skip。真实浏览器 File/Blob 内存曲线、XHR 网络进度、下载行为、跨浏览器 SSE、视觉布局、触控、键盘焦点、TLS、真实 provider 和容量故障尚未执行；当前环境缺少 Cypress 二进制，不能以组件测试替代。
-- 当前状态：因无真实 PostgreSQL、持久卷、S3 compatible 测试桶、TLS 浏览器和 Cypress 二进制延期。
+- 自动化覆盖情况：当前 WSL 的 API client、增量 SHA-256、XHR 进度/取消、角色矩阵、危险 MIME 无预览、上传成功/失败重试、审核发布删除刷新、迁移状态、S3 凭据不回填、HTTP binding 和共享契约测试已通过；真实 PostgreSQL binding 权限用例未配置 URL 时明确 skip。Cypress 13.11.0 已运行既有 Firebase 4 个 spec、22 项全通过，但尚无覆盖自托管文件页的 Cypress spec。真实浏览器 File/Blob 内存曲线、XHR 网络进度、下载行为、跨浏览器 SSE、视觉布局、触控、键盘焦点、TLS、真实 provider 和容量故障仍未执行。
+- 当前状态：因无真实 PostgreSQL、持久卷、S3 compatible 测试桶和 TLS 自托管实例延期。
 - 需要保存的证据：各角色与状态截图、窄屏和焦点截图、辅助功能树、浏览器任务管理器内存曲线、上传/取消/重试 Network 时间线、SSE 与列表刷新 HAR、attachment 响应头、下载 SHA-256、删除后的 404、binding/migration/file/event/audit/idempotency 脱敏查询、S3 配置响应和凭据泄漏搜索结果。不得保存文件正文、Session、CSRF token、access key、secret 或 master key。
+
+## 阶段 7：Chair Local Agent
+
+当前环境未提供 `TEST_DATABASE_ADMIN_URL`、自托管 TLS 实例、第二台真实设备或桌面发布/签名环境。阶段 7.1 的 PostgreSQL 集成测试已编写但明确 skip；以下项目尚未通过。
+
+### SH-MAN-509 Agent 配对、单主机 fencing 与离线降级
+
+- 前置条件：真实 PostgreSQL 16；通过 Caddy TLS 运行的自托管服务；Owner、Chair、member 和仅有 `SYSTEM_ADMIN` 的账号；两台隔离设备或两个独立 Agent 测试进程；可断网、延迟请求和检查数据库/服务日志。
+- 操作步骤：分别由 Owner 和 Chair 创建 `INITIAL` 配对码，检查明文只出现一次并在 10 分钟后失效；让 member 和系统管理员尝试创建、查看和撤销。用设备 A 配对并心跳，重用同一码；创建 `TRANSFER` 码但暂不消费，确认 A 仍有效；让设备 B 消费并同时发送 A 的迟到 heartbeat/未来 task 完成；撤销 B 后再次发送。并发消费同一码和并发初始配对。配对码创建后撤销签发 Chair 权限再消费。停止心跳超过宽限期，继续执行点名、动议、投票和计时，再恢复 heartbeat。搜索数据库、响应历史、浏览器存储、代理日志、应用日志、事件和审计中的配对码、设备凭据及公钥。
+- 通过条件：数据库仅保存 32 字节 code/credential hash，明文秘密各只在一次响应出现；设备凭据只能调用 storage-agent 路由，Session 不能替代 `QuorumAgent`，Agent 也不能调用账号或议事接口。一个委员会最多一个 `ACTIVE`/`DEGRADED` host；并发只有一个成功。转移前 A 有效，转移或撤销事务后 generation 单调递增，A/B 的旧请求统一返回 `STALE_STORAGE_LEASE` 且无状态变化。失效、已用、过期和失权 Chair 的码不能配对。离线只显示 `DEGRADED` 与最后在线时间，不暂停委员会；当前 generation 心跳恢复 `ACTIVE`。
+- 自动化覆盖情况：当前 WSL 的 migration、共享状态、配对码/凭据格式、HTTP 独立认证和秘密不入日志测试已通过；真实 PostgreSQL 用例覆盖角色、哈希保存、一次性消费、并发转移、撤销 fencing、失权/过期、超时降级、恢复及故障回滚，未配置 `TEST_DATABASE_ADMIN_URL` 时明确 skip。真实 TLS、两设备、代理日志、浏览器一次性显示和长时间网络分区尚未执行。
+- 当前状态：因无真实 PostgreSQL、自托管 TLS 实例和第二设备延期。
+- 需要保存的证据：完整集成输出、migration 20 表/索引/触发器、脱敏 host/code/event/audit 查询、两个设备的 generation/响应时间线、断网期间议事结果、恢复事件、浏览器一次性显示截图和全链路秘密搜索结果。不得保存配对码、设备凭据、Session、CSRF token、私钥、本地路径或文件正文。

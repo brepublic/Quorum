@@ -18,6 +18,7 @@ import type {Stage6StorageService} from '../modules/storage/service.js';
 import type {Stage6FileService} from '../modules/storage/file-service.js';
 import type {Stage6MigrationService} from '../modules/storage/migration-service.js';
 import type {StorageMetricsProvider} from '../modules/storage/maintenance-service.js';
+import type {Stage7StorageAgentService} from '../modules/storage-agent/service.js';
 import {AppError, normalizeError} from './errors.js';
 import {
   clearIdentityCookies,
@@ -50,6 +51,7 @@ export interface AppDependencies {
   files?: Stage6FileService;
   storageMigrations?: Stage6MigrationService;
   storageMetrics?: StorageMetricsProvider;
+  storageAgent?: Stage7StorageAgentService;
   allowedOrigins?: string[];
 }
 
@@ -178,6 +180,54 @@ function requestContentLength(request: IncomingMessage): number | undefined {
 async function optionalAuthentication(request: IncomingMessage, identity: IdentityService): Promise<AuthenticatedSession | undefined> {
   const token = identityCookies(request).get(SESSION_COOKIE_NAME);
   return token ? identity.authenticate(token) : undefined;
+}
+
+function storageAgentCredential(request: IncomingMessage): string {
+  const authorization = singleHeader(request.headers.authorization);
+  const match = /^QuorumAgent (qsa1\.[^\s]+)$/.exec(authorization ?? '');
+  if (!match) throw new AppError({code: 'AUTHENTICATION_REQUIRED', message: 'Agent authentication is required.'});
+  return match[1] as string;
+}
+
+async function handleStage7AgentRequest(options: {
+  request: IncomingMessage; response: ServerResponse; pathname: string; requestId: string;
+  storageAgent: Stage7StorageAgentService; identity?: IdentityService; allowedOrigins: readonly string[];
+}): Promise<boolean> {
+  const {request, response, pathname, requestId, storageAgent, identity, allowedOrigins} = options;
+  const method = request.method ?? 'GET';
+  const context = identityContext(request, requestId);
+  if (method === 'POST' && pathname === '/api/v1/storage-agent/pair') {
+    const body = await readJson(request);
+    sendJson(response, 201, success(await storageAgent.pair(body, context), requestId));
+    return true;
+  }
+  if (method === 'POST' && pathname === '/api/v1/storage-agent/heartbeat') {
+    const body = await readJson(request);
+    sendJson(response, 200, success(await storageAgent.heartbeat(storageAgentCredential(request), body), requestId));
+    return true;
+  }
+  const hosts = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/storage-hosts$/.exec(pathname);
+  if (method === 'GET' && hosts && identity) {
+    sendJson(response, 200, success(await storageAgent.listHosts(await authenticatedRead(request, identity),
+      hosts[1] as string), requestId));
+    return true;
+  }
+  const pairing = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/storage-agent\/pairing-codes$/.exec(pathname);
+  if (method === 'POST' && pairing && identity) {
+    requireOrigin(request, allowedOrigins);
+    const auth = await authenticatedWrite(request, identity); const body = await readJson(request);
+    sendJson(response, 201, success(await storageAgent.createPairing(auth, pairing[1] as string, body, context), requestId));
+    return true;
+  }
+  const revoke = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/storage-hosts\/([0-9a-f-]{36})\/revoke$/.exec(pathname);
+  if (method === 'POST' && revoke && identity) {
+    requireOrigin(request, allowedOrigins);
+    const auth = await authenticatedWrite(request, identity); const body = await readJson(request);
+    sendJson(response, 200, success(await storageAgent.revokeHost(auth, revoke[1] as string,
+      revoke[2] as string, body, context), requestId));
+    return true;
+  }
+  return false;
 }
 
 async function handleStage4Request(options: {
@@ -905,6 +955,10 @@ export function createRequestHandler(dependencies: AppDependencies): RequestList
       try {
         const requestUrl = new URL(request.url || '/', 'http://quorum.local');
         pathname = requestUrl.pathname;
+
+        if (dependencies.storageAgent && await handleStage7AgentRequest({request, response, pathname, requestId,
+          storageAgent: dependencies.storageAgent, identity: dependencies.identity,
+          allowedOrigins: dependencies.allowedOrigins ?? []})) return;
 
         if (dependencies.identity && await handleIdentityRequest({
           request,

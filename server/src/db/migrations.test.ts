@@ -219,6 +219,23 @@ describe('migration discovery', () => {
     expect(cleanup?.sql).toContain('schema_compatibility = 19');
   });
 
+  it('adds one-time Agent pairing and single-host fencing', async () => {
+    const migrations = await loadMigrations(resolve('server/migrations'));
+    const agent = migrations.find(migration => migration.version === 20);
+    expect(agent?.name).toBe('storage_agent_identity');
+    expect(agent?.sql).toContain('CREATE TABLE storage_pairing_codes');
+    expect(agent?.sql).toContain('code_hash bytea');
+    expect(agent?.sql).toContain('CREATE TABLE storage_hosts');
+    expect(agent?.sql).toContain('device_public_key bytea');
+    expect(agent?.sql).toContain('credential_hash bytea');
+    expect(agent?.sql).toContain('storage_lease_generation');
+    expect(agent?.sql).toContain('storage_hosts_one_current_per_committee');
+    expect(agent?.sql).not.toContain('pairing_code text');
+    expect(agent?.sql).not.toContain('credential text');
+    expect(agent?.sql).not.toContain('storage_agent_tasks');
+    expect(agent?.sql).toContain('schema_compatibility = 20');
+  });
+
   it('rejects SQL files outside the versioned naming contract', async () => {
     const directory = await temporaryDirectory();
     await writeFile(join(directory, 'first.sql'), 'SELECT 1;\n');

@@ -1,8 +1,8 @@
 # Quorum 自托管目标架构
 
-本目录描述 Quorum 从 Firebase BaaS 迁移到完全自主托管后的目标架构。阶段 0–6 已落地：上传内容可持久暂存并原子提交到 `SERVER_VOLUME` 或 `S3_COMPATIBLE`，PostgreSQL 同事务发布对应文件版本，并提供文件 UI、审核、发布、授权下载、durable 物理删除任务、安全 provider 切换、容量保护和后台清理。阶段 7 Chair Local Agent 尚未实施；仓库仍未完成全部迁移。当前事实以根目录的 [`PROJECT_ARCHITECTURE.md`](../../PROJECT_ARCHITECTURE.md) 为准。
+本目录描述 Quorum 从 Firebase BaaS 迁移到完全自主托管后的目标架构。阶段 0–6 和 7.1 已落地：除完整文件生命周期与 provider 能力外，Chair Local Agent 已具备一次性配对、独立设备身份、单活动主机 fencing、撤销/转移和离线降级基础。Agent task、manifest、本地目录同步和桌面发布包尚未实施；仓库仍未完成全部迁移。当前事实以根目录的 [`PROJECT_ARCHITECTURE.md`](../../PROJECT_ARCHITECTURE.md) 为准。
 
-## 当前阶段 6 边界
+## 当前阶段 7.1 边界
 
 - PostgreSQL migration 已建立身份、凭据、Session、系统设置、未来注册申请和身份审计表。
 - bootstrap secret 只保存哈希，并由 PostgreSQL 事务保证并发初始化只有一个成功；公开状态 API 不返回 secret。
@@ -13,7 +13,7 @@
 - 同源 API 已提供阶段 3 委员会、席位、邀请码、快照和规则包命令。所有写入继续执行 Session、CSRF 和 Origin 校验。
 - Committee Owner、Chair、membership、seat assignment 和 `SYSTEM_ADMIN` 分别授权。系统管理员和 Committee Owner 都不会隐式获得 Chair 能力。
 - 邀请码只保存哈希；规则模拟不写议事状态；内置包和已发布版本不可原地修改。
-- schema compatibility 19 覆盖阶段 4–5 业务表、文件数据基础、durable upload、SERVER_VOLUME/S3 provider、审核状态、物理删除任务、provider migration 和 fenced staging cleanup。
+- schema compatibility 20 覆盖阶段 4–5 业务表、完整阶段 6 文件能力，以及 Agent 配对码、设备身份、storage host 和 lease generation。
 - 自托管 React 页面只调用同源 API；一浏览器一委员会一条 SSE，游标过期、序号缺口或未知事件回退完整快照。
 - 服务器时间是计时真相；PostgreSQL 唯一约束和行锁保护队列顺序、当前发言人及一席一票。
 - 正式 ballot 冻结资格、门槛、must-vote、否决席位和规则版本；票更正追加历史，匿名意向性投票不保存投票人与选项关联。
@@ -40,7 +40,10 @@
 - 自托管工作区已接入文件列表、浏览器分块 SHA-256、真实上传字节进度、取消/重试、审核、发布、attachment 下载和永久删除；危险 MIME 不进入预览 DOM。
 - Chair/Owner 可查看当前 binding、初始化服务器卷或 S3、创建和操作 provider migration。系统管理员在独立页面创建、更新、停用和验证 S3 配置；浏览器不接收或回填保存的凭据。
 - 文件/迁移 SSE 只触发权威快照或列表刷新。revision、幂等或资源冲突不会由客户端静默覆盖；`SYSTEM_ADMIN` 不自动显示 Chair 操作。
-- 阶段 6 未实现 Chair Local Agent。
+- Agent 配对码和设备凭据只保存哈希，明文各只返回一次。Agent 使用独立 `QuorumAgent` authorization scheme，不能调用 Session 保护的账号或议事接口。
+- 一个委员会最多一个 `ACTIVE`/`DEGRADED` storage host；转移、撤销和重新配对递增单调 lease generation，旧设备写入返回 `STALE_STORAGE_LEASE`。
+- 心跳超时只把 storage host 标为降级并发送 Chair 事件，不自动暂停委员会；当前 generation 的 heartbeat 可恢复在线状态。
+- 阶段 7.1 未实现 durable Agent task、manifest、Chair Agent provider 内容提交、本地目录同步或桌面发布包。
 - PostgreSQL、TLS 浏览器和 Compose 实测尚未在当前环境执行，状态及取证要求见 [`MANUAL_ACCEPTANCE.md`](./MANUAL_ACCEPTANCE.md)。
 
 ## 文档索引
@@ -61,7 +64,8 @@
 | [`STAGE_6_6_HANDOFF_PROMPT.md`](./STAGE_6_6_HANDOFF_PROMPT.md) | 已完成阶段 6.6 provider 切换与失败回退的历史交接 Prompt |
 | [`STAGE_6_7_HANDOFF_PROMPT.md`](./STAGE_6_7_HANDOFF_PROMPT.md) | 已完成阶段 6.7 磁盘阈值和后台清理的历史交接 Prompt |
 | [`STAGE_6_8_HANDOFF_PROMPT.md`](./STAGE_6_8_HANDOFF_PROMPT.md) | 已完成阶段 6.8 自托管文件 UI 与阶段收尾的历史交接 Prompt |
-| [`STAGE_7_HANDOFF_PROMPT.md`](./STAGE_7_HANDOFF_PROMPT.md) | 下一步阶段 7 Chair Local Agent 交接 Prompt |
+| [`STAGE_7_HANDOFF_PROMPT.md`](./STAGE_7_HANDOFF_PROMPT.md) | 阶段 7 总体与 7.1 的历史交接 Prompt |
+| [`STAGE_7_2_HANDOFF_PROMPT.md`](./STAGE_7_2_HANDOFF_PROMPT.md) | 下一步阶段 7.2 Agent task 与 manifest 交接 Prompt |
 | [`RUNNING_LOG.md`](./RUNNING_LOG.md) | 长任务当前进度、验证结果和下一步恢复点 |
 
 ## 当前实施与验证约束

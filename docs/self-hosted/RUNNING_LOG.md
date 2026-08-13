@@ -6,10 +6,10 @@
 
 - 更新时间：2026-08-13
 - 分支：`self-host`
-- 已确认基线：`f6e82d7 stage 6.7: protect capacity and clean storage`
-- 当前阶段：6.8 自托管文件 UI 与阶段 6 收尾已完成当前 WSL 可执行的验证，等待单独提交。
-- 当前工作：文件生命周期、存储配置和 provider migration 已接入自托管 React 工作区；阶段 6 文档已收尾。
-- 下一步：提交 6.8，然后按 `STAGE_7_HANDOFF_PROMPT.md` 进入 7.1 协议、配对、设备身份与单主机 fencing。
+- 已确认基线：`c722f95 stage 6.8: add self-hosted file workspace`
+- 当前阶段：7.1 Agent 协议、配对、设备身份与单主机 fencing 已完成当前 WSL 可执行的验证，等待单独提交。
+- 当前工作：一次性配对、独立设备认证、单活动 host、撤销/转移、lease fencing、心跳与离线降级已落地。
+- 下一步：提交 7.1，然后按 `STAGE_7_2_HANDOFF_PROMPT.md` 实施 durable Agent task、manifest 与服务器内容边界。
 
 ## 已完成与验证
 
@@ -48,6 +48,7 @@
 - `3fe305d`：阶段 6.5 文件审核、授权下载和永久删除任务。
 - `c30aafc`：阶段 6.6 provider 切换与失败回退。
 - `f6e82d7`：阶段 6.7 磁盘阈值和后台清理。
+- `c722f95`：阶段 6.8 自托管文件 UI 与阶段 6 收尾。
 
 ### 2026-08-13：阶段 6.3 SERVER_VOLUME provider
 
@@ -147,3 +148,22 @@
 - Cypress 13.11.0 在可写临时缓存和沙箱外通过二进制校验；`pnpm test:e2e` 使用 Firebase emulators 与 Electron 118 完成既有 4 个 spec、22 项全通过。该套件验证 Firebase 运行时回归，不替代需要 PostgreSQL、真实 provider 和 TLS 的自托管浏览器验收。
 - 当前 WSL 仍未提供真实 PostgreSQL、Docker 持久卷、S3 compatible 测试桶或 TLS 入口；角色矩阵、真实大文件流、provider 故障/迁移、危险类型下载隔离与可访问性证据记录在 `MANUAL_ACCEPTANCE.md` 的 SH-MAN-508。
 - `git diff --check`：通过。阶段 6.8 完成后直接进入阶段 7.1。
+
+### 2026-08-13：阶段 7.1 Agent 身份与 fencing
+
+- 阶段 6.8 已单独提交为 `c722f95`；提交后工作区干净。
+- 6.8 基线复跑：6 个测试文件、34 项通过；1 个 PostgreSQL 文件、31 项因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip。仅出现既有 React/Semantic UI 弃用警告。
+- `pnpm build:self-host`：通过；contracts、前端、rule-schema 和 server 构建成功，Vite 仅报告既有的大分块警告。
+- 7.1 只实施短期一次性配对、设备凭据、单活动主机、lease generation、撤销/转移、心跳和离线降级；durable task、manifest、目录同步和桌面发布包留给后续 7.x。
+- migration 20 增加只保存哈希的 `storage_pairing_codes`、设备公钥/凭据哈希、历史 `storage_hosts`、委员会单调 generation、单当前 host 部分唯一索引和不可逆生命周期触发器；schema compatibility 为 20。
+- 配对码来自 16 个随机字节，默认 10 分钟有效；设备凭据含服务器 device UUID 和 32 个随机字节。两种明文秘密只返回一次，不写数据库、事件、审计或日志。
+- Owner/Chair 通过 Session、Origin、CSRF 和 revision 创建配对、查看 host、撤销或发起转移；`SYSTEM_ADMIN` 不自动获得权限。Agent 配对不接受 Session，后续只接受独立 `QuorumAgent` authorization scheme。
+- `INITIAL` 要求无当前 host；`TRANSFER` 在新设备实际配对前保持旧 host 有效。成功配对、转移或撤销在委员会行锁事务中递增 generation；旧凭据和迟到 generation 返回 `STALE_STORAGE_LEASE`。
+- 所有并发路径统一按委员会、配对码/host 的顺序加锁。部分唯一索引再保证一个委员会最多一个 `ACTIVE`/`DEGRADED` host；配对消费、host 状态、事件和审计同事务提交。
+- heartbeat 只更新固定状态和最后在线时间。默认 45 秒超时的常驻 monitor 把 host 标为 `DEGRADED` 并发送 Chair 事件，不改变委员会状态；当前 generation 心跳恢复 `ACTIVE`。
+- 最终针对性 Vitest：5 个文件、28 项通过；1 个 PostgreSQL 文件、6 项因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip。contracts 与 server build、`git diff --check` 通过。
+- `pnpm test:self-host`：46 个文件、215 项通过；7 个 PostgreSQL 集成文件、54 项明确 skip。仅出现既有 React/Semantic UI 弃用警告。
+- 默认 `pnpm build` 与 `pnpm build:self-host` 均通过；contracts、前端、rule-schema 和 server 构建成功，Vite 仅报告既有的大分块警告。
+- `pnpm test:self-host:integration`：7 个文件、54 项因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip。
+- 当前 WSL 没有真实 PostgreSQL、自托管 TLS 实例或第二设备；真实并发配对、两设备转移、网络分区、代理/浏览器秘密泄漏搜索和长时间离线恢复记录在 `MANUAL_ACCEPTANCE.md` 的 SH-MAN-509。
+- `git diff --check`：通过。阶段 7.1 完成后直接进入 7.2。

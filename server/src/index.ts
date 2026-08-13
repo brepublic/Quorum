@@ -26,6 +26,7 @@ import {Stage6FileService} from './modules/storage/file-service.js';
 import {Stage6MigrationService, startStorageMigrationWorker} from './modules/storage/migration-service.js';
 import {StorageCapacityMonitor} from './modules/storage/capacity.js';
 import {Stage6MaintenanceService, startStorageMaintenanceWorker} from './modules/storage/maintenance-service.js';
+import {Stage7StorageAgentService, startStorageHostMonitor} from './modules/storage-agent/service.js';
 
 const {Pool} = pg;
 const logger = createLogger();
@@ -78,6 +79,7 @@ async function main(): Promise<void> {
       providerConfig => new S3CompatibleStore(providerConfig, new NodeS3Transport(providerConfig), config.maxFileBytes),
       capacity);
     const storageMaintenance = new Stage6MaintenanceService(pool, staging, files, capacity, logger);
+    const storageAgent = new Stage7StorageAgentService(pool);
     await stage3.ensureBuiltins();
     const bootstrapSecret = await identity.ensureBootstrapSecret();
     if (bootstrapSecret) {
@@ -100,10 +102,12 @@ async function main(): Promise<void> {
       files,
       storageMigrations,
       storageMetrics: storageMaintenance,
+      storageAgent,
       allowedOrigins: config.allowedOrigins
     });
     const stopStorageMigrationWorker = startStorageMigrationWorker(storageMigrations, logger);
     const stopStorageMaintenanceWorker = startStorageMaintenanceWorker(storageMaintenance, logger);
+    const stopStorageHostMonitor = startStorageHostMonitor(storageAgent, logger);
 
     server.listen(config.port, config.host, () => {
       logger.info('server.started', {
@@ -121,6 +125,7 @@ async function main(): Promise<void> {
       shuttingDown = true;
       stopStorageMigrationWorker();
       stopStorageMaintenanceWorker();
+      stopStorageHostMonitor();
       logger.info('server.shutdown.started', {signal});
 
       const forceTimer = setTimeout(() => {

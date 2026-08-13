@@ -56,8 +56,13 @@ storage_bindings
   id, committee_id, provider_type, provider_config_id?, status, revision
 
 storage_hosts
-  id, committee_id, device_id, user_id
-  lease_generation, status, last_seen_at, paired_at, revoked_at
+  id, committee_id, device_id, paired_by_user_id
+  device_label, device_public_key, credential_hash
+  lease_generation, status, revision, last_seen_at, paired_at, revoked_at
+
+storage_pairing_codes
+  id, committee_id, code_hash, purpose, created_by_user_id
+  expires_at, used_at, revoked_at
 ```
 
 逻辑文件删除后立即不可见且内容进入物理删除任务。墓碑不含可恢复内容，只防止离线 Agent 把旧副本重新发布；它至少保留到委员会永久删除。
@@ -106,9 +111,19 @@ DELETED
 
 设备凭据只能访问其委员会的存储 Agent API，不能调用账号或议事管理接口。
 
+阶段 7.1 已固定并实现以下格式：
+
+- 配对码来自 16 个随机字节，规范化后是 26 位 Crockford Base32，显示以 `QRM-` 分组；默认 10 分钟到期。
+- 设备公钥是 32 字节 Ed25519 公钥的无 padding base64url。阶段 7.1 保存身份，后续任务协议再使用签名能力。
+- 设备凭据是 `qsa1.<device UUID>.<32 随机字节 base64url>`，Agent 使用 `Authorization: QuorumAgent <credential>`。
+- PostgreSQL 只保存配对码和凭据的 SHA-256；明文各只返回一次，不进入事件、审计、日志或浏览器持久状态。
+- 浏览器 Session 与 Agent 凭据完全分离；配对请求只以一次性码授权，其他 Agent 请求只接受 `QuorumAgent` scheme。
+
 ## 5. 单主机与 fencing
 
 一个委员会同一时间只有一个有效 Chair storage host。每个同步请求携带 `lease_generation`。转移或撤销主机时数据库递增 generation；旧 Agent 即使稍后联网也会收到 `409 STALE_STORAGE_LEASE`，不能继续写入。
+
+阶段 7.1 以 `committees.storage_lease_generation` 保存单调 counter，并用部分唯一索引限制一个 `ACTIVE`/`DEGRADED` host。`INITIAL` 配对要求没有当前 host；`TRANSFER` 配对码不立即撤销旧 host，只有新设备消费配对码的事务才同时撤销旧 host、递增 generation 并激活新 host。单独撤销同样递增 generation。签发配对码的 Chair 在消费时已失去权限，则配对码按失效处理。
 
 主机转移：
 
@@ -168,6 +183,8 @@ Agent 心跳超过宽限期后，存储状态变为 `STORAGE_DEGRADED`，但不�
 - 主席可以手动暂停、转移主机或切换提供者。
 
 Agent 重连后先拉取墓碑和服务端 manifest，再上报本地变化，防止删除文件复活。
+
+阶段 7.1 的常驻 monitor 默认以 45 秒为宽限期，只把 host 从 `ACTIVE` 改为 `DEGRADED` 并发送 `storage_host.status_changed`；不会修改委员会 `ACTIVE`/`PAUSED` 状态。持有当前 generation 的有效 heartbeat 会恢复 `ACTIVE`。墓碑和 manifest 恢复顺序属于后续 7.x。
 
 ## 9. 存储切换
 

@@ -64,6 +64,10 @@ PUT  /api/v1/admin/storage-provider-configs/:id
 POST /api/v1/admin/storage-provider-configs/:id/verify
 GET|POST /api/v1/committees/:id/storage-migrations
 POST /api/v1/storage-migrations/:id/{retry,confirm,cancel}
+GET /api/v1/committees/:id/storage-hosts
+POST /api/v1/committees/:id/storage-agent/pairing-codes
+POST /api/v1/committees/:id/storage-hosts/:hostId/revoke
+POST /api/v1/storage-agent/{pair,heartbeat}
 ```
 
 `/health/ready` 只有在数据库可访问、所有仓库 migration 已应用、存储目录可读写、容量可采样且可用字节不为零时返回 200。仍有可用空间的 warning/critical 状态返回 200 并报告状态，因为下载、议事和清理仍可用；critical 只拒绝新的上传字节和 provider copy。`/metrics` 以 Prometheus text 暴露容量与固定类别清理指标。
@@ -79,3 +83,5 @@ TEST_DATABASE_ADMIN_URL=postgresql://... pnpm test:self-host:integration
 未配置该变量时测试明确 skip，不改用内存数据库。
 
 阶段 6.1 的存储服务是 provider 成功后的内部持久化边界。阶段 6.2 把完整内容停在 `STAGED`。阶段 6.3 从暂存区流式提交到服务器卷。阶段 6.4 使用显式 master key 加密 S3 凭据，通过 SigV4 HTTPS 流式提交并远端重读校验；两种 provider 都在校验后以同一数据库事务发布 upload、blob 和 `file_version`，失败保留可重试暂存。阶段 6.5 增加审核/发布状态机、PUBLIC/member/Chair/Owner 读取授权、安全附件下载和 durable blob delete job。阶段 6.6 的常驻迁移 worker 经 durable staging 逐 blob 复制，旧 binding 在确认事务前始终服务；manifest 变化或故障要求重试，取消的目标副本进入删除任务。阶段 6.7 从实际存储挂载点采样 80%/90% 阈值，启动 fenced maintenance worker，优先完成 blob delete job，再清理严格符合状态的 upload/migration staging；`STAGED`、待重试和退休源副本不会被压力清理。阶段 6.8 增加 binding 状态读取和服务器卷初始化 HTTP，并由 React 工作区接入整个文件生命周期、S3 配置与 provider migration。
+
+阶段 7.1 增加一次性 Agent 配对、只保存哈希的设备凭据、单活动 host 和单调 lease generation。浏览器管理继续使用 Session/Origin/CSRF；Agent 只接受 `Authorization: QuorumAgent ...`。转移或撤销使旧 generation 稳定返回 `STALE_STORAGE_LEASE`。host monitor 只标记存储降级，不暂停委员会；任务、manifest 与本地目录同步尚未实现。

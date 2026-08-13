@@ -214,7 +214,11 @@ export const AUDIT_ACTION_DEFINITIONS = [
   'rules.version_created',
   'rules.chair_override_applied',
   'storage.binding_changed',
+  'storage.pairing_code_created',
+  'storage.host_paired',
   'storage.host_transferred',
+  'storage.host_revoked',
+  'storage.host_status_changed',
   'storage.file_deleted'
 ] as const;
 

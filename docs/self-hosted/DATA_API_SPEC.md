@@ -859,6 +859,35 @@ upload 只有 `COMMITTED`、`CANCELLED`，或期限已过的 `FAILED` 可清理�
 
 Chair/Owner 通过 binding 列表选择初始 `SERVER_VOLUME`/S3 storage，并查看迁移的复制、失败、待确认、完成和取消状态；可执行 retry、confirm 和 cancel。系统管理员的 `/storage` 页面可以创建、编辑、停用和验证 S3 配置。保存的 access key 与 secret 不在响应中出现，编辑表单也不回填凭据；仅在同时提供新的两项凭据时才轮换。
 
+## 11.11 阶段 7.1 Agent 配对、身份与 lease 契约
+
+浏览器管理接口为：
+
+```text
+GET  /api/v1/committees/:id/storage-hosts
+POST /api/v1/committees/:id/storage-agent/pairing-codes
+POST /api/v1/committees/:id/storage-hosts/:hostId/revoke
+```
+
+只有 Committee Owner 或明确授予的 Chair 可以调用；`SYSTEM_ADMIN` 不自动获得权限。读请求要求 Session，写请求继续要求允许的 Origin、匹配的 CSRF token 和委员会 `baseRevision`。创建配对码的 `purpose` 固定为 `INITIAL` 或 `TRANSFER`：前者要求当前没有有效 host，后者要求已有 host，并在新设备真正完成配对前保持旧 host 有效。创建新配对码会撤销同委员会尚未使用的旧码并增加委员会 revision。
+
+配对码由 16 个随机字节编码为 `QRM-` 开头的 Crockford Base32，忽略大小写和显示分隔符后固定 26 位，有效期默认 10 分钟。数据库只保存规范化值的 SHA-256；明文只在创建响应显示一次，不写入日志、事件、审计或幂等响应。设备提交 32 字节 Ed25519 公钥的无 padding base64url 表示；阶段 7.1 先冻结设备身份，后续任务协议再使用公钥能力。
+
+Agent 接口为：
+
+```text
+POST /api/v1/storage-agent/pair
+POST /api/v1/storage-agent/heartbeat
+```
+
+`pair` 请求体固定为 `{pairingCode,deviceLabel,devicePublicKey}`，不接受或依赖浏览器 Session。服务端重新锁定配对码、委员会和当前 host，并确认签发配对码的 Owner/Chair 仍有权限。成功后配对码原子标为已用，服务端签发 `qsa1.<device UUID>.<32 随机字节 base64url>` 凭据；数据库只保存完整 token 的 SHA-256。明文凭据只在配对响应显示一次。
+
+除配对外，Agent 通过 `Authorization: QuorumAgent <credential>` 认证，不使用 Session Cookie、CSRF 或浏览器 Bearer token。凭据只解析到一个委员会和一个设备，不能授权账号或议事路由。每个 Agent 写请求必须包含正整数 `leaseGeneration`；heartbeat 请求体固定为 `{leaseGeneration}`。
+
+`committees.storage_lease_generation` 是单调 fencing counter。首次配对、成功转移和撤销都在委员会行锁事务中递增 generation。每个委员会的 `ACTIVE`/`DEGRADED` host 由部分唯一索引限制为一个；转移事务同时撤销旧 host、创建新 host、消费配对码、写事件和审计。旧凭据、撤销设备、迟到 generation 和旧任务完成统一返回 `409 STALE_STORAGE_LEASE`，不能改变 host、文件、task 或 manifest。
+
+heartbeat 只刷新固定 host 状态与 `last_seen_at`。默认 45 秒未见心跳的 `ACTIVE` host 由常驻 monitor 改为 `DEGRADED` 并追加 Chair 事件；委员会状态不改变，议事不暂停。有效 heartbeat 可把同一 generation 的 `DEGRADED` host 恢复为 `ACTIVE`。阶段 7.1 尚未增加 Agent task、manifest、内容传输、本地路径或 provider binding。
+
 ## 12. SSE 格式
 
 ```text

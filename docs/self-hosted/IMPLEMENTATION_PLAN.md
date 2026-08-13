@@ -179,6 +179,8 @@ deploy/
 
 ## 10. 阶段 7：Chair Local Agent
 
+状态：7.1 的一次性配对码、设备公钥/凭据哈希、单活动 storage host、lease generation fencing、撤销/转移、心跳与离线降级已完成。7.2 起继续 durable task、manifest 和内容同步；桌面 Agent、目录扫描与发布包尚未完成。
+
 交付：
 
 - Agent 配对、设备凭据和撤销；
@@ -235,4 +237,4 @@ deploy/
 
 ## 14. 首个实现里程碑
 
-下一步实施阶段 7：Chair Local Agent。先冻结 Agent 协议与威胁边界，再实现一次性配对、设备凭据、单主机 lease generation/fencing、任务与 manifest 同步、离线恢复和主机转移；不得把本地目录内容或凭据暴露给浏览器，也不得提前实施归档、备份或 Firebase 移除。
+下一步实施 7.2：durable Agent task、manifest sequence、claim token、幂等完成/失败、服务器暂存与 blob 校验。继续使用 7.1 的独立设备认证和 lease fencing；不得把本地目录内容或凭据暴露给浏览器，也不得提前实施桌面目录同步、归档、备份或 Firebase 移除。
