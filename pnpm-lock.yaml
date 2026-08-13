@@ -150,6 +150,12 @@ importers:
 
   packages/rule-schema: {}
 
+  packages/storage-agent:
+    dependencies:
+      '@quorum/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+
   server:
     dependencies:
       '@quorum/contracts':

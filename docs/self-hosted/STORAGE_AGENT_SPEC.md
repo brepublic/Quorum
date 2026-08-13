@@ -111,13 +111,15 @@ DELETED
 
 设备凭据只能访问其委员会的存储 Agent API，不能调用账号或议事管理接口。
 
-阶段 7.1 已固定并实现以下格式：
+阶段 7.1 固定服务器格式；阶段 7.4 的 Agent 已实现以下本地边界：
 
 - 配对码来自 16 个随机字节，规范化后是 26 位 Crockford Base32，显示以 `QRM-` 分组；默认 10 分钟到期。
 - 设备公钥是 32 字节 Ed25519 公钥的无 padding base64url。阶段 7.1 保存身份，后续任务协议再使用签名能力。
 - 设备凭据是 `qsa1.<device UUID>.<32 随机字节 base64url>`，Agent 使用 `Authorization: QuorumAgent <credential>`。
 - PostgreSQL 只保存配对码和凭据的 SHA-256；明文各只返回一次，不进入事件、审计、日志或浏览器持久状态。
 - 浏览器 Session 与 Agent 凭据完全分离；配对请求只以一次性码授权，其他 Agent 请求只接受 `QuorumAgent` scheme。
+- 配对码由 0600 私有文件读取，不进入进程参数；设备凭据、服务器地址、选择的绝对根路径和 Ed25519 私钥只保存到 0600 Agent 配置。
+- 共享目录中的 `.quorum-storage.json` 只保存委员会、设备、manifest 游标、相对路径、哈希与 task recovery 状态，不保存凭据、私钥、服务器地址或绝对根路径。
 
 ## 5. 单主机与 fencing
 
@@ -177,6 +179,10 @@ Agent 使用操作系统文件监测作为快速提示，同时定期完整扫�
 
 路径必须规范化并拒绝越出根目录的 `..`、符号链接逃逸、设备文件和保留系统路径。服务器下发的文件先写临时文件，校验后原子重命名。
 
+阶段 7.4 的独立 Agent 程序已实现该循环。每轮心跳后从游标 0 分页获取 manifest，以最新 revision 的墓碑先于全部 task 落盘；未知事件、任务类型或不前进的分页游标统一 fail closed。本地 watcher 只唤醒同步循环，周期递归扫描继续校验普通单链接文件的大小、mtime 与 SHA-256。重命名优先于删除识别，每轮只提交一个 manifest-changing command，避免用旧 manifest 批量覆盖。
+
+下载先进入根目录内保留的 0600 临时目录，短写、长写、哈希错误、断流、符号链接、硬链接、设备文件和并发本地修改均不会成为完整目标。发布前再次检查目标与旧内容，原子重命名后重读校验；进程重启会清理普通临时残片，遇到非普通临时条目则拒绝启动。待上传内容、稳定 request ID、task ID 和 manifest sequence 在本地元数据中原子保存；服务器先完成而本地未保存时可重放恢复。冲突保留本地文件并由现有 `local-changes` 形成 durable conflict，不静默覆盖。`STALE_STORAGE_LEASE` 立即终止循环；其他暂时故障指数退避。
+
 ## 8. 离线与降级
 
 Agent 心跳超过宽限期后，存储状态变为 `STORAGE_DEGRADED`，但不自动暂停会议：
@@ -190,7 +196,7 @@ Agent 心跳超过宽限期后，存储状态变为 `STORAGE_DEGRADED`，但不�
 
 Agent 重连后先拉取墓碑和服务端 manifest，再上报本地变化，防止删除文件复活。
 
-阶段 7.1 的常驻 monitor 默认以 45 秒为宽限期，只把 host 从 `ACTIVE` 改为 `DEGRADED` 并发送 `storage_host.status_changed`；不会修改委员会 `ACTIVE`/`PAUSED` 状态。持有当前 generation 的有效 heartbeat 会恢复 `ACTIVE`。阶段 7.3 会在恢复或转移时按完整最新 manifest 重排任务；浏览器待提交 upload 保持唯一 staging，新 host 未确认的既有文件标记 `OUT_OF_SYNC`，旧 host 独有的未上传本地内容转成显式冲突。桌面 Agent 的墓碑优先目录扫描仍属于后续 7.x。
+阶段 7.1 的常驻 monitor 默认以 45 秒为宽限期，只把 host 从 `ACTIVE` 改为 `DEGRADED` 并发送 `storage_host.status_changed`；不会修改委员会 `ACTIVE`/`PAUSED` 状态。持有当前 generation 的有效 heartbeat 会恢复 `ACTIVE`。阶段 7.3 会在恢复或转移时按完整最新 manifest 重排任务；浏览器待提交 upload 保持唯一 staging，新 host 未确认的既有文件标记 `OUT_OF_SYNC`，旧 host 独有的未上传本地内容转成显式冲突。阶段 7.4 Agent 重连后严格执行心跳、完整 manifest、墓碑、task、pending recovery、本地变化顺序。
 
 ## 9. 存储切换
 

@@ -355,7 +355,7 @@
 
 ## 阶段 7：Chair Local Agent
 
-当前环境未提供 `TEST_DATABASE_ADMIN_URL`、自托管 TLS 实例、第二台真实设备或桌面发布/签名环境。阶段 7.1–7.3 的 PostgreSQL 集成测试已编写但明确 skip；以下项目尚未通过。
+当前环境未提供 `TEST_DATABASE_ADMIN_URL`、自托管 TLS 实例、第二台真实设备或桌面发布/签名环境。阶段 7.1–7.4 的自动验证已在 WSL 执行，PostgreSQL 集成测试明确 skip；以下实机项目尚未通过。
 
 ### SH-MAN-509 Agent 配对、单主机 fencing 与离线降级
 
@@ -383,3 +383,12 @@
 - 自动化覆盖情况：当前 WSL 的 migration 22 静态契约、202/pending 查询和 Chair binding HTTP、Agent local-change HTTP、任务 finalizer 顺序、前端持久 pending/sync 文案、TypeScript 与 mock 故障测试已通过。真实 PostgreSQL 用例覆盖浏览器 pending→host commit、staging 读取、事务回滚、host transfer 重排/fencing、本地内容发布、幂等重放、墓碑冲突和不复活；未配置 `TEST_DATABASE_ADMIN_URL` 时 13 项阶段 7 集成测试明确 skip。真实 PostgreSQL migration 执行、TLS、两设备、长时离线、进程终止、容量清理竞态、真实桌面目录和视觉/辅助功能尚未执行。
 - 当前状态：因无真实 PostgreSQL、TLS 自托管实例、第二设备和桌面 Agent 延期。
 - 需要保存的证据：migration 22 表/约束/触发器、binding/upload/change/conflict/task/manifest/file/blob/delete-job/event/audit 的脱敏查询；在线/离线/转移时间线；刷新前后页面和 sync 状态截图；staging inode/大小/SHA-256；故障矩阵、重复完成版本计数、maintenance 竞态与下载响应。不得保存设备凭据、claim token、Session、CSRF token、本地绝对路径或文件正文。
+
+### SH-MAN-512 桌面 Agent 目录语义、进程中断与恢复
+
+- 前置条件：Windows 11 x86-64 的 NTFS 与受支持 macOS 的 APFS 真机；各一份可执行 Agent 构建；TLS 自托管实例和真实 PostgreSQL；可用的 Chair 账号与测试委员会；可断网、终止进程、重启系统、制造磁盘满/只读和修改目录 ACL。测试根目录不得包含个人文件。
+- 操作步骤：分别完成配对、选择空目录并同步含嵌套中文名的文件；创建、修改、移动和删除本地文件，验证 watcher 唤醒与周期全量扫描结果。尝试绝对路径、`..`、Windows 保留名、尾随点/空格、符号链接、junction、alias、硬链接、FIFO/设备文件和指向根目录外的父目录。下载期间制造短写、长写、断流、哈希错误、目标碰撞、并发本地编辑、只读目录和满盘；在临时文件写入、rename、task complete 和本地状态写入前后分别强制终止进程并重启。断网期间执行服务端删除和本地修改，再恢复；最后转移 host，确认旧进程因 stale lease 停止。检查共享目录元数据、私有配置权限、进程参数、控制台和日志。
+- 通过条件：共享目录只有不含秘密和绝对根路径的 `.quorum-storage.json` 与内部临时目录；凭据、私钥和配对码不出现在目录元数据、进程参数或日志，私有配置仅当前用户可读。所有解析后的路径保持在根目录内，链接、非普通文件和平台保留路径 fail closed。服务端内容只有在完整大小/SHA-256 校验后原子出现；失败或断电最多留下可在重启时安全清理的内部临时文件，不把半文件识别为完整版本。本地编辑永不被服务端静默覆盖，墓碑先于扫描处理，冲突可恢复；同一 pending task 重启后重放而不产生重复版本。watcher 丢事件时周期扫描仍收敛。旧 lease 立即停止，临时网络故障退避重试且不泄露路径或秘密。
+- 自动化覆盖情况：当前 WSL 中 `packages/storage-agent` 的 5 个测试文件覆盖 portable 路径、元数据 no-follow、原子状态故障、符号链接/硬链接、非普通目标、0600 配置、临时残片、短写/长写/哈希/断流、原子发布、本地编辑保护、墓碑优先、扫描/重命名、pending task 重放、watcher 提示、未知协议 fail closed、stale lease 和日志脱敏；共 48 项通过。Node/TypeScript 构建已通过。WSL 的 ext4/DrvFs 行为不能替代 NTFS/APFS、原生 watcher、Windows ACL、macOS 权限、原生进程终止或发布包验证。
+- 当前状态：因无 Windows/macOS Agent 构建、TLS/PostgreSQL 实例和两台真机延期。
+- 需要保存的证据：每个平台版本与文件系统、Agent 构建哈希/签名、目录树和权限的脱敏输出、任务/manifest/conflict 脱敏时间线、网络与进程终止矩阵、各故障后的文件 SHA-256/大小、重启恢复结果和秘密搜索结果。不得保存配对码、设备凭据、私钥、claim token、本地绝对路径或文件正文。

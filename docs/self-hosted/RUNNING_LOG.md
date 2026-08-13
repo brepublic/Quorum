@@ -6,10 +6,10 @@
 
 - 更新时间：2026-08-13
 - 分支：`self-host`
-- 已确认基线：`887ce8b stage 7.2: add durable agent tasks`
-- 当前阶段：7.3 `CHAIR_AGENT` provider、本地变化和恢复编排已实现并通过当前 WSL 可执行验证，待单独提交。
-- 当前工作：最终审核差异并提交阶段 7.3。
-- 下一步：提交后按 `STAGE_7_4_HANDOFF_PROMPT.md` 实施桌面 Agent 文件系统核心。
+- 已确认基线：`ccf6f6a stage 7.3: orchestrate chair agent storage`
+- 当前阶段：7.4 桌面 Agent 文件系统核心与恢复循环已完成当前 WSL 验证，等待独立提交。
+- 当前工作：核对 7.4 最终差异并提交。
+- 下一步：提交 7.4 后实施 7.5 Agent 管理、离线恢复和冲突裁决 UI。
 
 ## 已完成与验证
 
@@ -51,6 +51,7 @@
 - `c722f95`：阶段 6.8 自托管文件 UI 与阶段 6 收尾。
 - `a7dd0fd`：阶段 7.1 Agent 配对、设备身份与单主机 fencing。
 - `887ce8b`：阶段 7.2 durable Agent task、manifest 与流式内容边界。
+- `ccf6f6a`：阶段 7.3 `CHAIR_AGENT` provider、本地变化和恢复编排。
 
 ### 2026-08-13：阶段 6.3 SERVER_VOLUME provider
 
@@ -207,3 +208,20 @@
 - `git diff --check`：通过。
 - 最终撤销/转移清理调整后，server TypeScript 与 Agent task/HTTP 10 项再次通过；阶段 7 PostgreSQL 13 项仍明确 skip，diff 检查再次通过。
 - 真实 PostgreSQL migration/事务、TLS、两设备、长时离线、进程终止、容量清理竞态、桌面目录和浏览器视觉仍未执行；步骤与证据要求记录在 `MANUAL_ACCEPTANCE.md` 的 SH-MAN-511。
+
+### 2026-08-13：阶段 7.4 桌面 Agent 文件系统核心与恢复循环
+
+- 阶段 7.3 已单独提交为 `ccf6f6a`；提交后工作区干净。
+- 新增独立 `packages/storage-agent`：配对命令从 0600 文件读取一次性码，生成 Ed25519 设备密钥，并把服务器地址、设备凭据、私钥和绝对根路径只写入 0600 私有配置。共享目录元数据不含秘密或绝对路径。
+- Agent HTTP client 只允许 HTTPS 或显式 loopback，所有 fenced 请求使用 `QuorumAgent` header；凭据不进入 URL、日志或共享元数据。
+- portable 路径校验拒绝绝对路径、驱动器/UNC、点路径、Windows 保留名、尾随点/空格、保留元数据路径、符号链接、硬链接与非普通文件；所有解析目标必须留在用户选择的根目录。
+- Agent 每轮先心跳并分页拉取完整 manifest，先应用最新墓碑，再按删除、服务端下载、本地上传顺序处理 task。未知协议状态和不前进的分页 fail closed，陈旧 lease 立即停止。
+- 服务端下载只写根目录内部的 0600 临时文件；大小、SHA-256、目标与原内容二次检查通过后原子发布并重读验证。短写、长写、哈希错误、断流、磁盘错误和并发本地编辑不会成为完整本地文件；重启先清理安全的普通临时残片。
+- watcher 只作为快速提示，周期递归扫描是最终依据。扫描重算内容 SHA-256，优先识别同内容重命名，每轮只提交一个本地变化；pending upload 的 request/task/manifest 状态原子保存，可在服务器完成与本地保存之间的中断后重放收敛。
+- 本地编辑、目标碰撞或墓碑冲突保留原内容并上报 durable conflict，不静默覆盖。普通故障指数退避；结构化日志只包含稳定错误码与 generation 等界定字段。
+- Agent 定向验证：5 个测试文件、48 项通过；`@quorum/contracts` 与 `@quorum/storage-agent` TypeScript build 通过。
+- `pnpm test:self-host`：52 个文件、278 项通过；7 个 PostgreSQL 文件、61 项因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip。仅出现既有 React/Semantic UI 弃用警告。
+- `pnpm build:self-host` 与默认 `pnpm build`：通过；self-host build 已包含 Agent 包，Vite 仅报告既有的大分块警告。
+- `pnpm test:self-host:integration`：7 个文件、61 项因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip；`git diff --check` 通过。
+- 当前 WSL 自动验证不能替代 NTFS/APFS、原生 watcher、Windows ACL、macOS 权限、真实 TLS/PostgreSQL、进程/系统中断和签名发布包；实机步骤与证据记录在 `MANUAL_ACCEPTANCE.md` 的 SH-MAN-512。
+- 已撰写 `STAGE_7_5_HANDOFF_PROMPT.md`；7.5 只实施 Agent 管理、恢复状态和 revision-fenced 冲突裁决 UI，发布包留到 7.6。
