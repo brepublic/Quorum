@@ -118,6 +118,22 @@ describe('migration discovery', () => {
     expect(documents?.sql).not.toContain('storage_provider');
   });
 
+  it('adds append-only file versions and tombstones without Chair Agent behavior', async () => {
+    const migrations = await loadMigrations(resolve('server/migrations'));
+    const files = migrations.find(migration => migration.version === 13);
+    expect(files?.name).toBe('file_metadata_tombstones');
+    expect(files?.sql).toContain('CREATE TABLE storage_bindings');
+    expect(files?.sql).toContain('CREATE TABLE file_entries');
+    expect(files?.sql).toContain('CREATE TABLE file_versions');
+    expect(files?.sql).toContain('CREATE TABLE file_tombstones');
+    expect(files?.sql).toContain('file_versions_append_only');
+    expect(files?.sql).toContain('file_tombstones_append_only');
+    expect(files?.sql).toContain('file_tombstones_integrity');
+    expect(files?.sql).toContain('deleted file cannot be revived');
+    expect(files?.sql).not.toContain('CHAIR_AGENT');
+    expect(files?.sql).not.toContain('lease_generation');
+  });
+
   it('rejects SQL files outside the versioned naming contract', async () => {
     const directory = await temporaryDirectory();
     await writeFile(join(directory, 'first.sql'), 'SELECT 1;\n');

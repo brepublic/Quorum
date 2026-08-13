@@ -182,6 +182,7 @@ export const AUDIT_ACTION_DEFINITIONS = [
   'documents.version_created',
   'documents.status_changed',
   'documents.discussion_added',
+  'storage.file_version_recorded',
   'rules.package_activated',
   'rules.package_imported',
   'rules.package_cloned',

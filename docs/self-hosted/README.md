@@ -1,8 +1,8 @@
 # Quorum 自托管目标架构
 
-本目录描述 Quorum 从 Firebase BaaS 迁移到完全自主托管后的目标架构。阶段 0–5 已落地：契约、后端与部署骨架、身份、委员会核心领域、规则包、低并发业务切片，以及实时与高并发议事。阶段 6 的服务器卷和 S3 文件尚未实施；仓库仍未完成全部迁移。当前事实以根目录的 [`PROJECT_ARCHITECTURE.md`](../../PROJECT_ARCHITECTURE.md) 为准。
+本目录描述 Quorum 从 Firebase BaaS 迁移到完全自主托管后的目标架构。阶段 0–5 和阶段 6.1 已落地：除既有身份与议事功能外，PostgreSQL 已建立文件元数据、版本、存储绑定和墓碑。阶段 6.2–6.8 的上传、provider、文件流程和 UI 尚未实施；仓库仍未完成全部迁移。当前事实以根目录的 [`PROJECT_ARCHITECTURE.md`](../../PROJECT_ARCHITECTURE.md) 为准。
 
-## 当前阶段 5 边界
+## 当前阶段 6.1 边界
 
 - PostgreSQL migration 已建立身份、凭据、Session、系统设置、未来注册申请和身份审计表。
 - bootstrap secret 只保存哈希，并由 PostgreSQL 事务保证并发初始化只有一个成功；公开状态 API 不返回 secret。
@@ -13,12 +13,13 @@
 - 同源 API 已提供阶段 3 委员会、席位、邀请码、快照和规则包命令。所有写入继续执行 Session、CSRF 和 Origin 校验。
 - Committee Owner、Chair、membership、seat assignment 和 `SYSTEM_ADMIN` 分别授权。系统管理员和 Committee Owner 都不会隐式获得 Chair 能力。
 - 邀请码只保存哈希；规则模拟不写议事状态；内置包和已发布版本不可原地修改。
-- schema compatibility 12 覆盖阶段 4 低并发表和阶段 5 的事件游标、计时器、名单、发言、动议、ballot、意向性投票与版本化决议草案。
+- schema compatibility 13 覆盖阶段 4–5 业务表，以及阶段 6.1 的存储绑定、逻辑文件、版本、blob 和墓碑。
 - 自托管 React 页面只调用同源 API；一浏览器一委员会一条 SSE，游标过期、序号缺口或未知事件回退完整快照。
 - 服务器时间是计时真相；PostgreSQL 唯一约束和行锁保护队列顺序、当前发言人及一席一票。
 - 正式 ballot 冻结资格、门槛、must-vote、否决席位和规则版本；票更正追加历史，匿名意向性投票不保存投票人与选项关联。
 - 决议草案和修正案使用不可变版本；进入表决的版本由数据库约束冻结。
-- 本阶段不提供文件 provider、上传或 Local Agent。
+- PostgreSQL 是文件状态、版本、大小、SHA-256、blob 绑定和墓碑的唯一业务真相。文件版本与墓碑不可修改；删除后不能恢复当前版本或追加新版本。
+- 存储服务只提供 provider 成功校验后的内部事务提交边界，尚不提供文件 HTTP、上传、下载、服务器卷/S3 二进制 I/O 或 Local Agent。
 - PostgreSQL、TLS 浏览器和 Compose 实测尚未在当前环境执行，状态及取证要求见 [`MANUAL_ACCEPTANCE.md`](./MANUAL_ACCEPTANCE.md)。
 
 ## 文档索引

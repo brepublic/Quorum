@@ -2,11 +2,11 @@
 
 > 本文件是本仓库的维护入口。后续涉及代码、构建、测试或运行的工作，应先阅读本文件和 `AGENTS.md`，并以实际代码为准更新本文档。
 
-> Quorum 已完成自主托管目标设计，并已落地实施计划阶段 0–5：共享契约、后端与部署骨架、身份、委员会核心领域、规则包、低并发业务切片，以及实时与高并发议事。`self-hosted` 运行时以 PostgreSQL 为唯一业务真相，通过同源 API 与受众过滤 SSE 提供计时、发言、动议、表决、意向性投票和版本化决议草案；文件 provider 尚未迁移。
+> Quorum 已完成自主托管目标设计，并已落地实施计划阶段 0–5 及阶段 6.1 的文件数据基础。`self-hosted` 运行时以 PostgreSQL 为唯一业务真相，通过同源 API 与受众过滤 SSE 提供议事功能；PostgreSQL 已保存文件元数据、版本、blob 绑定和删除墓碑，但上传、下载和二进制 provider 尚未接入。
 
 ## 1. 项目定位与技术栈
 
-Quorum 是一个用于 Model UN（模拟联合国）委员会管理的单页 Web 应用。它基于开源项目 [Muncoordinated](https://github.com/MaxwellBo/Muncoordinated-2)，当前源码仓库为 [brepublic/Quorum](https://github.com/brepublic/Quorum)。默认运行时仍由浏览器直接访问 Firebase，账号管理等少量操作使用 Firebase Cloud Functions；显式选择 `self-hosted` 时则通过常驻的同源 API/SSE 和 PostgreSQL 处理阶段 0–5 已迁移业务。两个运行时互斥，不双写。
+Quorum 是一个用于 Model UN（模拟联合国）委员会管理的单页 Web 应用。它基于开源项目 [Muncoordinated](https://github.com/MaxwellBo/Muncoordinated-2)，当前源码仓库为 [brepublic/Quorum](https://github.com/brepublic/Quorum)。默认运行时仍由浏览器直接访问 Firebase，账号管理等少量操作使用 Firebase Cloud Functions；显式选择 `self-hosted` 时则通过常驻的同源 API/SSE 和 PostgreSQL 处理已经迁移的业务。两个运行时互斥，不双写。
 
 | 层级 | 实现 | 责任 |
 | --- | --- | --- |
@@ -45,7 +45,7 @@ flowchart LR
 
 `src/index.tsx` 初始化 Google Analytics、Sentry、浏览器 history 与 Semantic UI 样式，并把 `App` 挂载到 `#root`。`VITE_RUNTIME_MODE` 显式选择运行路径：未设置或为 `firebase` 时保持原行为，`src/App.tsx` 初始化 Firebase，并在显示普通路由前调用 Functions 检查管理员初始化；`VITE_USE_FIREBASE_EMULATORS=true` 时连接本机模拟器，否则连接 `muncoordinated`。`VITE_RUNTIME_MODE=self-hosted` 使用 `SelfHostedIdentity` 与 `SelfHostedWorkspace`：身份、账号管理、委员会列表、模板和议事工作区均调用同源 `/api/v1`；每个浏览器对一个委员会最多保持一条 SSE。公开委员会深层路由可匿名读取过滤后的快照。两个运行时没有双写。
 
-`server/` 是自主托管模块化单体。它启动时通过 PostgreSQL advisory lock 执行带 SHA-256 校验和的 migration；数据库版本不兼容时 readiness 失败。阶段 2–4 migration 建立身份、委员会、规则包、模板及低并发议事。阶段 5 migration 5–12 增加事件保留游标、服务器权威计时器、普通 `GENERAL` 发言名单与有主持核心磋商、发言及让渡历史、动议状态机、正式 ballot、匿名/席位意向性投票和版本化决议草案；schema compatibility 为 12。
+`server/` 是自主托管模块化单体。它启动时通过 PostgreSQL advisory lock 执行带 SHA-256 校验和的 migration；数据库版本不兼容时 readiness 失败。阶段 2–4 migration 建立身份、委员会、规则包、模板及低并发议事。阶段 5 migration 5–12 增加实时议事、表决和版本化决议草案。migration 13 增加存储绑定、逻辑文件、不可变文件版本、blob 完整性元数据和不可变删除墓碑；schema compatibility 为 13。
 
 首次启动生成高熵 bootstrap secret，只把 SHA-256 哈希写入数据库，并在专用控制台行显示一次；初始化事务锁定单行设置、创建唯一 `SYSTEM_ADMIN` 后清除哈希。密码使用固定参数 Argon2id；Session Cookie 为 `Secure`、`HttpOnly`、`SameSite=Lax`，数据库只保存 Session token 的 SHA-256；写请求同时校验允许 Origin 和双提交 CSRF token。登录、密码确认提权和改密会轮换 Session，重置密码、禁用账号和用户级撤销通过 `session_version` 与撤销时间立即使旧 Session 失效。
 
@@ -53,7 +53,7 @@ flowchart LR
 
 邀请码明文只在创建响应中返回一次，数据库只保存 SHA-256。兑换事务锁定邀请码，在同一事务内检查期限、撤销和剩余次数，再写 membership 与 assignment；客户端不能更换目标席位。规则运行时只接受受限 JSON AST，拒绝未知字段、未知事实、无效引用、继承循环、类型错误、除以零和复杂度超限。内置包和已发布版本不可原地修改；模拟只返回计算值与声明式计划效果，不写议事状态。
 
-`packages/contracts/` 保存浏览器、后端和 Agent 共用的错误码、事件、审计动作、阶段 3–5 响应类型和不可变规则评估快照；`packages/rule-schema/` 保存规则包 v1 校验、有限表达式求值、模拟、有效值解析，以及 `Quorum Default` 和北京学术标准 fixture。自托管前端通过 workspace 依赖导入共享契约；Firebase 页面仍使用既有模型。阶段 0 行为基线见 [`docs/self-hosted/CURRENT_BEHAVIOR_BASELINE.md`](./docs/self-hosted/CURRENT_BEHAVIOR_BASELINE.md)。
+`packages/contracts/` 保存浏览器、后端和 Agent 共用的错误码、事件、审计动作、阶段 3–6 响应类型和不可变规则评估快照；`packages/rule-schema/` 保存规则包 v1 校验、有限表达式求值、模拟、有效值解析，以及 `Quorum Default` 和北京学术标准 fixture。自托管前端通过 workspace 依赖导入共享契约；Firebase 页面仍使用既有模型。阶段 0 行为基线见 [`docs/self-hosted/CURRENT_BEHAVIOR_BASELINE.md`](./docs/self-hosted/CURRENT_BEHAVIOR_BASELINE.md)。
 
 `src/i18n.tsx` 提供无外部运行时依赖的界面国际化层。当前支持英语和简体中文；英语原文同时作为稳定词条键，简体中文词条集中维护。`LanguageProvider` 在语言变更时重新挂载界面，使类组件与函数组件统一获取新文案，并集中覆盖 Semantic UI 的搜索空结果、可新增选项等默认文案；语言切换控件嵌入主页、创建页和委员会工作区的导航菜单。用户选择保存在浏览器 `localStorage` 的 `muncoordinated-language` 项中，首次访问则根据浏览器语言选择默认值。除用户模板、国家模板和国家名称外，业务数据（委员会名称、帖子正文等）不会被翻译或写回；这些可本地化名称均在 Firebase 中保存默认语言和语言到名称的映射，并按当前界面语言解析。内置默认国家模板从静态国家列表生成，包含英语、简体中文名称、Emoji 国旗和大洲；标准 ISO 国家在界面中使用本地打包的 `flag-icons` 独立 SVG 渲染，以保证放大后的清晰度，自定义 Emoji 与上传图片仍按保存值显示。
 
@@ -152,6 +152,7 @@ system
 - `storage.rules` 允许公开读取 `committees/{committeeId}/{fileName}`；上传需写入委员会创建者 UID 元数据。文件拥有者或委员会主任可更新/删除。
 - `Files.tsx` 同时维护 Database 中的文件/帖子元数据和 Storage 中的二进制对象。
 - 自主托管模式的 `src/pages/SelfHostedIdentity.tsx` 与 `SelfHostedWorkspace.tsx` 不复用 Firebase 身份、Database 引用或 Callable。管理员创建普通账号时由服务端生成一次性临时密码；首次登录只能读取当前身份、退出或改密。议事页面通过 `src/services/self-hosted-api.ts` 发送同源 Cookie、CSRF、revision 和幂等键，并由 `src/pages/self-hosted/ProceedingsPanel.tsx` 展示服务器时间推导的计时、名单、动议、表决、意向性投票和决议草案。管理员不能禁用唯一系统管理员；完整账号匿名化与资源转移仍属于后续阶段。
+- 阶段 6.1 的 `server/src/modules/storage/service.ts` 只提供 provider 校验完成后的内部 PostgreSQL 提交边界。它从 Session 推导 actor，并在同一事务中写入文件状态、委员会事件和审计。逻辑删除立即清除当前版本指针、追加墓碑并把 blob 标记为待物理删除；数据库触发器禁止修改文件版本、墓碑或复活已删除文件。本阶段尚无文件 HTTP 路由，浏览器不能伪造 provider 提交。
 
 因此，数据库规则和 Storage 元数据是产品的关键安全边界；变更前必须同时审查前端写入路径与这两份规则文件。
 
@@ -203,7 +204,7 @@ pnpm emulators                     # Firebase Auth/RTDB/Storage/Functions 模拟
 VITE_USE_FIREBASE_EMULATORS=true pnpm start
 pnpm test:e2e                      # 模拟器 + Vite + Cypress 集成测试
 pnpm build:self-host               # 以 self-hosted 模式构建前端、contracts、规则 schema 和后端
-pnpm test:self-host                # 阶段 0–5 契约、服务、HTTP 与自托管前端测试
+pnpm test:self-host                # 阶段 0–6 契约、服务、HTTP 与自托管前端测试
 pnpm self-host:test-db:up          # 启动只绑定 127.0.0.1:55432 的隔离 PostgreSQL
 TEST_DATABASE_ADMIN_URL=postgresql://... pnpm test:self-host:integration
                                       # 创建、测试并清理独立 PostgreSQL 临时数据库；未配置时明确 skip
