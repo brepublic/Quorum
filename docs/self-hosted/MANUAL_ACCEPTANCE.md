@@ -122,7 +122,7 @@
 
 - 前置条件：PostgreSQL 16；`TEST_DATABASE_ADMIN_URL` 指向可创建和删除数据库的管理员连接。
 - 操作步骤：执行 `TEST_DATABASE_ADMIN_URL=postgresql://... pnpm test:self-host:integration`；确认测试创建随机临时数据库，从空库执行全部 migration，再执行一次；检查阶段 3 表、外键、部分唯一索引、邀请码约束、已发布规则版本和审计追加限制。
-- 通过条件：两次 migration 均成功；schema compatibility 为 3；12 个阶段 3 核心表存在；同一用户的第二个活动席位被拒绝；已发布规则版本和审计记录不能更新或删除；测试数据库最终清理。
+- 通过条件：两次 migration 均成功；当前 schema compatibility 为 4，且 12 个阶段 3 核心表继续存在；同一用户的第二个活动席位被拒绝；已发布规则版本和审计记录不能更新或删除；测试数据库最终清理。
 - 自动化覆盖情况：`server/src/db/migrations.integration.test.ts` 检查空库、重复执行和表清单；`server/src/modules/stage3/postgres.integration.test.ts` 检查索引、外键、历史行和不可变触发器。未配置 URL 时测试明确 skip。
 - 当前状态：因无服务器延期。
 - 需要保存的证据：测试输出、`quorum_meta.schema_migrations`、表与索引查询、触发器失败结果和临时数据库清理记录。
@@ -153,3 +153,50 @@
 - 自动化覆盖情况：`packages/rule-schema/src/index.test.ts` 覆盖校验、表达式、复杂度、继承、模拟与解析顺序；`packages/contracts/src/stage3.test.ts` 覆盖冻结快照；`server/src/modules/stage3/postgres.integration.test.ts` 覆盖作用域、能力、版本、激活、覆盖和数据库不可变性。
 - 当前状态：因无服务器延期。
 - 需要保存的证据：脱敏 API 响应、数据库版本与绑定查询、模拟前后业务表计数、授权拒绝结果、规则快照比较和按 request ID 关联的审计。
+
+## 阶段 4：低并发业务切片
+
+### SH-MAN-301 阶段 4 migration 与 PostgreSQL 事务
+
+- 前置条件：PostgreSQL 16；`TEST_DATABASE_ADMIN_URL` 指向可创建和删除数据库的管理员连接。
+- 操作步骤：执行 `TEST_DATABASE_ADMIN_URL=postgresql://... pnpm test:self-host:integration`；检查 migration 4、模板隔离、幂等键、revision 冲突、软删除、并发点名和追加式出席事件用例。
+- 通过条件：schema compatibility 为 4；阶段 4 表、外键、唯一索引和追加式触发器均生效；并发写只有一个符合 revision 的请求成功；临时数据库最终清理。
+- 自动化覆盖情况：migration 与 `server/src/modules/stage4/postgres.integration.test.ts` 已实现；当前环境未提供 PostgreSQL，因此明确 skip。
+- 当前状态：因无服务器延期。
+- 需要保存的证据：测试输出、migration 表、阶段 4 表与索引查询、并发结果和临时数据库清理记录。
+
+### SH-MAN-302 模板、席位、笔记和文本帖子浏览器流程
+
+- 前置条件：通过 TLS 提供 `VITE_RUNTIME_MODE=self-hosted` 构建；Owner、Chair 和两个 member 账号；两个独立浏览器配置文件。
+- 操作步骤：创建、克隆、重命名和删除账号级国家/委员会模板；从模板创建委员会；修改源模板并确认席位/国旗快照不变；创建、编辑和删除笔记及文本帖子；制造陈旧 revision 后刷新。
+- 通过条件：账号模板互相隔离；模板删除冲突列出当前账号占用项；席位快照不随源模板变化；帖子权限符合 member/Chair/Owner 矩阵；删除后正文清空；409 后页面重新读取且不覆盖新版本。
+- 自动化覆盖情况：契约、HTTP、前端和 PostgreSQL 集成测试覆盖命令与权限；真实 WebP 选择、双浏览器交互和代理 Cookie 仍需人工确认。
+- 当前状态：因无服务器延期。
+- 需要保存的证据：关键页面截图、两浏览器请求时间线、脱敏 API 响应、模板/席位 SQL 查询和审计摘要。
+
+### SH-MAN-303 点名、出席与暂停状态
+
+- 前置条件：真实阶段 4 实例；含至少三个活动席位的委员会；两名 Chair 登录不同浏览器。
+- 操作步骤：开始会期和点名；同时提交同一 revision；撤销和重置；完成含“出席并参与表决”的点名；追加暂时离场、返回和缺席事件；把委员会暂停后重试议事命令。
+- 通过条件：同一会期只有一个进行中点名；并发提交只有一个成功；冻结席位名称和规则回答不受后续修改影响；完成后当前出席可由事件重建；暂停时会期、点名和出席命令返回 409，笔记和帖子仍可编辑。
+- 自动化覆盖情况：服务端和真实 PostgreSQL 集成用例已编写；当前环境只执行了无数据库测试。
+- 当前状态：因无服务器延期。
+- 需要保存的证据：两个浏览器的响应、点名/entry/attendance 表查询、事件 sequence、审计记录和暂停状态结果。
+
+### SH-MAN-304 问题、主席代办与关联出席事件
+
+- 前置条件：激活北京学术标准规则包；分别建立 `DELEGATE_OPERATED` 与 `CHAIR_OPERATED` 委员会；member、Chair、Owner 和系统管理员账号。
+- 操作步骤：由 member 提出本人席位问题；由 Chair 代席位提出；尝试未知和停用类型；回应普通问题并尝试附带出席变化；回应个人特权问题并附带出席变化；重复回应。
+- 通过条件：actor 和代办席位由服务端权限推导；运作模式矩阵生效；普通问题不能改变出席；个人特权问题、出席事件、当前状态、事件和审计同事务提交；重复回应返回 409；系统管理员无隐式 Chair 权限。
+- 自动化覆盖情况：HTTP 与 PostgreSQL 集成测试覆盖这些分支；真实 Session、代理和多账号 UI 仍需人工确认。
+- 当前状态：因无服务器延期。
+- 需要保存的证据：脱敏 API 响应、point/attendance/audit 联表查询、不同角色的拒绝结果和 request ID。
+
+### SH-MAN-305 schema v2 快照、匿名公开访问与跨浏览器刷新
+
+- 前置条件：PUBLIC 与 PRIVATE 委员会；匿名、非 member、member、Chair、Owner 和系统管理员访问者；两个浏览器。
+- 操作步骤：访问深层委员会路由并刷新；比较各 audience 快照；在一个浏览器修改笔记、点名或问题，在另一个窗口重新聚焦并显式刷新；检查网络请求。
+- 通过条件：PUBLIC 匿名页面可读取公开字段；PRIVATE 未授权访问统一 404；公开响应不含 owner、用户 ID、actor、正文、主席内部回应或审计；member/Chair/Owner 字段逐级增加；重新聚焦可取得最新快照；网络中没有 Firebase、`/events`、EventSource 或轮询请求。
+- 自动化覆盖情况：快照过滤、HTTP 匿名路由、前端 focus revalidation 和静态边界已有测试；真实深层 SPA fallback、TLS、多浏览器和网络面板需人工确认。
+- 当前状态：因无服务器延期。
+- 需要保存的证据：各 audience 脱敏响应差异、浏览器截图、网络 HAR、深层路由刷新结果和代理日志。

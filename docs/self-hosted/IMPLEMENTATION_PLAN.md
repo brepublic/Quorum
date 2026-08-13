@@ -115,6 +115,8 @@ deploy/
 
 ## 7. 阶段 4：低并发业务切片
 
+状态：代码与无服务器自动验收已完成；真实 PostgreSQL、TLS、Compose 和多浏览器验收按 `MANUAL_ACCEPTANCE.md` 延期。
+
 优先迁移：
 
 - 委员会资料和设置；

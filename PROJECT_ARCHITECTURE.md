@@ -2,7 +2,7 @@
 
 > 本文件是本仓库的维护入口。后续涉及代码、构建、测试或运行的工作，应先阅读本文件和 `AGENTS.md`，并以实际代码为准更新本文档。
 
-> Quorum 已完成自主托管目标设计，并已落地实施计划阶段 0/1/2/3：共享契约、后端与部署骨架、身份、委员会核心领域、席位和规则包。阶段 3 只提供 PostgreSQL 与同源 API；现有委员会页面仍使用 Firebase。SSE、低并发业务页面、议事命令、投票和文件 provider 尚未迁移。
+> Quorum 已完成自主托管目标设计，并已落地实施计划阶段 0–4：共享契约、后端与部署骨架、身份、委员会核心领域、规则包，以及低并发业务切片。`self-hosted` 运行时的委员会资料、模板、席位、笔记、文本帖子、点名、出席和问题已使用 PostgreSQL 与同源 API；SSE、高并发议事、投票和文件 provider 尚未迁移。
 
 ## 1. 项目定位与技术栈
 
@@ -17,7 +17,7 @@ Quorum 是一个用于 Model UN（模拟联合国）委员会管理的单页 Web
 | 文件 | Firebase Cloud Storage | 委员会附件上传、下载、删除 |
 | 可观测性 | Google Analytics、Sentry | 页面访问与客户端错误/性能上报（仅非本地模拟器模式） |
 | 构建/测试 | Vite、TypeScript、Vitest、Cypress、Firebase CLI | 开发服务器、生产构建、单元和端到端测试 |
-| 自托管后端 | Node.js 22、PostgreSQL 16、Argon2id、Caddy、Docker Compose | migration、身份、委员会核心领域、席位、邀请码、规则包和同源 API；尚不承载现有业务页面 |
+| 自托管后端 | Node.js 22、PostgreSQL 16、Argon2id、Caddy、Docker Compose | migration、身份、委员会核心领域、模板、低并发议事切片、审计和同源 API |
 
 ## 2. 运行时总体结构
 
@@ -43,17 +43,17 @@ flowchart LR
   Entry --> Obs
 ```
 
-`src/index.tsx` 初始化 Google Analytics、Sentry、浏览器 history 与 Semantic UI 样式，并把 `App` 挂载到 `#root`。`VITE_RUNTIME_MODE` 显式选择运行路径：未设置或为 `firebase` 时保持原行为，`src/App.tsx` 初始化 Firebase，并在显示普通路由前调用 Functions 检查管理员初始化；`VITE_USE_FIREBASE_EMULATORS=true` 时连接本机模拟器，否则连接 `muncoordinated`。只有 `VITE_RUNTIME_MODE=self-hosted` 时才显示 `SelfHostedIdentity`，调用同源身份 API 完成首次管理员、登录、强制改密、退出和账号管理；该分支目前不显示或写入委员会业务。
+`src/index.tsx` 初始化 Google Analytics、Sentry、浏览器 history 与 Semantic UI 样式，并把 `App` 挂载到 `#root`。`VITE_RUNTIME_MODE` 显式选择运行路径：未设置或为 `firebase` 时保持原行为，`src/App.tsx` 初始化 Firebase，并在显示普通路由前调用 Functions 检查管理员初始化；`VITE_USE_FIREBASE_EMULATORS=true` 时连接本机模拟器，否则连接 `muncoordinated`。`VITE_RUNTIME_MODE=self-hosted` 使用 `SelfHostedIdentity` 与 `SelfHostedWorkspace`：身份、账号管理、委员会列表、模板和阶段 4 工作区均调用同源 `/api/v1`。公开委员会深层路由可匿名读取过滤后的快照。两个运行时没有双写。
 
-`server/` 是自主托管模块化单体。它启动时通过 PostgreSQL advisory lock 执行带 SHA-256 校验和的 migration；数据库版本不兼容时 readiness 失败。阶段 2 migration 建立身份、凭据、Session、系统设置、注册申请预留和身份审计表。阶段 3 migration 建立委员会、membership、Chair capability、席位、席位历史、邀请码、规则包版本、规则绑定、主席覆盖、委员会事件和业务审计表，并用部分唯一索引限制同一用户在同一委员会最多一个活动席位。
+`server/` 是自主托管模块化单体。它启动时通过 PostgreSQL advisory lock 执行带 SHA-256 校验和的 migration；数据库版本不兼容时 readiness 失败。阶段 2 migration 建立身份、凭据、Session、系统设置、注册申请预留和身份审计表。阶段 3 migration 建立委员会、membership、Chair capability、席位、席位历史、邀请码、规则包版本、规则绑定、主席覆盖、委员会事件和业务审计表。阶段 4 migration 增加账号级模板、席位及国旗快照、笔记、文本帖子、meeting session、点名冻结席位、点名回答、追加式出席事件、当前出席状态、问题和幂等键；schema compatibility 为 4。
 
 首次启动生成高熵 bootstrap secret，只把 SHA-256 哈希写入数据库，并在专用控制台行显示一次；初始化事务锁定单行设置、创建唯一 `SYSTEM_ADMIN` 后清除哈希。密码使用固定参数 Argon2id；Session Cookie 为 `Secure`、`HttpOnly`、`SameSite=Lax`，数据库只保存 Session token 的 SHA-256；写请求同时校验允许 Origin 和双提交 CSRF token。登录、密码确认提权和改密会轮换 Session，重置密码、禁用账号和用户级撤销通过 `session_version` 与撤销时间立即使旧 Session 失效。
 
-身份 HTTP 面包括 bootstrap、登录、退出、当前身份、提权、改密和管理员账号命令。阶段 3 API 提供委员会创建、资料修改、归档、删除状态转换、Chair 任免、运作模式、席位与席位历史、邀请码、公开或私有快照、规则包导入/克隆/版本/校验/模拟/激活和主席覆盖。系统管理员只能管理 `SYSTEM` 规则包，不自动获得委员会 `CHAIR`；Committee Owner 也不自动获得 `CHAIR`。所有阶段 3 变更从 Session 推导 actor，并在同一 PostgreSQL 事务中写入状态、委员会事件和业务审计。
+身份 HTTP 面包括 bootstrap、登录、退出、当前身份、提权、改密和管理员账号命令。阶段 3 API 提供委员会核心权限和规则包。阶段 4 API 提供账号级国家/委员会模板、模板快照创建委员会、受控席位编辑、纯文本笔记与帖子、会期、点名、出席事件、问题和主席回应；写命令使用 revision，重试型创建使用 `Idempotency-Key`。工作区快照按 PUBLIC、member、Chair 与 Owner 过滤。系统管理员和 Committee Owner 都不自动获得 `CHAIR`。所有业务变更从 Session 推导 actor，并在同一 PostgreSQL 事务中提交状态、委员会事件和审计。
 
 邀请码明文只在创建响应中返回一次，数据库只保存 SHA-256。兑换事务锁定邀请码，在同一事务内检查期限、撤销和剩余次数，再写 membership 与 assignment；客户端不能更换目标席位。规则运行时只接受受限 JSON AST，拒绝未知字段、未知事实、无效引用、继承循环、类型错误、除以零和复杂度超限。内置包和已发布版本不可原地修改；模拟只返回计算值与声明式计划效果，不写议事状态。
 
-`packages/contracts/` 保存浏览器、后端和 Agent 共用的错误码、事件、审计动作、阶段 3 响应类型和不可变规则评估快照；`packages/rule-schema/` 保存规则包 v1 校验、有限表达式求值、模拟、有效值解析，以及 `Quorum Default` 和北京学术标准 fixture。当前 Firebase 前端不导入这两个包，阶段 0 行为基线见 [`docs/self-hosted/CURRENT_BEHAVIOR_BASELINE.md`](./docs/self-hosted/CURRENT_BEHAVIOR_BASELINE.md)。
+`packages/contracts/` 保存浏览器、后端和 Agent 共用的错误码、事件、审计动作、阶段 3/4 响应类型和不可变规则评估快照；`packages/rule-schema/` 保存规则包 v1 校验、有限表达式求值、模拟、有效值解析，以及 `Quorum Default` 和北京学术标准 fixture。自托管前端通过 workspace 依赖导入共享契约；Firebase 页面仍使用既有模型。阶段 0 行为基线见 [`docs/self-hosted/CURRENT_BEHAVIOR_BASELINE.md`](./docs/self-hosted/CURRENT_BEHAVIOR_BASELINE.md)。
 
 `src/i18n.tsx` 提供无外部运行时依赖的界面国际化层。当前支持英语和简体中文；英语原文同时作为稳定词条键，简体中文词条集中维护。`LanguageProvider` 在语言变更时重新挂载界面，使类组件与函数组件统一获取新文案，并集中覆盖 Semantic UI 的搜索空结果、可新增选项等默认文案；语言切换控件嵌入主页、创建页和委员会工作区的导航菜单。用户选择保存在浏览器 `localStorage` 的 `muncoordinated-language` 项中，首次访问则根据浏览器语言选择默认值。除用户模板、国家模板和国家名称外，业务数据（委员会名称、帖子正文等）不会被翻译或写回；这些可本地化名称均在 Firebase 中保存默认语言和语言到名称的映射，并按当前界面语言解析。内置默认国家模板从静态国家列表生成，包含英语、简体中文名称、Emoji 国旗和大洲；标准 ISO 国家在界面中使用本地打包的 `flag-icons` 独立 SVG 渲染，以保证放大后的清晰度，自定义 Emoji 与上传图片仍按保存值显示。
 
@@ -83,7 +83,7 @@ flowchart LR
 | `.../stats` | `Stats` | 委员会统计 |
 | `.../settings`、`.../help` | `Settings`、`Help` | 行为设置和使用帮助 |
 
-`Committee` 是委员会工作区的壳层：它对 `/committees/:committeeID` 建立 Realtime Database `value` 订阅，把当前委员会对象交给导航和管理页；具体业务页通常各自建立对应订阅。
+Firebase 运行时的 `Committee` 是委员会工作区壳层，对 `/committees/:committeeID` 建立 Realtime Database `value` 订阅。自托管运行时由 `SelfHostedWorkspace` 接管相同深层路径，使用 `SelfHostedCommitteeWorkspace` 读取 schema v2 快照；窗口重新聚焦、显式刷新、命令成功和 revision 冲突后重新读取，不开放 SSE 或轮询模拟实时。
 
 点名页把每个代表团的最终出席/缺席结果保存到成员现有的 `present` 字段，并用 `rollCall/called/{memberID}` 与 `rollCall/currentMemberID` 保存点名进度和当前代表团，因此刷新或重新进入页面后仍可继续。撤销历史和手动翻页位置仅属于当前页面会话状态。委员会设置页只展示总人数、有表决权人数与法定人数，依赖点名结果的出席人数和各类议事门槛会在点名完成后统一展示。
 
@@ -151,7 +151,7 @@ system
 - `countryTemplates/{creatorUid}` 同样仅允许 UID 对应的受管登录用户读写；内置默认国家模板随前端代码发布，不写入 Firebase。
 - `storage.rules` 允许公开读取 `committees/{committeeId}/{fileName}`；上传需写入委员会创建者 UID 元数据。文件拥有者或委员会主任可更新/删除。
 - `Files.tsx` 同时维护 Database 中的文件/帖子元数据和 Storage 中的二进制对象。
-- 自主托管模式的 `src/pages/SelfHostedIdentity.tsx` 不复用 Firebase 身份或 Callable。管理员创建普通账号时由服务端生成一次性临时密码；首次登录只能读取当前身份、退出或改密。管理员不能禁用唯一系统管理员；完整账号匿名化与资源转移仍属于后续阶段。
+- 自主托管模式的 `src/pages/SelfHostedIdentity.tsx` 与 `SelfHostedWorkspace.tsx` 不复用 Firebase 身份、Database 引用或 Callable。管理员创建普通账号时由服务端生成一次性临时密码；首次登录只能读取当前身份、退出或改密。阶段 4 页面通过 `src/services/self-hosted-api.ts` 发送同源 Cookie、CSRF、revision 和幂等键。管理员不能禁用唯一系统管理员；完整账号匿名化与资源转移仍属于后续阶段。
 
 因此，数据库规则和 Storage 元数据是产品的关键安全边界；变更前必须同时审查前端写入路径与这两份规则文件。
 

@@ -1,6 +1,6 @@
 # Quorum 自托管后端
 
-当前实现阶段 1–3：后端与部署骨架、身份、委员会核心领域、Chair 能力、席位、邀请码和规则包。阶段 3 API 尚未接入现有 React 委员会页面，也不包含 SSE 或议事流程。
+当前实现阶段 1–4：后端与部署骨架、身份、委员会核心领域、Chair 能力、席位、邀请码、规则包，以及低并发模板、文本、点名、出席和问题切片。阶段 4 已接入自托管 React 页面；仍不包含 SSE、计时器、发言队列、动议或表决。
 
 本机运行：
 
@@ -31,6 +31,14 @@ PATCH|DELETE /api/v1/committees/:id
 POST /api/v1/committees/:id/{archive,chairs,seats,seat-assignments,seat-invitations,operation-mode,status}
 POST /api/v1/seat-invitations/redeem
 GET|POST /api/v1/rule-packages...
+GET|POST /api/v1/{country-templates,committee-templates}
+PUT|DELETE /api/v1/{country-templates,committee-templates}/:id
+PUT /api/v1/committees/:id/seats/:seatId
+POST /api/v1/committees/:id/{notes,text-posts,meeting-sessions,roll-calls,attendance-events,points}
+PUT|DELETE /api/v1/{notes,text-posts}/:id
+POST /api/v1/meeting-sessions/:id/close
+POST /api/v1/roll-calls/:id/{record-response,undo,reset}
+POST /api/v1/points/:id/resolve
 ```
 
 `/health/ready` 只有在数据库可访问、所有仓库 migration 已应用且存储目录可读写时返回 200。
