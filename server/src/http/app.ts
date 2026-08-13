@@ -405,6 +405,26 @@ async function handleStage5Request(options: {
       : await stage5.closeStrawpoll(auth, id, body, context);
     sendJson(response, strawpollCommand[2] === 'votes' ? 201 : 200, success(result, requestId)); return true;
   }
+  const resolutions = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/resolutions$/.exec(pathname);
+  if (method === 'POST' && resolutions) {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 201, success(await stage5.createResolution(auth, resolutions[1] as string, body,
+      idempotencyKey(request), context), requestId)); return true;
+  }
+  const amendments = /^\/api\/v1\/resolutions\/([0-9a-f-]{36})\/amendments$/.exec(pathname);
+  if (method === 'POST' && amendments) {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 201, success(await stage5.createAmendment(auth, amendments[1] as string, body,
+      idempotencyKey(request), context), requestId)); return true;
+  }
+  const documentCommand = /^\/api\/v1\/documents\/([0-9a-f-]{36})\/(versions|commands|discussion)$/.exec(pathname);
+  if (method === 'POST' && documentCommand) {
+    const auth = await write(); const body = await readJson(request); const id = documentCommand[1] as string;
+    const result = documentCommand[2] === 'versions' ? await stage5.createDocumentVersion(auth, id, body, context)
+      : documentCommand[2] === 'commands' ? await stage5.commandDocument(auth, id, body, context)
+        : await stage5.addDocumentDiscussion(auth, id, body, idempotencyKey(request), context);
+    sendJson(response, documentCommand[2] === 'commands' ? 200 : 201, success(result, requestId)); return true;
+  }
   const timerCommand = /^\/api\/v1\/timers\/([0-9a-f-]{36})\/(start|pause|resume|extend|reset|expire)$/.exec(pathname);
   if (method === 'POST' && timerCommand) {
     const auth = await write(); const body = await readJson(request);

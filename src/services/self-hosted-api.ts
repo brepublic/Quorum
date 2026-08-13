@@ -7,6 +7,7 @@ import type {
   FormalBallot,
   Strawpoll,
   CreatedStrawpoll,
+  ProceedingDocument,
   CommitteeNote,
   CommitteeSummary,
   CommitteeTemplate,
@@ -229,6 +230,29 @@ export const selfHostedApi = {
   },
   closeStrawpoll(id: string, baseRevision: number) {
     return request<Strawpoll>(`/api/v1/strawpolls/${id}/close`, {method: 'POST', body: {baseRevision}});
+  },
+  createResolution(committeeId: string, input: {meetingSessionId: string; title: string; content: string;
+    onBehalfOfSeatId?: string}) {
+    return request<ProceedingDocument>(`/api/v1/committees/${committeeId}/resolutions`, {method: 'POST',
+      body: input, idempotencyKey: key()});
+  },
+  createAmendment(resolutionId: string, input: {meetingSessionId: string; title: string; content: string;
+    onBehalfOfSeatId?: string}) {
+    return request<ProceedingDocument>(`/api/v1/resolutions/${resolutionId}/amendments`, {method: 'POST',
+      body: input, idempotencyKey: key()});
+  },
+  createDocumentVersion(id: string, input: {baseRevision: number; title: string; content: string;
+    onBehalfOfSeatId?: string}) {
+    return request<ProceedingDocument>(`/api/v1/documents/${id}/versions`, {method: 'POST', body: input});
+  },
+  commandDocument(id: string, baseRevision: number, action: 'PUBLISH' | 'POSTPONE' | 'RESUME' | 'RECOMMEND_BALLOT',
+    ruleStableId: string) {
+    return request<ProceedingDocument>(`/api/v1/documents/${id}/commands`, {method: 'POST',
+      body: {baseRevision, action, ruleStableId}});
+  },
+  addDocumentDiscussion(id: string, input: {content: string; ruleStableId: string; onBehalfOfSeatId?: string}) {
+    return request<ProceedingDocument>(`/api/v1/documents/${id}/discussion`, {method: 'POST',
+      body: input, idempotencyKey: key()});
   },
   updateCommittee(id: string, baseRevision: number, patch: Record<string, unknown>) {
     return request<CommitteeSummary>(`/api/v1/committees/${id}`, {method: 'PATCH', body: {baseRevision, patch}});

@@ -127,4 +127,30 @@ describe('stage 5 timer HTTP boundary', () => {
     expect(voteStrawpoll).toHaveBeenCalledWith(authenticated, '30000000-0000-4000-8000-000000000001',
       expect.any(Object), 'timer-key', expect.any(Object));
   });
+
+  it('routes versioned resolution commands without accepting actor fields', async () => {
+    const createResolution = vi.fn(async (_auth, _id, body: Record<string, unknown>) => {
+      if ('actorUserId' in body) throw new AppError({code: 'VALIDATION_FAILED', message: 'Unsupported field.'});
+      return {id: 'resolution'};
+    });
+    const stage5 = {createResolution} as unknown as Stage5Service;
+    const response = await send(stage5, '/api/v1/committees/20000000-0000-4000-8000-000000000001/resolutions',
+      {meetingSessionId: '30000000-0000-4000-8000-000000000001', title: 'A/RES/1', content: '正文',
+        actorUserId: 'attacker'});
+    expect(response.statusCode).toBe(422);
+  });
+
+  it('uses idempotency for resolution creation and discussion', async () => {
+    const createResolution = vi.fn(async () => ({id: 'resolution'}));
+    const addDocumentDiscussion = vi.fn(async () => ({id: 'resolution'}));
+    const stage5 = {createResolution, addDocumentDiscussion} as unknown as Stage5Service;
+    await send(stage5, '/api/v1/committees/20000000-0000-4000-8000-000000000001/resolutions',
+      {meetingSessionId: '30000000-0000-4000-8000-000000000001', title: 'A/RES/1', content: '正文'});
+    await send(stage5, '/api/v1/documents/30000000-0000-4000-8000-000000000001/discussion',
+      {content: '支持本草案。', ruleStableId: 'discuss-resolution'});
+    expect(createResolution).toHaveBeenCalledWith(authenticated, '20000000-0000-4000-8000-000000000001',
+      expect.any(Object), 'timer-key', expect.any(Object));
+    expect(addDocumentDiscussion).toHaveBeenCalledWith(authenticated, '30000000-0000-4000-8000-000000000001',
+      expect.any(Object), 'timer-key', expect.any(Object));
+  });
 });

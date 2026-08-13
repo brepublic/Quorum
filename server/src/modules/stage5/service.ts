@@ -1,13 +1,13 @@
 import {createHash, randomBytes, randomUUID} from 'node:crypto';
 import type {Pool, PoolClient, QueryResultRow} from 'pg';
 import type {AuthoritativeTimer, BallotChoice, CreatedStrawpoll, FormalBallot, FrozenRuleEvaluation, ProceedingMotion,
-  SpeakerList, SpeakerListKind, SpeakerQueueEntry, SpeechRecord, Strawpoll, StrawpollVotingMode, TimerOwnerType,
-  YieldType} from '@quorum/contracts';
+  ProceedingDocument, ProceedingDocumentKind, ProceedingDocumentStatus, SpeakerList, SpeakerListKind, SpeakerQueueEntry,
+  SpeechRecord, Strawpoll, StrawpollVotingMode, TimerOwnerType, YieldType} from '@quorum/contracts';
 import {freezeRuleEvaluation} from '@quorum/contracts';
 import {AppError} from '../../http/errors.js';
 import type {AuthenticatedSession} from '../identity/store.js';
 import {activeSeat, appendEvent, audit, idempotentTransaction, isChair, lockedCommittee, requireBusinessIdentity,
-  requireChair, requireProceedingsActive, transaction, type Stage4Context} from '../stage4/database.js';
+  requireChair, requireProceedingsActive, transaction, type Stage4CommitteeRow, type Stage4Context} from '../stage4/database.js';
 import {assertExactBody} from '../stage4/validation.js';
 
 interface TimerRow extends QueryResultRow {
@@ -58,6 +58,14 @@ interface BallotRow extends QueryResultRow {
 interface StrawpollRow extends QueryResultRow {
   id: string; committee_id: string; meeting_session_id: string; question: string; voting_mode: StrawpollVotingMode;
   multiple_choice: boolean; status: Strawpoll['status']; revision: number; created_at: Date; closed_at: Date | null;
+}
+
+interface DocumentRow extends QueryResultRow {
+  id: string; committee_id: string; meeting_session_id: string; kind: ProceedingDocumentKind; title: string;
+  status: ProceedingDocumentStatus; rule_package_version_id: string; current_version_id: string;
+  voting_version_id: string | null; is_public: boolean; created_by_user_id: string;
+  created_on_behalf_of_seat_id: string; revision: number; created_at: Date; updated_at: Date;
+  resolution_document_id: string | null;
 }
 
 function positiveInteger(value: unknown, name: string): number {
@@ -159,6 +167,67 @@ async function strawpollState(client: PoolClient, row: StrawpollRow): Promise<St
 
 function sha256(value: string): Buffer {
   return createHash('sha256').update(value).digest();
+}
+
+async function documentState(client: PoolClient, row: DocumentRow): Promise<ProceedingDocument> {
+  const [version, discussion] = await Promise.all([
+    client.query<{id: string; version_number: number; content: string; created_at: Date}>(`SELECT id,version_number,
+      content,created_at FROM document_versions WHERE document_id=$1 AND id=$2`, [row.id, row.current_version_id]),
+    client.query<{id: string; seat_id: string; seat_display_name: string; content: string; rule_stable_id: string;
+      created_at: Date}>(`SELECT id,seat_id,seat_display_name,content,rule_stable_id,created_at FROM discussion_entries
+      WHERE document_id=$1 ORDER BY created_at,id`, [row.id])
+  ]);
+  const current = version.rows[0];
+  if (!current) throw new AppError({code: 'INTERNAL_ERROR', message: 'Document version is unavailable.'});
+  return {id: row.id, committeeId: row.committee_id, meetingSessionId: row.meeting_session_id, kind: row.kind,
+    resolutionId: row.resolution_document_id, title: row.title, status: row.status,
+    rulePackageVersionId: row.rule_package_version_id,
+    currentVersion: {id: current.id, versionNumber: current.version_number, content: current.content,
+      createdAt: current.created_at.toISOString()}, votingVersionId: row.voting_version_id, public: row.is_public,
+    revision: row.revision, discussion: discussion.rows.map(entry => ({id: entry.id, seatId: entry.seat_id,
+      seatDisplayName: entry.seat_display_name, content: entry.content, ruleStableId: entry.rule_stable_id,
+      createdAt: entry.created_at.toISOString()})), createdAt: row.created_at.toISOString(), updatedAt: row.updated_at.toISOString()};
+}
+
+const documentRuleIds: Record<ProceedingDocumentKind, Record<'PUBLISH' | 'POSTPONE' | 'RESUME' | 'RECOMMEND_BALLOT' | 'DISCUSS', string>> = {
+  RESOLUTION: {PUBLISH: 'introduce-draft-resolution', POSTPONE: 'postpone-resolution', RESUME: 'resume-resolution',
+    RECOMMEND_BALLOT: 'vote-on-resolution', DISCUSS: 'discuss-resolution'},
+  AMENDMENT: {PUBLISH: 'introduce-amendment', POSTPONE: 'postpone-amendment', RESUME: 'resume-amendment',
+    RECOMMEND_BALLOT: 'vote-on-amendment', DISCUSS: 'discuss-amendment'}
+};
+
+async function frozenDocumentRule(client: PoolClient, row: DocumentRow, suppliedId: string, expectedId: string,
+  now: Date): Promise<FrozenRuleEvaluation> {
+  if (suppliedId !== expectedId) throw new AppError({code: 'VALIDATION_FAILED', message: 'Document rule action is invalid.'});
+  const packageResult = await client.query<{definition: {motions?: unknown}}>(`SELECT definition FROM rule_package_versions
+    WHERE id=$1 AND status='PUBLISHED'`, [row.rule_package_version_id]);
+  const motions = packageResult.rows[0]?.definition.motions;
+  const matches = Array.isArray(motions) ? motions.filter(item => item && typeof item === 'object'
+    && (item as {id?: unknown}).id === suppliedId) : [];
+  if (matches.length !== 1) throw new AppError({code: 'VALIDATION_FAILED',
+    message: 'Document action is not available in the frozen rule package.'});
+  return freezeRuleEvaluation({packageVersionId: row.rule_package_version_id,
+    definition: structuredClone(matches[0]) as Record<string, unknown>,
+    facts: {documentId: row.id, kind: row.kind, status: row.status, currentVersionId: row.current_version_id},
+    resolvedValues: {stableId: suppliedId}, frozenAt: now.toISOString()});
+}
+
+async function representedDocumentSeat(client: PoolClient, committee: Stage4CommitteeRow, auth: AuthenticatedSession,
+  requestedSeatId: unknown, meetingSessionId: string): Promise<{chair: boolean; seatId: string; displayName: string}> {
+  const chair = await isChair(client, committee.id, auth.user.id); let seatId: string | null;
+  if (chair) seatId = uuid(requestedSeatId, 'Represented seat ID');
+  else {
+    if (committee.operation_mode === 'CHAIR_OPERATED') throw new AppError({code: 'FORBIDDEN',
+      message: 'Chair capability is required in Chair-operated mode.'});
+    if (requestedSeatId !== undefined) throw new AppError({code: 'FORBIDDEN', message: 'A delegate cannot choose another seat.'});
+    seatId = await activeSeat(client, committee.id, auth.user.id);
+  }
+  if (!seatId) throw new AppError({code: 'FORBIDDEN', message: 'An active seat assignment is required.'});
+  const seat = await client.query<{display_name: string}>(`SELECT s.display_name FROM committee_seats s
+    JOIN current_attendance a ON a.seat_id=s.id AND a.meeting_session_id=$3 AND a.state='PRESENT'
+    WHERE s.id=$1 AND s.committee_id=$2 AND s.active=true`, [seatId, committee.id, meetingSessionId]);
+  if (!seat.rows[0]) throw new AppError({code: 'FORBIDDEN', message: 'The represented seat is not present.'});
+  return {chair, seatId, displayName: seat.rows[0].display_name};
 }
 
 export function calculateBallotResult(eligibility: FormalBallot['eligibility'], votes: FormalBallot['votes'],
@@ -855,9 +924,19 @@ export class Stage5Service {
           active_rule_package_version_id FROM meeting_sessions WHERE id=$1 AND committee_id=$2`, [meetingSessionId, committeeId]);
         if (!session.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Meeting session not found.'});
         if (session.rows[0].status !== 'OPEN') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Meeting session is closed.'});
+        let subjectVersionId: string | null = null;
         if (subjectType === 'MOTION') {
           const motion = await client.query('SELECT 1 FROM motions WHERE id=$1 AND committee_id=$2', [subjectId, committeeId]);
           if (!motion.rowCount) throw new AppError({code: 'NOT_FOUND', message: 'Motion not found.'});
+        } else {
+          const kind = subjectType === 'RESOLUTION' ? 'RESOLUTION' : 'AMENDMENT';
+          const document = await client.query<{status: ProceedingDocumentStatus; voting_version_id: string | null}>(
+            'SELECT status,voting_version_id FROM documents WHERE id=$1 AND committee_id=$2 AND kind=$3 FOR UPDATE',
+            [subjectId, committeeId, kind]);
+          if (!document.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Ballot document not found.'});
+          if (document.rows[0].status !== 'VOTING' || !document.rows[0].voting_version_id) throw new AppError({
+            code: 'RESOURCE_CONFLICT', message: 'The document has not entered formal voting.'});
+          subjectVersionId = document.rows[0].voting_version_id;
         }
         const eligible = await client.query<{seat_id: string; display_name: string; must_vote: boolean; has_veto: boolean}>(`SELECT
           s.id AS seat_id,s.display_name,s.must_vote,s.has_veto FROM committee_seats s JOIN current_attendance a
@@ -873,7 +952,7 @@ export class Stage5Service {
         const now = this.now(); const evaluation = freezeRuleEvaluation({
           packageVersionId: session.rows[0].active_rule_package_version_id,
           definition: {subjectType, procedural, thresholdKind},
-          facts: {eligibleSeatIds: eligibility.map(seat => seat.seatId), eligibleSeatCount: eligibility.length,
+          facts: {subjectVersionId, eligibleSeatIds: eligibility.map(seat => seat.seatId), eligibleSeatCount: eligibility.length,
             vetoSeatIds: eligibility.filter(seat => seat.hasVeto).map(seat => seat.seatId)},
           resolvedValues: {choices, thresholdValue, mustVoteSeatIds: eligibility.filter(seat => seat.mustVote).map(seat => seat.seatId)},
           frozenAt: now.toISOString()
@@ -1030,6 +1109,30 @@ export class Stage5Service {
         state.votes, ballot.threshold_value); const now = this.now();
       const updated = await client.query<BallotRow>(`UPDATE ballots SET status='PUBLISHED',result=$2,published_at=$3,
         revision=revision+1 WHERE id=$1 RETURNING *`, [ballotId, result, now]);
+      if (ballot.subject_type === 'RESOLUTION' || ballot.subject_type === 'AMENDMENT') {
+        const nextStatus: ProceedingDocumentStatus = ballot.subject_type === 'RESOLUTION'
+          ? result.outcome === 'PASSED' ? 'PASSED' : 'FAILED'
+          : result.outcome === 'PASSED' ? 'INCORPORATED' : 'REJECTED';
+        const document = await client.query<DocumentRow>(`UPDATE documents SET status=$2,revision=revision+1,updated_at=$3
+          WHERE id=$1 AND status='VOTING' RETURNING *,
+          (SELECT resolution_document_id FROM amendments WHERE document_id=$1) AS resolution_document_id`,
+        [ballot.subject_id, nextStatus, now]);
+        if (!document.rows[0]) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The ballot document is not in voting state.'});
+        const rule = await client.query<{rule_stable_id: string; rule_evaluation: FrozenRuleEvaluation}>(`SELECT
+          rule_stable_id,rule_evaluation FROM document_actions WHERE document_id=$1 AND to_status='VOTING'
+          ORDER BY created_at DESC,id DESC LIMIT 1`, [ballot.subject_id]);
+        if (!rule.rows[0]) throw new AppError({code: 'INTERNAL_ERROR', message: 'Document voting rule is unavailable.'});
+        await client.query(`INSERT INTO document_actions
+          (id,committee_id,document_id,action,from_status,to_status,rule_stable_id,rule_evaluation,actor_user_id,created_at)
+          VALUES ($1,$2,$3,'BALLOT_RESULT','VOTING',$4,$5,$6,$7,$8)`, [randomUUID(), committee.id,
+          ballot.subject_id, nextStatus, rule.rows[0].rule_stable_id, rule.rows[0].rule_evaluation, auth.user.id, now]);
+        await appendEvent(client, committee, {type: 'document.status_changed', resourceType: 'document',
+          resourceId: ballot.subject_id, revision: document.rows[0].revision,
+          payload: {kind: ballot.subject_type, status: nextStatus, ballotId}, audience: 'PUBLIC'});
+        await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id, capabilities: ['CHAIR'],
+          action: 'documents.status_changed', resourceType: 'document', resourceId: ballot.subject_id,
+          before: {status: 'VOTING'}, after: {status: nextStatus, ballotId, result}});
+      }
       await appendEvent(client, committee, {type: 'ballot.result_published', resourceType: 'ballot', resourceId: ballotId,
         revision: ballot.revision + 1, payload: {result, publishedAt: now.toISOString()}, audience: 'PUBLIC'});
       await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id, capabilities: ['CHAIR'],
@@ -1183,5 +1286,199 @@ export class Stage5Service {
         before: {status: 'OPEN', revision: poll.revision}, after: {status: 'CLOSED', revision: poll.revision + 1}});
       return state;
     });
+  }
+
+  async createResolution(auth: AuthenticatedSession, committeeId: string, input: Record<string, unknown>, key: string,
+    context: Stage4Context): Promise<ProceedingDocument> {
+    return this.createDocument(auth, committeeId, 'RESOLUTION', input, key, context);
+  }
+
+  async createAmendment(auth: AuthenticatedSession, resolutionId: string, input: Record<string, unknown>, key: string,
+    context: Stage4Context): Promise<ProceedingDocument> {
+    requireBusinessIdentity(auth);
+    const located = await this.pool.query<{committee_id: string}>('SELECT committee_id FROM documents WHERE id=$1 AND kind=$2',
+      [resolutionId, 'RESOLUTION']);
+    if (!located.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Resolution not found.'});
+    return this.createDocument(auth, located.rows[0].committee_id, 'AMENDMENT', {...input, resolutionId}, key, context);
+  }
+
+  private async createDocument(auth: AuthenticatedSession, committeeId: string, kind: ProceedingDocumentKind,
+    input: Record<string, unknown>, key: string, context: Stage4Context): Promise<ProceedingDocument> {
+    requireBusinessIdentity(auth);
+    assertExactBody(input, kind === 'RESOLUTION'
+      ? ['meetingSessionId', 'title', 'content', 'onBehalfOfSeatId']
+      : ['meetingSessionId', 'title', 'content', 'onBehalfOfSeatId', 'resolutionId']);
+    const meetingSessionId = uuid(input.meetingSessionId, 'Meeting session ID'); const title = text(input.title, 'Title', 500);
+    const content = text(input.content, 'Content', 200_000); const resolutionId = kind === 'AMENDMENT'
+      ? uuid(input.resolutionId, 'Resolution ID') : null;
+    const route = kind === 'RESOLUTION' ? `POST /api/v1/committees/${committeeId}/resolutions`
+      : `POST /api/v1/resolutions/${resolutionId}/amendments`;
+    return idempotentTransaction({pool: this.pool, auth, route, key, request: input, status: 201, work: async client => {
+      const committee = await lockedCommittee(client, committeeId); requireProceedingsActive(committee);
+      const session = await client.query<{status: string; active_rule_package_version_id: string}>(`SELECT status,
+        active_rule_package_version_id FROM meeting_sessions WHERE id=$1 AND committee_id=$2`, [meetingSessionId, committeeId]);
+      if (!session.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Meeting session not found.'});
+      if (session.rows[0].status !== 'OPEN') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Meeting session is closed.'});
+      const actor = await representedDocumentSeat(client, committee, auth, input.onBehalfOfSeatId, meetingSessionId);
+      let isPublic = false;
+      if (kind === 'AMENDMENT') {
+        const parent = await client.query<DocumentRow>(`SELECT d.*,NULL::uuid AS resolution_document_id FROM documents d
+          WHERE d.id=$1 AND d.committee_id=$2 AND d.kind='RESOLUTION' FOR UPDATE`, [resolutionId, committeeId]);
+        if (!parent.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Resolution not found.'});
+        if (parent.rows[0].meeting_session_id !== meetingSessionId) throw new AppError({code: 'VALIDATION_FAILED',
+          message: 'Amendment and resolution must use the same meeting session.'});
+        if (!['PUBLISHED', 'POSTPONED'].includes(parent.rows[0].status)) throw new AppError({code: 'RESOURCE_CONFLICT',
+          message: 'The resolution does not accept amendments.'});
+        const rules = await client.query<{definition: {documents?: {amendmentsPublicByDefault?: unknown}}}>(
+          'SELECT definition FROM rule_package_versions WHERE id=$1 AND status=$2',
+          [session.rows[0].active_rule_package_version_id, 'PUBLISHED']);
+        isPublic = rules.rows[0]?.definition.documents?.amendmentsPublicByDefault === true;
+      }
+      const id = randomUUID(); const versionId = randomUUID(); const now = this.now();
+      const inserted = await client.query<DocumentRow>(`INSERT INTO documents
+        (id,committee_id,meeting_session_id,kind,title,rule_package_version_id,current_version_id,is_public,
+         created_by_user_id,created_on_behalf_of_seat_id,created_at,updated_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11) RETURNING *,NULL::uuid AS resolution_document_id`,
+      [id, committeeId, meetingSessionId, kind, title, session.rows[0].active_rule_package_version_id, versionId,
+        isPublic, auth.user.id, actor.seatId, now]);
+      await client.query(`INSERT INTO document_versions
+        (id,document_id,version_number,content,created_by_user_id,created_on_behalf_of_seat_id,created_at)
+        VALUES ($1,$2,1,$3,$4,$5,$6)`, [versionId, id, content, auth.user.id, actor.seatId, now]);
+      if (kind === 'RESOLUTION') await client.query('INSERT INTO resolutions (document_id,proposer_seat_id) VALUES ($1,$2)',
+        [id, actor.seatId]);
+      else await client.query(`INSERT INTO amendments (document_id,resolution_document_id,proposer_seat_id)
+        VALUES ($1,$2,$3)`, [id, resolutionId, actor.seatId]);
+      const eventAudience = isPublic ? 'PUBLIC' : 'MEMBER';
+      await appendEvent(client, committee, {type: 'document.created', resourceType: 'document', resourceId: id, revision: 1,
+        payload: {kind, resolutionId, title, status: 'DRAFT', currentVersionId: versionId,
+          rulePackageVersionId: session.rows[0].active_rule_package_version_id}, audience: eventAudience});
+      await audit(client, context, {committeeId, actorUserId: auth.user.id,
+        capabilities: actor.chair ? ['CHAIR'] : ['MEMBER'], onBehalfOfSeatId: actor.seatId,
+        action: 'documents.created', resourceType: 'document', resourceId: id,
+        after: {kind, resolutionId, title, versionId, characterCount: [...content].length, revision: 1}});
+      const row = inserted.rows[0] as DocumentRow; row.resolution_document_id = resolutionId;
+      return documentState(client, row);
+    }});
+  }
+
+  async createDocumentVersion(auth: AuthenticatedSession, documentId: string, input: Record<string, unknown>,
+    context: Stage4Context): Promise<ProceedingDocument> {
+    requireBusinessIdentity(auth); assertExactBody(input, ['baseRevision', 'title', 'content', 'onBehalfOfSeatId']);
+    const baseRevision = positiveInteger(input.baseRevision, 'Base revision'); const title = text(input.title, 'Title', 500);
+    const content = text(input.content, 'Content', 200_000);
+    return transaction(this.pool, async client => {
+      const located = await client.query<{committee_id: string}>('SELECT committee_id FROM documents WHERE id=$1', [documentId]);
+      if (!located.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Document not found.'});
+      const committee = await lockedCommittee(client, located.rows[0].committee_id); requireProceedingsActive(committee);
+      const found = await client.query<DocumentRow>(`SELECT d.*,a.resolution_document_id FROM documents d
+        LEFT JOIN amendments a ON a.document_id=d.id WHERE d.id=$1 FOR UPDATE OF d`, [documentId]);
+      const document = found.rows[0]; if (!document) throw new AppError({code: 'NOT_FOUND', message: 'Document not found.'});
+      if (document.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT',
+        message: 'This document changed since it was loaded.', details: {currentRevision: document.revision}});
+      if (document.status === 'VOTING' || ['PASSED', 'FAILED', 'INCORPORATED', 'REJECTED'].includes(document.status)) {
+        throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The document version is frozen.'});
+      }
+      const actor = await representedDocumentSeat(client, committee, auth, input.onBehalfOfSeatId, document.meeting_session_id);
+      if (!actor.chair && actor.seatId !== document.created_on_behalf_of_seat_id) throw new AppError({code: 'FORBIDDEN',
+        message: 'Only the proposer or a Chair may create a new version.'});
+      const next = await client.query<{version_number: number}>(
+        'SELECT coalesce(max(version_number),0)+1 AS version_number FROM document_versions WHERE document_id=$1', [documentId]);
+      const versionNumber = next.rows[0]?.version_number ?? 1; const versionId = randomUUID(); const now = this.now();
+      await client.query(`INSERT INTO document_versions
+        (id,document_id,version_number,content,created_by_user_id,created_on_behalf_of_seat_id,created_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7)`, [versionId, documentId, versionNumber, content, auth.user.id, actor.seatId, now]);
+      const updated = await client.query<DocumentRow>(`UPDATE documents SET title=$2,current_version_id=$3,
+        revision=revision+1,updated_at=$4 WHERE id=$1 RETURNING *,
+        (SELECT resolution_document_id FROM amendments WHERE document_id=$1) AS resolution_document_id`,
+      [documentId, title, versionId, now]);
+      await appendEvent(client, committee, {type: 'document.version_created', resourceType: 'document', resourceId: documentId,
+        revision: document.revision + 1, payload: {versionId, versionNumber, title},
+        audience: document.is_public ? 'PUBLIC' : 'MEMBER'});
+      await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id,
+        capabilities: actor.chair ? ['CHAIR'] : ['MEMBER'], onBehalfOfSeatId: actor.seatId,
+        action: 'documents.version_created', resourceType: 'document', resourceId: documentId,
+        before: {versionId: document.current_version_id, revision: document.revision},
+        after: {versionId, versionNumber, characterCount: [...content].length, revision: document.revision + 1}});
+      return documentState(client, updated.rows[0] as DocumentRow);
+    });
+  }
+
+  async commandDocument(auth: AuthenticatedSession, documentId: string, input: Record<string, unknown>,
+    context: Stage4Context): Promise<ProceedingDocument> {
+    requireBusinessIdentity(auth); assertExactBody(input, ['baseRevision', 'action', 'ruleStableId']);
+    const baseRevision = positiveInteger(input.baseRevision, 'Base revision');
+    const action = input.action as 'PUBLISH' | 'POSTPONE' | 'RESUME' | 'RECOMMEND_BALLOT';
+    if (!['PUBLISH', 'POSTPONE', 'RESUME', 'RECOMMEND_BALLOT'].includes(action)) throw new AppError({
+      code: 'VALIDATION_FAILED', message: 'Document action is invalid.'});
+    const ruleStableId = text(input.ruleStableId, 'Rule stable ID', 128);
+    return transaction(this.pool, async client => {
+      const located = await client.query<{committee_id: string}>('SELECT committee_id FROM documents WHERE id=$1', [documentId]);
+      if (!located.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Document not found.'});
+      const committee = await lockedCommittee(client, located.rows[0].committee_id); requireProceedingsActive(committee);
+      await requireChair(client, committee, auth.user.id);
+      const found = await client.query<DocumentRow>(`SELECT d.*,a.resolution_document_id FROM documents d
+        LEFT JOIN amendments a ON a.document_id=d.id WHERE d.id=$1 FOR UPDATE OF d`, [documentId]);
+      const document = found.rows[0]; if (!document) throw new AppError({code: 'NOT_FOUND', message: 'Document not found.'});
+      if (document.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT',
+        message: 'This document changed since it was loaded.', details: {currentRevision: document.revision}});
+      const expectedFrom: Record<typeof action, ProceedingDocumentStatus> = {PUBLISH: 'DRAFT', POSTPONE: 'PUBLISHED',
+        RESUME: 'POSTPONED', RECOMMEND_BALLOT: 'PUBLISHED'};
+      const nextStatus: Record<typeof action, ProceedingDocumentStatus> = {PUBLISH: 'PUBLISHED', POSTPONE: 'POSTPONED',
+        RESUME: 'PUBLISHED', RECOMMEND_BALLOT: 'VOTING'};
+      if (document.status !== expectedFrom[action]) throw new AppError({code: 'RESOURCE_CONFLICT',
+        message: 'The document is not in the required state.'});
+      const now = this.now(); const evaluation = await frozenDocumentRule(client, document, ruleStableId,
+        documentRuleIds[document.kind][action], now); const status = nextStatus[action];
+      const updated = await client.query<DocumentRow>(`UPDATE documents SET status=$2,is_public=true,
+        voting_version_id=CASE WHEN $2='VOTING' THEN current_version_id ELSE voting_version_id END,
+        revision=revision+1,updated_at=$3 WHERE id=$1 RETURNING *,
+        (SELECT resolution_document_id FROM amendments WHERE document_id=$1) AS resolution_document_id`,
+      [documentId, status, now]);
+      await client.query(`INSERT INTO document_actions
+        (id,committee_id,document_id,action,from_status,to_status,rule_stable_id,rule_evaluation,actor_user_id,created_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, [randomUUID(), committee.id, documentId, action,
+        document.status, status, ruleStableId, evaluation, auth.user.id, now]);
+      await appendEvent(client, committee, {type: 'document.status_changed', resourceType: 'document', resourceId: documentId,
+        revision: document.revision + 1, payload: {kind: document.kind, status, ruleStableId,
+          votingVersionId: status === 'VOTING' ? document.current_version_id : document.voting_version_id}, audience: 'PUBLIC'});
+      await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id, capabilities: ['CHAIR'],
+        action: 'documents.status_changed', resourceType: 'document', resourceId: documentId,
+        before: {status: document.status, revision: document.revision},
+        after: {status, ruleStableId, revision: document.revision + 1}});
+      return documentState(client, updated.rows[0] as DocumentRow);
+    });
+  }
+
+  async addDocumentDiscussion(auth: AuthenticatedSession, documentId: string, input: Record<string, unknown>, key: string,
+    context: Stage4Context): Promise<ProceedingDocument> {
+    requireBusinessIdentity(auth); assertExactBody(input, ['content', 'ruleStableId', 'onBehalfOfSeatId']);
+    const content = text(input.content, 'Discussion content', 10_000);
+    const ruleStableId = text(input.ruleStableId, 'Rule stable ID', 128);
+    return idempotentTransaction({pool: this.pool, auth, route: `POST /api/v1/documents/${documentId}/discussion`,
+      key, request: input, status: 201, work: async client => {
+        const located = await client.query<{committee_id: string}>('SELECT committee_id FROM documents WHERE id=$1', [documentId]);
+        if (!located.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Document not found.'});
+        const committee = await lockedCommittee(client, located.rows[0].committee_id); requireProceedingsActive(committee);
+        const found = await client.query<DocumentRow>(`SELECT d.*,a.resolution_document_id FROM documents d
+          LEFT JOIN amendments a ON a.document_id=d.id WHERE d.id=$1 FOR UPDATE OF d`, [documentId]);
+        const document = found.rows[0]; if (!document) throw new AppError({code: 'NOT_FOUND', message: 'Document not found.'});
+        if (document.status !== 'PUBLISHED') throw new AppError({code: 'RESOURCE_CONFLICT',
+          message: 'The document is not open for discussion.'});
+        const actor = await representedDocumentSeat(client, committee, auth, input.onBehalfOfSeatId, document.meeting_session_id);
+        await frozenDocumentRule(client, document, ruleStableId, documentRuleIds[document.kind].DISCUSS, this.now());
+        const id = randomUUID(); const now = this.now();
+        await client.query(`INSERT INTO discussion_entries
+          (id,committee_id,document_id,seat_id,seat_display_name,content,rule_stable_id,actor_user_id,on_behalf_of_seat_id,created_at)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$4,$9)`, [id, committee.id, documentId, actor.seatId,
+          actor.displayName, content, ruleStableId, auth.user.id, now]);
+        await appendEvent(client, committee, {type: 'document.discussion_added', resourceType: 'document', resourceId: documentId,
+          revision: document.revision, payload: {id, seatId: actor.seatId, seatDisplayName: actor.displayName,
+            content, ruleStableId, createdAt: now.toISOString()}, audience: document.is_public ? 'PUBLIC' : 'MEMBER'});
+        await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id,
+          capabilities: actor.chair ? ['CHAIR'] : ['MEMBER'], onBehalfOfSeatId: actor.seatId,
+          action: 'documents.discussion_added', resourceType: 'document', resourceId: documentId,
+          after: {discussionEntryId: id, ruleStableId, characterCount: [...content].length}});
+        return documentState(client, document);
+      }});
   }
 }

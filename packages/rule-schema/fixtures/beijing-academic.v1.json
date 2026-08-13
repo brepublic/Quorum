@@ -49,7 +49,15 @@
     {"id": "open-unmoderated-caucus", "procedural": true, "effects": [{"type": "START_TIMER"}]},
     {"id": "open-moderated-caucus", "procedural": true, "effects": [{"type": "CREATE_CAUCUS"}]},
     {"id": "introduce-draft-resolution", "requiredSecondCount": 1, "effects": [{"type": "SET_DOCUMENT_STATUS"}]},
-    {"id": "vote-on-resolution", "effects": [{"type": "START_BALLOT"}]}
+    {"id": "discuss-resolution", "effects": [{"type": "OPEN_DISCUSSION"}]},
+    {"id": "postpone-resolution", "effects": [{"type": "SET_DOCUMENT_STATUS"}]},
+    {"id": "resume-resolution", "effects": [{"type": "SET_DOCUMENT_STATUS"}]},
+    {"id": "vote-on-resolution", "effects": [{"type": "START_BALLOT"}]},
+    {"id": "introduce-amendment", "effects": [{"type": "SET_DOCUMENT_STATUS"}]},
+    {"id": "discuss-amendment", "effects": [{"type": "OPEN_DISCUSSION"}]},
+    {"id": "postpone-amendment", "effects": [{"type": "SET_DOCUMENT_STATUS"}]},
+    {"id": "resume-amendment", "effects": [{"type": "SET_DOCUMENT_STATUS"}]},
+    {"id": "vote-on-amendment", "effects": [{"type": "START_BALLOT"}]}
   ],
   "ballots": {
     "delegateMayChangeVote": false,

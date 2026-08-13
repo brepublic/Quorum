@@ -38,4 +38,22 @@ describe('self-hosted stage 4 workspace', () => {
     await act(async () => { window.dispatchEvent(new Event('focus')); await Promise.resolve(); await Promise.resolve(); });
     expect(api.snapshot).toHaveBeenCalledTimes(2);
   });
+
+  it('exposes stage 5 proceedings from the same-origin workspace', async () => {
+    const proceedings: CommitteeWorkspaceSnapshot = {...snapshot,
+      meetingSession: {id: 'session', committeeId: 'committee', phaseId: 'formal-debate', activeRulePackageVersionId: 'rules',
+        status: 'OPEN', revision: 1, createdAt: '2026-08-13T00:00:00.000Z', closedAt: null},
+      timers: [], speakerLists: [], motions: [], ballots: [], strawpolls: [], documents: []};
+    const api = {snapshot: vi.fn(async () => proceedings), openCommitteeEvents: vi.fn(() => () => undefined)} as unknown as SelfHostedApi;
+    container = document.createElement('div'); document.body.append(container); root = createRoot(container);
+    await act(async () => { root?.render(<MemoryRouter initialEntries={['/committees/committee']}>
+      <SelfHostedWorkspace user={user} logout={() => undefined} api={api} />
+    </MemoryRouter>); await Promise.resolve(); await Promise.resolve(); });
+    const item = Array.from(container.querySelectorAll('.item')).find(node => node.textContent === '议事');
+    expect(item).toBeTruthy();
+    await act(async () => { item?.dispatchEvent(new MouseEvent('click', {bubbles: true})); });
+    expect(container.textContent).toContain('发言名单');
+    expect(container.textContent).toContain('正式表决');
+    expect(container.textContent).toContain('决议草案与修正案');
+  });
 });

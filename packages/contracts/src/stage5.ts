@@ -200,3 +200,41 @@ export interface Strawpoll {
 export interface CreatedStrawpoll extends Strawpoll {
   anonymousAccessToken?: string;
 }
+
+export type ProceedingDocumentKind = 'RESOLUTION' | 'AMENDMENT';
+export type ProceedingDocumentStatus = 'DRAFT' | 'PUBLISHED' | 'POSTPONED' | 'VOTING'
+  | 'PASSED' | 'FAILED' | 'INCORPORATED' | 'REJECTED';
+
+export interface ProceedingDocumentVersion {
+  id: string;
+  versionNumber: number;
+  content: string;
+  createdAt: string;
+}
+
+export interface DocumentDiscussionEntry {
+  id: string;
+  seatId: string;
+  seatDisplayName: string;
+  content: string;
+  ruleStableId: string;
+  createdAt: string;
+}
+
+export interface ProceedingDocument {
+  id: string;
+  committeeId: string;
+  meetingSessionId: string;
+  kind: ProceedingDocumentKind;
+  resolutionId: string | null;
+  title: string;
+  status: ProceedingDocumentStatus;
+  rulePackageVersionId: string;
+  currentVersion: ProceedingDocumentVersion;
+  votingVersionId: string | null;
+  public: boolean;
+  revision: number;
+  discussion: DocumentDiscussionEntry[];
+  createdAt: string;
+  updatedAt: string;
+}

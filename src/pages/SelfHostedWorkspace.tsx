@@ -14,6 +14,7 @@ import Loading from '../components/Loading';
 import {LanguageMenuItem, t} from '../i18n';
 import {SelfHostedApiError, selfHostedApi, type SelfHostedApi} from '../services/self-hosted-api';
 import type {SelfHostedUser} from '../services/self-hosted-identity';
+import ProceedingsPanel from './self-hosted/ProceedingsPanel';
 
 function errorText(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 
@@ -159,7 +160,7 @@ function CommitteeTemplates({api}: {api: SelfHostedApi}) {
   </Container>;
 }
 
-type WorkspaceView = 'overview' | 'notes' | 'posts' | 'roll-call' | 'points';
+type WorkspaceView = 'overview' | 'notes' | 'posts' | 'roll-call' | 'points' | 'proceedings';
 
 function TextResources({kind, snapshot, run, api}: {kind: 'notes' | 'posts'; snapshot: CommitteeWorkspaceSnapshot;
   run(operation: () => Promise<unknown>): Promise<void>; api: SelfHostedApi}) {
@@ -289,10 +290,13 @@ export function SelfHostedCommitteeWorkspace({api = selfHostedApi, user}: {api?:
   const panels: Record<WorkspaceView, React.ReactNode> = {overview: <Overview snapshot={snapshot} run={run} api={api} canChair={canChair} />,
     notes: <TextResources kind="notes" snapshot={snapshot} run={run} api={api} />, posts: <TextResources kind="posts" snapshot={snapshot} run={run} api={api} />,
     'roll-call': <RollCallPanel snapshot={snapshot} run={run} api={api} canChair={canChair} />,
-    points: <PointsPanel snapshot={snapshot} run={run} api={api} canChair={canChair} />};
+    points: <PointsPanel snapshot={snapshot} run={run} api={api} canChair={canChair} />,
+    proceedings: <ProceedingsPanel snapshot={snapshot} run={run} api={api} canChair={canChair} />};
+  const viewLabels: Record<WorkspaceView, string> = {overview: t('overview'), notes: t('notes'), posts: t('posts'),
+    'roll-call': t('roll-call'), points: t('points'), proceedings: '议事'};
   return <Container style={{padding: '1em'}}><Header as="h1">{snapshot.committee.name}</Header>{error && <Message error content={error} />}
-    <Menu pointing secondary>{(['overview', 'notes', 'posts', 'roll-call', 'points'] as WorkspaceView[]).map(item => <Menu.Item key={item}
-      active={view === item} onClick={() => setView(item)}>{t(item)}</Menu.Item>)}<Menu.Menu position="right"><Menu.Item onClick={() => void refresh()}>
+    <Menu pointing secondary>{(['overview', 'notes', 'posts', 'roll-call', 'points', 'proceedings'] as WorkspaceView[]).map(item => <Menu.Item key={item}
+      active={view === item} onClick={() => setView(item)}>{viewLabels[item]}</Menu.Item>)}<Menu.Menu position="right"><Menu.Item onClick={() => void refresh()}>
         <Icon name="refresh" />{t('Refresh')}</Menu.Item></Menu.Menu></Menu>
     <Segment loading={working}>{panels[view]}</Segment>
   </Container>;

@@ -304,6 +304,7 @@ export interface CommitteeWorkspaceSnapshot {
   motions?: import('./stage5.js').ProceedingMotion[];
   ballots?: import('./stage5.js').FormalBallot[];
   strawpolls?: import('./stage5.js').Strawpoll[];
+  documents?: import('./stage5.js').ProceedingDocument[];
 }
 
 export function localizedDisplayName(

@@ -105,6 +105,19 @@ describe('migration discovery', () => {
     expect(anonymousVotes).not.toContain('created_at');
   });
 
+  it('keeps proceeding documents versioned and freezes the voting version', async () => {
+    const migrations = await loadMigrations(resolve('server/migrations'));
+    const documents = migrations.find(migration => migration.version === 12);
+    expect(documents?.name).toBe('resolution_documents');
+    expect(documents?.sql).toContain('CREATE TABLE document_versions');
+    expect(documents?.sql).toContain('documents_voting_version_fk');
+    expect(documents?.sql).toContain('document voting version is immutable');
+    expect(documents?.sql).toContain('documents_explicit_state_machine');
+    expect(documents?.sql).toContain('discussion_entries_append_only');
+    expect(documents?.sql).not.toContain('file_entries');
+    expect(documents?.sql).not.toContain('storage_provider');
+  });
+
   it('rejects SQL files outside the versioned naming contract', async () => {
     const directory = await temporaryDirectory();
     await writeFile(join(directory, 'first.sql'), 'SELECT 1;\n');

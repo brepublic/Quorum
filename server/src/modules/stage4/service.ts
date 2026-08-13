@@ -19,6 +19,7 @@ import type {
   FormalBallot,
   BallotChoice,
   Strawpoll,
+  ProceedingDocument,
   MeetingSession,
   PointStatus,
   PublicCommitteePoint,
@@ -228,6 +229,13 @@ interface SnapshotStrawpollRow extends QueryResultRow {
   id: string; committee_id: string; meeting_session_id: string; question: string;
   voting_mode: Strawpoll['votingMode']; multiple_choice: boolean; status: Strawpoll['status']; revision: number;
   created_at: Date; closed_at: Date | null;
+}
+
+interface SnapshotDocumentRow extends QueryResultRow {
+  id: string; committee_id: string; meeting_session_id: string; kind: ProceedingDocument['kind']; title: string;
+  status: ProceedingDocument['status']; rule_package_version_id: string; current_version_id: string;
+  voting_version_id: string | null; is_public: boolean; revision: number; created_at: Date; updated_at: Date;
+  resolution_document_id: string | null;
 }
 
 async function snapshotSpeeches(client: PoolClient, listId: string): Promise<SpeechRecord[]> {
@@ -701,6 +709,29 @@ export class Stage4Service {
           options: options.rows.map(option => ({id: option.id, label: option.label, sortOrder: option.sort_order,
             voteCount: Number(option.vote_count)})), revision: row.revision, createdAt: row.created_at.toISOString(),
           closedAt: row.closed_at?.toISOString() ?? null};
+      }));
+      const documentRows = await client.query<SnapshotDocumentRow>(`SELECT d.*,a.resolution_document_id FROM documents d
+        LEFT JOIN amendments a ON a.document_id=d.id WHERE d.committee_id=$1 ORDER BY d.created_at,d.id`, [committeeId]);
+      const visibleDocuments = viewer.audience === 'PUBLIC' ? documentRows.rows.filter(row => row.is_public) : documentRows.rows;
+      result.documents = await Promise.all(visibleDocuments.map(async row => {
+        const [version, discussion] = await Promise.all([
+          client.query<{id: string; version_number: number; content: string; created_at: Date}>(`SELECT id,version_number,
+            content,created_at FROM document_versions WHERE document_id=$1 AND id=$2`, [row.id, row.current_version_id]),
+          client.query<{id: string; seat_id: string; seat_display_name: string; content: string; rule_stable_id: string;
+            created_at: Date}>(`SELECT id,seat_id,seat_display_name,content,rule_stable_id,created_at FROM discussion_entries
+            WHERE document_id=$1 ORDER BY created_at,id`, [row.id])
+        ]);
+        const current = version.rows[0];
+        if (!current) throw new AppError({code: 'INTERNAL_ERROR', message: 'Document version is unavailable.'});
+        return {id: row.id, committeeId: row.committee_id, meetingSessionId: row.meeting_session_id, kind: row.kind,
+          resolutionId: row.resolution_document_id, title: row.title, status: row.status,
+          rulePackageVersionId: row.rule_package_version_id,
+          currentVersion: {id: current.id, versionNumber: current.version_number, content: current.content,
+            createdAt: current.created_at.toISOString()}, votingVersionId: row.voting_version_id, public: row.is_public,
+          revision: row.revision, discussion: discussion.rows.map(entry => ({id: entry.id, seatId: entry.seat_id,
+            seatDisplayName: entry.seat_display_name, content: entry.content, ruleStableId: entry.rule_stable_id,
+            createdAt: entry.created_at.toISOString()})), createdAt: row.created_at.toISOString(),
+          updatedAt: row.updated_at.toISOString()};
       }));
       if (viewer.audience !== 'PUBLIC') {
         const [notes, posts, timers] = await Promise.all([
