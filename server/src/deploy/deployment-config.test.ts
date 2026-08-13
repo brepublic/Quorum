@@ -14,6 +14,9 @@ describe('self-hosted deployment configuration', () => {
     expect(postgresBlock).not.toMatch(/^\s{4}ports:/m);
     expect(postgresBlock).toContain('postgres_data:/var/lib/postgresql/data');
     expect(compose).toContain('quorum_files:/var/lib/quorum/files');
+    expect(compose).toContain('QUORUM_STORAGE_PATH: /var/lib/quorum/files');
+    expect(compose).toContain('QUORUM_MAX_FILE_BYTES:');
+    expect(compose).toContain('QUORUM_MAX_UPLOAD_REQUEST_BYTES:');
     expect(compose).toMatch(/\nvolumes:\n(?:\s{2}[a-z_]+:\n?)+$/);
   });
 

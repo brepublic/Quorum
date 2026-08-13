@@ -11,6 +11,7 @@ import type {Stage3Service} from '../modules/stage3/service.js';
 import type {Stage4Service} from '../modules/stage4/service.js';
 import type {RealtimeService} from '../modules/realtime/service.js';
 import type {Stage5Service} from '../modules/stage5/service.js';
+import type {Stage6UploadService} from '../modules/storage/upload-service.js';
 import {AppError, normalizeError} from './errors.js';
 import {
   clearIdentityCookies,
@@ -36,6 +37,7 @@ export interface AppDependencies {
   stage4?: Stage4Service;
   realtime?: RealtimeService;
   stage5?: Stage5Service;
+  uploads?: Stage6UploadService;
   allowedOrigins?: string[];
 }
 
@@ -134,6 +136,19 @@ function integerField(body: Record<string, unknown>, name: string): number {
     throw new AppError({code: 'BAD_REQUEST', message: `Field ${name} must be a positive integer.`});
   }
   return Number(value);
+}
+
+function requestContentLength(request: IncomingMessage): number | undefined {
+  const value = singleHeader(request.headers['content-length']);
+  if (value === undefined) return undefined;
+  if (!/^(0|[1-9][0-9]*)$/.test(value)) {
+    throw new AppError({code: 'BAD_REQUEST', message: 'Content-Length is invalid.'});
+  }
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed)) {
+    throw new AppError({code: 'PAYLOAD_TOO_LARGE', message: 'Request body is too large.'});
+  }
+  return parsed;
 }
 
 async function optionalAuthentication(request: IncomingMessage, identity: IdentityService): Promise<AuthenticatedSession | undefined> {
@@ -310,6 +325,37 @@ async function handleStage4Request(options: {
   if (resolvePoint && method === 'POST') {
     const auth = await write(); const body = await readJson(request);
     sendJson(response, 200, success(await stage4.resolvePoint(auth, resolvePoint[1] as string, body, context), requestId));
+    return true;
+  }
+  return false;
+}
+
+async function handleStage6UploadRequest(options: {
+  request: IncomingMessage; response: ServerResponse; pathname: string; requestId: string;
+  identity: IdentityService; uploads: Stage6UploadService; allowedOrigins: readonly string[];
+}): Promise<boolean> {
+  const {request, response, pathname, requestId, identity, uploads, allowedOrigins} = options;
+  const method = request.method ?? 'GET';
+  const context = identityContext(request, requestId);
+  const write = async () => { requireOrigin(request, allowedOrigins); return authenticatedWrite(request, identity); };
+  const create = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/file-uploads$/.exec(pathname);
+  if (method === 'POST' && create) {
+    const auth = await write();
+    const body = await readJson(request);
+    sendJson(response, 201, success(await uploads.createUpload(auth, create[1] as string, body,
+      idempotencyKey(request), context), requestId));
+    return true;
+  }
+  const content = /^\/api\/v1\/file-uploads\/([0-9a-f-]{36})\/content$/.exec(pathname);
+  if (method === 'PUT' && content) {
+    const auth = await write();
+    try {
+      const result = await uploads.receiveContent(auth, content[1] as string, request,
+        idempotencyKey(request), requestContentLength(request), context);
+      sendJson(response, 200, success(result, requestId));
+    } finally {
+      request.resume();
+    }
     return true;
   }
   return false;
@@ -741,6 +787,11 @@ export function createRequestHandler(dependencies: AppDependencies): RequestList
             identity: dependencies.identity, realtime: dependencies.realtime});
           return;
         }
+
+        if (dependencies.identity && dependencies.uploads && await handleStage6UploadRequest({
+          request, response, pathname, requestId, identity: dependencies.identity, uploads: dependencies.uploads,
+          allowedOrigins: dependencies.allowedOrigins ?? []
+        })) return;
 
         if (dependencies.identity && dependencies.stage5 && await handleStage5Request({
           request, response, pathname, requestId, identity: dependencies.identity, stage5: dependencies.stage5,

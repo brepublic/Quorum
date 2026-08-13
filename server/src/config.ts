@@ -7,6 +7,9 @@ export interface ServerConfig {
   databaseUrl: string;
   migrationsDirectory: string;
   storagePath: string;
+  maxFileBytes: number;
+  maxUploadRequestBytes: number;
+  uploadTtlSeconds: number;
   shutdownGraceMs: number;
   allowedOrigins: string[];
 }
@@ -51,6 +54,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
       throw new Error('QUORUM_ALLOWED_ORIGINS must contain comma-separated HTTP origins.');
     }
   }
+  const maxFileBytes = integer(env.QUORUM_MAX_FILE_BYTES, 20 * 1024 * 1024, 'QUORUM_MAX_FILE_BYTES');
+  const maxUploadRequestBytes = integer(env.QUORUM_MAX_UPLOAD_REQUEST_BYTES,
+    21 * 1024 * 1024, 'QUORUM_MAX_UPLOAD_REQUEST_BYTES');
+  if (maxUploadRequestBytes < maxFileBytes) {
+    throw new Error('QUORUM_MAX_UPLOAD_REQUEST_BYTES must be at least QUORUM_MAX_FILE_BYTES.');
+  }
   return {
     host: env.HOST || '0.0.0.0',
     port: integer(env.PORT, 3000, 'PORT'),
@@ -58,6 +67,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     databaseUrl: databaseUrl(env),
     migrationsDirectory: resolve(env.QUORUM_MIGRATIONS_DIR || 'server/migrations'),
     storagePath: resolve(env.QUORUM_STORAGE_PATH || 'server/.local/storage'),
+    maxFileBytes,
+    maxUploadRequestBytes,
+    uploadTtlSeconds: integer(env.QUORUM_UPLOAD_TTL_SECONDS, 24 * 60 * 60, 'QUORUM_UPLOAD_TTL_SECONDS'),
     shutdownGraceMs: integer(env.SHUTDOWN_GRACE_MS, 10_000, 'SHUTDOWN_GRACE_MS'),
     allowedOrigins
   };

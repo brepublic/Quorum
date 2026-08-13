@@ -122,7 +122,7 @@
 
 - 前置条件：PostgreSQL 16；`TEST_DATABASE_ADMIN_URL` 指向可创建和删除数据库的管理员连接。
 - 操作步骤：执行 `TEST_DATABASE_ADMIN_URL=postgresql://... pnpm test:self-host:integration`；确认测试创建随机临时数据库，从空库执行全部 migration，再执行一次；检查阶段 3 表、外键、部分唯一索引、邀请码约束、已发布规则版本和审计追加限制。
-- 通过条件：两次 migration 均成功；当前 schema compatibility 为 13，且 12 个阶段 3 核心表继续存在；同一用户的第二个活动席位被拒绝；已发布规则版本和审计记录不能更新或删除；测试数据库最终清理。
+- 通过条件：两次 migration 均成功；当前 schema compatibility 为 14，且 12 个阶段 3 核心表继续存在；同一用户的第二个活动席位被拒绝；已发布规则版本和审计记录不能更新或删除；测试数据库最终清理。
 - 自动化覆盖情况：`server/src/db/migrations.integration.test.ts` 检查空库、重复执行和表清单；`server/src/modules/stage3/postgres.integration.test.ts` 检查索引、外键、历史行和不可变触发器。未配置 URL 时测试明确 skip。
 - 当前状态：因无服务器延期。
 - 需要保存的证据：测试输出、`quorum_meta.schema_migrations`、表与索引查询、触发器失败结果和临时数据库清理记录。
@@ -160,7 +160,7 @@
 
 - 前置条件：PostgreSQL 16；`TEST_DATABASE_ADMIN_URL` 指向可创建和删除数据库的管理员连接。
 - 操作步骤：执行 `TEST_DATABASE_ADMIN_URL=postgresql://... pnpm test:self-host:integration`；检查 migration 4、模板隔离、幂等键、revision 冲突、软删除、并发点名和追加式出席事件用例。
-- 通过条件：schema compatibility 为 13；migration 4 的表、外键、唯一索引和追加式触发器均生效；并发写只有一个符合 revision 的请求成功；临时数据库最终清理。
+- 通过条件：schema compatibility 为 14；migration 4 的表、外键、唯一索引和追加式触发器均生效；并发写只有一个符合 revision 的请求成功；临时数据库最终清理。
 - 自动化覆盖情况：migration 与 `server/src/modules/stage4/postgres.integration.test.ts` 已实现；当前环境未提供 PostgreSQL，因此明确 skip。
 - 当前状态：因无服务器延期。
 - 需要保存的证据：测试输出、migration 表、阶段 4 表与索引查询、并发结果和临时数据库清理记录。
@@ -209,7 +209,7 @@
 
 - 前置条件：PostgreSQL 16；`TEST_DATABASE_ADMIN_URL` 指向可创建和删除数据库的管理员连接。
 - 操作步骤：执行 `TEST_DATABASE_ADMIN_URL=postgresql://... pnpm test:self-host:integration`；保留 migration 5–12、两名 Chair 并发重排和同席位两名代表并发投票的输出。
-- 通过条件：schema compatibility 为 13；空库 migration 和重复执行成功；并发重排只有一个 revision 成功且活动位置唯一；同席位并发投票只有一张当前票；临时数据库被清理。
+- 通过条件：schema compatibility 为 14；空库 migration 和重复执行成功；并发重排只有一个 revision 成功且活动位置唯一；同席位并发投票只有一张当前票；临时数据库被清理。
 - 自动化覆盖情况：`server/src/db/migrations.integration.test.ts` 与 `server/src/modules/stage5/postgres.integration.test.ts` 已实现；未配置 URL 时明确 skip。
 - 当前状态：因无服务器延期。
 - 需要保存的证据：完整测试输出、`quorum_meta.schema_migrations`、相关唯一索引和触发器查询、两组并发结果及临时数据库清理记录。
@@ -279,13 +279,22 @@
 
 ## 阶段 6：服务器卷和 S3 文件
 
-当前环境未提供 `TEST_DATABASE_ADMIN_URL`、Docker 持久卷、S3 兼容测试桶或 TLS 浏览器。阶段 6.1 的真实 PostgreSQL 集成测试已编写但明确 skip；以下项目尚未通过。
+当前环境未提供 `TEST_DATABASE_ADMIN_URL`、PostgreSQL 客户端、Docker 持久卷、S3 兼容测试桶或 TLS 浏览器。阶段 6.1–6.2 的真实 PostgreSQL 集成测试已编写但明确 skip；以下项目尚未通过。
 
 ### SH-MAN-501 文件版本、绑定、事务和墓碑
 
 - 前置条件：PostgreSQL 16；`TEST_DATABASE_ADMIN_URL` 指向可创建和删除数据库的管理员连接。
 - 操作步骤：执行 `TEST_DATABASE_ADMIN_URL=postgresql://... pnpm test:self-host:integration`；检查 migration 13；创建服务器卷绑定和两个文件版本；注入审计写入失败；删除文件后尝试修改版本、删除墓碑和追加旧文件版本。
-- 通过条件：schema compatibility 为 13；一个委员会最多一个活动 binding；版本保存服务端大小和 SHA-256 且不可修改；故障时文件、事件、审计和幂等记录全部回滚；删除立即清除当前版本、追加唯一墓碑并标记 blob 待删；旧副本不能追加版本；系统管理员没有隐式 Chair 权限。
+- 通过条件：schema compatibility 为 14；一个委员会最多一个活动 binding；版本保存服务端大小和 SHA-256 且不可修改；故障时文件、事件、审计和幂等记录全部回滚；删除立即清除当前版本、追加唯一墓碑并标记 blob 待删；旧副本不能追加版本；系统管理员没有隐式 Chair 权限。
 - 自动化覆盖情况：migration 静态测试和无数据库校验已通过；`server/src/modules/storage/postgres.integration.test.ts` 覆盖真实 PostgreSQL 事务、追加历史、故障回滚和删除防复活，未配置 URL 时明确 skip。
 - 当前状态：因无服务器延期。
 - 需要保存的证据：完整测试输出、migration 13 表/约束/触发器查询、file entry/version/blob/tombstone 脱敏查询、事件与审计计数、故障注入回滚结果和临时数据库清理记录。证据不得包含二进制内容或 provider 密钥。
+
+### SH-MAN-502 durable staging、HTTP 流和故障恢复
+
+- 前置条件：真实 PostgreSQL 16；应用的 `QUORUM_STORAGE_PATH` 挂载到持久卷；通过 Caddy TLS 访问；准备 member 与 Chair 账号、活动和暂停委员会，以及可注入满盘、只读卷、断流和进程终止的测试环境。
+- 操作步骤：创建 upload 后分别以固定 `Content-Length` 和 chunked 请求分块上传；验证实际大小和 SHA-256；尝试超限、短写、长写、断流、错误哈希、只读卷、满盘、绝对路径、`..`、符号链接和目录/FIFO 目标；在字节落盘后、最终数据库事务前终止进程，重启后以同一幂等键重试；把委员会暂停后尝试创建和完成；把 `CREATED`、`RECEIVING` 与 `STAGED` 的期限调到过去并运行未来清理候选查询。
+- 通过条件：请求内存不随完整文件大小增长；成功 upload 的服务器实算大小和 SHA-256 匹配，内部键不含用户文件名；所有失败均不创建 file entry、blob、version 或下载记录；完整暂存副本在数据库或进程故障后保留并可恢复；暂停状态拒绝创建和完成；普通期限不会选择 `CREATED`、`RECEIVING` 或 `STAGED`，只选择 `COMMITTED`、`CANCELLED` 或已过期的 `FAILED`。
+- 自动化覆盖情况：migration、纯文件系统流、HTTP 边界和 PostgreSQL 集成用例已实现；当前 WSL 的无数据库测试验证流式分块、大小/哈希、超限、断流、磁盘错误、路径和清理候选。真实持久卷、进程终止、代理 chunked 传输、内存曲线和 PostgreSQL 事务尚未执行。
+- 当前状态：因无服务器延期。
+- 需要保存的证据：脱敏请求与响应、进程 RSS 时间线、暂存卷路径类型与 SHA-256、upload/event/audit/idempotency 查询、file 表计数、重启前后状态、代理日志和清理候选查询。证据不得包含 Session、CSRF token 或文件正文。

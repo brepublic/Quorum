@@ -1,4 +1,5 @@
 import {mkdir} from 'node:fs/promises';
+import {join} from 'node:path';
 import pg from 'pg';
 import {loadConfig} from './config.js';
 import {runMigrations} from './db/migrations.js';
@@ -11,6 +12,8 @@ import {Stage3Service} from './modules/stage3/service.js';
 import {Stage4Service} from './modules/stage4/service.js';
 import {RealtimeService} from './modules/realtime/service.js';
 import {Stage5Service} from './modules/stage5/service.js';
+import {DurableStagingStore} from './modules/storage/staging.js';
+import {Stage6UploadService} from './modules/storage/upload-service.js';
 
 const {Pool} = pg;
 const logger = createLogger();
@@ -41,6 +44,10 @@ async function main(): Promise<void> {
     const stage4 = new Stage4Service(pool);
     const realtime = new RealtimeService(pool);
     const stage5 = new Stage5Service(pool);
+    const staging = new DurableStagingStore(join(config.storagePath, 'staging'),
+      config.maxFileBytes, config.maxUploadRequestBytes);
+    await staging.initialize();
+    const uploads = new Stage6UploadService(pool, staging, config.uploadTtlSeconds * 1000);
     await stage3.ensureBuiltins();
     const bootstrapSecret = await identity.ensureBootstrapSecret();
     if (bootstrapSecret) {
@@ -56,6 +63,7 @@ async function main(): Promise<void> {
       stage4,
       realtime,
       stage5,
+      uploads,
       allowedOrigins: config.allowedOrigins
     });
 

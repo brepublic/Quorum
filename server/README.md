@@ -1,6 +1,6 @@
 # Quorum 自托管后端
 
-当前实现阶段 1–5 和阶段 6.1：除既有身份与议事功能外，PostgreSQL 已保存文件元数据、不可变版本、blob 完整性、活动存储绑定和不可变删除墓碑。上传、下载、服务器卷/S3 二进制 provider 和 Local Agent 尚未接入。
+当前实现阶段 1–5、6.1 和 6.2：PostgreSQL 已保存文件元数据、不可变版本、blob 完整性、活动存储绑定、删除墓碑和 durable upload 状态；HTTP 内容流可写入持久暂存区。下载、服务器卷/S3 最终提交和 Local Agent 尚未接入。
 
 本机运行：
 
@@ -64,4 +64,4 @@ TEST_DATABASE_ADMIN_URL=postgresql://... pnpm test:self-host:integration
 
 未配置该变量时测试明确 skip，不改用内存数据库。
 
-阶段 6.1 的存储服务是内部持久化边界，不是 HTTP API。只有 provider 持久保存并重新校验二进制后，后续阶段才能调用它发布 `file_version`。当前浏览器没有文件提交入口。
+阶段 6.1 的存储服务仍是 provider 成功后的内部持久化边界。阶段 6.2 只新增上传创建与原始内容流路由；完整内容停在 `STAGED`，不会发布 `file_version`。阶段 6.3 才会把它提交到 `SERVER_VOLUME` 并调用内部边界。

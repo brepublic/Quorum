@@ -46,6 +46,9 @@ services:
       QUORUM_MIGRATIONS_DIR: /app/server/migrations
       QUORUM_STORAGE_PATH: /var/lib/quorum/files
       QUORUM_ALLOWED_ORIGINS: ${QUORUM_ALLOWED_ORIGINS}
+      QUORUM_MAX_FILE_BYTES: ${QUORUM_MAX_FILE_BYTES:-20971520}
+      QUORUM_MAX_UPLOAD_REQUEST_BYTES: ${QUORUM_MAX_UPLOAD_REQUEST_BYTES:-22020096}
+      QUORUM_UPLOAD_TTL_SECONDS: ${QUORUM_UPLOAD_TTL_SECONDS:-86400}
     volumes:
       - quorum_files:/var/lib/quorum/files
     depends_on:

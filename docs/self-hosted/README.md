@@ -1,8 +1,8 @@
 # Quorum 自托管目标架构
 
-本目录描述 Quorum 从 Firebase BaaS 迁移到完全自主托管后的目标架构。阶段 0–5 和阶段 6.1 已落地：除既有身份与议事功能外，PostgreSQL 已建立文件元数据、版本、存储绑定和墓碑。阶段 6.2–6.8 的上传、provider、文件流程和 UI 尚未实施；仓库仍未完成全部迁移。当前事实以根目录的 [`PROJECT_ARCHITECTURE.md`](../../PROJECT_ARCHITECTURE.md) 为准。
+本目录描述 Quorum 从 Firebase BaaS 迁移到完全自主托管后的目标架构。阶段 0–5、6.1 和 6.2 已落地：PostgreSQL 已建立文件元数据、版本、存储绑定、墓碑和上传状态，HTTP 内容流可写入持久暂存区。阶段 6.3–6.8 的 provider、下载、文件流程和 UI 尚未实施；仓库仍未完成全部迁移。当前事实以根目录的 [`PROJECT_ARCHITECTURE.md`](../../PROJECT_ARCHITECTURE.md) 为准。
 
-## 当前阶段 6.1 边界
+## 当前阶段 6.2 边界
 
 - PostgreSQL migration 已建立身份、凭据、Session、系统设置、未来注册申请和身份审计表。
 - bootstrap secret 只保存哈希，并由 PostgreSQL 事务保证并发初始化只有一个成功；公开状态 API 不返回 secret。
@@ -13,13 +13,17 @@
 - 同源 API 已提供阶段 3 委员会、席位、邀请码、快照和规则包命令。所有写入继续执行 Session、CSRF 和 Origin 校验。
 - Committee Owner、Chair、membership、seat assignment 和 `SYSTEM_ADMIN` 分别授权。系统管理员和 Committee Owner 都不会隐式获得 Chair 能力。
 - 邀请码只保存哈希；规则模拟不写议事状态；内置包和已发布版本不可原地修改。
-- schema compatibility 13 覆盖阶段 4–5 业务表，以及阶段 6.1 的存储绑定、逻辑文件、版本、blob 和墓碑。
+- schema compatibility 14 覆盖阶段 4–5 业务表、阶段 6.1 的文件数据基础和阶段 6.2 的 durable upload 状态。
 - 自托管 React 页面只调用同源 API；一浏览器一委员会一条 SSE，游标过期、序号缺口或未知事件回退完整快照。
 - 服务器时间是计时真相；PostgreSQL 唯一约束和行锁保护队列顺序、当前发言人及一席一票。
 - 正式 ballot 冻结资格、门槛、must-vote、否决席位和规则版本；票更正追加历史，匿名意向性投票不保存投票人与选项关联。
 - 决议草案和修正案使用不可变版本；进入表决的版本由数据库约束冻结。
 - PostgreSQL 是文件状态、版本、大小、SHA-256、blob 绑定和墓碑的唯一业务真相。文件版本与墓碑不可修改；删除后不能恢复当前版本或追加新版本。
-- 存储服务只提供 provider 成功校验后的内部事务提交边界，尚不提供文件 HTTP、上传、下载、服务器卷/S3 二进制 I/O 或 Local Agent。
+- 上传元数据从同源 Session 推导 actor；创建和内容路由继续执行 Origin、CSRF、幂等键和请求大小边界，委员会暂停时拒绝创建或完成上传。
+- HTTP 内容请求直接流入持久暂存文件，不先拼接完整 Buffer。服务端计算实际大小和 SHA-256；用户文件名不参与暂存路径。
+- 暂存路径只接受服务器内部键，并拒绝绝对路径、点路径、符号链接逃逸和非普通文件。完整字节进入 `STAGED` 后仍未成为可下载文件。
+- 未提交的唯一暂存副本不因普通期限或 LRU 删除；只有 `COMMITTED`、`CANCELLED` 或已经过期的 `FAILED` upload 可进入后续清理范围。阶段 6.2 不运行清理 worker。
+- provider 成功校验后的内部事务提交边界仍未被 HTTP 上传调用；下载、服务器卷/S3 最终提交、文件审核和 Local Agent 尚未实现。
 - PostgreSQL、TLS 浏览器和 Compose 实测尚未在当前环境执行，状态及取证要求见 [`MANUAL_ACCEPTANCE.md`](./MANUAL_ACCEPTANCE.md)。
 
 ## 文档索引
@@ -34,6 +38,8 @@
 | [`CURRENT_BEHAVIOR_BASELINE.md`](./CURRENT_BEHAVIOR_BASELINE.md) | 阶段 0 当前行为清单、规则 fixture 差异和稳定注册表 |
 | [`MANUAL_ACCEPTANCE.md`](./MANUAL_ACCEPTANCE.md) | 当前环境无法自动执行的部署、浏览器和容量验收 |
 | [`STAGE_6_HANDOFF_PROMPT.md`](./STAGE_6_HANDOFF_PROMPT.md) | 阶段 6 服务器卷与 S3 文件实施交接 Prompt |
+| [`STAGE_6_3_HANDOFF_PROMPT.md`](./STAGE_6_3_HANDOFF_PROMPT.md) | 下一步阶段 6.3 SERVER_VOLUME provider 交接 Prompt |
+| [`RUNNING_LOG.md`](./RUNNING_LOG.md) | 长任务当前进度、验证结果和下一步恢复点 |
 
 ## 当前实施与验证约束
 

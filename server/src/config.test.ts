@@ -34,4 +34,14 @@ describe('server configuration', () => {
     expect(() => loadConfig({DATABASE_URL: 'postgresql://localhost/quorum',
       QUORUM_ALLOWED_ORIGINS: 'https://quorum.example.com/path'})).toThrow('HTTP origins');
   });
+
+  it('keeps the global upload request limit above the file limit', () => {
+    const config = loadConfig({DATABASE_URL: 'postgresql://localhost/quorum'});
+    expect(config.maxFileBytes).toBe(20 * 1024 * 1024);
+    expect(config.maxUploadRequestBytes).toBe(21 * 1024 * 1024);
+    expect(config.uploadTtlSeconds).toBe(24 * 60 * 60);
+    expect(() => loadConfig({DATABASE_URL: 'postgresql://localhost/quorum',
+      QUORUM_MAX_FILE_BYTES: '20', QUORUM_MAX_UPLOAD_REQUEST_BYTES: '19'}))
+      .toThrow('must be at least');
+  });
 });

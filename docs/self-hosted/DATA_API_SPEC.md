@@ -722,6 +722,44 @@ PUBLIC 匿名快照不返回 membership、assignment、用户 ID、actor、capab
 
 匿名意向性投票把重复投票 receipt 与选项 selection 分表保存；selection 不含 actor、席位、凭证或时间，快照、事件和审计不暴露投票人与选项关联。决议草案和修正案正文采用追加版本；进入表决时固定 `voting_version_id`，数据库触发器拒绝静默替换。本阶段没有文件 provider、上传或 Local Agent。
 
+## 11.4 阶段 6.2 durable upload 契约
+
+阶段 6.2 增加上传记录与持久暂存，不发布逻辑文件：
+
+```text
+POST /api/v1/committees/:id/file-uploads
+PUT  /api/v1/file-uploads/:id/content
+```
+
+创建请求为：
+
+```json
+{
+  "logicalName": "工作文件一",
+  "originalName": "working-paper-1.pdf",
+  "mediaType": "application/pdf",
+  "expectedSizeBytes": 1024,
+  "sha256": "64 位十六进制 SHA-256"
+}
+```
+
+两条路由都要求 Session、允许的 Origin、匹配的 CSRF token 和 `Idempotency-Key`。调用者必须是 Committee Owner、Chair 或活动 member；服务端从 Session 推导 actor。`PAUSED`、`ARCHIVED` 与 `DELETING` 委员会拒绝创建上传和把内容完成为 `STAGED`。
+
+创建响应返回 upload ID、活动 binding、元数据、预期大小与 SHA-256、状态、revision 和期限，不返回内部 `staging_key`。内容路由接收原始 HTTP 请求体，可使用 `Content-Length` 或 chunked 传输；服务端逐块执行请求上限、单文件上限、实际大小和 SHA-256 校验，不先把完整文件读入内存。
+
+状态只按以下方向推进：
+
+```text
+CREATED → RECEIVING → STAGED
+                    ↘ FAILED
+STAGED → COMMITTED        # 阶段 6.3 以后
+任一允许状态 → CANCELLED  # 后续阶段
+```
+
+暂存键由服务器 UUID 派生，用户文件名只保存为元数据。内部路径拒绝绝对路径、`.`、`..`、反斜杠、符号链接逃逸和非普通文件；临时文件完成 `fsync` 后才原子链接到最终暂存键。成功状态、事件、审计和内容幂等响应在同一 PostgreSQL 事务提交。若最终数据库事务失败，完整暂存文件保留，upload 停在 `RECEIVING`，相同幂等键可在恢复后重新校验并完成。
+
+`STAGED` 只表示服务器持久暂存区已保存并校验完整字节。阶段 6.2 不调用 `recordProviderCommit`，因此不创建 `file_entry`、`file_blob`、`file_version` 或下载记录。普通期限和 LRU 不得删除 `CREATED`、`RECEIVING` 或 `STAGED`；后续清理只可选择 `COMMITTED`、`CANCELLED` 或已经过期的 `FAILED`。
+
 ## 12. SSE 格式
 
 ```text

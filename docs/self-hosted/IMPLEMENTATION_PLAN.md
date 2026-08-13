@@ -157,7 +157,7 @@ deploy/
 
 ## 9. 阶段 6：服务器卷和 S3 文件
 
-状态：6.1 的 PostgreSQL schema、共享契约和内部事务服务已完成；真实 PostgreSQL 验收因当前环境未提供数据库而延期。6.2–6.8 尚未实施。
+状态：6.1 与 6.2 的 PostgreSQL schema、共享契约、内部事务服务、durable staging 和流式上传已完成；真实 PostgreSQL 与持久卷验收因当前环境未提供相应服务而延期。6.3–6.8 尚未实施。
 
 交付：
 
@@ -234,4 +234,4 @@ deploy/
 
 ## 14. 首个实现里程碑
 
-下一步只实施阶段 6.2：durable staging 与流式上传。保持阶段 5 议事、阶段 6.1 文件元数据、Firebase 默认运行时和同源安全边界不变，不提前实现 Chair Local Agent、归档或 Firebase 移除。
+下一步只实施阶段 6.3：`SERVER_VOLUME` provider。把已经校验的 `STAGED` 内容原子提交到服务器卷并重新校验，再调用阶段 6.1 内部事务边界发布版本；保持 Firebase 默认运行时和同源安全边界不变，不提前实现 S3、Chair Local Agent、归档或 Firebase 移除。

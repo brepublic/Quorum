@@ -10,6 +10,9 @@ export type FileEntryStatus = typeof FILE_ENTRY_STATUSES[number];
 export const FILE_BLOB_DURABILITY_STATES = ['COMMITTED', 'DELETE_PENDING', 'DELETED', 'FAILED'] as const;
 export type FileBlobDurabilityState = typeof FILE_BLOB_DURABILITY_STATES[number];
 
+export const FILE_UPLOAD_STATUSES = ['CREATED', 'RECEIVING', 'STAGED', 'COMMITTED', 'CANCELLED', 'FAILED'] as const;
+export type FileUploadStatus = typeof FILE_UPLOAD_STATUSES[number];
+
 export interface StorageBinding {
   id: string;
   committeeId: string;
@@ -49,4 +52,23 @@ export interface FileTombstone {
   committeeId: string;
   lastContentRevision: number;
   deletedAt: string;
+}
+
+export interface FileUpload {
+  id: string;
+  committeeId: string;
+  storageBindingId: string;
+  logicalName: string;
+  originalName: string;
+  mediaType: string;
+  expectedSizeBytes: number;
+  receivedSizeBytes: number;
+  expectedSha256: string;
+  actualSha256: string | null;
+  status: FileUploadStatus;
+  revision: number;
+  expiresAt: string;
+  failureCode: string | null;
+  createdAt: string;
+  updatedAt: string;
 }

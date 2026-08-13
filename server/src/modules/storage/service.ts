@@ -18,6 +18,9 @@ import {
   type Stage4Context
 } from '../stage4/database.js';
 import {assertExactBody} from '../stage4/validation.js';
+import {validateInternalStorageKey} from './paths.js';
+
+export {validateInternalStorageKey} from './paths.js';
 
 interface StorageBindingRow extends QueryResultRow {
   id: string;
@@ -92,15 +95,6 @@ export function normalizeSha256(value: unknown): string {
     throw new AppError({code: 'VALIDATION_FAILED', message: 'SHA-256 is invalid.'});
   }
   return value.toLowerCase();
-}
-
-export function validateInternalStorageKey(value: unknown): string {
-  if (typeof value !== 'string' || value.length > 512
-    || !/^[a-z0-9][a-z0-9/_-]*$/.test(value)
-    || value.split('/').includes('..')) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: 'Storage key is invalid.'});
-  }
-  return value;
 }
 
 function sizeBytes(value: unknown): number {

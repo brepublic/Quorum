@@ -2,7 +2,7 @@
 
 > 本文件是本仓库的维护入口。后续涉及代码、构建、测试或运行的工作，应先阅读本文件和 `AGENTS.md`，并以实际代码为准更新本文档。
 
-> Quorum 已完成自主托管目标设计，并已落地实施计划阶段 0–5 及阶段 6.1 的文件数据基础。`self-hosted` 运行时以 PostgreSQL 为唯一业务真相，通过同源 API 与受众过滤 SSE 提供议事功能；PostgreSQL 已保存文件元数据、版本、blob 绑定和删除墓碑，但上传、下载和二进制 provider 尚未接入。
+> Quorum 已完成自主托管目标设计，并已落地实施计划阶段 0–5、阶段 6.1 文件数据基础和阶段 6.2 durable staging。`self-hosted` 运行时以 PostgreSQL 为唯一业务真相，通过同源 API 与受众过滤 SSE 提供议事功能；上传请求可流式写入持久暂存区，但下载和二进制 provider 尚未接入。
 
 ## 1. 项目定位与技术栈
 
@@ -45,7 +45,7 @@ flowchart LR
 
 `src/index.tsx` 初始化 Google Analytics、Sentry、浏览器 history 与 Semantic UI 样式，并把 `App` 挂载到 `#root`。`VITE_RUNTIME_MODE` 显式选择运行路径：未设置或为 `firebase` 时保持原行为，`src/App.tsx` 初始化 Firebase，并在显示普通路由前调用 Functions 检查管理员初始化；`VITE_USE_FIREBASE_EMULATORS=true` 时连接本机模拟器，否则连接 `muncoordinated`。`VITE_RUNTIME_MODE=self-hosted` 使用 `SelfHostedIdentity` 与 `SelfHostedWorkspace`：身份、账号管理、委员会列表、模板和议事工作区均调用同源 `/api/v1`；每个浏览器对一个委员会最多保持一条 SSE。公开委员会深层路由可匿名读取过滤后的快照。两个运行时没有双写。
 
-`server/` 是自主托管模块化单体。它启动时通过 PostgreSQL advisory lock 执行带 SHA-256 校验和的 migration；数据库版本不兼容时 readiness 失败。阶段 2–4 migration 建立身份、委员会、规则包、模板及低并发议事。阶段 5 migration 5–12 增加实时议事、表决和版本化决议草案。migration 13 增加存储绑定、逻辑文件、不可变文件版本、blob 完整性元数据和不可变删除墓碑；schema compatibility 为 13。
+`server/` 是自主托管模块化单体。它启动时通过 PostgreSQL advisory lock 执行带 SHA-256 校验和的 migration；数据库版本不兼容时 readiness 失败。阶段 2–4 migration 建立身份、委员会、规则包、模板及低并发议事。阶段 5 migration 5–12 增加实时议事、表决和版本化决议草案。migration 13 增加存储绑定、逻辑文件、不可变文件版本、blob 完整性元数据和不可变删除墓碑；migration 14 增加 durable upload 状态、预期/实际大小与 SHA-256、服务器暂存键、期限和失败摘要。schema compatibility 为 14。
 
 首次启动生成高熵 bootstrap secret，只把 SHA-256 哈希写入数据库，并在专用控制台行显示一次；初始化事务锁定单行设置、创建唯一 `SYSTEM_ADMIN` 后清除哈希。密码使用固定参数 Argon2id；Session Cookie 为 `Secure`、`HttpOnly`、`SameSite=Lax`，数据库只保存 Session token 的 SHA-256；写请求同时校验允许 Origin 和双提交 CSRF token。登录、密码确认提权和改密会轮换 Session，重置密码、禁用账号和用户级撤销通过 `session_version` 与撤销时间立即使旧 Session 失效。
 
@@ -152,7 +152,8 @@ system
 - `storage.rules` 允许公开读取 `committees/{committeeId}/{fileName}`；上传需写入委员会创建者 UID 元数据。文件拥有者或委员会主任可更新/删除。
 - `Files.tsx` 同时维护 Database 中的文件/帖子元数据和 Storage 中的二进制对象。
 - 自主托管模式的 `src/pages/SelfHostedIdentity.tsx` 与 `SelfHostedWorkspace.tsx` 不复用 Firebase 身份、Database 引用或 Callable。管理员创建普通账号时由服务端生成一次性临时密码；首次登录只能读取当前身份、退出或改密。议事页面通过 `src/services/self-hosted-api.ts` 发送同源 Cookie、CSRF、revision 和幂等键，并由 `src/pages/self-hosted/ProceedingsPanel.tsx` 展示服务器时间推导的计时、名单、动议、表决、意向性投票和决议草案。管理员不能禁用唯一系统管理员；完整账号匿名化与资源转移仍属于后续阶段。
-- 阶段 6.1 的 `server/src/modules/storage/service.ts` 只提供 provider 校验完成后的内部 PostgreSQL 提交边界。它从 Session 推导 actor，并在同一事务中写入文件状态、委员会事件和审计。逻辑删除立即清除当前版本指针、追加墓碑并把 blob 标记为待物理删除；数据库触发器禁止修改文件版本、墓碑或复活已删除文件。本阶段尚无文件 HTTP 路由，浏览器不能伪造 provider 提交。
+- 阶段 6.1 的 `server/src/modules/storage/service.ts` 只提供 provider 校验完成后的内部 PostgreSQL 提交边界。它从 Session 推导 actor，并在同一事务中写入文件状态、委员会事件和审计。逻辑删除立即清除当前版本指针、追加墓碑并把 blob 标记为待物理删除；数据库触发器禁止修改文件版本、墓碑或复活已删除文件。
+- 阶段 6.2 的 `Stage6UploadService` 通过 `POST /api/v1/committees/:id/file-uploads` 创建上传，再由 `PUT /api/v1/file-uploads/:id/content` 直接消费 HTTP 流。`DurableStagingStore` 以服务器 UUID 生成路径，逐块执行全局与单文件上限、实际大小和 SHA-256 校验，并拒绝绝对路径、点路径、符号链接逃逸和非普通文件。完整内容只进入 `STAGED`；本阶段不调用 provider 提交，不创建 `file_entry`、`file_blob` 或 `file_version`。`CREATED`、`RECEIVING` 和 `STAGED` 即使过期也不属于普通清理范围。
 
 因此，数据库规则和 Storage 元数据是产品的关键安全边界；变更前必须同时审查前端写入路径与这两份规则文件。
 
@@ -210,6 +211,8 @@ TEST_DATABASE_ADMIN_URL=postgresql://... pnpm test:self-host:integration
                                       # 创建、测试并清理独立 PostgreSQL 临时数据库；未配置时明确 skip
 pnpm self-host:test-db:down        # 停止隔离测试数据库
 ```
+
+上传默认单文件上限为 20 MiB，上传请求上限为 21 MiB，暂存期限为 24 小时；可分别通过 `QUORUM_MAX_FILE_BYTES`、`QUORUM_MAX_UPLOAD_REQUEST_BYTES` 和 `QUORUM_UPLOAD_TTL_SECONDS` 配置。暂存期限不授权删除尚未提交的唯一副本。
 
 Firebase Emulator Suite 需要 Java 21 或更高版本。端到端测试只能连接本地模拟器，不能指向生产 Firebase 项目。Cypress 二进制若未预下载，可能因网络限制无法下载；此时至少运行 TypeScript 构建和 Vitest，并如实记录 E2E 未执行原因。
 

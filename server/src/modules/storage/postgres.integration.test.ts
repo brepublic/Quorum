@@ -1,7 +1,9 @@
 // @vitest-environment node
 
 import {createHash, randomUUID} from 'node:crypto';
-import {resolve} from 'node:path';
+import {link, lstat, mkdir, mkdtemp, open, realpath, rm, unlink} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join, resolve} from 'node:path';
 import pg from 'pg';
 import {afterEach, beforeEach, describe, expect, it} from 'vitest';
 import {runMigrations} from '../../db/migrations';
@@ -11,6 +13,8 @@ import type {AuthenticatedSession} from '../identity/store';
 import {Stage3Service} from '../stage3/service';
 import {Stage4Service} from '../stage4/service';
 import {Stage6StorageService} from './service';
+import {DurableStagingStore, type StagingOperations} from './staging';
+import {Stage6UploadService} from './upload-service';
 
 const {Client, Pool} = pg;
 const adminUrl = process.env.TEST_DATABASE_ADMIN_URL;
@@ -21,6 +25,9 @@ let identity: IdentityService;
 let stage3: Stage3Service;
 let stage4: Stage4Service;
 let storage: Stage6StorageService;
+let uploads: Stage6UploadService;
+let staging: DurableStagingStore;
+let stagingRoot = '';
 let administrator: AuthenticatedSession;
 
 function quoteIdentifier(value: string): string {
@@ -49,6 +56,10 @@ beforeEach(async () => {
   stage3 = new Stage3Service(pool);
   stage4 = new Stage4Service(pool);
   storage = new Stage6StorageService(pool);
+  stagingRoot = await mkdtemp(join(tmpdir(), 'quorum-stage6-integration-'));
+  staging = new DurableStagingStore(stagingRoot, 20 * 1024 * 1024, 21 * 1024 * 1024);
+  await staging.initialize();
+  uploads = new Stage6UploadService(pool, staging);
   await stage3.ensureBuiltins();
   const secret = await identity.ensureBootstrapSecret();
   const login = await identity.bootstrapAdmin({secret: secret as string, email: 'admin@example.com',
@@ -59,6 +70,10 @@ beforeEach(async () => {
 afterEach(async () => {
   await pool?.end();
   pool = undefined;
+  if (stagingRoot) {
+    await rm(stagingRoot, {recursive: true, force: true});
+    stagingRoot = '';
+  }
   if (!adminUrl || !databaseName) return;
   const admin = new Client({connectionString: adminUrl});
   await admin.connect();
@@ -195,5 +210,152 @@ integration('PostgreSQL stage 6 file metadata', () => {
       (SELECT count(*)::int FROM committee_events WHERE resource_type='file_entry') AS events,
       (SELECT count(*)::int FROM idempotency_keys WHERE key='atomic') AS idempotency`);
     expect(state?.rows[0]).toEqual({files: 0, events: 0, idempotency: 0});
+  });
+
+  it('streams verified bytes to durable staging without creating a file version', async () => {
+    const fixture = await storageFixture();
+    const content = 'stage 6.2 durable bytes';
+    const created = await uploads.createUpload(fixture.member, fixture.committee.id, {
+      logicalName: '工作文件二',
+      originalName: '../../committee-notes.pdf',
+      mediaType: 'application/pdf',
+      expectedSizeBytes: Buffer.byteLength(content),
+      sha256: digest(content)
+    }, 'create-upload', context('create-upload'));
+    expect(created.status).toBe('CREATED');
+    const staged = await uploads.receiveContent(fixture.member, created.id,
+      (async function* () { yield 'stage 6.2 '; yield Buffer.from('durable bytes'); })(),
+      'upload-content', Buffer.byteLength(content), context('upload-content'));
+    expect(staged).toEqual(expect.objectContaining({
+      status: 'STAGED',
+      receivedSizeBytes: Buffer.byteLength(content),
+      actualSha256: digest(content)
+    }));
+    const replayed = await uploads.receiveContent(fixture.member, created.id,
+      (async function* () { yield content; })(), 'upload-content', Buffer.byteLength(content),
+      context('upload-content-replay'));
+    expect(replayed).toEqual(staged);
+    const state = await pool?.query(`SELECT u.status,u.received_size_bytes,encode(u.actual_sha256,'hex') AS actual_sha256,
+      u.staging_key,
+      (SELECT count(*)::int FROM file_entries) AS files,
+      (SELECT count(*)::int FROM file_versions) AS versions,
+      (SELECT count(*)::int FROM file_blobs) AS blobs,
+      (SELECT count(*)::int FROM committee_events WHERE resource_id=u.id) AS events,
+      (SELECT count(*)::int FROM audit_log WHERE resource_id=u.id) AS audits,
+      (SELECT count(*)::int FROM idempotency_keys WHERE key IN ('create-upload','upload-content')) AS idempotency
+      FROM file_uploads u WHERE u.id=$1`, [created.id]);
+    expect(state?.rows[0]).toEqual(expect.objectContaining({
+      status: 'STAGED', received_size_bytes: String(Buffer.byteLength(content)), actual_sha256: digest(content),
+      files: 0, versions: 0, blobs: 0, events: 2, audits: 2, idempotency: 2
+    }));
+    expect(state?.rows[0]?.staging_key).toMatch(/^uploads\/[a-f0-9]{2}\/[a-f0-9]{32}$/);
+    expect(state?.rows[0]?.staging_key).not.toContain('committee-notes');
+  });
+
+  it('records short, long, interrupted, hash, and disk failures without file records', async () => {
+    const fixture = await storageFixture();
+    const cases: Array<{name: string; expected: number; hash: string; source: () => AsyncIterable<string>}> = [
+      {name: 'short', expected: 5, hash: digest('12345'), source: () => (async function* () { yield '1234'; })()},
+      {name: 'long', expected: 4, hash: digest('1234'), source: () => (async function* () { yield '12345'; })()},
+      {name: 'hash', expected: 4, hash: digest('xxxx'), source: () => (async function* () { yield '1234'; })()},
+      {name: 'interrupted', expected: 8, hash: digest('12345678'), source: () => (async function* () {
+        yield '1234'; throw new Error('connection reset');
+      })()}
+    ];
+    for (const item of cases) {
+      const upload = await uploads.createUpload(fixture.member, fixture.committee.id, {
+        logicalName: item.name, originalName: `${item.name}.bin`, mediaType: 'application/octet-stream',
+        expectedSizeBytes: item.expected, sha256: item.hash
+      }, `create-${item.name}`, context(`create-${item.name}`));
+      await expect(uploads.receiveContent(fixture.member, upload.id, item.source(),
+        `content-${item.name}`, undefined, context(`content-${item.name}`))).rejects.toBeDefined();
+    }
+
+    const diskOperations: StagingOperations = {link, lstat, mkdir, realpath, unlink,
+      open: async () => { throw Object.assign(new Error('disk full'), {code: 'ENOSPC'}); }} as StagingOperations;
+    const failingStore = new DurableStagingStore(join(stagingRoot, 'disk-failure'), 1024, 2048, diskOperations);
+    await failingStore.initialize();
+    const failingUploads = new Stage6UploadService(pool as pg.Pool, failingStore);
+    const diskUpload = await failingUploads.createUpload(fixture.member, fixture.committee.id, {
+      logicalName: 'disk', originalName: 'disk.bin', mediaType: 'application/octet-stream',
+      expectedSizeBytes: 4, sha256: digest('data')
+    }, 'create-disk', context('create-disk'));
+    await expect(failingUploads.receiveContent(fixture.member, diskUpload.id,
+      (async function* () { yield 'data'; })(), 'content-disk', 4, context('content-disk')))
+      .rejects.toMatchObject({code: 'SERVICE_NOT_READY'});
+
+    await expect(uploads.createUpload(fixture.member, fixture.committee.id, {
+      logicalName: 'large', originalName: 'large.bin', mediaType: 'application/octet-stream',
+      expectedSizeBytes: staging.maxFileBytes + 1, sha256: digest('large')
+    }, 'create-large', context('create-large'))).rejects.toMatchObject({code: 'PAYLOAD_TOO_LARGE'});
+    const state = await pool?.query(`SELECT
+      (SELECT count(*)::int FROM file_uploads WHERE status='FAILED') AS failed,
+      (SELECT count(*)::int FROM file_entries) AS files,
+      (SELECT count(*)::int FROM file_versions) AS versions,
+      (SELECT count(*)::int FROM file_blobs) AS blobs`);
+    expect(state?.rows[0]).toEqual({failed: 5, files: 0, versions: 0, blobs: 0});
+  });
+
+  it('keeps a completed staging copy when a paused committee blocks final state', async () => {
+    const fixture = await storageFixture();
+    const content = 'pause-safe';
+    const upload = await uploads.createUpload(fixture.member, fixture.committee.id, {
+      logicalName: '暂停测试', originalName: 'paused.bin', mediaType: 'application/octet-stream',
+      expectedSizeBytes: Buffer.byteLength(content), sha256: digest(content)
+    }, 'create-paused', context('create-paused'));
+    let pausedRevision = 0;
+    const source = (async function* () {
+      yield 'pause-';
+      const paused = await stage3.setCommitteeStatus(fixture.chair, fixture.committee.id, 'PAUSED',
+        fixture.committee.revision + 1, context('pause-during-upload'));
+      pausedRevision = paused.revision;
+      yield 'safe';
+    })();
+    await expect(uploads.receiveContent(fixture.member, upload.id, source,
+      'paused-content', Buffer.byteLength(content), context('paused-content')))
+      .rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
+    const receiving = await pool?.query(`SELECT status,staging_key,
+      (SELECT count(*)::int FROM file_versions) AS versions FROM file_uploads WHERE id=$1`, [upload.id]);
+    expect(receiving?.rows[0]).toEqual(expect.objectContaining({status: 'RECEIVING', versions: 0}));
+    expect(await staging.exists(receiving?.rows[0]?.staging_key)).toBe(true);
+
+    await expect(uploads.createUpload(fixture.member, fixture.committee.id, {
+      logicalName: '暂停拒绝', originalName: 'blocked.bin', mediaType: 'application/octet-stream',
+      expectedSizeBytes: 1, sha256: digest('x')
+    }, 'paused-create', context('paused-create'))).rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
+    await stage3.setCommitteeStatus(fixture.chair, fixture.committee.id, 'ACTIVE',
+      pausedRevision, context('resume-after-upload'));
+    const recovered = await uploads.receiveContent(fixture.member, upload.id,
+      (async function* () { yield 'ignored'; })(), 'paused-content', undefined, context('recover-content'));
+    expect(recovered.status).toBe('STAGED');
+  });
+
+  it('rolls back staged state, event, audit, and idempotency together', async () => {
+    const fixture = await storageFixture();
+    const content = 'atomic-staging';
+    const upload = await uploads.createUpload(fixture.member, fixture.committee.id, {
+      logicalName: '原子暂存', originalName: 'atomic.bin', mediaType: 'application/octet-stream',
+      expectedSizeBytes: Buffer.byteLength(content), sha256: digest(content)
+    }, 'create-atomic-staging', context('create-atomic-staging'));
+    await pool?.query(`CREATE FUNCTION fail_stage6_upload_audit() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF NEW.action='storage.upload_staged' THEN RAISE EXCEPTION 'injected upload audit failure'; END IF;
+        RETURN NEW;
+      END; $$`);
+    await pool?.query(`CREATE TRIGGER fail_stage6_upload_audit BEFORE INSERT ON audit_log
+      FOR EACH ROW EXECUTE FUNCTION fail_stage6_upload_audit()`);
+    await expect(uploads.receiveContent(fixture.member, upload.id,
+      (async function* () { yield content; })(), 'atomic-staging-content', Buffer.byteLength(content),
+      context('atomic-staging-content'))).rejects.toThrow('injected upload audit failure');
+    const state = await pool?.query(`SELECT u.status,u.staging_key,
+      (SELECT count(*)::int FROM committee_events WHERE resource_id=u.id AND event_type='file.upload_staged') AS events,
+      (SELECT count(*)::int FROM audit_log WHERE resource_id=u.id AND action='storage.upload_staged') AS audits,
+      (SELECT count(*)::int FROM idempotency_keys WHERE key='atomic-staging-content') AS idempotency,
+      (SELECT count(*)::int FROM file_versions) AS versions
+      FROM file_uploads u WHERE u.id=$1`, [upload.id]);
+    expect(state?.rows[0]).toEqual(expect.objectContaining({
+      status: 'RECEIVING', events: 0, audits: 0, idempotency: 0, versions: 0
+    }));
+    expect(await staging.exists(state?.rows[0]?.staging_key)).toBe(true);
   });
 });

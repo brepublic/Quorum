@@ -134,6 +134,21 @@ describe('migration discovery', () => {
     expect(files?.sql).not.toContain('lease_generation');
   });
 
+  it('adds durable upload staging without publishing file versions', async () => {
+    const migrations = await loadMigrations(resolve('server/migrations'));
+    const uploads = migrations.find(migration => migration.version === 14);
+    expect(uploads?.sql).toContain('CREATE TABLE file_uploads');
+    expect(uploads?.sql).toContain("'CREATED', 'RECEIVING', 'STAGED', 'COMMITTED', 'CANCELLED', 'FAILED'");
+    expect(uploads?.sql).toContain('expected_size_bytes');
+    expect(uploads?.sql).toContain('received_size_bytes');
+    expect(uploads?.sql).toContain('expected_sha256');
+    expect(uploads?.sql).toContain('actual_sha256');
+    expect(uploads?.sql).toContain('staging_key');
+    expect(uploads?.sql).toContain("WHERE status IN ('COMMITTED', 'CANCELLED', 'FAILED')");
+    expect(uploads?.sql).not.toContain('INSERT INTO file_versions');
+    expect(uploads?.sql).not.toContain('CHAIR_AGENT');
+  });
+
   it('rejects SQL files outside the versioned naming contract', async () => {
     const directory = await temporaryDirectory();
     await writeFile(join(directory, 'first.sql'), 'SELECT 1;\n');
