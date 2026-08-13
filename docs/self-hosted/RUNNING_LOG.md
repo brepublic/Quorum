@@ -6,10 +6,10 @@
 
 - 更新时间：2026-08-13
 - 分支：`self-host`
-- 已确认基线：`cf8002c stage 7.5a: manage chair storage hosts`
-- 当前阶段：7.5 Agent 管理、离线恢复和冲突裁决 UI 正在实施。
-- 当前工作：7.5b durable 冲突裁决、Agent 恢复和安全状态输出已完成当前 WSL 验证，等待单独提交。
-- 下一步：提交 7.5b 并收尾阶段 7.5；随后按 `STAGE_7_6_HANDOFF_PROMPT.md` 实施 Windows/macOS 发布包。
+- 已确认基线：`ae6ff2f stage 7.5b: resolve chair storage conflicts`
+- 当前阶段：7.6 Chair Local Agent 桌面发布包正在实施。
+- 当前工作：审计现有 Agent 构建、运行时依赖和仓库发布约束，确定可复现的 Windows x86-64、macOS 与 Linux 预留产物格式。
+- 下一步：增加发布脚本、manifest、安装/升级/卸载说明和签名配置入口，再执行 WSL 可完成的跨平台静态验证。
 
 ## 已完成与验证
 
@@ -54,6 +54,7 @@
 - `ccf6f6a`：阶段 7.3 `CHAIR_AGENT` provider、本地变化和恢复编排。
 - `3af6b1a`：阶段 7.4 Chair Agent 文件系统核心与恢复循环。
 - `cf8002c`：阶段 7.5a Chair/Owner 主机管理界面。
+- `ae6ff2f`：阶段 7.5b durable 冲突裁决、Agent 恢复与安全状态输出。
 
 ### 2026-08-13：阶段 6.3 SERVER_VOLUME provider
 
@@ -250,3 +251,4 @@
 - `pnpm test:self-host:integration`：7 个文件、63 项因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip；`git diff --check` 通过。
 - 当前 WSL 没有真实 PostgreSQL、TLS 自托管实例、第二设备、NTFS/APFS 原生目录或浏览器视觉/键盘/辅助功能环境；实机步骤与证据记录在 `MANUAL_ACCEPTANCE.md` 的 SH-MAN-513。
 - 已撰写 `STAGE_7_6_HANDOFF_PROMPT.md`；7.6 只实施桌面发布包、安装流程与签名配置入口，归档、备份和 Firebase 移除不得提前实施。
+- 阶段 7.5b 已单独提交为 `ae6ff2f`；阶段 7.5 完成，继续阶段 7.6。
