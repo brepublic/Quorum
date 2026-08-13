@@ -1,5 +1,6 @@
 import * as React from 'react';
-import type {CommitteeWorkspaceSnapshot, FileEntry, StorageMigration, StorageProviderType} from '@quorum/contracts';
+import type {CommitteeWorkspaceSnapshot, FileEntry, FileUpload, StorageMigration,
+  StorageProviderType} from '@quorum/contracts';
 import {Button, Card, Form, Header, Label, Message, Progress, Segment} from 'semantic-ui-react';
 import {SelfHostedApiError, newIdempotencyKey, type SelfHostedApi} from '../../services/self-hosted-api';
 import {sha256File} from '../../services/sha256';
@@ -49,9 +50,11 @@ export default function FilesPanel({snapshot, api, currentUserId}: {
   const canManage = snapshot.viewer.audience === 'CHAIR' || snapshot.viewer.audience === 'OWNER';
   const canUpload = snapshot.viewer.audience !== 'PUBLIC';
   const [files, setFiles] = React.useState<FileEntry[]>([]);
+  const [pendingHostCommits, setPendingHostCommits] = React.useState<FileUpload[]>([]);
   const [bindings, setBindings] = React.useState<Awaited<ReturnType<SelfHostedApi['listStorageBindings']>>>([]);
   const [configs, setConfigs] = React.useState<Awaited<ReturnType<SelfHostedApi['listS3ProviderConfigs']>>>([]);
   const [migrations, setMigrations] = React.useState<StorageMigration[]>([]);
+  const [hosts, setHosts] = React.useState<Awaited<ReturnType<SelfHostedApi['listStorageHosts']>>>([]);
   const [selectedFile, setSelectedFile] = React.useState<File>();
   const [logicalName, setLogicalName] = React.useState('');
   const [targetType, setTargetType] = React.useState<StorageProviderType>('SERVER_VOLUME');
@@ -63,13 +66,16 @@ export default function FilesPanel({snapshot, api, currentUserId}: {
 
   const refresh = React.useCallback(async (clearError = true) => {
     try {
-      const nextFiles = await api.listFiles(committeeId);
-      setFiles(nextFiles);
+      const [nextFiles, nextPendingHostCommits] = await Promise.all([
+        api.listFiles(committeeId), canUpload ? api.listPendingHostCommits(committeeId) : Promise.resolve([])
+      ]);
+      setFiles(nextFiles); setPendingHostCommits(nextPendingHostCommits);
       if (canManage) {
-        const [nextBindings, nextConfigs, nextMigrations] = await Promise.all([
-          api.listStorageBindings(committeeId), api.listS3ProviderConfigs(), api.listStorageMigrations(committeeId)
+        const [nextBindings, nextConfigs, nextMigrations, nextHosts] = await Promise.all([
+          api.listStorageBindings(committeeId), api.listS3ProviderConfigs(), api.listStorageMigrations(committeeId),
+          api.listStorageHosts(committeeId)
         ]);
-        setBindings(nextBindings); setConfigs(nextConfigs); setMigrations(nextMigrations);
+        setBindings(nextBindings); setConfigs(nextConfigs); setMigrations(nextMigrations); setHosts(nextHosts);
         const active = nextBindings.find(binding => binding.status === 'ACTIVE');
         const availableS3 = nextConfigs.filter(config => config.status === 'ACTIVE'
           && config.id !== active?.providerConfigId);
@@ -82,6 +88,8 @@ export default function FilesPanel({snapshot, api, currentUserId}: {
             ? 'SERVER_VOLUME' : current);
           setTargetConfigId(current => availableS3.some(config => config.id === current)
             ? current : availableS3[0]?.id || '');
+        } else if (active?.providerType === 'CHAIR_AGENT') {
+          setTargetType('SERVER_VOLUME'); setTargetConfigId('');
         } else {
           setTargetType(current => current === 'S3_COMPATIBLE' && availableS3.length === 0
             ? 'SERVER_VOLUME' : current);
@@ -89,11 +97,11 @@ export default function FilesPanel({snapshot, api, currentUserId}: {
             ? current : availableS3[0]?.id || '');
         }
       } else {
-        setBindings([]); setConfigs([]); setMigrations([]);
+        setBindings([]); setConfigs([]); setMigrations([]); setHosts([]);
       }
       if (clearError) setError(undefined);
     } catch (caught) { setError(storageErrorText(caught)); }
-  }, [api, canManage, committeeId]);
+  }, [api, canManage, canUpload, committeeId]);
 
   React.useEffect(() => { void refresh(); }, [refresh, snapshot.sync.committeeEventSequence]);
   React.useEffect(() => () => uploadController.current?.abort(), []);
@@ -136,18 +144,22 @@ export default function FilesPanel({snapshot, api, currentUserId}: {
 
   const initializeStorage = () => run(() => targetType === 'SERVER_VOLUME'
     ? api.createServerVolumeBinding(committeeId, snapshot.committee.revision)
-    : api.createS3Binding(committeeId, snapshot.committee.revision, targetConfigId));
+    : targetType === 'CHAIR_AGENT' ? api.createChairAgentBinding(committeeId, snapshot.committee.revision)
+      : api.createS3Binding(committeeId, snapshot.committee.revision, targetConfigId));
   const createMigration = () => run(() => api.createStorageMigration(committeeId, snapshot.committee.revision,
     targetType, targetType === 'S3_COMPATIBLE' ? targetConfigId : undefined));
   const activeBinding = bindings.find(binding => binding.status === 'ACTIVE');
   const targetOptions = [
-    ...(!activeBinding || activeBinding.providerType !== 'SERVER_VOLUME'
+    ...(!activeBinding || (activeBinding.providerType !== 'SERVER_VOLUME' && activeBinding.providerType !== 'CHAIR_AGENT')
       ? [{key: 'volume', value: 'SERVER_VOLUME', text: '服务器卷'}] : []),
-    ...configs.filter(config => config.status === 'ACTIVE' && config.id !== activeBinding?.providerConfigId).map(config => ({key: config.id,
+    ...(!activeBinding && hosts.some(host => host.status === 'ACTIVE' || host.status === 'DEGRADED')
+      ? [{key: 'chair-agent', value: 'CHAIR_AGENT', text: '主席电脑'}] : []),
+    ...(activeBinding?.providerType === 'CHAIR_AGENT' ? [] : configs.filter(config => config.status === 'ACTIVE'
+      && config.id !== activeBinding?.providerConfigId)).map(config => ({key: config.id,
       value: `S3:${config.id}`, text: `S3 · ${config.displayName}`}))
   ];
   const setTarget = (value: string) => {
-    if (value === 'SERVER_VOLUME') { setTargetType('SERVER_VOLUME'); setTargetConfigId(''); }
+    if (value === 'SERVER_VOLUME' || value === 'CHAIR_AGENT') { setTargetType(value); setTargetConfigId(''); }
     else { setTargetType('S3_COMPATIBLE'); setTargetConfigId(value.slice(3)); }
   };
   const progressPercent = progress && progress.total > 0
@@ -155,6 +167,8 @@ export default function FilesPanel({snapshot, api, currentUserId}: {
 
   return <div className="self-hosted-files">
     {error && <Message error role="alert" content={error} />}
+    {pendingHostCommits.length > 0 && <Message info header="等待主席电脑保存"
+      list={pendingHostCommits.map(item => item.logicalName)} />}
     {canUpload && <Segment loading={working && !progress}><Header as="h3">上传文件</Header>
       <Form onSubmit={() => void upload()}><Form.Input type="file" label="选择文件" input={{
         onChange: (event: React.ChangeEvent<HTMLInputElement>) => { const file = event.currentTarget.files?.[0];
@@ -178,7 +192,11 @@ export default function FilesPanel({snapshot, api, currentUserId}: {
         const canChange = canManage || ownsFile;
         return <Card key={file.id} className="self-hosted-file-card"><Card.Content>
           <Card.Header>{file.logicalName}</Card.Header>
-          <Card.Meta>{formatBytes(file.currentVersion.sizeBytes)} · <Label size="tiny">{FILE_STATUS[file.status]}</Label></Card.Meta>
+          <Card.Meta>{formatBytes(file.currentVersion.sizeBytes)} · <Label size="tiny">{FILE_STATUS[file.status]}</Label>
+            {file.syncState !== 'SYNCED' && <> · <Label size="tiny" color="orange">
+              {file.syncState === 'PENDING_HOST_COMMIT' ? '等待主席电脑保存' : '等待主席电脑同步'}
+            </Label></>}
+          </Card.Meta>
           <Card.Description>{file.currentVersion.originalName}</Card.Description>
         </Card.Content><Card.Content extra className="self-hosted-file-actions">
           <Button as="a" size="small" href={api.fileDownloadUrl(file.id)} download>下载文件</Button>
@@ -198,10 +216,11 @@ export default function FilesPanel({snapshot, api, currentUserId}: {
     {canManage && <Segment loading={working && !progress} className="self-hosted-storage-panel">
       <Header as="h3">文件存储</Header>
       {activeBinding && <p>当前：{activeBinding.providerType === 'SERVER_VOLUME' ? '服务器卷'
-        : `S3 · ${configs.find(config => config.id === activeBinding.providerConfigId)?.displayName ?? '已配置存储'}`}</p>}
+        : activeBinding.providerType === 'CHAIR_AGENT' ? '主席电脑'
+          : `S3 · ${configs.find(config => config.id === activeBinding.providerConfigId)?.displayName ?? '已配置存储'}`}</p>}
       <Form onSubmit={activeBinding ? createMigration : initializeStorage}>
         <Form.Select label={activeBinding ? '迁移到' : '初始存储'} options={targetOptions}
-          value={targetType === 'SERVER_VOLUME' ? 'SERVER_VOLUME' : `S3:${targetConfigId}`}
+          value={targetType === 'S3_COMPATIBLE' ? `S3:${targetConfigId}` : targetType}
           onChange={(_, data) => setTarget(String(data.value))} />
         <Button primary disabled={working || targetOptions.length === 0
           || (targetType === 'S3_COMPATIBLE' && !targetConfigId)}>

@@ -10,7 +10,7 @@ import FilesPanel, {storageErrorText} from './FilesPanel';
 (globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT: boolean}).IS_REACT_ACT_ENVIRONMENT = true;
 const committeeId = '20000000-0000-4000-8000-000000000001';
 const file: FileEntry = {id: '30000000-0000-4000-8000-000000000001', committeeId, logicalName: '工作文件一',
-  mediaType: 'image/svg+xml', status: 'UPLOAD_COMPLETE', createdByUserId: 'member', revision: 1,
+  mediaType: 'image/svg+xml', status: 'UPLOAD_COMPLETE', syncState: 'SYNCED', createdByUserId: 'member', revision: 1,
   currentVersion: {id: 'version', versionNumber: 1, originalName: 'draft.svg', mediaType: 'image/svg+xml',
     sizeBytes: 3, sha256: 'a'.repeat(64), blobId: 'blob', createdAt: '2026-08-13T00:00:00.000Z'},
   submittedAt: null, publishedAt: null, createdAt: '2026-08-13T00:00:00.000Z', updatedAt: '2026-08-13T00:00:00.000Z'};
@@ -24,7 +24,9 @@ function snapshot(audience: CommitteeWorkspaceSnapshot['viewer']['audience']): C
 
 function api(overrides: Partial<SelfHostedApi> = {}): SelfHostedApi {
   return {listFiles: vi.fn(async () => [file]), fileDownloadUrl: vi.fn(id => `/api/v1/files/${id}/download`),
+    listPendingHostCommits: vi.fn(async () => []),
     listStorageBindings: vi.fn(async () => []), listS3ProviderConfigs: vi.fn(async () => []),
+    listStorageHosts: vi.fn(async () => []),
     listStorageMigrations: vi.fn(async () => []), ...overrides} as unknown as SelfHostedApi;
 }
 
@@ -114,6 +116,46 @@ describe('self-hosted stage 6 file panel', () => {
     expect(uploadFileContent).toHaveBeenCalledTimes(2);
   });
 
+  it('reloads durable Chair Agent pending uploads and keeps them out of the file list', async () => {
+    const pending = {id: 'pending-upload', committeeId, storageBindingId: 'agent-binding',
+      logicalName: '离线文件', originalName: 'offline.pdf', mediaType: 'application/pdf', expectedSizeBytes: 8,
+      receivedSizeBytes: 8, expectedSha256: 'b'.repeat(64), actualSha256: 'b'.repeat(64), status: 'STAGED',
+      revision: 2, expiresAt: '2026-09-13T00:00:00.000Z', failureCode: null, committedFileEntryId: null,
+      agentCommitState: 'PENDING_HOST_COMMIT', agentTaskId: 'task', createdAt: '2026-08-13T00:00:00.000Z',
+      updatedAt: '2026-08-13T00:00:00.000Z'} as const;
+    const view = await render('MEMBER', api({listFiles: vi.fn(async () => []),
+      listPendingHostCommits: vi.fn(async () => [pending])}), 'member');
+    expect(view.textContent).toContain('等待主席电脑保存');
+    expect(view.textContent).toContain('离线文件');
+    expect(view.textContent).toContain('暂无文件');
+  });
+
+  it('shows when a transferred Chair host has not confirmed the current file revision', async () => {
+    const view = await render('MEMBER', api({listFiles: vi.fn(async () => [
+      {...file, syncState: 'OUT_OF_SYNC'} as FileEntry
+    ])}),
+      'member');
+    expect(view.textContent).toContain('等待主席电脑同步');
+  });
+
+  it('offers Chair computer initialization only after an active host is paired', async () => {
+    const createChairAgentBinding = vi.fn(async () => ({id: 'binding', committeeId,
+      providerType: 'CHAIR_AGENT', providerConfigId: null, storageHostId: 'host', status: 'ACTIVE', revision: 1,
+      createdAt: '2026-08-13T00:00:00.000Z'}));
+    const client = api({listFiles: vi.fn(async () => []), listStorageHosts: vi.fn(async () => [{id: 'host', committeeId,
+      deviceId: 'device', deviceLabel: '主席电脑', leaseGeneration: 1, status: 'ACTIVE', revision: 1,
+      lastSeenAt: '2026-08-13T00:00:00.000Z', pairedAt: '2026-08-13T00:00:00.000Z', revokedAt: null}]),
+      createChairAgentBinding} as unknown as Partial<SelfHostedApi>);
+    const view = await render('OWNER', client, 'owner');
+    expect(view.textContent).toContain('主席电脑');
+    const select = view.querySelector('.ui.dropdown') as HTMLElement;
+    await act(async () => {select.dispatchEvent(new MouseEvent('click', {bubbles: true}));});
+    const option = Array.from(view.querySelectorAll('.item')).find(item => item.textContent === '主席电脑') as HTMLElement;
+    await act(async () => {option?.dispatchEvent(new MouseEvent('click', {bubbles: true}));});
+    await act(async () => {button('启用存储')?.click(); await new Promise(resolve => setTimeout(resolve, 0));});
+    expect(createChairAgentBinding).toHaveBeenCalledWith(committeeId, 2);
+  });
+
   it('cancels an in-flight upload through AbortSignal without clearing the selected file', async () => {
     const uploadFileContent = vi.fn((_id, _file, _key, options) => new Promise((_resolve, reject) => {
       options.signal?.addEventListener('abort', () => reject(new DOMException('cancelled', 'AbortError')), {once: true});
@@ -140,7 +182,7 @@ describe('self-hosted stage 6 file panel', () => {
       {id: 'cancelled', status: 'CANCELLED', revision: 2, completedItems: 0, totalItems: 2}
     ] as StorageMigration[];
     const client = api({listStorageBindings: vi.fn(async () => [{id: 'binding', committeeId,
-      providerType: 'SERVER_VOLUME', providerConfigId: null, status: 'ACTIVE', revision: 1,
+      providerType: 'SERVER_VOLUME', providerConfigId: null, storageHostId: null, status: 'ACTIVE', revision: 1,
       createdAt: '2026-08-13T00:00:00.000Z'}] as Awaited<ReturnType<SelfHostedApi['listStorageBindings']>>),
       listStorageMigrations: vi.fn(async () => migrations)});
     const view = await render('OWNER', client, 'owner');

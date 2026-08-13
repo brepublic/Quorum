@@ -84,6 +84,7 @@ export const COMMITTEE_EVENT_DEFINITIONS = [
   {name: 'file.created', defaultAudience: 'MEMBER'},
   {name: 'file.upload_created', defaultAudience: 'MEMBER'},
   {name: 'file.upload_staged', defaultAudience: 'MEMBER'},
+  {name: 'file.upload_host_pending', defaultAudience: 'CHAIR'},
   {name: 'file.upload_committed', defaultAudience: 'MEMBER'},
   {name: 'file.upload_failed', defaultAudience: 'MEMBER'},
   {name: 'file.review_requested', defaultAudience: 'MEMBER'},
@@ -98,6 +99,7 @@ export const COMMITTEE_EVENT_DEFINITIONS = [
   {name: 'storage.migration_cancelled', defaultAudience: 'CHAIR'},
   {name: 'storage_host.status_changed', defaultAudience: 'CHAIR'},
   {name: 'storage_agent.task_changed', defaultAudience: 'CHAIR'},
+  {name: 'storage_agent.conflict_created', defaultAudience: 'CHAIR'},
   {name: 'rule_package.activated', defaultAudience: 'MEMBER'},
   {name: 'rule_package.version_created', defaultAudience: 'CHAIR'},
   {name: 'rule_override.created', defaultAudience: 'CHAIR'},
@@ -197,6 +199,8 @@ export const AUDIT_ACTION_DEFINITIONS = [
   'documents.discussion_added',
   'storage.upload_created',
   'storage.upload_staged',
+  'storage.upload_host_pending',
+  'storage.upload_host_committed',
   'storage.upload_committed',
   'storage.upload_failed',
   'storage.file_version_recorded',
@@ -224,6 +228,8 @@ export const AUDIT_ACTION_DEFINITIONS = [
   'storage.agent_blob_staged',
   'storage.agent_task_completed',
   'storage.agent_task_failed',
+  'storage.agent_local_change_applied',
+  'storage.agent_conflict_created',
   'storage.file_deleted'
 ] as const;
 

@@ -40,6 +40,8 @@ interface UploadRow extends QueryResultRow {
   expires_at: Date;
   failure_code: string | null;
   committed_file_entry_id: string | null;
+  agent_commit_state: FileUpload['agentCommitState'];
+  agent_task_id: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -103,6 +105,8 @@ function uploadState(row: UploadRow): FileUpload {
     expiresAt: row.expires_at.toISOString(),
     failureCode: row.failure_code,
     committedFileEntryId: row.committed_file_entry_id,
+    agentCommitState: row.agent_commit_state,
+    agentTaskId: row.agent_task_id,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString()
   };
@@ -158,6 +162,21 @@ export class Stage6UploadService {
     private readonly now: () => Date = () => new Date(),
     private readonly capacity?: StorageCapacityGuard
   ) {}
+
+  async listPendingHostCommits(auth: AuthenticatedSession, committeeId: string): Promise<FileUpload[]> {
+    requireBusinessIdentity(auth);
+    return transaction(this.pool, async client => {
+      const committee = await lockedCommittee(client, uuid(committeeId, 'Committee ID'));
+      await requireContributor(client, committee, auth.user.id);
+      const manager = committee.owner_user_id === auth.user.id || await isChair(client, committee.id, auth.user.id);
+      const result = await client.query<UploadRow>(`SELECT *,encode(expected_sha256,'hex') AS expected_sha256_hex,
+        CASE WHEN actual_sha256 IS NULL THEN NULL ELSE encode(actual_sha256,'hex') END AS actual_sha256_hex
+        FROM file_uploads WHERE committee_id=$1 AND agent_commit_state='PENDING_HOST_COMMIT'
+          AND ($2::boolean OR created_by_user_id=$3) ORDER BY created_at,id`,
+      [committee.id, manager, auth.user.id]);
+      return result.rows.map(uploadState);
+    });
+  }
 
   async createUpload(auth: AuthenticatedSession, committeeId: string, body: unknown,
     idempotencyKey: string, context: Stage4Context): Promise<FileUpload> {

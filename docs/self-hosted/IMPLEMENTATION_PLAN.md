@@ -179,7 +179,7 @@ deploy/
 
 ## 10. 阶段 7：Chair Local Agent
 
-状态：7.1 的配对、单活动 host 与 lease fencing，以及 7.2 的追加式 manifest、durable task、claim token、幂等完成/失败和服务器流式内容边界已完成。7.3 起继续 `CHAIR_AGENT` binding、本地变化提交与恢复编排；桌面 Agent、目录扫描与发布包尚未完成。
+状态：7.1 的配对、单活动 host 与 lease fencing，7.2 的追加式 manifest、durable task 与流式内容边界，以及 7.3 的 `CHAIR_AGENT` binding、`PENDING_HOST_COMMIT`、本地变化、显式冲突和主机转移重排已完成。桌面 Agent、目录扫描、原子本地落盘与发布包尚未完成。
 
 交付：
 
@@ -237,4 +237,4 @@ deploy/
 
 ## 14. 首个实现里程碑
 
-下一步实施 7.3：增加 `CHAIR_AGENT` binding、服务器上传到 host 的 `PENDING_HOST_COMMIT` 编排、本地变化提交、墓碑优先恢复和显式冲突记录。继续使用 7.2 的 manifest/task/claim/content 原语；不得把本地目录或凭据暴露给浏览器，也不得提前实施桌面打包、归档、备份或 Firebase 移除。
+下一步实施 7.4：建立可测试的桌面 Agent 文件系统核心，消费现有 manifest/task 协议，先拉取墓碑，再以临时文件、完整性校验和原子重命名落盘，并用 watcher 提示加周期全量扫描产生 `local-changes`。路径必须限制在用户选择的根目录并拒绝符号链接、设备文件和保留元数据路径；不得提前实施发布签名、安装器、归档、备份或 Firebase 移除。

@@ -18,6 +18,7 @@ export interface StorageBinding {
   committeeId: string;
   providerType: StorageProviderType;
   providerConfigId: string | null;
+  storageHostId: string | null;
   status: StorageBindingStatus;
   revision: number;
   createdAt: string;
@@ -57,6 +58,7 @@ export interface FileEntry {
   logicalName: string;
   mediaType: string;
   status: FileEntryStatus;
+  syncState: 'PENDING_HOST_COMMIT' | 'SYNCED' | 'OUT_OF_SYNC';
   createdByUserId: string;
   currentVersion: FileVersion;
   revision: number;
@@ -127,6 +129,15 @@ export interface FileUpload {
   expiresAt: string;
   failureCode: string | null;
   committedFileEntryId: string | null;
+  agentCommitState: 'PENDING_HOST_COMMIT' | 'HOST_COMMITTED' | 'CONFLICT' | null;
+  agentTaskId: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface PendingHostCommit {
+  kind: 'PENDING_HOST_COMMIT';
+  upload: FileUpload;
+  taskId: string;
+  leaseGeneration: number;
 }

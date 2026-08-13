@@ -355,7 +355,7 @@
 
 ## 阶段 7：Chair Local Agent
 
-当前环境未提供 `TEST_DATABASE_ADMIN_URL`、自托管 TLS 实例、第二台真实设备或桌面发布/签名环境。阶段 7.1–7.2 的 PostgreSQL 集成测试已编写但明确 skip；以下项目尚未通过。
+当前环境未提供 `TEST_DATABASE_ADMIN_URL`、自托管 TLS 实例、第二台真实设备或桌面发布/签名环境。阶段 7.1–7.3 的 PostgreSQL 集成测试已编写但明确 skip；以下项目尚未通过。
 
 ### SH-MAN-509 Agent 配对、单主机 fencing 与离线降级
 
@@ -374,3 +374,12 @@
 - 自动化覆盖情况：当前 WSL 的共享契约、migration 静态、HTTP 原始流、durable staging 和任务状态机测试已通过；真实 PostgreSQL 用例覆盖 manifest 回填、初始 task、claim 重放、幂等完成、相反 outcome 拒绝及 event/audit 回滚，未配置 `TEST_DATABASE_ADMIN_URL` 时明确 skip。真实 provider、TLS 反向代理、两个进程、网络分区、进程终止和数据库锁时间线尚未执行。
 - 当前状态：因无真实 PostgreSQL、自托管 TLS 实例、第二设备和可控 provider 故障环境延期。
 - 需要保存的证据：migration 21 表/触发器/约束、脱敏 manifest/task/event/audit 查询、sequence 与 generation 时间线、claim 重放响应、内容传输响应头与 SHA-256、失败矩阵、转移竞态结果、`pg_stat_activity`/锁等待记录和议事写入延迟。不得保存设备凭据、claim token、本地路径或文件正文。
+
+### SH-MAN-511 `CHAIR_AGENT` provider、本地变化与恢复编排
+
+- 前置条件：真实 PostgreSQL 16；TLS 自托管实例；Owner、Chair、member 和仅有 `SYSTEM_ADMIN` 的账号；两台隔离 Agent 测试进程；可断开 Agent 网络、转移 host、终止服务器进程并检查 durable staging；包含服务器卷/S3 现有文件、历史版本和墓碑的委员会。
+- 操作步骤：由 member 和系统管理员尝试启用 Chair storage，再由 Owner/Chair 选择当前配对 host；暂停委员会后重试。Agent 在线和离线时分别从浏览器上传，刷新及重新登录后检查“等待主席电脑保存”，恢复 Agent 并重复 claim/complete；在完成事务写审计前注入失败并重试。分别上报本地新增、修改、重命名和删除，使用陈旧 manifest、陈旧 revision、同名文件及已删除 file ID 制造冲突；重复相同 request ID。传输本地内容时制造短写、长写、断流、哈希/大小错误和磁盘失败。保留浏览器待提交 upload 后把 A 转移为 B；另在 A 尚有未上传本地修改时转移。检查 B 的完整最新任务、既有文件同步状态、A 的迟到 complete/blob/local-change。清理过期 upload 和触发容量压力，确认唯一 staging 未删。完成 Chair 文件删除并同时运行服务器 maintenance worker。删除服务器 staging 后尝试下载仅存在主席电脑的文件，检查 Network、DOM、事件、审计和日志。
+- 通过条件：只有 Owner/Chair 可绑定当前 generation host；暂停、陈旧 revision、已有 binding 和隐式系统管理员均拒绝。离线上传持久显示 `PENDING_HOST_COMMIT`，不暂停议事、不产生 file entry/version 且唯一 staging 不被清理；当前 Agent 完成后 task、upload、blob、file/version、manifest、事件、审计和幂等结果共同提交，重复完成不产生第二版本，故障回滚后可恢复。`local-changes` 只在最新 manifest/lease/revision 下接受；新增/修改先复验完整内容，重命名/删除用显式 revision。墓碑或并发状态优先并返回 `CHAIR_DECISION_REQUIRED`，冲突 durable 且不静默覆盖。转移后 A 全部写入被 fencing；B 获得浏览器 pending upload 和完整最新 manifest，文件从 `OUT_OF_SYNC` 收敛到 `SYNCED`；A 独有内容形成 `HOST_TRANSFERRED` 冲突。Chair 删除只由当前 Agent 完成，不被普通 provider cleanup 抢占。服务器有已验证 staging 时可授权下载；缓存移除后稳定返回暂不可用，浏览器从不获得 Agent 地址、凭据、本地路径或正文。
+- 自动化覆盖情况：当前 WSL 的 migration 22 静态契约、202/pending 查询和 Chair binding HTTP、Agent local-change HTTP、任务 finalizer 顺序、前端持久 pending/sync 文案、TypeScript 与 mock 故障测试已通过。真实 PostgreSQL 用例覆盖浏览器 pending→host commit、staging 读取、事务回滚、host transfer 重排/fencing、本地内容发布、幂等重放、墓碑冲突和不复活；未配置 `TEST_DATABASE_ADMIN_URL` 时 13 项阶段 7 集成测试明确 skip。真实 PostgreSQL migration 执行、TLS、两设备、长时离线、进程终止、容量清理竞态、真实桌面目录和视觉/辅助功能尚未执行。
+- 当前状态：因无真实 PostgreSQL、TLS 自托管实例、第二设备和桌面 Agent 延期。
+- 需要保存的证据：migration 22 表/约束/触发器、binding/upload/change/conflict/task/manifest/file/blob/delete-job/event/audit 的脱敏查询；在线/离线/转移时间线；刷新前后页面和 sync 状态截图；staging inode/大小/SHA-256；故障矩阵、重复完成版本计数、maintenance 竞态与下载响应。不得保存设备凭据、claim token、Session、CSRF token、本地绝对路径或文件正文。

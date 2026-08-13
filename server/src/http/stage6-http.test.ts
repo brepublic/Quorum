@@ -113,6 +113,16 @@ describe('stage 6 upload HTTP boundary', () => {
       {}, 'upload-key', expect.objectContaining({requestId: expect.any(String)}));
   });
 
+  it('returns accepted while a Chair Agent upload is waiting for its host commit', async () => {
+    const commitUpload = vi.fn(async () => ({kind: 'PENDING_HOST_COMMIT', taskId: 'task',
+      leaseGeneration: 4, upload: {id: 'upload', status: 'STAGED'}}));
+    const response = await send({} as Stage6UploadService, {method: 'POST',
+      path: '/api/v1/file-uploads/30000000-0000-4000-8000-000000000001/commit',
+      chunks: [Buffer.from('{}')]}, {commitUpload} as unknown as Stage6ProviderCommitService);
+    expect(response.statusCode).toBe(202);
+    expect(JSON.parse(response.body).data).toMatchObject({kind: 'PENDING_HOST_COMMIT', leaseGeneration: 4});
+  });
+
   it('keeps S3 configuration and binding behind authenticated role-aware services', async () => {
     const create = vi.fn(async () => ({id: 'config', displayName: '对象存储'}));
     const configResponse = await send({} as Stage6UploadService, {method: 'POST',
@@ -149,6 +159,15 @@ describe('stage 6 upload HTTP boundary', () => {
     expect(created.statusCode).toBe(201);
     expect(createServerVolumeBinding).toHaveBeenCalledWith(authenticated, committeeId, body, 'upload-key',
       expect.objectContaining({requestId: expect.any(String)}));
+
+    const createChairAgentBinding = vi.fn(async () => ({id: 'agent-binding', providerType: 'CHAIR_AGENT'}));
+    const chairStorage = {createChairAgentBinding} as unknown as Stage6StorageService;
+    const chair = await send({} as Stage6UploadService, {method: 'POST',
+      path: `/api/v1/committees/${committeeId}/storage-bindings/chair-agent`,
+      chunks: [Buffer.from(JSON.stringify(body))]}, undefined, {storage: chairStorage});
+    expect(chair.statusCode).toBe(201);
+    expect(createChairAgentBinding).toHaveBeenCalledWith(authenticated, committeeId, body, 'upload-key',
+      expect.objectContaining({requestId: expect.any(String)}));
   });
 
   it('routes file listing, detail, review, publication, and deletion through session-aware services', async () => {
@@ -178,6 +197,15 @@ describe('stage 6 upload HTTP boundary', () => {
       chunks: [Buffer.from(JSON.stringify({baseRevision: 3}))]}, undefined, {storage});
     expect((storage.deleteFile as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(authenticated, fileId,
       {baseRevision: 3}, 'upload-key', expect.anything());
+  });
+
+  it('lists durable pending host commits through the authenticated upload service', async () => {
+    const listPendingHostCommits = vi.fn(async () => [{id: 'upload', agentCommitState: 'PENDING_HOST_COMMIT'}]);
+    const committeeId = '20000000-0000-4000-8000-000000000001';
+    const response = await send({listPendingHostCommits} as unknown as Stage6UploadService, {method: 'GET',
+      path: `/api/v1/committees/${committeeId}/file-uploads/pending-host-commit`, chunks: []});
+    expect(response.statusCode).toBe(200);
+    expect(listPendingHostCommits).toHaveBeenCalledWith(authenticated, committeeId);
   });
 
   it('streams download bytes with the service-provided safe headers', async () => {

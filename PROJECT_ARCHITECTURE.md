@@ -2,7 +2,7 @@
 
 > 本文件是本仓库的维护入口。后续涉及代码、构建、测试或运行的工作，应先阅读本文件和 `AGENTS.md`，并以实际代码为准更新本文档。
 
-> Quorum 已完成自主托管目标设计，并已落地实施计划阶段 0–6。`self-hosted` 运行时以 PostgreSQL 为唯一业务真相，通过同源 API 与受众过滤 SSE 提供议事功能；上传可流式暂存并提交到服务器持久卷或 S3 compatible provider，文件可在自托管工作区审核、发布、授权下载、异步物理删除并在 provider 之间安全迁移。磁盘阈值、fenced 后台清理与存储指标已接入；Chair Local Agent 尚未实施。
+> Quorum 已完成自主托管目标设计，并已落地实施计划阶段 0–6 和 Chair Local Agent 的服务器端 7.1–7.3。`self-hosted` 运行时以 PostgreSQL 为唯一业务真相，通过同源 API 与受众过滤 SSE 提供议事功能；上传可流式暂存并提交到服务器持久卷、S3 compatible provider 或当前主席电脑。文件可在自托管工作区审核、发布、授权下载、异步物理删除并在服务器卷与 S3 之间安全迁移。磁盘阈值、fenced 后台清理与存储指标已接入；桌面 Agent、目录监测和发布包尚未实施。
 
 ## 1. 项目定位与技术栈
 
@@ -45,7 +45,7 @@ flowchart LR
 
 `src/index.tsx` 初始化 Google Analytics、Sentry、浏览器 history 与 Semantic UI 样式，并把 `App` 挂载到 `#root`。`VITE_RUNTIME_MODE` 显式选择运行路径：未设置或为 `firebase` 时保持原行为，`src/App.tsx` 初始化 Firebase，并在显示普通路由前调用 Functions 检查管理员初始化；`VITE_USE_FIREBASE_EMULATORS=true` 时连接本机模拟器，否则连接 `muncoordinated`。`VITE_RUNTIME_MODE=self-hosted` 使用 `SelfHostedIdentity` 与 `SelfHostedWorkspace`：身份、账号管理、委员会列表、模板和议事工作区均调用同源 `/api/v1`；每个浏览器对一个委员会最多保持一条 SSE。公开委员会深层路由可匿名读取过滤后的快照。两个运行时没有双写。
 
-`server/` 是自主托管模块化单体。它启动时通过 PostgreSQL advisory lock 执行带 SHA-256 校验和的 migration；数据库版本不兼容时 readiness 失败。阶段 2–4 migration 建立身份、委员会、规则包、模板及低并发议事。阶段 5 migration 5–12 增加实时议事、表决和版本化决议草案。migration 13 增加存储绑定、逻辑文件、不可变文件版本、blob 完整性元数据和不可变删除墓碑；migration 14 增加 durable upload；migration 15 把 provider blob 目标和已提交 file entry/version 绑定到 upload；migration 16 增加 S3 provider 配置和加密凭据列；migration 17 增加审核状态机和 durable 物理删除任务；migration 18 增加 provider migration、fenced copy item 和跨 binding 已验证副本；migration 19 增加 fenced staging cleanup 与追加式维护审计；migration 20 增加一次性 Agent 配对、设备身份、单活动 host 和 lease generation；migration 21 增加追加式 Agent manifest、按主机 generation 固定的 durable task、claim token 和任务内容暂存状态。schema compatibility 为 21。
+`server/` 是自主托管模块化单体。它启动时通过 PostgreSQL advisory lock 执行带 SHA-256 校验和的 migration；数据库版本不兼容时 readiness 失败。阶段 2–4 migration 建立身份、委员会、规则包、模板及低并发议事。阶段 5 migration 5–12 增加实时议事、表决和版本化决议草案。migration 13 增加存储绑定、逻辑文件、不可变文件版本、blob 完整性元数据和不可变删除墓碑；migration 14 增加 durable upload；migration 15 把 provider blob 目标和已提交 file entry/version 绑定到 upload；migration 16 增加 S3 provider 配置和加密凭据列；migration 17 增加审核状态机和 durable 物理删除任务；migration 18 增加 provider migration、fenced copy item 和跨 binding 已验证副本；migration 19 增加 fenced staging cleanup 与追加式维护审计；migration 20 增加一次性 Agent 配对、设备身份、单活动 host 和 lease generation；migration 21 增加追加式 Agent manifest、按主机 generation 固定的 durable task、claim token 和任务内容暂存状态；migration 22 增加 host-bound `CHAIR_AGENT` binding、文件同步状态、待 host 提交的 upload 以及不可静默覆盖的本地变化与冲突记录。schema compatibility 为 22。
 
 首次启动生成高熵 bootstrap secret，只把 SHA-256 哈希写入数据库，并在专用控制台行显示一次；初始化事务锁定单行设置、创建唯一 `SYSTEM_ADMIN` 后清除哈希。密码使用固定参数 Argon2id；Session Cookie 为 `Secure`、`HttpOnly`、`SameSite=Lax`，数据库只保存 Session token 的 SHA-256；写请求同时校验允许 Origin 和双提交 CSRF token。登录、密码确认提权和改密会轮换 Session，重置密码、禁用账号和用户级撤销通过 `session_version` 与撤销时间立即使旧 Session 失效。
 
@@ -165,7 +165,7 @@ system
 - 常驻 maintenance worker 优先运行已有 blob delete job，再通过 PostgreSQL claim token 清理符合条件的 upload 与 migration staging。只有 `COMMITTED`、`CANCELLED`、已过期 `FAILED` upload，以及 `COMPLETED`/`CANCELLED` migration item 可清理；`CREATED`、`RECEIVING`、`STAGED`、待重试 copy 和退休源 provider 副本不因期限、LRU 或压力删除。物理删除和暂存清理结果写入追加式 `storage_cleanup_audit`，数据库完成失败、进程中断和 stale claim 可幂等恢复。
 - 阶段 6.8 的浏览器 SHA-256 按固定大小读取 `Blob.slice()`，不创建完整文件副本；XHR 直接发送原始 `File` 并报告实际上传字节，可通过 `AbortSignal` 取消。文件命令失败后重新读取权威列表，409 不在客户端覆盖；SSE 文件和迁移事件仍只触发快照/列表刷新。下载只生成同源 attachment URL，不把用户内容送入 DOM、iframe、object、data URL 或预览组件。
 - 阶段 7.1 增加 `storage_pairing_codes` 与 `storage_hosts`。短期一次性配对码和设备凭据只保存 SHA-256，明文各返回一次；Agent 使用独立 `QuorumAgent` authorization scheme，不能以该凭据调用浏览器 Session 路由。委员会保存单调 storage lease generation，部分唯一索引限制一个活动或降级 host；首次配对、转移和撤销在委员会行锁事务中 fencing 旧设备，迟到请求返回 `STALE_STORAGE_LEASE`。常驻 host monitor 只生成存储降级状态与 Chair 事件，不暂停委员会。
-- 阶段 7.2 增加 `storage_manifest_events` 与 `storage_agent_tasks`，并把 provider 枚举扩展为 `CHAIR_AGENT`，但尚不开放该 binding 的创建或提交。文件版本或墓碑在原事务内分配严格递增 manifest sequence，并为当前 host 创建 `STORE_BLOB` 或 `DELETE_FILE`；新 host 配对时按每个文件的最新 manifest 补建任务。Agent 可按游标分页读取 manifest/task，以 task ID、file revision、lease generation、claim request ID 和 claim token 领取并幂等完成或失败。`GET/POST /api/v1/storage-agent/blobs` 只在匹配 claim 下流式读取已验证 provider blob 或写入服务器生成路径的 durable staging；网络传输不持有委员会行锁，完成前再复核当前 generation。阶段 7.2 不实现本地目录监测、`local-changes`、`CHAIR_AGENT` binding 命令/提交、桌面程序或发布包。
+- 阶段 7.2 增加 `storage_manifest_events` 与 `storage_agent_tasks`。文件版本或墓碑在原事务内分配严格递增 manifest sequence，并为当前 host 创建 `STORE_BLOB` 或 `DELETE_FILE`；Agent 以 task ID、file revision、lease generation、claim token 和幂等 request ID 领取、传输并终结任务。阶段 7.3 开放 host-bound `CHAIR_AGENT` binding：浏览器已校验的 durable upload 先成为 `PENDING_HOST_COMMIT`，仅在当前 Agent 完成固定 task 后才于同一事务发布 blob、file entry/version、manifest、事件与审计。`local-changes` 以最新 manifest、墓碑和 revision 接受新增、修改、重命名及删除；内容变化先经 `UPLOAD_BLOB` 流式复验，冲突持久化后返回 `CHAIR_DECISION_REQUIRED`。主机转移取消旧 generation task、重新规划浏览器待提交 upload 和最新 manifest，并把既有文件保持 `OUT_OF_SYNC` 到新主机确认。服务器只在仍有已验证 staging 时为 Chair 内容提供授权下载；普通清理不会删除唯一的 pending staging，也不会处理由 Agent 负责的物理删除。桌面目录监测、原子本地落盘和发布包仍未实现。
 
 因此，数据库规则和 Storage 元数据是产品的关键安全边界；变更前必须同时审查前端写入路径与这两份规则文件。
 

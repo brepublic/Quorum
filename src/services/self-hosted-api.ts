@@ -17,6 +17,7 @@ import type {
   CountryTemplate,
   CountryTemplateInput,
   MeetingSession,
+  PendingHostCommit,
   RollCall,
   Stage4CommitteeSeat,
   AttendanceEvent,
@@ -26,7 +27,8 @@ import type {
   S3ProviderConfigSummary,
   StorageBinding,
   StorageMigration,
-  StorageProviderType
+  StorageProviderType,
+  StorageHost
 } from '@quorum/contracts';
 import {COMMITTEE_EVENT_DEFINITIONS, type RealtimeSyncState} from '@quorum/contracts';
 
@@ -401,6 +403,9 @@ export const selfHostedApi = {
   listFiles(committeeId: string) {
     return request<FileEntry[]>(`/api/v1/committees/${committeeId}/files`);
   },
+  listPendingHostCommits(committeeId: string) {
+    return request<FileUpload[]>(`/api/v1/committees/${committeeId}/file-uploads/pending-host-commit`);
+  },
   createFileUpload(committeeId: string, input: {logicalName: string; originalName: string; mediaType: string;
     expectedSizeBytes: number; sha256: string}, idempotencyKey = key()) {
     return request<FileUpload>(`/api/v1/committees/${committeeId}/file-uploads`, {method: 'POST',
@@ -412,7 +417,8 @@ export const selfHostedApi = {
     return uploadContentRequest(uploadId, file, idempotencyKey, options);
   },
   commitFileUpload(uploadId: string, idempotencyKey = key()) {
-    return request<FileEntry>(`/api/v1/file-uploads/${uploadId}/commit`, {method: 'POST', body: {}, idempotencyKey});
+    return request<FileEntry | PendingHostCommit>(`/api/v1/file-uploads/${uploadId}/commit`,
+      {method: 'POST', body: {}, idempotencyKey});
   },
   submitFileForReview(fileId: string, baseRevision: number, idempotencyKey = key()) {
     return request<FileEntry>(`/api/v1/files/${fileId}/submit-review`, {method: 'POST',
@@ -439,6 +445,13 @@ export const selfHostedApi = {
   createS3Binding(committeeId: string, baseRevision: number, providerConfigId: string, idempotencyKey = key()) {
     return request<StorageBinding>(`/api/v1/committees/${committeeId}/storage-bindings/s3`, {method: 'POST',
       body: {baseRevision, providerConfigId}, idempotencyKey});
+  },
+  createChairAgentBinding(committeeId: string, baseRevision: number, idempotencyKey = key()) {
+    return request<StorageBinding>(`/api/v1/committees/${committeeId}/storage-bindings/chair-agent`, {
+      method: 'POST', body: {baseRevision}, idempotencyKey});
+  },
+  listStorageHosts(committeeId: string) {
+    return request<StorageHost[]>(`/api/v1/committees/${committeeId}/storage-hosts`);
   },
   listS3ProviderConfigs() {
     return request<S3ProviderConfigSummary[]>('/api/v1/storage-provider-configs/s3');

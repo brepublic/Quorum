@@ -910,6 +910,35 @@ GET 请求通过 `X-Storage-Lease-Generation` 携带 generation；task 写请求
 
 阶段 7.2 只建立服务器协议原语；生产路径尚不创建 `UPLOAD_BLOB` task，也未开放 `local-changes`。`CHAIR_AGENT` binding、离线浏览器上传编排、墓碑优先恢复、本地路径/冲突处理和桌面 Agent 属于 7.3 以后。
 
+## 11.13 阶段 7.3 `CHAIR_AGENT` provider 与恢复编排
+
+migration 22 把 `storage_bindings` 约束扩展为三种互斥目标：服务器卷无外部目标、S3 必须引用 provider config、`CHAIR_AGENT` 必须引用同委员会的 storage host。`file_entries.sync_state` 保存 `PENDING_HOST_COMMIT`、`SYNCED` 或 `OUT_OF_SYNC`；`file_uploads` 保存固定 task、host、lease generation 和 host commit 状态。`storage_agent_change_requests` 保存 Agent 的幂等本地变化，`storage_agent_conflicts` 保存不得静默覆盖的待 Chair 决策冲突。schema compatibility 为 22。
+
+浏览器管理及上传恢复接口增加：
+
+```text
+POST /api/v1/committees/:id/storage-bindings/chair-agent
+GET  /api/v1/committees/:id/file-uploads/pending-host-commit
+```
+
+初始 Chair binding 只允许 Owner 或明确 Chair 选择当前 `ACTIVE`/`DEGRADED` 且 generation 匹配的 host；委员会已有活动 binding、暂停/归档、陈旧 revision 或仅有 `SYSTEM_ADMIN` 身份均拒绝。待 host 提交列表要求 Session；Owner/Chair 可见委员会全部待提交 upload，普通 contributor 只见自己创建的项。
+
+浏览器 upload 在服务器 durable staging 完整复验后，提交命令返回 `202 PENDING_HOST_COMMIT` 并创建固定 blob、未来 file entry ID、host/generation 和 `STORE_BLOB` task。Agent 只能用该 task 的 claim 读取对应 staging。task 完成事务再次检查当前 binding、host、generation、upload 大小和 SHA-256，随后原子创建 blob、file entry/version、manifest、事件与审计并把 upload 改为 `HOST_COMMITTED`。数据库事务失败不会留下 file version，原 task 与 staging 保持可重试状态；普通 cleanup 仍不选择 `STAGED` upload。
+
+生产 `local-changes` 接口现为：
+
+```text
+POST /api/v1/storage-agent/local-changes
+```
+
+请求固定为 `{leaseGeneration,requestId,manifestSequence,change}`。`change` 是携带 file revision 的 `UPSERT`、`RENAME` 或 `DELETE`；`UPSERT` 另带逻辑名、原始名、媒体类型、大小和 SHA-256。服务器先复核当前 lease、活动 Chair binding、委员会可写状态和完整最新 manifest sequence，再以墓碑、当前 file revision 和同委员会名称唯一性判断。新增/修改创建服务器 UUID 派生的 `UPLOAD_BLOB` task；完整内容经 7.2 流式边界进入 `STAGED` 后，task 完成事务才发布版本。重命名和删除是显式 revision 命令；删除同时写墓碑、Agent 删除 task 和物理删除 job。
+
+相同 host/request ID 精确重放 pending 或 completed 结果。manifest、墓碑、revision、名称或 host transfer 冲突先写入 durable change/conflict、Chair 事件和审计，再返回 `422 CHAIR_DECISION_REQUIRED` 及冲突 ID/原因；不会复活已删除文件或自动选择任一副本。冲突裁决 UI 尚未实施。
+
+主机转移事务把活动 Chair binding 指向新 host，取消旧 generation 的非终态 task，为浏览器 `STORE_BLOB` 待提交 upload 重新创建新 generation task，并按每个文件最新 manifest 为新 host 补建任务。未完成的本地 `UPLOAD_BLOB` 因内容仍只在旧 host 而转成 `HOST_TRANSFERRED` 冲突。既有文件在转移时成为 `OUT_OF_SYNC`，相同 revision 的新 host task 完成后恢复 `SYNCED`。旧凭据、claim、内容上传和 local change 继续由 lease fencing 拒绝。
+
+`CHAIR_AGENT` blob 不交给服务器 provider delete worker；当前 Agent 完成 `DELETE_FILE` 后才把对应 blob/delete job 标为完成。下载只在服务器仍保存并复验关联 upload staging 时可用；否则返回稳定 `SERVICE_NOT_READY`，浏览器从不直连 Agent。桌面文件系统 watcher、周期扫描、路径落盘和发布包留在后续阶段。
+
 ## 12. SSE 格式
 
 ```text

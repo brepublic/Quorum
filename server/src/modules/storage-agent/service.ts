@@ -268,6 +268,65 @@ export class Stage7StorageAgentService {
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'ACTIVE',$9,$9,$9,$9) RETURNING *`,
       [hostId, committee.id, deviceId, label, publicKey, parsedCredential.tokenHash,
         pairing.created_by_user_id, leaseGeneration, now]);
+      const transferredBinding = await client.query(`UPDATE storage_bindings SET storage_host_id=$2,
+        revision=revision+1,updated_at=$3
+        WHERE committee_id=$1 AND provider_type='CHAIR_AGENT' AND status='ACTIVE'`,
+      [committee.id, hostId, now]);
+      if (active && transferredBinding.rowCount) {
+        await client.query(`UPDATE file_entries SET sync_state='OUT_OF_SYNC',updated_at=$2
+          WHERE committee_id=$1 AND status<>'DELETED'`, [committee.id, now]);
+      }
+      const pendingUploads = await client.query<{
+        upload_id: string; task_id: string; task_type: 'STORE_BLOB' | 'UPLOAD_BLOB'; host_id: string; file_entry_id: string;
+        file_revision: number; blob_id: string; expected_size_bytes: string | number; expected_sha256: Buffer;
+      }>(`SELECT upload.id AS upload_id,task.id AS task_id,task.task_type,task.host_id,task.file_entry_id,task.file_revision,
+        task.blob_id,task.expected_size_bytes,task.expected_sha256 FROM file_uploads upload
+        JOIN storage_agent_tasks task ON task.id=upload.agent_task_id
+        WHERE upload.committee_id=$1 AND upload.agent_commit_state='PENDING_HOST_COMMIT'
+          AND upload.agent_host_id<>$2 FOR UPDATE OF upload,task`, [committee.id, hostId]);
+      for (const pending of pendingUploads.rows) {
+        await client.query(`UPDATE storage_agent_tasks SET status='CANCELLED',cancelled_at=$2,
+          claimed_at=NULL,claim_request_id=NULL,claim_token=NULL,revision=revision+1,updated_at=$2
+          WHERE id=$1 AND status NOT IN ('COMPLETED','FAILED','CANCELLED')`, [pending.task_id, now]);
+        if (pending.task_type === 'UPLOAD_BLOB') {
+          const conflictId = randomUUID();
+          const change = await client.query<{id: string}>(`UPDATE storage_agent_change_requests
+            SET status='CONFLICT',completed_at=$2,
+              result=jsonb_build_object('status','CONFLICT','changeRequestId',id,'conflictId',$3::text,
+                'reasonCode','HOST_TRANSFERRED')
+            WHERE task_id=$1 AND status='PENDING_CONTENT' RETURNING id`, [pending.task_id, now, conflictId]);
+          await client.query(`UPDATE file_uploads SET status='CANCELLED',cancelled_at=$2,
+            agent_commit_state='CONFLICT',revision=revision+1,updated_at=$2 WHERE id=$1`, [pending.upload_id, now]);
+          if (change.rows[0]) {
+            await client.query(`INSERT INTO storage_agent_conflicts
+              (id,committee_id,host_id,change_request_id,file_entry_id,reason_code,created_at)
+              VALUES ($1,$2,$3,$4,$5,'HOST_TRANSFERRED',$6)`,
+            [conflictId, committee.id, pending.host_id, change.rows[0].id, pending.file_entry_id, now]);
+            await appendEvent(client, committee, {type: 'storage_agent.conflict_created',
+              resourceType: 'storage_agent_conflict', resourceId: conflictId, revision: 1, audience: 'CHAIR',
+              payload: {reasonCode: 'HOST_TRANSFERRED'}});
+            await audit(client, context, {committeeId: committee.id, actorUserId: pairing.created_by_user_id,
+              capabilities: [committee.owner_user_id === pairing.created_by_user_id ? 'OWNER' : 'CHAIR'],
+              action: 'storage.agent_conflict_created', resourceType: 'storage_agent_conflict',
+              resourceId: conflictId, after: {reasonCode: 'HOST_TRANSFERRED'}});
+          }
+          continue;
+        }
+        const allocated = await client.query<{sequence: string | number}>(`UPDATE committees
+          SET next_storage_agent_task_sequence=next_storage_agent_task_sequence+1 WHERE id=$1
+          RETURNING next_storage_agent_task_sequence-1 AS sequence`, [committee.id]);
+        const replacementId = randomUUID();
+        await client.query(`INSERT INTO storage_agent_tasks
+          (id,committee_id,host_id,lease_generation,sequence,task_type,file_entry_id,file_revision,blob_id,
+           expected_size_bytes,expected_sha256,source_upload_id)
+          VALUES ($1,$2,$3,$4,$5,'STORE_BLOB',$6,$7,$8,$9,$10,$11)`,
+        [replacementId, committee.id, hostId, leaseGeneration, allocated.rows[0]?.sequence,
+          pending.file_entry_id, pending.file_revision, pending.blob_id, pending.expected_size_bytes,
+          pending.expected_sha256, pending.upload_id]);
+        await client.query(`UPDATE file_uploads SET agent_task_id=$2,agent_host_id=$3,agent_lease_generation=$4,
+          revision=revision+1,updated_at=$5 WHERE id=$1`,
+        [pending.upload_id, replacementId, hostId, leaseGeneration, now]);
+      }
       const manifest = await client.query<{
         kind: 'UPSERT' | 'DELETE'; file_entry_id: string; file_revision: number;
         blob_id: string | null; size_bytes: string | number | null; sha256: Buffer | null;
@@ -325,6 +384,10 @@ export class Stage7StorageAgentService {
       const revoked = await client.query<HostRow>(`UPDATE storage_hosts
         SET status='REVOKED',revision=revision+1,revoked_at=$2,updated_at=$2 WHERE id=$1 RETURNING *`,
       [active.id, now]);
+      await client.query(`UPDATE file_entries SET sync_state='OUT_OF_SYNC',updated_at=$3
+        FROM storage_bindings binding WHERE file_entries.committee_id=$1
+          AND binding.id=$2 AND binding.provider_type='CHAIR_AGENT' AND binding.status='ACTIVE'
+          AND file_entries.status<>'DELETED'`, [committee.id, committee.active_storage_binding_id, now]);
       const leaseGeneration = Number(updated.rows[0]?.storage_lease_generation);
       await appendEvent(client, committee, {type: 'storage_host.status_changed', resourceType: 'storage_host',
         resourceId: active.id, revision: active.revision + 1, audience: 'CHAIR',

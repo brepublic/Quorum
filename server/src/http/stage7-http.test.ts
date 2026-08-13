@@ -8,7 +8,9 @@ import {createLogger} from '../logger';
 import type {IdentityService} from '../modules/identity/service';
 import type {Stage7StorageAgentService} from '../modules/storage-agent/service';
 import type {Stage7StorageTaskService} from '../modules/storage-agent/task-service';
+import type {Stage7LocalChangeService} from '../modules/storage-agent/local-change-service';
 import {createRequestHandler} from './app';
+import {AppError} from './errors';
 
 const authenticated = {sessionId: 'session', user: {id: '10000000-0000-4000-8000-000000000001',
   email: 'chair@example.com', displayName: 'Chair', status: 'ACTIVE', isSystemAdmin: false,
@@ -26,14 +28,15 @@ class TestResponse extends EventEmitter {
 
 async function send(storageAgent: Stage7StorageAgentService, options: {
   method: 'GET' | 'POST'; path: string; body?: unknown; rawBody?: Buffer; headers?: Record<string, string>;
-  identity?: IdentityService; storageTasks?: Stage7StorageTaskService;
+  identity?: IdentityService; storageTasks?: Stage7StorageTaskService; storageLocalChanges?: Stage7LocalChangeService;
 }) {
   const identity = options.identity ?? ({authenticate: vi.fn(async () => authenticated)} as unknown as IdentityService);
   const logs: string[] = [];
   const handler = createRequestHandler({health: {ready: async () => ({ready: true, checks: {
     database: {status: 'ok', migrationVersion: 20}, storage: {status: 'ok'}}})},
   logger: createLogger(line => logs.push(line)), version: 'test', databaseMigrationVersion: 20,
-  identity, storageAgent, storageTasks: options.storageTasks, allowedOrigins: ['https://quorum.example.com']});
+  identity, storageAgent, storageTasks: options.storageTasks, storageLocalChanges: options.storageLocalChanges,
+  allowedOrigins: ['https://quorum.example.com']});
   const chunks = options.rawBody ? [options.rawBody]
     : options.body === undefined ? [] : [Buffer.from(JSON.stringify(options.body))];
   const incoming = Readable.from(chunks) as unknown as IncomingMessage;
@@ -118,6 +121,25 @@ describe('stage 7 storage Agent HTTP boundary', () => {
     expect(claimed.response.statusCode).toBe(200);
     expect(claim).toHaveBeenCalledWith('qsa1.device.secret', '30000000-0000-4000-8000-000000000001', body);
     expect(listed.identity.authenticate).not.toHaveBeenCalled();
+  });
+
+  it('forwards local changes through Agent credentials without a browser Session', async () => {
+    const submit = vi.fn(async () => { throw new AppError({code: 'CHAIR_DECISION_REQUIRED',
+      message: 'Conflict.', details: {conflictId: 'conflict', reasonCode: 'MANIFEST_STALE'}}); });
+    const storageLocalChanges = {submit} as unknown as Stage7LocalChangeService;
+    const identity = {authenticate: vi.fn()} as unknown as IdentityService;
+    const body = {leaseGeneration: 7, requestId: '40000000-0000-4000-8000-000000000001',
+      manifestSequence: 11, change: {kind: 'DELETE', fileEntryId: '50000000-0000-4000-8000-000000000001',
+        baseRevision: 2}};
+    const result = await send({} as Stage7StorageAgentService, {method: 'POST',
+      path: '/api/v1/storage-agent/local-changes', body,
+      headers: {authorization: 'QuorumAgent qsa1.device.secret'}, identity, storageLocalChanges});
+    expect(result.response.statusCode).toBe(422);
+    expect(JSON.parse(result.response.body).error).toMatchObject({code: 'CHAIR_DECISION_REQUIRED',
+      details: {conflictId: 'conflict'}});
+    expect(submit).toHaveBeenCalledWith('qsa1.device.secret', body,
+      expect.objectContaining({requestId: expect.any(String)}));
+    expect(identity.authenticate).not.toHaveBeenCalled();
   });
 
   it('streams Agent upload bytes and provider blob bytes through task-scoped headers', async () => {

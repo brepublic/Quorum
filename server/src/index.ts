@@ -28,6 +28,8 @@ import {StorageCapacityMonitor} from './modules/storage/capacity.js';
 import {Stage6MaintenanceService, startStorageMaintenanceWorker} from './modules/storage/maintenance-service.js';
 import {Stage7StorageAgentService, startStorageHostMonitor} from './modules/storage-agent/service.js';
 import {Stage7StorageTaskService} from './modules/storage-agent/task-service.js';
+import {Stage7ChairAgentProviderService} from './modules/storage-agent/chair-provider-service.js';
+import {Stage7LocalChangeService} from './modules/storage-agent/local-change-service.js';
 
 const {Pool} = pg;
 const logger = createLogger();
@@ -73,15 +75,18 @@ async function main(): Promise<void> {
     const s3Configs = new Stage6S3ConfigService(pool, credentialCipher);
     const s3 = new Stage6S3CommitService(pool, metadata, staging, s3Configs,
       providerConfig => new S3CompatibleStore(providerConfig, new NodeS3Transport(providerConfig), config.maxFileBytes));
-    const providerCommits = new Stage6ProviderCommitService(pool, serverVolume, s3);
     const files = new Stage6FileService(pool, serverVolumeStore, s3Configs,
-      providerConfig => new S3CompatibleStore(providerConfig, new NodeS3Transport(providerConfig), config.maxFileBytes));
+      providerConfig => new S3CompatibleStore(providerConfig, new NodeS3Transport(providerConfig), config.maxFileBytes),
+      staging);
+    const chairAgentProvider = new Stage7ChairAgentProviderService(pool, metadata);
+    const providerCommits = new Stage6ProviderCommitService(pool, serverVolume, s3, chairAgentProvider);
     const storageMigrations = new Stage6MigrationService(pool, staging, serverVolumeStore, s3Configs,
       providerConfig => new S3CompatibleStore(providerConfig, new NodeS3Transport(providerConfig), config.maxFileBytes),
       capacity);
     const storageMaintenance = new Stage6MaintenanceService(pool, staging, files, capacity, logger);
     const storageAgent = new Stage7StorageAgentService(pool);
-    const storageTasks = new Stage7StorageTaskService(storageAgent, staging, files, capacity);
+    const storageTasks = new Stage7StorageTaskService(storageAgent, staging, files, capacity, chairAgentProvider);
+    const storageLocalChanges = new Stage7LocalChangeService(storageAgent);
     await stage3.ensureBuiltins();
     const bootstrapSecret = await identity.ensureBootstrapSecret();
     if (bootstrapSecret) {
@@ -106,6 +111,7 @@ async function main(): Promise<void> {
       storageMetrics: storageMaintenance,
       storageAgent,
       storageTasks,
+      storageLocalChanges,
       allowedOrigins: config.allowedOrigins
     });
     const stopStorageMigrationWorker = startStorageMigrationWorker(storageMigrations, logger);

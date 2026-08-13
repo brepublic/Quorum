@@ -6,10 +6,10 @@
 
 - 更新时间：2026-08-13
 - 分支：`self-host`
-- 已确认基线：`a7dd0fd stage 7.1: fence chair storage agents`
-- 当前阶段：7.2 durable Agent task、manifest 与服务器内容边界已完成当前 WSL 可执行的验证，等待单独提交。
-- 当前工作：migration 21、共享契约、任务状态机、独立 Agent HTTP 和流式内容校验已落地。
-- 下一步：提交 7.2，然后按 `STAGE_7_3_HANDOFF_PROMPT.md` 实施 `CHAIR_AGENT` provider、本地变化和恢复编排。
+- 已确认基线：`887ce8b stage 7.2: add durable agent tasks`
+- 当前阶段：7.3 `CHAIR_AGENT` provider、本地变化和恢复编排已实现并通过当前 WSL 可执行验证，待单独提交。
+- 当前工作：最终审核差异并提交阶段 7.3。
+- 下一步：提交后按 `STAGE_7_4_HANDOFF_PROMPT.md` 实施桌面 Agent 文件系统核心。
 
 ## 已完成与验证
 
@@ -50,6 +50,7 @@
 - `f6e82d7`：阶段 6.7 磁盘阈值和后台清理。
 - `c722f95`：阶段 6.8 自托管文件 UI 与阶段 6 收尾。
 - `a7dd0fd`：阶段 7.1 Agent 配对、设备身份与单主机 fencing。
+- `887ce8b`：阶段 7.2 durable Agent task、manifest 与流式内容边界。
 
 ### 2026-08-13：阶段 6.3 SERVER_VOLUME provider
 
@@ -187,3 +188,22 @@
 - `pnpm test:self-host:integration`：7 个文件、57 项因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip。
 - `git diff --check`：通过。
 - 当前 WSL 未提供真实 PostgreSQL、自托管 TLS、真实 provider、第二设备或可控网络/进程终止环境；实机步骤和证据要求记录在 `MANUAL_ACCEPTANCE.md` 的 SH-MAN-510。
+
+### 2026-08-13：阶段 7.3 `CHAIR_AGENT` provider 与恢复编排
+
+- 阶段 7.2 已单独提交为 `887ce8b`；提交后工作区干净。
+- 7.2 基线复跑：33 项针对性测试通过；9 项 PostgreSQL 用例因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip。`pnpm build:self-host` 通过。
+- migration 22 增加 host-bound `CHAIR_AGENT` binding、文件同步状态、upload 的 host commit 目标、Agent 本地变化和不可静默覆盖的冲突记录；schema compatibility 为 22。
+- Owner/Chair 可把当前 generation 的已配对 host 设为初始 provider；普通 member 与仅有 `SYSTEM_ADMIN` 的账号没有隐式权限，暂停/归档和陈旧 revision 继续拒绝。
+- 浏览器完整暂存提交返回 `202 PENDING_HOST_COMMIT` 并创建固定 generation 的 `STORE_BLOB` task。Agent 完成后，task、upload、blob、file entry/version、manifest、事件与审计在同一事务收敛；完成前不产生可下载文件记录。
+- 受权限约束的 pending 查询让页面刷新或重新登录后仍显示“等待主席电脑保存”。普通 contributor 只见自己的 pending upload，Owner/Chair 可见委员会全部。
+- `local-changes` 复核当前 lease、最新 manifest、墓碑和 file revision；本地新增/修改创建服务器路径的 `UPLOAD_BLOB` task，重命名和删除使用显式 revision。冲突先持久化，再返回 `CHAIR_DECISION_REQUIRED`。
+- 主机转移取消旧 generation task，重排浏览器 pending upload 和每个文件最新 manifest；旧 host 独有的未上传内容转为 `HOST_TRANSFERRED` 冲突。既有文件保持 `OUT_OF_SYNC` 到新 host 完成相同 revision task。
+- Chair 内容只在服务器仍有已验证 staging 时经授权路由下载；普通 maintenance worker 跳过 Chair provider 的物理删除 job，由当前 Agent 的 `DELETE_FILE` task 完成。
+- 最终针对性验证：8 个文件、73 项通过；阶段 7 PostgreSQL 文件 13 项因缺少 URL 明确 skip。另复跑文件页 15 项通过。
+- `pnpm test:self-host`：47 个文件、230 项通过；7 个 PostgreSQL 集成文件、61 项明确 skip。仅有既有 React/Semantic UI 弃用警告。
+- `pnpm build:self-host` 与 `pnpm build`：通过；contracts、前端、rule-schema 和 server 构建成功，Vite 仅报告既有的大分块警告。
+- `pnpm test:self-host:integration`：7 个文件、61 项因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip。
+- `git diff --check`：通过。
+- 最终撤销/转移清理调整后，server TypeScript 与 Agent task/HTTP 10 项再次通过；阶段 7 PostgreSQL 13 项仍明确 skip，diff 检查再次通过。
+- 真实 PostgreSQL migration/事务、TLS、两设备、长时离线、进程终止、容量清理竞态、桌面目录和浏览器视觉仍未执行；步骤与证据要求记录在 `MANUAL_ACCEPTANCE.md` 的 SH-MAN-511。

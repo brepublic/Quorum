@@ -26,6 +26,7 @@ interface StorageBindingRow extends QueryResultRow {
   committee_id: string;
   provider_type: StorageBinding['providerType'];
   provider_config_id: string | null;
+  storage_host_id: string | null;
   status: StorageBinding['status'];
   revision: number;
   created_at: Date;
@@ -37,6 +38,7 @@ interface FileEntryRow extends QueryResultRow {
   logical_name: string;
   media_type: string;
   status: FileEntryStatus;
+  sync_state: FileEntry['syncState'];
   current_version_id: string | null;
   created_by_user_id: string;
   revision: number;
@@ -62,6 +64,7 @@ export interface ProviderCommitInput {
   bindingId: string;
   blobId?: string;
   fileEntryId?: string;
+  targetFileEntryId?: string;
   baseRevision?: number;
   logicalName: string;
   originalName: string;
@@ -112,6 +115,7 @@ function binding(row: StorageBindingRow): StorageBinding {
     committeeId: row.committee_id,
     providerType: row.provider_type,
     providerConfigId: row.provider_config_id,
+    storageHostId: row.storage_host_id,
     status: row.status,
     revision: row.revision,
     createdAt: row.created_at.toISOString()
@@ -133,6 +137,7 @@ async function fileState(client: PoolClient, row: FileEntryRow): Promise<FileEnt
     logicalName: row.logical_name,
     mediaType: row.media_type,
     status: row.status,
+    syncState: row.sync_state,
     createdByUserId: row.created_by_user_id,
     currentVersion: {
       id: version.id,
@@ -293,6 +298,45 @@ export class Stage6StorageService {
     });
   }
 
+  async createChairAgentBinding(auth: AuthenticatedSession, committeeId: string, body: unknown,
+    idempotencyKey: string, context: Stage4Context): Promise<StorageBinding> {
+    requireBusinessIdentity(auth);
+    assertExactBody(body as Record<string, unknown>, ['baseRevision']);
+    const request = body as {baseRevision?: unknown};
+    return idempotentTransaction({pool: this.pool, auth,
+      route: `/api/v1/committees/${committeeId}/storage-bindings/chair-agent`, key: idempotencyKey,
+      request: body, status: 201, work: async client => {
+        const committee = await lockedCommittee(client, uuid(committeeId, 'Committee ID'));
+        requireEditable(committee);
+        await requireStorageManager(client, committee, auth.user.id);
+        requireCommitteeRevision(committee, request.baseRevision);
+        if (committee.active_storage_binding_id) {
+          throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The committee already has active storage.'});
+        }
+        const current = await client.query<{id: string; lease_generation: string | number}>(`SELECT id,lease_generation
+          FROM storage_hosts WHERE committee_id=$1 AND status IN ('ACTIVE','DEGRADED') FOR UPDATE`, [committee.id]);
+        const host = current.rows[0];
+        if (!host || Number(host.lease_generation) !== Number(committee.storage_lease_generation)) {
+          throw new AppError({code: 'SERVICE_NOT_READY', message: 'The committee has no current storage host.'});
+        }
+        const id = randomUUID();
+        const created = await client.query<StorageBindingRow>(`INSERT INTO storage_bindings
+          (id,committee_id,provider_type,storage_host_id,status,created_by_user_id)
+          VALUES ($1,$2,'CHAIR_AGENT',$3,'ACTIVE',$4) RETURNING *`, [id, committee.id, host.id, auth.user.id]);
+        await client.query(`UPDATE committees SET active_storage_binding_id=$2,revision=revision+1,updated_at=now()
+          WHERE id=$1`, [committee.id, id]);
+        committee.revision += 1;
+        await appendEvent(client, committee, {type: 'committee.updated', resourceType: 'storage_binding',
+          resourceId: id, revision: committee.revision, audience: 'CHAIR',
+          payload: {storageBindingId: id, providerType: 'CHAIR_AGENT'}});
+        await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id,
+          capabilities: committee.owner_user_id === auth.user.id ? ['OWNER'] : ['CHAIR'],
+          action: 'storage.binding_changed', resourceType: 'storage_binding', resourceId: id,
+          after: {providerType: 'CHAIR_AGENT', storageHostId: host.id, status: 'ACTIVE', revision: 1}});
+        return binding(created.rows[0] as StorageBindingRow);
+      }});
+  }
+
   /**
    * Internal persistence boundary. A provider may call this only after it has
    * durably committed and independently verified the bytes described here.
@@ -314,11 +358,16 @@ export class Stage6StorageService {
   async recordProviderCommitInTransaction(client: PoolClient, auth: AuthenticatedSession, committeeId: string,
     input: ProviderCommitInput, context: Stage4Context): Promise<FileEntry> {
     requireBusinessIdentity(auth);
-    assertExactBody(input as unknown as Record<string, unknown>, ['bindingId', 'blobId', 'fileEntryId', 'baseRevision',
+    assertExactBody(input as unknown as Record<string, unknown>, ['bindingId', 'blobId', 'fileEntryId', 'targetFileEntryId', 'baseRevision',
       'logicalName', 'originalName', 'mediaType', 'sizeBytes', 'sha256', 'storageKey']);
     const bindingId = uuid(input.bindingId, 'Storage binding ID');
     const requestedBlobId = input.blobId === undefined ? undefined : uuid(input.blobId, 'Blob ID');
     const fileEntryId = input.fileEntryId === undefined ? undefined : uuid(input.fileEntryId, 'File ID');
+    const targetFileEntryId = input.targetFileEntryId === undefined
+      ? undefined : uuid(input.targetFileEntryId, 'Target file ID');
+    if (fileEntryId && targetFileEntryId) {
+      throw new AppError({code: 'VALIDATION_FAILED', message: 'Target file ID is only valid for a new file.'});
+    }
     const logicalName = boundedText(input.logicalName, 'Logical name', 500);
     const originalName = boundedText(input.originalName, 'Original name', 500);
     const mediaType = boundedText(input.mediaType, 'Media type', 255).toLowerCase();
@@ -349,7 +398,7 @@ export class Stage6StorageService {
       throw new AppError({code: 'VALIDATION_FAILED', message: 'Revision is only valid for an existing file.'});
     }
 
-    const id = entry?.id ?? randomUUID();
+    const id = entry?.id ?? targetFileEntryId ?? randomUUID();
     const versionId = randomUUID();
     const blobId = requestedBlobId ?? randomUUID();
     const versionNumber = entry

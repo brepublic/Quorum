@@ -20,6 +20,7 @@ import type {Stage6MigrationService} from '../modules/storage/migration-service.
 import type {StorageMetricsProvider} from '../modules/storage/maintenance-service.js';
 import type {Stage7StorageAgentService} from '../modules/storage-agent/service.js';
 import type {Stage7StorageTaskService} from '../modules/storage-agent/task-service.js';
+import type {Stage7LocalChangeService} from '../modules/storage-agent/local-change-service.js';
 import {AppError, normalizeError} from './errors.js';
 import {
   clearIdentityCookies,
@@ -54,6 +55,7 @@ export interface AppDependencies {
   storageMetrics?: StorageMetricsProvider;
   storageAgent?: Stage7StorageAgentService;
   storageTasks?: Stage7StorageTaskService;
+  storageLocalChanges?: Stage7LocalChangeService;
   allowedOrigins?: string[];
 }
 
@@ -208,9 +210,11 @@ function requiredHeader(request: IncomingMessage, name: string): string {
 async function handleStage7AgentRequest(options: {
   request: IncomingMessage; response: ServerResponse; pathname: string; requestId: string;
   storageAgent: Stage7StorageAgentService; storageTasks?: Stage7StorageTaskService;
+  storageLocalChanges?: Stage7LocalChangeService;
   identity?: IdentityService; allowedOrigins: readonly string[];
 }): Promise<boolean> {
-  const {request, response, pathname, requestId, storageAgent, storageTasks, identity, allowedOrigins} = options;
+  const {request, response, pathname, requestId, storageAgent, storageTasks, storageLocalChanges,
+    identity, allowedOrigins} = options;
   const method = request.method ?? 'GET';
   const context = identityContext(request, requestId);
   if (method === 'POST' && pathname === '/api/v1/storage-agent/pair') {
@@ -262,6 +266,12 @@ async function handleStage7AgentRequest(options: {
     } finally {
       request.resume();
     }
+    return true;
+  }
+  if (storageLocalChanges && method === 'POST' && pathname === '/api/v1/storage-agent/local-changes') {
+    const body = await readJson(request);
+    sendJson(response, 200, success(await storageLocalChanges.submit(storageAgentCredential(request), body, context),
+      requestId));
     return true;
   }
   const agentBlob = /^\/api\/v1\/storage-agent\/blobs\/([0-9a-f-]{36})$/.exec(pathname);
@@ -591,6 +601,19 @@ async function handleStage6UploadRequest(options: {
     sendJson(response, 201, success(await storage.createS3Binding(auth, s3Binding[1] as string, body,
       idempotencyKey(request), context), requestId)); return true;
   }
+  const chairAgentBinding = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/storage-bindings\/chair-agent$/.exec(pathname);
+  if (method === 'POST' && chairAgentBinding && storage) {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 201, success(await storage.createChairAgentBinding(auth, chairAgentBinding[1] as string,
+      body, idempotencyKey(request), context), requestId)); return true;
+  }
+  const pendingHostCommits = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/file-uploads\/pending-host-commit$/.exec(pathname);
+  if (method === 'GET' && pendingHostCommits) {
+    const auth = await authenticatedRead(request, identity);
+    sendJson(response, 200, success(await uploads.listPendingHostCommits(auth,
+      pendingHostCommits[1] as string), requestId));
+    return true;
+  }
   const create = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/file-uploads$/.exec(pathname);
   if (method === 'POST' && create) {
     const auth = await write();
@@ -615,8 +638,10 @@ async function handleStage6UploadRequest(options: {
   if (method === 'POST' && commit && providerCommits) {
     const auth = await write();
     const body = await readJson(request);
-    sendJson(response, 201, success(await providerCommits.commitUpload(auth, commit[1] as string, body,
-      idempotencyKey(request), context), requestId));
+    const result = await providerCommits.commitUpload(auth, commit[1] as string, body,
+      idempotencyKey(request), context);
+    sendJson(response, 'kind' in result && result.kind === 'PENDING_HOST_COMMIT' ? 202 : 201,
+      success(result, requestId));
     return true;
   }
   return false;
@@ -1035,6 +1060,7 @@ export function createRequestHandler(dependencies: AppDependencies): RequestList
 
         if (dependencies.storageAgent && await handleStage7AgentRequest({request, response, pathname, requestId,
           storageAgent: dependencies.storageAgent, storageTasks: dependencies.storageTasks, identity: dependencies.identity,
+          storageLocalChanges: dependencies.storageLocalChanges,
           allowedOrigins: dependencies.allowedOrigins ?? []})) return;
 
         if (dependencies.identity && await handleIdentityRequest({

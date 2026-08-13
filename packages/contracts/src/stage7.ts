@@ -100,3 +100,39 @@ export interface StorageManifestPage {
   nextSequence: number;
   hasMore: boolean;
 }
+
+export type StorageAgentLocalChange = {
+  kind: 'UPSERT';
+  fileEntryId?: string;
+  baseRevision?: number;
+  logicalName: string;
+  originalName: string;
+  mediaType: string;
+  sizeBytes: number;
+  sha256: string;
+} | {
+  kind: 'RENAME';
+  fileEntryId: string;
+  baseRevision: number;
+  logicalName: string;
+} | {
+  kind: 'DELETE';
+  fileEntryId: string;
+  baseRevision: number;
+};
+
+export type StorageAgentLocalChangeResult = {
+  status: 'PENDING_CONTENT';
+  changeRequestId: string;
+  task: StorageAgentTask;
+} | {
+  status: 'COMPLETED';
+  changeRequestId: string;
+  fileEntryId: string;
+  fileRevision: number;
+} | {
+  status: 'CONFLICT';
+  changeRequestId: string;
+  conflictId: string;
+  reasonCode: 'MANIFEST_STALE' | 'FILE_DELETED' | 'REVISION_CONFLICT' | 'NAME_CONFLICT' | 'HOST_TRANSFERRED';
+};

@@ -9,6 +9,7 @@ import {assertExactBody} from '../stage4/validation.js';
 import type {Stage6S3ConfigService} from './s3-config-service.js';
 import type {S3CompatibleStore, S3ProviderConfig} from './s3-store.js';
 import type {ServerVolumeStore} from './server-volume.js';
+import type {DurableStagingStore} from './staging.js';
 
 interface FileRow extends QueryResultRow {
   id: string;
@@ -16,6 +17,7 @@ interface FileRow extends QueryResultRow {
   logical_name: string;
   entry_media_type: string;
   status: FileEntryStatus;
+  sync_state: FileEntry['syncState'];
   current_version_id: string;
   created_by_user_id: string;
   revision: number;
@@ -34,6 +36,7 @@ interface FileRow extends QueryResultRow {
   storage_key: string;
   provider_type: 'SERVER_VOLUME' | 'CHAIR_AGENT' | 'S3_COMPATIBLE';
   provider_config_id: string | null;
+  agent_staging_key: string | null;
 }
 
 interface EntryRow extends QueryResultRow {
@@ -54,6 +57,7 @@ interface StoredBlobRow extends QueryResultRow {
   sha256_hex: string;
   provider_type: 'SERVER_VOLUME' | 'CHAIR_AGENT' | 'S3_COMPATIBLE';
   provider_config_id: string | null;
+  agent_staging_key: string | null;
 }
 
 type Audience = 'PUBLIC' | 'MEMBER' | 'CHAIR' | 'OWNER';
@@ -61,12 +65,12 @@ type Store = Pick<ServerVolumeStore, 'verify' | 'readVerified' | 'delete'>;
 export type FileS3StoreFactory = (config: S3ProviderConfig) =>
   Pick<S3CompatibleStore, 'verify' | 'readVerified' | 'delete'>;
 
-const FILE_SELECT = `SELECT e.id,e.committee_id,e.logical_name,e.media_type AS entry_media_type,e.status,
+const FILE_SELECT = `SELECT e.id,e.committee_id,e.logical_name,e.media_type AS entry_media_type,e.status,e.sync_state,
   e.current_version_id,e.created_by_user_id,e.revision,e.submitted_at,e.published_at,
   e.created_at AS entry_created_at,e.updated_at AS entry_updated_at,
   v.id AS version_id,v.version_number,v.original_name,v.media_type AS version_media_type,
   v.size_bytes,encode(v.sha256,'hex') AS sha256_hex,v.blob_id,v.created_at AS version_created_at,
-  b.storage_key,sb.provider_type,sb.provider_config_id
+  b.storage_key,sb.provider_type,sb.provider_config_id,agent_upload.staging_key AS agent_staging_key
   FROM file_entries e JOIN committees committee ON committee.id=e.committee_id
   JOIN file_versions v ON v.id=e.current_version_id JOIN file_blobs content ON content.id=v.blob_id
   LEFT JOIN file_blob_copies location ON location.content_blob_id=content.id
@@ -74,11 +78,14 @@ const FILE_SELECT = `SELECT e.id,e.committee_id,e.logical_name,e.media_type AS e
   LEFT JOIN file_blobs replica ON replica.id=location.copy_blob_id AND replica.durability_state='COMMITTED'
   JOIN file_blobs b ON b.id=CASE WHEN content.storage_binding_id=committee.active_storage_binding_id
     THEN content.id ELSE replica.id END
-  JOIN storage_bindings sb ON sb.id=b.storage_binding_id`;
+  JOIN storage_bindings sb ON sb.id=b.storage_binding_id
+  LEFT JOIN file_uploads agent_upload ON agent_upload.committed_blob_id=b.id
+    AND agent_upload.agent_commit_state='HOST_COMMITTED'`;
 
 function mapFile(row: FileRow): FileEntry {
   return {id: row.id, committeeId: row.committee_id, logicalName: row.logical_name,
-    mediaType: row.entry_media_type, status: row.status, createdByUserId: row.created_by_user_id,
+    mediaType: row.entry_media_type, status: row.status, syncState: row.sync_state,
+    createdByUserId: row.created_by_user_id,
     currentVersion: {id: row.version_id, versionNumber: row.version_number, originalName: row.original_name,
       mediaType: row.version_media_type, sizeBytes: Number(row.size_bytes), sha256: row.sha256_hex,
       blobId: row.blob_id, createdAt: row.version_created_at.toISOString()},
@@ -140,7 +147,8 @@ export function safeDownloadHeaders(file: FileEntry): Record<string, string> {
 
 export class Stage6FileService {
   constructor(private readonly pool: Pool, private readonly serverVolume: ServerVolumeStore,
-    private readonly s3Configs: Stage6S3ConfigService, private readonly s3Factory: FileS3StoreFactory) {}
+    private readonly s3Configs: Stage6S3ConfigService, private readonly s3Factory: FileS3StoreFactory,
+    private readonly staging?: DurableStagingStore) {}
 
   async list(auth: AuthenticatedSession | undefined, committeeId: string): Promise<FileEntry[]> {
     return transaction(this.pool, async client => {
@@ -162,6 +170,14 @@ export class Stage6FileService {
   }> {
     const row = await this.visibleRow(auth, uuid(fileId, 'File ID'));
     const file = mapFile(row);
+    if (row.provider_type === 'CHAIR_AGENT') {
+      if (!this.staging || !row.agent_staging_key || !await this.staging.exists(row.agent_staging_key)) {
+        throw new AppError({code: 'SERVICE_NOT_READY', message: 'The file is currently available only on the Chair computer.'});
+      }
+      await this.staging.verify(row.agent_staging_key, Number(row.size_bytes), row.sha256_hex);
+      return {file, headers: safeDownloadHeaders(file),
+        content: this.staging.read(row.agent_staging_key, Number(row.size_bytes), row.sha256_hex)};
+    }
     const store = await this.store(row.provider_type, row.provider_config_id);
     await store.verify(row.storage_key, Number(row.size_bytes), row.sha256_hex);
     const content = store.readVerified(row.storage_key);
@@ -172,12 +188,23 @@ export class Stage6FileService {
     sizeBytes: number; sha256: string; content: AsyncIterable<Buffer>;
   }> {
     const result = await this.pool.query<StoredBlobRow>(`SELECT b.storage_key,b.size_bytes,
-      encode(b.sha256,'hex') AS sha256_hex,s.provider_type,s.provider_config_id
+      encode(b.sha256,'hex') AS sha256_hex,s.provider_type,s.provider_config_id,
+      agent_upload.staging_key AS agent_staging_key
       FROM file_blobs b JOIN storage_bindings s ON s.id=b.storage_binding_id
+      LEFT JOIN file_uploads agent_upload ON agent_upload.committed_blob_id=b.id
+        AND agent_upload.agent_commit_state='HOST_COMMITTED'
       WHERE b.committee_id=$1 AND b.id=$2 AND b.durability_state='COMMITTED'`,
     [uuid(committeeId, 'Committee ID'), uuid(blobId, 'Blob ID')]);
     const row = result.rows[0];
     if (!row) throw new AppError({code: 'NOT_FOUND', message: 'Blob not found.'});
+    if (row.provider_type === 'CHAIR_AGENT') {
+      if (!this.staging || !row.agent_staging_key || !await this.staging.exists(row.agent_staging_key)) {
+        throw new AppError({code: 'SERVICE_NOT_READY', message: 'The blob is currently available only on the Chair computer.'});
+      }
+      await this.staging.verify(row.agent_staging_key, Number(row.size_bytes), row.sha256_hex);
+      return {sizeBytes: Number(row.size_bytes), sha256: row.sha256_hex,
+        content: this.staging.read(row.agent_staging_key, Number(row.size_bytes), row.sha256_hex)};
+    }
     const store = await this.store(row.provider_type, row.provider_config_id);
     await store.verify(row.storage_key, Number(row.size_bytes), row.sha256_hex);
     return {sizeBytes: Number(row.size_bytes), sha256: row.sha256_hex, content: store.readVerified(row.storage_key)};
@@ -200,8 +227,8 @@ export class Stage6FileService {
       const result = await client.query<DeleteJobRow>(`SELECT j.*,b.storage_key,s.provider_type,s.provider_config_id
         FROM file_blob_delete_jobs j JOIN file_blobs b ON b.id=j.blob_id
         JOIN storage_bindings s ON s.id=b.storage_binding_id
-        WHERE (j.status IN ('PENDING','RETRY') AND j.next_attempt_at<=now())
-          OR (j.status='IN_PROGRESS' AND (j.claimed_at IS NULL OR j.claimed_at<=now()-interval '5 minutes'))
+        WHERE s.provider_type<>'CHAIR_AGENT' AND ((j.status IN ('PENDING','RETRY') AND j.next_attempt_at<=now())
+          OR (j.status='IN_PROGRESS' AND (j.claimed_at IS NULL OR j.claimed_at<=now()-interval '5 minutes')))
         ORDER BY CASE WHEN j.status='IN_PROGRESS' THEN j.claimed_at ELSE j.next_attempt_at END,j.created_at,j.id
         FOR UPDATE OF j SKIP LOCKED LIMIT 1`);
       if (!result.rows[0]) return null;

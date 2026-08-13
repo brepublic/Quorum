@@ -255,6 +255,20 @@ describe('migration discovery', () => {
     expect(tasks?.sql).toContain('schema_compatibility = 21');
   });
 
+  it('binds Chair Agent storage to durable host commits and explicit local conflicts', async () => {
+    const migrations = await loadMigrations(resolve('server/migrations'));
+    const provider = migrations.find(migration => migration.version === 22);
+    expect(provider?.name).toBe('chair_agent_provider');
+    expect(provider?.sql).toContain("'PENDING_HOST_COMMIT', 'SYNCED', 'OUT_OF_SYNC'");
+    expect(provider?.sql).toContain('storage_bindings_storage_host_fk');
+    expect(provider?.sql).toContain('file_uploads_agent_target_integrity');
+    expect(provider?.sql).toContain('storage_agent_tasks_source_upload_once');
+    expect(provider?.sql).toContain('CREATE TABLE storage_agent_change_requests');
+    expect(provider?.sql).toContain('CREATE TABLE storage_agent_conflicts');
+    expect(provider?.sql).toContain("'HOST_TRANSFERRED'");
+    expect(provider?.sql).toContain('schema_compatibility=22');
+  });
+
   it('rejects SQL files outside the versioned naming contract', async () => {
     const directory = await temporaryDirectory();
     await writeFile(join(directory, 'first.sql'), 'SELECT 1;\n');

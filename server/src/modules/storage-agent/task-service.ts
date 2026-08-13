@@ -43,6 +43,7 @@ interface TaskRow extends QueryResultRow {
   expected_size_bytes: string | number | null;
   expected_sha256_hex: string | null;
   content_staging_key: string | null;
+  source_upload_id: string | null;
   content_state: 'NONE' | 'RECEIVING' | 'STAGED';
   received_size_bytes: string | number | null;
   actual_sha256_hex: string | null;
@@ -63,6 +64,15 @@ interface TaskRow extends QueryResultRow {
 export interface AgentBlobDestination {
   start(metadata: {sizeBytes: number; sha256: string}): void;
   write(chunk: Buffer): Promise<void>;
+}
+
+export interface StorageAgentTaskCompletionFinalizer {
+  finalize(client: PoolClient, task: {
+    id: string; committeeId: string; hostId: string; leaseGeneration: number;
+    type: StorageAgentTask['type']; fileEntryId: string; fileRevision: number;
+    blobId: string | null; expectedSizeBytes: number | null; expectedSha256: string | null;
+    contentStagingKey: string | null; sourceUploadId: string | null;
+  }, committee: Stage4CommitteeRow, context: Stage4Context): Promise<void>;
 }
 
 const TASK_SELECT = `SELECT *,encode(expected_sha256,'hex') AS expected_sha256_hex,
@@ -182,7 +192,8 @@ export class Stage7StorageTaskService {
     private readonly agent: Stage7StorageAgentService,
     private readonly staging: DurableStagingStore,
     private readonly files: Stage6FileService,
-    private readonly capacity?: StorageCapacityGuard
+    private readonly capacity?: StorageCapacityGuard,
+    private readonly finalizer?: StorageAgentTaskCompletionFinalizer
   ) {}
 
   async manifest(credential: string, leaseGeneration: number, after = 0, limit = 100): Promise<StorageManifestPage> {
@@ -326,8 +337,26 @@ export class Stage7StorageTaskService {
       if (row.task_type !== 'STORE_BLOB' || row.blob_id !== blobId || row.file_revision !== fileRevision) {
         throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Blob does not match its storage Agent task.'});
       }
-      return {committeeId: lease.committeeId, sizeBytes: Number(row.expected_size_bytes), sha256: row.expected_sha256_hex as string};
+      let stagingKey: string | null = null;
+      if (row.source_upload_id) {
+        const upload = await client.query<{staging_key: string; status: string; agent_task_id: string}>(`SELECT
+          staging_key,status,agent_task_id FROM file_uploads WHERE id=$1 FOR SHARE`, [row.source_upload_id]);
+        if (!upload.rows[0] || upload.rows[0].status !== 'STAGED' || upload.rows[0].agent_task_id !== row.id) {
+          throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Source upload is not ready for its storage Agent task.'});
+        }
+        stagingKey = upload.rows[0].staging_key;
+      }
+      return {committeeId: lease.committeeId, sizeBytes: Number(row.expected_size_bytes),
+        sha256: row.expected_sha256_hex as string, stagingKey};
     });
+    if (authorized.stagingKey) {
+      await this.staging.verify(authorized.stagingKey, authorized.sizeBytes, authorized.sha256);
+      destination.start({sizeBytes: authorized.sizeBytes, sha256: authorized.sha256});
+      for await (const chunk of this.staging.read(authorized.stagingKey, authorized.sizeBytes, authorized.sha256)) {
+        await destination.write(chunk);
+      }
+      return;
+    }
     const stored = await this.files.readStoredBlob(authorized.committeeId, blobId);
     if (stored.sizeBytes !== authorized.sizeBytes || stored.sha256 !== authorized.sha256) {
       throw new AppError({code: 'SERVICE_NOT_READY', message: 'Stored blob integrity does not match its task.'});
@@ -373,6 +402,14 @@ export class Stage7StorageTaskService {
       }
       if (outcome === 'FAILED' && row.content_state === 'STAGED') {
         throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Verified staged content cannot be failed.'});
+      }
+      if (outcome === 'COMPLETED' && this.finalizer) {
+        await this.finalizer.finalize(client, {id: row.id, committeeId: row.committee_id, hostId: row.host_id,
+          leaseGeneration: Number(row.lease_generation), type: row.task_type, fileEntryId: row.file_entry_id,
+          fileRevision: row.file_revision, blobId: row.blob_id,
+          expectedSizeBytes: row.expected_size_bytes === null ? null : Number(row.expected_size_bytes),
+          expectedSha256: row.expected_sha256_hex, contentStagingKey: row.content_staging_key,
+          sourceUploadId: row.source_upload_id}, committee, context);
       }
       const updated = await client.query<TaskRow>(`UPDATE storage_agent_tasks SET status=$2,
         terminal_request_id=$3,terminal_outcome=$2,completed_at=CASE WHEN $2='COMPLETED' THEN now() ELSE NULL END,
