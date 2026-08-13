@@ -54,8 +54,8 @@
   },
   "scripts": {
     "start": "vite",
-    "build": "tsc && vite build",
-    "build:self-host": "VITE_RUNTIME_MODE=self-hosted pnpm build && pnpm --filter @quorum/contracts build && pnpm --filter @quorum/rule-schema build && pnpm --filter @quorum/server build",
+    "build": "pnpm --filter @quorum/contracts build && tsc && vite build",
+    "build:self-host": "VITE_RUNTIME_MODE=self-hosted pnpm build && pnpm --filter @quorum/rule-schema build && pnpm --filter @quorum/server build",
     "serve": "vite preview",
     "test": "vitest",
     "test:self-host": "vitest run packages server src/runtime-mode.test.ts src/services/self-hosted-identity.test.ts src/services/self-hosted-api.test.ts src/pages/SelfHostedIdentity.test.tsx src/pages/SelfHostedWorkspace.test.tsx",

@@ -100,4 +100,31 @@ describe('stage 5 timer HTTP boundary', () => {
     expect(commandTimer).toHaveBeenCalledWith(authenticated, '30000000-0000-4000-8000-000000000001', 'pause',
       {baseRevision: 3}, expect.objectContaining({requestId: expect.any(String)}));
   });
+
+  it('rejects an actor identity in anonymous strawpoll votes', async () => {
+    const voteStrawpoll = vi.fn(async (_auth, _id, body: Record<string, unknown>) => {
+      if ('actorUserId' in body) throw new AppError({code: 'VALIDATION_FAILED', message: 'Unsupported field.'});
+      return {id: 'strawpoll'};
+    });
+    const stage5 = {voteStrawpoll} as unknown as Stage5Service;
+    const response = await send(stage5, '/api/v1/strawpolls/30000000-0000-4000-8000-000000000001/votes',
+      {optionIds: ['40000000-0000-4000-8000-000000000001'], anonymousAccessToken: 'token',
+        actorUserId: 'attacker'});
+    expect(response.statusCode).toBe(422);
+  });
+
+  it('routes strawpoll creation and votes through idempotent commands', async () => {
+    const createStrawpoll = vi.fn(async () => ({id: 'strawpoll'}));
+    const voteStrawpoll = vi.fn(async () => ({id: 'strawpoll'}));
+    const stage5 = {createStrawpoll, voteStrawpoll} as unknown as Stage5Service;
+    await send(stage5, '/api/v1/committees/20000000-0000-4000-8000-000000000001/strawpolls',
+      {meetingSessionId: '30000000-0000-4000-8000-000000000001', question: '支持？',
+        votingMode: 'ANONYMOUS', multipleChoice: false, options: ['支持', '反对']});
+    await send(stage5, '/api/v1/strawpolls/30000000-0000-4000-8000-000000000001/votes',
+      {optionIds: ['40000000-0000-4000-8000-000000000001'], anonymousAccessToken: 'token'});
+    expect(createStrawpoll).toHaveBeenCalledWith(authenticated, '20000000-0000-4000-8000-000000000001',
+      expect.any(Object), 'timer-key', expect.any(Object));
+    expect(voteStrawpoll).toHaveBeenCalledWith(authenticated, '30000000-0000-4000-8000-000000000001',
+      expect.any(Object), 'timer-key', expect.any(Object));
+  });
 });

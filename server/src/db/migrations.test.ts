@@ -91,6 +91,20 @@ describe('migration discovery', () => {
     expect(ballots?.sql).toContain('ballots_frozen_state_machine');
   });
 
+  it('separates anonymous strawpoll receipts from option selections', async () => {
+    const migrations = await loadMigrations(resolve('server/migrations'));
+    const strawpolls = migrations.find(migration => migration.version === 11);
+    expect(strawpolls?.name).toBe('strawpolls');
+    expect(strawpolls?.sql).toContain('strawpoll_seat_votes');
+    expect(strawpolls?.sql).toContain('strawpoll_anonymous_receipts');
+    expect(strawpolls?.sql).toContain('strawpoll_anonymous_votes');
+    const anonymousVotes = strawpolls?.sql.split('CREATE TABLE strawpoll_anonymous_votes')[1]?.split(');')[0];
+    expect(anonymousVotes).not.toContain('credential_hash');
+    expect(anonymousVotes).not.toContain('actor_user_id');
+    expect(anonymousVotes).not.toContain('seat_id');
+    expect(anonymousVotes).not.toContain('created_at');
+  });
+
   it('rejects SQL files outside the versioned naming contract', async () => {
     const directory = await temporaryDirectory();
     await writeFile(join(directory, 'first.sql'), 'SELECT 1;\n');

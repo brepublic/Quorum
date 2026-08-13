@@ -303,6 +303,7 @@ export interface CommitteeWorkspaceSnapshot {
   speakerLists?: import('./stage5.js').SpeakerList[];
   motions?: import('./stage5.js').ProceedingMotion[];
   ballots?: import('./stage5.js').FormalBallot[];
+  strawpolls?: import('./stage5.js').Strawpoll[];
 }
 
 export function localizedDisplayName(

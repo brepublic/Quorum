@@ -391,6 +391,20 @@ async function handleStage5Request(options: {
           : await stage5.publishBallot(auth, id, body, context);
     sendJson(response, ballotCommand[2] === 'votes' ? 201 : 200, success(result, requestId)); return true;
   }
+  const strawpolls = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/strawpolls$/.exec(pathname);
+  if (method === 'POST' && strawpolls) {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 201, success(await stage5.createStrawpoll(auth, strawpolls[1] as string, body,
+      idempotencyKey(request), context), requestId)); return true;
+  }
+  const strawpollCommand = /^\/api\/v1\/strawpolls\/([0-9a-f-]{36})\/(votes|close)$/.exec(pathname);
+  if (method === 'POST' && strawpollCommand) {
+    const auth = await write(); const body = await readJson(request); const id = strawpollCommand[1] as string;
+    const result = strawpollCommand[2] === 'votes'
+      ? await stage5.voteStrawpoll(auth, id, body, idempotencyKey(request), context)
+      : await stage5.closeStrawpoll(auth, id, body, context);
+    sendJson(response, strawpollCommand[2] === 'votes' ? 201 : 200, success(result, requestId)); return true;
+  }
   const timerCommand = /^\/api\/v1\/timers\/([0-9a-f-]{36})\/(start|pause|resume|extend|reset|expire)$/.exec(pathname);
   if (method === 'POST' && timerCommand) {
     const auth = await write(); const body = await readJson(request);

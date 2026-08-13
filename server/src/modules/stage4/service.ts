@@ -18,6 +18,7 @@ import type {
   FrozenRuleEvaluation,
   FormalBallot,
   BallotChoice,
+  Strawpoll,
   MeetingSession,
   PointStatus,
   PublicCommitteePoint,
@@ -221,6 +222,12 @@ interface SnapshotBallotRow extends QueryResultRow {
   rule_evaluation: FrozenRuleEvaluation; eligibility_snapshot: FormalBallot['eligibility'];
   threshold_definition: FormalBallot['threshold']; result: FormalBallot['result']; revision: number;
   opened_at: Date; closed_at: Date | null; published_at: Date | null;
+}
+
+interface SnapshotStrawpollRow extends QueryResultRow {
+  id: string; committee_id: string; meeting_session_id: string; question: string;
+  voting_mode: Strawpoll['votingMode']; multiple_choice: boolean; status: Strawpoll['status']; revision: number;
+  created_at: Date; closed_at: Date | null;
 }
 
 async function snapshotSpeeches(client: PoolClient, listId: string): Promise<SpeechRecord[]> {
@@ -678,6 +685,22 @@ export class Stage4Service {
           result: row.status === 'PUBLISHED' ? row.result : null, revision: row.revision,
           openedAt: row.opened_at.toISOString(), closedAt: row.closed_at?.toISOString() ?? null,
           publishedAt: row.published_at?.toISOString() ?? null};
+      }));
+      const strawpollRows = await client.query<SnapshotStrawpollRow>(
+        'SELECT * FROM strawpolls WHERE committee_id=$1 ORDER BY created_at,id', [committeeId]);
+      result.strawpolls = await Promise.all(strawpollRows.rows.map(async row => {
+        const options = await client.query<{id: string; label: string; sort_order: number; vote_count: string}>(`WITH votes AS (
+            SELECT unnest(option_ids) AS option_id FROM strawpoll_seat_votes WHERE strawpoll_id=$1
+            UNION ALL
+            SELECT unnest(option_ids) AS option_id FROM strawpoll_anonymous_votes WHERE strawpoll_id=$1
+          ) SELECT o.id,o.label,o.sort_order,count(v.option_id)::text AS vote_count FROM strawpoll_options o
+            LEFT JOIN votes v ON v.option_id=o.id WHERE o.strawpoll_id=$1
+            GROUP BY o.id,o.label,o.sort_order ORDER BY o.sort_order,o.id`, [row.id]);
+        return {id: row.id, committeeId: row.committee_id, meetingSessionId: row.meeting_session_id,
+          question: row.question, votingMode: row.voting_mode, multipleChoice: row.multiple_choice, status: row.status,
+          options: options.rows.map(option => ({id: option.id, label: option.label, sortOrder: option.sort_order,
+            voteCount: Number(option.vote_count)})), revision: row.revision, createdAt: row.created_at.toISOString(),
+          closedAt: row.closed_at?.toISOString() ?? null};
       }));
       if (viewer.audience !== 'PUBLIC') {
         const [notes, posts, timers] = await Promise.all([

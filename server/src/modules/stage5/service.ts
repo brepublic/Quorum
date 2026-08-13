@@ -1,7 +1,8 @@
-import {randomUUID} from 'node:crypto';
+import {createHash, randomBytes, randomUUID} from 'node:crypto';
 import type {Pool, PoolClient, QueryResultRow} from 'pg';
-import type {AuthoritativeTimer, BallotChoice, FormalBallot, FrozenRuleEvaluation, ProceedingMotion, SpeakerList,
-  SpeakerListKind, SpeakerQueueEntry, SpeechRecord, TimerOwnerType, YieldType} from '@quorum/contracts';
+import type {AuthoritativeTimer, BallotChoice, CreatedStrawpoll, FormalBallot, FrozenRuleEvaluation, ProceedingMotion,
+  SpeakerList, SpeakerListKind, SpeakerQueueEntry, SpeechRecord, Strawpoll, StrawpollVotingMode, TimerOwnerType,
+  YieldType} from '@quorum/contracts';
 import {freezeRuleEvaluation} from '@quorum/contracts';
 import {AppError} from '../../http/errors.js';
 import type {AuthenticatedSession} from '../identity/store.js';
@@ -52,6 +53,11 @@ interface BallotRow extends QueryResultRow {
   rule_evaluation: FrozenRuleEvaluation; eligibility_snapshot: FormalBallot['eligibility'];
   threshold_definition: FormalBallot['threshold']; threshold_value: number; result: FormalBallot['result'];
   revision: number; opened_at: Date; closed_at: Date | null; published_at: Date | null;
+}
+
+interface StrawpollRow extends QueryResultRow {
+  id: string; committee_id: string; meeting_session_id: string; question: string; voting_mode: StrawpollVotingMode;
+  multiple_choice: boolean; status: Strawpoll['status']; revision: number; created_at: Date; closed_at: Date | null;
 }
 
 function positiveInteger(value: unknown, name: string): number {
@@ -134,6 +140,25 @@ async function ballotState(client: PoolClient, row: BallotRow, includeVotes = tr
       choice: vote.current_choice, revision: vote.revision, castAt: vote.cast_at.toISOString()})), result: row.result,
     revision: row.revision, openedAt: row.opened_at.toISOString(), closedAt: row.closed_at?.toISOString() ?? null,
     publishedAt: row.published_at?.toISOString() ?? null};
+}
+
+async function strawpollState(client: PoolClient, row: StrawpollRow): Promise<Strawpoll> {
+  const options = await client.query<{id: string; label: string; sort_order: number; vote_count: string}>(`WITH votes AS (
+      SELECT unnest(option_ids) AS option_id FROM strawpoll_seat_votes WHERE strawpoll_id=$1
+      UNION ALL
+      SELECT unnest(option_ids) AS option_id FROM strawpoll_anonymous_votes WHERE strawpoll_id=$1
+    ) SELECT o.id,o.label,o.sort_order,count(v.option_id)::text AS vote_count FROM strawpoll_options o
+      LEFT JOIN votes v ON v.option_id=o.id WHERE o.strawpoll_id=$1
+      GROUP BY o.id,o.label,o.sort_order ORDER BY o.sort_order,o.id`, [row.id]);
+  return {id: row.id, committeeId: row.committee_id, meetingSessionId: row.meeting_session_id,
+    question: row.question, votingMode: row.voting_mode, multipleChoice: row.multiple_choice, status: row.status,
+    options: options.rows.map(option => ({id: option.id, label: option.label, sortOrder: option.sort_order,
+      voteCount: Number(option.vote_count)})), revision: row.revision, createdAt: row.created_at.toISOString(),
+    closedAt: row.closed_at?.toISOString() ?? null};
+}
+
+function sha256(value: string): Buffer {
+  return createHash('sha256').update(value).digest();
 }
 
 export function calculateBallotResult(eligibility: FormalBallot['eligibility'], votes: FormalBallot['votes'],
@@ -1012,6 +1037,151 @@ export class Stage5Service {
         before: {status: ballot.status, revision: ballot.revision},
         after: {status: 'PUBLISHED', revision: ballot.revision + 1, result}});
       return ballotState(client, updated.rows[0] as BallotRow);
+    });
+  }
+
+  async createStrawpoll(auth: AuthenticatedSession, committeeId: string, input: Record<string, unknown>, key: string,
+    context: Stage4Context): Promise<CreatedStrawpoll> {
+    requireBusinessIdentity(auth); assertExactBody(input, ['meetingSessionId', 'question', 'votingMode', 'multipleChoice', 'options']);
+    const meetingSessionId = uuid(input.meetingSessionId, 'Meeting session ID');
+    const question = text(input.question, 'Question', 1000); const votingMode = input.votingMode as StrawpollVotingMode;
+    if (!['ANONYMOUS', 'SEAT_AUTHENTICATED'].includes(votingMode)) {
+      throw new AppError({code: 'VALIDATION_FAILED', message: 'Strawpoll voting mode is invalid.'});
+    }
+    if (typeof input.multipleChoice !== 'boolean') {
+      throw new AppError({code: 'VALIDATION_FAILED', message: 'Strawpoll choice mode is invalid.'});
+    }
+    if (!Array.isArray(input.options) || input.options.length < 2 || input.options.length > 20) {
+      throw new AppError({code: 'VALIDATION_FAILED', message: 'Strawpoll options are invalid.'});
+    }
+    const optionLabels = input.options.map((value, index) => text(value, `Option ${index + 1}`, 500));
+    if (new Set(optionLabels).size !== optionLabels.length) {
+      throw new AppError({code: 'VALIDATION_FAILED', message: 'Strawpoll options must be unique.'});
+    }
+    return idempotentTransaction({pool: this.pool, auth, route: `POST /api/v1/committees/${committeeId}/strawpolls`,
+      key, request: input, status: 201, work: async client => {
+        const committee = await lockedCommittee(client, committeeId); requireProceedingsActive(committee);
+        await requireChair(client, committee, auth.user.id);
+        const session = await client.query<{status: string}>('SELECT status FROM meeting_sessions WHERE id=$1 AND committee_id=$2',
+          [meetingSessionId, committeeId]);
+        if (!session.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Meeting session not found.'});
+        if (session.rows[0].status !== 'OPEN') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Meeting session is closed.'});
+        const id = randomUUID(); const accessToken = votingMode === 'ANONYMOUS' ? randomBytes(32).toString('base64url') : undefined;
+        const inserted = await client.query<StrawpollRow>(`INSERT INTO strawpolls
+          (id,committee_id,meeting_session_id,question,voting_mode,multiple_choice,anonymous_access_token_hash,created_by_user_id)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`, [id, committeeId, meetingSessionId, question, votingMode,
+          input.multipleChoice, accessToken ? sha256(accessToken) : null, auth.user.id]);
+        for (const [index, label] of optionLabels.entries()) {
+          await client.query('INSERT INTO strawpoll_options (id,strawpoll_id,label,sort_order) VALUES ($1,$2,$3,$4)',
+            [randomUUID(), id, label, index]);
+        }
+        await appendEvent(client, committee, {type: 'strawpoll.created', resourceType: 'strawpoll', resourceId: id,
+          revision: 1, payload: {question, votingMode, multipleChoice: input.multipleChoice,
+            options: optionLabels.map((label, index) => ({label, sortOrder: index}))}, audience: 'PUBLIC'});
+        await audit(client, context, {committeeId, actorUserId: auth.user.id, capabilities: ['CHAIR'],
+          action: 'voting.strawpoll_created', resourceType: 'strawpoll', resourceId: id,
+          after: {votingMode, multipleChoice: input.multipleChoice, optionCount: optionLabels.length, revision: 1}});
+        return {...await strawpollState(client, inserted.rows[0] as StrawpollRow),
+          ...(accessToken ? {anonymousAccessToken: accessToken} : {})};
+      }});
+  }
+
+  async voteStrawpoll(auth: AuthenticatedSession, strawpollId: string, input: Record<string, unknown>, key: string,
+    context: Stage4Context): Promise<Strawpoll> {
+    requireBusinessIdentity(auth);
+    assertExactBody(input, ['optionIds', 'onBehalfOfSeatId', 'anonymousAccessToken']);
+    if (!Array.isArray(input.optionIds) || input.optionIds.length < 1 || input.optionIds.length > 20) {
+      throw new AppError({code: 'VALIDATION_FAILED', message: 'Strawpoll choices are invalid.'});
+    }
+    const optionIds = input.optionIds.map((value, index) => uuid(value, `Option ID ${index + 1}`));
+    if (new Set(optionIds).size !== optionIds.length) throw new AppError({code: 'VALIDATION_FAILED', message: 'Strawpoll choices are invalid.'});
+    return idempotentTransaction({pool: this.pool, auth, route: `POST /api/v1/strawpolls/${strawpollId}/votes`, key,
+      request: input, status: 201, work: async client => {
+        const located = await client.query<{committee_id: string}>('SELECT committee_id FROM strawpolls WHERE id=$1', [strawpollId]);
+        if (!located.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Strawpoll not found.'});
+        const committee = await lockedCommittee(client, located.rows[0].committee_id); requireProceedingsActive(committee);
+        const pollResult = await client.query<StrawpollRow & {anonymous_access_token_hash: Buffer | null}>(
+          'SELECT * FROM strawpolls WHERE id=$1 FOR UPDATE', [strawpollId]);
+        const poll = pollResult.rows[0];
+        if (!poll) throw new AppError({code: 'NOT_FOUND', message: 'Strawpoll not found.'});
+        if (poll.status !== 'OPEN') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The strawpoll is closed.'});
+        if (!poll.multiple_choice && optionIds.length !== 1) {
+          throw new AppError({code: 'VALIDATION_FAILED', message: 'Select one strawpoll option.'});
+        }
+        const validOptions = await client.query<{id: string}>('SELECT id FROM strawpoll_options WHERE strawpoll_id=$1 AND id=ANY($2::uuid[])',
+          [strawpollId, optionIds]);
+        if (validOptions.rowCount !== optionIds.length) throw new AppError({code: 'VALIDATION_FAILED', message: 'Strawpoll choice is invalid.'});
+        const chair = await isChair(client, committee.id, auth.user.id);
+        if (poll.voting_mode === 'ANONYMOUS') {
+          if (input.onBehalfOfSeatId !== undefined) throw new AppError({code: 'VALIDATION_FAILED', message: 'Anonymous votes do not use seats.'});
+          const accessToken = text(input.anonymousAccessToken, 'Anonymous access token', 200);
+          if (!poll.anonymous_access_token_hash?.equals(sha256(accessToken))) {
+            throw new AppError({code: 'FORBIDDEN', message: 'Anonymous strawpoll access is invalid.'});
+          }
+          const credentialHash = sha256(`${strawpollId}\0${accessToken}\0${auth.user.id}`);
+          await client.query('INSERT INTO strawpoll_anonymous_receipts (strawpoll_id,credential_hash) VALUES ($1,$2)',
+            [strawpollId, credentialHash]);
+          await client.query('INSERT INTO strawpoll_anonymous_votes (id,strawpoll_id,option_ids) VALUES ($1,$2,$3)',
+            [randomUUID(), strawpollId, optionIds]);
+          await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id,
+            capabilities: chair ? ['CHAIR'] : ['MEMBER'], action: 'voting.strawpoll_vote_recorded',
+            resourceType: 'strawpoll', resourceId: strawpollId,
+            after: {votingMode: 'ANONYMOUS', selectionCount: optionIds.length, revision: poll.revision + 1}});
+        } else {
+          if (input.anonymousAccessToken !== undefined) {
+            throw new AppError({code: 'VALIDATION_FAILED', message: 'Seat strawpolls do not use anonymous credentials.'});
+          }
+          let seatId: string | null;
+          if (chair) seatId = uuid(input.onBehalfOfSeatId, 'Represented seat ID');
+          else {
+            if (committee.operation_mode === 'CHAIR_OPERATED') throw new AppError({code: 'FORBIDDEN',
+              message: 'Chair capability is required in Chair-operated mode.'});
+            if (input.onBehalfOfSeatId !== undefined) throw new AppError({code: 'FORBIDDEN', message: 'A delegate cannot choose another seat.'});
+            seatId = await activeSeat(client, committee.id, auth.user.id);
+          }
+          if (!seatId) throw new AppError({code: 'FORBIDDEN', message: 'An active committee seat is required.'});
+          const present = await client.query(`SELECT 1 FROM current_attendance WHERE meeting_session_id=$1 AND seat_id=$2
+            AND state='PRESENT'`, [poll.meeting_session_id, seatId]);
+          if (!present.rowCount) throw new AppError({code: 'FORBIDDEN', message: 'The represented seat is not present.'});
+          await client.query(`INSERT INTO strawpoll_seat_votes
+            (id,strawpoll_id,seat_id,option_ids,actor_user_id,on_behalf_of_seat_id) VALUES ($1,$2,$3,$4,$5,$3)`,
+          [randomUUID(), strawpollId, seatId, optionIds, auth.user.id]);
+          await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id,
+            capabilities: chair ? ['CHAIR'] : ['MEMBER'], onBehalfOfSeatId: seatId,
+            action: 'voting.strawpoll_vote_recorded', resourceType: 'strawpoll', resourceId: strawpollId,
+            after: {votingMode: 'SEAT_AUTHENTICATED', seatId, optionIds, revision: poll.revision + 1}});
+        }
+        await client.query('UPDATE strawpolls SET revision=revision+1 WHERE id=$1', [strawpollId]);
+        await appendEvent(client, committee, {type: 'strawpoll.vote_recorded', resourceType: 'strawpoll', resourceId: strawpollId,
+          revision: poll.revision + 1, payload: {votingMode: poll.voting_mode, voteCountIncrement: 1}, audience: 'PUBLIC'});
+        const updated = await client.query<StrawpollRow>('SELECT * FROM strawpolls WHERE id=$1', [strawpollId]);
+        return strawpollState(client, updated.rows[0] as StrawpollRow);
+      }});
+  }
+
+  async closeStrawpoll(auth: AuthenticatedSession, strawpollId: string, input: Record<string, unknown>,
+    context: Stage4Context): Promise<Strawpoll> {
+    requireBusinessIdentity(auth); assertExactBody(input, ['baseRevision']);
+    const baseRevision = positiveInteger(input.baseRevision, 'Base revision');
+    return transaction(this.pool, async client => {
+      const located = await client.query<{committee_id: string}>('SELECT committee_id FROM strawpolls WHERE id=$1', [strawpollId]);
+      if (!located.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Strawpoll not found.'});
+      const committee = await lockedCommittee(client, located.rows[0].committee_id); requireProceedingsActive(committee);
+      await requireChair(client, committee, auth.user.id);
+      const pollResult = await client.query<StrawpollRow>('SELECT * FROM strawpolls WHERE id=$1 FOR UPDATE', [strawpollId]);
+      const poll = pollResult.rows[0] as StrawpollRow;
+      if (poll.status !== 'OPEN') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The strawpoll is closed.'});
+      if (poll.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT',
+        message: 'This strawpoll changed since it was loaded.', details: {currentRevision: poll.revision}});
+      const now = this.now(); const updated = await client.query<StrawpollRow>(`UPDATE strawpolls SET status='CLOSED',
+        closed_at=$2,revision=revision+1 WHERE id=$1 RETURNING *`, [strawpollId, now]);
+      const state = await strawpollState(client, updated.rows[0] as StrawpollRow);
+      await appendEvent(client, committee, {type: 'strawpoll.closed', resourceType: 'strawpoll', resourceId: strawpollId,
+        revision: poll.revision + 1, payload: {closedAt: now.toISOString(), options: state.options}, audience: 'PUBLIC'});
+      await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id, capabilities: ['CHAIR'],
+        action: 'voting.strawpoll_closed', resourceType: 'strawpoll', resourceId: strawpollId,
+        before: {status: 'OPEN', revision: poll.revision}, after: {status: 'CLOSED', revision: poll.revision + 1}});
+      return state;
     });
   }
 }

@@ -5,6 +5,8 @@ import type {
   SpeechRecord,
   ProceedingMotion,
   FormalBallot,
+  Strawpoll,
+  CreatedStrawpoll,
   CommitteeNote,
   CommitteeSummary,
   CommitteeTemplate,
@@ -215,6 +217,18 @@ export const selfHostedApi = {
   },
   publishBallot(id: string, baseRevision: number) {
     return request<FormalBallot>(`/api/v1/ballots/${id}/publish`, {method: 'POST', body: {baseRevision}});
+  },
+  createStrawpoll(committeeId: string, input: {meetingSessionId: string; question: string;
+    votingMode: 'ANONYMOUS' | 'SEAT_AUTHENTICATED'; multipleChoice: boolean; options: string[]}) {
+    return request<CreatedStrawpoll>(`/api/v1/committees/${committeeId}/strawpolls`, {method: 'POST',
+      body: input, idempotencyKey: key()});
+  },
+  voteStrawpoll(id: string, input: {optionIds: string[]; onBehalfOfSeatId?: string;
+    anonymousAccessToken?: string}) {
+    return request<Strawpoll>(`/api/v1/strawpolls/${id}/votes`, {method: 'POST', body: input, idempotencyKey: key()});
+  },
+  closeStrawpoll(id: string, baseRevision: number) {
+    return request<Strawpoll>(`/api/v1/strawpolls/${id}/close`, {method: 'POST', body: {baseRevision}});
   },
   updateCommittee(id: string, baseRevision: number, patch: Record<string, unknown>) {
     return request<CommitteeSummary>(`/api/v1/committees/${id}`, {method: 'PATCH', body: {baseRevision, patch}});

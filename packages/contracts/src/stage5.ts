@@ -173,3 +173,30 @@ export interface FormalBallot {
   closedAt: string | null;
   publishedAt: string | null;
 }
+
+export type StrawpollVotingMode = 'ANONYMOUS' | 'SEAT_AUTHENTICATED';
+
+export interface StrawpollOptionResult {
+  id: string;
+  label: string;
+  sortOrder: number;
+  voteCount: number;
+}
+
+export interface Strawpoll {
+  id: string;
+  committeeId: string;
+  meetingSessionId: string;
+  question: string;
+  votingMode: StrawpollVotingMode;
+  multipleChoice: boolean;
+  status: 'OPEN' | 'CLOSED';
+  options: StrawpollOptionResult[];
+  revision: number;
+  createdAt: string;
+  closedAt: string | null;
+}
+
+export interface CreatedStrawpoll extends Strawpoll {
+  anonymousAccessToken?: string;
+}

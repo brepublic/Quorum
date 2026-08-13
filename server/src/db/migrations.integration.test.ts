@@ -60,8 +60,8 @@ integration('PostgreSQL migrations', () => {
       expect(first).toEqual(expect.objectContaining({ready: true, latestAppliedVersion: 10}));
       expect(second).toEqual(expect.objectContaining({ready: true, pendingVersions: []}));
       expect(status.ready).toBe(true);
-      expect(runtime.rows[0]?.schema_compatibility).toBe(10);
-      expect(applied.rowCount).toBe(10);
+      expect(runtime.rows[0]?.schema_compatibility).toBe(11);
+      expect(applied.rowCount).toBe(11);
       const stage3Tables = await pool.query<{name: string}>(`SELECT table_name AS name FROM information_schema.tables
         WHERE table_schema='public' AND table_name IN ('committees','committee_memberships','committee_capabilities',
         'committee_seats','seat_assignments','seat_invitations','rule_packages','rule_package_versions',
