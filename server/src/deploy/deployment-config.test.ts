@@ -17,6 +17,8 @@ describe('self-hosted deployment configuration', () => {
     expect(compose).toContain('QUORUM_STORAGE_PATH: /var/lib/quorum/files');
     expect(compose).toContain('QUORUM_MAX_FILE_BYTES:');
     expect(compose).toContain('QUORUM_MAX_UPLOAD_REQUEST_BYTES:');
+    expect(compose).toContain('QUORUM_STORAGE_MASTER_KEY:');
+    expect(compose).toContain('QUORUM_STORAGE_MASTER_KEY_VERSION:');
     expect(compose).toMatch(/\nvolumes:\n(?:\s{2}[a-z_]+:\n?)+$/);
   });
 

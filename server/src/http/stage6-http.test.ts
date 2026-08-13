@@ -7,7 +7,9 @@ import {describe, expect, it, vi} from 'vitest';
 import {createLogger} from '../logger';
 import type {IdentityService} from '../modules/identity/service';
 import type {Stage6UploadService} from '../modules/storage/upload-service';
-import type {Stage6ServerVolumeService} from '../modules/storage/server-volume-service';
+import type {Stage6ProviderCommitService} from '../modules/storage/provider-commit-service';
+import type {Stage6S3ConfigService} from '../modules/storage/s3-config-service';
+import type {Stage6StorageService} from '../modules/storage/service';
 import {createRequestHandler} from './app';
 
 const authenticated = {sessionId: 'session', user: {id: '10000000-0000-4000-8000-000000000001',
@@ -23,12 +25,14 @@ class TestResponse extends EventEmitter {
 
 async function send(uploads: Stage6UploadService, options: {
   method: 'POST' | 'PUT'; path: string; chunks: Buffer[]; headers?: Record<string, string>;
-}, serverVolume?: Stage6ServerVolumeService) {
+}, providerCommits?: Stage6ProviderCommitService, extras: {
+  s3Configs?: Stage6S3ConfigService; storage?: Stage6StorageService;
+} = {}) {
   const identity = {authenticate: vi.fn(async () => authenticated)} as unknown as IdentityService;
   const handler = createRequestHandler({health: {ready: async () => ({ready: true, checks: {
     database: {status: 'ok', migrationVersion: 14}, storage: {status: 'ok'}}})},
   logger: createLogger(() => undefined), version: 'test', databaseMigrationVersion: 14,
-  identity, uploads, serverVolume, allowedOrigins: ['https://quorum.example.com']});
+  identity, uploads, providerCommits, ...extras, allowedOrigins: ['https://quorum.example.com']});
   const incoming = Readable.from(options.chunks) as unknown as IncomingMessage;
   Object.assign(incoming, {method: options.method, url: options.path, headers: {
     origin: 'https://quorum.example.com',
@@ -98,9 +102,28 @@ describe('stage 6 upload HTTP boundary', () => {
     const commitUpload = vi.fn(async () => ({id: 'file', currentVersion: {id: 'version'}}));
     const response = await send({} as Stage6UploadService, {method: 'POST',
       path: '/api/v1/file-uploads/30000000-0000-4000-8000-000000000001/commit',
-      chunks: [Buffer.from('{}')]}, {commitUpload} as unknown as Stage6ServerVolumeService);
+      chunks: [Buffer.from('{}')]}, {commitUpload} as unknown as Stage6ProviderCommitService);
     expect(response.statusCode).toBe(201);
     expect(commitUpload).toHaveBeenCalledWith(authenticated, '30000000-0000-4000-8000-000000000001',
       {}, 'upload-key', expect.objectContaining({requestId: expect.any(String)}));
+  });
+
+  it('keeps S3 configuration and binding behind authenticated role-aware services', async () => {
+    const create = vi.fn(async () => ({id: 'config', displayName: '对象存储'}));
+    const configResponse = await send({} as Stage6UploadService, {method: 'POST',
+      path: '/api/v1/admin/storage-provider-configs/s3', chunks: [Buffer.from(JSON.stringify({name: 'config'}))]},
+    undefined, {s3Configs: {create} as unknown as Stage6S3ConfigService});
+    expect(configResponse.statusCode).toBe(201);
+    expect(create).toHaveBeenCalledWith(authenticated, {name: 'config'}, 'upload-key', expect.anything());
+
+    const createS3Binding = vi.fn(async () => ({id: 'binding', providerType: 'S3_COMPATIBLE'}));
+    const body = {baseRevision: 2, providerConfigId: '40000000-0000-4000-8000-000000000001'};
+    const bindingResponse = await send({} as Stage6UploadService, {method: 'POST',
+      path: '/api/v1/committees/20000000-0000-4000-8000-000000000001/storage-bindings/s3',
+      chunks: [Buffer.from(JSON.stringify(body))]}, undefined,
+    {storage: {createS3Binding} as unknown as Stage6StorageService});
+    expect(bindingResponse.statusCode).toBe(201);
+    expect(createS3Binding).toHaveBeenCalledWith(authenticated, '20000000-0000-4000-8000-000000000001',
+      body, 'upload-key', expect.anything());
   });
 });

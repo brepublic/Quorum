@@ -774,6 +774,27 @@ provider 最终内容校验成功后，单一 PostgreSQL 事务把 upload 更新
 
 阶段 6.3 只提供校验后读取的内部原语，尚未开放下载 HTTP。已提交的服务器卷内容不属于暂存期限或 LRU 清理范围；S3、provider 切换、审核 UI 和清理 worker 留给后续阶段。
 
+## 11.6 阶段 6.4 S3 compatible provider 契约
+
+```text
+GET  /api/v1/storage-provider-configs/s3
+POST /api/v1/admin/storage-provider-configs/s3
+PUT  /api/v1/admin/storage-provider-configs/:id
+POST /api/v1/admin/storage-provider-configs/:id/verify
+POST /api/v1/committees/:id/storage-bindings/s3
+POST /api/v1/file-uploads/:id/commit
+```
+
+系统管理员创建、更新、停用和验证实例级 S3 配置。写请求继续执行 Session、Origin、CSRF、幂等键或 revision 边界。配置响应只返回显示名、endpoint、region、bucket、prefix、寻址方式、私网许可、状态和凭据 key version，不返回 access key、secret 或密文。
+
+凭据以实例显式 `QUORUM_STORAGE_MASTER_KEY` 做 AES-256-GCM 认证加密，AAD 绑定配置 ID 与 key version。缺少 master key、版本不匹配、密文篡改或错误 key 均返回稳定的 `SERVICE_NOT_READY`，不尝试明文或默认凭据链。Chair 只能把委员会绑定到活动配置；不能读取凭据或提交任意 endpoint。
+
+endpoint 只接受无 URL 凭据、query 或 fragment 的 HTTPS URL。保存时拒绝明显的回环、链路本地、私网和元数据 IP；每次请求 DNS 解析后再次校验所有地址，并把 TLS 主机名连接固定到已校验地址，防止 DNS rebinding。私网对象存储只有系统管理员保存的 `allowPrivateNetwork` 可显式放行。
+
+S3 object key 固定为 `<prefix>/blobs/<两位分片>/<压缩 blob UUID>`。服务端以 SigV4 从 durable staging 流式 PUT，不加载完整文件；成功响应后必须 GET 远端对象并重新计算实际大小和 SHA-256。只有远端校验成功才复用阶段 6.3 的 upload、blob、file entry/version、事件、审计和幂等事务。网络、远端状态、短写、超限或哈希失败不产生文件版本；数据库失败保留暂存与远端完整对象，同一 upload 重试复用原 blob/object key。
+
+阶段 6.4 仅实现内部读取、验证和删除原语，不开放下载或运行物理删除任务。provider 切换、审核发布和清理留给后续阶段。
+
 ## 12. SSE 格式
 
 ```text

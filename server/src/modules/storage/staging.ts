@@ -211,6 +211,23 @@ export class DurableStagingStore {
     return {sizeBytes: received, sha256: actualHash};
   }
 
+  async *read(key: string, expectedSizeBytes: number, expectedSha256: string): AsyncGenerator<Buffer> {
+    await this.verify(key, expectedSizeBytes, expectedSha256);
+    const target = await this.checkedTarget(key);
+    await this.regularFile(target);
+    const handle = await this.operations.open(target, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+    const buffer = Buffer.allocUnsafe(64 * 1024);
+    try {
+      while (true) {
+        const result = await handle.read(buffer, 0, buffer.length, null);
+        if (!result.bytesRead) break;
+        yield Buffer.from(buffer.subarray(0, result.bytesRead));
+      }
+    } finally {
+      await handle.close();
+    }
+  }
+
   private preflight(expectedSizeBytes: number, contentLength?: number): void {
     if (!Number.isSafeInteger(expectedSizeBytes) || expectedSizeBytes < 0) {
       throw new UploadStreamError('UPLOAD_SIZE_MISMATCH', 'VALIDATION_FAILED',

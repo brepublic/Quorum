@@ -157,7 +157,7 @@ deploy/
 
 ## 9. 阶段 6：服务器卷和 S3 文件
 
-状态：6.1–6.3 的 PostgreSQL schema、共享契约、durable staging、流式上传和 `SERVER_VOLUME` provider 已完成；真实 PostgreSQL 与持久卷验收因当前环境未提供相应服务而延期。6.4–6.8 尚未实施。
+状态：6.1–6.4 的 PostgreSQL schema、共享契约、durable staging、流式上传、`SERVER_VOLUME` 与 `S3_COMPATIBLE` provider 已完成；真实 PostgreSQL、持久卷和 S3 compatible 服务验收因当前环境未提供相应服务而延期。6.5–6.8 尚未实施。
 
 交付：
 
@@ -234,4 +234,4 @@ deploy/
 
 ## 14. 首个实现里程碑
 
-下一步只实施阶段 6.4：`S3_COMPATIBLE` provider。实例级配置保存加密凭据，Chair 只能选择获准配置；上传、读取、删除和完整性校验通过 provider 接口完成。保持 Firebase 默认运行时和同源安全边界不变，不提前实现 provider 切换、Chair Local Agent、归档或 Firebase 移除。
+下一步只实施阶段 6.5：文件审核、发布、授权下载和永久删除任务。下载必须安全编码文件名并强制危险类型作为附件；逻辑删除保持即时不可见，物理删除使用显式任务和墓碑。保持 Firebase 默认运行时和同源安全边界不变，不提前实现 provider 切换、Chair Local Agent、归档或 Firebase 移除。

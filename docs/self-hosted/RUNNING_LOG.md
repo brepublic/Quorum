@@ -6,10 +6,10 @@
 
 - 更新时间：2026-08-13
 - 分支：`self-host`
-- 已确认基线：`da454ec stage 6.2: stream uploads to durable staging`
-- 当前阶段：6.3 `SERVER_VOLUME` provider 已完成并单独提交；提交以当前 `git log` 为准。
-- 当前工作：准备按阶段 6.4 交接实施 `S3_COMPATIBLE` provider。
-- 下一步：复跑 6.3 针对性测试和 `pnpm build:self-host`，再实施阶段 6.4。
+- 已确认基线：`1119c2a stage 6.3: commit uploads to server volume`
+- 当前阶段：6.4 `S3_COMPATIBLE` provider 已完成并单独提交；提交以当前 `git log` 为准。
+- 当前工作：准备按阶段 6.5 交接实施文件审核、发布、下载和永久删除。
+- 下一步：复跑 6.4 针对性测试和 `pnpm build:self-host`，再实施阶段 6.5。
 
 ## 已完成与验证
 
@@ -43,6 +43,7 @@
 
 - `4351291`：阶段 6.1 文件元数据、版本、存储绑定和墓碑。
 - `da454ec`：阶段 6.2 durable staging 与流式上传。
+- `1119c2a`：阶段 6.3 `SERVER_VOLUME` provider。
 
 ### 2026-08-13：阶段 6.3 SERVER_VOLUME provider
 
@@ -59,3 +60,19 @@
 - `git diff --check`：通过。
 - 当前 WSL 仍未提供真实 PostgreSQL、Docker 持久卷或 TLS 浏览器；断电、满盘、重启、挂载卷和代理证据记录在 `MANUAL_ACCEPTANCE.md` 的 SH-MAN-503。
 - 阶段 6.3 已单独提交；提交以当前 `git log` 为准。
+
+### 2026-08-13：阶段 6.4 S3_COMPATIBLE provider
+
+- migration 16 增加实例级 S3 provider 配置、凭据密文字段、key version 和 binding 外键；schema compatibility 为 16。
+- 凭据使用显式 master key 的 AES-256-GCM，AAD 绑定配置 ID 与 key version。错误 key、密文篡改和跨配置重放被拒绝。
+- 系统管理员管理配置；Chair 只能绑定活动配置。配置响应、事件和审计不包含凭据。
+- endpoint 只接受 HTTPS，配置和 DNS 解析后均执行 SSRF 检查；连接固定到已验证地址。私网目标只能由系统管理员显式允许。
+- SigV4 适配器从 durable staging 流式 PUT；object key 只由管理员 prefix 与 blob UUID 派生，PUT 后 GET 重算大小和 SHA-256。
+- provider 或数据库故障保留暂存；同一 upload 重试复用 blob/object key。阶段 6.4 不开放下载或运行删除任务。
+- 最终针对性 Vitest：9 个文件、51 项测试通过；1 个 PostgreSQL 文件 12 项明确 skip。SigV4 与 AWS 官方 GET Object 测试向量精确匹配；contracts 与 server build 通过。
+- `pnpm test:self-host`：36 个文件、152 项测试通过；6 个 PostgreSQL 集成文件共 29 项明确 skip。仅出现既有 React/Semantic UI 弃用警告。
+- `pnpm build:self-host`：通过；Vite 仅报告既有的大分块警告。
+- `pnpm test:self-host:integration`：6 个文件、29 项测试因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip。
+- `git diff --check`：通过。
+- 当前 WSL 没有真实 PostgreSQL、S3 compatible 测试桶、可控 DNS/TLS 或浏览器；相关验证与取证要求记录在 `MANUAL_ACCEPTANCE.md` 的 SH-MAN-504。
+- 阶段 6.4 已单独提交；提交以当前 `git log` 为准。

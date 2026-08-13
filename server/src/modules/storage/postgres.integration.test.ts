@@ -17,6 +17,10 @@ import {DurableStagingStore, type StagingOperations} from './staging';
 import {Stage6UploadService} from './upload-service';
 import {ServerVolumeStore} from './server-volume';
 import {Stage6ServerVolumeService} from './server-volume-service';
+import {StorageCredentialCipher} from './credential-crypto';
+import {Stage6S3ConfigService} from './s3-config-service';
+import {Stage6S3CommitService} from './s3-commit-service';
+import {S3CompatibleStore, type S3Request, type S3Response, type S3Transport} from './s3-store';
 
 const {Client, Pool} = pg;
 const adminUrl = process.env.TEST_DATABASE_ADMIN_URL;
@@ -117,6 +121,44 @@ async function storageFixture() {
   const binding = await storage.createServerVolumeBinding(chair, committee.id,
     {baseRevision: committee.revision}, 'binding', context('binding'));
   return {owner, chair, member, committee, binding};
+}
+
+class IntegrationS3Transport implements S3Transport {
+  readonly objects = new Map<string, Buffer>();
+  async request(input: S3Request): Promise<S3Response> {
+    if (input.method === 'PUT') {
+      const chunks: Buffer[] = [];
+      for await (const chunk of input.body as AsyncIterable<Uint8Array>) chunks.push(Buffer.from(chunk));
+      this.objects.set(input.key, Buffer.concat(chunks));
+      return {statusCode: 200, headers: {}, body: (async function* () {})()};
+    }
+    if (input.method === 'GET') {
+      const content = this.objects.get(input.key);
+      return {statusCode: content ? 200 : 404, headers: {}, body: (async function* () {if (content) yield content;})()};
+    }
+    return {statusCode: 200, headers: {}, body: (async function* () {})()};
+  }
+}
+
+async function s3Fixture() {
+  const owner = await user('s3owner');
+  const chair = await user('s3chair');
+  const member = await user('s3member');
+  let committee = await stage4.createCommittee(owner, {name: 'S3 Council', visibility: 'PUBLIC',
+    countryTemplateKey: 'builtin:default'}, 's3-committee', context('s3-committee'));
+  committee = await stage3.setChair(owner, committee.id, chair.user.id, true, committee.revision, context('s3-chair'));
+  const seat = await stage4.createSeat(chair, committee.id,
+    {stableKey: 's3-member', displayName: 'S3 Member', canVote: true}, 's3-seat', context('s3-seat'));
+  await stage3.assignSeat(chair, committee.id, {seatId: seat.id, userId: member.user.id}, context('s3-assign'));
+  const configs = new Stage6S3ConfigService(pool as pg.Pool,
+    new StorageCredentialCipher(Buffer.alloc(32, 9), 1), () => new IntegrationS3Transport());
+  const config = await configs.create(administrator, {displayName: '测试 S3', endpoint: 'https://s3.example.com',
+    region: 'ap-shanghai', bucket: 'quorum-files', prefix: 'instance', forcePathStyle: true,
+    allowPrivateNetwork: false, credentials: {accessKeyId: 'access', secretAccessKey: 'secret'}},
+  's3-config', context('s3-config'));
+  const binding = await storage.createS3Binding(chair, committee.id,
+    {baseRevision: committee.revision, providerConfigId: config.id}, 's3-binding', context('s3-binding'));
+  return {owner, chair, member, committee, config, binding, configs};
 }
 
 integration('PostgreSQL stage 6 file metadata', () => {
@@ -479,5 +521,47 @@ integration('PostgreSQL stage 6 file metadata', () => {
     const state = await pool?.query(`SELECT status,provider_blob_id,provider_storage_key,
       (SELECT count(*)::int FROM file_versions) AS versions FROM file_uploads WHERE id=$1`, [upload.id]);
     expect(state?.rows[0]).toEqual({status: 'STAGED', provider_blob_id: null, provider_storage_key: null, versions: 0});
+  });
+
+  it('encrypts S3 credentials, hides them from summaries, and restricts configuration to the administrator', async () => {
+    const cipher = new StorageCredentialCipher(Buffer.alloc(32, 8), 2);
+    const configs = new Stage6S3ConfigService(pool as pg.Pool, cipher, () => new IntegrationS3Transport());
+    const ordinary = await user('ordinary-config-user');
+    const body = {displayName: '对象存储', endpoint: 'https://s3.example.com', region: 'ap-shanghai',
+      bucket: 'quorum-files', prefix: 'instance', forcePathStyle: true, allowPrivateNetwork: false,
+      credentials: {accessKeyId: 'visible-access', secretAccessKey: 'top-secret'}};
+    await expect(configs.create(ordinary, body, 'forbidden-s3-config', context('forbidden-s3-config')))
+      .rejects.toMatchObject({code: 'FORBIDDEN'});
+    const created = await configs.create(administrator, body, 'create-s3-config', context('create-s3-config'));
+    expect(created).not.toHaveProperty('credentials');
+    const stored = await pool?.query(`SELECT credentials_ciphertext,credentials_nonce,credentials_auth_tag,
+      credential_key_version FROM storage_provider_configs WHERE id=$1`, [created.id]);
+    expect(stored?.rows[0]?.credentials_ciphertext.toString('utf8')).not.toContain('top-secret');
+    expect(cipher.decrypt(created.id, {ciphertext: stored?.rows[0]?.credentials_ciphertext,
+      nonce: stored?.rows[0]?.credentials_nonce, authTag: stored?.rows[0]?.credentials_auth_tag,
+      keyVersion: stored?.rows[0]?.credential_key_version})).toEqual(body.credentials);
+  });
+
+  it('commits a STAGED upload to S3 exactly once with a blob-derived object key', async () => {
+    const fixture = await s3Fixture();
+    const content = 's3-provider-content';
+    const upload = await uploads.createUpload(fixture.member, fixture.committee.id, {
+      logicalName: 'S3 文件', originalName: '../../unsafe-name.pdf', mediaType: 'application/pdf',
+      expectedSizeBytes: Buffer.byteLength(content), sha256: digest(content)
+    }, 's3-upload', context('s3-upload'));
+    await uploads.receiveContent(fixture.member, upload.id, (async function* () {yield content;})(),
+      's3-content', Buffer.byteLength(content), context('s3-content'));
+    const transport = new IntegrationS3Transport();
+    const service = new Stage6S3CommitService(pool as pg.Pool, storage, staging, fixture.configs,
+      config => new S3CompatibleStore(config, transport, 20 * 1024 * 1024));
+    const file = await service.commitUpload(fixture.member, upload.id, {}, 's3-commit', context('s3-commit'));
+    const replay = await service.commitUpload(fixture.member, upload.id, {}, 's3-commit', context('s3-replay'));
+    expect(replay).toEqual(file);
+    const state = await pool?.query(`SELECT status,provider_storage_key,
+      (SELECT count(*)::int FROM file_blobs) AS blobs,(SELECT count(*)::int FROM file_versions) AS versions
+      FROM file_uploads WHERE id=$1`, [upload.id]);
+    expect(state?.rows[0]).toEqual(expect.objectContaining({status: 'COMMITTED', blobs: 1, versions: 1}));
+    expect(state?.rows[0]?.provider_storage_key).toMatch(/^instance\/blobs\/[a-f0-9]{2}\/[a-f0-9]{32}$/);
+    expect(state?.rows[0]?.provider_storage_key).not.toContain('unsafe-name');
   });
 });

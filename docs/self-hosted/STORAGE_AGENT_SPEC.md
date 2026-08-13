@@ -20,6 +20,8 @@ S3_COMPATIBLE
 
 系统管理员创建实例级存储配置，保存 endpoint、region、bucket、prefix 和加密凭据。Chair 只能选择获准配置，不能读取凭据。腾讯云 COS 通过其 S3 兼容接口接入；首版不实现 OneDrive、Google Drive 等 OAuth 网盘。
 
+当前阶段 6.4 使用显式实例 master key 对凭据执行带配置 ID 与 key version AAD 的 AES-256-GCM 加密。endpoint 只接受 HTTPS；DNS 解析后再次执行网络目标校验并固定连接地址。对象使用 SigV4，key 只由管理员 prefix 和服务器 blob UUID 派生；PUT 后必须 GET 重算大小和 SHA-256，不能只信任 ETag。
+
 ### `CHAIR_AGENT`
 
 主席电脑上的 Local Agent 是指定文件夹的主机。普通浏览器不直接访问主席电脑；Agent 始终主动向 Quorum 服务器建立 HTTPS 连接。

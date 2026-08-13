@@ -219,6 +219,52 @@ export class Stage6StorageService {
     });
   }
 
+  async createS3Binding(auth: AuthenticatedSession, committeeId: string, body: unknown,
+    idempotencyKey: string, context: Stage4Context): Promise<StorageBinding> {
+    requireBusinessIdentity(auth);
+    assertExactBody(body as Record<string, unknown>, ['baseRevision', 'providerConfigId']);
+    const request = body as {baseRevision?: unknown; providerConfigId?: unknown};
+    const providerConfigId = uuid(request.providerConfigId, 'Provider config ID');
+    return idempotentTransaction({
+      pool: this.pool,
+      auth,
+      route: `/api/v1/committees/${committeeId}/storage-bindings/s3`,
+      key: idempotencyKey,
+      request: body,
+      status: 201,
+      work: async client => {
+        const committee = await lockedCommittee(client, committeeId);
+        requireEditable(committee);
+        await requireChair(client, committee, auth.user.id);
+        requireCommitteeRevision(committee, request.baseRevision);
+        const provider = await client.query(`SELECT 1 FROM storage_provider_configs
+          WHERE id=$1 AND provider_type='S3_COMPATIBLE' AND status='ACTIVE' FOR SHARE`, [providerConfigId]);
+        if (!provider.rowCount) {
+          throw new AppError({code: 'NOT_FOUND', message: 'S3 provider config not found.'});
+        }
+        if (await client.query('SELECT 1 FROM storage_bindings WHERE committee_id=$1 AND status=$2',
+          [committee.id, 'ACTIVE']).then(result => Boolean(result.rowCount))) {
+          throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The committee already has active storage.'});
+        }
+        const id = randomUUID();
+        const created = await client.query<StorageBindingRow>(`INSERT INTO storage_bindings
+          (id,committee_id,provider_type,provider_config_id,status,created_by_user_id)
+          VALUES ($1,$2,'S3_COMPATIBLE',$3,'ACTIVE',$4) RETURNING *`,
+        [id, committee.id, providerConfigId, auth.user.id]);
+        await client.query(`UPDATE committees SET active_storage_binding_id=$2,revision=revision+1,updated_at=now()
+          WHERE id=$1`, [committee.id, id]);
+        committee.revision += 1;
+        await appendEvent(client, committee, {type: 'committee.updated', resourceType: 'storage_binding',
+          resourceId: id, revision: committee.revision, audience: 'CHAIR',
+          payload: {storageBindingId: id, providerType: 'S3_COMPATIBLE', providerConfigId}});
+        await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id,
+          capabilities: ['CHAIR'], action: 'storage.binding_changed', resourceType: 'storage_binding', resourceId: id,
+          after: {providerType: 'S3_COMPATIBLE', providerConfigId, status: 'ACTIVE', revision: 1}});
+        return binding(created.rows[0] as StorageBindingRow);
+      }
+    });
+  }
+
   /**
    * Internal persistence boundary. A provider may call this only after it has
    * durably committed and independently verified the bytes described here.

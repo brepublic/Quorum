@@ -12,7 +12,9 @@ import type {Stage4Service} from '../modules/stage4/service.js';
 import type {RealtimeService} from '../modules/realtime/service.js';
 import type {Stage5Service} from '../modules/stage5/service.js';
 import type {Stage6UploadService} from '../modules/storage/upload-service.js';
-import type {Stage6ServerVolumeService} from '../modules/storage/server-volume-service.js';
+import type {Stage6ProviderCommitService} from '../modules/storage/provider-commit-service.js';
+import type {Stage6S3ConfigService} from '../modules/storage/s3-config-service.js';
+import type {Stage6StorageService} from '../modules/storage/service.js';
 import {AppError, normalizeError} from './errors.js';
 import {
   clearIdentityCookies,
@@ -39,7 +41,9 @@ export interface AppDependencies {
   realtime?: RealtimeService;
   stage5?: Stage5Service;
   uploads?: Stage6UploadService;
-  serverVolume?: Stage6ServerVolumeService;
+  providerCommits?: Stage6ProviderCommitService;
+  s3Configs?: Stage6S3ConfigService;
+  storage?: Stage6StorageService;
   allowedOrigins?: string[];
 }
 
@@ -130,6 +134,10 @@ async function authenticatedWrite(request: IncomingMessage, identity: IdentitySe
   const cookies = identityCookies(request);
   verifyCsrf(cookies.get(CSRF_COOKIE_NAME), singleHeader(request.headers['x-csrf-token']));
   return identity.authenticate(cookies.get(SESSION_COOKIE_NAME));
+}
+
+async function authenticatedRead(request: IncomingMessage, identity: IdentityService): Promise<AuthenticatedSession> {
+  return identity.authenticate(identityCookies(request).get(SESSION_COOKIE_NAME));
 }
 
 function integerField(body: Record<string, unknown>, name: string): number {
@@ -334,13 +342,44 @@ async function handleStage4Request(options: {
 
 async function handleStage6UploadRequest(options: {
   request: IncomingMessage; response: ServerResponse; pathname: string; requestId: string;
-  identity: IdentityService; uploads: Stage6UploadService; serverVolume?: Stage6ServerVolumeService;
+  identity: IdentityService; uploads: Stage6UploadService; providerCommits?: Stage6ProviderCommitService;
+  s3Configs?: Stage6S3ConfigService; storage?: Stage6StorageService;
   allowedOrigins: readonly string[];
 }): Promise<boolean> {
-  const {request, response, pathname, requestId, identity, uploads, serverVolume, allowedOrigins} = options;
+  const {request, response, pathname, requestId, identity, uploads, providerCommits, s3Configs, storage,
+    allowedOrigins} = options;
   const method = request.method ?? 'GET';
   const context = identityContext(request, requestId);
   const write = async () => { requireOrigin(request, allowedOrigins); return authenticatedWrite(request, identity); };
+  if (method === 'GET' && pathname === '/api/v1/storage-provider-configs/s3' && s3Configs) {
+    const auth = await authenticatedRead(request, identity);
+    sendJson(response, 200, success(await s3Configs.list(auth), requestId));
+    return true;
+  }
+  if (method === 'POST' && pathname === '/api/v1/admin/storage-provider-configs/s3' && s3Configs) {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 201, success(await s3Configs.create(auth, body, idempotencyKey(request), context), requestId));
+    return true;
+  }
+  const config = /^\/api\/v1\/admin\/storage-provider-configs\/([0-9a-f-]{36})$/.exec(pathname);
+  if (method === 'PUT' && config && s3Configs) {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 200, success(await s3Configs.update(auth, config[1] as string, body,
+      idempotencyKey(request), context), requestId)); return true;
+  }
+  const verifyConfig = /^\/api\/v1\/admin\/storage-provider-configs\/([0-9a-f-]{36})\/verify$/.exec(pathname);
+  if (method === 'POST' && verifyConfig && s3Configs) {
+    const auth = await write(); await readJson(request);
+    sendJson(response, 200, success(await s3Configs.verify(auth, verifyConfig[1] as string,
+      idempotencyKey(request), context), requestId));
+    return true;
+  }
+  const s3Binding = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/storage-bindings\/s3$/.exec(pathname);
+  if (method === 'POST' && s3Binding && storage) {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 201, success(await storage.createS3Binding(auth, s3Binding[1] as string, body,
+      idempotencyKey(request), context), requestId)); return true;
+  }
   const create = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/file-uploads$/.exec(pathname);
   if (method === 'POST' && create) {
     const auth = await write();
@@ -362,10 +401,10 @@ async function handleStage6UploadRequest(options: {
     return true;
   }
   const commit = /^\/api\/v1\/file-uploads\/([0-9a-f-]{36})\/commit$/.exec(pathname);
-  if (method === 'POST' && commit && serverVolume) {
+  if (method === 'POST' && commit && providerCommits) {
     const auth = await write();
     const body = await readJson(request);
-    sendJson(response, 201, success(await serverVolume.commitUpload(auth, commit[1] as string, body,
+    sendJson(response, 201, success(await providerCommits.commitUpload(auth, commit[1] as string, body,
       idempotencyKey(request), context), requestId));
     return true;
   }
@@ -801,7 +840,8 @@ export function createRequestHandler(dependencies: AppDependencies): RequestList
 
         if (dependencies.identity && dependencies.uploads && await handleStage6UploadRequest({
           request, response, pathname, requestId, identity: dependencies.identity, uploads: dependencies.uploads,
-          serverVolume: dependencies.serverVolume,
+          providerCommits: dependencies.providerCommits, s3Configs: dependencies.s3Configs,
+          storage: dependencies.storage,
           allowedOrigins: dependencies.allowedOrigins ?? []
         })) return;
 

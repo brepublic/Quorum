@@ -4,9 +4,11 @@ Compose 同时启动 Caddy、Quorum TypeScript 后端和 PostgreSQL。PostgreSQL
 
 ```sh
 cp deploy/.env.example deploy/.env
-# 编辑域名、同源 Origin 和数据库密码
+# 编辑域名、同源 Origin、数据库密码和存储 master key
 docker compose --env-file deploy/.env -f deploy/compose.yaml up -d --build
 ```
+
+`QUORUM_STORAGE_MASTER_KEY` 必须是 32 字节的无填充 base64url。可用 `openssl rand -base64 32 | tr '+/' '-_' | tr -d '='` 生成并单独安全保存。更换 key 时先迁移已有 S3 凭据并递增 `QUORUM_STORAGE_MASTER_KEY_VERSION`；直接替换会使现有密文无法解密。
 
 Caddy 将 `/api/v1/*` 和 `/health/*` 反向代理到应用，其余未知路径回退到 `index.html`。`/health/live` 只检查进程，`/health/ready` 检查 PostgreSQL migration 与持久文件卷可写性。
 

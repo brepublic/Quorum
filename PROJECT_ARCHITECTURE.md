@@ -2,7 +2,7 @@
 
 > 本文件是本仓库的维护入口。后续涉及代码、构建、测试或运行的工作，应先阅读本文件和 `AGENTS.md`，并以实际代码为准更新本文档。
 
-> Quorum 已完成自主托管目标设计，并已落地实施计划阶段 0–5 和阶段 6.1–6.3。`self-hosted` 运行时以 PostgreSQL 为唯一业务真相，通过同源 API 与受众过滤 SSE 提供议事功能；上传可流式暂存并提交到服务器持久卷。S3、公开下载流程和文件 UI 尚未接入。
+> Quorum 已完成自主托管目标设计，并已落地实施计划阶段 0–5 和阶段 6.1–6.4。`self-hosted` 运行时以 PostgreSQL 为唯一业务真相，通过同源 API 与受众过滤 SSE 提供议事功能；上传可流式暂存并提交到服务器持久卷或 S3 compatible provider。公开下载流程和文件 UI 尚未接入。
 
 ## 1. 项目定位与技术栈
 
@@ -45,7 +45,7 @@ flowchart LR
 
 `src/index.tsx` 初始化 Google Analytics、Sentry、浏览器 history 与 Semantic UI 样式，并把 `App` 挂载到 `#root`。`VITE_RUNTIME_MODE` 显式选择运行路径：未设置或为 `firebase` 时保持原行为，`src/App.tsx` 初始化 Firebase，并在显示普通路由前调用 Functions 检查管理员初始化；`VITE_USE_FIREBASE_EMULATORS=true` 时连接本机模拟器，否则连接 `muncoordinated`。`VITE_RUNTIME_MODE=self-hosted` 使用 `SelfHostedIdentity` 与 `SelfHostedWorkspace`：身份、账号管理、委员会列表、模板和议事工作区均调用同源 `/api/v1`；每个浏览器对一个委员会最多保持一条 SSE。公开委员会深层路由可匿名读取过滤后的快照。两个运行时没有双写。
 
-`server/` 是自主托管模块化单体。它启动时通过 PostgreSQL advisory lock 执行带 SHA-256 校验和的 migration；数据库版本不兼容时 readiness 失败。阶段 2–4 migration 建立身份、委员会、规则包、模板及低并发议事。阶段 5 migration 5–12 增加实时议事、表决和版本化决议草案。migration 13 增加存储绑定、逻辑文件、不可变文件版本、blob 完整性元数据和不可变删除墓碑；migration 14 增加 durable upload；migration 15 把 provider blob 目标和已提交 file entry/version 绑定到 upload。schema compatibility 为 15。
+`server/` 是自主托管模块化单体。它启动时通过 PostgreSQL advisory lock 执行带 SHA-256 校验和的 migration；数据库版本不兼容时 readiness 失败。阶段 2–4 migration 建立身份、委员会、规则包、模板及低并发议事。阶段 5 migration 5–12 增加实时议事、表决和版本化决议草案。migration 13 增加存储绑定、逻辑文件、不可变文件版本、blob 完整性元数据和不可变删除墓碑；migration 14 增加 durable upload；migration 15 把 provider blob 目标和已提交 file entry/version 绑定到 upload；migration 16 增加 S3 provider 配置和加密凭据列。schema compatibility 为 16。
 
 首次启动生成高熵 bootstrap secret，只把 SHA-256 哈希写入数据库，并在专用控制台行显示一次；初始化事务锁定单行设置、创建唯一 `SYSTEM_ADMIN` 后清除哈希。密码使用固定参数 Argon2id；Session Cookie 为 `Secure`、`HttpOnly`、`SameSite=Lax`，数据库只保存 Session token 的 SHA-256；写请求同时校验允许 Origin 和双提交 CSRF token。登录、密码确认提权和改密会轮换 Session，重置密码、禁用账号和用户级撤销通过 `session_version` 与撤销时间立即使旧 Session 失效。
 
@@ -155,6 +155,7 @@ system
 - 阶段 6.1 的 `server/src/modules/storage/service.ts` 只提供 provider 校验完成后的内部 PostgreSQL 提交边界。它从 Session 推导 actor，并在同一事务中写入文件状态、委员会事件和审计。逻辑删除立即清除当前版本指针、追加墓碑并把 blob 标记为待物理删除；数据库触发器禁止修改文件版本、墓碑或复活已删除文件。
 - 阶段 6.2 的 `Stage6UploadService` 通过 `POST /api/v1/committees/:id/file-uploads` 创建上传，再由 `PUT /api/v1/file-uploads/:id/content` 直接消费 HTTP 流。`DurableStagingStore` 以服务器 UUID 生成路径，逐块执行全局与单文件上限、实际大小和 SHA-256 校验，并拒绝绝对路径、点路径、符号链接逃逸和非普通文件。完整内容只进入 `STAGED`；本阶段不调用 provider 提交，不创建 `file_entry`、`file_blob` 或 `file_version`。`CREATED`、`RECEIVING` 和 `STAGED` 即使过期也不属于普通清理范围。
 - 阶段 6.3 的 `Stage6ServerVolumeService` 只接收 `STAGED` upload。`ServerVolumeStore` 从暂存文件流式复制到由 blob UUID 派生的 0600 临时文件，执行 `fsync`、无覆盖原子发布和最终重读校验；路径检查拒绝符号链接、硬链接和非普通文件。`POST /api/v1/file-uploads/:id/commit` 在 provider 验证后用一个事务提交 upload、blob、file entry/version、事件、审计和幂等响应。数据库失败会保留暂存与服务器卷副本，重试复用原 blob ID；服务器卷读取原语已实现，但尚未开放下载 HTTP。
+- 阶段 6.4 增加实例级 `S3_COMPATIBLE` 配置、AES-256-GCM 凭据密文和 SigV4 HTTPS 适配器。系统管理员管理配置，Chair 只能把委员会绑定到活动配置。endpoint 在保存时拒绝危险 URL，并在每次 DNS 解析后拒绝非获准私网、回环、链路本地和元数据目标，同时把 TLS 主机名连接固定到已检查地址。S3 object key 只由管理员 prefix 和 blob UUID 派生；上传后 GET 重算大小和 SHA-256，再复用阶段 6.3 的原子发布事务。真实 S3 compatible 服务仍需按人工验收清单验证。
 
 因此，数据库规则和 Storage 元数据是产品的关键安全边界；变更前必须同时审查前端写入路径与这两份规则文件。
 

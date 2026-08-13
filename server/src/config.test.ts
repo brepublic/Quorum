@@ -44,4 +44,15 @@ describe('server configuration', () => {
       QUORUM_MAX_FILE_BYTES: '20', QUORUM_MAX_UPLOAD_REQUEST_BYTES: '19'}))
       .toThrow('must be at least');
   });
+
+  it('accepts only an explicit 32-byte storage master key', () => {
+    const encoded = Buffer.alloc(32, 7).toString('base64url');
+    const config = loadConfig({DATABASE_URL: 'postgresql://localhost/quorum',
+      QUORUM_STORAGE_MASTER_KEY: encoded, QUORUM_STORAGE_MASTER_KEY_VERSION: '3'});
+    expect(config.storageMasterKey).toEqual(Buffer.alloc(32, 7));
+    expect(config.storageMasterKeyVersion).toBe(3);
+    expect(loadConfig({DATABASE_URL: 'postgresql://localhost/quorum'}).storageMasterKey).toBeNull();
+    expect(() => loadConfig({DATABASE_URL: 'postgresql://localhost/quorum',
+      QUORUM_STORAGE_MASTER_KEY: 'not-a-key'})).toThrow('32-byte key');
+  });
 });

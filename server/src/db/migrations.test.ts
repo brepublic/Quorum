@@ -161,6 +161,20 @@ describe('migration discovery', () => {
     expect(provider?.sql).not.toContain('CHAIR_AGENT');
   });
 
+  it('stores S3 provider configuration with encrypted credentials and a binding foreign key', async () => {
+    const migrations = await loadMigrations(resolve('server/migrations'));
+    const s3 = migrations.find(migration => migration.version === 16);
+    expect(s3?.name).toBe('s3_provider_configs');
+    expect(s3?.sql).toContain('CREATE TABLE storage_provider_configs');
+    expect(s3?.sql).toContain('credentials_ciphertext bytea');
+    expect(s3?.sql).toContain('credentials_nonce bytea');
+    expect(s3?.sql).toContain('credentials_auth_tag bytea');
+    expect(s3?.sql).toContain('credential_key_version integer');
+    expect(s3?.sql).toContain('storage_bindings_provider_config_fk');
+    expect(s3?.sql).toContain('storage_bindings_provider_config_required');
+    expect(s3?.sql).not.toContain('secret_access_key');
+  });
+
   it('rejects SQL files outside the versioned naming contract', async () => {
     const directory = await temporaryDirectory();
     await writeFile(join(directory, 'first.sql'), 'SELECT 1;\n');

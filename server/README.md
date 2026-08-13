@@ -1,6 +1,6 @@
 # Quorum 自托管后端
 
-当前实现阶段 1–5 和 6.1–6.3：PostgreSQL 已保存文件元数据、不可变版本、blob 完整性、活动存储绑定、删除墓碑和 durable upload 状态；HTTP 内容流可持久暂存并原子提交到服务器卷。下载 HTTP、S3 和 Local Agent 尚未接入。
+当前实现阶段 1–5 和 6.1–6.4：PostgreSQL 已保存文件元数据、不可变版本、blob 完整性、活动存储绑定、删除墓碑、durable upload 和加密 S3 provider 配置；HTTP 内容流可持久暂存并原子提交到服务器卷或 S3 compatible provider。下载 HTTP 和 Local Agent 尚未接入。
 
 本机运行：
 
@@ -64,4 +64,4 @@ TEST_DATABASE_ADMIN_URL=postgresql://... pnpm test:self-host:integration
 
 未配置该变量时测试明确 skip，不改用内存数据库。
 
-阶段 6.1 的存储服务是 provider 成功后的内部持久化边界。阶段 6.2 把完整内容停在 `STAGED`。阶段 6.3 从暂存区流式提交到服务器卷，重新校验后在同一数据库事务中发布 upload、blob 和 `file_version`；失败保留可重试字节。
+阶段 6.1 的存储服务是 provider 成功后的内部持久化边界。阶段 6.2 把完整内容停在 `STAGED`。阶段 6.3 从暂存区流式提交到服务器卷。阶段 6.4 使用显式 master key 加密 S3 凭据，通过 SigV4 HTTPS 流式提交并远端重读校验；两种 provider 都在校验后以同一数据库事务发布 upload、blob 和 `file_version`，失败保留可重试暂存。

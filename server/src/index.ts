@@ -17,6 +17,11 @@ import {Stage6UploadService} from './modules/storage/upload-service.js';
 import {Stage6StorageService} from './modules/storage/service.js';
 import {ServerVolumeStore} from './modules/storage/server-volume.js';
 import {Stage6ServerVolumeService} from './modules/storage/server-volume-service.js';
+import {StorageCredentialCipher} from './modules/storage/credential-crypto.js';
+import {Stage6S3ConfigService} from './modules/storage/s3-config-service.js';
+import {NodeS3Transport, S3CompatibleStore} from './modules/storage/s3-store.js';
+import {Stage6S3CommitService} from './modules/storage/s3-commit-service.js';
+import {Stage6ProviderCommitService} from './modules/storage/provider-commit-service.js';
 
 const {Pool} = pg;
 const logger = createLogger();
@@ -55,6 +60,11 @@ async function main(): Promise<void> {
     const serverVolumeStore = new ServerVolumeStore(join(config.storagePath, 'server-volume'), config.maxFileBytes);
     await serverVolumeStore.initialize();
     const serverVolume = new Stage6ServerVolumeService(pool, metadata, staging, serverVolumeStore);
+    const credentialCipher = new StorageCredentialCipher(config.storageMasterKey, config.storageMasterKeyVersion);
+    const s3Configs = new Stage6S3ConfigService(pool, credentialCipher);
+    const s3 = new Stage6S3CommitService(pool, metadata, staging, s3Configs,
+      providerConfig => new S3CompatibleStore(providerConfig, new NodeS3Transport(providerConfig), config.maxFileBytes));
+    const providerCommits = new Stage6ProviderCommitService(pool, serverVolume, s3);
     await stage3.ensureBuiltins();
     const bootstrapSecret = await identity.ensureBootstrapSecret();
     if (bootstrapSecret) {
@@ -71,7 +81,9 @@ async function main(): Promise<void> {
       realtime,
       stage5,
       uploads,
-      serverVolume,
+      providerCommits,
+      s3Configs,
+      storage: metadata,
       allowedOrigins: config.allowedOrigins
     });
 

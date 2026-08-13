@@ -23,6 +23,22 @@ export interface StorageBinding {
   createdAt: string;
 }
 
+export interface S3ProviderConfigSummary {
+  id: string;
+  displayName: string;
+  endpoint: string;
+  region: string;
+  bucket: string;
+  prefix: string;
+  forcePathStyle: boolean;
+  allowPrivateNetwork: boolean;
+  status: 'ACTIVE' | 'DISABLED';
+  credentialKeyVersion: number;
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface FileVersion {
   id: string;
   versionNumber: number;

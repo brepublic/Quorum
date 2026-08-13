@@ -10,8 +10,23 @@ export interface ServerConfig {
   maxFileBytes: number;
   maxUploadRequestBytes: number;
   uploadTtlSeconds: number;
+  storageMasterKey: Buffer | null;
+  storageMasterKeyVersion: number;
   shutdownGraceMs: number;
   allowedOrigins: string[];
+}
+
+function storageMasterKey(env: NodeJS.ProcessEnv): Buffer | null {
+  const encoded = env.QUORUM_STORAGE_MASTER_KEY;
+  if (!encoded) return null;
+  if (!/^[A-Za-z0-9_-]{43}$/.test(encoded)) {
+    throw new Error('QUORUM_STORAGE_MASTER_KEY must be an unpadded base64url-encoded 32-byte key.');
+  }
+  const key = Buffer.from(encoded, 'base64url');
+  if (key.length !== 32 || key.toString('base64url') !== encoded) {
+    throw new Error('QUORUM_STORAGE_MASTER_KEY must be an unpadded base64url-encoded 32-byte key.');
+  }
+  return key;
 }
 
 function databaseUrl(env: NodeJS.ProcessEnv): string {
@@ -60,6 +75,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   if (maxUploadRequestBytes < maxFileBytes) {
     throw new Error('QUORUM_MAX_UPLOAD_REQUEST_BYTES must be at least QUORUM_MAX_FILE_BYTES.');
   }
+  const masterKey = storageMasterKey(env);
   return {
     host: env.HOST || '0.0.0.0',
     port: integer(env.PORT, 3000, 'PORT'),
@@ -70,6 +86,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     maxFileBytes,
     maxUploadRequestBytes,
     uploadTtlSeconds: integer(env.QUORUM_UPLOAD_TTL_SECONDS, 24 * 60 * 60, 'QUORUM_UPLOAD_TTL_SECONDS'),
+    storageMasterKey: masterKey,
+    storageMasterKeyVersion: masterKey
+      ? integer(env.QUORUM_STORAGE_MASTER_KEY_VERSION, 1, 'QUORUM_STORAGE_MASTER_KEY_VERSION')
+      : 1,
     shutdownGraceMs: integer(env.SHUTDOWN_GRACE_MS, 10_000, 'SHUTDOWN_GRACE_MS'),
     allowedOrigins
   };
