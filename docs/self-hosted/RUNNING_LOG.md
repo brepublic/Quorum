@@ -6,10 +6,10 @@
 
 - 更新时间：2026-08-13
 - 分支：`self-host`
-- 已确认基线：`4351291 stage 6.1: persist file metadata and tombstones`
-- 当前阶段：6.2 durable staging 与流式上传已完成；提交以当前 `git log` 为准。
-- 当前工作：阶段 6.2 代码、自动测试、架构文档、人工验收和 6.3 交接 prompt 已完成。
-- 下一步：按 `STAGE_6_3_HANDOFF_PROMPT.md` 实施 `SERVER_VOLUME` provider。
+- 已确认基线：`da454ec stage 6.2: stream uploads to durable staging`
+- 当前阶段：6.3 `SERVER_VOLUME` provider 已完成并单独提交；提交以当前 `git log` 为准。
+- 当前工作：准备按阶段 6.4 交接实施 `S3_COMPATIBLE` provider。
+- 下一步：复跑 6.3 针对性测试和 `pnpm build:self-host`，再实施阶段 6.4。
 
 ## 已完成与验证
 
@@ -42,3 +42,20 @@
 ## 提交记录
 
 - `4351291`：阶段 6.1 文件元数据、版本、存储绑定和墓碑。
+- `da454ec`：阶段 6.2 durable staging 与流式上传。
+
+### 2026-08-13：阶段 6.3 SERVER_VOLUME provider
+
+- migration 15 为 upload 保存服务器生成的 provider blob/key 和已提交 blob/entry/version 关联；schema compatibility 为 15。
+- `POST /api/v1/file-uploads/:id/commit` 只接收完整 `STAGED` upload，并重新检查创建者、活动委员会和活动 `SERVER_VOLUME` binding。
+- 暂存内容流式复制到 0600 provider 临时文件，经文件 `fsync`、无覆盖原子发布、目录同步和最终重读校验后才进入 PostgreSQL 发布事务。
+- provider 最终路径只由 blob UUID 派生；符号链接、硬链接和非普通文件被拒绝。
+- upload、blob、file entry/version、事件、审计和幂等响应在同一事务提交。数据库失败保留暂存和最终 provider 字节，同一 upload 重试复用原 blob 目标。
+- 针对性 Vitest：6 个文件、36 项测试通过；1 个 PostgreSQL 文件的 9 项测试因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip。随后增加资格撤销集成用例，集成文件现有 10 项明确 skip。
+- `@quorum/contracts` 与 `@quorum/server` TypeScript build：通过。
+- `pnpm test:self-host`：33 个文件、132 项测试通过；6 个 PostgreSQL 集成文件共 27 项明确 skip。仅出现既有 React/Semantic UI 弃用警告。
+- `pnpm build:self-host`：通过；Vite 仅报告既有的大分块警告。
+- `pnpm test:self-host:integration`：6 个文件、27 项测试因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip。
+- `git diff --check`：通过。
+- 当前 WSL 仍未提供真实 PostgreSQL、Docker 持久卷或 TLS 浏览器；断电、满盘、重启、挂载卷和代理证据记录在 `MANUAL_ACCEPTANCE.md` 的 SH-MAN-503。
+- 阶段 6.3 已单独提交；提交以当前 `git log` 为准。

@@ -15,6 +15,8 @@ import {Stage4Service} from '../stage4/service';
 import {Stage6StorageService} from './service';
 import {DurableStagingStore, type StagingOperations} from './staging';
 import {Stage6UploadService} from './upload-service';
+import {ServerVolumeStore} from './server-volume';
+import {Stage6ServerVolumeService} from './server-volume-service';
 
 const {Client, Pool} = pg;
 const adminUrl = process.env.TEST_DATABASE_ADMIN_URL;
@@ -28,6 +30,8 @@ let storage: Stage6StorageService;
 let uploads: Stage6UploadService;
 let staging: DurableStagingStore;
 let stagingRoot = '';
+let volume: ServerVolumeStore;
+let serverVolume: Stage6ServerVolumeService;
 let administrator: AuthenticatedSession;
 
 function quoteIdentifier(value: string): string {
@@ -60,6 +64,9 @@ beforeEach(async () => {
   staging = new DurableStagingStore(stagingRoot, 20 * 1024 * 1024, 21 * 1024 * 1024);
   await staging.initialize();
   uploads = new Stage6UploadService(pool, staging);
+  volume = new ServerVolumeStore(join(stagingRoot, 'server-volume'), 20 * 1024 * 1024);
+  await volume.initialize();
+  serverVolume = new Stage6ServerVolumeService(pool, storage, staging, volume);
   await stage3.ensureBuiltins();
   const secret = await identity.ensureBootstrapSecret();
   const login = await identity.bootstrapAdmin({secret: secret as string, email: 'admin@example.com',
@@ -357,5 +364,120 @@ integration('PostgreSQL stage 6 file metadata', () => {
       status: 'RECEIVING', events: 0, audits: 0, idempotency: 0, versions: 0
     }));
     expect(await staging.exists(state?.rows[0]?.staging_key)).toBe(true);
+  });
+
+  it('commits a STAGED upload to SERVER_VOLUME exactly once', async () => {
+    const fixture = await storageFixture();
+    const content = 'server-volume-provider-content';
+    const upload = await uploads.createUpload(fixture.member, fixture.committee.id, {
+      logicalName: '服务器卷文件', originalName: '../../provider.pdf', mediaType: 'application/pdf',
+      expectedSizeBytes: Buffer.byteLength(content), sha256: digest(content)
+    }, 'provider-upload', context('provider-upload'));
+    await uploads.receiveContent(fixture.member, upload.id, (async function* () { yield content; })(),
+      'provider-content', Buffer.byteLength(content), context('provider-content'));
+    const file = await serverVolume.commitUpload(fixture.member, upload.id, {},
+      'provider-commit', context('provider-commit'));
+    expect(file.currentVersion).toEqual(expect.objectContaining({
+      sizeBytes: Buffer.byteLength(content), sha256: digest(content)
+    }));
+    const replayed = await serverVolume.commitUpload(fixture.member, upload.id, {},
+      'provider-commit', context('provider-commit-replay'));
+    expect(replayed).toEqual(file);
+    const state = await pool?.query(`SELECT u.status,u.provider_blob_id,u.provider_storage_key,
+      u.committed_blob_id,u.committed_file_entry_id,u.committed_file_version_id,
+      (SELECT count(*)::int FROM file_blobs WHERE id=u.provider_blob_id) AS blobs,
+      (SELECT count(*)::int FROM file_versions WHERE file_entry_id=u.committed_file_entry_id) AS versions,
+      (SELECT count(*)::int FROM committee_events WHERE resource_id=u.id AND event_type='file.upload_committed') AS events,
+      (SELECT count(*)::int FROM audit_log WHERE resource_id=u.id AND action='storage.upload_committed') AS audits,
+      (SELECT count(*)::int FROM idempotency_keys WHERE key='provider-commit') AS idempotency
+      FROM file_uploads u WHERE u.id=$1`, [upload.id]);
+    expect(state?.rows[0]).toEqual(expect.objectContaining({
+      status: 'COMMITTED',
+      committed_blob_id: state?.rows[0]?.provider_blob_id,
+      committed_file_entry_id: file.id,
+      committed_file_version_id: file.currentVersion.id,
+      blobs: 1, versions: 1, events: 1, audits: 1, idempotency: 1
+    }));
+    expect(state?.rows[0]?.provider_storage_key).toMatch(/^blobs\/[a-f0-9]{2}\/[a-f0-9]{32}$/);
+    expect(state?.rows[0]?.provider_storage_key).not.toContain('provider.pdf');
+    expect(await volume.verify(state?.rows[0]?.provider_storage_key,
+      Buffer.byteLength(content), digest(content))).toEqual({sizeBytes: Buffer.byteLength(content), sha256: digest(content)});
+  });
+
+  it('rolls back upload, file, event, audit, and idempotency while retaining both byte copies', async () => {
+    const fixture = await storageFixture();
+    const content = 'provider-atomic-content';
+    const upload = await uploads.createUpload(fixture.member, fixture.committee.id, {
+      logicalName: 'Provider 原子性', originalName: 'atomic-provider.bin', mediaType: 'application/octet-stream',
+      expectedSizeBytes: Buffer.byteLength(content), sha256: digest(content)
+    }, 'provider-atomic-upload', context('provider-atomic-upload'));
+    await uploads.receiveContent(fixture.member, upload.id, (async function* () { yield content; })(),
+      'provider-atomic-content', Buffer.byteLength(content), context('provider-atomic-content'));
+    await pool?.query(`CREATE FUNCTION fail_stage6_provider_audit() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF NEW.action='storage.upload_committed' THEN RAISE EXCEPTION 'injected provider audit failure'; END IF;
+        RETURN NEW;
+      END; $$`);
+    await pool?.query(`CREATE TRIGGER fail_stage6_provider_audit BEFORE INSERT ON audit_log
+      FOR EACH ROW EXECUTE FUNCTION fail_stage6_provider_audit()`);
+    await expect(serverVolume.commitUpload(fixture.member, upload.id, {},
+      'provider-atomic-commit', context('provider-atomic-commit'))).rejects.toThrow('injected provider audit failure');
+    const failed = await pool?.query(`SELECT status,provider_blob_id,provider_storage_key,staging_key,
+      (SELECT count(*)::int FROM file_entries) AS files,
+      (SELECT count(*)::int FROM file_blobs) AS blobs,
+      (SELECT count(*)::int FROM file_versions) AS versions,
+      (SELECT count(*)::int FROM committee_events WHERE resource_id=file_uploads.id
+        AND event_type='file.upload_committed') AS events,
+      (SELECT count(*)::int FROM audit_log WHERE resource_id=file_uploads.id
+        AND action='storage.upload_committed') AS audits,
+      (SELECT count(*)::int FROM idempotency_keys WHERE key='provider-atomic-commit') AS idempotency
+      FROM file_uploads WHERE id=$1`, [upload.id]);
+    expect(failed?.rows[0]).toEqual(expect.objectContaining({
+      status: 'STAGED', files: 0, blobs: 0, versions: 0, events: 0, audits: 0, idempotency: 0
+    }));
+    expect(await staging.exists(failed?.rows[0]?.staging_key)).toBe(true);
+    expect(await volume.verify(failed?.rows[0]?.provider_storage_key,
+      Buffer.byteLength(content), digest(content))).toBeDefined();
+    await pool?.query('DROP TRIGGER fail_stage6_provider_audit ON audit_log');
+    await pool?.query('DROP FUNCTION fail_stage6_provider_audit()');
+    const recovered = await serverVolume.commitUpload(fixture.member, upload.id, {},
+      'provider-atomic-commit', context('provider-atomic-retry'));
+    expect(recovered.currentVersion.sha256).toBe(digest(content));
+  });
+
+  it('rejects SERVER_VOLUME commit while the committee is paused', async () => {
+    const fixture = await storageFixture();
+    const content = 'paused-provider';
+    const upload = await uploads.createUpload(fixture.member, fixture.committee.id, {
+      logicalName: '暂停 Provider', originalName: 'paused-provider.bin', mediaType: 'application/octet-stream',
+      expectedSizeBytes: Buffer.byteLength(content), sha256: digest(content)
+    }, 'paused-provider-upload', context('paused-provider-upload'));
+    await uploads.receiveContent(fixture.member, upload.id, (async function* () { yield content; })(),
+      'paused-provider-content', Buffer.byteLength(content), context('paused-provider-content'));
+    await stage3.setCommitteeStatus(fixture.chair, fixture.committee.id, 'PAUSED',
+      fixture.committee.revision + 1, context('pause-provider'));
+    await expect(serverVolume.commitUpload(fixture.member, upload.id, {},
+      'paused-provider-commit', context('paused-provider-commit'))).rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
+    const state = await pool?.query(`SELECT status,
+      (SELECT count(*)::int FROM file_versions) AS versions FROM file_uploads WHERE id=$1`, [upload.id]);
+    expect(state?.rows[0]).toEqual({status: 'STAGED', versions: 0});
+  });
+
+  it('rechecks contributor membership before claiming or writing a provider target', async () => {
+    const fixture = await storageFixture();
+    const content = 'revoked-provider';
+    const upload = await uploads.createUpload(fixture.member, fixture.committee.id, {
+      logicalName: '已撤销成员上传', originalName: 'revoked.bin', mediaType: 'application/octet-stream',
+      expectedSizeBytes: Buffer.byteLength(content), sha256: digest(content)
+    }, 'revoked-provider-upload', context('revoked-provider-upload'));
+    await uploads.receiveContent(fixture.member, upload.id, (async function* () { yield content; })(),
+      'revoked-provider-content', Buffer.byteLength(content), context('revoked-provider-content'));
+    await pool?.query(`UPDATE committee_memberships SET status='SUSPENDED',updated_at=now()
+      WHERE committee_id=$1 AND user_id=$2`, [fixture.committee.id, fixture.member.user.id]);
+    await expect(serverVolume.commitUpload(fixture.member, upload.id, {},
+      'revoked-provider-commit', context('revoked-provider-commit'))).rejects.toMatchObject({code: 'FORBIDDEN'});
+    const state = await pool?.query(`SELECT status,provider_blob_id,provider_storage_key,
+      (SELECT count(*)::int FROM file_versions) AS versions FROM file_uploads WHERE id=$1`, [upload.id]);
+    expect(state?.rows[0]).toEqual({status: 'STAGED', provider_blob_id: null, provider_storage_key: null, versions: 0});
   });
 });

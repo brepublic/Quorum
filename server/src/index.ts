@@ -14,6 +14,9 @@ import {RealtimeService} from './modules/realtime/service.js';
 import {Stage5Service} from './modules/stage5/service.js';
 import {DurableStagingStore} from './modules/storage/staging.js';
 import {Stage6UploadService} from './modules/storage/upload-service.js';
+import {Stage6StorageService} from './modules/storage/service.js';
+import {ServerVolumeStore} from './modules/storage/server-volume.js';
+import {Stage6ServerVolumeService} from './modules/storage/server-volume-service.js';
 
 const {Pool} = pg;
 const logger = createLogger();
@@ -48,6 +51,10 @@ async function main(): Promise<void> {
       config.maxFileBytes, config.maxUploadRequestBytes);
     await staging.initialize();
     const uploads = new Stage6UploadService(pool, staging, config.uploadTtlSeconds * 1000);
+    const metadata = new Stage6StorageService(pool);
+    const serverVolumeStore = new ServerVolumeStore(join(config.storagePath, 'server-volume'), config.maxFileBytes);
+    await serverVolumeStore.initialize();
+    const serverVolume = new Stage6ServerVolumeService(pool, metadata, staging, serverVolumeStore);
     await stage3.ensureBuiltins();
     const bootstrapSecret = await identity.ensureBootstrapSecret();
     if (bootstrapSecret) {
@@ -64,6 +71,7 @@ async function main(): Promise<void> {
       realtime,
       stage5,
       uploads,
+      serverVolume,
       allowedOrigins: config.allowedOrigins
     });
 

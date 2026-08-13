@@ -59,6 +59,7 @@ interface FileVersionRow extends QueryResultRow {
 
 export interface ProviderCommitInput {
   bindingId: string;
+  blobId?: string;
   fileEntryId?: string;
   baseRevision?: number;
   logicalName: string;
@@ -225,16 +226,6 @@ export class Stage6StorageService {
   async recordProviderCommit(auth: AuthenticatedSession, committeeId: string, input: ProviderCommitInput,
     idempotencyKey: string, context: Stage4Context): Promise<FileEntry> {
     requireBusinessIdentity(auth);
-    assertExactBody(input as unknown as Record<string, unknown>, ['bindingId', 'fileEntryId', 'baseRevision', 'logicalName',
-      'originalName', 'mediaType', 'sizeBytes', 'sha256', 'storageKey']);
-    const bindingId = uuid(input.bindingId, 'Storage binding ID');
-    const fileEntryId = input.fileEntryId === undefined ? undefined : uuid(input.fileEntryId, 'File ID');
-    const logicalName = boundedText(input.logicalName, 'Logical name', 500);
-    const originalName = boundedText(input.originalName, 'Original name', 500);
-    const mediaType = boundedText(input.mediaType, 'Media type', 255).toLowerCase();
-    const verifiedSize = sizeBytes(input.sizeBytes);
-    const verifiedHash = normalizeSha256(input.sha256);
-    const storageKey = validateInternalStorageKey(input.storageKey);
     return idempotentTransaction({
       pool: this.pool,
       auth,
@@ -242,70 +233,85 @@ export class Stage6StorageService {
       key: idempotencyKey,
       request: input,
       status: 201,
-      work: async client => {
-        const committee = await lockedCommittee(client, committeeId);
-        requireProceedingsActive(committee);
-        await requireContributor(client, committee, auth.user.id);
-        const activeBinding = await client.query<StorageBindingRow>(`SELECT * FROM storage_bindings
-          WHERE id=$1 AND committee_id=$2 AND status='ACTIVE' FOR UPDATE`, [bindingId, committee.id]);
-        if (!activeBinding.rows[0] || committee.active_storage_binding_id !== bindingId) {
-          throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The storage binding is not active.'});
-        }
-
-        let entry: FileEntryRow | undefined;
-        if (fileEntryId) {
-          entry = (await client.query<FileEntryRow>('SELECT * FROM file_entries WHERE id=$1 FOR UPDATE', [fileEntryId])).rows[0];
-          if (!entry || entry.committee_id !== committee.id || entry.status === 'DELETED') {
-            throw new AppError({code: 'NOT_FOUND', message: 'File not found.'});
-          }
-          requireFileRevision(entry, input.baseRevision);
-          if (entry.created_by_user_id !== auth.user.id && committee.owner_user_id !== auth.user.id
-            && !(await isChair(client, committee.id, auth.user.id))) {
-            throw new AppError({code: 'FORBIDDEN', message: 'Only the file owner or Chair may add a version.'});
-          }
-        } else if (input.baseRevision !== undefined) {
-          throw new AppError({code: 'VALIDATION_FAILED', message: 'Revision is only valid for an existing file.'});
-        }
-
-        const id = entry?.id ?? randomUUID();
-        const versionId = randomUUID();
-        const blobId = randomUUID();
-        const versionNumber = entry
-          ? Number((await client.query<{next_version: number}>(`SELECT coalesce(max(version_number),0)+1 AS next_version
-              FROM file_versions WHERE file_entry_id=$1`, [entry.id])).rows[0]?.next_version ?? 1)
-          : 1;
-        await client.query(`INSERT INTO file_blobs
-          (id,committee_id,storage_binding_id,storage_key,size_bytes,sha256,durability_state)
-          VALUES ($1,$2,$3,$4,$5,decode($6,'hex'),'COMMITTED')`,
-        [blobId, committee.id, bindingId, storageKey, verifiedSize, verifiedHash]);
-        if (entry) {
-          const updated = await client.query<FileEntryRow>(`UPDATE file_entries SET logical_name=$2,media_type=$3,
-            status='UPLOAD_COMPLETE',current_version_id=$4,revision=revision+1,updated_at=now()
-            WHERE id=$1 RETURNING *`, [entry.id, logicalName, mediaType, versionId]);
-          entry = updated.rows[0];
-        } else {
-          const created = await client.query<FileEntryRow>(`INSERT INTO file_entries
-            (id,committee_id,logical_name,media_type,status,current_version_id,created_by_user_id)
-            VALUES ($1,$2,$3,$4,'UPLOAD_COMPLETE',$5,$6) RETURNING *`,
-          [id, committee.id, logicalName, mediaType, versionId, auth.user.id]);
-          entry = created.rows[0];
-        }
-        await client.query(`INSERT INTO file_versions
-          (id,committee_id,file_entry_id,version_number,blob_id,original_name,media_type,size_bytes,sha256,created_by_user_id)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,decode($9,'hex'),$10)`,
-        [versionId, committee.id, id, versionNumber, blobId, originalName, mediaType, verifiedSize, verifiedHash, auth.user.id]);
-        await appendEvent(client, committee, {type: versionNumber === 1 ? 'file.created' : 'file.sync_state_changed',
-          resourceType: 'file_entry', resourceId: id, revision: entry?.revision ?? 1,
-          payload: {status: 'UPLOAD_COMPLETE', versionNumber, sizeBytes: verifiedSize}});
-        await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id,
-          capabilities: await isChair(client, committee.id, auth.user.id) ? ['CHAIR'] : ['MEMBER'],
-          action: 'storage.file_version_recorded', resourceType: 'file_entry', resourceId: id,
-          before: versionNumber === 1 ? null : {revision: (entry?.revision ?? 2) - 1},
-          after: {status: 'UPLOAD_COMPLETE', revision: entry?.revision ?? 1, versionNumber,
-            sizeBytes: verifiedSize, sha256: verifiedHash}});
-        return fileState(client, entry as FileEntryRow);
-      }
+      work: client => this.recordProviderCommitInTransaction(client, auth, committeeId, input, context)
     });
+  }
+
+  async recordProviderCommitInTransaction(client: PoolClient, auth: AuthenticatedSession, committeeId: string,
+    input: ProviderCommitInput, context: Stage4Context): Promise<FileEntry> {
+    requireBusinessIdentity(auth);
+    assertExactBody(input as unknown as Record<string, unknown>, ['bindingId', 'blobId', 'fileEntryId', 'baseRevision',
+      'logicalName', 'originalName', 'mediaType', 'sizeBytes', 'sha256', 'storageKey']);
+    const bindingId = uuid(input.bindingId, 'Storage binding ID');
+    const requestedBlobId = input.blobId === undefined ? undefined : uuid(input.blobId, 'Blob ID');
+    const fileEntryId = input.fileEntryId === undefined ? undefined : uuid(input.fileEntryId, 'File ID');
+    const logicalName = boundedText(input.logicalName, 'Logical name', 500);
+    const originalName = boundedText(input.originalName, 'Original name', 500);
+    const mediaType = boundedText(input.mediaType, 'Media type', 255).toLowerCase();
+    const verifiedSize = sizeBytes(input.sizeBytes);
+    const verifiedHash = normalizeSha256(input.sha256);
+    const storageKey = validateInternalStorageKey(input.storageKey);
+    const committee = await lockedCommittee(client, committeeId);
+    requireProceedingsActive(committee);
+    await requireContributor(client, committee, auth.user.id);
+    const activeBinding = await client.query<StorageBindingRow>(`SELECT * FROM storage_bindings
+      WHERE id=$1 AND committee_id=$2 AND status='ACTIVE' FOR UPDATE`, [bindingId, committee.id]);
+    if (!activeBinding.rows[0] || committee.active_storage_binding_id !== bindingId) {
+      throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The storage binding is not active.'});
+    }
+
+    let entry: FileEntryRow | undefined;
+    if (fileEntryId) {
+      entry = (await client.query<FileEntryRow>('SELECT * FROM file_entries WHERE id=$1 FOR UPDATE', [fileEntryId])).rows[0];
+      if (!entry || entry.committee_id !== committee.id || entry.status === 'DELETED') {
+        throw new AppError({code: 'NOT_FOUND', message: 'File not found.'});
+      }
+      requireFileRevision(entry, input.baseRevision);
+      if (entry.created_by_user_id !== auth.user.id && committee.owner_user_id !== auth.user.id
+        && !(await isChair(client, committee.id, auth.user.id))) {
+        throw new AppError({code: 'FORBIDDEN', message: 'Only the file owner or Chair may add a version.'});
+      }
+    } else if (input.baseRevision !== undefined) {
+      throw new AppError({code: 'VALIDATION_FAILED', message: 'Revision is only valid for an existing file.'});
+    }
+
+    const id = entry?.id ?? randomUUID();
+    const versionId = randomUUID();
+    const blobId = requestedBlobId ?? randomUUID();
+    const versionNumber = entry
+      ? Number((await client.query<{next_version: number}>(`SELECT coalesce(max(version_number),0)+1 AS next_version
+          FROM file_versions WHERE file_entry_id=$1`, [entry.id])).rows[0]?.next_version ?? 1)
+      : 1;
+    await client.query(`INSERT INTO file_blobs
+      (id,committee_id,storage_binding_id,storage_key,size_bytes,sha256,durability_state)
+      VALUES ($1,$2,$3,$4,$5,decode($6,'hex'),'COMMITTED')`,
+    [blobId, committee.id, bindingId, storageKey, verifiedSize, verifiedHash]);
+    if (entry) {
+      const updated = await client.query<FileEntryRow>(`UPDATE file_entries SET logical_name=$2,media_type=$3,
+        status='UPLOAD_COMPLETE',current_version_id=$4,revision=revision+1,updated_at=now()
+        WHERE id=$1 RETURNING *`, [entry.id, logicalName, mediaType, versionId]);
+      entry = updated.rows[0];
+    } else {
+      const created = await client.query<FileEntryRow>(`INSERT INTO file_entries
+        (id,committee_id,logical_name,media_type,status,current_version_id,created_by_user_id)
+        VALUES ($1,$2,$3,$4,'UPLOAD_COMPLETE',$5,$6) RETURNING *`,
+      [id, committee.id, logicalName, mediaType, versionId, auth.user.id]);
+      entry = created.rows[0];
+    }
+    await client.query(`INSERT INTO file_versions
+      (id,committee_id,file_entry_id,version_number,blob_id,original_name,media_type,size_bytes,sha256,created_by_user_id)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,decode($9,'hex'),$10)`,
+    [versionId, committee.id, id, versionNumber, blobId, originalName, mediaType, verifiedSize, verifiedHash, auth.user.id]);
+    await appendEvent(client, committee, {type: versionNumber === 1 ? 'file.created' : 'file.sync_state_changed',
+      resourceType: 'file_entry', resourceId: id, revision: entry?.revision ?? 1,
+      payload: {status: 'UPLOAD_COMPLETE', versionNumber, sizeBytes: verifiedSize}});
+    await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id,
+      capabilities: await isChair(client, committee.id, auth.user.id) ? ['CHAIR'] : ['MEMBER'],
+      action: 'storage.file_version_recorded', resourceType: 'file_entry', resourceId: id,
+      before: versionNumber === 1 ? null : {revision: (entry?.revision ?? 2) - 1},
+      after: {status: 'UPLOAD_COMPLETE', revision: entry?.revision ?? 1, versionNumber,
+        sizeBytes: verifiedSize, sha256: verifiedHash}});
+    return fileState(client, entry as FileEntryRow);
   }
 
   async deleteFile(auth: AuthenticatedSession, fileEntryId: string, body: unknown,

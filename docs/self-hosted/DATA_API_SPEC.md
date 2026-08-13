@@ -760,6 +760,20 @@ STAGED → COMMITTED        # 阶段 6.3 以后
 
 `STAGED` 只表示服务器持久暂存区已保存并校验完整字节。阶段 6.2 不调用 `recordProviderCommit`，因此不创建 `file_entry`、`file_blob`、`file_version` 或下载记录。普通期限和 LRU 不得删除 `CREATED`、`RECEIVING` 或 `STAGED`；后续清理只可选择 `COMMITTED`、`CANCELLED` 或已经过期的 `FAILED`。
 
+## 11.5 阶段 6.3 SERVER_VOLUME 提交契约
+
+```text
+POST /api/v1/file-uploads/:id/commit
+```
+
+请求体固定为 `{}`，并继续要求 Session、允许的 Origin、匹配的 CSRF token 和 `Idempotency-Key`。只有 upload 创建者可以提交；服务端重新锁定 upload 与委员会，要求委员会为 `ACTIVE`、upload 为完整的 `STAGED`，且其 binding 仍是委员会活动的 `SERVER_VOLUME` binding。
+
+服务端为 upload 分配一次性的 blob UUID，并只用该 UUID 派生 `blobs/<两位分片>/<压缩 UUID>`。用户文件名、逻辑名称和媒体类型不参与磁盘路径。暂存内容流式复制到 0600 临时文件；复制过程重新校验大小和 SHA-256，执行文件 `fsync` 后以无覆盖硬链接原子发布，随后同步目录并从最终文件重读校验。路径检查拒绝绝对路径、点路径、反斜杠、符号链接、硬链接和非普通文件。
+
+provider 最终内容校验成功后，单一 PostgreSQL 事务把 upload 更新为 `COMMITTED`，并创建 `file_blob`、`file_entry`、首个 `file_version`、委员会事件、审计及幂等响应。upload 保存已提交的 blob、entry 和 version ID。数据库失败不会删除暂存或已经完整发布的 provider 字节；重试复用原 blob UUID 和存储键，不产生第二个 blob 或版本。provider 写入或完整性校验失败同样不发布数据库文件记录。
+
+阶段 6.3 只提供校验后读取的内部原语，尚未开放下载 HTTP。已提交的服务器卷内容不属于暂存期限或 LRU 清理范围；S3、provider 切换、审核 UI 和清理 worker 留给后续阶段。
+
 ## 12. SSE 格式
 
 ```text
@@ -798,6 +812,10 @@ document.version_created
 document.status_changed
 document.discussion_added
 file.created
+file.upload_created
+file.upload_staged
+file.upload_committed
+file.upload_failed
 file.sync_state_changed
 file.deleted
 storage_host.status_changed

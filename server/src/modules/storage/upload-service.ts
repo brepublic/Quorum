@@ -38,6 +38,7 @@ interface UploadRow extends QueryResultRow {
   content_idempotency_key: string | null;
   expires_at: Date;
   failure_code: string | null;
+  committed_file_entry_id: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -100,6 +101,7 @@ function uploadState(row: UploadRow): FileUpload {
     revision: row.revision,
     expiresAt: row.expires_at.toISOString(),
     failureCode: row.failure_code,
+    committedFileEntryId: row.committed_file_entry_id,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString()
   };

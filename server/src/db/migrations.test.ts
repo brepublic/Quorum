@@ -149,6 +149,18 @@ describe('migration discovery', () => {
     expect(uploads?.sql).not.toContain('CHAIR_AGENT');
   });
 
+  it('binds committed uploads to SERVER_VOLUME blobs and file versions', async () => {
+    const migrations = await loadMigrations(resolve('server/migrations'));
+    const provider = migrations.find(migration => migration.version === 15);
+    expect(provider?.sql).toContain('provider_blob_id');
+    expect(provider?.sql).toContain('provider_storage_key');
+    expect(provider?.sql).toContain('committed_blob_id');
+    expect(provider?.sql).toContain('committed_file_entry_id');
+    expect(provider?.sql).toContain('committed_file_version_id');
+    expect(provider?.sql).not.toContain('S3_COMPATIBLE');
+    expect(provider?.sql).not.toContain('CHAIR_AGENT');
+  });
+
   it('rejects SQL files outside the versioned naming contract', async () => {
     const directory = await temporaryDirectory();
     await writeFile(join(directory, 'first.sql'), 'SELECT 1;\n');

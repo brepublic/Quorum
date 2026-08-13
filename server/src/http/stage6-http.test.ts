@@ -7,6 +7,7 @@ import {describe, expect, it, vi} from 'vitest';
 import {createLogger} from '../logger';
 import type {IdentityService} from '../modules/identity/service';
 import type {Stage6UploadService} from '../modules/storage/upload-service';
+import type {Stage6ServerVolumeService} from '../modules/storage/server-volume-service';
 import {createRequestHandler} from './app';
 
 const authenticated = {sessionId: 'session', user: {id: '10000000-0000-4000-8000-000000000001',
@@ -22,12 +23,12 @@ class TestResponse extends EventEmitter {
 
 async function send(uploads: Stage6UploadService, options: {
   method: 'POST' | 'PUT'; path: string; chunks: Buffer[]; headers?: Record<string, string>;
-}) {
+}, serverVolume?: Stage6ServerVolumeService) {
   const identity = {authenticate: vi.fn(async () => authenticated)} as unknown as IdentityService;
   const handler = createRequestHandler({health: {ready: async () => ({ready: true, checks: {
     database: {status: 'ok', migrationVersion: 14}, storage: {status: 'ok'}}})},
   logger: createLogger(() => undefined), version: 'test', databaseMigrationVersion: 14,
-  identity, uploads, allowedOrigins: ['https://quorum.example.com']});
+  identity, uploads, serverVolume, allowedOrigins: ['https://quorum.example.com']});
   const incoming = Readable.from(options.chunks) as unknown as IncomingMessage;
   Object.assign(incoming, {method: options.method, url: options.path, headers: {
     origin: 'https://quorum.example.com',
@@ -91,5 +92,15 @@ describe('stage 6 upload HTTP boundary', () => {
       chunks: [Buffer.from('data')], headers: {origin: 'https://attacker.example.com'}});
     expect(response.statusCode).toBe(403);
     expect(receiveContent).not.toHaveBeenCalled();
+  });
+
+  it('routes SERVER_VOLUME commit through Session, CSRF, and idempotency', async () => {
+    const commitUpload = vi.fn(async () => ({id: 'file', currentVersion: {id: 'version'}}));
+    const response = await send({} as Stage6UploadService, {method: 'POST',
+      path: '/api/v1/file-uploads/30000000-0000-4000-8000-000000000001/commit',
+      chunks: [Buffer.from('{}')]}, {commitUpload} as unknown as Stage6ServerVolumeService);
+    expect(response.statusCode).toBe(201);
+    expect(commitUpload).toHaveBeenCalledWith(authenticated, '30000000-0000-4000-8000-000000000001',
+      {}, 'upload-key', expect.objectContaining({requestId: expect.any(String)}));
   });
 });

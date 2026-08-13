@@ -122,7 +122,7 @@
 
 - 前置条件：PostgreSQL 16；`TEST_DATABASE_ADMIN_URL` 指向可创建和删除数据库的管理员连接。
 - 操作步骤：执行 `TEST_DATABASE_ADMIN_URL=postgresql://... pnpm test:self-host:integration`；确认测试创建随机临时数据库，从空库执行全部 migration，再执行一次；检查阶段 3 表、外键、部分唯一索引、邀请码约束、已发布规则版本和审计追加限制。
-- 通过条件：两次 migration 均成功；当前 schema compatibility 为 14，且 12 个阶段 3 核心表继续存在；同一用户的第二个活动席位被拒绝；已发布规则版本和审计记录不能更新或删除；测试数据库最终清理。
+- 通过条件：两次 migration 均成功；当前 schema compatibility 为 15，且 12 个阶段 3 核心表继续存在；同一用户的第二个活动席位被拒绝；已发布规则版本和审计记录不能更新或删除；测试数据库最终清理。
 - 自动化覆盖情况：`server/src/db/migrations.integration.test.ts` 检查空库、重复执行和表清单；`server/src/modules/stage3/postgres.integration.test.ts` 检查索引、外键、历史行和不可变触发器。未配置 URL 时测试明确 skip。
 - 当前状态：因无服务器延期。
 - 需要保存的证据：测试输出、`quorum_meta.schema_migrations`、表与索引查询、触发器失败结果和临时数据库清理记录。
@@ -160,7 +160,7 @@
 
 - 前置条件：PostgreSQL 16；`TEST_DATABASE_ADMIN_URL` 指向可创建和删除数据库的管理员连接。
 - 操作步骤：执行 `TEST_DATABASE_ADMIN_URL=postgresql://... pnpm test:self-host:integration`；检查 migration 4、模板隔离、幂等键、revision 冲突、软删除、并发点名和追加式出席事件用例。
-- 通过条件：schema compatibility 为 14；migration 4 的表、外键、唯一索引和追加式触发器均生效；并发写只有一个符合 revision 的请求成功；临时数据库最终清理。
+- 通过条件：schema compatibility 为 15；migration 4 的表、外键、唯一索引和追加式触发器均生效；并发写只有一个符合 revision 的请求成功；临时数据库最终清理。
 - 自动化覆盖情况：migration 与 `server/src/modules/stage4/postgres.integration.test.ts` 已实现；当前环境未提供 PostgreSQL，因此明确 skip。
 - 当前状态：因无服务器延期。
 - 需要保存的证据：测试输出、migration 表、阶段 4 表与索引查询、并发结果和临时数据库清理记录。
@@ -209,7 +209,7 @@
 
 - 前置条件：PostgreSQL 16；`TEST_DATABASE_ADMIN_URL` 指向可创建和删除数据库的管理员连接。
 - 操作步骤：执行 `TEST_DATABASE_ADMIN_URL=postgresql://... pnpm test:self-host:integration`；保留 migration 5–12、两名 Chair 并发重排和同席位两名代表并发投票的输出。
-- 通过条件：schema compatibility 为 14；空库 migration 和重复执行成功；并发重排只有一个 revision 成功且活动位置唯一；同席位并发投票只有一张当前票；临时数据库被清理。
+- 通过条件：schema compatibility 为 15；空库 migration 和重复执行成功；并发重排只有一个 revision 成功且活动位置唯一；同席位并发投票只有一张当前票；临时数据库被清理。
 - 自动化覆盖情况：`server/src/db/migrations.integration.test.ts` 与 `server/src/modules/stage5/postgres.integration.test.ts` 已实现；未配置 URL 时明确 skip。
 - 当前状态：因无服务器延期。
 - 需要保存的证据：完整测试输出、`quorum_meta.schema_migrations`、相关唯一索引和触发器查询、两组并发结果及临时数据库清理记录。
@@ -279,13 +279,13 @@
 
 ## 阶段 6：服务器卷和 S3 文件
 
-当前环境未提供 `TEST_DATABASE_ADMIN_URL`、PostgreSQL 客户端、Docker 持久卷、S3 兼容测试桶或 TLS 浏览器。阶段 6.1–6.2 的真实 PostgreSQL 集成测试已编写但明确 skip；以下项目尚未通过。
+当前环境未提供 `TEST_DATABASE_ADMIN_URL`、PostgreSQL 客户端、Docker 持久卷、S3 兼容测试桶或 TLS 浏览器。阶段 6.1–6.3 的真实 PostgreSQL 集成测试已编写但明确 skip；以下项目尚未通过。
 
 ### SH-MAN-501 文件版本、绑定、事务和墓碑
 
 - 前置条件：PostgreSQL 16；`TEST_DATABASE_ADMIN_URL` 指向可创建和删除数据库的管理员连接。
 - 操作步骤：执行 `TEST_DATABASE_ADMIN_URL=postgresql://... pnpm test:self-host:integration`；检查 migration 13；创建服务器卷绑定和两个文件版本；注入审计写入失败；删除文件后尝试修改版本、删除墓碑和追加旧文件版本。
-- 通过条件：schema compatibility 为 14；一个委员会最多一个活动 binding；版本保存服务端大小和 SHA-256 且不可修改；故障时文件、事件、审计和幂等记录全部回滚；删除立即清除当前版本、追加唯一墓碑并标记 blob 待删；旧副本不能追加版本；系统管理员没有隐式 Chair 权限。
+- 通过条件：schema compatibility 为 15；一个委员会最多一个活动 binding；版本保存服务端大小和 SHA-256 且不可修改；故障时文件、事件、审计和幂等记录全部回滚；删除立即清除当前版本、追加唯一墓碑并标记 blob 待删；旧副本不能追加版本；系统管理员没有隐式 Chair 权限。
 - 自动化覆盖情况：migration 静态测试和无数据库校验已通过；`server/src/modules/storage/postgres.integration.test.ts` 覆盖真实 PostgreSQL 事务、追加历史、故障回滚和删除防复活，未配置 URL 时明确 skip。
 - 当前状态：因无服务器延期。
 - 需要保存的证据：完整测试输出、migration 13 表/约束/触发器查询、file entry/version/blob/tombstone 脱敏查询、事件与审计计数、故障注入回滚结果和临时数据库清理记录。证据不得包含二进制内容或 provider 密钥。
@@ -298,3 +298,12 @@
 - 自动化覆盖情况：migration、纯文件系统流、HTTP 边界和 PostgreSQL 集成用例已实现；当前 WSL 的无数据库测试验证流式分块、大小/哈希、超限、断流、磁盘错误、路径和清理候选。真实持久卷、进程终止、代理 chunked 传输、内存曲线和 PostgreSQL 事务尚未执行。
 - 当前状态：因无服务器延期。
 - 需要保存的证据：脱敏请求与响应、进程 RSS 时间线、暂存卷路径类型与 SHA-256、upload/event/audit/idempotency 查询、file 表计数、重启前后状态、代理日志和清理候选查询。证据不得包含 Session、CSRF token 或文件正文。
+
+### SH-MAN-503 SERVER_VOLUME 原子提交与故障恢复
+
+- 前置条件：真实 PostgreSQL 16；`QUORUM_STORAGE_PATH` 挂载到支持 `fsync` 与同文件系统硬链接的持久卷；通过 Caddy TLS 访问；准备活动和暂停委员会，以及可注入只读卷、满盘、I/O、数据库审计写入失败、进程终止和宿主机重启的环境。
+- 操作步骤：把同一 `STAGED` upload 提交到 `SERVER_VOLUME`；核对最终路径、权限、大小和 SHA-256；分别在打开临时文件、写入、文件 `fsync`、原子发布、目录 `fsync`、最终重读和数据库事务处注入失败；以同一幂等键重试，再以不同请求复用该键；构造符号链接、硬链接、目录和 FIFO 目标；在 provider 发布后数据库提交前终止进程并重启；暂停委员会后尝试提交。
+- 通过条件：最终路径只由 blob UUID 派生且权限为 0600；已提交内容在应用和宿主机重启后仍可校验读取；任一 provider 失败均不创建 file version 且保留 `STAGED`；数据库失败保留暂存和完整 provider 字节，重试只产生一个 blob、entry 和 version；upload、文件元数据、事件、审计和幂等响应原子一致；路径替换被拒绝；暂停状态拒绝提交；已发布 provider 内容不被暂存期限或 LRU 删除。
+- 自动化覆盖情况：纯文件系统测试覆盖流式复制、文件打开/`fsync`/原子发布失败、最终重读校验、幂等目标复用及符号链接、硬链接和非普通文件拒绝；HTTP 测试覆盖 Session、Origin、CSRF 与幂等边界；真实 PostgreSQL 用例覆盖提交精确一次、审计故障回滚重试和暂停拒绝，未配置 URL 时明确 skip。真实挂载卷的断电耐久性、目录 `fsync`、满盘、进程/宿主机重启及 TLS 代理尚未执行。
+- 当前状态：因无服务器延期。
+- 需要保存的证据：完整测试输出、挂载类型与选项、最终文件 `stat`/SHA-256、数据库 upload/blob/entry/version/event/audit/idempotency 脱敏查询、每个故障点的前后状态、重启前后读取结果和 Caddy 日志。证据不得包含 Session、CSRF token、文件正文或未来 S3 凭据。

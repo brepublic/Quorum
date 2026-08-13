@@ -69,6 +69,7 @@ export interface FileUpload {
   revision: number;
   expiresAt: string;
   failureCode: string | null;
+  committedFileEntryId: string | null;
   createdAt: string;
   updatedAt: string;
 }

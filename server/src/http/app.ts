@@ -12,6 +12,7 @@ import type {Stage4Service} from '../modules/stage4/service.js';
 import type {RealtimeService} from '../modules/realtime/service.js';
 import type {Stage5Service} from '../modules/stage5/service.js';
 import type {Stage6UploadService} from '../modules/storage/upload-service.js';
+import type {Stage6ServerVolumeService} from '../modules/storage/server-volume-service.js';
 import {AppError, normalizeError} from './errors.js';
 import {
   clearIdentityCookies,
@@ -38,6 +39,7 @@ export interface AppDependencies {
   realtime?: RealtimeService;
   stage5?: Stage5Service;
   uploads?: Stage6UploadService;
+  serverVolume?: Stage6ServerVolumeService;
   allowedOrigins?: string[];
 }
 
@@ -332,9 +334,10 @@ async function handleStage4Request(options: {
 
 async function handleStage6UploadRequest(options: {
   request: IncomingMessage; response: ServerResponse; pathname: string; requestId: string;
-  identity: IdentityService; uploads: Stage6UploadService; allowedOrigins: readonly string[];
+  identity: IdentityService; uploads: Stage6UploadService; serverVolume?: Stage6ServerVolumeService;
+  allowedOrigins: readonly string[];
 }): Promise<boolean> {
-  const {request, response, pathname, requestId, identity, uploads, allowedOrigins} = options;
+  const {request, response, pathname, requestId, identity, uploads, serverVolume, allowedOrigins} = options;
   const method = request.method ?? 'GET';
   const context = identityContext(request, requestId);
   const write = async () => { requireOrigin(request, allowedOrigins); return authenticatedWrite(request, identity); };
@@ -356,6 +359,14 @@ async function handleStage6UploadRequest(options: {
     } finally {
       request.resume();
     }
+    return true;
+  }
+  const commit = /^\/api\/v1\/file-uploads\/([0-9a-f-]{36})\/commit$/.exec(pathname);
+  if (method === 'POST' && commit && serverVolume) {
+    const auth = await write();
+    const body = await readJson(request);
+    sendJson(response, 201, success(await serverVolume.commitUpload(auth, commit[1] as string, body,
+      idempotencyKey(request), context), requestId));
     return true;
   }
   return false;
@@ -790,6 +801,7 @@ export function createRequestHandler(dependencies: AppDependencies): RequestList
 
         if (dependencies.identity && dependencies.uploads && await handleStage6UploadRequest({
           request, response, pathname, requestId, identity: dependencies.identity, uploads: dependencies.uploads,
+          serverVolume: dependencies.serverVolume,
           allowedOrigins: dependencies.allowedOrigins ?? []
         })) return;
 
