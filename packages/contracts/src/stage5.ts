@@ -15,3 +15,19 @@ export interface CommitteeEventEnvelope {
 }
 
 export const COMMITTEE_EVENT_SCHEMA_VERSION = 1 as const;
+
+export type TimerOwnerType = 'COMMITTEE' | 'SPEAKER_LIST' | 'CAUCUS' | 'SPEECH';
+
+export interface AuthoritativeTimer {
+  id: string;
+  committeeId: string;
+  ownerType: TimerOwnerType;
+  ownerId: string;
+  running: boolean;
+  startedAt: string | null;
+  remainingAtStartMs: number;
+  remainingMs: number;
+  revision: number;
+  expiredAt: string | null;
+  serverTime: string;
+}

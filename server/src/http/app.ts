@@ -10,6 +10,7 @@ import type {AuthenticatedSession} from '../modules/identity/store.js';
 import type {Stage3Service} from '../modules/stage3/service.js';
 import type {Stage4Service} from '../modules/stage4/service.js';
 import type {RealtimeService} from '../modules/realtime/service.js';
+import type {Stage5Service} from '../modules/stage5/service.js';
 import {AppError, normalizeError} from './errors.js';
 import {
   clearIdentityCookies,
@@ -34,6 +35,7 @@ export interface AppDependencies {
   stage3?: Stage3Service;
   stage4?: Stage4Service;
   realtime?: RealtimeService;
+  stage5?: Stage5Service;
   allowedOrigins?: string[];
 }
 
@@ -308,6 +310,29 @@ async function handleStage4Request(options: {
   if (resolvePoint && method === 'POST') {
     const auth = await write(); const body = await readJson(request);
     sendJson(response, 200, success(await stage4.resolvePoint(auth, resolvePoint[1] as string, body, context), requestId));
+    return true;
+  }
+  return false;
+}
+
+async function handleStage5Request(options: {
+  request: IncomingMessage; response: ServerResponse; pathname: string; requestId: string;
+  identity: IdentityService; stage5: Stage5Service; allowedOrigins: readonly string[];
+}): Promise<boolean> {
+  const {request, response, pathname, requestId, identity, stage5, allowedOrigins} = options;
+  const method = request.method ?? 'GET'; const context = identityContext(request, requestId);
+  const write = async () => { requireOrigin(request, allowedOrigins); return authenticatedWrite(request, identity); };
+  const timers = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/timers$/.exec(pathname);
+  if (method === 'POST' && timers) {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 201, success(await stage5.createTimer(auth, timers[1] as string, body,
+      idempotencyKey(request), context), requestId)); return true;
+  }
+  const timerCommand = /^\/api\/v1\/timers\/([0-9a-f-]{36})\/(start|pause|resume|extend|reset|expire)$/.exec(pathname);
+  if (method === 'POST' && timerCommand) {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 200, success(await stage5.commandTimer(auth, timerCommand[1] as string,
+      timerCommand[2] as 'start' | 'pause' | 'resume' | 'extend' | 'reset' | 'expire', body, context), requestId));
     return true;
   }
   return false;
@@ -619,6 +644,11 @@ export function createRequestHandler(dependencies: AppDependencies): RequestList
             identity: dependencies.identity, realtime: dependencies.realtime});
           return;
         }
+
+        if (dependencies.identity && dependencies.stage5 && await handleStage5Request({
+          request, response, pathname, requestId, identity: dependencies.identity, stage5: dependencies.stage5,
+          allowedOrigins: dependencies.allowedOrigins ?? []
+        })) return;
 
         if (dependencies.identity && dependencies.stage4 && await handleStage4Request({
           request, response, pathname, requestId, identity: dependencies.identity, stage4: dependencies.stage4,

@@ -1,5 +1,6 @@
 import type {
   CommitteeEventEnvelope,
+  AuthoritativeTimer,
   CommitteeNote,
   CommitteeSummary,
   CommitteeTemplate,
@@ -143,6 +144,16 @@ export const selfHostedApi = {
   },
   snapshot(id: string) { return request<CommitteeWorkspaceSnapshot>(`/api/v1/committees/${id}/snapshot`); },
   openCommitteeEvents: openCommitteeEventStream,
+  createTimer(committeeId: string, ownerType: 'COMMITTEE' | 'SPEAKER_LIST' | 'CAUCUS' | 'SPEECH', ownerId: string,
+    durationMs: number) {
+    return request<AuthoritativeTimer>(`/api/v1/committees/${committeeId}/timers`, {method: 'POST',
+      body: {ownerType, ownerId, durationMs}, idempotencyKey: key()});
+  },
+  commandTimer(id: string, command: 'start' | 'pause' | 'resume' | 'extend' | 'reset' | 'expire',
+    baseRevision: number, durationMs?: number) {
+    return request<AuthoritativeTimer>(`/api/v1/timers/${id}/${command}`, {method: 'POST',
+      body: {baseRevision, ...(durationMs === undefined ? {} : {durationMs})}});
+  },
   updateCommittee(id: string, baseRevision: number, patch: Record<string, unknown>) {
     return request<CommitteeSummary>(`/api/v1/committees/${id}`, {method: 'PATCH', body: {baseRevision, patch}});
   },

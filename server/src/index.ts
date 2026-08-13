@@ -10,6 +10,7 @@ import {IdentityService} from './modules/identity/service.js';
 import {Stage3Service} from './modules/stage3/service.js';
 import {Stage4Service} from './modules/stage4/service.js';
 import {RealtimeService} from './modules/realtime/service.js';
+import {Stage5Service} from './modules/stage5/service.js';
 
 const {Pool} = pg;
 const logger = createLogger();
@@ -39,6 +40,7 @@ async function main(): Promise<void> {
     const stage3 = new Stage3Service(pool);
     const stage4 = new Stage4Service(pool);
     const realtime = new RealtimeService(pool);
+    const stage5 = new Stage5Service(pool);
     await stage3.ensureBuiltins();
     const bootstrapSecret = await identity.ensureBootstrapSecret();
     if (bootstrapSecret) {
@@ -53,6 +55,7 @@ async function main(): Promise<void> {
       stage3,
       stage4,
       realtime,
+      stage5,
       allowedOrigins: config.allowedOrigins
     });
 

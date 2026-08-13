@@ -299,6 +299,7 @@ export interface CommitteeWorkspaceSnapshot {
   notes: CommitteeNote[];
   textPosts: CommitteeTextPost[];
   sync: {committeeEventSequence: number};
+  timers?: import('./stage5.js').AuthoritativeTimer[];
 }
 
 export function localizedDisplayName(

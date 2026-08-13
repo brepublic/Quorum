@@ -47,6 +47,14 @@ describe('migration discovery', () => {
     expect(realtime?.sql).not.toContain('CREATE TABLE timer_states');
   });
 
+  it('adds server-authoritative timer state without per-second rows', async () => {
+    const migrations = await loadMigrations(resolve('server/migrations'));
+    const timers = migrations.find(migration => migration.version === 6);
+    expect(timers?.name).toBe('authoritative_timers');
+    expect(timers?.sql).toContain('remaining_at_start_ms');
+    expect(timers?.sql).not.toContain('timer_ticks');
+  });
+
   it('rejects SQL files outside the versioned naming contract', async () => {
     const directory = await temporaryDirectory();
     await writeFile(join(directory, 'first.sql'), 'SELECT 1;\n');

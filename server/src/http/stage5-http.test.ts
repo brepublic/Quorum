@@ -1,0 +1,60 @@
+// @vitest-environment node
+
+import {EventEmitter, once} from 'node:events';
+import {Readable} from 'node:stream';
+import type {IncomingMessage, ServerResponse} from 'node:http';
+import {describe, expect, it, vi} from 'vitest';
+import {createLogger} from '../logger';
+import type {IdentityService} from '../modules/identity/service';
+import type {Stage5Service} from '../modules/stage5/service';
+import {createRequestHandler} from './app';
+import {AppError} from './errors';
+
+const authenticated = {sessionId: 'session', user: {id: '10000000-0000-4000-8000-000000000001',
+  email: 'user@example.com', displayName: 'User', status: 'ACTIVE', isSystemAdmin: false,
+  sessionVersion: 1, mustChangePassword: false, createdAt: '2026-08-13T00:00:00.000Z', disabledAt: null}} as const;
+const headers = {origin: 'https://quorum.example.com', cookie: '__Host-quorum_session=session; __Host-quorum_csrf=csrf',
+  'x-csrf-token': 'csrf', 'idempotency-key': 'timer-key'};
+
+class TestResponse extends EventEmitter {
+  statusCode = 200; headersSent = false; body = ''; readonly headers = new Map<string, unknown>();
+  setHeader(name: string, value: unknown): this {this.headers.set(name, value); return this;}
+  end(body?: string): this {this.headersSent = true; this.body = body ?? ''; queueMicrotask(() => this.emit('finish')); return this;}
+  destroy(): this {return this;}
+}
+
+async function send(stage5: Stage5Service, path: string, body: unknown, requestHeaders = headers) {
+  const identity = {authenticate: vi.fn(async token => {
+    if (!token) throw new AppError({code: 'AUTHENTICATION_REQUIRED', message: 'Authentication is required.'});
+    return authenticated;
+  })} as unknown as IdentityService;
+  const handler = createRequestHandler({health: {ready: async () => ({ready: true, checks: {database: {status: 'ok', migrationVersion: 6},
+    storage: {status: 'ok'}}})}, logger: createLogger(() => undefined), version: 'test', databaseMigrationVersion: 6,
+    identity, stage5, allowedOrigins: ['https://quorum.example.com']});
+  const incoming = Readable.from([Buffer.from(JSON.stringify(body))]) as unknown as IncomingMessage;
+  Object.assign(incoming, {method: 'POST', url: path, headers: requestHeaders, socket: {remoteAddress: '127.0.0.1'}});
+  const response = new TestResponse(); const finished = once(response, 'finish');
+  handler(incoming, response as unknown as ServerResponse); await finished;
+  return response;
+}
+
+describe('stage 5 timer HTTP boundary', () => {
+  it('derives the actor from Session and requires idempotency for timer creation', async () => {
+    const createTimer = vi.fn(async () => ({id: 'timer'}));
+    const stage5 = {createTimer} as unknown as Stage5Service;
+    const response = await send(stage5, '/api/v1/committees/20000000-0000-4000-8000-000000000001/timers',
+      {ownerType: 'COMMITTEE', ownerId: '20000000-0000-4000-8000-000000000001', durationMs: 60_000});
+    expect(response.statusCode).toBe(201);
+    expect(createTimer).toHaveBeenCalledWith(authenticated, '20000000-0000-4000-8000-000000000001',
+      expect.not.objectContaining({actorUserId: expect.anything()}), 'timer-key', expect.objectContaining({requestId: expect.any(String)}));
+  });
+
+  it('routes explicit timer commands with CSRF and revision', async () => {
+    const commandTimer = vi.fn(async () => ({id: 'timer', revision: 4}));
+    const stage5 = {commandTimer} as unknown as Stage5Service;
+    const response = await send(stage5, '/api/v1/timers/30000000-0000-4000-8000-000000000001/pause', {baseRevision: 3});
+    expect(response.statusCode).toBe(200);
+    expect(commandTimer).toHaveBeenCalledWith(authenticated, '30000000-0000-4000-8000-000000000001', 'pause',
+      {baseRevision: 3}, expect.objectContaining({requestId: expect.any(String)}));
+  });
+});

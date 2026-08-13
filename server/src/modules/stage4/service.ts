@@ -11,6 +11,7 @@ import type {
   AttendanceState,
   CommitteePoint,
   CommitteeWorkspaceSnapshot,
+  AuthoritativeTimer,
   MeetingSession,
   PointStatus,
   PublicCommitteePoint,
@@ -181,6 +182,11 @@ interface PointRow extends QueryResultRow {
   raised_by_seat_id: string; raised_by_seat_display_name: string; actor_user_id: string; on_behalf_of_seat_id: string;
   interrupt_requested: boolean; status: PointStatus; chair_response: string; resolved_by_user_id: string | null;
   rule_package_version_id: string; revision: number; created_at: Date; resolved_at: Date | null;
+}
+
+interface SnapshotTimerRow extends QueryResultRow {
+  id: string; committee_id: string; owner_type: AuthoritativeTimer['ownerType']; owner_id: string; running: boolean;
+  started_at: Date | null; remaining_at_start_ms: string | number; revision: number; expired_at: Date | null;
 }
 
 function note(row: NoteRow): CommitteeNote {
@@ -572,11 +578,20 @@ export class Stage4Service {
         ...(currentSession ? {meetingSession: meetingSession(currentSession)} : {}),
         ...(currentRollCall ? {rollCall: currentRollCall} : {})};
       if (viewer.audience !== 'PUBLIC') {
-        const [notes, posts] = await Promise.all([
+        const [notes, posts, timers] = await Promise.all([
           client.query<NoteRow>(`SELECT * FROM committee_notes WHERE committee_id=$1 AND deleted_at IS NULL ORDER BY sort_order,created_at,id`, [committeeId]),
-          client.query<TextPostRow>(`SELECT * FROM committee_text_posts WHERE committee_id=$1 AND deleted_at IS NULL ORDER BY sort_order,created_at,id`, [committeeId])
+          client.query<TextPostRow>(`SELECT * FROM committee_text_posts WHERE committee_id=$1 AND deleted_at IS NULL ORDER BY sort_order,created_at,id`, [committeeId]),
+          client.query<SnapshotTimerRow>(`SELECT * FROM timer_states WHERE committee_id=$1 ORDER BY created_at,id`, [committeeId])
         ]);
         result.notes = notes.rows.map(note); result.textPosts = posts.rows.map(textPost);
+        const serverTime = new Date();
+        result.timers = timers.rows.map(row => { const remaining = row.running && row.started_at
+          ? Math.max(0, Number(row.remaining_at_start_ms) - Math.max(0, serverTime.getTime() - row.started_at.getTime()))
+          : Number(row.remaining_at_start_ms);
+        return {id: row.id, committeeId: row.committee_id, ownerType: row.owner_type, ownerId: row.owner_id,
+          running: row.running && remaining > 0, startedAt: row.started_at?.toISOString() ?? null,
+          remainingAtStartMs: Number(row.remaining_at_start_ms), remainingMs: remaining, revision: row.revision,
+          expiredAt: row.expired_at?.toISOString() ?? null, serverTime: serverTime.toISOString()}; });
       }
       if (viewer.audience === 'OWNER' || viewer.audience === 'CHAIR') {
         const [memberships, chairs, assignments] = await Promise.all([
