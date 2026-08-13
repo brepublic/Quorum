@@ -795,6 +795,25 @@ S3 object key 固定为 `<prefix>/blobs/<两位分片>/<压缩 blob UUID>`。服
 
 阶段 6.4 仅实现内部读取、验证和删除原语，不开放下载或运行物理删除任务。provider 切换、审核发布和清理留给后续阶段。
 
+## 11.7 阶段 6.5 审核、发布、下载和永久删除契约
+
+```text
+GET    /api/v1/committees/:id/files
+GET    /api/v1/files/:id
+GET    /api/v1/files/:id/download
+POST   /api/v1/files/:id/submit-review
+POST   /api/v1/files/:id/publish
+DELETE /api/v1/files/:id
+```
+
+文件状态由数据库约束为 `UPLOAD_COMPLETE → PENDING_REVIEW → PUBLISHED`；任一未删除状态可以进入 `DELETED`。新不可变版本把原文件重置为 `UPLOAD_COMPLETE` 并清除旧审核时间，已删除文件不能追加版本或复活。上传者、Chair 或 Owner 可以提交审核；只有 Chair 或 Owner 可以发布。写请求体为 `{baseRevision}`，继续要求 Session、允许的 Origin、匹配的 CSRF token 和 `Idempotency-Key`；相同 key 和请求返回原响应，不同请求复用 key 返回 `IDEMPOTENCY_CONFLICT`。委员会不是 `ACTIVE` 时拒绝提交审核、发布和删除。
+
+公开委员会的匿名或非 member 调用者只能列出、读取和下载 `PUBLISHED` 文件；未发布文件与私有委员会统一返回 `NOT_FOUND`，避免泄漏存在性。活动 member、Chair 和 Owner 可读取本委员会所有未删除文件。系统管理员不因实例角色获得委员会文件权限。
+
+下载以当前不可变版本记录的 binding、storage key、大小和 SHA-256 选择 provider；即使 S3 配置后来停用，已有 blob 仍使用其保存的配置读取。服务端在发送 200 响应头前完成 provider 完整性预检。响应始终使用安全编码的 `Content-Disposition: attachment`、`X-Content-Type-Options: nosniff`、限制性 CSP、same-origin CORP 和 `private, no-store`；HTML、XML、JavaScript、XHTML 与 SVG 强制返回 `application/octet-stream`，用户文件名不能注入响应头。
+
+逻辑删除在一个 PostgreSQL 幂等事务中清除当前版本、增加 revision、追加不含内容的墓碑、把所有版本 blob 标为 `DELETE_PENDING`、为每个 blob 创建唯一 `file_blob_delete_job`，并写入事件和审计；事务失败时全部回滚。文件随后立即从列表、详情和下载消失。worker 原语使用 `FOR UPDATE SKIP LOCKED` 一次 claim 一个任务，在记录该 blob 的原 provider 上执行幂等删除；成功后原子标记 job `COMPLETED` 和 blob `DELETED`，失败保存稳定 failure code 并指数退避。进程崩溃遗留超过五分钟的 `IN_PROGRESS` claim 可重新领取；不存在的 provider 对象视为成功。阶段 6.5 尚未启动阶段 6.7 的常驻清理调度循环。
+
 ## 12. SSE 格式
 
 ```text

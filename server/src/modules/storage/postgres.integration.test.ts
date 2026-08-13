@@ -21,6 +21,7 @@ import {StorageCredentialCipher} from './credential-crypto';
 import {Stage6S3ConfigService} from './s3-config-service';
 import {Stage6S3CommitService} from './s3-commit-service';
 import {S3CompatibleStore, type S3Request, type S3Response, type S3Transport} from './s3-store';
+import {Stage6FileService} from './file-service';
 
 const {Client, Pool} = pg;
 const adminUrl = process.env.TEST_DATABASE_ADMIN_URL;
@@ -36,6 +37,8 @@ let staging: DurableStagingStore;
 let stagingRoot = '';
 let volume: ServerVolumeStore;
 let serverVolume: Stage6ServerVolumeService;
+let files: Stage6FileService;
+let fileS3Configs: Stage6S3ConfigService;
 let administrator: AuthenticatedSession;
 
 function quoteIdentifier(value: string): string {
@@ -71,6 +74,10 @@ beforeEach(async () => {
   volume = new ServerVolumeStore(join(stagingRoot, 'server-volume'), 20 * 1024 * 1024);
   await volume.initialize();
   serverVolume = new Stage6ServerVolumeService(pool, storage, staging, volume);
+  fileS3Configs = new Stage6S3ConfigService(pool, new StorageCredentialCipher(Buffer.alloc(32, 7), 1),
+    () => new IntegrationS3Transport());
+  files = new Stage6FileService(pool, volume, fileS3Configs,
+    config => new S3CompatibleStore(config, new IntegrationS3Transport(), 20 * 1024 * 1024));
   await stage3.ensureBuiltins();
   const secret = await identity.ensureBootstrapSecret();
   const login = await identity.bootstrapAdmin({secret: secret as string, email: 'admin@example.com',
@@ -108,11 +115,11 @@ async function user(name: string): Promise<AuthenticatedSession> {
   return identity.authenticate(changed.sessionToken);
 }
 
-async function storageFixture() {
+async function storageFixture(visibility: 'PUBLIC' | 'PRIVATE' = 'PUBLIC') {
   const owner = await user('owner');
   const chair = await user('chair');
   const member = await user('member');
-  let committee = await stage4.createCommittee(owner, {name: 'Stage 6 Council', visibility: 'PUBLIC',
+  let committee = await stage4.createCommittee(owner, {name: 'Stage 6 Council', visibility,
     countryTemplateKey: 'builtin:default'}, 'committee', context('committee'));
   committee = await stage3.setChair(owner, committee.id, chair.user.id, true, committee.revision, context('chair'));
   const seat = await stage4.createSeat(chair, committee.id,
@@ -125,6 +132,7 @@ async function storageFixture() {
 
 class IntegrationS3Transport implements S3Transport {
   readonly objects = new Map<string, Buffer>();
+  failDelete = false;
   async request(input: S3Request): Promise<S3Response> {
     if (input.method === 'PUT') {
       const chunks: Buffer[] = [];
@@ -136,6 +144,8 @@ class IntegrationS3Transport implements S3Transport {
       const content = this.objects.get(input.key);
       return {statusCode: content ? 200 : 404, headers: {}, body: (async function* () {if (content) yield content;})()};
     }
+    if (this.failDelete) throw new Error('delete unavailable');
+    this.objects.delete(input.key);
     return {statusCode: 200, headers: {}, body: (async function* () {})()};
   }
 }
@@ -159,6 +169,17 @@ async function s3Fixture() {
   const binding = await storage.createS3Binding(chair, committee.id,
     {baseRevision: committee.revision, providerConfigId: config.id}, 's3-binding', context('s3-binding'));
   return {owner, chair, member, committee, config, binding, configs};
+}
+
+async function committedServerFile(fixture: Awaited<ReturnType<typeof storageFixture>>, content: string,
+  key: string) {
+  const upload = await uploads.createUpload(fixture.member, fixture.committee.id, {
+    logicalName: `文件 ${key}`, originalName: `${key}.pdf`, mediaType: 'application/pdf',
+    expectedSizeBytes: Buffer.byteLength(content), sha256: digest(content)
+  }, `${key}-upload`, context(`${key}-upload`));
+  await uploads.receiveContent(fixture.member, upload.id, (async function* () {yield content;})(),
+    `${key}-content`, Buffer.byteLength(content), context(`${key}-content`));
+  return serverVolume.commitUpload(fixture.member, upload.id, {}, `${key}-commit`, context(`${key}-commit`));
 }
 
 integration('PostgreSQL stage 6 file metadata', () => {
@@ -207,18 +228,21 @@ integration('PostgreSQL stage 6 file metadata', () => {
 
     const paused = await stage3.setCommitteeStatus(fixture.chair, fixture.committee.id, 'PAUSED',
       fixture.committee.revision + 1, context('pause'));
-    await expect(storage.deleteFile(fixture.member, file.id, {baseRevision: file.revision}, context('paused-delete')))
+    await expect(storage.deleteFile(fixture.member, file.id, {baseRevision: file.revision}, 'paused-delete',
+      context('paused-delete')))
       .rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
     await stage3.setCommitteeStatus(fixture.chair, fixture.committee.id, 'ACTIVE', paused.revision, context('resume'));
     const tombstone = await storage.deleteFile(fixture.member, file.id,
-      {baseRevision: file.revision}, context('delete'));
+      {baseRevision: file.revision}, 'delete-file', context('delete'));
     expect(tombstone.lastContentRevision).toBe(file.revision);
     const deleted = await pool?.query(`SELECT e.status,e.current_version_id,
       (SELECT count(*)::int FROM file_tombstones WHERE file_entry_id=e.id) AS tombstones,
       (SELECT count(*)::int FROM file_blobs b JOIN file_versions v ON v.blob_id=b.id
-        WHERE v.file_entry_id=e.id AND b.durability_state='DELETE_PENDING') AS pending_deletes
+        WHERE v.file_entry_id=e.id AND b.durability_state='DELETE_PENDING') AS pending_deletes,
+      (SELECT count(*)::int FROM file_blob_delete_jobs j WHERE j.file_entry_id=e.id) AS delete_jobs
       FROM file_entries e WHERE e.id=$1`, [file.id]);
-    expect(deleted?.rows[0]).toEqual({status: 'DELETED', current_version_id: null, tombstones: 1, pending_deletes: 2});
+    expect(deleted?.rows[0]).toEqual({status: 'DELETED', current_version_id: null, tombstones: 1,
+      pending_deletes: 2, delete_jobs: 2});
 
     await expect(storage.recordProviderCommit(fixture.member, fixture.committee.id, {
       bindingId: fixture.binding.id,
@@ -563,5 +587,185 @@ integration('PostgreSQL stage 6 file metadata', () => {
     expect(state?.rows[0]).toEqual(expect.objectContaining({status: 'COMMITTED', blobs: 1, versions: 1}));
     expect(state?.rows[0]?.provider_storage_key).toMatch(/^instance\/blobs\/[a-f0-9]{2}\/[a-f0-9]{32}$/);
     expect(state?.rows[0]?.provider_storage_key).not.toContain('unsafe-name');
+  });
+
+  it('enforces review roles, revisions, pause state, visibility, and verified SERVER_VOLUME downloads', async () => {
+    const fixture = await storageFixture();
+    const content = 'reviewed server volume content';
+    const created = await committedServerFile(fixture, content, 'review-flow');
+    expect(await files.list(undefined, fixture.committee.id)).toEqual([]);
+    await expect(files.get(undefined, created.id)).rejects.toMatchObject({code: 'NOT_FOUND'});
+    expect((await files.get(fixture.member, created.id)).id).toBe(created.id);
+    await expect(files.publish(fixture.member, created.id, {baseRevision: created.revision}, 'member-publish',
+      context('member-publish'))).rejects.toMatchObject({code: 'FORBIDDEN'});
+
+    const pending = await files.submitForReview(fixture.member, created.id, {baseRevision: created.revision},
+      'submit-review', context('submit-review'));
+    expect(pending).toEqual(expect.objectContaining({status: 'PENDING_REVIEW', revision: created.revision + 1,
+      submittedAt: expect.any(String), publishedAt: null}));
+    expect(await files.submitForReview(fixture.member, created.id, {baseRevision: created.revision},
+      'submit-review', context('submit-review-replay'))).toEqual(pending);
+    await expect(files.submitForReview(fixture.member, created.id, {baseRevision: pending.revision},
+      'submit-review', context('submit-review-conflict'))).rejects.toMatchObject({code: 'IDEMPOTENCY_CONFLICT'});
+    await expect(files.publish(fixture.chair, created.id, {baseRevision: created.revision}, 'stale-publish',
+      context('stale-publish'))).rejects.toMatchObject({code: 'REVISION_CONFLICT'});
+    const paused = await stage3.setCommitteeStatus(fixture.chair, fixture.committee.id, 'PAUSED',
+      fixture.committee.revision + 1, context('pause-review'));
+    await expect(files.publish(fixture.chair, created.id, {baseRevision: pending.revision}, 'paused-publish',
+      context('paused-publish'))).rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
+    await stage3.setCommitteeStatus(fixture.chair, fixture.committee.id, 'ACTIVE', paused.revision,
+      context('resume-review'));
+    const published = await files.publish(fixture.chair, created.id, {baseRevision: pending.revision},
+      'publish', context('publish'));
+    expect(published).toEqual(expect.objectContaining({status: 'PUBLISHED', revision: pending.revision + 1,
+      publishedAt: expect.any(String)}));
+    expect(await files.publish(fixture.chair, created.id, {baseRevision: pending.revision}, 'publish',
+      context('publish-replay'))).toEqual(published);
+    expect(await files.list(undefined, fixture.committee.id)).toEqual([published]);
+    const download = await files.download(undefined, created.id);
+    const chunks: Buffer[] = [];
+    for await (const chunk of download.content) chunks.push(chunk);
+    expect(Buffer.concat(chunks).toString()).toBe(content);
+    expect(download.headers).toEqual(expect.objectContaining({'content-type': 'application/pdf',
+      'content-disposition': expect.stringMatching(/^attachment;/), 'x-content-type-options': 'nosniff'}));
+    const records = await pool?.query(`SELECT
+      (SELECT count(*)::int FROM committee_events WHERE resource_id=$1
+        AND event_type IN ('file.review_requested','file.published')) AS events,
+      (SELECT count(*)::int FROM audit_log WHERE resource_id=$1
+        AND action IN ('storage.file_review_requested','storage.file_published')) AS audits`, [created.id]);
+    expect(records?.rows[0]).toEqual({events: 2, audits: 2});
+  });
+
+  it('hides every file in a private committee from unauthenticated callers', async () => {
+    const fixture = await storageFixture('PRIVATE');
+    const created = await committedServerFile(fixture, 'private content', 'private-file');
+    await expect(files.list(undefined, fixture.committee.id)).rejects.toMatchObject({code: 'NOT_FOUND'});
+    await expect(files.get(undefined, created.id)).rejects.toMatchObject({code: 'NOT_FOUND'});
+    expect(await files.list(fixture.member, fixture.committee.id)).toEqual([created]);
+  });
+
+  it('rolls back review state and its event when audit persistence fails', async () => {
+    const fixture = await storageFixture();
+    const created = await committedServerFile(fixture, 'review atomicity', 'review-atomicity');
+    const pending = await files.submitForReview(fixture.member, created.id, {baseRevision: created.revision},
+      'atomic-submit', context('atomic-submit'));
+    await pool?.query(`CREATE FUNCTION fail_stage6_publish_audit() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF NEW.action='storage.file_published' THEN RAISE EXCEPTION 'injected publish audit failure'; END IF;
+        RETURN NEW;
+      END; $$`);
+    await pool?.query(`CREATE TRIGGER fail_stage6_publish_audit BEFORE INSERT ON audit_log
+      FOR EACH ROW EXECUTE FUNCTION fail_stage6_publish_audit()`);
+    await expect(files.publish(fixture.chair, created.id, {baseRevision: pending.revision}, 'atomic-publish',
+      context('atomic-publish'))).rejects.toThrow('injected publish audit failure');
+    const state = await pool?.query(`SELECT e.status,e.revision,
+      (SELECT count(*)::int FROM committee_events WHERE resource_id=e.id AND event_type='file.published') AS events,
+      (SELECT count(*)::int FROM audit_log WHERE resource_id=e.id AND action='storage.file_published') AS audits,
+      (SELECT count(*)::int FROM idempotency_keys WHERE key='atomic-publish') AS idempotency
+      FROM file_entries e WHERE e.id=$1`, [created.id]);
+    expect(state?.rows[0]).toEqual({status: 'PENDING_REVIEW', revision: pending.revision,
+      events: 0, audits: 0, idempotency: 0});
+  });
+
+  it('rolls back tombstone, delete jobs, blob state, event, and idempotency when deletion audit fails', async () => {
+    const fixture = await storageFixture();
+    const created = await committedServerFile(fixture, 'delete atomicity', 'delete-atomicity');
+    await pool?.query(`CREATE FUNCTION fail_stage6_delete_audit() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF NEW.action='storage.file_deleted' THEN RAISE EXCEPTION 'injected delete audit failure'; END IF;
+        RETURN NEW;
+      END; $$`);
+    await pool?.query(`CREATE TRIGGER fail_stage6_delete_audit BEFORE INSERT ON audit_log
+      FOR EACH ROW EXECUTE FUNCTION fail_stage6_delete_audit()`);
+    await expect(storage.deleteFile(fixture.member, created.id, {baseRevision: created.revision},
+      'atomic-delete', context('atomic-delete'))).rejects.toThrow('injected delete audit failure');
+    const state = await pool?.query(`SELECT e.status,e.revision,
+      (SELECT count(*)::int FROM file_tombstones WHERE file_entry_id=e.id) AS tombstones,
+      (SELECT count(*)::int FROM file_blob_delete_jobs WHERE file_entry_id=e.id) AS jobs,
+      (SELECT count(*)::int FROM file_blobs b JOIN file_versions v ON v.blob_id=b.id
+        WHERE v.file_entry_id=e.id AND b.durability_state='COMMITTED') AS committed,
+      (SELECT count(*)::int FROM committee_events WHERE resource_id=e.id AND event_type='file.deleted') AS events,
+      (SELECT count(*)::int FROM idempotency_keys WHERE key='atomic-delete') AS idempotency
+      FROM file_entries e WHERE e.id=$1`, [created.id]);
+    expect(state?.rows[0]).toEqual({status: 'UPLOAD_COMPLETE', revision: created.revision,
+      tombstones: 0, jobs: 0, committed: 1, events: 0, idempotency: 0});
+  });
+
+  it('makes logical deletion immediate and completes its durable SERVER_VOLUME delete job', async () => {
+    const fixture = await storageFixture();
+    const created = await committedServerFile(fixture, 'delete this provider copy', 'delete-job');
+    const storageKey = (await pool?.query<{storage_key: string}>(`SELECT b.storage_key FROM file_blobs b
+      JOIN file_versions v ON v.blob_id=b.id WHERE v.file_entry_id=$1`, [created.id]))?.rows[0]?.storage_key as string;
+    const tombstone = await storage.deleteFile(fixture.member, created.id, {baseRevision: created.revision},
+      'logical-delete', context('logical-delete'));
+    expect(await storage.deleteFile(fixture.member, created.id, {baseRevision: created.revision},
+      'logical-delete', context('logical-delete-replay'))).toEqual(tombstone);
+    await expect(files.get(fixture.member, created.id)).rejects.toMatchObject({code: 'NOT_FOUND'});
+    const pending = await pool?.query(`SELECT j.status,j.attempts,b.durability_state FROM file_blob_delete_jobs j
+      JOIN file_blobs b ON b.id=j.blob_id WHERE j.file_entry_id=$1`, [created.id]);
+    expect(pending?.rows[0]).toEqual({status: 'PENDING', attempts: 0, durability_state: 'DELETE_PENDING'});
+    await pool?.query(`UPDATE file_blob_delete_jobs SET status='IN_PROGRESS',claimed_at=now()-interval '10 minutes',
+      claim_token=$2 WHERE file_entry_id=$1`, [created.id, randomUUID()]);
+    const completed = await files.processNextDeleteJob();
+    expect(completed).toEqual(expect.objectContaining({status: 'COMPLETED', attempts: 1, failureCode: null}));
+    await expect(lstat(volume.pathForKey(storageKey))).rejects.toMatchObject({code: 'ENOENT'});
+    expect(await files.processNextDeleteJob()).toBeNull();
+    const durable = await pool?.query(`SELECT j.status,b.durability_state FROM file_blob_delete_jobs j
+      JOIN file_blobs b ON b.id=j.blob_id WHERE j.file_entry_id=$1`, [created.id]);
+    expect(durable?.rows[0]).toEqual({status: 'COMPLETED', durability_state: 'DELETED'});
+  });
+
+  it('retries a provider deletion failure without marking the blob deleted', async () => {
+    const fixture = await storageFixture();
+    const created = await committedServerFile(fixture, 'retry provider delete', 'delete-retry');
+    await storage.deleteFile(fixture.member, created.id, {baseRevision: created.revision}, 'retry-delete',
+      context('retry-delete'));
+    const failingVolume = new ServerVolumeStore(volume.rootPath, 20 * 1024 * 1024, {
+      link, lstat, mkdir, open, realpath,
+      unlink: async () => {throw Object.assign(new Error('provider unavailable'), {code: 'EIO'});},
+      syncFile: handle => handle.sync(), syncDirectory: handle => handle.sync()
+    });
+    await failingVolume.initialize();
+    const failingFiles = new Stage6FileService(pool as pg.Pool, failingVolume, fileS3Configs,
+      config => new S3CompatibleStore(config, new IntegrationS3Transport(), 20 * 1024 * 1024));
+    const retry = await failingFiles.processNextDeleteJob();
+    expect(retry).toEqual(expect.objectContaining({status: 'RETRY', attempts: 1,
+      failureCode: 'SERVER_VOLUME_DELETE_FAILED'}));
+    const state = await pool?.query(`SELECT j.status,j.failure_code,b.durability_state
+      FROM file_blob_delete_jobs j JOIN file_blobs b ON b.id=j.blob_id WHERE j.file_entry_id=$1`, [created.id]);
+    expect(state?.rows[0]).toEqual({status: 'RETRY', failure_code: 'SERVER_VOLUME_DELETE_FAILED',
+      durability_state: 'DELETE_PENDING'});
+  });
+
+  it('reads and deletes an existing S3 blob even after its provider config is disabled', async () => {
+    const fixture = await s3Fixture();
+    const content = 'published S3 bytes';
+    const upload = await uploads.createUpload(fixture.member, fixture.committee.id, {
+      logicalName: 'S3 发布文件', originalName: '../../published.svg', mediaType: 'image/svg+xml',
+      expectedSizeBytes: Buffer.byteLength(content), sha256: digest(content)
+    }, 's3-review-upload', context('s3-review-upload'));
+    await uploads.receiveContent(fixture.member, upload.id, (async function* () {yield content;})(),
+      's3-review-content', Buffer.byteLength(content), context('s3-review-content'));
+    const transport = new IntegrationS3Transport();
+    const commits = new Stage6S3CommitService(pool as pg.Pool, storage, staging, fixture.configs,
+      config => new S3CompatibleStore(config, transport, 20 * 1024 * 1024));
+    const created = await commits.commitUpload(fixture.member, upload.id, {}, 's3-review-commit',
+      context('s3-review-commit'));
+    const s3Files = new Stage6FileService(pool as pg.Pool, volume, fixture.configs,
+      config => new S3CompatibleStore(config, transport, 20 * 1024 * 1024));
+    const pending = await s3Files.submitForReview(fixture.member, created.id, {baseRevision: created.revision},
+      's3-submit', context('s3-submit'));
+    const published = await s3Files.publish(fixture.chair, created.id, {baseRevision: pending.revision},
+      's3-publish', context('s3-publish'));
+    await pool?.query("UPDATE storage_provider_configs SET status='DISABLED' WHERE id=$1", [fixture.config.id]);
+    const download = await s3Files.download(undefined, published.id);
+    const chunks: Buffer[] = [];
+    for await (const chunk of download.content) chunks.push(chunk);
+    expect(Buffer.concat(chunks).toString()).toBe(content);
+    expect(download.headers['content-type']).toBe('application/octet-stream');
+    await storage.deleteFile(fixture.member, created.id, {baseRevision: published.revision}, 's3-delete',
+      context('s3-delete'));
+    expect((await s3Files.processNextDeleteJob())?.status).toBe('COMPLETED');
+    expect(transport.objects.size).toBe(0);
   });
 });

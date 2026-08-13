@@ -56,10 +56,23 @@ export interface FileEntry {
   logicalName: string;
   mediaType: string;
   status: FileEntryStatus;
+  createdByUserId: string;
   currentVersion: FileVersion;
   revision: number;
+  submittedAt: string | null;
+  publishedAt: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface FileBlobDeleteJob {
+  id: string;
+  fileEntryId: string;
+  blobId: string;
+  status: 'PENDING' | 'IN_PROGRESS' | 'RETRY' | 'COMPLETED';
+  attempts: number;
+  nextAttemptAt: string;
+  failureCode: string | null;
 }
 
 export interface FileTombstone {

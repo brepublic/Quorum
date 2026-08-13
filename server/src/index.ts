@@ -22,6 +22,7 @@ import {Stage6S3ConfigService} from './modules/storage/s3-config-service.js';
 import {NodeS3Transport, S3CompatibleStore} from './modules/storage/s3-store.js';
 import {Stage6S3CommitService} from './modules/storage/s3-commit-service.js';
 import {Stage6ProviderCommitService} from './modules/storage/provider-commit-service.js';
+import {Stage6FileService} from './modules/storage/file-service.js';
 
 const {Pool} = pg;
 const logger = createLogger();
@@ -65,6 +66,8 @@ async function main(): Promise<void> {
     const s3 = new Stage6S3CommitService(pool, metadata, staging, s3Configs,
       providerConfig => new S3CompatibleStore(providerConfig, new NodeS3Transport(providerConfig), config.maxFileBytes));
     const providerCommits = new Stage6ProviderCommitService(pool, serverVolume, s3);
+    const files = new Stage6FileService(pool, serverVolumeStore, s3Configs,
+      providerConfig => new S3CompatibleStore(providerConfig, new NodeS3Transport(providerConfig), config.maxFileBytes));
     await stage3.ensureBuiltins();
     const bootstrapSecret = await identity.ensureBootstrapSecret();
     if (bootstrapSecret) {
@@ -84,6 +87,7 @@ async function main(): Promise<void> {
       providerCommits,
       s3Configs,
       storage: metadata,
+      files,
       allowedOrigins: config.allowedOrigins
     });
 

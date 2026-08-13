@@ -2,7 +2,7 @@
 
 > 本文件是本仓库的维护入口。后续涉及代码、构建、测试或运行的工作，应先阅读本文件和 `AGENTS.md`，并以实际代码为准更新本文档。
 
-> Quorum 已完成自主托管目标设计，并已落地实施计划阶段 0–5 和阶段 6.1–6.4。`self-hosted` 运行时以 PostgreSQL 为唯一业务真相，通过同源 API 与受众过滤 SSE 提供议事功能；上传可流式暂存并提交到服务器持久卷或 S3 compatible provider。公开下载流程和文件 UI 尚未接入。
+> Quorum 已完成自主托管目标设计，并已落地实施计划阶段 0–5 和阶段 6.1–6.5。`self-hosted` 运行时以 PostgreSQL 为唯一业务真相，通过同源 API 与受众过滤 SSE 提供议事功能；上传可流式暂存并提交到服务器持久卷或 S3 compatible provider，文件可审核、发布、授权下载和异步物理删除。文件 UI 尚未接入。
 
 ## 1. 项目定位与技术栈
 
@@ -156,6 +156,8 @@ system
 - 阶段 6.2 的 `Stage6UploadService` 通过 `POST /api/v1/committees/:id/file-uploads` 创建上传，再由 `PUT /api/v1/file-uploads/:id/content` 直接消费 HTTP 流。`DurableStagingStore` 以服务器 UUID 生成路径，逐块执行全局与单文件上限、实际大小和 SHA-256 校验，并拒绝绝对路径、点路径、符号链接逃逸和非普通文件。完整内容只进入 `STAGED`；本阶段不调用 provider 提交，不创建 `file_entry`、`file_blob` 或 `file_version`。`CREATED`、`RECEIVING` 和 `STAGED` 即使过期也不属于普通清理范围。
 - 阶段 6.3 的 `Stage6ServerVolumeService` 只接收 `STAGED` upload。`ServerVolumeStore` 从暂存文件流式复制到由 blob UUID 派生的 0600 临时文件，执行 `fsync`、无覆盖原子发布和最终重读校验；路径检查拒绝符号链接、硬链接和非普通文件。`POST /api/v1/file-uploads/:id/commit` 在 provider 验证后用一个事务提交 upload、blob、file entry/version、事件、审计和幂等响应。数据库失败会保留暂存与服务器卷副本，重试复用原 blob ID；服务器卷读取原语已实现，但尚未开放下载 HTTP。
 - 阶段 6.4 增加实例级 `S3_COMPATIBLE` 配置、AES-256-GCM 凭据密文和 SigV4 HTTPS 适配器。系统管理员管理配置，Chair 只能把委员会绑定到活动配置。endpoint 在保存时拒绝危险 URL，并在每次 DNS 解析后拒绝非获准私网、回环、链路本地和元数据目标，同时把 TLS 主机名连接固定到已检查地址。S3 object key 只由管理员 prefix 和 blob UUID 派生；上传后 GET 重算大小和 SHA-256，再复用阶段 6.3 的原子发布事务。真实 S3 compatible 服务仍需按人工验收清单验证。
+- 阶段 6.5 增加 `UPLOAD_COMPLETE → PENDING_REVIEW → PUBLISHED` 数据库状态机和同源文件列表、详情、下载、提交审核、发布及删除路由。PUBLIC 访问只看到公开委员会的已发布文件；活动 member、Chair 和 Owner 可读取本委员会未删除文件。状态命令继续执行 Session、Origin、CSRF、revision 与幂等边界，暂停委员会拒绝审核、发布和删除。
+- 下载在发送响应头前从文件版本记录的 provider 重新校验大小和 SHA-256，并始终使用安全编码的 `Content-Disposition: attachment`、`nosniff` 和同源隔离头；HTML、XML、JavaScript 与 SVG 强制作为 `application/octet-stream`。逻辑删除立即隐藏文件、追加墓碑并为每个不可变版本创建 durable delete job；worker 原语对服务器卷和 S3 执行幂等删除，失败退避重试，超时的 `IN_PROGRESS` claim 可恢复。
 
 因此，数据库规则和 Storage 元数据是产品的关键安全边界；变更前必须同时审查前端写入路径与这两份规则文件。
 

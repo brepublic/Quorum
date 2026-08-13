@@ -189,6 +189,10 @@ export class Stage6S3ConfigService {
     return this.provider(await this.loadRow(configId, true));
   }
 
+  async providerForStoredBlob(configId: string): Promise<S3ProviderConfig> {
+    return this.provider(await this.loadRow(configId, false));
+  }
+
   private provider(row: ConfigRow): S3ProviderConfig {
     const credentials: S3Credentials = this.cipher.decrypt(row.id, {
       ciphertext: row.credentials_ciphertext, nonce: row.credentials_nonce,

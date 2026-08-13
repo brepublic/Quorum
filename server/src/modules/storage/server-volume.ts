@@ -208,6 +208,11 @@ export class ServerVolumeStore {
 
   async *read(storageKey: string, expectedSizeBytes: number, expectedSha256: string): AsyncGenerator<Buffer> {
     await this.verify(storageKey, expectedSizeBytes, expectedSha256);
+    yield* this.readVerified(storageKey);
+  }
+
+  async *readVerified(storageKey: string): AsyncGenerator<Buffer> {
+    await this.ensureInitialized();
     const target = await this.checkedTarget(storageKey);
     const handle = await this.operations.open(target, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
     const buffer = Buffer.allocUnsafe(64 * 1024);
@@ -219,6 +224,20 @@ export class ServerVolumeStore {
       }
     } finally {
       await handle.close();
+    }
+  }
+
+  async delete(storageKey: string): Promise<void> {
+    await this.ensureInitialized();
+    const target = await this.checkedTarget(storageKey);
+    try {
+      await this.regularFile(target);
+      await this.operations.unlink(target);
+      await this.syncDirectory(dirname(target));
+    } catch (error) {
+      if (missing(error)) return;
+      throw new ProviderStorageError('SERVER_VOLUME_DELETE_FAILED', 'SERVICE_NOT_READY',
+        'Server volume content could not be deleted.', error);
     }
   }
 

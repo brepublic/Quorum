@@ -10,6 +10,7 @@ import type {Stage6UploadService} from '../modules/storage/upload-service';
 import type {Stage6ProviderCommitService} from '../modules/storage/provider-commit-service';
 import type {Stage6S3ConfigService} from '../modules/storage/s3-config-service';
 import type {Stage6StorageService} from '../modules/storage/service';
+import type {Stage6FileService} from '../modules/storage/file-service';
 import {createRequestHandler} from './app';
 
 const authenticated = {sessionId: 'session', user: {id: '10000000-0000-4000-8000-000000000001',
@@ -19,14 +20,16 @@ const authenticated = {sessionId: 'session', user: {id: '10000000-0000-4000-8000
 class TestResponse extends EventEmitter {
   statusCode = 200; headersSent = false; body = ''; readonly headers = new Map<string, unknown>();
   setHeader(name: string, value: unknown): this {this.headers.set(name, value); return this;}
-  end(body?: string): this {this.headersSent = true; this.body = body ?? ''; queueMicrotask(() => this.emit('finish')); return this;}
+  write(chunk: Uint8Array | string): boolean {this.headersSent = true; this.body += Buffer.from(chunk).toString(); return true;}
+  end(body?: string): this {this.headersSent = true; if (body !== undefined) this.body += body;
+    queueMicrotask(() => this.emit('finish')); return this;}
   destroy(): this {return this;}
 }
 
 async function send(uploads: Stage6UploadService, options: {
-  method: 'POST' | 'PUT'; path: string; chunks: Buffer[]; headers?: Record<string, string>;
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE'; path: string; chunks: Buffer[]; headers?: Record<string, string>;
 }, providerCommits?: Stage6ProviderCommitService, extras: {
-  s3Configs?: Stage6S3ConfigService; storage?: Stage6StorageService;
+  s3Configs?: Stage6S3ConfigService; storage?: Stage6StorageService; files?: Stage6FileService;
 } = {}) {
   const identity = {authenticate: vi.fn(async () => authenticated)} as unknown as IdentityService;
   const handler = createRequestHandler({health: {ready: async () => ({ready: true, checks: {
@@ -125,5 +128,51 @@ describe('stage 6 upload HTTP boundary', () => {
     expect(bindingResponse.statusCode).toBe(201);
     expect(createS3Binding).toHaveBeenCalledWith(authenticated, '20000000-0000-4000-8000-000000000001',
       body, 'upload-key', expect.anything());
+  });
+
+  it('routes file listing, detail, review, publication, and deletion through session-aware services', async () => {
+    const files = {list: vi.fn(async () => [{id: 'file'}]), get: vi.fn(async () => ({id: 'file'})),
+      submitForReview: vi.fn(async () => ({id: 'file', status: 'PENDING_REVIEW'})),
+      publish: vi.fn(async () => ({id: 'file', status: 'PUBLISHED'}))} as unknown as Stage6FileService;
+    const storage = {deleteFile: vi.fn(async () => ({id: 'tombstone'}))} as unknown as Stage6StorageService;
+    const committeeId = '20000000-0000-4000-8000-000000000001';
+    const fileId = '30000000-0000-4000-8000-000000000001';
+    expect((await send({} as Stage6UploadService, {method: 'GET', path: `/api/v1/committees/${committeeId}/files`,
+      chunks: []}, undefined, {files})).statusCode).toBe(200);
+    expect((files.list as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(authenticated, committeeId);
+    expect((await send({} as Stage6UploadService, {method: 'GET', path: `/api/v1/files/${fileId}`,
+      chunks: []}, undefined, {files})).statusCode).toBe(200);
+    expect((files.get as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(authenticated, fileId);
+
+    const reviewBody = {baseRevision: 1};
+    await send({} as Stage6UploadService, {method: 'POST', path: `/api/v1/files/${fileId}/submit-review`,
+      chunks: [Buffer.from(JSON.stringify(reviewBody))]}, undefined, {files});
+    expect((files.submitForReview as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(authenticated, fileId,
+      reviewBody, 'upload-key', expect.objectContaining({requestId: expect.any(String)}));
+    await send({} as Stage6UploadService, {method: 'POST', path: `/api/v1/files/${fileId}/publish`,
+      chunks: [Buffer.from(JSON.stringify({baseRevision: 2}))]}, undefined, {files});
+    expect((files.publish as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(authenticated, fileId,
+      {baseRevision: 2}, 'upload-key', expect.anything());
+    await send({} as Stage6UploadService, {method: 'DELETE', path: `/api/v1/files/${fileId}`,
+      chunks: [Buffer.from(JSON.stringify({baseRevision: 3}))]}, undefined, {storage});
+    expect((storage.deleteFile as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(authenticated, fileId,
+      {baseRevision: 3}, 'upload-key', expect.anything());
+  });
+
+  it('streams download bytes with the service-provided safe headers', async () => {
+    const fileId = '30000000-0000-4000-8000-000000000001';
+    const download = vi.fn(async () => ({file: {id: fileId}, headers: {
+      'content-type': 'application/octet-stream',
+      'content-disposition': 'attachment; filename="download.svg"',
+      'x-content-type-options': 'nosniff'
+    }, content: (async function* () {yield Buffer.from('first-'); yield Buffer.from('second');})()}));
+    const response = await send({} as Stage6UploadService, {method: 'GET',
+      path: `/api/v1/files/${fileId}/download`, chunks: []}, undefined,
+    {files: {download} as unknown as Stage6FileService});
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toBe('first-second');
+    expect(response.headers.get('content-type')).toBe('application/octet-stream');
+    expect(response.headers.get('content-disposition')).toBe('attachment; filename="download.svg"');
+    expect(download).toHaveBeenCalledWith(authenticated, fileId);
   });
 });

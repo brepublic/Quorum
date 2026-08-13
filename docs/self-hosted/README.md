@@ -1,8 +1,8 @@
 # Quorum 自托管目标架构
 
-本目录描述 Quorum 从 Firebase BaaS 迁移到完全自主托管后的目标架构。阶段 0–5 和 6.1–6.4 已落地：上传内容可持久暂存并原子提交到 `SERVER_VOLUME` 或 `S3_COMPATIBLE`，PostgreSQL 同事务发布对应文件版本。阶段 6.5–6.8 的完整文件流程和 UI 尚未实施；仓库仍未完成全部迁移。当前事实以根目录的 [`PROJECT_ARCHITECTURE.md`](../../PROJECT_ARCHITECTURE.md) 为准。
+本目录描述 Quorum 从 Firebase BaaS 迁移到完全自主托管后的目标架构。阶段 0–5 和 6.1–6.5 已落地：上传内容可持久暂存并原子提交到 `SERVER_VOLUME` 或 `S3_COMPATIBLE`，PostgreSQL 同事务发布对应文件版本，并提供审核、发布、授权下载和 durable 物理删除任务。阶段 6.6–6.8 的 provider 切换、后台保护和文件 UI 尚未实施；仓库仍未完成全部迁移。当前事实以根目录的 [`PROJECT_ARCHITECTURE.md`](../../PROJECT_ARCHITECTURE.md) 为准。
 
-## 当前阶段 6.4 边界
+## 当前阶段 6.5 边界
 
 - PostgreSQL migration 已建立身份、凭据、Session、系统设置、未来注册申请和身份审计表。
 - bootstrap secret 只保存哈希，并由 PostgreSQL 事务保证并发初始化只有一个成功；公开状态 API 不返回 secret。
@@ -13,7 +13,7 @@
 - 同源 API 已提供阶段 3 委员会、席位、邀请码、快照和规则包命令。所有写入继续执行 Session、CSRF 和 Origin 校验。
 - Committee Owner、Chair、membership、seat assignment 和 `SYSTEM_ADMIN` 分别授权。系统管理员和 Committee Owner 都不会隐式获得 Chair 能力。
 - 邀请码只保存哈希；规则模拟不写议事状态；内置包和已发布版本不可原地修改。
-- schema compatibility 16 覆盖阶段 4–5 业务表、阶段 6.1 文件数据基础、durable upload、SERVER_VOLUME 提交绑定和 S3 provider 配置。
+- schema compatibility 17 覆盖阶段 4–5 业务表、阶段 6.1 文件数据基础、durable upload、SERVER_VOLUME/S3 provider、审核状态和物理删除任务。
 - 自托管 React 页面只调用同源 API；一浏览器一委员会一条 SSE，游标过期、序号缺口或未知事件回退完整快照。
 - 服务器时间是计时真相；PostgreSQL 唯一约束和行锁保护队列顺序、当前发言人及一席一票。
 - 正式 ballot 冻结资格、门槛、must-vote、否决席位和规则版本；票更正追加历史，匿名意向性投票不保存投票人与选项关联。
@@ -29,7 +29,10 @@
 - S3 凭据使用显式实例 master key 和带配置 ID/版本 AAD 的 AES-256-GCM 密文；API、事件、审计和日志不返回凭据。
 - S3 endpoint 只接受 HTTPS，并拒绝 URL 凭据、query、fragment 和危险网络目标。DNS 解析后的实际连接地址再次校验并固定，私网目标必须由系统管理员显式允许。
 - S3 内容从 durable staging 流式 PUT，object key 只由管理员 prefix 和 blob UUID 派生；远端 GET 重算大小和 SHA-256 后才发布文件版本。
-- 阶段 6.4 未开放下载 HTTP、provider 切换、文件审核/发布 UI 或清理 worker。
+- 同源 HTTP 已开放文件列表、详情、下载、提交审核、发布和逻辑删除。PUBLIC 只看到公开委员会的已发布文件；member、Chair 和 Owner 可读取未删除文件。
+- 下载先按不可变版本记录的 provider 校验大小和 SHA-256，再以强制附件和安全响应头流式返回；HTML、XML、JavaScript 与 SVG 不作为同源可执行内容内联。
+- 逻辑删除立即不可见，并为所有版本 blob 创建 durable delete job。provider 删除失败退避重试，超时 claim 可恢复；阶段 6.7 的常驻 worker 和清理调度尚未运行。
+- 阶段 6.5 未实现 provider 切换、文件 UI、Chair Local Agent 或磁盘阈值。
 - PostgreSQL、TLS 浏览器和 Compose 实测尚未在当前环境执行，状态及取证要求见 [`MANUAL_ACCEPTANCE.md`](./MANUAL_ACCEPTANCE.md)。
 
 ## 文档索引
@@ -46,7 +49,8 @@
 | [`STAGE_6_HANDOFF_PROMPT.md`](./STAGE_6_HANDOFF_PROMPT.md) | 阶段 6 服务器卷与 S3 文件实施交接 Prompt |
 | [`STAGE_6_3_HANDOFF_PROMPT.md`](./STAGE_6_3_HANDOFF_PROMPT.md) | 已完成阶段 6.3 SERVER_VOLUME provider 的历史交接 Prompt |
 | [`STAGE_6_4_HANDOFF_PROMPT.md`](./STAGE_6_4_HANDOFF_PROMPT.md) | 已完成阶段 6.4 S3 compatible provider 的历史交接 Prompt |
-| [`STAGE_6_5_HANDOFF_PROMPT.md`](./STAGE_6_5_HANDOFF_PROMPT.md) | 下一步阶段 6.5 审核、发布、下载和永久删除交接 Prompt |
+| [`STAGE_6_5_HANDOFF_PROMPT.md`](./STAGE_6_5_HANDOFF_PROMPT.md) | 已完成阶段 6.5 审核、发布、下载和永久删除的历史交接 Prompt |
+| [`STAGE_6_6_HANDOFF_PROMPT.md`](./STAGE_6_6_HANDOFF_PROMPT.md) | 下一步阶段 6.6 provider 切换与失败回退交接 Prompt |
 | [`RUNNING_LOG.md`](./RUNNING_LOG.md) | 长任务当前进度、验证结果和下一步恢复点 |
 
 ## 当前实施与验证约束

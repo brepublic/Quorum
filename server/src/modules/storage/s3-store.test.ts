@@ -32,6 +32,7 @@ class MemoryTransport implements S3Transport {
   readonly requests: S3Request[] = [];
   failPut = false;
   corruptReads = false;
+  deleteStatus = 204;
 
   async request(input: S3Request): Promise<S3Response> {
     this.requests.push(input);
@@ -48,8 +49,8 @@ class MemoryTransport implements S3Transport {
         if (content) yield content;
       })()};
     }
-    this.objects.delete(input.key);
-    return {statusCode: 204, headers: {}, body: empty()};
+    if (this.deleteStatus !== 404) this.objects.delete(input.key);
+    return {statusCode: this.deleteStatus, headers: {}, body: empty()};
   }
 }
 
@@ -117,6 +118,12 @@ describe('S3 compatible provider', () => {
     await provider.delete(committed.storageKey);
     expect(transport.objects.has(committed.storageKey)).toBe(false);
     expect(await staging.exists(stagingKey)).toBe(true);
+  });
+
+  it('treats an already missing object as an idempotent delete success', async () => {
+    const transport = new MemoryTransport();
+    transport.deleteStatus = 404;
+    await expect(store(transport).delete('instance/blobs/aa/' + 'a'.repeat(32))).resolves.toBeUndefined();
   });
 
   it('rejects a declared object above the provider file limit before transport', async () => {

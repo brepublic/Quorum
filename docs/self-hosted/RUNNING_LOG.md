@@ -6,10 +6,10 @@
 
 - 更新时间：2026-08-13
 - 分支：`self-host`
-- 已确认基线：`1119c2a stage 6.3: commit uploads to server volume`
-- 当前阶段：6.4 `S3_COMPATIBLE` provider 已完成并单独提交；提交以当前 `git log` 为准。
-- 当前工作：准备按阶段 6.5 交接实施文件审核、发布、下载和永久删除。
-- 下一步：复跑 6.4 针对性测试和 `pnpm build:self-host`，再实施阶段 6.5。
+- 已确认基线：`de214c1 stage 6.4: add S3 compatible storage`
+- 当前阶段：6.5 文件审核、发布、授权下载和永久删除已完成并单独提交。
+- 当前工作：按 `STAGE_6_6_HANDOFF_PROMPT.md` 开始实施 provider 切换与失败回退。
+- 下一步：复跑 6.5 针对性测试和 `pnpm build:self-host`，再建立 durable provider migration 与逐 blob copy worker。
 
 ## 已完成与验证
 
@@ -44,6 +44,8 @@
 - `4351291`：阶段 6.1 文件元数据、版本、存储绑定和墓碑。
 - `da454ec`：阶段 6.2 durable staging 与流式上传。
 - `1119c2a`：阶段 6.3 `SERVER_VOLUME` provider。
+- `de214c1`：阶段 6.4 `S3_COMPATIBLE` provider。
+- 阶段 6.5 文件审核、授权下载和永久删除任务：提交以当前 `git log` 为准。
 
 ### 2026-08-13：阶段 6.3 SERVER_VOLUME provider
 
@@ -76,3 +78,18 @@
 - `git diff --check`：通过。
 - 当前 WSL 没有真实 PostgreSQL、S3 compatible 测试桶、可控 DNS/TLS 或浏览器；相关验证与取证要求记录在 `MANUAL_ACCEPTANCE.md` 的 SH-MAN-504。
 - 阶段 6.4 已单独提交；提交以当前 `git log` 为准。
+
+### 2026-08-13：阶段 6.5 文件审核、发布、下载和永久删除
+
+- migration 17 增加审核时间/发布 actor、数据库审核状态机和按 blob 唯一的 durable delete job；schema compatibility 为 17。
+- 同源 HTTP 增加文件列表、详情、下载、提交审核、发布和逻辑删除。PUBLIC 只看到公开委员会的已发布文件；member、Chair 和 Owner 可读取未删除文件。
+- 审核、发布和删除继续执行 Session、Origin、CSRF、revision 与幂等键；状态、事件、审计和幂等响应同事务提交，暂停委员会拒绝状态变化。
+- 下载在发送响应头前预检 provider 大小与 SHA-256，强制安全附件头；HTML、XML、JavaScript、XHTML 与 SVG 返回 `application/octet-stream`，恶意文件名和 MIME 不能注入响应头。
+- 逻辑删除立即不可见并为所有不可变版本创建 provider delete job。SERVER_VOLUME 与 S3 删除均幂等；失败退避重试，超过五分钟的 `IN_PROGRESS` claim 可恢复。阶段 6.7 的常驻 worker 尚未启动。
+- 最终针对性 Vitest：7 个文件、47 项通过；2 个 PostgreSQL 文件、20 项因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip。
+- `pnpm test:self-host`：37 个文件、167 项通过；6 个 PostgreSQL 集成文件、36 项明确 skip。仅出现既有 React/Semantic UI 弃用警告。
+- `pnpm build:self-host`：通过；contracts、前端、rule-schema 和 server 均构建成功，Vite 仅报告既有的大分块警告。
+- `pnpm test:self-host:integration`：6 个文件、36 项因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip。
+- `git diff --check`：通过。
+- 当前 WSL 仍没有真实 PostgreSQL、持久卷、S3 compatible 测试桶或 TLS 浏览器；角色矩阵、危险类型浏览器隔离、真实 provider 下载/删除、进程终止和 stale claim 恢复记录在 `MANUAL_ACCEPTANCE.md` 的 SH-MAN-505。
+- 阶段 6.5 已单独提交；提交以当前 `git log` 为准。

@@ -15,6 +15,7 @@ import type {Stage6UploadService} from '../modules/storage/upload-service.js';
 import type {Stage6ProviderCommitService} from '../modules/storage/provider-commit-service.js';
 import type {Stage6S3ConfigService} from '../modules/storage/s3-config-service.js';
 import type {Stage6StorageService} from '../modules/storage/service.js';
+import type {Stage6FileService} from '../modules/storage/file-service.js';
 import {AppError, normalizeError} from './errors.js';
 import {
   clearIdentityCookies,
@@ -44,6 +45,7 @@ export interface AppDependencies {
   providerCommits?: Stage6ProviderCommitService;
   s3Configs?: Stage6S3ConfigService;
   storage?: Stage6StorageService;
+  files?: Stage6FileService;
   allowedOrigins?: string[];
 }
 
@@ -343,14 +345,48 @@ async function handleStage4Request(options: {
 async function handleStage6UploadRequest(options: {
   request: IncomingMessage; response: ServerResponse; pathname: string; requestId: string;
   identity: IdentityService; uploads: Stage6UploadService; providerCommits?: Stage6ProviderCommitService;
-  s3Configs?: Stage6S3ConfigService; storage?: Stage6StorageService;
+  s3Configs?: Stage6S3ConfigService; storage?: Stage6StorageService; files?: Stage6FileService;
   allowedOrigins: readonly string[];
 }): Promise<boolean> {
-  const {request, response, pathname, requestId, identity, uploads, providerCommits, s3Configs, storage,
+  const {request, response, pathname, requestId, identity, uploads, providerCommits, s3Configs, storage, files,
     allowedOrigins} = options;
   const method = request.method ?? 'GET';
   const context = identityContext(request, requestId);
   const write = async () => { requireOrigin(request, allowedOrigins); return authenticatedWrite(request, identity); };
+  const committeeFiles = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/files$/.exec(pathname);
+  if (method === 'GET' && committeeFiles && files) {
+    sendJson(response, 200, success(await files.list(await optionalAuthentication(request, identity),
+      committeeFiles[1] as string), requestId)); return true;
+  }
+  const download = /^\/api\/v1\/files\/([0-9a-f-]{36})\/download$/.exec(pathname);
+  if (method === 'GET' && download && files) {
+    const result = await files.download(await optionalAuthentication(request, identity), download[1] as string);
+    response.statusCode = 200;
+    for (const [name, value] of Object.entries(result.headers)) response.setHeader(name, value);
+    for await (const chunk of result.content) {
+      if (!response.write(chunk)) await new Promise<void>(resolve => response.once('drain', resolve));
+    }
+    response.end(); return true;
+  }
+  const file = /^\/api\/v1\/files\/([0-9a-f-]{36})$/.exec(pathname);
+  if (method === 'GET' && file && files) {
+    sendJson(response, 200, success(await files.get(await optionalAuthentication(request, identity),
+      file[1] as string), requestId)); return true;
+  }
+  if (method === 'DELETE' && file && storage) {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 200, success(await storage.deleteFile(auth, file[1] as string, body,
+      idempotencyKey(request), context), requestId));
+    return true;
+  }
+  const fileCommand = /^\/api\/v1\/files\/([0-9a-f-]{36})\/(submit-review|publish)$/.exec(pathname);
+  if (method === 'POST' && fileCommand && files) {
+    const auth = await write(); const body = await readJson(request);
+    const result = fileCommand[2] === 'submit-review'
+      ? await files.submitForReview(auth, fileCommand[1] as string, body, idempotencyKey(request), context)
+      : await files.publish(auth, fileCommand[1] as string, body, idempotencyKey(request), context);
+    sendJson(response, 200, success(result, requestId)); return true;
+  }
   if (method === 'GET' && pathname === '/api/v1/storage-provider-configs/s3' && s3Configs) {
     const auth = await authenticatedRead(request, identity);
     sendJson(response, 200, success(await s3Configs.list(auth), requestId));
@@ -841,7 +877,7 @@ export function createRequestHandler(dependencies: AppDependencies): RequestList
         if (dependencies.identity && dependencies.uploads && await handleStage6UploadRequest({
           request, response, pathname, requestId, identity: dependencies.identity, uploads: dependencies.uploads,
           providerCommits: dependencies.providerCommits, s3Configs: dependencies.s3Configs,
-          storage: dependencies.storage,
+          storage: dependencies.storage, files: dependencies.files,
           allowedOrigins: dependencies.allowedOrigins ?? []
         })) return;
 

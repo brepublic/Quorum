@@ -175,6 +175,22 @@ describe('migration discovery', () => {
     expect(s3?.sql).not.toContain('secret_access_key');
   });
 
+  it('adds review transitions and durable physical-delete jobs', async () => {
+    const migrations = await loadMigrations(resolve('server/migrations'));
+    const review = migrations.find(migration => migration.version === 17);
+    expect(review?.name).toBe('file_review_download_delete_jobs');
+    expect(review?.sql).toContain('file_entries_review_state');
+    expect(review?.sql).toContain('enforce_file_review_transition');
+    expect(review?.sql).toContain('new file version must return to upload complete');
+    expect(review?.sql).toContain('CREATE TABLE file_blob_delete_jobs');
+    expect(review?.sql).toContain("status IN ('PENDING', 'RETRY')");
+    expect(review?.sql).toContain("status = 'IN_PROGRESS'");
+    expect(review?.sql).toContain('file_blob_delete_jobs_stale_claim');
+    expect(review?.sql).toContain('claim_token uuid');
+    expect(review?.sql).toContain('UNIQUE (blob_id)');
+    expect(review?.sql).toContain('schema_compatibility = 17');
+  });
+
   it('rejects SQL files outside the versioned naming contract', async () => {
     const directory = await temporaryDirectory();
     await writeFile(join(directory, 'first.sql'), 'SELECT 1;\n');

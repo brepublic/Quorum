@@ -20,7 +20,7 @@ S3_COMPATIBLE
 
 系统管理员创建实例级存储配置，保存 endpoint、region、bucket、prefix 和加密凭据。Chair 只能选择获准配置，不能读取凭据。腾讯云 COS 通过其 S3 兼容接口接入；首版不实现 OneDrive、Google Drive 等 OAuth 网盘。
 
-当前阶段 6.4 使用显式实例 master key 对凭据执行带配置 ID 与 key version AAD 的 AES-256-GCM 加密。endpoint 只接受 HTTPS；DNS 解析后再次执行网络目标校验并固定连接地址。对象使用 SigV4，key 只由管理员 prefix 和服务器 blob UUID 派生；PUT 后必须 GET 重算大小和 SHA-256，不能只信任 ETag。
+当前阶段 6.5 使用显式实例 master key 对凭据执行带配置 ID 与 key version AAD 的 AES-256-GCM 加密。endpoint 只接受 HTTPS；DNS 解析后再次执行网络目标校验并固定连接地址。对象使用 SigV4，key 只由管理员 prefix 和服务器 blob UUID 派生；PUT 后必须 GET 重算大小和 SHA-256，不能只信任 ETag。已有 blob 的读取和删除继续使用其保存的 provider 配置，即使该配置后来停用。
 
 ### `CHAIR_AGENT`
 
@@ -48,6 +48,10 @@ file_uploads
 file_tombstones
   file_entry_id, last_content_revision, deleted_by_user_id, deleted_at
 
+file_blob_delete_jobs
+  file_entry_id, blob_id, status, attempts, next_attempt_at
+  claimed_at, completed_at, failure_code, failure_reason
+
 storage_bindings
   id, committee_id, provider_type, provider_config_id?, status, revision
 
@@ -57,6 +61,8 @@ storage_hosts
 ```
 
 逻辑文件删除后立即不可见且内容进入物理删除任务。墓碑不含可恢复内容，只防止离线 Agent 把旧副本重新发布；它至少保留到委员会永久删除。
+
+阶段 6.5 的删除任务按 blob 唯一。provider 删除成功后，任务和 blob 状态在同一事务完成；失败保存摘要并退避，过期 claim 可重新领取。服务器卷和 S3 的“目标已不存在”都按幂等成功处理。常驻 worker、指标和暂存清理由阶段 6.7 接入。
 
 ## 3. 上传和发布
 

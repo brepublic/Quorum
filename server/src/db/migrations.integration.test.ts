@@ -57,11 +57,11 @@ integration('PostgreSQL migrations', () => {
       );
       const applied = await pool.query('SELECT version FROM quorum_meta.schema_migrations');
 
-      expect(first).toEqual(expect.objectContaining({ready: true, latestAppliedVersion: 16}));
+      expect(first).toEqual(expect.objectContaining({ready: true, latestAppliedVersion: 17}));
       expect(second).toEqual(expect.objectContaining({ready: true, pendingVersions: []}));
       expect(status.ready).toBe(true);
-      expect(runtime.rows[0]?.schema_compatibility).toBe(16);
-      expect(applied.rowCount).toBe(16);
+      expect(runtime.rows[0]?.schema_compatibility).toBe(17);
+      expect(applied.rowCount).toBe(17);
       const stage3Tables = await pool.query<{name: string}>(`SELECT table_name AS name FROM information_schema.tables
         WHERE table_schema='public' AND table_name IN ('committees','committee_memberships','committee_capabilities',
         'committee_seats','seat_assignments','seat_invitations','rule_packages','rule_package_versions',
@@ -75,8 +75,8 @@ integration('PostgreSQL migrations', () => {
       expect(stage4Tables.rowCount).toBe(14);
       const stage6Tables = await pool.query<{name: string}>(`SELECT table_name AS name FROM information_schema.tables
         WHERE table_schema='public' AND table_name IN ('storage_bindings','file_entries','file_versions',
-        'file_blobs','file_tombstones','file_uploads','storage_provider_configs')`);
-      expect(stage6Tables.rowCount).toBe(7);
+        'file_blobs','file_tombstones','file_uploads','storage_provider_configs','file_blob_delete_jobs')`);
+      expect(stage6Tables.rowCount).toBe(8);
     } finally {
       await pool.end();
     }

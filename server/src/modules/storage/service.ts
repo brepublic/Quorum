@@ -13,7 +13,6 @@ import {
   requireChair,
   requireEditable,
   requireProceedingsActive,
-  transaction,
   type Stage4CommitteeRow,
   type Stage4Context
 } from '../stage4/database.js';
@@ -44,6 +43,8 @@ interface FileEntryRow extends QueryResultRow {
   created_at: Date;
   updated_at: Date;
   deleted_at: Date | null;
+  submitted_at: Date | null;
+  published_at: Date | null;
 }
 
 interface FileVersionRow extends QueryResultRow {
@@ -132,6 +133,7 @@ async function fileState(client: PoolClient, row: FileEntryRow): Promise<FileEnt
     logicalName: row.logical_name,
     mediaType: row.media_type,
     status: row.status,
+    createdByUserId: row.created_by_user_id,
     currentVersion: {
       id: version.id,
       versionNumber: version.version_number,
@@ -143,6 +145,8 @@ async function fileState(client: PoolClient, row: FileEntryRow): Promise<FileEnt
       createdAt: version.created_at.toISOString()
     },
     revision: row.revision,
+    submittedAt: row.submitted_at?.toISOString() ?? null,
+    publishedAt: row.published_at?.toISOString() ?? null,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString()
   };
@@ -334,7 +338,8 @@ export class Stage6StorageService {
     [blobId, committee.id, bindingId, storageKey, verifiedSize, verifiedHash]);
     if (entry) {
       const updated = await client.query<FileEntryRow>(`UPDATE file_entries SET logical_name=$2,media_type=$3,
-        status='UPLOAD_COMPLETE',current_version_id=$4,revision=revision+1,updated_at=now()
+        status='UPLOAD_COMPLETE',current_version_id=$4,submitted_at=NULL,published_at=NULL,published_by_user_id=NULL,
+        revision=revision+1,updated_at=now()
         WHERE id=$1 RETURNING *`, [entry.id, logicalName, mediaType, versionId]);
       entry = updated.rows[0];
     } else {
@@ -361,13 +366,15 @@ export class Stage6StorageService {
   }
 
   async deleteFile(auth: AuthenticatedSession, fileEntryId: string, body: unknown,
-    context: Stage4Context): Promise<FileTombstone> {
+    idempotencyKey: string, context: Stage4Context): Promise<FileTombstone> {
     requireBusinessIdentity(auth);
     assertExactBody(body as Record<string, unknown>, ['baseRevision']);
     const request = body as {baseRevision?: unknown};
-    return transaction(this.pool, async client => {
+    const id = uuid(fileEntryId, 'File ID');
+    return idempotentTransaction({pool: this.pool, auth, route: `/api/v1/files/${id}`, key: idempotencyKey,
+      request: body, status: 200, work: async client => {
       const entry = (await client.query<FileEntryRow>('SELECT * FROM file_entries WHERE id=$1 FOR UPDATE',
-        [uuid(fileEntryId, 'File ID')])).rows[0];
+        [id])).rows[0];
       if (!entry || entry.status === 'DELETED') throw new AppError({code: 'NOT_FOUND', message: 'File not found.'});
       const committee = await lockedCommittee(client, entry.committee_id);
       requireProceedingsActive(committee);
@@ -386,6 +393,13 @@ export class Stage6StorageService {
       [tombstoneId, committee.id, entry.id, entry.revision, auth.user.id, deleted.rows[0]?.deleted_at]);
       await client.query(`UPDATE file_blobs b SET durability_state='DELETE_PENDING',updated_at=now()
         FROM file_versions v WHERE v.file_entry_id=$1 AND v.blob_id=b.id AND b.durability_state='COMMITTED'`, [entry.id]);
+      const deleteBlobs = await client.query<{blob_id: string}>(
+        'SELECT blob_id FROM file_versions WHERE file_entry_id=$1', [entry.id]);
+      for (const blob of deleteBlobs.rows) {
+        await client.query(`INSERT INTO file_blob_delete_jobs (id,committee_id,file_entry_id,blob_id)
+          VALUES ($1,$2,$3,$4) ON CONFLICT (blob_id) DO NOTHING`,
+        [randomUUID(), committee.id, entry.id, blob.blob_id]);
+      }
       await appendEvent(client, committee, {type: 'file.deleted', resourceType: 'file_entry', resourceId: entry.id,
         revision: entry.revision + 1, payload: {status: 'DELETED'}});
       await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id,
@@ -395,6 +409,6 @@ export class Stage6StorageService {
         after: {status: 'DELETED', revision: entry.revision + 1, tombstoneId}});
       return {id: tombstoneId, fileEntryId: entry.id, committeeId: committee.id,
         lastContentRevision: entry.revision, deletedAt: (deleted.rows[0]?.deleted_at as Date).toISOString()};
-    });
+    }});
   }
 }

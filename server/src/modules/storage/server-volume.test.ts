@@ -86,6 +86,39 @@ describe('SERVER_VOLUME provider', () => {
     expect(await staging.exists(stagingKey)).toBe(true);
   });
 
+  it('deletes only the committed provider copy and treats a missing copy as success', async () => {
+    const {staging, volume, stagingKey, content} = await fixture();
+    const result = await volume.commitFromStaging({blobId: randomUUID(), staging, stagingKey,
+      expectedSizeBytes: Buffer.byteLength(content), expectedSha256: digest(content)});
+    await volume.delete(result.storageKey);
+    await expect(readFile(volume.pathForKey(result.storageKey))).rejects.toMatchObject({code: 'ENOENT'});
+    expect(await staging.exists(stagingKey)).toBe(true);
+    await expect(volume.delete(result.storageKey)).resolves.toBeUndefined();
+  });
+
+  it('refuses to delete symbolic links and multiply-linked files', async () => {
+    const {staging, volume, stagingKey, content} = await fixture();
+    const symlinkResult = await volume.commitFromStaging({blobId: randomUUID(), staging, stagingKey,
+      expectedSizeBytes: Buffer.byteLength(content), expectedSha256: digest(content)});
+    const outside = join(await temporaryRoot('delete-outside'), 'outside');
+    await writeFile(outside, content);
+    await unlink(volume.pathForKey(symlinkResult.storageKey));
+    await symlink(outside, volume.pathForKey(symlinkResult.storageKey));
+    await expect(volume.delete(symlinkResult.storageKey)).rejects.toMatchObject({
+      failureCode: 'SERVER_VOLUME_DELETE_FAILED'
+    });
+    expect(await readFile(outside, 'utf8')).toBe(content);
+
+    const hardlinkResult = await volume.commitFromStaging({blobId: randomUUID(), staging, stagingKey,
+      expectedSizeBytes: Buffer.byteLength(content), expectedSha256: digest(content)});
+    const peer = join(await temporaryRoot('delete-hardlink'), 'peer');
+    await link(volume.pathForKey(hardlinkResult.storageKey), peer);
+    await expect(volume.delete(hardlinkResult.storageKey)).rejects.toMatchObject({
+      failureCode: 'SERVER_VOLUME_DELETE_FAILED'
+    });
+    expect(await readFile(peer, 'utf8')).toBe(content);
+  });
+
   it('rejects symbolic-link paths, hard-linked files, and non-regular targets', async () => {
     const {staging, stagingKey, content} = await fixture();
     const volumeRoot = await temporaryRoot('unsafe-volume');

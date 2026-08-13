@@ -279,13 +279,13 @@
 
 ## 阶段 6：服务器卷和 S3 文件
 
-当前环境未提供 `TEST_DATABASE_ADMIN_URL`、PostgreSQL 客户端、Docker 持久卷、S3 兼容测试桶或 TLS 浏览器。阶段 6.1–6.4 的真实 PostgreSQL 集成测试已编写但明确 skip；以下项目尚未通过。
+当前环境未提供 `TEST_DATABASE_ADMIN_URL`、PostgreSQL 客户端、Docker 持久卷、S3 兼容测试桶或 TLS 浏览器。阶段 6.1–6.5 的真实 PostgreSQL 集成测试已编写但明确 skip；以下项目尚未通过。
 
 ### SH-MAN-501 文件版本、绑定、事务和墓碑
 
 - 前置条件：PostgreSQL 16；`TEST_DATABASE_ADMIN_URL` 指向可创建和删除数据库的管理员连接。
 - 操作步骤：执行 `TEST_DATABASE_ADMIN_URL=postgresql://... pnpm test:self-host:integration`；检查 migration 13；创建服务器卷绑定和两个文件版本；注入审计写入失败；删除文件后尝试修改版本、删除墓碑和追加旧文件版本。
-- 通过条件：schema compatibility 为 16；一个委员会最多一个活动 binding；版本保存服务端大小和 SHA-256 且不可修改；故障时文件、事件、审计和幂等记录全部回滚；删除立即清除当前版本、追加唯一墓碑并标记 blob 待删；旧副本不能追加版本；系统管理员没有隐式 Chair 权限。
+- 通过条件：schema compatibility 为 17；一个委员会最多一个活动 binding；版本保存服务端大小和 SHA-256 且不可修改；故障时文件、事件、审计和幂等记录全部回滚；删除立即清除当前版本、追加唯一墓碑并标记 blob 待删；旧副本不能追加版本；系统管理员没有隐式 Chair 权限。
 - 自动化覆盖情况：migration 静态测试和无数据库校验已通过；`server/src/modules/storage/postgres.integration.test.ts` 覆盖真实 PostgreSQL 事务、追加历史、故障回滚和删除防复活，未配置 URL 时明确 skip。
 - 当前状态：因无服务器延期。
 - 需要保存的证据：完整测试输出、migration 13 表/约束/触发器查询、file entry/version/blob/tombstone 脱敏查询、事件与审计计数、故障注入回滚结果和临时数据库清理记录。证据不得包含二进制内容或 provider 密钥。
@@ -316,3 +316,12 @@
 - 自动化覆盖情况：当前 WSL 的单元测试覆盖 AES-256-GCM 往返、篡改/错 key/跨配置重放、URL 与 IP SSRF、DNS 后连接地址校验入口、blob key、流式 PUT/GET 校验和 S3 故障；HTTP 与静态 migration 测试已实现；真实 PostgreSQL 用例覆盖权限、密文、binding 和精确一次提交，未配置 URL 时明确 skip。真实 S3 的 SigV4 兼容性、DNS/TLS、multipart、大文件内存、权限、限速和故障重试尚未执行。
 - 当前状态：因无服务器与测试桶延期。
 - 需要保存的证据：脱敏配置响应、数据库密文长度和 key version、审计/log 搜索结果、DNS 与 TLS 记录、对象 key/metadata/远端 SHA-256、每个故障点的 upload/blob/version/idempotency 查询、重试结果和 provider 日志。任何证据不得包含 access key、secret、master key、Session、CSRF token 或文件正文。
+
+### SH-MAN-505 文件审核、授权下载和永久删除恢复
+
+- 前置条件：真实 PostgreSQL 16；通过 Caddy TLS 运行 self-hosted 服务；一个 PUBLIC 和一个 PRIVATE 委员会；Owner、Chair、活动 member、非 member 和未登录浏览器；服务器持久卷与独立 S3 compatible 测试桶；可暂停委员会、停用 S3 配置、篡改测试对象并终止 worker 进程的隔离环境。
+- 操作步骤：上传文件后分别以未登录、非 member、member、Chair 和 Owner 调用列表、详情及下载；依次提交审核和发布，并尝试错误角色、陈旧 revision、相同/冲突幂等键及暂停状态；上传包含中文、路径片段、引号、CR/LF 的文件名，以及 HTML、XML、JavaScript、SVG、PDF 和普通二进制类型；在服务器卷与 S3 上分别下载并核对大小/SHA-256，停用 S3 配置后再次读取已有 blob；篡改或移除 provider 内容后请求下载；创建多版本文件并逻辑删除，检查即时不可见、墓碑、所有 blob delete job，再分别注入 provider 删除失败、数据库完成事务失败和 worker 在 claim/远端删除后的进程终止，等待 claim 超时后重跑。
+- 通过条件：PRIVATE 委员会不向未授权调用者泄漏存在性；PUBLIC 只公开 `PUBLISHED` 文件，member/Chair/Owner 权限符合契约，系统管理员没有隐式 Chair 权限；暂停状态拒绝审核、发布和删除；状态、事件、审计与幂等响应原子一致；下载在 200 前完成 provider 完整性预检，文件名不能注入响应头，所有类型强制 attachment，危险类型返回 `application/octet-stream`，TLS 浏览器中不能同源执行；逻辑删除立即使列表、详情和下载返回 404，墓碑不含正文；每个历史版本 blob 最终只完成一个删除任务，失败保留 `DELETE_PENDING` 并退避，进程崩溃后的 stale claim 可恢复，已不存在的对象按成功收敛，停用配置不妨碍已有 S3 blob 的读取或删除。
+- 自动化覆盖情况：migration、下载头、HTTP 路由、SERVER_VOLUME/S3 删除原语和共享契约测试已在当前 WSL 通过；真实 PostgreSQL 用例覆盖角色、公开/私有可见性、revision、幂等重放、暂停、状态/事件/审计原子性、服务器卷/S3 下载、逻辑删除、删除任务完成/重试/stale claim 和停用配置读取，未配置 URL 时明确 skip。真实 TLS 浏览器的响应头执行隔离、大文件下载内存、真实 S3 停用配置、进程终止、数据库完成故障和持久卷重启尚未执行。
+- 当前状态：因无服务器、真实 PostgreSQL、测试桶和 TLS 浏览器延期。
+- 需要保存的证据：各角色脱敏响应矩阵、浏览器 Network/Security 截图、`Content-Disposition`/`Content-Type`/安全头、下载 SHA-256、file entry/version/blob/tombstone/delete-job/event/audit/idempotency 脱敏查询、provider 对象前后清单、每次故障与重启的时间线及 worker 日志。不得保存文件正文、Session、CSRF token、S3 凭据或 master key。

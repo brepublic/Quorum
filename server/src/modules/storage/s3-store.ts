@@ -195,6 +195,10 @@ export class S3CompatibleStore {
 
   async *read(storageKey: string, expectedSizeBytes: number, expectedSha256: string): AsyncGenerator<Buffer> {
     await this.verify(storageKey, expectedSizeBytes, expectedSha256);
+    yield* this.readVerified(storageKey);
+  }
+
+  async *readVerified(storageKey: string): AsyncGenerator<Buffer> {
     const response = await this.transport.request({method: 'GET', key: storageKey});
     if (response.statusCode !== 200) {
       throw new ProviderStorageError('S3_READ_FAILED', 'SERVICE_NOT_READY', 'S3 content is unavailable.');
@@ -204,7 +208,7 @@ export class S3CompatibleStore {
 
   async delete(storageKey: string): Promise<void> {
     const response = await this.transport.request({method: 'DELETE', key: storageKey});
-    if (response.statusCode < 200 || response.statusCode >= 300) {
+    if (response.statusCode !== 404 && (response.statusCode < 200 || response.statusCode >= 300)) {
       throw new ProviderStorageError('S3_DELETE_FAILED', 'SERVICE_NOT_READY', 'S3 content could not be deleted.');
     }
   }
