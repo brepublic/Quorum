@@ -206,6 +206,19 @@ describe('migration discovery', () => {
     expect(switching?.sql).toContain('schema_compatibility = 18');
   });
 
+  it('adds fenced staging cleanup and append-only maintenance audit', async () => {
+    const migrations = await loadMigrations(resolve('server/migrations'));
+    const cleanup = migrations.find(migration => migration.version === 19);
+    expect(cleanup?.name).toBe('storage_capacity_cleanup');
+    expect(cleanup?.sql).toContain('file_uploads_cleanup_claim_state');
+    expect(cleanup?.sql).toContain('storage_migration_items_cleanup_claim_state');
+    expect(cleanup?.sql).toContain('staging_deleted_at');
+    expect(cleanup?.sql).toContain('cleanup_claim_token uuid');
+    expect(cleanup?.sql).toContain('CREATE TABLE storage_cleanup_audit');
+    expect(cleanup?.sql).toContain('storage cleanup audit records are append-only');
+    expect(cleanup?.sql).toContain('schema_compatibility = 19');
+  });
+
   it('rejects SQL files outside the versioned naming contract', async () => {
     const directory = await temporaryDirectory();
     await writeFile(join(directory, 'first.sql'), 'SELECT 1;\n');

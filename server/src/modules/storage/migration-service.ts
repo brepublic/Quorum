@@ -13,6 +13,7 @@ import type {ServerVolumeStore} from './server-volume.js';
 import {ProviderStorageError} from './server-volume.js';
 import type {DurableStagingStore} from './staging.js';
 import {UploadStreamError} from './staging.js';
+import type {StorageCapacityGuard} from './capacity.js';
 
 type ProviderType = 'SERVER_VOLUME' | 'S3_COMPATIBLE';
 type MigrationStatus = StorageMigration['status'];
@@ -104,7 +105,7 @@ export async function copyProviderBlob(input: {staging: DurableStagingStore; sta
 export class Stage6MigrationService {
   constructor(private readonly pool: Pool, private readonly staging: DurableStagingStore,
     private readonly serverVolume: ServerVolumeStore, private readonly s3Configs: Stage6S3ConfigService,
-    private readonly s3Factory: MigrationS3StoreFactory) {}
+    private readonly s3Factory: MigrationS3StoreFactory, private readonly capacity?: StorageCapacityGuard) {}
 
   async list(auth: AuthenticatedSession, committeeId: string): Promise<StorageMigration[]> {
     requireBusinessIdentity(auth);
@@ -316,6 +317,11 @@ export class Stage6MigrationService {
   }
 
   async processNextCopyItem(): Promise<StorageMigrationItem | null> {
+    try {
+      await this.capacity?.assertWriteAllowed();
+    } catch {
+      return null;
+    }
     const claimed = await transaction(this.pool, async client => {
       const result = await client.query<ItemRow>(`SELECT i.*,encode(i.sha256,'hex') AS sha256_hex,
         source.storage_key AS source_storage_key,source_binding.provider_type AS source_provider_type,

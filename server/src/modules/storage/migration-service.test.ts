@@ -8,6 +8,7 @@ import {afterEach, describe, expect, it, vi} from 'vitest';
 import {createLogger} from '../../logger';
 import {DurableStagingStore} from './staging';
 import {copyProviderBlob, startStorageMigrationWorker} from './migration-service';
+import {Stage6MigrationService} from './migration-service';
 
 const roots: string[] = [];
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
@@ -95,5 +96,11 @@ describe('provider migration streaming copy', () => {
     expect(processNextCopyItem).toHaveBeenCalledTimes(3);
     expect(logs).toEqual([]);
     vi.useRealTimers();
+  });
+
+  it('does not claim provider copy work while capacity is critical or unknown', async () => {
+    const service = new Stage6MigrationService({} as never, {} as never, {} as never, {} as never,
+      (() => ({})) as never, {sample: vi.fn(), assertWriteAllowed: vi.fn().mockRejectedValue(new Error('full'))});
+    await expect(service.processNextCopyItem()).resolves.toBeNull();
   });
 });

@@ -157,7 +157,7 @@ deploy/
 
 ## 9. 阶段 6：服务器卷和 S3 文件
 
-状态：6.1–6.6 的 PostgreSQL schema、共享契约、durable staging、流式上传、`SERVER_VOLUME`、`S3_COMPATIBLE`、文件审核/发布、授权下载、durable 物理删除任务和 provider 切换已完成；真实 PostgreSQL、持久卷和 S3 compatible 服务验收因当前环境未提供相应服务而延期。6.7–6.8 尚未实施。
+状态：6.1–6.7 的 PostgreSQL schema、共享契约、durable staging、流式上传、`SERVER_VOLUME`、`S3_COMPATIBLE`、文件审核/发布、授权下载、durable 物理删除任务、provider 切换、容量保护和后台清理已完成；真实 PostgreSQL、持久卷和 S3 compatible 服务验收因当前环境未提供相应服务而延期。6.8 尚未实施。
 
 交付：
 
@@ -234,4 +234,4 @@ deploy/
 
 ## 14. 首个实现里程碑
 
-下一步只实施阶段 6.7：磁盘阈值和后台清理。80% 产生容量告警，90% 拒绝新内容上传但不影响下载或议事；只清理已提交、明确取消或失败且过期的 upload/staging，以及已有 durable delete job。任务必须幂等、有指标/审计、可恢复 claim，并让 readiness 准确反映必要存储不可用。保持 Firebase 默认运行时和阶段 6.6 provider 迁移语义，不提前实现文件 UI、Chair Local Agent、归档或 Firebase 移除。
+下一步只实施阶段 6.8：把现有阶段 6 同源 API 接入自托管文件 UI。使用简体中文模拟联合国术语和必要、简短文案，提供上传进度/失败恢复、文件状态、审核、发布、下载、删除、存储 provider 配置与迁移状态入口；按 PUBLIC/member/Chair/Owner 权限隐藏或禁用操作，并保留 Session、Origin、CSRF、revision、幂等键和容量错误边界。完成阶段 6 的前端测试与浏览器人工验收清单，但不实现 Chair Local Agent、归档、备份或 Firebase 移除。

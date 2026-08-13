@@ -812,7 +812,7 @@ DELETE /api/v1/files/:id
 
 下载以当前不可变版本记录的 binding、storage key、大小和 SHA-256 选择 provider；即使 S3 配置后来停用，已有 blob 仍使用其保存的配置读取。服务端在发送 200 响应头前完成 provider 完整性预检。响应始终使用安全编码的 `Content-Disposition: attachment`、`X-Content-Type-Options: nosniff`、限制性 CSP、same-origin CORP 和 `private, no-store`；HTML、XML、JavaScript、XHTML 与 SVG 强制返回 `application/octet-stream`，用户文件名不能注入响应头。
 
-逻辑删除在一个 PostgreSQL 幂等事务中清除当前版本、增加 revision、追加不含内容的墓碑、把所有版本 blob 标为 `DELETE_PENDING`、为每个 blob 创建唯一 `file_blob_delete_job`，并写入事件和审计；事务失败时全部回滚。文件随后立即从列表、详情和下载消失。worker 原语使用 `FOR UPDATE SKIP LOCKED` 一次 claim 一个任务，在记录该 blob 的原 provider 上执行幂等删除；成功后原子标记 job `COMPLETED` 和 blob `DELETED`，失败保存稳定 failure code 并指数退避。进程崩溃遗留超过五分钟的 `IN_PROGRESS` claim 可重新领取；不存在的 provider 对象视为成功。阶段 6.5 尚未启动阶段 6.7 的常驻清理调度循环。
+逻辑删除在一个 PostgreSQL 幂等事务中清除当前版本、增加 revision、追加不含内容的墓碑、把所有版本 blob 标为 `DELETE_PENDING`、为每个 blob 创建唯一 `file_blob_delete_job`，并写入事件和审计；事务失败时全部回滚。文件随后立即从列表、详情和下载消失。worker 原语使用 `FOR UPDATE SKIP LOCKED` 一次 claim 一个任务，在记录该 blob 的原 provider 上执行幂等删除；成功后原子标记 job `COMPLETED` 和 blob `DELETED`，失败保存稳定 failure code 并指数退避。进程崩溃遗留超过五分钟的 `IN_PROGRESS` claim 可重新领取；不存在的 provider 对象视为成功。阶段 6.7 已启动常驻 maintenance worker，并把成功、provider 失败和数据库完成失败写入追加式维护审计。
 
 ## 11.8 阶段 6.6 provider 切换与失败回退契约
 
@@ -831,6 +831,21 @@ Owner 或 Chair 以 `{baseRevision,targetProviderType,targetProviderConfigId?}` 
 新版本或逻辑删除递增 manifest revision，并把进行中或待确认的 migration 标为 `FAILED/MANIFEST_CHANGED`。`retry` 重新快照：补充缺失内容，取消已删除内容的 item，并复用已完成目标副本。所有 item 完成且 manifest 未变时进入 `READY_TO_CONFIRM`。`confirm` 再次读取并校验全部目标副本，然后在一个 PostgreSQL 幂等事务中锁定委员会、migration 和两个 binding，重新检查 manifest/配置/副本集合，同时把源 binding 设为 `RETIRED`、目标设为 `ACTIVE`、更新活动 binding、完成 migration，并写事件和审计。任一失败都不改变活动源。
 
 `cancel` 保持源 binding 有效，把目标 binding 退役；已落地目标副本和取消后晚到的 provider 成功写入都标为 `DELETE_PENDING` 并进入阶段 6.5 的 durable delete job。源内容和墓碑不删除。完成切换后保留退休源副本作为安全冗余；其容量策略属于阶段 6.7，不在确认事务中冒险删除。
+
+## 11.9 阶段 6.7 容量保护、后台清理与指标契约
+
+```text
+GET /health/ready
+GET /metrics
+```
+
+应用对实际 `QUORUM_STORAGE_PATH` 执行 `statfs`。默认使用率达到 80% 为 `warning`，达到 90% 为 `critical`；阈值必须是 warning 小于 critical 的整数百分比。`critical` 阻止新 upload 创建、新内容写入和 provider migration copy，但不阻止下载、议事命令、provider delete 或 staging cleanup。已有幂等响应仍可重放，容量拒绝不能把 `CREATED` upload 提前改为 `RECEIVING`。容量采样失败、可用字节为零或必要目录不可读写时 readiness 返回统一 503；仍有可用空间的 warning/critical 会在 200 响应的 storage check 中明确报告，避免编排器因保护性写入限制反复重启仍可读实例。
+
+`file_uploads` 和 `storage_migration_items` 分别保存 cleanup attempts、next attempt、claim token、claim time、失败摘要与 `staging_deleted_at`。maintenance worker 先运行 durable blob delete job，再用 `FOR UPDATE SKIP LOCKED` claim 一个 staging 候选；超过五分钟的 claim 可回收，旧 token 完成不会覆盖新 claim。文件系统删除发生在事务外；若进程在 unlink 后终止，重试把“文件不存在”作为幂等成功，再原子写完成状态与 `storage_cleanup_audit`。
+
+upload 只有 `COMMITTED`、`CANCELLED`，或期限已过的 `FAILED` 可清理；`CREATED`、`RECEIVING` 和 `STAGED` 永不因普通期限、LRU 或容量压力删除。migration item 只有 `COMPLETED` 或 `CANCELLED` 可清理；活动 claim、`PENDING`、`IN_PROGRESS`、`RETRY` 和仍需恢复的失败 copy 保留。退休源 provider 副本仍是明确的安全冗余，本阶段不因压力自动删除。
+
+`/metrics` 使用 Prometheus text exposition，只包含容量采样成功、使用率、可用字节、固定状态、三类 cleanup queue 深度和按固定 kind/outcome 聚合的维护计数。响应与结构化容量/清理日志不得包含 storage path、文件名、正文、Session 或 provider 凭据。
 
 ## 12. SSE 格式
 

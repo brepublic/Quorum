@@ -2,7 +2,7 @@
 
 > 本文件是本仓库的维护入口。后续涉及代码、构建、测试或运行的工作，应先阅读本文件和 `AGENTS.md`，并以实际代码为准更新本文档。
 
-> Quorum 已完成自主托管目标设计，并已落地实施计划阶段 0–5 和阶段 6.1–6.6。`self-hosted` 运行时以 PostgreSQL 为唯一业务真相，通过同源 API 与受众过滤 SSE 提供议事功能；上传可流式暂存并提交到服务器持久卷或 S3 compatible provider，文件可审核、发布、授权下载、异步物理删除并在 provider 之间安全迁移。文件 UI 尚未接入。
+> Quorum 已完成自主托管目标设计，并已落地实施计划阶段 0–5 和阶段 6.1–6.7。`self-hosted` 运行时以 PostgreSQL 为唯一业务真相，通过同源 API 与受众过滤 SSE 提供议事功能；上传可流式暂存并提交到服务器持久卷或 S3 compatible provider，文件可审核、发布、授权下载、异步物理删除并在 provider 之间安全迁移。磁盘阈值、fenced 后台清理与存储指标已接入；文件 UI 尚未接入。
 
 ## 1. 项目定位与技术栈
 
@@ -45,7 +45,7 @@ flowchart LR
 
 `src/index.tsx` 初始化 Google Analytics、Sentry、浏览器 history 与 Semantic UI 样式，并把 `App` 挂载到 `#root`。`VITE_RUNTIME_MODE` 显式选择运行路径：未设置或为 `firebase` 时保持原行为，`src/App.tsx` 初始化 Firebase，并在显示普通路由前调用 Functions 检查管理员初始化；`VITE_USE_FIREBASE_EMULATORS=true` 时连接本机模拟器，否则连接 `muncoordinated`。`VITE_RUNTIME_MODE=self-hosted` 使用 `SelfHostedIdentity` 与 `SelfHostedWorkspace`：身份、账号管理、委员会列表、模板和议事工作区均调用同源 `/api/v1`；每个浏览器对一个委员会最多保持一条 SSE。公开委员会深层路由可匿名读取过滤后的快照。两个运行时没有双写。
 
-`server/` 是自主托管模块化单体。它启动时通过 PostgreSQL advisory lock 执行带 SHA-256 校验和的 migration；数据库版本不兼容时 readiness 失败。阶段 2–4 migration 建立身份、委员会、规则包、模板及低并发议事。阶段 5 migration 5–12 增加实时议事、表决和版本化决议草案。migration 13 增加存储绑定、逻辑文件、不可变文件版本、blob 完整性元数据和不可变删除墓碑；migration 14 增加 durable upload；migration 15 把 provider blob 目标和已提交 file entry/version 绑定到 upload；migration 16 增加 S3 provider 配置和加密凭据列；migration 17 增加审核状态机和 durable 物理删除任务；migration 18 增加 provider migration、fenced copy item 和跨 binding 已验证副本。schema compatibility 为 18。
+`server/` 是自主托管模块化单体。它启动时通过 PostgreSQL advisory lock 执行带 SHA-256 校验和的 migration；数据库版本不兼容时 readiness 失败。阶段 2–4 migration 建立身份、委员会、规则包、模板及低并发议事。阶段 5 migration 5–12 增加实时议事、表决和版本化决议草案。migration 13 增加存储绑定、逻辑文件、不可变文件版本、blob 完整性元数据和不可变删除墓碑；migration 14 增加 durable upload；migration 15 把 provider blob 目标和已提交 file entry/version 绑定到 upload；migration 16 增加 S3 provider 配置和加密凭据列；migration 17 增加审核状态机和 durable 物理删除任务；migration 18 增加 provider migration、fenced copy item 和跨 binding 已验证副本；migration 19 增加 fenced staging cleanup 与追加式维护审计。schema compatibility 为 19。
 
 首次启动生成高熵 bootstrap secret，只把 SHA-256 哈希写入数据库，并在专用控制台行显示一次；初始化事务锁定单行设置、创建唯一 `SYSTEM_ADMIN` 后清除哈希。密码使用固定参数 Argon2id；Session Cookie 为 `Secure`、`HttpOnly`、`SameSite=Lax`，数据库只保存 Session token 的 SHA-256；写请求同时校验允许 Origin 和双提交 CSRF token。登录、密码确认提权和改密会轮换 Session，重置密码、禁用账号和用户级撤销通过 `session_version` 与撤销时间立即使旧 Session 失效。
 
@@ -159,6 +159,8 @@ system
 - 阶段 6.5 增加 `UPLOAD_COMPLETE → PENDING_REVIEW → PUBLISHED` 数据库状态机和同源文件列表、详情、下载、提交审核、发布及删除路由。PUBLIC 访问只看到公开委员会的已发布文件；活动 member、Chair 和 Owner 可读取本委员会未删除文件。状态命令继续执行 Session、Origin、CSRF、revision 与幂等边界，暂停委员会拒绝审核、发布和删除。
 - 下载在发送响应头前从文件版本记录的 provider 重新校验大小和 SHA-256，并始终使用安全编码的 `Content-Disposition: attachment`、`nosniff` 和同源隔离头；HTML、XML、JavaScript 与 SVG 强制作为 `application/octet-stream`。逻辑删除立即隐藏文件、追加墓碑并为每个不可变版本创建 durable delete job；worker 原语对服务器卷和 S3 执行幂等删除，失败退避重试，超时的 `IN_PROGRESS` claim 可恢复。
 - 阶段 6.6 以 `storage_migrations`、逐内容 blob copy item 和 `file_blob_copies` 保存 provider 切换。文件版本继续引用原始不可变内容 blob；读取时用委员会活动 binding 解析同哈希的已验证副本，因此复制期间和失败后仍从旧 provider 服务。后台 worker 经 durable staging 流式复制，使用 claim token、退避与 stale-claim 恢复；只有当前 manifest 的全部历史版本副本再次校验后，确认事务才同时退役源 binding、激活目标 binding 并写事件、审计及幂等响应。S3 目标必须为活动且当前 revision 已验证的配置；取消只把目标副本送入 durable 删除任务。
+- 阶段 6.7 用实际 `QUORUM_STORAGE_PATH` 的 `statfs` 采样容量；默认 80% 记录结构化告警，90% 阻止新的上传字节和 provider copy，但下载、议事与回收任务继续运行。`/health/ready` 在目录不可读写或容量未知时失败，在阈值告警/临界状态仍返回具体状态；`/metrics` 只暴露容量、固定类别队列深度和清理结果计数。
+- 常驻 maintenance worker 优先运行已有 blob delete job，再通过 PostgreSQL claim token 清理符合条件的 upload 与 migration staging。只有 `COMMITTED`、`CANCELLED`、已过期 `FAILED` upload，以及 `COMPLETED`/`CANCELLED` migration item 可清理；`CREATED`、`RECEIVING`、`STAGED`、待重试 copy 和退休源 provider 副本不因期限、LRU 或压力删除。物理删除和暂存清理结果写入追加式 `storage_cleanup_audit`，数据库完成失败、进程中断和 stale claim 可幂等恢复。
 
 因此，数据库规则和 Storage 元数据是产品的关键安全边界；变更前必须同时审查前端写入路径与这两份规则文件。
 
@@ -217,7 +219,7 @@ TEST_DATABASE_ADMIN_URL=postgresql://... pnpm test:self-host:integration
 pnpm self-host:test-db:down        # 停止隔离测试数据库
 ```
 
-上传默认单文件上限为 20 MiB，上传请求上限为 21 MiB，暂存期限为 24 小时；可分别通过 `QUORUM_MAX_FILE_BYTES`、`QUORUM_MAX_UPLOAD_REQUEST_BYTES` 和 `QUORUM_UPLOAD_TTL_SECONDS` 配置。暂存期限不授权删除尚未提交的唯一副本。
+上传默认单文件上限为 20 MiB，上传请求上限为 21 MiB，暂存期限为 24 小时；可分别通过 `QUORUM_MAX_FILE_BYTES`、`QUORUM_MAX_UPLOAD_REQUEST_BYTES` 和 `QUORUM_UPLOAD_TTL_SECONDS` 配置。容量告警/临界阈值默认 80%/90%，由 `QUORUM_STORAGE_WARNING_PERCENT` 与 `QUORUM_STORAGE_CRITICAL_PERCENT` 调整。暂存期限不授权删除尚未提交的唯一副本。
 
 Firebase Emulator Suite 需要 Java 21 或更高版本。端到端测试只能连接本地模拟器，不能指向生产 Firebase 项目。Cypress 二进制若未预下载，可能因网络限制无法下载；此时至少运行 TypeScript 构建和 Vitest，并如实记录 E2E 未执行原因。
 

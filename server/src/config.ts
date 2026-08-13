@@ -10,6 +10,8 @@ export interface ServerConfig {
   maxFileBytes: number;
   maxUploadRequestBytes: number;
   uploadTtlSeconds: number;
+  storageWarningPercent: number;
+  storageCriticalPercent: number;
   storageMasterKey: Buffer | null;
   storageMasterKeyVersion: number;
   shutdownGraceMs: number;
@@ -76,6 +78,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     throw new Error('QUORUM_MAX_UPLOAD_REQUEST_BYTES must be at least QUORUM_MAX_FILE_BYTES.');
   }
   const masterKey = storageMasterKey(env);
+  const storageWarningPercent = integer(env.QUORUM_STORAGE_WARNING_PERCENT, 80,
+    'QUORUM_STORAGE_WARNING_PERCENT');
+  const storageCriticalPercent = integer(env.QUORUM_STORAGE_CRITICAL_PERCENT, 90,
+    'QUORUM_STORAGE_CRITICAL_PERCENT');
+  if (storageWarningPercent >= storageCriticalPercent || storageCriticalPercent > 100) {
+    throw new Error('Storage thresholds must be percentages with warning below critical.');
+  }
   return {
     host: env.HOST || '0.0.0.0',
     port: integer(env.PORT, 3000, 'PORT'),
@@ -86,6 +95,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     maxFileBytes,
     maxUploadRequestBytes,
     uploadTtlSeconds: integer(env.QUORUM_UPLOAD_TTL_SECONDS, 24 * 60 * 60, 'QUORUM_UPLOAD_TTL_SECONDS'),
+    storageWarningPercent,
+    storageCriticalPercent,
     storageMasterKey: masterKey,
     storageMasterKeyVersion: masterKey
       ? integer(env.QUORUM_STORAGE_MASTER_KEY_VERSION, 1, 'QUORUM_STORAGE_MASTER_KEY_VERSION')

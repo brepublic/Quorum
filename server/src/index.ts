@@ -24,6 +24,8 @@ import {Stage6S3CommitService} from './modules/storage/s3-commit-service.js';
 import {Stage6ProviderCommitService} from './modules/storage/provider-commit-service.js';
 import {Stage6FileService} from './modules/storage/file-service.js';
 import {Stage6MigrationService, startStorageMigrationWorker} from './modules/storage/migration-service.js';
+import {StorageCapacityMonitor} from './modules/storage/capacity.js';
+import {Stage6MaintenanceService, startStorageMaintenanceWorker} from './modules/storage/maintenance-service.js';
 
 const {Pool} = pg;
 const logger = createLogger();
@@ -44,10 +46,13 @@ async function main(): Promise<void> {
       migrationVersion: migrationState.latestAppliedVersion
     });
 
+    const capacity = new StorageCapacityMonitor(config.storagePath, config.storageWarningPercent,
+      config.storageCriticalPercent, logger);
     const health = createHealthService({
       pool,
       migrationsDirectory: config.migrationsDirectory,
-      storagePath: config.storagePath
+      storagePath: config.storagePath,
+      capacity
     });
     const identity = new IdentityService(new PostgresIdentityStore(pool));
     const stage3 = new Stage3Service(pool);
@@ -57,7 +62,7 @@ async function main(): Promise<void> {
     const staging = new DurableStagingStore(join(config.storagePath, 'staging'),
       config.maxFileBytes, config.maxUploadRequestBytes);
     await staging.initialize();
-    const uploads = new Stage6UploadService(pool, staging, config.uploadTtlSeconds * 1000);
+    const uploads = new Stage6UploadService(pool, staging, config.uploadTtlSeconds * 1000, undefined, capacity);
     const metadata = new Stage6StorageService(pool);
     const serverVolumeStore = new ServerVolumeStore(join(config.storagePath, 'server-volume'), config.maxFileBytes);
     await serverVolumeStore.initialize();
@@ -70,7 +75,9 @@ async function main(): Promise<void> {
     const files = new Stage6FileService(pool, serverVolumeStore, s3Configs,
       providerConfig => new S3CompatibleStore(providerConfig, new NodeS3Transport(providerConfig), config.maxFileBytes));
     const storageMigrations = new Stage6MigrationService(pool, staging, serverVolumeStore, s3Configs,
-      providerConfig => new S3CompatibleStore(providerConfig, new NodeS3Transport(providerConfig), config.maxFileBytes));
+      providerConfig => new S3CompatibleStore(providerConfig, new NodeS3Transport(providerConfig), config.maxFileBytes),
+      capacity);
+    const storageMaintenance = new Stage6MaintenanceService(pool, staging, files, capacity, logger);
     await stage3.ensureBuiltins();
     const bootstrapSecret = await identity.ensureBootstrapSecret();
     if (bootstrapSecret) {
@@ -92,9 +99,11 @@ async function main(): Promise<void> {
       storage: metadata,
       files,
       storageMigrations,
+      storageMetrics: storageMaintenance,
       allowedOrigins: config.allowedOrigins
     });
     const stopStorageMigrationWorker = startStorageMigrationWorker(storageMigrations, logger);
+    const stopStorageMaintenanceWorker = startStorageMaintenanceWorker(storageMaintenance, logger);
 
     server.listen(config.port, config.host, () => {
       logger.info('server.started', {
@@ -111,6 +120,7 @@ async function main(): Promise<void> {
       }
       shuttingDown = true;
       stopStorageMigrationWorker();
+      stopStorageMaintenanceWorker();
       logger.info('server.shutdown.started', {signal});
 
       const forceTimer = setTimeout(() => {

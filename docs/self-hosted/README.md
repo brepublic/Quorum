@@ -1,8 +1,8 @@
 # Quorum 自托管目标架构
 
-本目录描述 Quorum 从 Firebase BaaS 迁移到完全自主托管后的目标架构。阶段 0–5 和 6.1–6.6 已落地：上传内容可持久暂存并原子提交到 `SERVER_VOLUME` 或 `S3_COMPATIBLE`，PostgreSQL 同事务发布对应文件版本，并提供审核、发布、授权下载、durable 物理删除任务和安全 provider 切换。阶段 6.7–6.8 的后台保护和文件 UI 尚未实施；仓库仍未完成全部迁移。当前事实以根目录的 [`PROJECT_ARCHITECTURE.md`](../../PROJECT_ARCHITECTURE.md) 为准。
+本目录描述 Quorum 从 Firebase BaaS 迁移到完全自主托管后的目标架构。阶段 0–5 和 6.1–6.7 已落地：上传内容可持久暂存并原子提交到 `SERVER_VOLUME` 或 `S3_COMPATIBLE`，PostgreSQL 同事务发布对应文件版本，并提供审核、发布、授权下载、durable 物理删除任务、安全 provider 切换、容量保护和后台清理。阶段 6.8 文件 UI 尚未实施；仓库仍未完成全部迁移。当前事实以根目录的 [`PROJECT_ARCHITECTURE.md`](../../PROJECT_ARCHITECTURE.md) 为准。
 
-## 当前阶段 6.6 边界
+## 当前阶段 6.7 边界
 
 - PostgreSQL migration 已建立身份、凭据、Session、系统设置、未来注册申请和身份审计表。
 - bootstrap secret 只保存哈希，并由 PostgreSQL 事务保证并发初始化只有一个成功；公开状态 API 不返回 secret。
@@ -13,7 +13,7 @@
 - 同源 API 已提供阶段 3 委员会、席位、邀请码、快照和规则包命令。所有写入继续执行 Session、CSRF 和 Origin 校验。
 - Committee Owner、Chair、membership、seat assignment 和 `SYSTEM_ADMIN` 分别授权。系统管理员和 Committee Owner 都不会隐式获得 Chair 能力。
 - 邀请码只保存哈希；规则模拟不写议事状态；内置包和已发布版本不可原地修改。
-- schema compatibility 18 覆盖阶段 4–5 业务表、文件数据基础、durable upload、SERVER_VOLUME/S3 provider、审核状态、物理删除任务和 provider migration。
+- schema compatibility 19 覆盖阶段 4–5 业务表、文件数据基础、durable upload、SERVER_VOLUME/S3 provider、审核状态、物理删除任务、provider migration 和 fenced staging cleanup。
 - 自托管 React 页面只调用同源 API；一浏览器一委员会一条 SSE，游标过期、序号缺口或未知事件回退完整快照。
 - 服务器时间是计时真相；PostgreSQL 唯一约束和行锁保护队列顺序、当前发言人及一席一票。
 - 正式 ballot 冻结资格、门槛、must-vote、否决席位和规则版本；票更正追加历史，匿名意向性投票不保存投票人与选项关联。
@@ -22,7 +22,7 @@
 - 上传元数据从同源 Session 推导 actor；创建和内容路由继续执行 Origin、CSRF、幂等键和请求大小边界，委员会暂停时拒绝创建或完成上传。
 - HTTP 内容请求直接流入持久暂存文件，不先拼接完整 Buffer。服务端计算实际大小和 SHA-256；用户文件名不参与暂存路径。
 - 暂存路径只接受服务器内部键，并拒绝绝对路径、点路径、符号链接逃逸和非普通文件。完整字节进入 `STAGED` 后仍未成为可下载文件。
-- 未提交的唯一暂存副本不因普通期限或 LRU 删除；只有 `COMMITTED`、`CANCELLED` 或已经过期的 `FAILED` upload 可进入后续清理范围。阶段 6.2 不运行清理 worker。
+- 未提交的唯一暂存副本不因普通期限或 LRU 删除；只有 `COMMITTED`、`CANCELLED` 或已经过期的 `FAILED` upload 可由常驻 worker 清理。
 - `SERVER_VOLUME` 提交路由只接受 `STAGED` upload；最终路径由 blob UUID 派生，用户名称不参与磁盘路径。
 - provider 临时文件使用 0600 权限，完成 `fsync` 后无覆盖原子发布，并从最终文件重新计算大小与 SHA-256。读取原语同样先验证完整性。
 - provider 验证成功后，upload、blob、file entry/version、事件、审计和幂等响应在一个 PostgreSQL 事务提交。数据库失败保留暂存与最终 provider 字节，重试复用同一 blob 目标。
@@ -31,10 +31,13 @@
 - S3 内容从 durable staging 流式 PUT，object key 只由管理员 prefix 和 blob UUID 派生；远端 GET 重算大小和 SHA-256 后才发布文件版本。
 - 同源 HTTP 已开放文件列表、详情、下载、提交审核、发布和逻辑删除。PUBLIC 只看到公开委员会的已发布文件；member、Chair 和 Owner 可读取未删除文件。
 - 下载先按不可变版本记录的 provider 校验大小和 SHA-256，再以强制附件和安全响应头流式返回；HTML、XML、JavaScript 与 SVG 不作为同源可执行内容内联。
-- 逻辑删除立即不可见，并为所有版本 blob 创建 durable delete job。provider 删除失败退避重试，超时 claim 可恢复；阶段 6.7 的常驻 worker 和清理调度尚未运行。
+- 逻辑删除立即不可见，并为所有版本 blob 创建 durable delete job。常驻 maintenance worker 优先执行这些任务；provider 删除失败退避重试，超时 claim 可恢复。
 - provider 切换以 durable migration/item/copy 表保存；复制期间旧 binding 持续服务，manifest 改变要求显式重试，全部目标副本复验后才原子切换。
 - S3 目标必须活动且当前 revision 已验证；常驻迁移 worker 使用 durable staging、claim token、退避与 stale-claim 恢复。取消副本进入 durable 删除任务。
-- 阶段 6.6 未实现磁盘阈值、暂存清理、文件 UI 或 Chair Local Agent。
+- 实际存储挂载点达到默认 80% 时记录告警，达到 90% 时拒绝新上传字节和 provider copy；下载、议事和清理继续可用。容量未知或必要目录不可读写会使 readiness 失败。
+- upload 和 provider migration staging 用独立 claim token、退避及 stale-claim 恢复清理；结果写追加式维护审计。活动、待重试或唯一暂存副本不会被清理，退休源副本也不因压力自动删除。
+- `/metrics` 暴露容量比、固定类别队列深度和成功/失败计数，不包含路径、文件名或凭据。
+- 阶段 6.7 未实现文件 UI 或 Chair Local Agent。
 - PostgreSQL、TLS 浏览器和 Compose 实测尚未在当前环境执行，状态及取证要求见 [`MANUAL_ACCEPTANCE.md`](./MANUAL_ACCEPTANCE.md)。
 
 ## 文档索引
@@ -53,7 +56,8 @@
 | [`STAGE_6_4_HANDOFF_PROMPT.md`](./STAGE_6_4_HANDOFF_PROMPT.md) | 已完成阶段 6.4 S3 compatible provider 的历史交接 Prompt |
 | [`STAGE_6_5_HANDOFF_PROMPT.md`](./STAGE_6_5_HANDOFF_PROMPT.md) | 已完成阶段 6.5 审核、发布、下载和永久删除的历史交接 Prompt |
 | [`STAGE_6_6_HANDOFF_PROMPT.md`](./STAGE_6_6_HANDOFF_PROMPT.md) | 已完成阶段 6.6 provider 切换与失败回退的历史交接 Prompt |
-| [`STAGE_6_7_HANDOFF_PROMPT.md`](./STAGE_6_7_HANDOFF_PROMPT.md) | 下一步阶段 6.7 磁盘阈值和后台清理交接 Prompt |
+| [`STAGE_6_7_HANDOFF_PROMPT.md`](./STAGE_6_7_HANDOFF_PROMPT.md) | 已完成阶段 6.7 磁盘阈值和后台清理的历史交接 Prompt |
+| [`STAGE_6_8_HANDOFF_PROMPT.md`](./STAGE_6_8_HANDOFF_PROMPT.md) | 下一步阶段 6.8 自托管文件 UI 与阶段收尾交接 Prompt |
 | [`RUNNING_LOG.md`](./RUNNING_LOG.md) | 长任务当前进度、验证结果和下一步恢复点 |
 
 ## 当前实施与验证约束

@@ -19,6 +19,8 @@ describe('self-hosted deployment configuration', () => {
     expect(compose).toContain('QUORUM_MAX_UPLOAD_REQUEST_BYTES:');
     expect(compose).toContain('QUORUM_STORAGE_MASTER_KEY:');
     expect(compose).toContain('QUORUM_STORAGE_MASTER_KEY_VERSION:');
+    expect(compose).toContain('QUORUM_STORAGE_WARNING_PERCENT:');
+    expect(compose).toContain('QUORUM_STORAGE_CRITICAL_PERCENT:');
     expect(compose).toMatch(/\nvolumes:\n(?:\s{2}[a-z_]+:\n?)+$/);
   });
 
@@ -34,11 +36,13 @@ describe('self-hosted deployment configuration', () => {
     const caddyfile = await readFile(caddyfilePath, 'utf8');
     const api = caddyfile.indexOf('handle /api/v1/*');
     const health = caddyfile.indexOf('handle /health/*');
+    const metrics = caddyfile.indexOf('handle /metrics');
     const spa = caddyfile.indexOf('try_files {path} /index.html');
 
     expect(api).toBeGreaterThan(-1);
     expect(health).toBeGreaterThan(api);
-    expect(spa).toBeGreaterThan(health);
+    expect(metrics).toBeGreaterThan(health);
+    expect(spa).toBeGreaterThan(metrics);
     expect(caddyfile).toContain('reverse_proxy app:3000');
   });
 });

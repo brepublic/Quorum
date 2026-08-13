@@ -38,11 +38,20 @@ describe('server configuration', () => {
   it('keeps the global upload request limit above the file limit', () => {
     const config = loadConfig({DATABASE_URL: 'postgresql://localhost/quorum'});
     expect(config.maxFileBytes).toBe(20 * 1024 * 1024);
+    expect(config.storageWarningPercent).toBe(80);
+    expect(config.storageCriticalPercent).toBe(90);
     expect(config.maxUploadRequestBytes).toBe(21 * 1024 * 1024);
     expect(config.uploadTtlSeconds).toBe(24 * 60 * 60);
     expect(() => loadConfig({DATABASE_URL: 'postgresql://localhost/quorum',
       QUORUM_MAX_FILE_BYTES: '20', QUORUM_MAX_UPLOAD_REQUEST_BYTES: '19'}))
       .toThrow('must be at least');
+  });
+
+  it('requires ordered storage capacity percentages', () => {
+    expect(() => loadConfig({DATABASE_URL: 'postgresql://localhost/quorum', QUORUM_STORAGE_WARNING_PERCENT: '90',
+      QUORUM_STORAGE_CRITICAL_PERCENT: '90'})).toThrow('warning below critical');
+    expect(() => loadConfig({DATABASE_URL: 'postgresql://localhost/quorum', QUORUM_STORAGE_WARNING_PERCENT: '80',
+      QUORUM_STORAGE_CRITICAL_PERCENT: '101'})).toThrow('warning below critical');
   });
 
   it('accepts only an explicit 32-byte storage master key', () => {

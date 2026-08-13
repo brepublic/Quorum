@@ -191,8 +191,10 @@ export class Stage6FileService {
       return row;
     });
     if (!claimed) return null;
+    let providerDeleted = false;
     try {
       await (await this.store(claimed.provider_type, claimed.provider_config_id)).delete(claimed.storage_key);
+      providerDeleted = true;
       return transaction(this.pool, async client => {
         const completed = await client.query<DeleteJobRow>(`UPDATE file_blob_delete_jobs SET status='COMPLETED',
           completed_at=now(),claimed_at=NULL,claim_token=NULL,failure_code=NULL,failure_reason=NULL,updated_at=now()
@@ -200,10 +202,13 @@ export class Stage6FileService {
         if (!completed.rows[0]) return this.currentDeleteJob(client, claimed.id);
         await client.query(`UPDATE file_blobs SET durability_state='DELETED',updated_at=now() WHERE id=$1`,
           [claimed.blob_id]);
+        await client.query(`INSERT INTO storage_cleanup_audit (resource_type,resource_id,outcome)
+          VALUES ('BLOB_DELETE',$1,'SUCCEEDED')`, [claimed.id]);
         return this.deleteJob(completed.rows[0]);
       });
     } catch (error) {
-      const failureCode = (error as {failureCode?: string}).failureCode ?? 'PROVIDER_DELETE_FAILED';
+      const failureCode = providerDeleted ? 'STORAGE_CLEANUP_COMMIT_FAILED'
+        : (error as {failureCode?: string}).failureCode ?? 'PROVIDER_DELETE_FAILED';
       const failureReason = error instanceof Error ? error.message.slice(0, 240) : 'Provider deletion failed.';
       return transaction(this.pool, async client => {
         const retry = await client.query<DeleteJobRow>(`UPDATE file_blob_delete_jobs SET status='RETRY',
@@ -212,6 +217,8 @@ export class Stage6FileService {
           updated_at=now() WHERE id=$1 AND status='IN_PROGRESS' AND claim_token=$4 RETURNING *`,
         [claimed.id, failureCode.slice(0, 80), failureReason, claimed.claim_token]);
         if (!retry.rows[0]) return this.currentDeleteJob(client, claimed.id);
+        await client.query(`INSERT INTO storage_cleanup_audit (resource_type,resource_id,outcome,failure_code)
+          VALUES ('BLOB_DELETE',$1,'FAILED',$2)`, [claimed.id, failureCode.slice(0, 80)]);
         return this.deleteJob(retry.rows[0]);
       });
     }

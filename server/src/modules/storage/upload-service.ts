@@ -18,6 +18,7 @@ import {
 } from '../stage4/database.js';
 import {assertExactBody} from '../stage4/validation.js';
 import {normalizeSha256} from './service.js';
+import type {StorageCapacityGuard} from './capacity.js';
 import {DurableStagingStore, UploadStreamError} from './staging.js';
 
 interface UploadRow extends QueryResultRow {
@@ -154,7 +155,8 @@ export class Stage6UploadService {
     private readonly pool: Pool,
     readonly staging: DurableStagingStore,
     private readonly uploadTtlMs = 24 * 60 * 60 * 1000,
-    private readonly now: () => Date = () => new Date()
+    private readonly now: () => Date = () => new Date(),
+    private readonly capacity?: StorageCapacityGuard
   ) {}
 
   async createUpload(auth: AuthenticatedSession, committeeId: string, body: unknown,
@@ -179,6 +181,7 @@ export class Stage6UploadService {
       request: body,
       status: 201,
       work: async client => {
+        await this.capacity?.assertWriteAllowed();
         const committee = await lockedCommittee(client, uuid(committeeId, 'Committee ID'));
         requireProceedingsActive(committee);
         await requireContributor(client, committee, auth.user.id);
@@ -216,7 +219,13 @@ export class Stage6UploadService {
     requireBusinessIdentity(auth);
     validateIdempotencyKey(idempotencyKey);
     const id = uuid(uploadId, 'Upload ID');
-    const claim = await this.claim(auth, id, idempotencyKey);
+    let capacityError: unknown;
+    try {
+      await this.capacity?.assertWriteAllowed();
+    } catch (error) {
+      capacityError = error;
+    }
+    const claim = await this.claim(auth, id, idempotencyKey, capacityError);
     if (claim.kind === 'REPLAY') return replay(claim.attempt);
     try {
       const content = claim.kind === 'RECOVER'
@@ -237,7 +246,8 @@ export class Stage6UploadService {
     }
   }
 
-  private async claim(auth: AuthenticatedSession, uploadId: string, key: string): Promise<Claim> {
+  private async claim(auth: AuthenticatedSession, uploadId: string, key: string,
+    capacityError?: unknown): Promise<Claim> {
     const route = `/api/v1/file-uploads/${uploadId}/content`;
     const hash = requestHash({uploadId});
     return transaction(this.pool, async client => {
@@ -261,6 +271,7 @@ export class Stage6UploadService {
         && await this.staging.exists(upload.staging_key)) {
         return {kind: 'RECOVER', upload};
       }
+      if (upload.status === 'CREATED' && capacityError) throw capacityError;
       if (upload.status !== 'CREATED') {
         throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Upload content is not expected in its current state.'});
       }

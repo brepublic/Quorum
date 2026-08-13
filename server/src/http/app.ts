@@ -17,6 +17,7 @@ import type {Stage6S3ConfigService} from '../modules/storage/s3-config-service.j
 import type {Stage6StorageService} from '../modules/storage/service.js';
 import type {Stage6FileService} from '../modules/storage/file-service.js';
 import type {Stage6MigrationService} from '../modules/storage/migration-service.js';
+import type {StorageMetricsProvider} from '../modules/storage/maintenance-service.js';
 import {AppError, normalizeError} from './errors.js';
 import {
   clearIdentityCookies,
@@ -48,6 +49,7 @@ export interface AppDependencies {
   storage?: Stage6StorageService;
   files?: Stage6FileService;
   storageMigrations?: Stage6MigrationService;
+  storageMetrics?: StorageMetricsProvider;
   allowedOrigins?: string[];
 }
 
@@ -66,6 +68,14 @@ function sendJson(response: ServerResponse, status: number, body: unknown): void
   response.setHeader('content-length', Buffer.byteLength(json));
   response.setHeader('cache-control', 'no-store');
   response.end(json);
+}
+
+function sendText(response: ServerResponse, status: number, contentType: string, body: string): void {
+  response.statusCode = status;
+  response.setHeader('content-type', contentType);
+  response.setHeader('content-length', Buffer.byteLength(body));
+  response.setHeader('cache-control', 'no-store');
+  response.end(body);
 }
 
 async function readJson(request: IncomingMessage): Promise<Record<string, unknown>> {
@@ -943,6 +953,12 @@ export function createRequestHandler(dependencies: AppDependencies): RequestList
             });
           }
           sendJson(response, 200, success({status: 'ok' as const, checks: result.checks}, requestId));
+          return;
+        }
+
+        if (pathname === '/metrics' && dependencies.storageMetrics) {
+          sendText(response, 200, 'text/plain; version=0.0.4; charset=utf-8',
+            await dependencies.storageMetrics.renderMetrics());
           return;
         }
 

@@ -6,10 +6,10 @@
 
 - 更新时间：2026-08-13
 - 分支：`self-host`
-- 已确认基线：`3fe305d stage 6.5: publish and delete stored files`
-- 当前阶段：6.6 provider 切换与失败回退已实现并通过当前 WSL 可执行的验证。
-- 当前工作：单独提交阶段 6.6。
-- 下一步：按 `STAGE_6_7_HANDOFF_PROMPT.md` 复跑 6.6 基线，然后实施磁盘阈值和后台清理。
+- 已确认基线：`c30aafc stage 6.6: migrate storage providers safely`
+- 当前阶段：6.7 磁盘阈值和后台清理已实现并通过当前 WSL 可执行的验证。
+- 当前工作：单独提交阶段 6.7。
+- 下一步：按 `STAGE_6_8_HANDOFF_PROMPT.md` 复跑 6.7 基线，然后实施自托管文件 UI 与阶段 6 收尾。
 
 ## 已完成与验证
 
@@ -47,6 +47,7 @@
 - `de214c1`：阶段 6.4 `S3_COMPATIBLE` provider。
 - 阶段 6.5 文件审核、授权下载和永久删除任务：提交以当前 `git log` 为准。
 - 阶段 6.6 provider 切换与失败回退：提交以当前 `git log` 为准。
+- 阶段 6.7 磁盘阈值和后台清理：提交以当前 `git log` 为准。
 
 ### 2026-08-13：阶段 6.3 SERVER_VOLUME provider
 
@@ -111,3 +112,20 @@
 - `git diff --check`：通过。
 - 当前 WSL 仍没有真实 PostgreSQL、持久卷、S3 compatible 测试桶、多实例或 TLS 浏览器；双向迁移、真实 provider 故障、进程终止、stale claim 和确认前目标损坏记录在 `MANUAL_ACCEPTANCE.md` 的 SH-MAN-506。
 - 阶段 6.6 已完成当前 WSL 可执行的验证；单独提交后直接进入 6.7。
+
+### 2026-08-13：阶段 6.7 磁盘阈值和后台清理
+
+- 阶段 6.6 基线复跑：针对性 Vitest 31 项通过、26 项 PostgreSQL 用例明确 skip；`pnpm build:self-host` 通过，仅有既有 Vite 大分块警告。
+- migration 19 为 upload 和 provider migration staging 增加 cleanup attempts、next attempt、claim token、stale claim、失败摘要与删除时间，并新增不可修改的 `storage_cleanup_audit`；schema compatibility 为 19。
+- `StorageCapacityMonitor` 对实际 `QUORUM_STORAGE_PATH` 执行 `statfs`。默认 80% warning、90% critical，可用有序整数百分比环境变量调整；状态转换写结构化日志且不记录存储路径。
+- critical 或容量未知阻止新 upload 与新内容写入，并暂停 provider migration copy claim；已有幂等响应仍可重放。下载、议事命令、blob delete 和 staging cleanup 不受临界阈值阻断。
+- readiness 在数据库/migration、必要目录或容量采样不可用时失败；warning/critical 仍返回 200 并包含使用率及可用字节，避免把仍可读实例从服务中摘除。Caddy 已转发只含固定聚合值的 Prometheus `/metrics`。
+- 常驻 maintenance worker 优先运行阶段 6.5 blob delete job，再清理严格符合条件的 upload/migration staging。`STAGED`、活动或待重试 copy、唯一副本和退休源 provider 副本不会被期限、LRU 或压力删除。
+- 清理使用 `FOR UPDATE SKIP LOCKED`、claim token、五分钟 stale 回收和指数退避。unlink/provider delete 后进程或数据库失败可通过“目标不存在”幂等收敛；成功和失败均追加维护审计。
+- 最终针对性 Vitest：9 个文件、60 项通过；1 个 PostgreSQL 文件、30 项因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip。
+- `pnpm test:self-host`：40 个文件、188 项通过；6 个 PostgreSQL 集成文件、47 项明确 skip。仅出现既有 React/Semantic UI 弃用警告。
+- 默认 `pnpm build` 与 `pnpm build:self-host` 均通过；contracts、前端、rule-schema 和 server 构建成功，Vite 仅报告既有的大分块警告。
+- `pnpm test:self-host:integration`：6 个文件、47 项因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip。
+- `git diff --check`：通过。
+- 当前 WSL 没有真实 PostgreSQL、可控持久卷、S3、多实例、只读/满盘或进程终止环境；相关验证与证据要求记录在 `MANUAL_ACCEPTANCE.md` 的 SH-MAN-507。
+- 阶段 6.7 已完成当前 WSL 可执行的验证；单独提交后直接进入 6.8。

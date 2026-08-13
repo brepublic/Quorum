@@ -49,6 +49,7 @@ async function request(options: {
   method?: string;
   requestId?: string;
   ready?: ReadyCheckResult;
+  metrics?: string;
 }) {
   const logs: string[] = [];
   const handler = createRequestHandler({
@@ -56,6 +57,7 @@ async function request(options: {
     logger: createLogger(line => logs.push(line)),
     version: 'test-version',
     databaseMigrationVersion: 1,
+    storageMetrics: options.metrics === undefined ? undefined : {renderMetrics: async () => options.metrics as string},
     now: () => 10_000
   });
   const incoming = {
@@ -67,10 +69,17 @@ async function request(options: {
   const finished = once(response, 'finish');
   handler(incoming, response as unknown as ServerResponse);
   await finished;
+  let body: Record<string, unknown> = {};
+  try {
+    body = JSON.parse(response.body) as Record<string, unknown>;
+  } catch {
+    // Non-JSON infrastructure endpoints expose their raw body separately.
+  }
   return {
     status: response.statusCode,
     headers: response.headers,
-    body: JSON.parse(response.body) as Record<string, unknown>,
+    body,
+    rawBody: response.body,
     logs
   };
 }
@@ -101,6 +110,17 @@ describe('HTTP infrastructure contract', () => {
     expect(error.details).toEqual({checks: notReady.checks});
   });
 
+  it('reports critical capacity without taking read-only service paths out of readiness', async () => {
+    const response = await request({path: '/health/ready', ready: {ready: true, checks: {
+      database: {status: 'ok', migrationVersion: 19},
+      storage: {status: 'critical', usagePercent: 90, availableBytes: 100}
+    }}});
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(expect.objectContaining({data: expect.objectContaining({checks: expect.objectContaining({
+      storage: {status: 'critical', usagePercent: 90, availableBytes: 100}
+    })})}));
+  });
+
   it('uses the same error format for unknown routes and emits structured request logs', async () => {
     const response = await request({path: '/missing'});
     expect(response.status).toBe(404);
@@ -120,6 +140,14 @@ describe('HTTP infrastructure contract', () => {
       path: '/missing',
       status: 404
     }));
+  });
+
+  it('serves storage metrics as non-cacheable Prometheus text', async () => {
+    const response = await request({path: '/metrics', metrics: 'quorum_storage_usage_ratio 0.8\n'});
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toContain('text/plain');
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(response.rawBody).toBe('quorum_storage_usage_ratio 0.8\n');
   });
 
   it('rejects non-read methods with a stable error code', async () => {

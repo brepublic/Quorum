@@ -228,6 +228,21 @@ export class DurableStagingStore {
     }
   }
 
+  async remove(key: string): Promise<void> {
+    await this.ensureInitialized();
+    let target: string;
+    try {
+      target = await this.checkedTarget(key);
+      const stats = await this.operations.lstat(target);
+      if (stats.isSymbolicLink() || !stats.isFile()) throw new Error('The staging target is not a regular file.');
+      await this.operations.unlink(target);
+    } catch (error) {
+      if (missing(error)) return;
+      throw new UploadStreamError('STAGING_CLEANUP_FAILED', 'SERVICE_NOT_READY',
+        'Durable staging cleanup failed.', 0, error);
+    }
+  }
+
   private preflight(expectedSizeBytes: number, contentLength?: number): void {
     if (!Number.isSafeInteger(expectedSizeBytes) || expectedSizeBytes < 0) {
       throw new UploadStreamError('UPLOAD_SIZE_MISMATCH', 'VALIDATION_FAILED',

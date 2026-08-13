@@ -101,4 +101,17 @@ describe('durable upload staging', () => {
       failureCode: 'STAGING_PATH_INVALID'
     });
   });
+
+  it('removes only a regular server-keyed staging file and treats a missing file as success', async () => {
+    const directory = await root();
+    const store = new DurableStagingStore(directory, 64, 80);
+    await store.initialize();
+    const content = Buffer.from('cleanup');
+    await store.write({key: 'uploads/aa/cleanup', source: (async function* () {yield content;})(),
+      expectedSizeBytes: content.length, expectedSha256: createHash('sha256').update(content).digest('hex')});
+    await store.remove('uploads/aa/cleanup');
+    await expect(store.exists('uploads/aa/cleanup')).resolves.toBe(false);
+    await expect(store.remove('uploads/aa/cleanup')).resolves.toBeUndefined();
+    await expect(store.remove('../outside')).rejects.toMatchObject({failureCode: 'STAGING_CLEANUP_FAILED'});
+  });
 });

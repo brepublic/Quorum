@@ -62,7 +62,7 @@ storage_hosts
 
 逻辑文件删除后立即不可见且内容进入物理删除任务。墓碑不含可恢复内容，只防止离线 Agent 把旧副本重新发布；它至少保留到委员会永久删除。
 
-阶段 6.5 的删除任务按 blob 唯一。provider 删除成功后，任务和 blob 状态在同一事务完成；失败保存摘要并退避，过期 claim 可重新领取。服务器卷和 S3 的“目标已不存在”都按幂等成功处理。常驻 worker、指标和暂存清理由阶段 6.7 接入。
+阶段 6.5 的删除任务按 blob 唯一。provider 删除成功后，任务和 blob 状态在同一事务完成；失败保存摘要并退避，过期 claim 可重新领取。服务器卷和 S3 的“目标已不存在”都按幂等成功处理。阶段 6.7 已接入常驻 worker、维护审计、指标和暂存清理；provider 成功但数据库完成回滚时用独立稳定 failure code 重试。
 
 ## 3. 上传和发布
 
@@ -195,6 +195,10 @@ S3 目标要求当前配置 revision 已由系统管理员完成连通性验证�
 - 暂存内容有后台清理，但只有已提交、失败且过期或明确取消的 upload 可以删除。
 - 下载响应必须使用安全 `Content-Disposition` 和内容类型，禁止把用户上传 HTML 以内联同源页面执行。
 - S3 和 Agent 凭据不得出现在日志、事件或审计 payload。
+
+阶段 6.7 的容量采样固定指向实际 `QUORUM_STORAGE_PATH`。80%/90% 是可配置默认阈值：warning 只告警，critical 阻止新的 upload 字节和 provider copy；两者都不停止下载、议事和清理。采样未知或必要目录不可读写才使 readiness 失败，临界容量通过 readiness 详情和 `/metrics` 明确暴露。
+
+maintenance worker 先处理 durable blob delete job，再处理 upload/migration staging。所有 cleanup claim 都有 token、五分钟 stale 回收和指数退避；unlink 后进程中断可按“目标已不存在”收敛。upload 只清理 `COMMITTED`、`CANCELLED` 或过期 `FAILED`；migration staging 只清理 `COMPLETED` 或 `CANCELLED`。任何 `STAGED`、待重试 copy、活动 claim 和退休源副本都不参与压力清理。
 
 ## 11. Agent 发布目标
 

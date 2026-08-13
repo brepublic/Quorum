@@ -23,6 +23,8 @@ import {Stage6S3CommitService} from './s3-commit-service';
 import {S3CompatibleStore, type S3Request, type S3Response, type S3Transport} from './s3-store';
 import {Stage6FileService} from './file-service';
 import {Stage6MigrationService} from './migration-service';
+import {Stage6MaintenanceService} from './maintenance-service';
+import {createLogger} from '../../logger';
 
 const {Client, Pool} = pg;
 const adminUrl = process.env.TEST_DATABASE_ADMIN_URL;
@@ -50,6 +52,9 @@ function quoteIdentifier(value: string): string {
 const context = (name: string) => ({requestId: `stage6-${name}`, sourceIp: '127.0.0.1', userAgent: 'Vitest'});
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 const blobKey = () => `blobs/${randomUUID().replaceAll('-', '')}`;
+const availableCapacity = {sample: async () => ({state: 'normal' as const, usageRatio: 0.5, usagePercent: 50,
+  totalBytes: 1000, availableBytes: 500}), assertWriteAllowed: async () => ({state: 'normal' as const,
+  usageRatio: 0.5, usagePercent: 50, totalBytes: 1000, availableBytes: 500})};
 
 beforeEach(async () => {
   if (!adminUrl) return;
@@ -448,6 +453,29 @@ integration('PostgreSQL stage 6 file metadata', () => {
     expect(await staging.exists(state?.rows[0]?.staging_key)).toBe(true);
   });
 
+  it('rejects only new upload bytes at critical capacity while preserving idempotent replay', async () => {
+    const fixture = await storageFixture();
+    let writable = true;
+    const capacity = {sample: availableCapacity.sample, assertWriteAllowed: async () => {
+      if (!writable) throw Object.assign(new Error('capacity critical'), {code: 'SERVICE_NOT_READY'});
+      return availableCapacity.assertWriteAllowed();
+    }};
+    const guarded = new Stage6UploadService(pool as pg.Pool, staging, 24 * 60 * 60 * 1000, undefined, capacity);
+    const body = {logicalName: '容量保护', originalName: 'capacity.bin', mediaType: 'application/octet-stream',
+      expectedSizeBytes: 4, sha256: digest('data')};
+    const created = await guarded.createUpload(fixture.member, fixture.committee.id, body,
+      'capacity-create', context('capacity-create'));
+    writable = false;
+    expect(await guarded.createUpload(fixture.member, fixture.committee.id, body,
+      'capacity-create', context('capacity-create-replay'))).toEqual(created);
+    await expect(guarded.createUpload(fixture.member, fixture.committee.id, body,
+      'capacity-create-blocked', context('capacity-create-blocked'))).rejects.toMatchObject({code: 'SERVICE_NOT_READY'});
+    await expect(guarded.receiveContent(fixture.member, created.id, (async function* () {yield 'data';})(),
+      'capacity-content', 4, context('capacity-content'))).rejects.toMatchObject({code: 'SERVICE_NOT_READY'});
+    expect((await pool?.query('SELECT status FROM file_uploads WHERE id=$1', [created.id]))?.rows[0]?.status)
+      .toBe('CREATED');
+  });
+
   it('commits a STAGED upload to SERVER_VOLUME exactly once', async () => {
     const fixture = await storageFixture();
     const content = 'server-volume-provider-content';
@@ -484,6 +512,56 @@ integration('PostgreSQL stage 6 file metadata', () => {
     expect(state?.rows[0]?.provider_storage_key).not.toContain('provider.pdf');
     expect(await volume.verify(state?.rows[0]?.provider_storage_key,
       Buffer.byteLength(content), digest(content))).toEqual({sizeBytes: Buffer.byteLength(content), sha256: digest(content)});
+  });
+
+  it('cleans committed upload staging but preserves the only STAGED copy', async () => {
+    const fixture = await storageFixture();
+    await committedServerFile(fixture, 'safe committed cleanup', 'cleanup-committed');
+    const stagedContent = 'only staged copy';
+    const staged = await uploads.createUpload(fixture.member, fixture.committee.id, {
+      logicalName: '暂存保护', originalName: 'staged.bin', mediaType: 'application/octet-stream',
+      expectedSizeBytes: Buffer.byteLength(stagedContent), sha256: digest(stagedContent)
+    }, 'cleanup-staged-upload', context('cleanup-staged-upload'));
+    await uploads.receiveContent(fixture.member, staged.id, (async function* () {yield stagedContent;})(),
+      'cleanup-staged-content', Buffer.byteLength(stagedContent), context('cleanup-staged-content'));
+    const committed = await pool?.query<{id: string; staging_key: string}>(`SELECT id,staging_key FROM file_uploads
+      WHERE logical_name='文件 cleanup-committed'`);
+    const maintenance = new Stage6MaintenanceService(pool as pg.Pool, staging, files, availableCapacity,
+      createLogger(() => undefined));
+    expect(await maintenance.processNext()).toEqual({kind: 'FILE_UPLOAD_STAGING',
+      outcome: 'SUCCEEDED', failureCode: null});
+    expect(await staging.exists(committed?.rows[0]?.staging_key as string)).toBe(false);
+    expect(await staging.exists((await pool?.query<{staging_key: string}>('SELECT staging_key FROM file_uploads WHERE id=$1',
+      [staged.id]))?.rows[0]?.staging_key as string)).toBe(true);
+    const state = await pool?.query(`SELECT staging_deleted_at IS NOT NULL AS deleted,
+      (SELECT count(*)::int FROM storage_cleanup_audit WHERE resource_id=$1 AND outcome='SUCCEEDED') AS audits
+      FROM file_uploads WHERE id=$1`, [committed?.rows[0]?.id]);
+    expect(state?.rows[0]).toEqual({deleted: true, audits: 1});
+  });
+
+  it('retries a fenced staging cleanup failure without losing the committed file', async () => {
+    const fixture = await storageFixture();
+    const file = await committedServerFile(fixture, 'cleanup retry bytes', 'cleanup-retry');
+    const failingStore = new DurableStagingStore(stagingRoot, 20 * 1024 * 1024, 21 * 1024 * 1024, {
+      link, lstat, mkdir, open, realpath,
+      unlink: async () => {throw Object.assign(new Error('cleanup unavailable'), {code: 'EIO'});}
+    });
+    await failingStore.initialize();
+    const failing = new Stage6MaintenanceService(pool as pg.Pool, failingStore, files, availableCapacity,
+      createLogger(() => undefined));
+    expect(await failing.processNext()).toEqual({kind: 'FILE_UPLOAD_STAGING', outcome: 'FAILED',
+      failureCode: 'STAGING_CLEANUP_FAILED'});
+    const retry = await pool?.query(`SELECT cleanup_attempts,cleanup_claim_token,cleanup_failure_code,
+      staging_deleted_at FROM file_uploads WHERE logical_name='文件 cleanup-retry'`);
+    expect(retry?.rows[0]).toEqual({cleanup_attempts: 1, cleanup_claim_token: null,
+      cleanup_failure_code: 'STAGING_CLEANUP_FAILED', staging_deleted_at: null});
+    await pool?.query(`UPDATE file_uploads SET cleanup_next_attempt_at=now()-interval '1 second'
+      WHERE logical_name='文件 cleanup-retry'`);
+    const recovered = new Stage6MaintenanceService(pool as pg.Pool, staging, files, availableCapacity,
+      createLogger(() => undefined));
+    expect(await recovered.processNext()).toEqual({kind: 'FILE_UPLOAD_STAGING', outcome: 'SUCCEEDED',
+      failureCode: null});
+    expect((await files.get(fixture.member, file.id)).id).toBe(file.id);
   });
 
   it('rolls back upload, file, event, audit, and idempotency while retaining both byte copies', async () => {
@@ -753,6 +831,34 @@ integration('PostgreSQL stage 6 file metadata', () => {
       durability_state: 'DELETE_PENDING'});
   });
 
+  it('recovers when the provider delete succeeded but its database completion rolled back', async () => {
+    const fixture = await storageFixture();
+    const created = await committedServerFile(fixture, 'delete completion rollback', 'delete-db-retry');
+    await storage.deleteFile(fixture.member, created.id, {baseRevision: created.revision},
+      'delete-db-retry', context('delete-db-retry'));
+    await pool?.query(`CREATE FUNCTION fail_storage_cleanup_success() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF NEW.resource_type='BLOB_DELETE' AND NEW.outcome='SUCCEEDED' THEN
+          RAISE EXCEPTION 'injected cleanup completion failure';
+        END IF;
+        RETURN NEW;
+      END; $$`);
+    await pool?.query(`CREATE TRIGGER fail_storage_cleanup_success BEFORE INSERT ON storage_cleanup_audit
+      FOR EACH ROW EXECUTE FUNCTION fail_storage_cleanup_success()`);
+    const retried = await files.processNextDeleteJob();
+    expect(retried).toEqual(expect.objectContaining({status: 'RETRY', failureCode: 'STORAGE_CLEANUP_COMMIT_FAILED'}));
+    await pool?.query('DROP TRIGGER fail_storage_cleanup_success ON storage_cleanup_audit');
+    await pool?.query('DROP FUNCTION fail_storage_cleanup_success()');
+    await pool?.query(`UPDATE file_blob_delete_jobs SET next_attempt_at=now()-interval '1 second'
+      WHERE file_entry_id=$1`, [created.id]);
+    expect(await files.processNextDeleteJob()).toEqual(expect.objectContaining({status: 'COMPLETED'}));
+    const state = await pool?.query(`SELECT j.status,b.durability_state,
+      (SELECT count(*)::int FROM storage_cleanup_audit WHERE resource_id=j.id AND outcome='FAILED') AS failures,
+      (SELECT count(*)::int FROM storage_cleanup_audit WHERE resource_id=j.id AND outcome='SUCCEEDED') AS successes
+      FROM file_blob_delete_jobs j JOIN file_blobs b ON b.id=j.blob_id WHERE j.file_entry_id=$1`, [created.id]);
+    expect(state?.rows[0]).toEqual({status: 'COMPLETED', durability_state: 'DELETED', failures: 1, successes: 1});
+  });
+
   it('reads and deletes an existing S3 blob even after its provider config is disabled', async () => {
     const fixture = await s3Fixture();
     const content = 'published S3 bytes';
@@ -830,6 +936,15 @@ integration('PostgreSQL stage 6 file metadata', () => {
       JOIN file_blob_copies c ON c.content_blob_id=v.blob_id WHERE v.file_entry_id=$1`, [file.id]);
     expect(immutable?.rows[0]).toEqual({blob_id: file.currentVersion.blobId,
       copy_blob_id: expect.not.stringContaining(file.currentVersion.blobId)});
+    const maintenance = new Stage6MaintenanceService(pool as pg.Pool, staging, migratedFiles, availableCapacity,
+      createLogger(() => undefined));
+    while (await maintenance.processNext()) {
+      // Drain committed upload and completed migration staging.
+    }
+    const cleaned = await pool?.query(`SELECT count(*)::int AS count FROM storage_migration_items
+      WHERE migration_id=$1 AND staging_deleted_at IS NOT NULL`, [created.id]);
+    expect(cleaned?.rows[0]?.count).toBe(1);
+    expect((await migratedFiles.get(fixture.member, file.id)).id).toBe(file.id);
   });
 
   it('keeps the source active on copy failure and resumes with the same target blob', async () => {

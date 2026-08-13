@@ -11,6 +11,10 @@
     reverse_proxy app:3000
   }
 
+  handle /metrics {
+    reverse_proxy app:3000
+  }
+
   handle {
     root * /srv
     try_files {path} /index.html
