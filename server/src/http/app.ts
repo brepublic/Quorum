@@ -9,6 +9,7 @@ import type {IdentityService, RequestIdentityContext, SessionResult} from '../mo
 import type {AuthenticatedSession} from '../modules/identity/store.js';
 import type {Stage3Service} from '../modules/stage3/service.js';
 import type {Stage4Service} from '../modules/stage4/service.js';
+import type {RealtimeService} from '../modules/realtime/service.js';
 import {AppError, normalizeError} from './errors.js';
 import {
   clearIdentityCookies,
@@ -19,6 +20,7 @@ import {
   sessionCookie,
   verifyCsrf
 } from './cookies.js';
+import {streamCommitteeEvents} from './sse.js';
 
 const REQUEST_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 
@@ -31,6 +33,7 @@ export interface AppDependencies {
   identity?: IdentityService;
   stage3?: Stage3Service;
   stage4?: Stage4Service;
+  realtime?: RealtimeService;
   allowedOrigins?: string[];
 }
 
@@ -598,7 +601,8 @@ export function createRequestHandler(dependencies: AppDependencies): RequestList
       });
 
       try {
-        pathname = new URL(request.url || '/', 'http://quorum.local').pathname;
+        const requestUrl = new URL(request.url || '/', 'http://quorum.local');
+        pathname = requestUrl.pathname;
 
         if (dependencies.identity && await handleIdentityRequest({
           request,
@@ -608,6 +612,13 @@ export function createRequestHandler(dependencies: AppDependencies): RequestList
           identity: dependencies.identity,
           allowedOrigins: dependencies.allowedOrigins ?? []
         })) return;
+
+        const events = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/events$/.exec(pathname);
+        if (request.method === 'GET' && events && dependencies.identity && dependencies.realtime) {
+          await streamCommitteeEvents({request, response, committeeId: events[1] as string, url: requestUrl,
+            identity: dependencies.identity, realtime: dependencies.realtime});
+          return;
+        }
 
         if (dependencies.identity && dependencies.stage4 && await handleStage4Request({
           request, response, pathname, requestId, identity: dependencies.identity, stage4: dependencies.stage4,

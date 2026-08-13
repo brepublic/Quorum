@@ -39,6 +39,14 @@ describe('migration discovery', () => {
     expect(stage4?.sql).not.toContain('CREATE TABLE timers');
   });
 
+  it('adds retained event cursors for stage 5 SSE', async () => {
+    const migrations = await loadMigrations(resolve('server/migrations'));
+    const realtime = migrations.find(migration => migration.version === 5);
+    expect(realtime?.name).toBe('realtime_sse');
+    expect(realtime?.sql).toContain('events_retained_from_sequence');
+    expect(realtime?.sql).not.toContain('CREATE TABLE timer_states');
+  });
+
   it('rejects SQL files outside the versioned naming contract', async () => {
     const directory = await temporaryDirectory();
     await writeFile(join(directory, 'first.sql'), 'SELECT 1;\n');

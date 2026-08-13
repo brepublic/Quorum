@@ -27,6 +27,7 @@ export const ERROR_HTTP_STATUS: Readonly<Record<ApiErrorCode, number>> = Object.
 );
 
 export const COMMITTEE_EVENT_DEFINITIONS = [
+  {name: 'sync.cursor_advanced', defaultAudience: 'PUBLIC'},
   {name: 'committee.created', defaultAudience: 'MEMBER'},
   {name: 'committee.updated', defaultAudience: 'MEMBER'},
   {name: 'committee.chair_granted', defaultAudience: 'MEMBER'},

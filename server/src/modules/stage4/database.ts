@@ -159,5 +159,6 @@ export async function appendEvent(client: PoolClient, row: Stage4CommitteeRow, i
     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
   [row.id, sequence, input.type, input.resourceType, input.resourceId, input.revision,
     input.payload ?? {}, input.audience ?? 'MEMBER']);
+  await client.query("SELECT pg_notify('quorum_committee_events', $1)", [row.id]);
   return sequence;
 }

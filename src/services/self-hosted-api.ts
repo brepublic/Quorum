@@ -1,4 +1,5 @@
 import type {
+  CommitteeEventEnvelope,
   CommitteeNote,
   CommitteeSummary,
   CommitteeTemplate,
@@ -13,6 +14,7 @@ import type {
   AttendanceEvent,
   CommitteePoint
 } from '@quorum/contracts';
+import {COMMITTEE_EVENT_DEFINITIONS, type RealtimeSyncState} from '@quorum/contracts';
 
 interface ApiSuccess<T> {data: T; meta: {requestId: string}}
 interface ApiFailure {error: {code: string; message: string; requestId: string; details?: unknown}}
@@ -53,6 +55,85 @@ async function request<T>(path: string, options: {
 
 function key(): string { return crypto.randomUUID(); }
 
+const knownCommitteeEvents = new Set<string>(COMMITTEE_EVENT_DEFINITIONS.map(item => item.name));
+
+function realtimeClientId(): string {
+  const storageKey = 'quorum-self-hosted-realtime-client';
+  const existing = window.localStorage.getItem(storageKey);
+  if (existing && /^[A-Za-z0-9_-]{8,128}$/.test(existing)) return existing;
+  const created = crypto.randomUUID();
+  window.localStorage.setItem(storageKey, created);
+  return created;
+}
+
+export function parseSseFrame(frame: string): {id?: number; type?: string; data?: unknown} {
+  let id: number | undefined; let type: string | undefined; const data: string[] = [];
+  for (const rawLine of frame.split(/\r?\n/)) {
+    if (!rawLine || rawLine.startsWith(':')) continue;
+    const separator = rawLine.indexOf(':');
+    const field = separator < 0 ? rawLine : rawLine.slice(0, separator);
+    const value = separator < 0 ? '' : rawLine.slice(separator + 1).replace(/^ /, '');
+    if (field === 'id' && /^(0|[1-9]\d*)$/.test(value)) id = Number(value);
+    else if (field === 'event') type = value;
+    else if (field === 'data') data.push(value);
+  }
+  if (data.length === 0) return {id, type};
+  try { return {id, type, data: JSON.parse(data.join('\n'))}; }
+  catch { return {id, type, data: undefined}; }
+}
+
+export interface CommitteeEventStreamCallbacks {
+  onEvent(event: CommitteeEventEnvelope): void;
+  onState(state: RealtimeSyncState): void;
+  onResyncRequired(): Promise<number>;
+}
+
+function openCommitteeEventStream(committeeId: string, initialAfter: number,
+  callbacks: CommitteeEventStreamCallbacks): () => void {
+  const controller = new AbortController(); let cursor = initialAfter;
+  const clientId = realtimeClientId();
+  const resync = async () => { callbacks.onState('RESYNCING'); cursor = await callbacks.onResyncRequired(); };
+  const delay = () => new Promise<void>(resolve => {
+    const timer = window.setTimeout(resolve, 1_000);
+    controller.signal.addEventListener('abort', () => {window.clearTimeout(timer); resolve();}, {once: true});
+  });
+  void (async () => {
+    while (!controller.signal.aborted) {
+      try {
+        const response = await fetch(`/api/v1/committees/${committeeId}/events?after=${cursor}&clientId=${encodeURIComponent(clientId)}`,
+          {credentials: 'same-origin', headers: {'last-event-id': String(cursor)}, signal: controller.signal});
+        if (response.status === 410) { await resync(); continue; }
+        if (response.status === 401 || response.status === 403 || response.status === 404) {
+          callbacks.onState('OFFLINE_READONLY'); return;
+        }
+        if (!response.ok || !response.body) throw new Error('SSE unavailable');
+        callbacks.onState('LIVE');
+        const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = '';
+        while (!controller.signal.aborted) {
+          const chunk = await reader.read();
+          buffer += decoder.decode(chunk.value ?? new Uint8Array(), {stream: !chunk.done}).replaceAll('\r\n', '\n');
+          let boundary = buffer.indexOf('\n\n');
+          while (boundary >= 0) {
+            const frame = parseSseFrame(buffer.slice(0, boundary)); buffer = buffer.slice(boundary + 2);
+            boundary = buffer.indexOf('\n\n');
+            if (frame.id === undefined || !frame.type || frame.data === undefined) continue;
+            if (frame.id <= cursor) continue;
+            if (frame.id !== cursor + 1 || !knownCommitteeEvents.has(frame.type)) { await resync(); continue; }
+            cursor = frame.id;
+            callbacks.onEvent(frame.data as CommitteeEventEnvelope);
+          }
+          if (chunk.done) break;
+        }
+      } catch {
+        if (controller.signal.aborted) return;
+        callbacks.onState('DEGRADED');
+      }
+      if (!controller.signal.aborted) await delay();
+    }
+  })();
+  return () => controller.abort();
+}
+
 export const selfHostedApi = {
   async listCommittees(): Promise<CommitteeSummary[]> {
     return (await request<{committees: CommitteeSummary[]}>('/api/v1/committees')).committees;
@@ -61,6 +142,7 @@ export const selfHostedApi = {
     return request<CommitteeSummary>('/api/v1/committees', {method: 'POST', body: input, idempotencyKey: key()});
   },
   snapshot(id: string) { return request<CommitteeWorkspaceSnapshot>(`/api/v1/committees/${id}/snapshot`); },
+  openCommitteeEvents: openCommitteeEventStream,
   updateCommittee(id: string, baseRevision: number, patch: Record<string, unknown>) {
     return request<CommitteeSummary>(`/api/v1/committees/${id}`, {method: 'PATCH', body: {baseRevision, patch}});
   },

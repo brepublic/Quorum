@@ -263,12 +263,22 @@ function PointsPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspa
 
 export function SelfHostedCommitteeWorkspace({api = selfHostedApi, user}: {api?: SelfHostedApi; user?: SelfHostedUser}) {
   const {id} = useParams<{id: string}>(); const [snapshot, setSnapshot] = React.useState<CommitteeWorkspaceSnapshot>();
+  const [streamAfter, setStreamAfter] = React.useState<number>();
   const [view, setView] = React.useState<WorkspaceView>('overview'); const [error, setError] = React.useState<string>();
   const [working, setWorking] = React.useState(false);
-  const refresh = React.useCallback(async () => { try { setSnapshot(await api.snapshot(id)); setError(undefined); }
-    catch (caught) { setError(errorText(caught)); } }, [api, id]);
+  const refresh = React.useCallback(async () => { try { const next = await api.snapshot(id); setSnapshot(next);
+      setStreamAfter(current => current ?? next.sync.committeeEventSequence); setError(undefined); return next; }
+    catch (caught) { setError(errorText(caught)); return undefined; } }, [api, id]);
   React.useEffect(() => { void refresh(); const focus = () => void refresh(); window.addEventListener('focus', focus);
     return () => window.removeEventListener('focus', focus); }, [refresh]);
+  React.useEffect(() => {
+    if (streamAfter === undefined) return;
+    return api.openCommitteeEvents(id, streamAfter, {
+      onEvent: event => { if (event.type !== 'sync.cursor_advanced') void refresh(); },
+      onState: () => undefined,
+      onResyncRequired: async () => (await refresh())?.sync.committeeEventSequence ?? streamAfter
+    });
+  }, [api, id, refresh, streamAfter]);
   const run = React.useCallback(async (operation: () => Promise<unknown>) => { setWorking(true); setError(undefined);
     try { await operation(); } catch (caught) { setError(errorText(caught));
       if (caught instanceof SelfHostedApiError && caught.code === 'REVISION_CONFLICT') await refresh();

@@ -26,7 +26,7 @@ afterEach(() => { if (root) act(() => root?.unmount()); container?.remove(); roo
 
 describe('self-hosted stage 4 workspace', () => {
   it('loads the API snapshot and revalidates when the window regains focus', async () => {
-    const api = {snapshot: vi.fn(async () => snapshot)} as unknown as SelfHostedApi;
+    const api = {snapshot: vi.fn(async () => snapshot), openCommitteeEvents: vi.fn(() => () => undefined)} as unknown as SelfHostedApi;
     container = document.createElement('div'); document.body.append(container); root = createRoot(container);
     await act(async () => { root?.render(<MemoryRouter initialEntries={['/committees/committee']}>
       <SelfHostedWorkspace user={user} logout={() => undefined} api={api} />
@@ -34,6 +34,7 @@ describe('self-hosted stage 4 workspace', () => {
     expect(container.textContent).toContain('Security Council');
     expect(container.textContent).toContain('China');
     expect(api.snapshot).toHaveBeenCalledTimes(1);
+    expect(api.openCommitteeEvents).toHaveBeenCalledWith('committee', 7, expect.any(Object));
     await act(async () => { window.dispatchEvent(new Event('focus')); await Promise.resolve(); await Promise.resolve(); });
     expect(api.snapshot).toHaveBeenCalledTimes(2);
   });

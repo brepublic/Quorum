@@ -2,7 +2,9 @@
   encode zstd gzip
 
   handle /api/v1/* {
-    reverse_proxy app:3000
+    reverse_proxy app:3000 {
+      flush_interval -1
+    }
   }
 
   handle /health/* {

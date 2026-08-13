@@ -1,10 +1,17 @@
 import {beforeEach, describe, expect, it, vi} from 'vitest';
-import {selfHostedApi, SelfHostedApiError} from './self-hosted-api';
+import {parseSseFrame, selfHostedApi, SelfHostedApiError} from './self-hosted-api';
 
 describe('self-hosted stage 4 API client', () => {
   beforeEach(() => {
     Object.defineProperty(document, 'cookie', {configurable: true, value: '__Host-quorum_csrf=csrf-token'});
     vi.stubGlobal('crypto', {randomUUID: () => 'request-key'});
+  });
+
+  it('parses typed SSE frames and ignores heartbeat comments', () => {
+    expect(parseSseFrame(': heartbeat')).toEqual({id: undefined, type: undefined});
+    expect(parseSseFrame('id: 9\nevent: committee.updated\ndata: {"id":9}')).toEqual({
+      id: 9, type: 'committee.updated', data: {id: 9}
+    });
   });
 
   it('sends CSRF, revision, and idempotency headers for commands', async () => {
