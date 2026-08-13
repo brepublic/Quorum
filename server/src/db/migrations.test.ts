@@ -55,6 +55,15 @@ describe('migration discovery', () => {
     expect(timers?.sql).not.toContain('timer_ticks');
   });
 
+  it('models GSL as a normal GENERAL speaker list with serialized active positions', async () => {
+    const migrations = await loadMigrations(resolve('server/migrations'));
+    const queues = migrations.find(migration => migration.version === 7);
+    expect(queues?.name).toBe('speaker_lists_caucuses');
+    expect(queues?.sql).toContain("'GENERAL'");
+    expect(queues?.sql).toContain('speaker_queue_one_current');
+    expect(queues?.sql).not.toContain("'gsl'");
+  });
+
   it('rejects SQL files outside the versioned naming contract', async () => {
     const directory = await temporaryDirectory();
     await writeFile(join(directory, 'first.sql'), 'SELECT 1;\n');

@@ -31,3 +31,34 @@ export interface AuthoritativeTimer {
   expiredAt: string | null;
   serverTime: string;
 }
+
+export type SpeakerListKind = 'GENERAL' | 'MODERATED_CAUCUS';
+export type SpeakerListStatus = 'OPEN' | 'CLOSED';
+export type SpeakerQueueStatus = 'QUEUED' | 'CURRENT' | 'COMPLETED' | 'SKIPPED';
+
+export interface SpeakerQueueEntry {
+  id: string;
+  seatId: string;
+  seatDisplayName: string;
+  position: number;
+  status: SpeakerQueueStatus;
+  createdAt: string;
+}
+
+export interface SpeakerList {
+  id: string;
+  committeeId: string;
+  meetingSessionId: string;
+  kind: SpeakerListKind;
+  status: SpeakerListStatus;
+  topic: string;
+  defaultSpeechMs: number;
+  rulePackageVersionId: string;
+  currentEntryId: string | null;
+  speechTimerId: string;
+  totalTimerId: string | null;
+  revision: number;
+  queue: SpeakerQueueEntry[];
+  createdAt: string;
+  closedAt: string | null;
+}

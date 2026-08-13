@@ -300,6 +300,7 @@ export interface CommitteeWorkspaceSnapshot {
   textPosts: CommitteeTextPost[];
   sync: {committeeEventSequence: number};
   timers?: import('./stage5.js').AuthoritativeTimer[];
+  speakerLists?: import('./stage5.js').SpeakerList[];
 }
 
 export function localizedDisplayName(

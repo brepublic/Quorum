@@ -328,6 +328,22 @@ async function handleStage5Request(options: {
     sendJson(response, 201, success(await stage5.createTimer(auth, timers[1] as string, body,
       idempotencyKey(request), context), requestId)); return true;
   }
+  const speakerLists = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/speaker-lists$/.exec(pathname);
+  if (method === 'POST' && speakerLists) {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 201, success(await stage5.createSpeakerList(auth, speakerLists[1] as string, body,
+      idempotencyKey(request), context), requestId)); return true;
+  }
+  const speakerCommand = /^\/api\/v1\/speaker-lists\/([0-9a-f-]{36})\/(queue|reorder|advance)$/.exec(pathname);
+  if (method === 'POST' && speakerCommand) {
+    const auth = await write(); const body = await readJson(request); const id = speakerCommand[1] as string;
+    const result = speakerCommand[2] === 'queue'
+      ? await stage5.joinSpeakerQueue(auth, id, body, idempotencyKey(request), context)
+      : speakerCommand[2] === 'reorder'
+        ? await stage5.reorderSpeakerQueue(auth, id, body, context)
+        : await stage5.advanceSpeakerQueue(auth, id, body, context);
+    sendJson(response, speakerCommand[2] === 'queue' ? 201 : 200, success(result, requestId)); return true;
+  }
   const timerCommand = /^\/api\/v1\/timers\/([0-9a-f-]{36})\/(start|pause|resume|extend|reset|expire)$/.exec(pathname);
   if (method === 'POST' && timerCommand) {
     const auth = await write(); const body = await readJson(request);

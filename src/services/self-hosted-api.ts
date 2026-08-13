@@ -1,6 +1,7 @@
 import type {
   CommitteeEventEnvelope,
   AuthoritativeTimer,
+  SpeakerList,
   CommitteeNote,
   CommitteeSummary,
   CommitteeTemplate,
@@ -153,6 +154,21 @@ export const selfHostedApi = {
     baseRevision: number, durationMs?: number) {
     return request<AuthoritativeTimer>(`/api/v1/timers/${id}/${command}`, {method: 'POST',
       body: {baseRevision, ...(durationMs === undefined ? {} : {durationMs})}});
+  },
+  createSpeakerList(committeeId: string, input: {meetingSessionId: string; kind: 'GENERAL' | 'MODERATED_CAUCUS';
+    topic?: string; defaultSpeechMs: number; totalDurationMs?: number}) {
+    return request<SpeakerList>(`/api/v1/committees/${committeeId}/speaker-lists`, {method: 'POST',
+      body: input, idempotencyKey: key()});
+  },
+  joinSpeakerQueue(id: string, seatId?: string) {
+    return request<SpeakerList>(`/api/v1/speaker-lists/${id}/queue`, {method: 'POST',
+      body: seatId ? {seatId} : {}, idempotencyKey: key()});
+  },
+  reorderSpeakerQueue(id: string, baseRevision: number, entryIds: string[]) {
+    return request<SpeakerList>(`/api/v1/speaker-lists/${id}/reorder`, {method: 'POST', body: {baseRevision, entryIds}});
+  },
+  advanceSpeakerQueue(id: string, baseRevision: number) {
+    return request<SpeakerList>(`/api/v1/speaker-lists/${id}/advance`, {method: 'POST', body: {baseRevision}});
   },
   updateCommittee(id: string, baseRevision: number, patch: Record<string, unknown>) {
     return request<CommitteeSummary>(`/api/v1/committees/${id}`, {method: 'PATCH', body: {baseRevision, patch}});

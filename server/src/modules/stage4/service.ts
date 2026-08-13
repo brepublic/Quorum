@@ -12,6 +12,7 @@ import type {
   CommitteePoint,
   CommitteeWorkspaceSnapshot,
   AuthoritativeTimer,
+  SpeakerList,
   MeetingSession,
   PointStatus,
   PublicCommitteePoint,
@@ -187,6 +188,12 @@ interface PointRow extends QueryResultRow {
 interface SnapshotTimerRow extends QueryResultRow {
   id: string; committee_id: string; owner_type: AuthoritativeTimer['ownerType']; owner_id: string; running: boolean;
   started_at: Date | null; remaining_at_start_ms: string | number; revision: number; expired_at: Date | null;
+}
+
+interface SnapshotSpeakerListRow extends QueryResultRow {
+  id: string; committee_id: string; meeting_session_id: string; kind: SpeakerList['kind']; status: SpeakerList['status'];
+  topic: string; default_speech_ms: string | number; rule_package_version_id: string; current_entry_id: string | null;
+  speech_timer_id: string; total_timer_id: string | null; revision: number; created_at: Date; closed_at: Date | null;
 }
 
 function note(row: NoteRow): CommitteeNote {
@@ -577,6 +584,20 @@ export class Stage4Service {
         sync: {committeeEventSequence: Number(committee.next_event_sequence) - 1},
         ...(currentSession ? {meetingSession: meetingSession(currentSession)} : {}),
         ...(currentRollCall ? {rollCall: currentRollCall} : {})};
+      const speakerRows = await client.query<SnapshotSpeakerListRow>(`SELECT * FROM speaker_lists
+        WHERE committee_id=$1 ORDER BY created_at,id`, [committeeId]);
+      result.speakerLists = await Promise.all(speakerRows.rows.map(async row => {
+        const queue = await client.query<{id: string; seat_id: string; seat_display_name: string; position: number;
+          status: SpeakerList['queue'][number]['status']; created_at: Date}>(`SELECT id,seat_id,seat_display_name,position,status,created_at
+          FROM speaker_queue_entries WHERE speaker_list_id=$1 ORDER BY position,created_at,id`, [row.id]);
+        return {id: row.id, committeeId: row.committee_id, meetingSessionId: row.meeting_session_id, kind: row.kind,
+          status: row.status, topic: row.topic, defaultSpeechMs: Number(row.default_speech_ms),
+          rulePackageVersionId: row.rule_package_version_id, currentEntryId: row.current_entry_id,
+          speechTimerId: row.speech_timer_id, totalTimerId: row.total_timer_id, revision: row.revision,
+          queue: queue.rows.map(entry => ({id: entry.id, seatId: entry.seat_id, seatDisplayName: entry.seat_display_name,
+            position: entry.position, status: entry.status, createdAt: entry.created_at.toISOString()})),
+          createdAt: row.created_at.toISOString(), closedAt: row.closed_at?.toISOString() ?? null};
+      }));
       if (viewer.audience !== 'PUBLIC') {
         const [notes, posts, timers] = await Promise.all([
           client.query<NoteRow>(`SELECT * FROM committee_notes WHERE committee_id=$1 AND deleted_at IS NULL ORDER BY sort_order,created_at,id`, [committeeId]),

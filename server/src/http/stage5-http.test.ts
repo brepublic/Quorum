@@ -49,6 +49,19 @@ describe('stage 5 timer HTTP boundary', () => {
       expect.not.objectContaining({actorUserId: expect.anything()}), 'timer-key', expect.objectContaining({requestId: expect.any(String)}));
   });
 
+  it('routes queue changes through idempotent or revision commands', async () => {
+    const joinSpeakerQueue = vi.fn(async () => ({id: 'list', revision: 2}));
+    const reorderSpeakerQueue = vi.fn(async () => ({id: 'list', revision: 3}));
+    const stage5 = {joinSpeakerQueue, reorderSpeakerQueue} as unknown as Stage5Service;
+    await send(stage5, '/api/v1/speaker-lists/30000000-0000-4000-8000-000000000001/queue', {seatId: 'seat'});
+    await send(stage5, '/api/v1/speaker-lists/30000000-0000-4000-8000-000000000001/reorder',
+      {baseRevision: 2, entryIds: []});
+    expect(joinSpeakerQueue).toHaveBeenCalledWith(authenticated, '30000000-0000-4000-8000-000000000001',
+      {seatId: 'seat'}, 'timer-key', expect.any(Object));
+    expect(reorderSpeakerQueue).toHaveBeenCalledWith(authenticated, '30000000-0000-4000-8000-000000000001',
+      {baseRevision: 2, entryIds: []}, expect.any(Object));
+  });
+
   it('routes explicit timer commands with CSRF and revision', async () => {
     const commandTimer = vi.fn(async () => ({id: 'timer', revision: 4}));
     const stage5 = {commandTimer} as unknown as Stage5Service;
