@@ -362,6 +362,20 @@ async function handleStage5Request(options: {
     sendJson(response, 201, success(await stage5.recordSpeechContribution(auth, contribution[1] as string, body, context), requestId));
     return true;
   }
+  const motions = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/motions$/.exec(pathname);
+  if (method === 'POST' && motions) {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 201, success(await stage5.proposeMotion(auth, motions[1] as string, body,
+      idempotencyKey(request), context), requestId)); return true;
+  }
+  const motionCommand = /^\/api\/v1\/motions\/([0-9a-f-]{36})\/(second|decide)$/.exec(pathname);
+  if (method === 'POST' && motionCommand) {
+    const auth = await write(); const body = await readJson(request); const id = motionCommand[1] as string;
+    const result = motionCommand[2] === 'second'
+      ? await stage5.secondMotion(auth, id, body, idempotencyKey(request), context)
+      : await stage5.decideMotion(auth, id, body, context);
+    sendJson(response, motionCommand[2] === 'second' ? 201 : 200, success(result, requestId)); return true;
+  }
   const timerCommand = /^\/api\/v1\/timers\/([0-9a-f-]{36})\/(start|pause|resume|extend|reset|expire)$/.exec(pathname);
   if (method === 'POST' && timerCommand) {
     const auth = await write(); const body = await readJson(request);

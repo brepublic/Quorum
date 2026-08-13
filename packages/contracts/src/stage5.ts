@@ -1,4 +1,5 @@
 import type {CommitteeEventName, EventAudience} from './registry.js';
+import type {FrozenRuleEvaluation} from './stage3.js';
 
 export type RealtimeSyncState = 'LIVE' | 'DEGRADED' | 'OFFLINE_READONLY' | 'RESYNCING';
 
@@ -104,4 +105,31 @@ export interface SpeechRecord {
   endedAt: string | null;
   actions: SpeechActionRecord[];
   contributions: SpeechContribution[];
+}
+
+export type MotionStatus = 'PENDING' | 'SECONDED' | 'VOTING' | 'PASSED' | 'FAILED' | 'WITHDRAWN' | 'SUPERSEDED';
+
+export interface MotionSecond {
+  id: string;
+  seatId: string;
+  seatDisplayName: string;
+  createdAt: string;
+}
+
+export interface ProceedingMotion {
+  id: string;
+  committeeId: string;
+  meetingSessionId: string;
+  motionTypeId: string;
+  proposedBySeatId: string;
+  proposedBySeatDisplayName: string;
+  parameters: Record<string, unknown>;
+  status: MotionStatus;
+  rulePackageVersionId: string;
+  ruleEvaluation: FrozenRuleEvaluation;
+  requiredSecondCount: number;
+  seconds: MotionSecond[];
+  revision: number;
+  createdAt: string;
+  decidedAt: string | null;
 }

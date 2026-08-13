@@ -301,6 +301,7 @@ export interface CommitteeWorkspaceSnapshot {
   sync: {committeeEventSequence: number};
   timers?: import('./stage5.js').AuthoritativeTimer[];
   speakerLists?: import('./stage5.js').SpeakerList[];
+  motions?: import('./stage5.js').ProceedingMotion[];
 }
 
 export function localizedDisplayName(

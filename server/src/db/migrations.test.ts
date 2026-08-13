@@ -73,6 +73,15 @@ describe('migration discovery', () => {
     expect(speeches?.sql).toContain('speech_contributions_append_only');
   });
 
+  it('freezes motion rules behind an explicit database state machine', async () => {
+    const migrations = await loadMigrations(resolve('server/migrations'));
+    const motions = migrations.find(migration => migration.version === 9);
+    expect(motions?.name).toBe('motions');
+    expect(motions?.sql).toContain('rule_evaluation jsonb NOT NULL');
+    expect(motions?.sql).toContain('motions_explicit_state_machine');
+    expect(motions?.sql).toContain('UNIQUE (motion_id, seat_id)');
+  });
+
   it('rejects SQL files outside the versioned naming contract', async () => {
     const directory = await temporaryDirectory();
     await writeFile(join(directory, 'first.sql'), 'SELECT 1;\n');

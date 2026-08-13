@@ -14,6 +14,8 @@ import type {
   AuthoritativeTimer,
   SpeakerList,
   SpeechRecord,
+  ProceedingMotion,
+  FrozenRuleEvaluation,
   MeetingSession,
   PointStatus,
   PublicCommitteePoint,
@@ -202,6 +204,13 @@ interface SnapshotSpeechRow extends QueryResultRow {
   kind: SpeechRecord['kind']; status: SpeechRecord['status']; inherited_from_speech_id: string | null;
   inherited_time_ms: string | number | null; can_yield: boolean; yield_type: SpeechRecord['yieldType'];
   yield_target_seat_id: string | null; revision: number; started_at: Date | null; ended_at: Date | null;
+}
+
+interface SnapshotMotionRow extends QueryResultRow {
+  id: string; committee_id: string; meeting_session_id: string; motion_type_id: string; proposed_by_seat_id: string;
+  proposed_by_seat_display_name: string; parameters: Record<string, unknown>; status: ProceedingMotion['status'];
+  rule_package_version_id: string; rule_evaluation: FrozenRuleEvaluation; required_second_count: number;
+  revision: number; created_at: Date; decided_at: Date | null;
 }
 
 async function snapshotSpeeches(client: PoolClient, listId: string): Promise<SpeechRecord[]> {
@@ -630,6 +639,19 @@ export class Stage4Service {
             position: entry.position, status: entry.status, createdAt: entry.created_at.toISOString()})),
           createdAt: row.created_at.toISOString(), closedAt: row.closed_at?.toISOString() ?? null,
           speeches: await snapshotSpeeches(client, row.id)};
+      }));
+      const motionRows = await client.query<SnapshotMotionRow>('SELECT * FROM motions WHERE committee_id=$1 ORDER BY created_at,id', [committeeId]);
+      result.motions = await Promise.all(motionRows.rows.map(async row => {
+        const seconds = await client.query<{id: string; seat_id: string; seat_display_name: string; created_at: Date}>(`SELECT
+          id,seat_id,seat_display_name,created_at FROM motion_seconds WHERE motion_id=$1 ORDER BY created_at,id`, [row.id]);
+        return {id: row.id, committeeId: row.committee_id, meetingSessionId: row.meeting_session_id,
+          motionTypeId: row.motion_type_id, proposedBySeatId: row.proposed_by_seat_id,
+          proposedBySeatDisplayName: row.proposed_by_seat_display_name, parameters: row.parameters, status: row.status,
+          rulePackageVersionId: row.rule_package_version_id, ruleEvaluation: row.rule_evaluation,
+          requiredSecondCount: row.required_second_count,
+          seconds: seconds.rows.map(item => ({id: item.id, seatId: item.seat_id, seatDisplayName: item.seat_display_name,
+            createdAt: item.created_at.toISOString()})), revision: row.revision, createdAt: row.created_at.toISOString(),
+          decidedAt: row.decided_at?.toISOString() ?? null};
       }));
       if (viewer.audience !== 'PUBLIC') {
         const [notes, posts, timers] = await Promise.all([

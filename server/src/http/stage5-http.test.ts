@@ -73,6 +73,18 @@ describe('stage 5 timer HTTP boundary', () => {
     expect(response.statusCode).toBe(422);
   });
 
+  it('uses idempotency for motion proposals and seconds', async () => {
+    const proposeMotion = vi.fn(async () => ({id: 'motion'})); const secondMotion = vi.fn(async () => ({id: 'motion'}));
+    const stage5 = {proposeMotion, secondMotion} as unknown as Stage5Service;
+    await send(stage5, '/api/v1/committees/20000000-0000-4000-8000-000000000001/motions',
+      {meetingSessionId: 'session', motionTypeId: 'open-moderated-caucus'});
+    await send(stage5, '/api/v1/motions/30000000-0000-4000-8000-000000000001/second', {});
+    expect(proposeMotion).toHaveBeenCalledWith(authenticated, '20000000-0000-4000-8000-000000000001',
+      expect.any(Object), 'timer-key', expect.any(Object));
+    expect(secondMotion).toHaveBeenCalledWith(authenticated, '30000000-0000-4000-8000-000000000001',
+      {}, 'timer-key', expect.any(Object));
+  });
+
   it('routes explicit timer commands with CSRF and revision', async () => {
     const commandTimer = vi.fn(async () => ({id: 'timer', revision: 4}));
     const stage5 = {commandTimer} as unknown as Stage5Service;

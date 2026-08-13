@@ -1,7 +1,8 @@
 import {randomUUID} from 'node:crypto';
 import type {Pool, PoolClient, QueryResultRow} from 'pg';
-import type {AuthoritativeTimer, SpeakerList, SpeakerListKind, SpeakerQueueEntry, SpeechRecord, TimerOwnerType,
-  YieldType} from '@quorum/contracts';
+import type {AuthoritativeTimer, FrozenRuleEvaluation, ProceedingMotion, SpeakerList, SpeakerListKind, SpeakerQueueEntry,
+  SpeechRecord, TimerOwnerType, YieldType} from '@quorum/contracts';
+import {freezeRuleEvaluation} from '@quorum/contracts';
 import {AppError} from '../../http/errors.js';
 import type {AuthenticatedSession} from '../identity/store.js';
 import {activeSeat, appendEvent, audit, idempotentTransaction, isChair, lockedCommittee, requireBusinessIdentity,
@@ -36,6 +37,13 @@ interface SpeechRow extends QueryResultRow {
   kind: SpeechRecord['kind']; status: SpeechRecord['status']; inherited_from_speech_id: string | null;
   inherited_time_ms: string | number | null; can_yield: boolean; yield_type: YieldType | null;
   yield_target_seat_id: string | null; revision: number; started_at: Date | null; ended_at: Date | null;
+}
+
+interface MotionRow extends QueryResultRow {
+  id: string; committee_id: string; meeting_session_id: string; motion_type_id: string; proposed_by_seat_id: string;
+  proposed_by_seat_display_name: string; parameters: Record<string, unknown>; status: ProceedingMotion['status'];
+  rule_package_version_id: string; rule_evaluation: FrozenRuleEvaluation; required_second_count: number;
+  revision: number; created_at: Date; decided_at: Date | null;
 }
 
 function positiveInteger(value: unknown, name: string): number {
@@ -91,6 +99,19 @@ async function speechState(client: PoolClient, row: SpeechRow): Promise<SpeechRe
       targetType: action.target_type, targetSeatId: action.target_seat_id, createdAt: action.created_at.toISOString()})),
     contributions: contributions.rows.map(item => ({id: item.id, type: item.type, seatId: item.seat_id,
       seatDisplayName: item.seat_display_name, content: item.content, createdAt: item.created_at.toISOString()}))};
+}
+
+async function motionState(client: PoolClient, row: MotionRow): Promise<ProceedingMotion> {
+  const seconds = await client.query<{id: string; seat_id: string; seat_display_name: string; created_at: Date}>(`SELECT
+    id,seat_id,seat_display_name,created_at FROM motion_seconds WHERE motion_id=$1 ORDER BY created_at,id`, [row.id]);
+  return {id: row.id, committeeId: row.committee_id, meetingSessionId: row.meeting_session_id,
+    motionTypeId: row.motion_type_id, proposedBySeatId: row.proposed_by_seat_id,
+    proposedBySeatDisplayName: row.proposed_by_seat_display_name, parameters: row.parameters, status: row.status,
+    rulePackageVersionId: row.rule_package_version_id, ruleEvaluation: row.rule_evaluation,
+    requiredSecondCount: row.required_second_count,
+    seconds: seconds.rows.map(item => ({id: item.id, seatId: item.seat_id, seatDisplayName: item.seat_display_name,
+      createdAt: item.created_at.toISOString()})), revision: row.revision, createdAt: row.created_at.toISOString(),
+    decidedAt: row.decided_at?.toISOString() ?? null};
 }
 
 async function renumberActiveQueue(client: PoolClient, listId: string): Promise<void> {
@@ -600,6 +621,159 @@ export class Stage5Service {
         capabilities: ['CHAIR'], onBehalfOfSeatId: seatId, action: 'proceedings.chair_acted_on_behalf',
         resourceType: 'speech', resourceId: speechId, after: {command: 'speech.contribution_recorded', type}});
       return speechState(client, speech);
+    });
+  }
+
+  async proposeMotion(auth: AuthenticatedSession, committeeId: string, input: Record<string, unknown>, key: string,
+    context: Stage4Context): Promise<ProceedingMotion> {
+    requireBusinessIdentity(auth);
+    assertExactBody(input, ['meetingSessionId', 'motionTypeId', 'parameters', 'onBehalfOfSeatId']);
+    const meetingSessionId = uuid(input.meetingSessionId, 'Meeting session ID');
+    const motionTypeId = text(input.motionTypeId, 'Motion type ID', 128);
+    const parameters = input.parameters ?? {};
+    if (!parameters || typeof parameters !== 'object' || Array.isArray(parameters)
+      || JSON.stringify(parameters).length > 16_000) {
+      throw new AppError({code: 'VALIDATION_FAILED', message: 'Motion parameters are invalid.'});
+    }
+    return idempotentTransaction({pool: this.pool, auth, route: `POST /api/v1/committees/${committeeId}/motions`,
+      key, request: input, status: 201, work: async client => {
+        const committee = await lockedCommittee(client, committeeId); requireProceedingsActive(committee);
+        const chair = await isChair(client, committeeId, auth.user.id); let seatId: string | null;
+        if (chair) seatId = uuid(input.onBehalfOfSeatId, 'Represented seat ID');
+        else {
+          if (committee.operation_mode === 'CHAIR_OPERATED') throw new AppError({code: 'FORBIDDEN',
+            message: 'Chair capability is required in Chair-operated mode.'});
+          if (input.onBehalfOfSeatId !== undefined) throw new AppError({code: 'FORBIDDEN',
+            message: 'A delegate cannot choose another seat.'});
+          seatId = await activeSeat(client, committeeId, auth.user.id);
+        }
+        if (!seatId) throw new AppError({code: 'FORBIDDEN', message: 'An active seat assignment is required.'});
+        const session = await client.query<{status: string; active_rule_package_version_id: string}>(`SELECT status,
+          active_rule_package_version_id FROM meeting_sessions WHERE id=$1 AND committee_id=$2`, [meetingSessionId, committeeId]);
+        if (!session.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Meeting session not found.'});
+        if (session.rows[0].status !== 'OPEN') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Meeting session is closed.'});
+        const seat = await client.query<{display_name: string}>(`SELECT s.display_name FROM committee_seats s
+          JOIN current_attendance a ON a.seat_id=s.id AND a.meeting_session_id=$3 AND a.state='PRESENT'
+          WHERE s.id=$1 AND s.committee_id=$2 AND s.active=true`, [seatId, committeeId, meetingSessionId]);
+        if (!seat.rows[0]) throw new AppError({code: 'VALIDATION_FAILED', message: 'Only a present active seat may propose a motion.'});
+        const version = await client.query<{definition: {motions?: unknown}}>(`SELECT definition FROM rule_package_versions
+          WHERE id=$1 AND status='PUBLISHED'`, [session.rows[0].active_rule_package_version_id]);
+        const definitions = version.rows[0]?.definition.motions;
+        const matches = Array.isArray(definitions) ? definitions.filter(item => item && typeof item === 'object'
+          && (item as {id?: unknown}).id === motionTypeId) : [];
+        if (matches.length !== 1) throw new AppError({code: 'VALIDATION_FAILED',
+          message: 'Motion type is not active in the meeting rule package.'});
+        const definition = structuredClone(matches[0]) as {id: string; requiredSecondCount?: unknown; procedural?: unknown;
+          effects?: unknown};
+        const requiredSecondCount = definition.requiredSecondCount === undefined ? 0 : definition.requiredSecondCount;
+        if (!Number.isSafeInteger(requiredSecondCount) || Number(requiredSecondCount) < 0) {
+          throw new AppError({code: 'VALIDATION_FAILED', message: 'Motion second requirement is invalid.'});
+        }
+        const attendance = await client.query<{seat_id: string}>(`SELECT seat_id FROM current_attendance
+          WHERE meeting_session_id=$1 AND state='PRESENT' ORDER BY seat_id`, [meetingSessionId]);
+        const now = this.now(); const evaluation = freezeRuleEvaluation({
+          packageVersionId: session.rows[0].active_rule_package_version_id,
+          definition: definition as unknown as Record<string, unknown>,
+          facts: {meetingSessionId, operationMode: committee.operation_mode,
+            presentSeatIds: attendance.rows.map(item => item.seat_id)},
+          resolvedValues: {requiredSecondCount: Number(requiredSecondCount), procedural: definition.procedural === true,
+            effects: Array.isArray(definition.effects) ? structuredClone(definition.effects) : []},
+          frozenAt: now.toISOString()
+        });
+        const id = randomUUID(); const initialStatus = Number(requiredSecondCount) === 0 ? 'SECONDED' : 'PENDING';
+        const inserted = await client.query<MotionRow>(`INSERT INTO motions
+          (id,committee_id,meeting_session_id,motion_type_id,proposed_by_seat_id,proposed_by_seat_display_name,
+           actor_user_id,on_behalf_of_seat_id,parameters,status,rule_package_version_id,rule_evaluation,required_second_count)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$5,$8,$9,$10,$11,$12) RETURNING *`,
+        [id, committeeId, meetingSessionId, motionTypeId, seatId, seat.rows[0].display_name, auth.user.id,
+          parameters, initialStatus, session.rows[0].active_rule_package_version_id, evaluation, requiredSecondCount]);
+        await appendEvent(client, committee, {type: 'motion.proposed', resourceType: 'motion', resourceId: id,
+          revision: 1, payload: {motionTypeId, proposedBySeatId: seatId, status: initialStatus,
+            rulePackageVersionId: session.rows[0].active_rule_package_version_id}, audience: 'PUBLIC'});
+        await audit(client, context, {committeeId, actorUserId: auth.user.id,
+          capabilities: chair ? ['CHAIR'] : ['MEMBER'], onBehalfOfSeatId: seatId,
+          action: 'proceedings.motion_proposed', resourceType: 'motion', resourceId: id,
+          after: {motionTypeId, seatId, status: initialStatus, rulePackageVersionId: evaluation.packageVersionId,
+            requiredSecondCount, revision: 1}});
+        if (chair) await audit(client, context, {committeeId, actorUserId: auth.user.id, capabilities: ['CHAIR'],
+          onBehalfOfSeatId: seatId, action: 'proceedings.chair_acted_on_behalf', resourceType: 'motion', resourceId: id,
+          after: {command: 'motion.proposed', motionTypeId}});
+        return motionState(client, inserted.rows[0] as MotionRow);
+      }});
+  }
+
+  async secondMotion(auth: AuthenticatedSession, motionId: string, input: Record<string, unknown>, key: string,
+    context: Stage4Context): Promise<ProceedingMotion> {
+    requireBusinessIdentity(auth); assertExactBody(input, ['onBehalfOfSeatId']);
+    return idempotentTransaction({pool: this.pool, auth, route: `POST /api/v1/motions/${motionId}/second`,
+      key, request: input, status: 201, work: async client => {
+        const located = await client.query<{committee_id: string}>('SELECT committee_id FROM motions WHERE id=$1', [motionId]);
+        if (!located.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Motion not found.'});
+        const committee = await lockedCommittee(client, located.rows[0].committee_id); requireProceedingsActive(committee);
+        const motionResult = await client.query<MotionRow>('SELECT * FROM motions WHERE id=$1 FOR UPDATE', [motionId]);
+        const motion = motionResult.rows[0] as MotionRow;
+        if (motion.status !== 'PENDING') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'This motion no longer accepts seconds.'});
+        const chair = await isChair(client, committee.id, auth.user.id); let seatId: string | null;
+        if (chair) seatId = uuid(input.onBehalfOfSeatId, 'Represented seat ID');
+        else {
+          if (committee.operation_mode === 'CHAIR_OPERATED') throw new AppError({code: 'FORBIDDEN',
+            message: 'Chair capability is required in Chair-operated mode.'});
+          if (input.onBehalfOfSeatId !== undefined) throw new AppError({code: 'FORBIDDEN', message: 'A delegate cannot choose another seat.'});
+          seatId = await activeSeat(client, committee.id, auth.user.id);
+        }
+        if (!seatId || seatId === motion.proposed_by_seat_id) throw new AppError({code: 'VALIDATION_FAILED',
+          message: 'A different present seat must second the motion.'});
+        const seat = await client.query<{display_name: string}>(`SELECT s.display_name FROM committee_seats s
+          JOIN current_attendance a ON a.seat_id=s.id AND a.meeting_session_id=$3 AND a.state='PRESENT'
+          WHERE s.id=$1 AND s.committee_id=$2 AND s.active=true`, [seatId, committee.id, motion.meeting_session_id]);
+        if (!seat.rows[0]) throw new AppError({code: 'VALIDATION_FAILED', message: 'Only a present active seat may second a motion.'});
+        const secondId = randomUUID(); await client.query(`INSERT INTO motion_seconds
+          (id,committee_id,motion_id,seat_id,seat_display_name,actor_user_id,on_behalf_of_seat_id)
+          VALUES ($1,$2,$3,$4,$5,$6,$4)`, [secondId, committee.id, motionId, seatId, seat.rows[0].display_name, auth.user.id]);
+        const count = await client.query<{count: string}>('SELECT count(*)::text AS count FROM motion_seconds WHERE motion_id=$1', [motionId]);
+        const nextStatus = Number(count.rows[0]?.count ?? 0) >= motion.required_second_count ? 'SECONDED' : 'PENDING';
+        const updated = await client.query<MotionRow>(`UPDATE motions SET status=$2,revision=revision+1 WHERE id=$1 RETURNING *`,
+          [motionId, nextStatus]);
+        await appendEvent(client, committee, {type: 'motion.seconded', resourceType: 'motion', resourceId: motionId,
+          revision: motion.revision + 1, payload: {secondId, seatId, status: nextStatus}, audience: 'PUBLIC'});
+        await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id,
+          capabilities: chair ? ['CHAIR'] : ['MEMBER'], onBehalfOfSeatId: seatId,
+          action: 'proceedings.motion_seconded', resourceType: 'motion', resourceId: motionId,
+          after: {secondId, seatId, status: nextStatus, revision: motion.revision + 1}});
+        return motionState(client, updated.rows[0] as MotionRow);
+      }});
+  }
+
+  async decideMotion(auth: AuthenticatedSession, motionId: string, input: Record<string, unknown>,
+    context: Stage4Context): Promise<ProceedingMotion> {
+    requireBusinessIdentity(auth); assertExactBody(input, ['baseRevision', 'result']);
+    const baseRevision = positiveInteger(input.baseRevision, 'Base revision'); const result = input.result;
+    if (!['PASSED', 'FAILED'].includes(result as string)) throw new AppError({code: 'VALIDATION_FAILED',
+      message: 'Motion result is invalid.'});
+    return transaction(this.pool, async client => {
+      const located = await client.query<{committee_id: string}>('SELECT committee_id FROM motions WHERE id=$1', [motionId]);
+      if (!located.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Motion not found.'});
+      const committee = await lockedCommittee(client, located.rows[0].committee_id); requireProceedingsActive(committee);
+      await requireChair(client, committee, auth.user.id);
+      const motionResult = await client.query<MotionRow>('SELECT * FROM motions WHERE id=$1 FOR UPDATE', [motionId]);
+      const motion = motionResult.rows[0] as MotionRow;
+      if (!['PENDING', 'SECONDED', 'VOTING'].includes(motion.status)) throw new AppError({code: 'RESOURCE_CONFLICT',
+        message: 'The motion has already been decided.'});
+      if (motion.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT',
+        message: 'This motion changed since it was loaded.', details: {currentRevision: motion.revision}});
+      const seconds = await client.query<{count: string}>('SELECT count(*)::text AS count FROM motion_seconds WHERE motion_id=$1', [motionId]);
+      if (Number(seconds.rows[0]?.count ?? 0) < motion.required_second_count) throw new AppError({code: 'RESOURCE_CONFLICT',
+        message: 'The motion does not have the required seconds.'});
+      const now = this.now(); const updated = await client.query<MotionRow>(`UPDATE motions SET status=$2,
+        decided_by_user_id=$3,decided_at=$4,revision=revision+1 WHERE id=$1 RETURNING *`,
+      [motionId, result, auth.user.id, now]);
+      await appendEvent(client, committee, {type: 'motion.decided', resourceType: 'motion', resourceId: motionId,
+        revision: motion.revision + 1, payload: {result, decidedAt: now.toISOString()}, audience: 'PUBLIC'});
+      await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id, capabilities: ['CHAIR'],
+        action: 'proceedings.motion_decided', resourceType: 'motion', resourceId: motionId,
+        before: {status: motion.status, revision: motion.revision},
+        after: {status: result, decidedAt: now.toISOString(), revision: motion.revision + 1}});
+      return motionState(client, updated.rows[0] as MotionRow);
     });
   }
 }

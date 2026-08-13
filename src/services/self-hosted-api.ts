@@ -3,6 +3,7 @@ import type {
   AuthoritativeTimer,
   SpeakerList,
   SpeechRecord,
+  ProceedingMotion,
   CommitteeNote,
   CommitteeSummary,
   CommitteeTemplate,
@@ -182,6 +183,18 @@ export const selfHostedApi = {
   recordSpeechContribution(id: string, type: 'QUESTION' | 'COMMENT', content: string, seatId?: string) {
     return request<SpeechRecord>(`/api/v1/speeches/${id}/contributions`, {method: 'POST',
       body: {type, content, ...(seatId ? {seatId} : {})}});
+  },
+  proposeMotion(committeeId: string, input: {meetingSessionId: string; motionTypeId: string;
+    parameters?: Record<string, unknown>; onBehalfOfSeatId?: string}) {
+    return request<ProceedingMotion>(`/api/v1/committees/${committeeId}/motions`, {method: 'POST',
+      body: input, idempotencyKey: key()});
+  },
+  secondMotion(id: string, onBehalfOfSeatId?: string) {
+    return request<ProceedingMotion>(`/api/v1/motions/${id}/second`, {method: 'POST',
+      body: onBehalfOfSeatId ? {onBehalfOfSeatId} : {}, idempotencyKey: key()});
+  },
+  decideMotion(id: string, baseRevision: number, result: 'PASSED' | 'FAILED') {
+    return request<ProceedingMotion>(`/api/v1/motions/${id}/decide`, {method: 'POST', body: {baseRevision, result}});
   },
   updateCommittee(id: string, baseRevision: number, patch: Record<string, unknown>) {
     return request<CommitteeSummary>(`/api/v1/committees/${id}`, {method: 'PATCH', body: {baseRevision, patch}});
