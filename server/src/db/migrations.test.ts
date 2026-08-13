@@ -82,6 +82,15 @@ describe('migration discovery', () => {
     expect(motions?.sql).toContain('UNIQUE (motion_id, seat_id)');
   });
 
+  it('enforces one current vote per ballot seat and append-only corrections', async () => {
+    const migrations = await loadMigrations(resolve('server/migrations'));
+    const ballots = migrations.find(migration => migration.version === 10);
+    expect(ballots?.name).toBe('formal_ballots');
+    expect(ballots?.sql).toContain('UNIQUE (ballot_id, seat_id)');
+    expect(ballots?.sql).toContain('ballot_vote_revisions_append_only');
+    expect(ballots?.sql).toContain('ballots_frozen_state_machine');
+  });
+
   it('rejects SQL files outside the versioned naming contract', async () => {
     const directory = await temporaryDirectory();
     await writeFile(join(directory, 'first.sql'), 'SELECT 1;\n');

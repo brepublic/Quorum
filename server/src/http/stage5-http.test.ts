@@ -85,6 +85,13 @@ describe('stage 5 timer HTTP boundary', () => {
       {}, 'timer-key', expect.any(Object));
   });
 
+  it('uses idempotency for the first vote from a seat', async () => {
+    const castVote = vi.fn(async () => ({id: 'ballot'})); const stage5 = {castVote} as unknown as Stage5Service;
+    await send(stage5, '/api/v1/ballots/30000000-0000-4000-8000-000000000001/votes', {choice: 'FOR'});
+    expect(castVote).toHaveBeenCalledWith(authenticated, '30000000-0000-4000-8000-000000000001',
+      {choice: 'FOR'}, 'timer-key', expect.any(Object));
+  });
+
   it('routes explicit timer commands with CSRF and revision', async () => {
     const commandTimer = vi.fn(async () => ({id: 'timer', revision: 4}));
     const stage5 = {commandTimer} as unknown as Stage5Service;

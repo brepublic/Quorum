@@ -133,3 +133,43 @@ export interface ProceedingMotion {
   createdAt: string;
   decidedAt: string | null;
 }
+
+export type BallotStatus = 'OPEN' | 'CLOSED' | 'PUBLISHED';
+export type BallotChoice = 'FOR' | 'AGAINST' | 'ABSTAIN';
+
+export interface BallotEligibilitySeat {
+  seatId: string;
+  seatDisplayName: string;
+  mustVote: boolean;
+  hasVeto: boolean;
+}
+
+export interface BallotVote {
+  id: string;
+  seatId: string;
+  seatDisplayName: string;
+  choice: BallotChoice;
+  revision: number;
+  castAt: string;
+}
+
+export interface FormalBallot {
+  id: string;
+  committeeId: string;
+  meetingSessionId: string;
+  subjectType: 'MOTION' | 'RESOLUTION' | 'AMENDMENT';
+  subjectId: string;
+  status: BallotStatus;
+  procedural: boolean;
+  choices: BallotChoice[];
+  rulePackageVersionId: string;
+  ruleEvaluation: FrozenRuleEvaluation;
+  eligibility: BallotEligibilitySeat[];
+  threshold: {kind: 'SIMPLE_MAJORITY' | 'TWO_THIRDS'; value: number};
+  votes: BallotVote[];
+  result: {outcome: 'PASSED' | 'FAILED' | 'VETOED'; forCount: number; againstCount: number; abstainCount: number} | null;
+  revision: number;
+  openedAt: string;
+  closedAt: string | null;
+  publishedAt: string | null;
+}

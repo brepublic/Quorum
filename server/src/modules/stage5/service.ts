@@ -1,7 +1,7 @@
 import {randomUUID} from 'node:crypto';
 import type {Pool, PoolClient, QueryResultRow} from 'pg';
-import type {AuthoritativeTimer, FrozenRuleEvaluation, ProceedingMotion, SpeakerList, SpeakerListKind, SpeakerQueueEntry,
-  SpeechRecord, TimerOwnerType, YieldType} from '@quorum/contracts';
+import type {AuthoritativeTimer, BallotChoice, FormalBallot, FrozenRuleEvaluation, ProceedingMotion, SpeakerList,
+  SpeakerListKind, SpeakerQueueEntry, SpeechRecord, TimerOwnerType, YieldType} from '@quorum/contracts';
 import {freezeRuleEvaluation} from '@quorum/contracts';
 import {AppError} from '../../http/errors.js';
 import type {AuthenticatedSession} from '../identity/store.js';
@@ -44,6 +44,14 @@ interface MotionRow extends QueryResultRow {
   proposed_by_seat_display_name: string; parameters: Record<string, unknown>; status: ProceedingMotion['status'];
   rule_package_version_id: string; rule_evaluation: FrozenRuleEvaluation; required_second_count: number;
   revision: number; created_at: Date; decided_at: Date | null;
+}
+
+interface BallotRow extends QueryResultRow {
+  id: string; committee_id: string; meeting_session_id: string; subject_type: FormalBallot['subjectType']; subject_id: string;
+  status: FormalBallot['status']; procedural: boolean; choices: BallotChoice[]; rule_package_version_id: string;
+  rule_evaluation: FrozenRuleEvaluation; eligibility_snapshot: FormalBallot['eligibility'];
+  threshold_definition: FormalBallot['threshold']; threshold_value: number; result: FormalBallot['result'];
+  revision: number; opened_at: Date; closed_at: Date | null; published_at: Date | null;
 }
 
 function positiveInteger(value: unknown, name: string): number {
@@ -112,6 +120,30 @@ async function motionState(client: PoolClient, row: MotionRow): Promise<Proceedi
     seconds: seconds.rows.map(item => ({id: item.id, seatId: item.seat_id, seatDisplayName: item.seat_display_name,
       createdAt: item.created_at.toISOString()})), revision: row.revision, createdAt: row.created_at.toISOString(),
     decidedAt: row.decided_at?.toISOString() ?? null};
+}
+
+async function ballotState(client: PoolClient, row: BallotRow, includeVotes = true): Promise<FormalBallot> {
+  const votes = includeVotes ? await client.query<{id: string; seat_id: string; seat_display_name: string;
+    current_choice: BallotChoice; revision: number; cast_at: Date}>(`SELECT id,seat_id,seat_display_name,current_choice,
+    revision,cast_at FROM ballot_votes WHERE ballot_id=$1 ORDER BY seat_id`, [row.id]) : {rows: []};
+  return {id: row.id, committeeId: row.committee_id, meetingSessionId: row.meeting_session_id,
+    subjectType: row.subject_type, subjectId: row.subject_id, status: row.status, procedural: row.procedural,
+    choices: row.choices, rulePackageVersionId: row.rule_package_version_id, ruleEvaluation: row.rule_evaluation,
+    eligibility: row.eligibility_snapshot, threshold: row.threshold_definition,
+    votes: votes.rows.map(vote => ({id: vote.id, seatId: vote.seat_id, seatDisplayName: vote.seat_display_name,
+      choice: vote.current_choice, revision: vote.revision, castAt: vote.cast_at.toISOString()})), result: row.result,
+    revision: row.revision, openedAt: row.opened_at.toISOString(), closedAt: row.closed_at?.toISOString() ?? null,
+    publishedAt: row.published_at?.toISOString() ?? null};
+}
+
+export function calculateBallotResult(eligibility: FormalBallot['eligibility'], votes: FormalBallot['votes'],
+  threshold: number): NonNullable<FormalBallot['result']> {
+  const forCount = votes.filter(vote => vote.choice === 'FOR').length;
+  const againstCount = votes.filter(vote => vote.choice === 'AGAINST').length;
+  const abstainCount = votes.filter(vote => vote.choice === 'ABSTAIN').length;
+  const vetoed = votes.some(vote => vote.choice === 'AGAINST'
+    && eligibility.some(seat => seat.seatId === vote.seatId && seat.hasVeto));
+  return {outcome: vetoed ? 'VETOED' : forCount >= threshold ? 'PASSED' : 'FAILED', forCount, againstCount, abstainCount};
 }
 
 async function renumberActiveQueue(client: PoolClient, listId: string): Promise<void> {
@@ -774,6 +806,212 @@ export class Stage5Service {
         before: {status: motion.status, revision: motion.revision},
         after: {status: result, decidedAt: now.toISOString(), revision: motion.revision + 1}});
       return motionState(client, updated.rows[0] as MotionRow);
+    });
+  }
+
+  async createBallot(auth: AuthenticatedSession, committeeId: string, input: Record<string, unknown>, key: string,
+    context: Stage4Context): Promise<FormalBallot> {
+    requireBusinessIdentity(auth);
+    assertExactBody(input, ['meetingSessionId', 'subjectType', 'subjectId', 'procedural', 'thresholdKind']);
+    const meetingSessionId = uuid(input.meetingSessionId, 'Meeting session ID');
+    const subjectType = input.subjectType as FormalBallot['subjectType'];
+    if (!['MOTION', 'RESOLUTION', 'AMENDMENT'].includes(subjectType)) throw new AppError({code: 'VALIDATION_FAILED',
+      message: 'Ballot subject type is invalid.'});
+    const subjectId = uuid(input.subjectId, 'Ballot subject ID'); const procedural = input.procedural;
+    if (typeof procedural !== 'boolean') throw new AppError({code: 'VALIDATION_FAILED', message: 'Ballot procedure type is invalid.'});
+    const thresholdKind = input.thresholdKind as FormalBallot['threshold']['kind'];
+    if (!['SIMPLE_MAJORITY', 'TWO_THIRDS'].includes(thresholdKind)) throw new AppError({code: 'VALIDATION_FAILED',
+      message: 'Ballot threshold is invalid.'});
+    return idempotentTransaction({pool: this.pool, auth, route: `POST /api/v1/committees/${committeeId}/ballots`,
+      key, request: input, status: 201, work: async client => {
+        const committee = await lockedCommittee(client, committeeId); requireProceedingsActive(committee);
+        await requireChair(client, committee, auth.user.id);
+        const session = await client.query<{status: string; active_rule_package_version_id: string}>(`SELECT status,
+          active_rule_package_version_id FROM meeting_sessions WHERE id=$1 AND committee_id=$2`, [meetingSessionId, committeeId]);
+        if (!session.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Meeting session not found.'});
+        if (session.rows[0].status !== 'OPEN') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Meeting session is closed.'});
+        if (subjectType === 'MOTION') {
+          const motion = await client.query('SELECT 1 FROM motions WHERE id=$1 AND committee_id=$2', [subjectId, committeeId]);
+          if (!motion.rowCount) throw new AppError({code: 'NOT_FOUND', message: 'Motion not found.'});
+        }
+        const eligible = await client.query<{seat_id: string; display_name: string; must_vote: boolean; has_veto: boolean}>(`SELECT
+          s.id AS seat_id,s.display_name,s.must_vote,s.has_veto FROM committee_seats s JOIN current_attendance a
+          ON a.seat_id=s.id AND a.meeting_session_id=$2 AND a.state='PRESENT'
+          WHERE s.committee_id=$1 AND s.active=true AND s.can_vote=true ORDER BY s.sort_order,s.stable_key,s.id`,
+        [committeeId, meetingSessionId]);
+        if (eligible.rowCount === 0) throw new AppError({code: 'VALIDATION_FAILED', message: 'The ballot has no eligible seats.'});
+        const eligibility = eligible.rows.map(seat => ({seatId: seat.seat_id, seatDisplayName: seat.display_name,
+          mustVote: procedural || seat.must_vote, hasVeto: seat.has_veto}));
+        const thresholdValue = thresholdKind === 'TWO_THIRDS' ? Math.ceil(eligibility.length * 2 / 3)
+          : Math.floor(eligibility.length / 2) + 1;
+        const choices: BallotChoice[] = procedural ? ['FOR', 'AGAINST'] : ['FOR', 'AGAINST', 'ABSTAIN'];
+        const now = this.now(); const evaluation = freezeRuleEvaluation({
+          packageVersionId: session.rows[0].active_rule_package_version_id,
+          definition: {subjectType, procedural, thresholdKind},
+          facts: {eligibleSeatIds: eligibility.map(seat => seat.seatId), eligibleSeatCount: eligibility.length,
+            vetoSeatIds: eligibility.filter(seat => seat.hasVeto).map(seat => seat.seatId)},
+          resolvedValues: {choices, thresholdValue, mustVoteSeatIds: eligibility.filter(seat => seat.mustVote).map(seat => seat.seatId)},
+          frozenAt: now.toISOString()
+        });
+        const id = randomUUID(); const inserted = await client.query<BallotRow>(`INSERT INTO ballots
+          (id,committee_id,meeting_session_id,subject_type,subject_id,procedural,choices,rule_package_version_id,
+           rule_evaluation,eligibility_snapshot,threshold_definition,threshold_value,opened_by_user_id,opened_at)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
+        [id, committeeId, meetingSessionId, subjectType, subjectId, procedural, choices,
+          session.rows[0].active_rule_package_version_id, evaluation, eligibility, {kind: thresholdKind, value: thresholdValue},
+          thresholdValue, auth.user.id, now]);
+        await appendEvent(client, committee, {type: 'ballot.opened', resourceType: 'ballot', resourceId: id, revision: 1,
+          payload: {subjectType, subjectId, eligibleSeatCount: eligibility.length, procedural,
+            rulePackageVersionId: evaluation.packageVersionId}, audience: 'PUBLIC'});
+        await audit(client, context, {committeeId, actorUserId: auth.user.id, capabilities: ['CHAIR'],
+          action: 'voting.ballot_created', resourceType: 'ballot', resourceId: id,
+          after: {subjectType, subjectId, eligibleSeatCount: eligibility.length, thresholdKind, thresholdValue,
+            procedural, revision: 1}});
+        return ballotState(client, inserted.rows[0] as BallotRow);
+      }});
+  }
+
+  async castVote(auth: AuthenticatedSession, ballotId: string, input: Record<string, unknown>, key: string,
+    context: Stage4Context): Promise<FormalBallot> {
+    requireBusinessIdentity(auth); assertExactBody(input, ['choice', 'onBehalfOfSeatId']);
+    const choice = input.choice as BallotChoice;
+    if (!['FOR', 'AGAINST', 'ABSTAIN'].includes(choice)) throw new AppError({code: 'VALIDATION_FAILED', message: 'Vote choice is invalid.'});
+    return idempotentTransaction({pool: this.pool, auth, route: `POST /api/v1/ballots/${ballotId}/votes`, key,
+      request: input, status: 201, work: async client => {
+        const located = await client.query<{committee_id: string}>('SELECT committee_id FROM ballots WHERE id=$1', [ballotId]);
+        if (!located.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Ballot not found.'});
+        const committee = await lockedCommittee(client, located.rows[0].committee_id); requireProceedingsActive(committee);
+        const ballotResult = await client.query<BallotRow>('SELECT * FROM ballots WHERE id=$1 FOR UPDATE', [ballotId]);
+        const ballot = ballotResult.rows[0] as BallotRow;
+        if (ballot.status !== 'OPEN') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The ballot is not open.'});
+        const chair = await isChair(client, committee.id, auth.user.id); let seatId: string | null;
+        if (chair) seatId = uuid(input.onBehalfOfSeatId, 'Represented seat ID');
+        else {
+          if (committee.operation_mode === 'CHAIR_OPERATED') throw new AppError({code: 'FORBIDDEN',
+            message: 'Chair capability is required in Chair-operated mode.'});
+          if (input.onBehalfOfSeatId !== undefined) throw new AppError({code: 'FORBIDDEN', message: 'A delegate cannot choose another seat.'});
+          seatId = await activeSeat(client, committee.id, auth.user.id);
+        }
+        const eligibility = ballot.eligibility_snapshot.find(seat => seat.seatId === seatId);
+        if (!seatId || !eligibility) throw new AppError({code: 'FORBIDDEN', message: 'This seat is not eligible for the ballot.'});
+        if (!ballot.choices.includes(choice) || (eligibility.mustVote && choice === 'ABSTAIN')) {
+          throw new AppError({code: 'VALIDATION_FAILED', message: 'This seat cannot cast that choice.'});
+        }
+        const voteId = randomUUID(); const vote = await client.query(`INSERT INTO ballot_votes
+          (id,ballot_id,seat_id,seat_display_name,current_choice,cast_by_user_id,cast_on_behalf)
+          VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`, [voteId, ballotId, seatId, eligibility.seatDisplayName,
+          choice, auth.user.id, chair]);
+        await client.query(`INSERT INTO ballot_vote_revisions
+          (id,ballot_id,vote_id,seat_id,new_choice,actor_user_id,on_behalf_of_seat_id)
+          VALUES ($1,$2,$3,$4,$5,$6,$4)`, [randomUUID(), ballotId, vote.rows[0].id, seatId, choice, auth.user.id]);
+        await client.query('UPDATE ballots SET revision=revision+1 WHERE id=$1', [ballotId]);
+        await appendEvent(client, committee, {type: 'ballot.vote_recorded', resourceType: 'ballot', resourceId: ballotId,
+          revision: ballot.revision + 1, payload: {castCountIncrement: 1}, audience: 'CHAIR'});
+        await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id,
+          capabilities: chair ? ['CHAIR'] : ['MEMBER'], onBehalfOfSeatId: seatId,
+          action: 'voting.vote_cast', resourceType: 'ballot', resourceId: ballotId,
+          after: {seatId, choice, voteId, revision: ballot.revision + 1}});
+        const updated = await client.query<BallotRow>('SELECT * FROM ballots WHERE id=$1', [ballotId]);
+        return ballotState(client, updated.rows[0] as BallotRow);
+      }});
+  }
+
+  async correctVote(auth: AuthenticatedSession, ballotId: string, input: Record<string, unknown>,
+    context: Stage4Context): Promise<FormalBallot> {
+    requireBusinessIdentity(auth); assertExactBody(input, ['baseRevision', 'seatId', 'choice', 'reason']);
+    const baseRevision = positiveInteger(input.baseRevision, 'Base revision'); const seatId = uuid(input.seatId, 'Seat ID');
+    const choice = input.choice as BallotChoice; const reason = text(input.reason, 'Correction reason', 1000);
+    if (!['FOR', 'AGAINST', 'ABSTAIN'].includes(choice)) throw new AppError({code: 'VALIDATION_FAILED', message: 'Vote choice is invalid.'});
+    return transaction(this.pool, async client => {
+      const located = await client.query<{committee_id: string}>('SELECT committee_id FROM ballots WHERE id=$1', [ballotId]);
+      if (!located.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Ballot not found.'});
+      const committee = await lockedCommittee(client, located.rows[0].committee_id); requireProceedingsActive(committee);
+      await requireChair(client, committee, auth.user.id);
+      const ballotResult = await client.query<BallotRow>('SELECT * FROM ballots WHERE id=$1 FOR UPDATE', [ballotId]);
+      const ballot = ballotResult.rows[0] as BallotRow;
+      if (ballot.status !== 'OPEN') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The ballot is not open.'});
+      if (ballot.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT', message: 'This ballot changed since it was loaded.',
+        details: {currentRevision: ballot.revision}});
+      const eligibility = ballot.eligibility_snapshot.find(seat => seat.seatId === seatId);
+      if (!eligibility || !ballot.choices.includes(choice) || (eligibility.mustVote && choice === 'ABSTAIN')) {
+        throw new AppError({code: 'VALIDATION_FAILED', message: 'The corrected vote is invalid.'});
+      }
+      const vote = await client.query<{id: string; current_choice: BallotChoice; revision: number}>(`SELECT id,current_choice,revision
+        FROM ballot_votes WHERE ballot_id=$1 AND seat_id=$2 FOR UPDATE`, [ballotId, seatId]);
+      if (!vote.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Vote not found.'});
+      await client.query(`UPDATE ballot_votes SET current_choice=$2,revision=revision+1 WHERE id=$1`, [vote.rows[0].id, choice]);
+      await client.query(`INSERT INTO ballot_vote_revisions
+        (id,ballot_id,vote_id,seat_id,previous_choice,new_choice,actor_user_id,on_behalf_of_seat_id,reason)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$4,$8)`, [randomUUID(), ballotId, vote.rows[0].id, seatId,
+        vote.rows[0].current_choice, choice, auth.user.id, reason]);
+      await client.query('UPDATE ballots SET revision=revision+1 WHERE id=$1', [ballotId]);
+      await appendEvent(client, committee, {type: 'ballot.vote_corrected', resourceType: 'ballot', resourceId: ballotId,
+        revision: ballot.revision + 1, payload: {seatId}, audience: 'CHAIR'});
+      await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id, capabilities: ['CHAIR'],
+        onBehalfOfSeatId: seatId, action: 'voting.vote_corrected', resourceType: 'ballot', resourceId: ballotId,
+        before: {seatId, choice: vote.rows[0].current_choice, voteRevision: vote.rows[0].revision},
+        after: {seatId, choice, voteRevision: vote.rows[0].revision + 1, ballotRevision: ballot.revision + 1, reason}});
+      const updated = await client.query<BallotRow>('SELECT * FROM ballots WHERE id=$1', [ballotId]);
+      return ballotState(client, updated.rows[0] as BallotRow);
+    });
+  }
+
+  async closeBallot(auth: AuthenticatedSession, ballotId: string, input: Record<string, unknown>,
+    context: Stage4Context): Promise<FormalBallot> {
+    requireBusinessIdentity(auth); assertExactBody(input, ['baseRevision']);
+    const baseRevision = positiveInteger(input.baseRevision, 'Base revision');
+    return transaction(this.pool, async client => {
+      const located = await client.query<{committee_id: string}>('SELECT committee_id FROM ballots WHERE id=$1', [ballotId]);
+      if (!located.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Ballot not found.'});
+      const committee = await lockedCommittee(client, located.rows[0].committee_id); requireProceedingsActive(committee);
+      await requireChair(client, committee, auth.user.id);
+      const ballotResult = await client.query<BallotRow>('SELECT * FROM ballots WHERE id=$1 FOR UPDATE', [ballotId]);
+      const ballot = ballotResult.rows[0] as BallotRow;
+      if (ballot.status !== 'OPEN') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The ballot is not open.'});
+      if (ballot.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT', message: 'This ballot changed since it was loaded.',
+        details: {currentRevision: ballot.revision}});
+      const votes = await client.query<{seat_id: string; current_choice: BallotChoice}>(`SELECT seat_id,current_choice
+        FROM ballot_votes WHERE ballot_id=$1`, [ballotId]);
+      const voted = new Set(votes.rows.map(vote => vote.seat_id));
+      const missingMustVote = ballot.eligibility_snapshot.filter(seat => seat.mustVote && !voted.has(seat.seatId));
+      const vetoRequiresAll = ballot.eligibility_snapshot.some(seat => seat.hasVeto);
+      if (missingMustVote.length > 0 || (vetoRequiresAll && voted.size < ballot.eligibility_snapshot.length)) {
+        throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Required eligible votes have not all been cast.'});
+      }
+      const now = this.now(); const updated = await client.query<BallotRow>(`UPDATE ballots SET status='CLOSED',
+        closed_at=$2,revision=revision+1 WHERE id=$1 RETURNING *`, [ballotId, now]);
+      await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id, capabilities: ['CHAIR'],
+        action: 'voting.ballot_closed', resourceType: 'ballot', resourceId: ballotId,
+        before: {status: 'OPEN', revision: ballot.revision}, after: {status: 'CLOSED', revision: ballot.revision + 1}});
+      return ballotState(client, updated.rows[0] as BallotRow);
+    });
+  }
+
+  async publishBallot(auth: AuthenticatedSession, ballotId: string, input: Record<string, unknown>,
+    context: Stage4Context): Promise<FormalBallot> {
+    requireBusinessIdentity(auth); assertExactBody(input, ['baseRevision']);
+    const baseRevision = positiveInteger(input.baseRevision, 'Base revision');
+    return transaction(this.pool, async client => {
+      const located = await client.query<{committee_id: string}>('SELECT committee_id FROM ballots WHERE id=$1', [ballotId]);
+      if (!located.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Ballot not found.'});
+      const committee = await lockedCommittee(client, located.rows[0].committee_id); requireProceedingsActive(committee);
+      await requireChair(client, committee, auth.user.id);
+      const ballotResult = await client.query<BallotRow>('SELECT * FROM ballots WHERE id=$1 FOR UPDATE', [ballotId]);
+      const ballot = ballotResult.rows[0] as BallotRow;
+      if (ballot.status !== 'CLOSED') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Close the ballot before publishing.'});
+      if (ballot.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT', message: 'This ballot changed since it was loaded.',
+        details: {currentRevision: ballot.revision}});
+      const state = await ballotState(client, ballot); const result = calculateBallotResult(ballot.eligibility_snapshot,
+        state.votes, ballot.threshold_value); const now = this.now();
+      const updated = await client.query<BallotRow>(`UPDATE ballots SET status='PUBLISHED',result=$2,published_at=$3,
+        revision=revision+1 WHERE id=$1 RETURNING *`, [ballotId, result, now]);
+      await appendEvent(client, committee, {type: 'ballot.result_published', resourceType: 'ballot', resourceId: ballotId,
+        revision: ballot.revision + 1, payload: {result, publishedAt: now.toISOString()}, audience: 'PUBLIC'});
+      await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id, capabilities: ['CHAIR'],
+        action: 'voting.result_published', resourceType: 'ballot', resourceId: ballotId,
+        before: {status: ballot.status, revision: ballot.revision},
+        after: {status: 'PUBLISHED', revision: ballot.revision + 1, result}});
+      return ballotState(client, updated.rows[0] as BallotRow);
     });
   }
 }

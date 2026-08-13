@@ -4,6 +4,7 @@ import type {
   SpeakerList,
   SpeechRecord,
   ProceedingMotion,
+  FormalBallot,
   CommitteeNote,
   CommitteeSummary,
   CommitteeTemplate,
@@ -195,6 +196,25 @@ export const selfHostedApi = {
   },
   decideMotion(id: string, baseRevision: number, result: 'PASSED' | 'FAILED') {
     return request<ProceedingMotion>(`/api/v1/motions/${id}/decide`, {method: 'POST', body: {baseRevision, result}});
+  },
+  createBallot(committeeId: string, input: {meetingSessionId: string; subjectType: 'MOTION' | 'RESOLUTION' | 'AMENDMENT';
+    subjectId: string; procedural: boolean; thresholdKind: 'SIMPLE_MAJORITY' | 'TWO_THIRDS'}) {
+    return request<FormalBallot>(`/api/v1/committees/${committeeId}/ballots`, {method: 'POST',
+      body: input, idempotencyKey: key()});
+  },
+  castVote(id: string, choice: 'FOR' | 'AGAINST' | 'ABSTAIN', onBehalfOfSeatId?: string) {
+    return request<FormalBallot>(`/api/v1/ballots/${id}/votes`, {method: 'POST',
+      body: {choice, ...(onBehalfOfSeatId ? {onBehalfOfSeatId} : {})}, idempotencyKey: key()});
+  },
+  correctVote(id: string, baseRevision: number, seatId: string, choice: 'FOR' | 'AGAINST' | 'ABSTAIN', reason: string) {
+    return request<FormalBallot>(`/api/v1/ballots/${id}/correct-vote`, {method: 'POST',
+      body: {baseRevision, seatId, choice, reason}});
+  },
+  closeBallot(id: string, baseRevision: number) {
+    return request<FormalBallot>(`/api/v1/ballots/${id}/close`, {method: 'POST', body: {baseRevision}});
+  },
+  publishBallot(id: string, baseRevision: number) {
+    return request<FormalBallot>(`/api/v1/ballots/${id}/publish`, {method: 'POST', body: {baseRevision}});
   },
   updateCommittee(id: string, baseRevision: number, patch: Record<string, unknown>) {
     return request<CommitteeSummary>(`/api/v1/committees/${id}`, {method: 'PATCH', body: {baseRevision, patch}});

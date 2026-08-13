@@ -16,6 +16,8 @@ import type {
   SpeechRecord,
   ProceedingMotion,
   FrozenRuleEvaluation,
+  FormalBallot,
+  BallotChoice,
   MeetingSession,
   PointStatus,
   PublicCommitteePoint,
@@ -211,6 +213,14 @@ interface SnapshotMotionRow extends QueryResultRow {
   proposed_by_seat_display_name: string; parameters: Record<string, unknown>; status: ProceedingMotion['status'];
   rule_package_version_id: string; rule_evaluation: FrozenRuleEvaluation; required_second_count: number;
   revision: number; created_at: Date; decided_at: Date | null;
+}
+
+interface SnapshotBallotRow extends QueryResultRow {
+  id: string; committee_id: string; meeting_session_id: string; subject_type: FormalBallot['subjectType']; subject_id: string;
+  status: FormalBallot['status']; procedural: boolean; choices: BallotChoice[]; rule_package_version_id: string;
+  rule_evaluation: FrozenRuleEvaluation; eligibility_snapshot: FormalBallot['eligibility'];
+  threshold_definition: FormalBallot['threshold']; result: FormalBallot['result']; revision: number;
+  opened_at: Date; closed_at: Date | null; published_at: Date | null;
 }
 
 async function snapshotSpeeches(client: PoolClient, listId: string): Promise<SpeechRecord[]> {
@@ -652,6 +662,22 @@ export class Stage4Service {
           seconds: seconds.rows.map(item => ({id: item.id, seatId: item.seat_id, seatDisplayName: item.seat_display_name,
             createdAt: item.created_at.toISOString()})), revision: row.revision, createdAt: row.created_at.toISOString(),
           decidedAt: row.decided_at?.toISOString() ?? null};
+      }));
+      const ballotRows = await client.query<SnapshotBallotRow>('SELECT * FROM ballots WHERE committee_id=$1 ORDER BY opened_at,id', [committeeId]);
+      result.ballots = await Promise.all(ballotRows.rows.map(async row => {
+        const revealVotes = viewer.audience === 'CHAIR' || viewer.audience === 'OWNER' || row.status === 'PUBLISHED';
+        const votes = revealVotes ? await client.query<{id: string; seat_id: string; seat_display_name: string;
+          current_choice: BallotChoice; revision: number; cast_at: Date}>(`SELECT id,seat_id,seat_display_name,current_choice,
+          revision,cast_at FROM ballot_votes WHERE ballot_id=$1 ORDER BY seat_id`, [row.id]) : {rows: []};
+        return {id: row.id, committeeId: row.committee_id, meetingSessionId: row.meeting_session_id,
+          subjectType: row.subject_type, subjectId: row.subject_id, status: row.status, procedural: row.procedural,
+          choices: row.choices, rulePackageVersionId: row.rule_package_version_id, ruleEvaluation: row.rule_evaluation,
+          eligibility: viewer.audience === 'PUBLIC' ? [] : row.eligibility_snapshot, threshold: row.threshold_definition,
+          votes: votes.rows.map(vote => ({id: vote.id, seatId: vote.seat_id, seatDisplayName: vote.seat_display_name,
+            choice: vote.current_choice, revision: vote.revision, castAt: vote.cast_at.toISOString()})),
+          result: row.status === 'PUBLISHED' ? row.result : null, revision: row.revision,
+          openedAt: row.opened_at.toISOString(), closedAt: row.closed_at?.toISOString() ?? null,
+          publishedAt: row.published_at?.toISOString() ?? null};
       }));
       if (viewer.audience !== 'PUBLIC') {
         const [notes, posts, timers] = await Promise.all([

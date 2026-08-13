@@ -1,13 +1,21 @@
 // @vitest-environment node
 
 import {describe, expect, it} from 'vitest';
-import {canYieldSpeech, remainingTimerMs, timerState} from './service';
+import {calculateBallotResult, canYieldSpeech, remainingTimerMs, timerState} from './service';
 
 describe('server-authoritative timers', () => {
   it('derives a running timer only from server time and persisted start state', () => {
     const row = {running: true, started_at: new Date('2026-08-13T00:00:00.000Z'), remaining_at_start_ms: 60_000};
     expect(remainingTimerMs(row, new Date('2026-08-13T00:00:15.250Z'))).toBe(44_750);
     expect(remainingTimerMs(row, new Date('2026-08-13T00:02:00.000Z'))).toBe(0);
+  });
+
+  it('applies veto only to an AGAINST vote by a frozen veto seat', () => {
+    const eligibility = [{seatId: 'veto', seatDisplayName: 'Veto', mustVote: true, hasVeto: true},
+      {seatId: 'other', seatDisplayName: 'Other', mustVote: false, hasVeto: false}];
+    expect(calculateBallotResult(eligibility, [{id: 'a', seatId: 'veto', seatDisplayName: 'Veto', choice: 'AGAINST',
+      revision: 1, castAt: ''}, {id: 'b', seatId: 'other', seatDisplayName: 'Other', choice: 'FOR', revision: 1, castAt: ''}], 1)
+      .outcome).toBe('VETOED');
   });
 
   it('allows only paused original time to be yielded once', () => {

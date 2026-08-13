@@ -302,6 +302,7 @@ export interface CommitteeWorkspaceSnapshot {
   timers?: import('./stage5.js').AuthoritativeTimer[];
   speakerLists?: import('./stage5.js').SpeakerList[];
   motions?: import('./stage5.js').ProceedingMotion[];
+  ballots?: import('./stage5.js').FormalBallot[];
 }
 
 export function localizedDisplayName(

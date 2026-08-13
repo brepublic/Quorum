@@ -376,6 +376,21 @@ async function handleStage5Request(options: {
       : await stage5.decideMotion(auth, id, body, context);
     sendJson(response, motionCommand[2] === 'second' ? 201 : 200, success(result, requestId)); return true;
   }
+  const ballots = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/ballots$/.exec(pathname);
+  if (method === 'POST' && ballots) {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 201, success(await stage5.createBallot(auth, ballots[1] as string, body,
+      idempotencyKey(request), context), requestId)); return true;
+  }
+  const ballotCommand = /^\/api\/v1\/ballots\/([0-9a-f-]{36})\/(votes|correct-vote|close|publish)$/.exec(pathname);
+  if (method === 'POST' && ballotCommand) {
+    const auth = await write(); const body = await readJson(request); const id = ballotCommand[1] as string;
+    const result = ballotCommand[2] === 'votes' ? await stage5.castVote(auth, id, body, idempotencyKey(request), context)
+      : ballotCommand[2] === 'correct-vote' ? await stage5.correctVote(auth, id, body, context)
+        : ballotCommand[2] === 'close' ? await stage5.closeBallot(auth, id, body, context)
+          : await stage5.publishBallot(auth, id, body, context);
+    sendJson(response, ballotCommand[2] === 'votes' ? 201 : 200, success(result, requestId)); return true;
+  }
   const timerCommand = /^\/api\/v1\/timers\/([0-9a-f-]{36})\/(start|pause|resume|extend|reset|expire)$/.exec(pathname);
   if (method === 'POST' && timerCommand) {
     const auth = await write(); const body = await readJson(request);
