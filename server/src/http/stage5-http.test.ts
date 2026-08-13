@@ -62,6 +62,17 @@ describe('stage 5 timer HTTP boundary', () => {
       {baseRevision: 2, entryIds: []}, expect.any(Object));
   });
 
+  it('routes yields without accepting an actor identity from the client', async () => {
+    const yieldSpeech = vi.fn(async (_auth, _id, body: Record<string, unknown>) => {
+      if ('actorUserId' in body) throw new AppError({code: 'VALIDATION_FAILED', message: 'Unsupported field.'});
+      return {id: 'inherited-speech'};
+    });
+    const stage5 = {yieldSpeech} as unknown as Stage5Service;
+    const response = await send(stage5, '/api/v1/speeches/30000000-0000-4000-8000-000000000001/yield',
+      {baseRevision: 2, type: 'QUESTIONS', actorUserId: 'attacker'});
+    expect(response.statusCode).toBe(422);
+  });
+
   it('routes explicit timer commands with CSRF and revision', async () => {
     const commandTimer = vi.fn(async () => ({id: 'timer', revision: 4}));
     const stage5 = {commandTimer} as unknown as Stage5Service;

@@ -344,6 +344,24 @@ async function handleStage5Request(options: {
         : await stage5.advanceSpeakerQueue(auth, id, body, context);
     sendJson(response, speakerCommand[2] === 'queue' ? 201 : 200, success(result, requestId)); return true;
   }
+  const speechCommand = /^\/api\/v1\/speaker-lists\/([0-9a-f-]{36})\/speech\/(start|pause|resume|complete)$/.exec(pathname);
+  if (method === 'POST' && speechCommand) {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 200, success(await stage5.commandSpeech(auth, speechCommand[1] as string,
+      speechCommand[2] as 'start' | 'pause' | 'resume' | 'complete', body, context), requestId)); return true;
+  }
+  const yieldSpeech = /^\/api\/v1\/speeches\/([0-9a-f-]{36})\/yield$/.exec(pathname);
+  if (method === 'POST' && yieldSpeech) {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 200, success(await stage5.yieldSpeech(auth, yieldSpeech[1] as string, body, context), requestId));
+    return true;
+  }
+  const contribution = /^\/api\/v1\/speeches\/([0-9a-f-]{36})\/contributions$/.exec(pathname);
+  if (method === 'POST' && contribution) {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 201, success(await stage5.recordSpeechContribution(auth, contribution[1] as string, body, context), requestId));
+    return true;
+  }
   const timerCommand = /^\/api\/v1\/timers\/([0-9a-f-]{36})\/(start|pause|resume|extend|reset|expire)$/.exec(pathname);
   if (method === 'POST' && timerCommand) {
     const auth = await write(); const body = await readJson(request);

@@ -61,4 +61,47 @@ export interface SpeakerList {
   queue: SpeakerQueueEntry[];
   createdAt: string;
   closedAt: string | null;
+  speeches?: SpeechRecord[];
+}
+
+export type SpeechKind = 'ORIGINAL' | 'INHERITED';
+export type SpeechStatus = 'READY' | 'RUNNING' | 'PAUSED' | 'COMPLETED';
+export type YieldType = 'CHAIR' | 'SEAT' | 'QUESTIONS' | 'COMMENTS';
+
+export interface SpeechActionRecord {
+  id: string;
+  action: 'STARTED' | 'PAUSED' | 'RESUMED' | 'COMPLETED' | 'YIELDED' | 'QUESTION_RECORDED' | 'COMMENT_RECORDED';
+  remainingMs: number;
+  targetType: YieldType | null;
+  targetSeatId: string | null;
+  createdAt: string;
+}
+
+export interface SpeechContribution {
+  id: string;
+  type: 'QUESTION' | 'COMMENT';
+  seatId: string;
+  seatDisplayName: string;
+  content: string;
+  createdAt: string;
+}
+
+export interface SpeechRecord {
+  id: string;
+  speakerListId: string;
+  queueEntryId: string;
+  seatId: string;
+  seatDisplayName: string;
+  kind: SpeechKind;
+  status: SpeechStatus;
+  inheritedFromSpeechId: string | null;
+  inheritedTimeMs: number | null;
+  canYield: boolean;
+  yieldType: YieldType | null;
+  yieldTargetSeatId: string | null;
+  revision: number;
+  startedAt: string | null;
+  endedAt: string | null;
+  actions: SpeechActionRecord[];
+  contributions: SpeechContribution[];
 }

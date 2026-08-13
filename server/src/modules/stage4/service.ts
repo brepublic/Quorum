@@ -13,6 +13,7 @@ import type {
   CommitteeWorkspaceSnapshot,
   AuthoritativeTimer,
   SpeakerList,
+  SpeechRecord,
   MeetingSession,
   PointStatus,
   PublicCommitteePoint,
@@ -194,6 +195,37 @@ interface SnapshotSpeakerListRow extends QueryResultRow {
   id: string; committee_id: string; meeting_session_id: string; kind: SpeakerList['kind']; status: SpeakerList['status'];
   topic: string; default_speech_ms: string | number; rule_package_version_id: string; current_entry_id: string | null;
   speech_timer_id: string; total_timer_id: string | null; revision: number; created_at: Date; closed_at: Date | null;
+}
+
+interface SnapshotSpeechRow extends QueryResultRow {
+  id: string; speaker_list_id: string; queue_entry_id: string; seat_id: string; seat_display_name: string;
+  kind: SpeechRecord['kind']; status: SpeechRecord['status']; inherited_from_speech_id: string | null;
+  inherited_time_ms: string | number | null; can_yield: boolean; yield_type: SpeechRecord['yieldType'];
+  yield_target_seat_id: string | null; revision: number; started_at: Date | null; ended_at: Date | null;
+}
+
+async function snapshotSpeeches(client: PoolClient, listId: string): Promise<SpeechRecord[]> {
+  const rows = await client.query<SnapshotSpeechRow>('SELECT * FROM speeches WHERE speaker_list_id=$1 ORDER BY created_at,id', [listId]);
+  return Promise.all(rows.rows.map(async row => {
+    const [actions, contributions] = await Promise.all([
+      client.query<{id: string; action: SpeechRecord['actions'][number]['action']; remaining_ms: string | number;
+        target_type: SpeechRecord['yieldType']; target_seat_id: string | null; created_at: Date}>(`SELECT id,action,remaining_ms,
+        target_type,target_seat_id,created_at FROM speech_actions WHERE speech_id=$1 ORDER BY created_at,id`, [row.id]),
+      client.query<{id: string; type: 'QUESTION' | 'COMMENT'; seat_id: string; seat_display_name: string; content: string;
+        created_at: Date}>(`SELECT id,type,seat_id,seat_display_name,content,created_at FROM speech_contributions
+        WHERE speech_id=$1 ORDER BY created_at,id`, [row.id])
+    ]);
+    return {id: row.id, speakerListId: row.speaker_list_id, queueEntryId: row.queue_entry_id, seatId: row.seat_id,
+      seatDisplayName: row.seat_display_name, kind: row.kind, status: row.status,
+      inheritedFromSpeechId: row.inherited_from_speech_id,
+      inheritedTimeMs: row.inherited_time_ms === null ? null : Number(row.inherited_time_ms), canYield: row.can_yield,
+      yieldType: row.yield_type, yieldTargetSeatId: row.yield_target_seat_id, revision: row.revision,
+      startedAt: row.started_at?.toISOString() ?? null, endedAt: row.ended_at?.toISOString() ?? null,
+      actions: actions.rows.map(action => ({id: action.id, action: action.action, remainingMs: Number(action.remaining_ms),
+        targetType: action.target_type, targetSeatId: action.target_seat_id, createdAt: action.created_at.toISOString()})),
+      contributions: contributions.rows.map(item => ({id: item.id, type: item.type, seatId: item.seat_id,
+        seatDisplayName: item.seat_display_name, content: item.content, createdAt: item.created_at.toISOString()}))};
+  }));
 }
 
 function note(row: NoteRow): CommitteeNote {
@@ -596,7 +628,8 @@ export class Stage4Service {
           speechTimerId: row.speech_timer_id, totalTimerId: row.total_timer_id, revision: row.revision,
           queue: queue.rows.map(entry => ({id: entry.id, seatId: entry.seat_id, seatDisplayName: entry.seat_display_name,
             position: entry.position, status: entry.status, createdAt: entry.created_at.toISOString()})),
-          createdAt: row.created_at.toISOString(), closedAt: row.closed_at?.toISOString() ?? null};
+          createdAt: row.created_at.toISOString(), closedAt: row.closed_at?.toISOString() ?? null,
+          speeches: await snapshotSpeeches(client, row.id)};
       }));
       if (viewer.audience !== 'PUBLIC') {
         const [notes, posts, timers] = await Promise.all([

@@ -1,13 +1,19 @@
 // @vitest-environment node
 
 import {describe, expect, it} from 'vitest';
-import {remainingTimerMs, timerState} from './service';
+import {canYieldSpeech, remainingTimerMs, timerState} from './service';
 
 describe('server-authoritative timers', () => {
   it('derives a running timer only from server time and persisted start state', () => {
     const row = {running: true, started_at: new Date('2026-08-13T00:00:00.000Z'), remaining_at_start_ms: 60_000};
     expect(remainingTimerMs(row, new Date('2026-08-13T00:00:15.250Z'))).toBe(44_750);
     expect(remainingTimerMs(row, new Date('2026-08-13T00:02:00.000Z'))).toBe(0);
+  });
+
+  it('allows only paused original time to be yielded once', () => {
+    expect(canYieldSpeech({kind: 'ORIGINAL', can_yield: true, status: 'PAUSED'}, 1_001, false)).toBe(true);
+    expect(canYieldSpeech({kind: 'INHERITED', can_yield: false, status: 'PAUSED'}, 30_000, false)).toBe(false);
+    expect(canYieldSpeech({kind: 'ORIGINAL', can_yield: true, status: 'RUNNING'}, 30_000, true)).toBe(false);
   });
 
   it('serializes the server observation time and never exposes negative remaining time', () => {

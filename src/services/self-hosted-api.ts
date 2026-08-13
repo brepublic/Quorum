@@ -2,6 +2,7 @@ import type {
   CommitteeEventEnvelope,
   AuthoritativeTimer,
   SpeakerList,
+  SpeechRecord,
   CommitteeNote,
   CommitteeSummary,
   CommitteeTemplate,
@@ -169,6 +170,18 @@ export const selfHostedApi = {
   },
   advanceSpeakerQueue(id: string, baseRevision: number) {
     return request<SpeakerList>(`/api/v1/speaker-lists/${id}/advance`, {method: 'POST', body: {baseRevision}});
+  },
+  commandSpeech(listId: string, command: 'start' | 'pause' | 'resume' | 'complete', baseRevision: number) {
+    return request<SpeechRecord>(`/api/v1/speaker-lists/${listId}/speech/${command}`,
+      {method: 'POST', body: {baseRevision}});
+  },
+  yieldSpeech(id: string, baseRevision: number, type: 'CHAIR' | 'SEAT' | 'QUESTIONS' | 'COMMENTS', targetSeatId?: string) {
+    return request<SpeechRecord>(`/api/v1/speeches/${id}/yield`, {method: 'POST',
+      body: {baseRevision, type, ...(targetSeatId ? {targetSeatId} : {})}});
+  },
+  recordSpeechContribution(id: string, type: 'QUESTION' | 'COMMENT', content: string, seatId?: string) {
+    return request<SpeechRecord>(`/api/v1/speeches/${id}/contributions`, {method: 'POST',
+      body: {type, content, ...(seatId ? {seatId} : {})}});
   },
   updateCommittee(id: string, baseRevision: number, patch: Record<string, unknown>) {
     return request<CommitteeSummary>(`/api/v1/committees/${id}`, {method: 'PATCH', body: {baseRevision, patch}});

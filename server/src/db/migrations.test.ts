@@ -64,6 +64,15 @@ describe('migration discovery', () => {
     expect(queues?.sql).not.toContain("'gsl'");
   });
 
+  it('keeps speech actions and contributions append-only', async () => {
+    const migrations = await loadMigrations(resolve('server/migrations'));
+    const speeches = migrations.find(migration => migration.version === 8);
+    expect(speeches?.name).toBe('speech_history_yields');
+    expect(speeches?.sql).toContain('speeches_one_active_per_list');
+    expect(speeches?.sql).toContain('speech_actions_append_only');
+    expect(speeches?.sql).toContain('speech_contributions_append_only');
+  });
+
   it('rejects SQL files outside the versioned naming contract', async () => {
     const directory = await temporaryDirectory();
     await writeFile(join(directory, 'first.sql'), 'SELECT 1;\n');
