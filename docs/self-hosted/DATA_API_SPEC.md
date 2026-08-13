@@ -271,7 +271,7 @@ unique(ballot_id, seat_id)
 
 ### `strawpolls`、`strawpoll_options`
 
-`voting_mode` 为 `SEAT_AUTHENTICATED` 或 `ANONYMOUS`。席位模式复用一席一票语义。匿名模式使用不可猜测访问 token、poll 专用浏览器标识和限流；匿名票不保存为正式 ballot，也不能转换成正式结果。
+`voting_mode` 为 `SEAT_AUTHENTICATED` 或 `ANONYMOUS`。席位模式复用一席一票语义。匿名模式使用不可猜测访问 token、由 Session 派生的 poll 专用凭证和限流；匿名票不保存为正式 ballot，也不能转换成正式结果。
 
 ## 8. 规则、事件、审计和后台任务
 
@@ -444,28 +444,41 @@ POST /api/v1/committees/:id/attendance-events
 POST /api/v1/committees/:id/points
 POST /api/v1/points/:id/resolve
 
-POST /api/v1/speaker-lists/:id/requests
-POST /api/v1/speaker-requests/:id/approve
-POST /api/v1/speaker-requests/:id/reject
+POST /api/v1/committees/:id/speaker-lists
+POST /api/v1/speaker-lists/:id/queue
 POST /api/v1/speaker-lists/:id/advance
 POST /api/v1/speaker-lists/:id/reorder
-POST /api/v1/speaker-lists/:id/yield
+POST /api/v1/speaker-lists/:id/speech/{start,pause,resume,complete}
+POST /api/v1/speeches/:id/yield
+POST /api/v1/speeches/:id/contributions
 
 POST /api/v1/committees/:id/motions
 POST /api/v1/motions/:id/second
 POST /api/v1/motions/:id/decide
 
+POST /api/v1/committees/:id/timers
 POST /api/v1/timers/:id/start
 POST /api/v1/timers/:id/pause
+POST /api/v1/timers/:id/resume
 POST /api/v1/timers/:id/reset
 POST /api/v1/timers/:id/extend
+POST /api/v1/timers/:id/expire
 
-POST /api/v1/ballots/:id/open
+POST /api/v1/committees/:id/ballots
 POST /api/v1/ballots/:id/votes
 POST /api/v1/ballots/:id/correct-vote
 POST /api/v1/ballots/:id/close
 POST /api/v1/ballots/:id/publish
-POST /api/v1/ballots/:id/reopen
+
+POST /api/v1/committees/:id/strawpolls
+POST /api/v1/strawpolls/:id/votes
+POST /api/v1/strawpolls/:id/close
+
+POST /api/v1/committees/:id/resolutions
+POST /api/v1/resolutions/:id/amendments
+POST /api/v1/documents/:id/versions
+POST /api/v1/documents/:id/commands
+POST /api/v1/documents/:id/discussion
 ```
 
 ### 规则与实时
@@ -701,6 +714,14 @@ PUBLIC 匿名快照不返回 membership、assignment、用户 ID、actor、capab
 
 跨页面和跨浏览器一致性在阶段 4 通过重新读取快照、窗口重新聚焦时 revalidation、显式刷新和 409 后重新读取实现。本阶段不开放 `/events`、`Last-Event-ID`、心跳、轮询模拟实时或事件驱动 React store。
 
+## 11.3 阶段 5 高并发命令契约
+
+阶段 5 在阶段 4 安全边界上增加受众过滤 SSE 和显式议事命令。`ACTIVE` 委员会允许命令，`PAUSED`、`ARCHIVED` 与 `DELETING` 拒绝议事写入。actor 始终由 Session 推导；Chair 代办只接受 `onBehalfOfSeatId`，并同时保存真实 actor。每个成功写命令在一个 PostgreSQL 事务中提交状态、委员会事件和审计。
+
+计时器只保存 `running`、`started_at`、`remaining_at_start_ms`、到期和 revision，不写每秒 tick。发言名单行锁串行化重排和切换，数据库唯一索引限制一个当前发言人。动议、ballot 和文档使用显式状态机；ballot 创建时冻结资格、门槛、must-vote、否决席位和规则版本，一席一票由数据库唯一约束保证。
+
+匿名意向性投票把重复投票 receipt 与选项 selection 分表保存；selection 不含 actor、席位、凭证或时间，快照、事件和审计不暴露投票人与选项关联。决议草案和修正案正文采用追加版本；进入表决时固定 `voting_version_id`，数据库触发器拒绝静默替换。本阶段没有文件 provider、上传或 Local Agent。
+
 ## 12. SSE 格式
 
 ```text
@@ -718,7 +739,11 @@ attendance.changed
 point.raised
 point.resolved
 speaker_request.created
+speaker_list.created
 speaker_queue.changed
+speech.changed
+speech.yielded
+speech.contribution_recorded
 timer.changed
 timer.expired
 motion.proposed
@@ -727,6 +752,13 @@ ballot.opened
 ballot.vote_recorded
 ballot.vote_corrected
 ballot.result_published
+strawpoll.created
+strawpoll.vote_recorded
+strawpoll.closed
+document.created
+document.version_created
+document.status_changed
+document.discussion_added
 file.created
 file.sync_state_changed
 file.deleted

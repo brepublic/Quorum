@@ -132,6 +132,8 @@ deploy/
 
 ## 8. 阶段 5：实时与高并发议事
 
+状态：5.1–5.8 代码、无数据库自动测试和生产构建已完成；真实 PostgreSQL、代理/TLS、多浏览器和 Firebase emulator/Cypress 回归按 `MANUAL_ACCEPTANCE.md` 延期。
+
 迁移顺序：
 
 1. 快照、committee event sequence 和 SSE 补偿；
@@ -230,4 +232,4 @@ deploy/
 
 ## 14. 首个实现里程碑
 
-建议下一步只实施阶段 0 和阶段 1：建立共享契约、后端空骨架、PostgreSQL migration 和本地 Compose，并保持现有 Firebase 应用行为不变。第一个可演示结果应是同一域名下 SPA 正常打开、`/health/ready` 返回后端和数据库状态、空库 migration 可重建；此时还不切换登录或业务页面。
+下一步只实施阶段 6：服务器卷和 S3 文件。保持阶段 5 议事、Firebase 默认运行时和同源安全边界不变，不提前实现 Chair Local Agent、归档或 Firebase 移除。

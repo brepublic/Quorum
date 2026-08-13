@@ -122,7 +122,7 @@
 
 - 前置条件：PostgreSQL 16；`TEST_DATABASE_ADMIN_URL` 指向可创建和删除数据库的管理员连接。
 - 操作步骤：执行 `TEST_DATABASE_ADMIN_URL=postgresql://... pnpm test:self-host:integration`；确认测试创建随机临时数据库，从空库执行全部 migration，再执行一次；检查阶段 3 表、外键、部分唯一索引、邀请码约束、已发布规则版本和审计追加限制。
-- 通过条件：两次 migration 均成功；当前 schema compatibility 为 4，且 12 个阶段 3 核心表继续存在；同一用户的第二个活动席位被拒绝；已发布规则版本和审计记录不能更新或删除；测试数据库最终清理。
+- 通过条件：两次 migration 均成功；当前 schema compatibility 为 12，且 12 个阶段 3 核心表继续存在；同一用户的第二个活动席位被拒绝；已发布规则版本和审计记录不能更新或删除；测试数据库最终清理。
 - 自动化覆盖情况：`server/src/db/migrations.integration.test.ts` 检查空库、重复执行和表清单；`server/src/modules/stage3/postgres.integration.test.ts` 检查索引、外键、历史行和不可变触发器。未配置 URL 时测试明确 skip。
 - 当前状态：因无服务器延期。
 - 需要保存的证据：测试输出、`quorum_meta.schema_migrations`、表与索引查询、触发器失败结果和临时数据库清理记录。
@@ -160,7 +160,7 @@
 
 - 前置条件：PostgreSQL 16；`TEST_DATABASE_ADMIN_URL` 指向可创建和删除数据库的管理员连接。
 - 操作步骤：执行 `TEST_DATABASE_ADMIN_URL=postgresql://... pnpm test:self-host:integration`；检查 migration 4、模板隔离、幂等键、revision 冲突、软删除、并发点名和追加式出席事件用例。
-- 通过条件：schema compatibility 为 4；阶段 4 表、外键、唯一索引和追加式触发器均生效；并发写只有一个符合 revision 的请求成功；临时数据库最终清理。
+- 通过条件：schema compatibility 为 12；migration 4 的表、外键、唯一索引和追加式触发器均生效；并发写只有一个符合 revision 的请求成功；临时数据库最终清理。
 - 自动化覆盖情况：migration 与 `server/src/modules/stage4/postgres.integration.test.ts` 已实现；当前环境未提供 PostgreSQL，因此明确 skip。
 - 当前状态：因无服务器延期。
 - 需要保存的证据：测试输出、migration 表、阶段 4 表与索引查询、并发结果和临时数据库清理记录。
@@ -196,7 +196,83 @@
 
 - 前置条件：PUBLIC 与 PRIVATE 委员会；匿名、非 member、member、Chair、Owner 和系统管理员访问者；两个浏览器。
 - 操作步骤：访问深层委员会路由并刷新；比较各 audience 快照；在一个浏览器修改笔记、点名或问题，在另一个窗口重新聚焦并显式刷新；检查网络请求。
-- 通过条件：PUBLIC 匿名页面可读取公开字段；PRIVATE 未授权访问统一 404；公开响应不含 owner、用户 ID、actor、正文、主席内部回应或审计；member/Chair/Owner 字段逐级增加；重新聚焦可取得最新快照；网络中没有 Firebase、`/events`、EventSource 或轮询请求。
-- 自动化覆盖情况：快照过滤、HTTP 匿名路由、前端 focus revalidation 和静态边界已有测试；真实深层 SPA fallback、TLS、多浏览器和网络面板需人工确认。
+- 通过条件：PUBLIC 匿名页面可读取公开字段；PRIVATE 未授权访问统一 404；公开响应不含 owner、用户 ID、actor、私有正文、主席内部回应或审计；member/Chair/Owner 字段逐级增加；重新聚焦可取得最新快照；网络中没有 Firebase 请求。
+- 自动化覆盖情况：快照过滤、HTTP 匿名路由、前端 focus revalidation 和静态边界已有测试；阶段 5 会在同源 `/events` 上建立 SSE，真实深层 SPA fallback、TLS、多浏览器和网络面板需人工确认。
 - 当前状态：因无服务器延期。
 - 需要保存的证据：各 audience 脱敏响应差异、浏览器截图、网络 HAR、深层路由刷新结果和代理日志。
+
+## 阶段 5：实时与高并发议事
+
+当前环境未提供 `TEST_DATABASE_ADMIN_URL`、Docker、Caddy、TLS 或多浏览器。阶段 5 的真实 PostgreSQL 集成文件已编写但在本环境明确 skip；以下项目均未标记为通过。
+
+### SH-MAN-401 migration 5–12 与并发约束
+
+- 前置条件：PostgreSQL 16；`TEST_DATABASE_ADMIN_URL` 指向可创建和删除数据库的管理员连接。
+- 操作步骤：执行 `TEST_DATABASE_ADMIN_URL=postgresql://... pnpm test:self-host:integration`；保留 migration 5–12、两名 Chair 并发重排和同席位两名代表并发投票的输出。
+- 通过条件：schema compatibility 为 12；空库 migration 和重复执行成功；并发重排只有一个 revision 成功且活动位置唯一；同席位并发投票只有一张当前票；临时数据库被清理。
+- 自动化覆盖情况：`server/src/db/migrations.integration.test.ts` 与 `server/src/modules/stage5/postgres.integration.test.ts` 已实现；未配置 URL 时明确 skip。
+- 当前状态：因无服务器延期。
+- 需要保存的证据：完整测试输出、`quorum_meta.schema_migrations`、相关唯一索引和触发器查询、两组并发结果及临时数据库清理记录。
+
+### SH-MAN-402 SSE 游标、断线补偿和权限变化
+
+- 前置条件：Caddy HTTPS 实例；PUBLIC、member、Chair、Owner 四种身份；可调整代理断线和事件保留游标。
+- 操作步骤：同时传入不同的 `Last-Event-ID` 与 `after`；断开后重连；把游标调到保留范围之前；注入客户端未知事件；连接期间撤销 membership 或 Chair 能力；检查同一浏览器重复打开同委员会页面。
+- 通过条件：服务端采用更新且有效的游标；有效断线按序补齐；过期游标稳定返回 410 并触发完整快照；序号缺口或未知事件不应用部分状态；权限变化后连接重新鉴权并关闭；每浏览器每委员会最多一条流。
+- 自动化覆盖情况：realtime service、HTTP SSE 和前端同步状态测试覆盖游标选择、410、未知事件和单流；真实代理断线、浏览器复用及权限时序需人工确认。
+- 当前状态：因无服务器延期。
+- 需要保存的证据：HAR、SSE frame 序号、410 响应、快照请求、撤权时间线、服务端 request ID 和浏览器连接数。
+
+### SH-MAN-403 SSE 心跳与 Caddy 禁用缓冲
+
+- 前置条件：真实 Caddy 反向代理；可用 `curl -N` 和浏览器网络面板。
+- 操作步骤：在无业务事件时保持流至少两个心跳周期；分别直连应用和经 Caddy 访问；记录首字节和每次心跳到达时间。
+- 通过条件：响应为 `text/event-stream`，含 `Cache-Control: no-cache` 与 `X-Accel-Buffering: no`；心跳及时逐条到达，不成批缓冲；断开能被服务端释放。
+- 自动化覆盖情况：HTTP 和部署配置测试检查响应头、心跳与 `flush_interval -1`；真实代理行为未执行。
+- 当前状态：因无服务器延期。
+- 需要保存的证据：`curl -N` 时间戳、响应头、Caddy 配置、代理日志和断开前后连接计数。
+
+### SH-MAN-404 权威计时、发言队列、让渡和主席代办
+
+- 前置条件：两个 Chair、三个出席席位、`DELEGATE_OPERATED` 与 `CHAIR_OPERATED` 委员会各一；两个浏览器。
+- 操作步骤：开始、暂停、恢复、延长、重置并等待到期；修改客户端系统时钟；并发重排和切换发言人；尝试未暂停切换；完成不足一次发言时间的有主持核心磋商；执行四类让渡并尝试二次让渡；由 Chair 代席位记录问题和评论。
+- 通过条件：数据库不产生每秒写入；显示由服务器基线和单调时钟推导，修改系统时钟不改变真实剩余时间；队列顺序和当前发言人唯一；未暂停不能切换；不足完整发言时结束磋商；继承时间不能再次让渡；审计同时记录真实 actor 与代行席位。
+- 自动化覆盖情况：计时纯函数、服务命令、迁移约束和 PostgreSQL 并发测试覆盖核心边界；真实时钟篡改、两个浏览器和长时间到期需人工确认。
+- 当前状态：因无服务器延期。
+- 需要保存的证据：数据库写入时间线、两浏览器响应、计时截图、queue/timer/speech/action/audit 查询和时钟修改前后对比。
+
+### SH-MAN-405 动议与正式 ballot
+
+- 前置条件：已发布规则包；含普通、must-vote 和否决席位的委员会；同一席位绑定两名代表；两名 Chair。
+- 操作步骤：由出席和缺席席位分别提出及附议；并发裁决同一 revision；创建程序性与实质性 ballot；同席位并发投票；代表尝试改票；Chair 更正；在 must-vote 未齐和否决席位未齐时结束；收齐后公布通过、未通过和否决结果。
+- 通过条件：动议规则版本和评估快照冻结；状态只能经命令迁移且通过/未通过都保留时间和 actor；ballot 冻结资格、门槛、must-vote、否决和规则版本；程序性 ballot 无弃权；代表不能改票；更正追加历史；否决席位存在时收齐合资格票后才公布。
+- 自动化覆盖情况：迁移、服务、HTTP 和 PostgreSQL 并发测试覆盖状态机、一席一票及历史；真实多账号 UI 和全部结果矩阵需人工确认。
+- 当前状态：因无服务器延期。
+- 需要保存的证据：motion/ballot/vote/revision/event/audit 查询、并发响应、公布前后快照和各角色页面截图。
+
+### SH-MAN-406 匿名与席位意向性投票
+
+- 前置条件：匿名和席位实名意向性投票各一；member、Chair、PUBLIC 访问者；可查询测试数据库。
+- 操作步骤：匿名投票后检查快照、SSE、审计、receipt 和 selection 表；同一账号重复投票；席位模式下让同席位两名代表并发投票；尝试把意向性结果作为正式 ballot 输入。
+- 通过条件：两种模式清晰标识；匿名 receipt 与 selection 无共同标识或时间，事件/快照仅含聚合，审计不含选项 ID；重复匿名身份和重复席位只有一次成功；没有转换为正式 ballot 的命令或数据路径。
+- 自动化覆盖情况：迁移静态测试、HTTP 边界和 PostgreSQL 集成用例已实现；匿名关联攻击审查和真实浏览器流程需人工确认。
+- 当前状态：因无服务器延期。
+- 需要保存的证据：脱敏表结构与查询、SSE payload、快照、审计摘要、重复请求结果和 API 路由清单。
+
+### SH-MAN-407 决议草案、修正案与冻结版本
+
+- 前置条件：包含阶段 5 文档稳定 ID 的已发布规则包；Chair 和两个出席 member。
+- 操作步骤：创建决议草案和修正案；创建新版本；按稳定 ID 发布、讨论、延置、恢复和建议表决；进入表决后尝试替换当前版本；创建 ballot 并公布结果。
+- 通过条件：每次正文修改新增不可变版本；规则动作引用冻结包中的唯一稳定 ID；进入表决时固定 `voting_version_id`，服务和数据库都拒绝替换；ballot 发布与文档最终状态在同一事务完成；没有 file entry、上传或 Local Agent 路径。
+- 自动化覆盖情况：规则 fixture、迁移触发器、HTTP、服务和 PostgreSQL 集成用例已实现；真实角色 UI 和数据库触发器执行需人工确认。
+- 当前状态：因无服务器延期。
+- 需要保存的证据：document/version/action/discussion/ballot/event/audit 查询、拒绝响应、规则快照和各状态页面截图。
+
+### SH-MAN-408 Firebase 与自托管运行时回归
+
+- 前置条件：Java 21、Firebase Emulator Suite、已安装 Cypress 二进制，以及独立自托管测试实例。
+- 操作步骤：运行 `pnpm test:e2e`；分别构建默认与 `VITE_RUNTIME_MODE=self-hosted`；在两个浏览器检查网络请求和相同业务动作。
+- 通过条件：Firebase emulator/Cypress 既有用例通过；默认构建仍只走 Firebase；自托管构建只走同源 API/SSE；任何动作都不双写；简体中文议事控件和状态可读。
+- 自动化覆盖情况：两个生产构建和 runtime 静态测试已实现；当前环境缺少 Cypress 二进制及真实浏览器，未执行 E2E。
+- 当前状态：因无服务器延期。
+- 需要保存的证据：Cypress 输出、两个构建日志、两份 HAR、浏览器截图及 Firebase/PostgreSQL 写入对比。

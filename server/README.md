@@ -1,6 +1,6 @@
 # Quorum 自托管后端
 
-当前实现阶段 1–4：后端与部署骨架、身份、委员会核心领域、Chair 能力、席位、邀请码、规则包，以及低并发模板、文本、点名、出席和问题切片。阶段 4 已接入自托管 React 页面；仍不包含 SSE、计时器、发言队列、动议或表决。
+当前实现阶段 1–5：后端与部署骨架、身份、委员会核心领域、规则包、低并发切片，以及 SSE、权威计时器、发言队列、动议、正式 ballot、意向性投票和版本化决议草案。阶段 5 已接入自托管 React 议事页面；仍不包含文件 provider、上传或 Local Agent。
 
 本机运行：
 
@@ -39,6 +39,17 @@ PUT|DELETE /api/v1/{notes,text-posts}/:id
 POST /api/v1/meeting-sessions/:id/close
 POST /api/v1/roll-calls/:id/{record-response,undo,reset}
 POST /api/v1/points/:id/resolve
+GET  /api/v1/committees/:id/events
+POST /api/v1/committees/:id/{timers,speaker-lists,motions,ballots,strawpolls,resolutions}
+POST /api/v1/timers/:id/{start,pause,resume,extend,reset,expire}
+POST /api/v1/speaker-lists/:id/{queue,reorder,advance}
+POST /api/v1/speaker-lists/:id/speech/{start,pause,resume,complete}
+POST /api/v1/speeches/:id/{yield,contributions}
+POST /api/v1/motions/:id/{second,decide}
+POST /api/v1/ballots/:id/{votes,correct-vote,close,publish}
+POST /api/v1/strawpolls/:id/{votes,close}
+POST /api/v1/resolutions/:id/amendments
+POST /api/v1/documents/:id/{versions,commands,discussion}
 ```
 
 `/health/ready` 只有在数据库可访问、所有仓库 migration 已应用且存储目录可读写时返回 200。
