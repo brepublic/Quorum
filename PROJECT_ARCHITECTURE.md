@@ -2,7 +2,7 @@
 
 > 本文件是本仓库的维护入口。后续涉及代码、构建、测试或运行的工作，应先阅读本文件和 `AGENTS.md`，并以实际代码为准更新本文档。
 
-> Quorum 已完成自主托管目标设计，并已落地实施计划阶段 0–7。`self-hosted` 运行时以 PostgreSQL 为唯一业务真相，通过同源 API 与受众过滤 SSE 提供议事功能；上传可流式暂存并提交到服务器持久卷、S3 compatible provider 或当前主席电脑。文件可在自托管工作区审核、发布、授权下载、异步物理删除并在服务器卷与 S3 之间安全迁移。桌面 Agent 已具备安全目录、墓碑优先同步、原子落盘、全量扫描、中断恢复和显式冲突裁决，并可生成携带固定运行时的 Windows、macOS 与 Linux 发布包。原生签名、公证和安装证据仍须在目标系统取得。
+> Quorum 已完成自主托管目标设计，并已落地实施计划阶段 0–7 与阶段 8.1。`self-hosted` 运行时以 PostgreSQL 为唯一业务真相，通过同源 API 与受众过滤 SSE 提供议事功能；上传可流式暂存并提交到服务器持久卷、S3 compatible provider 或当前主席电脑。文件可在自托管工作区审核、发布、授权下载、异步物理删除并在服务器卷与 S3 之间安全迁移。委员会可进入全工作区只读归档，并由 Owner 流式导出议事记录、审计和文件 manifest。桌面 Agent 已具备安全目录、墓碑优先同步、原子落盘、全量扫描、中断恢复和显式冲突裁决，并可生成携带固定运行时的 Windows、macOS 与 Linux 发布包。原生签名、公证和安装证据仍须在目标系统取得。
 
 ## 1. 项目定位与技术栈
 
@@ -169,6 +169,7 @@ system
 - 阶段 7.4 增加独立 `packages/storage-agent` Node 程序。配对凭据与 Ed25519 私钥只保存到 Agent 私有配置；共享目录元数据不含秘密或绝对根路径。Agent 每轮先拉取完整 manifest 并处理墓碑，再领取固定 generation 的 task；下载写入内部 0600 临时文件，完整校验大小和 SHA-256 后原子发布。相对路径统一拒绝绝对路径、点路径、Windows 保留名、符号链接、硬链接和非普通文件。文件系统通知只作为快速提示，周期递归扫描是最终依据；本地新增、修改、重命名和删除一次上报一个显式变化，pending upload 与 task recovery 状态原子持久化。并发本地编辑保留原内容并形成服务端 durable conflict；陈旧 lease 立即停机，其他故障指数退避且日志只记录稳定代码。
 - 阶段 7.5 在文件页增加当前主机、在线状态、最后在线时间、一次性配对/转移码和撤销操作。Owner/Chair 可读取 durable conflict，并以 conflict revision、当前 lease generation、file revision 和幂等键选择保留服务端、采用本地或另存为新文件；暂停、陈旧状态、墓碑复活和旧主机写入均被拒绝。浏览器 conflict 响应只保留文件名，不返回 Agent 相对目录。裁决状态、Chair 事件和审计同事务提交，Agent 以持久 request ID 重放本地裁决；磁盘/网络故障保留 task 重试，裁决后的新本地编辑形成新的 durable conflict。`status` 命令只输出 generation、manifest sequence 和聚合计数。
 - 阶段 7.6 固定 Agent 0.1.0 与 Node.js 22.23.2，为 Windows x86-64、macOS x86-64/arm64 和非阻断 Linux x86-64 生成自包含发布包。构建先校验 Node 官方归档 SHA-256，只携带运行时、编译 JS、入口、许可证和安装说明；归档路径顺序、时间戳、权限及 release manifest 可复现。签名脚本只引用 Windows 证书存储 thumbprint 或 macOS keychain identity/profile，不接收私钥和密码。当前 WSL 已验证未签名包、SHA-256、内容、权限、秘密扫描与 Linux 运行；Windows/macOS 签名、公证、ACL、Gatekeeper、SmartScreen 和原生文件系统仍是人工验收项。
+- 阶段 8.1 允许 Committee Owner 归档活动委员会。归档后同源 API 在既有领域服务边界拒绝委员会、议事、文本和文件写入，前端只保留按角色读取及文件下载；Owner 可从 PostgreSQL `REPEATABLE READ READ ONLY` 快照分页流式导出 JSON Lines。导出使用显式列白名单，包含议事记录、审计和文件大小/SHA-256 manifest，不包含凭据哈希、Session、设备秘密、provider storage key、源 IP 摘要或文件正文。
 
 因此，数据库规则和 Storage 元数据是产品的关键安全边界；变更前必须同时审查前端写入路径与这两份规则文件。
 

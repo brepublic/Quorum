@@ -26,6 +26,18 @@ describe('self-hosted stage 4 API client', () => {
     }));
   });
 
+  it('archives with CSRF and exposes only the same-origin archive download route', async () => {
+    const fetchMock = vi.fn(async () => ({ok: true, status: 200,
+      json: async () => ({data: {id: 'committee', status: 'ARCHIVED'}, meta: {requestId: 'archive'}})}));
+    vi.stubGlobal('fetch', fetchMock);
+    await selfHostedApi.archiveCommittee('committee', 8);
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/committees/committee/archive', expect.objectContaining({
+      method: 'POST', credentials: 'same-origin', body: JSON.stringify({baseRevision: 8}),
+      headers: expect.objectContaining({'x-csrf-token': 'csrf-token'})
+    }));
+    expect(selfHostedApi.committeeExportUrl('committee id')).toBe('/api/v1/committees/committee%20id/export');
+  });
+
   it('preserves stable API errors so callers can revalidate after revision conflicts', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ok: false, status: 409,
       json: async () => ({error: {code: 'REVISION_CONFLICT', message: 'Changed.', requestId: 'two',

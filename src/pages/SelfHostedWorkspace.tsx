@@ -169,7 +169,8 @@ function TextResources({kind, snapshot, run, api}: {kind: 'notes' | 'posts'; sna
   run(operation: () => Promise<unknown>): Promise<void>; api: SelfHostedApi}) {
   const [title, setTitle] = React.useState(''); const [content, setContent] = React.useState('');
   const resources = kind === 'notes' ? snapshot.notes : snapshot.textPosts;
-  const canWrite = snapshot.viewer.audience !== 'PUBLIC';
+  const canWrite = snapshot.viewer.audience !== 'PUBLIC'
+    && snapshot.committee.status !== 'ARCHIVED' && snapshot.committee.status !== 'DELETING';
   const create = async () => { if (kind === 'notes') await run(() => api.createNote(snapshot.committee.id, {title, content}));
     else await run(() => api.createTextPost(snapshot.committee.id, {title, content})); setTitle(''); setContent(''); };
   const edit = (resource: CommitteeNote | CommitteeTextPost) => {
@@ -183,9 +184,9 @@ function TextResources({kind, snapshot, run, api}: {kind: 'notes' | 'posts'; sna
   return <>{canWrite && <Form onSubmit={create}><Form.Input label={t('Title')} value={title} onChange={e => setTitle(e.currentTarget.value)} />
     <Form.TextArea label={t('Content')} required value={content} onChange={(_, data) => setContent(String(data.value))} />
     <Button primary disabled={!content}>{kind === 'notes' ? t('Create note') : t('Create text post')}</Button></Form>}
-    <List divided relaxed>{resources.map(resource => <List.Item key={resource.id}><List.Content floated="right">
+    <List divided relaxed>{resources.map(resource => <List.Item key={resource.id}>{canWrite && <List.Content floated="right">
       <Button size="mini" onClick={() => void edit(resource)}>{t('Edit')}</Button>
-      <Button size="mini" negative onClick={() => void remove(resource)}>{t('Delete')}</Button></List.Content>
+      <Button size="mini" negative onClick={() => void remove(resource)}>{t('Delete')}</Button></List.Content>}
       <List.Header>{resource.title || t('Untitled')}</List.Header><List.Description style={{whiteSpace: 'pre-wrap'}}>{resource.content}</List.Description>
     </List.Item>)}</List></>;
 }
@@ -196,24 +197,29 @@ function Overview({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspaceS
   const [chairUserId, setChairUserId] = React.useState(''); const [assignmentUserId, setAssignmentUserId] = React.useState('');
   const [assignmentSeatId, setAssignmentSeatId] = React.useState(snapshot.seats[0]?.id ?? '');
   const owner = snapshot.viewer.audience === 'OWNER';
-  return <><Header as="h2">{t('Committee profile')}</Header>{owner && <Form onSubmit={() => run(() => api.updateCommittee(
+  const readOnly = snapshot.committee.status === 'ARCHIVED' || snapshot.committee.status === 'DELETING';
+  return <><Header as="h2">{t('Committee profile')}</Header>{owner && !readOnly && <Form onSubmit={() => run(() => api.updateCommittee(
     snapshot.committee.id, snapshot.committee.revision, {name}))}><Form.Input label={t('Committee name')} value={name}
       onChange={e => setName(e.currentTarget.value)} /><Button primary>{t('Save changes')}</Button></Form>}
-    {owner && <><Header as="h2">{t('Chairs')}</Header><Form onSubmit={async () => { await run(() => api.grantChair(
+    {owner && !readOnly && <><Header as="h2">{t('Chairs')}</Header><Form onSubmit={async () => { await run(() => api.grantChair(
       snapshot.committee.id, chairUserId.trim(), snapshot.committee.revision)); setChairUserId(''); }}>
       <Form.Input label={t('Account ID')} required value={chairUserId} onChange={e => setChairUserId(e.currentTarget.value)} />
       <Button primary disabled={!chairUserId.trim()}>{t('Grant Chair')}</Button></Form></>}
-    <Header as="h2">{t('Seats')}</Header>{canChair && <Form onSubmit={async () => {await run(() => api.createSeat(snapshot.committee.id,
+    {owner && snapshot.committee.status === 'ARCHIVED' && <Button as="a" href={api.committeeExportUrl(snapshot.committee.id)} download>导出记录</Button>}
+    {owner && !readOnly && <Button negative onClick={() => {if (window.confirm('归档后委员会只读。继续？')) {
+      void run(() => api.archiveCommittee(snapshot.committee.id, snapshot.committee.revision));
+    }}}>归档委员会</Button>}
+    <Header as="h2">{t('Seats')}</Header>{canChair && !readOnly && <Form onSubmit={async () => {await run(() => api.createSeat(snapshot.committee.id,
       {stableKey: seatName.trim().toLowerCase().replace(/\s+/g, '-'), displayName: seatName})); setSeatName('');}}>
       <Form.Input label={t('Seat name')} required value={seatName} onChange={e => setSeatName(e.currentTarget.value)} />
       <Button primary disabled={!seatName.trim()}>{t('Create seat')}</Button></Form>}
     <Table basic="very"><Table.Body>{snapshot.seats.map(seat => <Table.Row key={seat.id}><Table.Cell><Flag seat={seat} /></Table.Cell>
       <Table.Cell>{seat.displayName}</Table.Cell><Table.Cell>{t(seat.rank)}</Table.Cell><Table.Cell>{seat.canVote ? t('Voting') : t('Non-voting')}</Table.Cell>
-      {canChair && <Table.Cell><Button size="mini" onClick={() => {const next = window.prompt(t('Seat name'), seat.displayName);
+      {canChair && !readOnly && <Table.Cell><Button size="mini" onClick={() => {const next = window.prompt(t('Seat name'), seat.displayName);
         if (next) void run(() => api.updateSeat(snapshot.committee.id, seat.id, seat.revision, {displayName: next}));}}>{t('Rename')}</Button>
         <Button size="mini" negative onClick={() => {if (window.confirm(t('Deactivate seat?'))) void run(() => api.updateSeat(
           snapshot.committee.id, seat.id, seat.revision, {active: false}));}}>{t('Deactivate')}</Button></Table.Cell>}</Table.Row>)}</Table.Body></Table>
-    {canChair && snapshot.seats.length > 0 && <><Header as="h2">{t('Seat assignments')}</Header><Form onSubmit={async () => {
+    {canChair && !readOnly && snapshot.seats.length > 0 && <><Header as="h2">{t('Seat assignments')}</Header><Form onSubmit={async () => {
       await run(() => api.assignSeat(snapshot.committee.id, assignmentSeatId, assignmentUserId.trim())); setAssignmentUserId('');}}>
       <Form.Select label={t('Seat')} value={assignmentSeatId} options={snapshot.seats.map(seat => ({key: seat.id, value: seat.id, text: seat.displayName}))}
         onChange={(_, data) => setAssignmentSeatId(String(data.value))} />
@@ -251,7 +257,8 @@ function PointsPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspa
   const session = snapshot.meetingSession;
   const create = async () => { if (!session) return; await run(() => api.createPoint(snapshot.committee.id,
     {meetingSessionId: session.id, pointTypeId: type, content, ...(chair && seatId ? {onBehalfOfSeatId: seatId} : {})})); setContent(''); };
-  const canRaise = snapshot.viewer.audience !== 'PUBLIC';
+  const canRaise = snapshot.viewer.audience !== 'PUBLIC'
+    && snapshot.committee.status !== 'ARCHIVED' && snapshot.committee.status !== 'DELETING';
   return <>{canRaise && session?.status === 'OPEN' && <Form onSubmit={create}><Form.Input label={t('Point type')} value={type} onChange={e => setType(e.currentTarget.value)} />
     {chair && <Form.Select label={t('Represented seat')} value={seatId} options={snapshot.seats.map(seat => ({key: seat.id, value: seat.id, text: seat.displayName}))}
       onChange={(_, data) => setSeatId(String(data.value))} />}
@@ -289,7 +296,8 @@ export function SelfHostedCommitteeWorkspace({api = selfHostedApi, user}: {api?:
     } finally { await refresh(); setWorking(false); } }, [refresh]);
   if (!snapshot && !error) return <Loading />;
   if (!snapshot) return <Container text><Message error content={error} /><Button onClick={() => void refresh()}>{t('Retry')}</Button></Container>;
-  const canChair = snapshot.viewer.audience === 'CHAIR' || snapshot.viewer.audience === 'OWNER';
+  const canChair = (snapshot.viewer.audience === 'CHAIR' || snapshot.viewer.audience === 'OWNER')
+    && snapshot.committee.status !== 'ARCHIVED' && snapshot.committee.status !== 'DELETING';
   const panels: Record<WorkspaceView, React.ReactNode> = {overview: <Overview snapshot={snapshot} run={run} api={api} canChair={canChair} />,
     notes: <TextResources kind="notes" snapshot={snapshot} run={run} api={api} />, posts: <TextResources kind="posts" snapshot={snapshot} run={run} api={api} />,
     files: <FilesPanel snapshot={snapshot} api={api} currentUserId={user?.id} />,

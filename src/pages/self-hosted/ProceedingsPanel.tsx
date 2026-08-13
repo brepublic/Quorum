@@ -38,6 +38,8 @@ export default function ProceedingsPanel({snapshot, run, api, canChair}: {snapsh
   const [resolutionTitle, setResolutionTitle] = React.useState('');
   const [resolutionContent, setResolutionContent] = React.useState('');
   const represented = canChair && seatId ? {onBehalfOfSeatId: seatId} : {};
+  const canParticipate = snapshot.viewer.audience !== 'PUBLIC'
+    && snapshot.committee.status !== 'ARCHIVED' && snapshot.committee.status !== 'DELETING';
   const activeLists = snapshot.speakerLists ?? []; const motions = snapshot.motions ?? [];
   const ballots = snapshot.ballots ?? []; const strawpolls = snapshot.strawpolls ?? [];
   const documents = snapshot.documents ?? [];
@@ -94,7 +96,7 @@ export default function ProceedingsPanel({snapshot, run, api, canChair}: {snapsh
       {meetingSessionId: session.id, kind: 'MODERATED_CAUCUS', topic: '有主持核心磋商', defaultSpeechMs: 60_000,
         totalDurationMs: 600_000}))}>新建有主持核心磋商</Button>}
     <List divided>{activeLists.map(list => <List.Item key={list.id}><List.Content floated="right">
-      {snapshot.viewer.audience !== 'PUBLIC' && list.status === 'OPEN' && <Button size="mini" onClick={() => void run(() =>
+      {canParticipate && list.status === 'OPEN' && <Button size="mini" onClick={() => void run(() =>
         api.joinSpeakerQueue(list.id, canChair ? seatId : undefined))}>加入名单</Button>}
       {canChair && list.status === 'OPEN' && <><Button size="mini" onClick={() => void run(() => api.commandSpeech(
         list.id, 'start', list.revision))}>开始发言</Button><Button size="mini" onClick={() => void run(() => api.commandSpeech(
@@ -105,12 +107,12 @@ export default function ProceedingsPanel({snapshot, run, api, canChair}: {snapsh
     </List.Item>)}</List>
 
     <Header as="h2">动议</Header>
-    {snapshot.viewer.audience !== 'PUBLIC' && <Form onSubmit={() => run(() => api.proposeMotion(snapshot.committee.id,
+    {canParticipate && <Form onSubmit={() => run(() => api.proposeMotion(snapshot.committee.id,
       {meetingSessionId: session.id, motionTypeId: motionType, ...represented}))}><Form.Input label="动议稳定 ID"
       value={motionType} onChange={event => setMotionType(event.currentTarget.value)} /><Button primary disabled={!motionType.trim()
         || (canChair && !seatId)}>提出动议</Button></Form>}
     <List divided>{motions.map(motion => <List.Item key={motion.id}><List.Content floated="right">
-      {motion.status === 'PENDING' && <Button size="mini" onClick={() => void run(() => api.secondMotion(motion.id,
+      {canParticipate && motion.status === 'PENDING' && <Button size="mini" onClick={() => void run(() => api.secondMotion(motion.id,
         canChair ? seatId : undefined))}>附议</Button>}
       {canChair && ['PENDING', 'SECONDED', 'VOTING'].includes(motion.status) && <><Button size="mini" positive onClick={() => void run(() =>
         api.decideMotion(motion.id, motion.revision, 'PASSED'))}>裁定通过</Button><Button size="mini" negative onClick={() => void run(() =>
@@ -122,7 +124,7 @@ export default function ProceedingsPanel({snapshot, run, api, canChair}: {snapsh
 
     <Header as="h2">正式表决</Header>
     <List divided>{ballots.map(ballot => <List.Item key={ballot.id}><List.Content floated="right">
-      {ballot.status === 'OPEN' && snapshot.viewer.audience !== 'PUBLIC' && ballot.choices.map(choice => <Button key={choice}
+      {ballot.status === 'OPEN' && canParticipate && ballot.choices.map(choice => <Button key={choice}
         size="mini" onClick={() => void run(() => api.castVote(ballot.id, choice, canChair ? seatId : undefined))}>
         {choice === 'FOR' ? '赞成' : choice === 'AGAINST' ? '反对' : '弃权'}</Button>)}
       {canChair && ballot.status === 'OPEN' && <Button size="mini" onClick={() => void run(() => api.closeBallot(ballot.id,
@@ -140,7 +142,7 @@ export default function ProceedingsPanel({snapshot, run, api, canChair}: {snapsh
         {key: 'anonymous', value: 'ANONYMOUS', text: '匿名'}]} onChange={(_, data) => setStrawMode(data.value as typeof strawMode)} />
       <Button primary disabled={!strawQuestion.trim()}>发起意向性投票</Button></Form>}
     <List divided>{strawpolls.map(poll => <List.Item key={poll.id}><List.Content floated="right">
-      {poll.status === 'OPEN' && snapshot.viewer.audience !== 'PUBLIC' && <><Form.Select inline aria-label="投票选项"
+      {poll.status === 'OPEN' && canParticipate && <><Form.Select inline aria-label="投票选项"
         value={strawChoices[poll.id] ?? ''} options={poll.options.map(option => ({key: option.id, value: option.id, text: option.label}))}
         onChange={(_, data) => setStrawChoices(current => ({...current, [poll.id]: String(data.value)}))} />
         {poll.votingMode === 'ANONYMOUS' && <Form.Input inline aria-label="匿名投票码" placeholder="匿名投票码"
@@ -155,18 +157,18 @@ export default function ProceedingsPanel({snapshot, run, api, canChair}: {snapsh
       <List.Description>{poll.options.map(option => `${option.label} ${option.voteCount}`).join('　')}</List.Description></List.Item>)}</List>
 
     <Header as="h2">决议草案与修正案</Header>
-    {snapshot.viewer.audience !== 'PUBLIC' && <Form onSubmit={async () => { await run(() => api.createResolution(snapshot.committee.id,
+    {canParticipate && <Form onSubmit={async () => { await run(() => api.createResolution(snapshot.committee.id,
       {meetingSessionId: session.id, title: resolutionTitle, content: resolutionContent, ...represented}));
       setResolutionTitle(''); setResolutionContent(''); }}><Form.Input label="标题" required value={resolutionTitle}
       onChange={event => setResolutionTitle(event.currentTarget.value)} /><Form.TextArea label="正文" required value={resolutionContent}
       onChange={(_, data) => setResolutionContent(String(data.value))} /><Button primary disabled={!resolutionTitle.trim()
         || !resolutionContent.trim() || (canChair && !seatId)}>新建决议草案</Button></Form>}
     <List divided>{documents.map(document => <List.Item key={document.id}><List.Content floated="right">
-      {snapshot.viewer.audience !== 'PUBLIC' && !['VOTING', 'PASSED', 'FAILED', 'INCORPORATED', 'REJECTED'].includes(document.status)
+      {canParticipate && !['VOTING', 'PASSED', 'FAILED', 'INCORPORATED', 'REJECTED'].includes(document.status)
         && <Button size="mini" onClick={() => createVersion(document)}>新版本</Button>}
-      {document.status === 'PUBLISHED' && snapshot.viewer.audience !== 'PUBLIC'
+      {document.status === 'PUBLISHED' && canParticipate
         && <Button size="mini" onClick={() => discuss(document)}>记录讨论</Button>}
-      {document.kind === 'RESOLUTION' && document.status === 'PUBLISHED' && snapshot.viewer.audience !== 'PUBLIC'
+      {document.kind === 'RESOLUTION' && document.status === 'PUBLISHED' && canParticipate
         && <Button size="mini" onClick={() => createAmendment(document.id)}>新建修正案</Button>}
       {canChair && document.status === 'DRAFT' && <Button size="mini" onClick={() => void run(() => api.commandDocument(document.id,
         document.revision, 'PUBLISH', document.kind === 'RESOLUTION' ? 'introduce-draft-resolution' : 'introduce-amendment'))}>发布</Button>}

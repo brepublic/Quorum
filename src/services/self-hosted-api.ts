@@ -317,6 +317,10 @@ export const selfHostedApi = {
   updateCommittee(id: string, baseRevision: number, patch: Record<string, unknown>) {
     return request<CommitteeSummary>(`/api/v1/committees/${id}`, {method: 'PATCH', body: {baseRevision, patch}});
   },
+  archiveCommittee(id: string, baseRevision: number) {
+    return request<CommitteeSummary>(`/api/v1/committees/${id}/archive`, {method: 'POST', body: {baseRevision}});
+  },
+  committeeExportUrl(id: string) { return `/api/v1/committees/${encodeURIComponent(id)}/export`; },
   listCountryTemplates: async () => (await request<{countryTemplates: CountryTemplate[]}>('/api/v1/country-templates')).countryTemplates,
   createCountryTemplate(input: CountryTemplateInput) {
     return request<CountryTemplate>('/api/v1/country-templates', {method: 'POST', body: input as unknown as Record<string, unknown>, idempotencyKey: key()});

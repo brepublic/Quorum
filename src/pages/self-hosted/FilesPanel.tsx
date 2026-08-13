@@ -53,8 +53,9 @@ export default function FilesPanel({snapshot, api, currentUserId}: {
   currentUserId?: string;
 }) {
   const committeeId = snapshot.committee.id;
-  const canManage = snapshot.viewer.audience === 'CHAIR' || snapshot.viewer.audience === 'OWNER';
-  const canUpload = snapshot.viewer.audience !== 'PUBLIC';
+  const readOnly = snapshot.committee.status === 'ARCHIVED' || snapshot.committee.status === 'DELETING';
+  const canManage = !readOnly && (snapshot.viewer.audience === 'CHAIR' || snapshot.viewer.audience === 'OWNER');
+  const canUpload = !readOnly && snapshot.viewer.audience !== 'PUBLIC';
   const [files, setFiles] = React.useState<FileEntry[]>([]);
   const [pendingHostCommits, setPendingHostCommits] = React.useState<FileUpload[]>([]);
   const [bindings, setBindings] = React.useState<Awaited<ReturnType<SelfHostedApi['listStorageBindings']>>>([]);
@@ -217,7 +218,7 @@ export default function FilesPanel({snapshot, api, currentUserId}: {
     {files.length === 0 ? <Message content="暂无文件" /> : <Card.Group itemsPerRow={3} stackable>
       {files.map(file => {
         const ownsFile = currentUserId === file.createdByUserId;
-        const canChange = canManage || ownsFile;
+        const canChange = !readOnly && (canManage || ownsFile);
         return <Card key={file.id} className="self-hosted-file-card"><Card.Content>
           <Card.Header>{file.logicalName}</Card.Header>
           <Card.Meta>{formatBytes(file.currentVersion.sizeBytes)} · <Label size="tiny">{FILE_STATUS[file.status]}</Label>

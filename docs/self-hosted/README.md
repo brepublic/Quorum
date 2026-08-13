@@ -1,8 +1,8 @@
 # Quorum 自托管目标架构
 
-本目录描述 Quorum 从 Firebase BaaS 迁移到完全自主托管后的目标架构。阶段 0–7 已落地：一次性配对、单活动主机 fencing、manifest/task、`CHAIR_AGENT` provider、桌面安全目录、恢复同步、显式冲突裁决和跨平台发布包均已接入。阶段 8–9 尚未实施；仓库仍未完成全部迁移。当前事实以根目录的 [`PROJECT_ARCHITECTURE.md`](../../PROJECT_ARCHITECTURE.md) 为准。
+本目录描述 Quorum 从 Firebase BaaS 迁移到完全自主托管后的目标架构。阶段 0–7 已落地；阶段 8.1 已接入委员会只读归档与一致性流式导出。永久删除、账号资源处置、运维恢复和阶段 9 Firebase 移除仍待实施。当前事实以根目录的 [`PROJECT_ARCHITECTURE.md`](../../PROJECT_ARCHITECTURE.md) 为准。
 
-## 当前阶段 7.6 边界
+## 当前阶段 8.1 边界
 
 - PostgreSQL migration 已建立身份、凭据、Session、系统设置、未来注册申请和身份审计表。
 - bootstrap secret 只保存哈希，并由 PostgreSQL 事务保证并发初始化只有一个成功；公开状态 API 不返回 secret。
@@ -53,6 +53,8 @@
 - Chair 内容仅在服务器仍有已验证暂存副本时可授权下载；浏览器不会获得 Agent 地址、设备凭据、本地路径或正文。
 - 独立 `packages/storage-agent` 已实现 HTTPS-only Agent client、私有配置、安全共享目录、墓碑优先 task 消费、完整性校验后的原子落盘、watcher 提示与周期全量扫描、本地变化上报、pending task 重放及 lease fencing。并发本地编辑与不安全路径 fail closed，不被静默覆盖。
 - 浏览器配对、转移、撤销和冲突裁决界面已实施。仓库可生成固定运行时、自包含、可复现的 Windows x86-64、macOS x86-64/arm64 和 Linux x86-64 包；当前 WSL 只验证未签名产物，原生签名、公证和系统行为仍待实机验收。
+- Committee Owner 可把活动委员会归档；归档后工作区保留受众过滤读取和文件下载，但隐藏并在服务端拒绝所有委员会、议事、文本和文件写命令。
+- 归档 Owner 可流式导出同一 `REPEATABLE READ READ ONLY` 快照中的议事记录、审计和文件 manifest。导出不缓冲完整结果，排除邀请/设备/Session 等凭据、provider storage key、源 IP 摘要和文件正文。
 - PostgreSQL、TLS 浏览器和 Compose 实测尚未在当前环境执行，状态及取证要求见 [`MANUAL_ACCEPTANCE.md`](./MANUAL_ACCEPTANCE.md)。
 
 ## 文档索引

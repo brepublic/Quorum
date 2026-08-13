@@ -410,3 +410,12 @@
 - 自动化覆盖情况：当前 WSL 已用伪运行时对四个平台验证固定 ZIP/tar.gz 字节、上游布局提取、路径逃逸拒绝、allowlist、版本、权限、秘密 canary、manifest 和重复构建；真实 Node.js 22.23.2 四个平台归档已按固定 SHA-256 下载并生成未签名包，发布验证器全部通过。Linux x86-64 包可在 WSL 运行。WSL 没有 Windows SDK/证书存储、NTFS ACL、SmartScreen、macOS `codesign`/Xcode keychain、APFS、Gatekeeper 或 Apple 公证服务，不能替代原生验签、安装、启动和系统重启证据。
 - 当前状态：未签名跨平台包和 WSL 静态/运行验证已完成；签名、公证、原生安装与系统行为因缺少目标系统和凭据延期。
 - 需要保存的证据：两次构建的 SHA-256 与 manifest、上游 Node 归档校验、完整归档清单、SignTool/codesign/notarytool 脱敏输出、签名链和时间戳、SmartScreen/Gatekeeper 截图、安装前后 ACL/权限、Task Scheduler/LaunchAgent 状态、重启与同步时间线、升级/回退前后聚合状态、卸载后的目录清单和全链路秘密搜索。不得保存证书私钥、密码、公证 token、Agent 凭据、配对码、私钥、claim token、本地绝对路径或正文。
+
+### SH-MAN-515 委员会只读归档与一致性导出
+
+- 前置条件：真实 PostgreSQL 16；TLS 自托管实例；含大量议事记录、审计、公开与未公开文件版本的测试委员会；Owner、Chair、member、外部账号和匿名浏览器；可限制客户端下载速度并在导出期间制造并发写入、数据库查询失败和客户端断流。
+- 操作步骤：分别以各角色尝试归档；用陈旧 revision 和重复请求重试。归档后遍历委员会资料、席位、点名、发言、动议、表决、决议文本、普通文本和文件页，尝试所有写操作并确认现有授权下载仍可用。由 Owner 下载导出，其他身份尝试同一路由；限速读取大导出并观察应用内存。解析每一行和末尾 `complete`，核对议事数量、审计和文件大小/SHA-256；搜索邀请码、匿名凭据、Session、设备凭据、S3 密文、provider key、源 IP 摘要和文件正文。导出期间制造数据库故障和客户端断流，并确认连接/事务释放。
+- 通过条件：只有 Owner 可归档和导出，系统管理员无隐式权限；陈旧写入不改变状态。`ARCHIVED` 委员会对全部角色保持只读，读取继续按受众过滤；文件只能授权下载。导出来自单个一致性快照、内存随流量保持有界、响应强制 attachment/no-store/nosniff；完整导出以 `complete` 结束，失败导出不伪造完成标记。导出包含议事记录、审计和文件 manifest，但不含秘密字段、provider 路径或文件正文。
+- 自动化覆盖情况：当前 WSL 的服务、HTTP、API client 和工作区/文件页测试覆盖 Owner 边界、归档状态、只读控件、只读事务、分页流、查询失败回滚、慢客户端断开时销毁流、安全响应头及秘密列白名单。真实 PostgreSQL 用例会执行全部导出 SQL 并核对权限和归档状态；未配置 `TEST_DATABASE_ADMIN_URL` 时明确 skip。真实 TLS、慢客户端、大数据量内存、并发快照、浏览器下载和数据库断流尚未执行。
+- 当前状态：因无真实 PostgreSQL、TLS 自托管实例、大数据 fixture 和浏览器故障注入环境延期。
+- 需要保存的证据：角色/路由矩阵、归档前后 revision 与事件审计、全写命令拒绝结果、导出响应头、记录数量和文件 SHA-256 对照、进程 RSS 曲线、数据库事务/连接快照、故障时间线及秘密搜索结果。不得保存真实 Session、CSRF token、邀请码、设备凭据、S3 密文、provider key、源 IP 摘要或文件正文。

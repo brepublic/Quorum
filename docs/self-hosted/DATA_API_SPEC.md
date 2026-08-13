@@ -951,6 +951,17 @@ Agent 只以当前 `QuorumAgent` 凭据和 generation 拉取已裁决 conflict�
 
 `CHAIR_AGENT` blob 不交给服务器 provider delete worker；当前 Agent 完成 `DELETE_FILE` 后才把对应 blob/delete job 标为完成。下载只在服务器仍保存并复验关联 upload staging 时可用；否则返回稳定 `SERVICE_NOT_READY`，浏览器从不直连 Agent。桌面文件系统 watcher、周期扫描和路径落盘已由 Agent 实现；Windows/macOS 发布包留到阶段 7.6。
 
+### 11.16 阶段 8.1 委员会归档与一致性导出
+
+```text
+POST /api/v1/committees/:id/archive
+GET  /api/v1/committees/:id/export
+```
+
+归档命令只允许 Committee Owner，并继续要求 Session、允许的 Origin、匹配的 CSRF token 和当前 committee revision。委员会进入 `ARCHIVED` 后，Owner、Chair、member 和公开访客仍可按原受众读取，但委员会资料、席位、议事、文本和文件状态均不可再修改；文件只保留授权下载。系统管理员不自动获得归档或导出权限。
+
+导出只允许归档委员会的 Owner。服务端在 `REPEATABLE READ READ ONLY` 事务内分页查询，并以 JSON Lines 流式返回委员会资料、议事记录、不可变审计和文件 manifest；不会把完整导出装入内存。响应强制 attachment、`nosniff` 和 `no-store`。导出显式排除邀请码/匿名投票凭据哈希、Session、设备凭据、S3 密文、provider storage key、源 IP 摘要和文件正文；文件记录保留原始大小与 SHA-256，便于另行核对内容副本。流中最后的 `complete` 记录仅在全部查询成功后出现；断流或查询失败会回滚只读快照。
+
 ## 12. SSE 格式
 
 ```text

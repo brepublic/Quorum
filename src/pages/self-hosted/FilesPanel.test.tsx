@@ -15,9 +15,10 @@ const file: FileEntry = {id: '30000000-0000-4000-8000-000000000001', committeeId
     sizeBytes: 3, sha256: 'a'.repeat(64), blobId: 'blob', createdAt: '2026-08-13T00:00:00.000Z'},
   submittedAt: null, publishedAt: null, createdAt: '2026-08-13T00:00:00.000Z', updatedAt: '2026-08-13T00:00:00.000Z'};
 
-function snapshot(audience: CommitteeWorkspaceSnapshot['viewer']['audience']): CommitteeWorkspaceSnapshot {
+function snapshot(audience: CommitteeWorkspaceSnapshot['viewer']['audience'],
+  status: CommitteeWorkspaceSnapshot['committee']['status'] = 'ACTIVE'): CommitteeWorkspaceSnapshot {
   return {schemaVersion: 2, committee: {id: committeeId, name: '安理会', chairLabel: '主席', topic: '', conference: '',
-    visibility: audience === 'PUBLIC' ? 'PUBLIC' : 'PRIVATE', operationMode: 'DELEGATE_OPERATED', status: 'ACTIVE',
+    visibility: audience === 'PUBLIC' ? 'PUBLIC' : 'PRIVATE', operationMode: 'DELEGATE_OPERATED', status,
     activeRulePackageVersionId: 'rules', revision: 2}, seats: [], viewer: {audience, seatId: null}, attendance: [],
   points: [], notes: [], textPosts: [], sync: {committeeEventSequence: 1}};
 }
@@ -33,9 +34,9 @@ function api(overrides: Partial<SelfHostedApi> = {}): SelfHostedApi {
 
 let root: Root | undefined; let container: HTMLDivElement | undefined;
 async function render(audience: CommitteeWorkspaceSnapshot['viewer']['audience'], client: SelfHostedApi,
-  currentUserId?: string): Promise<HTMLDivElement> {
+  currentUserId?: string, status: CommitteeWorkspaceSnapshot['committee']['status'] = 'ACTIVE'): Promise<HTMLDivElement> {
   container = document.createElement('div'); document.body.append(container); root = createRoot(container);
-  await act(async () => {root?.render(<FilesPanel snapshot={snapshot(audience)} api={client}
+  await act(async () => {root?.render(<FilesPanel snapshot={snapshot(audience, status)} api={client}
     currentUserId={currentUserId} />); await new Promise(resolve => setTimeout(resolve, 0));});
   return container;
 }
@@ -73,6 +74,15 @@ describe('self-hosted stage 6 file panel', () => {
     view = await render('MEMBER', api(), 'system-admin');
     expect(view.textContent).not.toContain('文件存储');
     expect(view.textContent).not.toContain('永久删除');
+  });
+
+  it('keeps archived committees download-only even for the Owner', async () => {
+    const view = await render('OWNER', api(), 'owner', 'ARCHIVED');
+    expect(view.textContent).toContain('下载文件');
+    expect(view.textContent).not.toContain('上传文件');
+    expect(view.textContent).not.toContain('提交审核');
+    expect(view.textContent).not.toContain('永久删除');
+    expect(view.textContent).not.toContain('文件存储');
   });
 
   it('hashes, streams, reports progress, commits, and refreshes a selected file', async () => {

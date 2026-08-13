@@ -22,6 +22,7 @@ import type {Stage7StorageAgentService} from '../modules/storage-agent/service.j
 import type {Stage7StorageTaskService} from '../modules/storage-agent/task-service.js';
 import type {Stage7LocalChangeService} from '../modules/storage-agent/local-change-service.js';
 import type {Stage7ConflictService} from '../modules/storage-agent/conflict-service.js';
+import type {Stage8ArchiveService} from '../modules/operations/archive-service.js';
 import {AppError, normalizeError} from './errors.js';
 import {
   clearIdentityCookies,
@@ -58,6 +59,7 @@ export interface AppDependencies {
   storageTasks?: Stage7StorageTaskService;
   storageLocalChanges?: Stage7LocalChangeService;
   storageConflicts?: Stage7ConflictService;
+  archives?: Stage8ArchiveService;
   allowedOrigins?: string[];
 }
 
@@ -669,6 +671,36 @@ async function handleStage6UploadRequest(options: {
   return false;
 }
 
+async function handleStage8Request(options: {
+  request: IncomingMessage; response: ServerResponse; pathname: string;
+  identity: IdentityService; archives: Stage8ArchiveService;
+}): Promise<boolean> {
+  const {request, response, pathname, identity, archives} = options;
+  const match = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/export$/.exec(pathname);
+  if ((request.method ?? 'GET') !== 'GET' || !match) return false;
+  const result = await archives.exportCommittee(await authenticatedRead(request, identity), match[1] as string);
+  response.statusCode = 200;
+  response.setHeader('content-type', 'application/x-ndjson; charset=utf-8');
+  response.setHeader('content-disposition', `attachment; filename="${result.fileName}"`);
+  response.setHeader('cache-control', 'no-store'); response.setHeader('x-content-type-options', 'nosniff');
+  let disconnected = false;
+  const close = () => { disconnected = true; result.content.destroy(); };
+  response.once('close', close);
+  try {
+    for await (const chunk of result.content) {
+      if (disconnected) break;
+      if (!response.write(chunk)) await new Promise<void>(resolve => {
+        const resume = () => {response.off('close', resume); response.off('drain', resume); resolve();};
+        response.once('close', resume); response.once('drain', resume);
+      });
+    }
+  } finally {
+    response.off('close', close);
+    if (disconnected) result.content.destroy();
+  }
+  if (!disconnected) response.end(); return true;
+}
+
 async function handleStage5Request(options: {
   request: IncomingMessage; response: ServerResponse; pathname: string; requestId: string;
   identity: IdentityService; stage5: Stage5Service; allowedOrigins: readonly string[];
@@ -1101,6 +1133,10 @@ export function createRequestHandler(dependencies: AppDependencies): RequestList
             identity: dependencies.identity, realtime: dependencies.realtime});
           return;
         }
+
+        if (dependencies.identity && dependencies.archives && await handleStage8Request({
+          request, response, pathname, identity: dependencies.identity, archives: dependencies.archives
+        })) return;
 
         if (dependencies.identity && dependencies.uploads && await handleStage6UploadRequest({
           request, response, pathname, requestId, identity: dependencies.identity, uploads: dependencies.uploads,

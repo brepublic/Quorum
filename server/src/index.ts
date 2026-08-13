@@ -31,6 +31,7 @@ import {Stage7StorageTaskService} from './modules/storage-agent/task-service.js'
 import {Stage7ChairAgentProviderService} from './modules/storage-agent/chair-provider-service.js';
 import {Stage7LocalChangeService} from './modules/storage-agent/local-change-service.js';
 import {Stage7ConflictService} from './modules/storage-agent/conflict-service.js';
+import {Stage8ArchiveService} from './modules/operations/archive-service.js';
 
 const {Pool} = pg;
 const logger = createLogger();
@@ -89,6 +90,7 @@ async function main(): Promise<void> {
     const storageTasks = new Stage7StorageTaskService(storageAgent, staging, files, capacity, chairAgentProvider);
     const storageLocalChanges = new Stage7LocalChangeService(storageAgent);
     const storageConflicts = new Stage7ConflictService(pool, storageAgent);
+    const archives = new Stage8ArchiveService(pool);
     await stage3.ensureBuiltins();
     const bootstrapSecret = await identity.ensureBootstrapSecret();
     if (bootstrapSecret) {
@@ -115,6 +117,7 @@ async function main(): Promise<void> {
       storageTasks,
       storageLocalChanges,
       storageConflicts,
+      archives,
       allowedOrigins: config.allowedOrigins
     });
     const stopStorageMigrationWorker = startStorageMigrationWorker(storageMigrations, logger);

@@ -6,10 +6,10 @@
 
 - 更新时间：2026-08-13
 - 分支：`self-host`
-- 已确认基线：`458de03 stage 7.6: package chair storage agent`
+- 已确认基线：`ae2fd72 docs: advance self-host log to stage 8`
 - 当前阶段：8 归档、删除与运维正在实施。
-- 当前工作：审计既有 `ARCHIVED`/`DELETING` 状态、账号生命周期、文件删除任务、审计和运维接口，拆分阶段 8 的事务边界。
-- 下一步：先实现委员会只读归档与授权导出，再分别提交永久删除、账号资源处置、保留策略和运维恢复能力。
+- 当前工作：阶段 8.1 委员会只读归档与一致性导出已完成当前 WSL 验证，等待单独提交。
+- 下一步：提交 8.1 后实施带明确确认、durable job 和 provider 清理边界的委员会永久删除。
 
 ## 已完成与验证
 
@@ -266,3 +266,13 @@
 - `pnpm build:self-host` 与默认 `pnpm build`：通过；Vite 仅报告既有大分块警告。`pnpm test:self-host:integration`：7 个文件、63 项明确 skip；`git diff --check` 通过。
 - 当前 WSL 没有 Windows SDK/证书存储、NTFS ACL、SmartScreen、macOS `codesign`/Xcode keychain、APFS、Gatekeeper、Apple 公证服务或系统启动项环境；真实签名、公证、安装、升级、卸载、重启和原生 watcher 验收记录在 `MANUAL_ACCEPTANCE.md` 的 SH-MAN-514，未伪造成功。
 - 阶段 7.6 已单独提交为 `458de03`；阶段 7 完成，继续阶段 8。
+
+### 2026-08-13：阶段 8.1 委员会只读归档与一致性导出
+
+- Owner 可在活动委员会概览执行“归档委员会”；归档后委员会资料、主席/席位、点名、议事、普通文本和文件写控件全部移除，文件仍可按既有权限下载。服务端既有 `requireEditable` 边界继续拒绝绕过界面的写请求。
+- `GET /api/v1/committees/:id/export` 只允许归档委员会的 Owner。响应从 `REPEATABLE READ READ ONLY` 事务分页流式产生 JSON Lines，并设置 attachment、`nosniff` 与 `no-store`，不会先把完整导出读入内存。
+- 导出使用显式列白名单，覆盖委员会成员/席位、规则快照、全部议事记录、事件、不可变审计和文件 manifest；排除邀请/匿名投票凭据哈希、Session、设备凭据、S3 密文、provider storage key、源 IP 摘要和文件正文。文件版本包含大小与 SHA-256。
+- 查询或流失败会回滚并释放连接；只有完整导出才写 `complete` 记录。新增真实 PostgreSQL 集成测试会在临时数据库执行全部 section SQL，当前未配置 `TEST_DATABASE_ADMIN_URL` 时明确 skip。
+- 定向 Vitest：5 个文件、37 项通过。`pnpm test:self-host`：56 个文件、307 项通过；8 个 PostgreSQL 文件、64 项明确 skip。`pnpm exec vitest run`：75 个文件、462 项通过；相同 8 个文件、64 项明确 skip。
+- `pnpm build:self-host`：通过；Vite 仅报告既有大分块警告。`pnpm test:self-host:integration`：8 个文件、64 项因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip；`git diff --check` 通过。
+- 当前 WSL 没有真实 PostgreSQL、TLS 浏览器、大数据量 fixture 或可控慢客户端/数据库断流环境；上机步骤与证据要求记录在 `MANUAL_ACCEPTANCE.md` 的 SH-MAN-515。
