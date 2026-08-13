@@ -6,10 +6,10 @@
 
 - 更新时间：2026-08-13
 - 分支：`self-host`
-- 已确认基线：`ae6ff2f stage 7.5b: resolve chair storage conflicts`
-- 当前阶段：7.6 Chair Local Agent 桌面发布包正在实施。
-- 当前工作：审计现有 Agent 构建、运行时依赖和仓库发布约束，确定可复现的 Windows x86-64、macOS 与 Linux 预留产物格式。
-- 下一步：增加发布脚本、manifest、安装/升级/卸载说明和签名配置入口，再执行 WSL 可完成的跨平台静态验证。
+- 已确认基线：`33e5548 docs: advance self-host log to stage 7.6`
+- 当前阶段：7.6 Chair Local Agent 桌面发布包已完成 WSL 可执行的实现与验证，等待单独提交。
+- 当前工作：复核最终差异并提交阶段 7.6。
+- 下一步：提交 7.6 后直接实施阶段 8 的委员会归档、导出、永久删除、资源处置、保留策略和运维能力。
 
 ## 已完成与验证
 
@@ -252,3 +252,16 @@
 - 当前 WSL 没有真实 PostgreSQL、TLS 自托管实例、第二设备、NTFS/APFS 原生目录或浏览器视觉/键盘/辅助功能环境；实机步骤与证据记录在 `MANUAL_ACCEPTANCE.md` 的 SH-MAN-513。
 - 已撰写 `STAGE_7_6_HANDOFF_PROMPT.md`；7.6 只实施桌面发布包、安装流程与签名配置入口，归档、备份和 Firebase 移除不得提前实施。
 - 阶段 7.5b 已单独提交为 `ae6ff2f`；阶段 7.5 完成，继续阶段 7.6。
+
+### 2026-08-13：阶段 7.6 Chair Agent 桌面发布包
+
+- 固定 Agent 0.1.0 与 Node.js 22.23.2。`storage-agent-runtime-lock.json` 保存 Node 官方 Windows x86-64、macOS x86-64/arm64 和 Linux x86-64 归档 URL 边界与 SHA-256；下载先流式校验再进入忽略的本地缓存。
+- 发布包只含编译后 Agent JS、最小 Node 运行时、`pair`/`start`/`status` 启动入口、Node 许可证、release metadata 和安装说明，不含源码映射、声明文件、`node_modules`、仓库路径或 Agent 私有状态。目标机不需要全局 Node、pnpm 或仓库。
+- 自有 ZIP/tar.gz 归档器固定路径顺序、时间戳、所有者和权限；校验器执行 allowlist、重复路径、入口依赖闭包、Agent/Node 版本、运行时哈希、POSIX 执行位、外部 manifest、`SHA256SUMS` 与 canary secret 检查。
+- 真实四平台未签名包已从 Node 官方归档生成并验证。连续两次离线构建得到相同 SHA-256：macOS arm64 `3d5e4f5e8048976deeab8c3bea578873544b4fc3ee65334af6ee791fd84ed400`、macOS x64 `5b492030d1824e38e2e8441d586d9620f1d1942fc4ea762ec167eb81d92ba1d9`、Linux x64 `ce3076d04d8cb21ff3836ca42976f50de8205b1ffab071c317a23940d5cedc72`、Windows x64 `bc49cca517ca19a9dc3c3ea25df668e616c9c7e28deb7bed7c05ff3cb934c592`。产物位于忽略的 `release/storage-agent/`，不提交二进制。
+- Windows 签名入口只读取受保护证书存储的非秘密 thumbprint，使用 SHA-256 文件/时间戳摘要并立即验签；macOS 入口只读取 Developer ID identity 与 keychain profile，启用 hardened runtime、安全时间戳、严格验签和 `notarytool` 公证。脚本和文档不接收证书私钥、公证密码或 token。
+- 归档内及 `AGENT_RELEASE.md` 记录版本化安装、原配置升级/回退和保守卸载。升级保留设备身份、共享目录元数据、pending upload 与 conflict recovery；卸载默认不删除私有配置或用户选择的存储目录。
+- 发布/Agent 定向验证：7 个测试文件、60 项通过；其中发布脚本 4 项覆盖四平台伪运行时、逐字节重复构建、上游布局、路径逃逸、allowlist、权限、manifest 与秘密 canary。真实包验证器通过，Linux 包内运行时实际输出 `v22.23.2`。
+- `pnpm test:self-host`：54 个文件、299 项通过；7 个 PostgreSQL 文件、63 项因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip。`pnpm exec vitest run`：73 个文件、454 项通过；相同 7 个文件、63 项明确 skip。仅出现既有 React/Semantic UI 弃用警告。
+- `pnpm build:self-host` 与默认 `pnpm build`：通过；Vite 仅报告既有大分块警告。`pnpm test:self-host:integration`：7 个文件、63 项明确 skip；`git diff --check` 通过。
+- 当前 WSL 没有 Windows SDK/证书存储、NTFS ACL、SmartScreen、macOS `codesign`/Xcode keychain、APFS、Gatekeeper、Apple 公证服务或系统启动项环境；真实签名、公证、安装、升级、卸载、重启和原生 watcher 验收记录在 `MANUAL_ACCEPTANCE.md` 的 SH-MAN-514，未伪造成功。

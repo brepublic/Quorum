@@ -12,6 +12,7 @@
 
 # production
 /build
+/release
 /packages/*/dist
 /server/dist
 /server/node_modules

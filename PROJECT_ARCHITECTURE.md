@@ -2,7 +2,7 @@
 
 > 本文件是本仓库的维护入口。后续涉及代码、构建、测试或运行的工作，应先阅读本文件和 `AGENTS.md`，并以实际代码为准更新本文档。
 
-> Quorum 已完成自主托管目标设计，并已落地实施计划阶段 0–6 和 Chair Local Agent 7.1–7.5。`self-hosted` 运行时以 PostgreSQL 为唯一业务真相，通过同源 API 与受众过滤 SSE 提供议事功能；上传可流式暂存并提交到服务器持久卷、S3 compatible provider 或当前主席电脑。文件可在自托管工作区审核、发布、授权下载、异步物理删除并在服务器卷与 S3 之间安全迁移。桌面 Agent 已具备安全目录、墓碑优先同步、原子落盘、全量扫描、中断恢复和显式冲突裁决；Windows/macOS 发布包尚未实施。
+> Quorum 已完成自主托管目标设计，并已落地实施计划阶段 0–7。`self-hosted` 运行时以 PostgreSQL 为唯一业务真相，通过同源 API 与受众过滤 SSE 提供议事功能；上传可流式暂存并提交到服务器持久卷、S3 compatible provider 或当前主席电脑。文件可在自托管工作区审核、发布、授权下载、异步物理删除并在服务器卷与 S3 之间安全迁移。桌面 Agent 已具备安全目录、墓碑优先同步、原子落盘、全量扫描、中断恢复和显式冲突裁决，并可生成携带固定运行时的 Windows、macOS 与 Linux 发布包。原生签名、公证和安装证据仍须在目标系统取得。
 
 ## 1. 项目定位与技术栈
 
@@ -167,7 +167,8 @@ system
 - 阶段 7.1 增加 `storage_pairing_codes` 与 `storage_hosts`。短期一次性配对码和设备凭据只保存 SHA-256，明文各返回一次；Agent 使用独立 `QuorumAgent` authorization scheme，不能以该凭据调用浏览器 Session 路由。委员会保存单调 storage lease generation，部分唯一索引限制一个活动或降级 host；首次配对、转移和撤销在委员会行锁事务中 fencing 旧设备，迟到请求返回 `STALE_STORAGE_LEASE`。常驻 host monitor 只生成存储降级状态与 Chair 事件，不暂停委员会。
 - 阶段 7.2 增加 `storage_manifest_events` 与 `storage_agent_tasks`。文件版本或墓碑在原事务内分配严格递增 manifest sequence，并为当前 host 创建 `STORE_BLOB` 或 `DELETE_FILE`；Agent 以 task ID、file revision、lease generation、claim token 和幂等 request ID 领取、传输并终结任务。阶段 7.3 开放 host-bound `CHAIR_AGENT` binding：浏览器已校验的 durable upload 先成为 `PENDING_HOST_COMMIT`，仅在当前 Agent 完成固定 task 后才于同一事务发布 blob、file entry/version、manifest、事件与审计。`local-changes` 以最新 manifest、墓碑和 revision 接受新增、修改、重命名及删除；内容变化先经 `UPLOAD_BLOB` 流式复验，冲突持久化后返回 `CHAIR_DECISION_REQUIRED`。主机转移取消旧 generation task、重新规划浏览器待提交 upload 和最新 manifest，并把既有文件保持 `OUT_OF_SYNC` 到新主机确认。服务器只在仍有已验证 staging 时为 Chair 内容提供授权下载；普通清理不会删除唯一的 pending staging，也不会处理由 Agent 负责的物理删除。
 - 阶段 7.4 增加独立 `packages/storage-agent` Node 程序。配对凭据与 Ed25519 私钥只保存到 Agent 私有配置；共享目录元数据不含秘密或绝对根路径。Agent 每轮先拉取完整 manifest 并处理墓碑，再领取固定 generation 的 task；下载写入内部 0600 临时文件，完整校验大小和 SHA-256 后原子发布。相对路径统一拒绝绝对路径、点路径、Windows 保留名、符号链接、硬链接和非普通文件。文件系统通知只作为快速提示，周期递归扫描是最终依据；本地新增、修改、重命名和删除一次上报一个显式变化，pending upload 与 task recovery 状态原子持久化。并发本地编辑保留原内容并形成服务端 durable conflict；陈旧 lease 立即停机，其他故障指数退避且日志只记录稳定代码。
-- 阶段 7.5 在文件页增加当前主机、在线状态、最后在线时间、一次性配对/转移码和撤销操作。Owner/Chair 可读取 durable conflict，并以 conflict revision、当前 lease generation、file revision 和幂等键选择保留服务端、采用本地或另存为新文件；暂停、陈旧状态、墓碑复活和旧主机写入均被拒绝。浏览器 conflict 响应只保留文件名，不返回 Agent 相对目录。裁决状态、Chair 事件和审计同事务提交，Agent 以持久 request ID 重放本地裁决；磁盘/网络故障保留 task 重试，裁决后的新本地编辑形成新的 durable conflict。`status` 命令只输出 generation、manifest sequence 和聚合计数。Windows/macOS 原生打包与签名仍未实现。
+- 阶段 7.5 在文件页增加当前主机、在线状态、最后在线时间、一次性配对/转移码和撤销操作。Owner/Chair 可读取 durable conflict，并以 conflict revision、当前 lease generation、file revision 和幂等键选择保留服务端、采用本地或另存为新文件；暂停、陈旧状态、墓碑复活和旧主机写入均被拒绝。浏览器 conflict 响应只保留文件名，不返回 Agent 相对目录。裁决状态、Chair 事件和审计同事务提交，Agent 以持久 request ID 重放本地裁决；磁盘/网络故障保留 task 重试，裁决后的新本地编辑形成新的 durable conflict。`status` 命令只输出 generation、manifest sequence 和聚合计数。
+- 阶段 7.6 固定 Agent 0.1.0 与 Node.js 22.23.2，为 Windows x86-64、macOS x86-64/arm64 和非阻断 Linux x86-64 生成自包含发布包。构建先校验 Node 官方归档 SHA-256，只携带运行时、编译 JS、入口、许可证和安装说明；归档路径顺序、时间戳、权限及 release manifest 可复现。签名脚本只引用 Windows 证书存储 thumbprint 或 macOS keychain identity/profile，不接收私钥和密码。当前 WSL 已验证未签名包、SHA-256、内容、权限、秘密扫描与 Linux 运行；Windows/macOS 签名、公证、ACL、Gatekeeper、SmartScreen 和原生文件系统仍是人工验收项。
 
 因此，数据库规则和 Storage 元数据是产品的关键安全边界；变更前必须同时审查前端写入路径与这两份规则文件。
 
@@ -184,7 +185,7 @@ system
 | `server/` | 自托管 Node.js 后端、PostgreSQL migration、身份、委员会、规则包、实时议事、HTTP/SSE 安全边界和真实数据库集成测试 |
 | `packages/contracts/` | 浏览器、后端和 Agent 共享的 API 类型、schema 与稳定注册表 |
 | `packages/rule-schema/` | 规则包 v1 schema、无服务器校验器和内置 fixture |
-| `packages/storage-agent/` | Chair Local Agent 的 HTTPS 客户端、安全目录、原子文件操作、扫描与恢复循环 |
+| `packages/storage-agent/` | Chair Local Agent 的 HTTPS 客户端、安全目录、原子文件操作、扫描、恢复循环与发布包安装说明 |
 | `deploy/` | Caddy、应用、PostgreSQL Compose，自托管镜像与隔离测试数据库 |
 | `src/modules/` | 通用事件处理、成员转换、统计和埋点 |
 | `src/i18n.tsx` | 英语/简体中文词条、语言偏好与全局语言切换控件 |

@@ -238,3 +238,7 @@ maintenance worker 先处理 durable blob delete job，再处理 upload/migratio
 ## 11. Agent 发布目标
 
 v1 必须支持 Windows x86-64 与 macOS。Linux 使用相同协议并预留构建，但不作为首个发布阻断项。普通 Quorum Web 前端仍支持 Chromium、Firefox、Safari、iPad 和 Android；只有配置 Chair Computer 主存储的主席电脑需要安装 Agent。
+
+阶段 7.6 固定 Agent 0.1.0 和 Node.js 22.23.2，生成 Windows x86-64、macOS x86-64/arm64 与 Linux x86-64 自包含归档。发布包只含已编译 Agent、最小 Node 运行时、`pair`/`start`/`status` 入口、许可证和安装说明，不依赖目标机全局 Node、pnpm 或仓库。构建先校验官方运行时归档 SHA-256，再固定归档路径顺序、时间戳和权限；外部 `release-manifest.json` 与 `SHA256SUMS` 描述最终字节。
+
+Windows 正式包在原生 runner 上通过受保护证书存储和 certificate thumbprint 调用 SignTool；macOS 通过 Developer ID keychain identity 签名，并以只含 profile 名称的 `notarytool` 接口公证。构建、日志、命令行、产物和 manifest 不接受或保存证书私钥、公证密码、设备凭据、配对码、claim token、本地绝对路径或文件正文。未签名本地包不得被描述为已签名或已公证。

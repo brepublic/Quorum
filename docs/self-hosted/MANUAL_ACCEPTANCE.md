@@ -355,7 +355,7 @@
 
 ## 阶段 7：Chair Local Agent
 
-当前环境未提供 `TEST_DATABASE_ADMIN_URL`、自托管 TLS 实例、第二台真实设备或桌面发布/签名环境。阶段 7.1–7.5 的自动验证已在 WSL 执行，PostgreSQL 集成测试明确 skip；以下实机项目尚未通过。
+当前环境未提供 `TEST_DATABASE_ADMIN_URL`、自托管 TLS 实例、第二台真实设备或桌面签名环境。阶段 7.1–7.6 的自动验证已在 WSL 执行，PostgreSQL 集成测试明确 skip；以下实机项目尚未通过。
 
 ### SH-MAN-509 Agent 配对、单主机 fencing 与离线降级
 
@@ -390,7 +390,7 @@
 - 操作步骤：分别完成配对、选择空目录并同步含嵌套中文名的文件；创建、修改、移动和删除本地文件，验证 watcher 唤醒与周期全量扫描结果。尝试绝对路径、`..`、Windows 保留名、尾随点/空格、符号链接、junction、alias、硬链接、FIFO/设备文件和指向根目录外的父目录。下载期间制造短写、长写、断流、哈希错误、目标碰撞、并发本地编辑、只读目录和满盘；在临时文件写入、rename、task complete 和本地状态写入前后分别强制终止进程并重启。断网期间执行服务端删除和本地修改，再恢复；最后转移 host，确认旧进程因 stale lease 停止。检查共享目录元数据、私有配置权限、进程参数、控制台和日志。
 - 通过条件：共享目录只有不含秘密和绝对根路径的 `.quorum-storage.json` 与内部临时目录；凭据、私钥和配对码不出现在目录元数据、进程参数或日志，私有配置仅当前用户可读。所有解析后的路径保持在根目录内，链接、非普通文件和平台保留路径 fail closed。服务端内容只有在完整大小/SHA-256 校验后原子出现；失败或断电最多留下可在重启时安全清理的内部临时文件，不把半文件识别为完整版本。本地编辑永不被服务端静默覆盖，墓碑先于扫描处理，冲突可恢复；同一 pending task 重启后重放而不产生重复版本。watcher 丢事件时周期扫描仍收敛。旧 lease 立即停止，临时网络故障退避重试且不泄露路径或秘密。
 - 自动化覆盖情况：当前 WSL 中 `packages/storage-agent` 的测试覆盖 portable 路径、元数据 no-follow、原子状态故障、符号链接/硬链接、非普通目标、0600 配置、临时残片、短写/长写/哈希/断流、原子发布、本地编辑保护、墓碑优先、扫描/重命名、pending task 和 conflict 裁决重放、watcher 提示、未知协议 fail closed、stale lease、状态聚合和日志脱敏。Node/TypeScript 构建已通过。WSL 的 ext4/DrvFs 行为不能替代 NTFS/APFS、原生 watcher、Windows ACL、macOS 权限、原生进程终止或发布包验证。
-- 当前状态：因无 Windows/macOS Agent 构建、TLS/PostgreSQL 实例和两台真机延期。
+- 当前状态：未签名 Windows/macOS Agent 构建已生成；因无 TLS/PostgreSQL 实例和两台真机，原生目录与恢复验证延期。
 - 需要保存的证据：每个平台版本与文件系统、Agent 构建哈希/签名、目录树和权限的脱敏输出、任务/manifest/conflict 脱敏时间线、网络与进程终止矩阵、各故障后的文件 SHA-256/大小、重启恢复结果和秘密搜索结果。不得保存配对码、设备凭据、私钥、claim token、本地绝对路径或文件正文。
 
 ### SH-MAN-513 Agent 管理与冲突裁决
@@ -401,3 +401,12 @@
 - 自动化覆盖情况：migration 23 静态契约、共享类型、Agent HTTP client/runtime/filesystem/status、HTTP 认证分离、API client 和文件页交互测试已在 WSL 通过。真实 PostgreSQL 用例覆盖 Owner/Chair 权限、路径拒绝、revision/lease/file fencing、幂等重放、一次性裁决应用以及 event/audit 故障回滚；未配置 `TEST_DATABASE_ADMIN_URL` 时明确 skip。`pnpm test:self-host` 为 53 个文件、295 项通过，7 个 PostgreSQL 文件、63 项明确 skip；默认构建与自托管构建通过。真实 PostgreSQL、TLS、双设备、原生目录、浏览器视觉/键盘/辅助功能和故障注入尚未执行。
 - 当前状态：因无真实 PostgreSQL、TLS 自托管实例、第二设备、原生桌面目录和浏览器验收环境延期。
 - 需要保存的证据：migration 23 enum/列/约束/触发器与 application 表；脱敏 conflict/change/task/event/audit/idempotency 查询；三种裁决及五类原因时间线；故障前后 revision、task 和本地 SHA-256；角色、窄屏、焦点与键盘截图；status 和全链路秘密搜索结果。不得保存配对码、设备凭据、私钥、claim token、Session、CSRF token、本地绝对路径或正文。
+
+### SH-MAN-514 Agent 发布、安装、升级、卸载与原生信任
+
+- 前置条件：Windows 11 x86-64 NTFS 真机；Intel 与 Apple Silicon macOS APFS 真机或明确覆盖两个架构的等价设备；受保护的 Windows 代码签名证书存储、Developer ID Application keychain identity 和公证 profile；可访问发布渠道、TLS 自托管实例和测试委员会；发布用普通权限 OS 账号。不得使用个人文件目录测试。
+- 操作步骤：在隔离目录各重复生成两次未签名包并比较 SHA-256；核对 `release-manifest.json`、`SHA256SUMS`、Agent/Node 版本、归档清单和权限。分别在原生 runner 执行签名脚本、重新归档、严格验签及 macOS 公证，检查 CI 日志和产物秘密。通过发布渠道下载，在新账号下验证 SmartScreen/Gatekeeper 和签名链，安装到版本化目录并配对。检查私有配置 ACL、共享目录元数据、命令行、进程环境和日志。配置当前用户 Task Scheduler/LaunchAgent，重启系统并等待同步。制造 pending upload 和 conflict recovery 后升级，使用原 config 启动并回退一次。撤销或转移主机后卸载；先只删除程序目录，再确认私有配置和用户存储目录仍在。最后按明确的数据处置决定单独删除私有配置，用户存储目录仍不得由卸载流程删除。
+- 通过条件：同一源码、锁文件和运行时缓存产生逐字节相同归档；四个包只含 allowlist 文件，POSIX 入口/运行时可执行，版本、大小和 SHA-256 与 manifest 一致，不含仓库路径、凭据、私钥、配对码、claim token、正文、源码映射、声明文件或 `node_modules`。Windows Authenticode 与时间戳链通过，macOS Developer ID、hardened runtime 和公证通过；SmartScreen/Gatekeeper 不要求绕过安全策略。目标机无需 Node、pnpm 或仓库即可执行 `pair`、`start`、`status`。重启后只启动当前版本；升级保留设备身份、私有配置、共享目录元数据、pending upload 和 conflict recovery，回退不复制或复活文件。卸载默认不删除私有配置和用户选择的存储目录，也不留下仍运行的任务。
+- 自动化覆盖情况：当前 WSL 已用伪运行时对四个平台验证固定 ZIP/tar.gz 字节、上游布局提取、路径逃逸拒绝、allowlist、版本、权限、秘密 canary、manifest 和重复构建；真实 Node.js 22.23.2 四个平台归档已按固定 SHA-256 下载并生成未签名包，发布验证器全部通过。Linux x86-64 包可在 WSL 运行。WSL 没有 Windows SDK/证书存储、NTFS ACL、SmartScreen、macOS `codesign`/Xcode keychain、APFS、Gatekeeper 或 Apple 公证服务，不能替代原生验签、安装、启动和系统重启证据。
+- 当前状态：未签名跨平台包和 WSL 静态/运行验证已完成；签名、公证、原生安装与系统行为因缺少目标系统和凭据延期。
+- 需要保存的证据：两次构建的 SHA-256 与 manifest、上游 Node 归档校验、完整归档清单、SignTool/codesign/notarytool 脱敏输出、签名链和时间戳、SmartScreen/Gatekeeper 截图、安装前后 ACL/权限、Task Scheduler/LaunchAgent 状态、重启与同步时间线、升级/回退前后聚合状态、卸载后的目录清单和全链路秘密搜索。不得保存证书私钥、密码、公证 token、Agent 凭据、配对码、私钥、claim token、本地绝对路径或正文。
