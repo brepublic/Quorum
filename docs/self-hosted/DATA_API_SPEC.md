@@ -781,13 +781,15 @@ GET  /api/v1/storage-provider-configs/s3
 POST /api/v1/admin/storage-provider-configs/s3
 PUT  /api/v1/admin/storage-provider-configs/:id
 POST /api/v1/admin/storage-provider-configs/:id/verify
+GET  /api/v1/committees/:id/storage-bindings
+POST /api/v1/committees/:id/storage-bindings/server-volume
 POST /api/v1/committees/:id/storage-bindings/s3
 POST /api/v1/file-uploads/:id/commit
 ```
 
 系统管理员创建、更新、停用和验证实例级 S3 配置。写请求继续执行 Session、Origin、CSRF、幂等键或 revision 边界。配置响应只返回显示名、endpoint、region、bucket、prefix、寻址方式、私网许可、状态和凭据 key version，不返回 access key、secret 或密文。
 
-凭据以实例显式 `QUORUM_STORAGE_MASTER_KEY` 做 AES-256-GCM 认证加密，AAD 绑定配置 ID 与 key version。缺少 master key、版本不匹配、密文篡改或错误 key 均返回稳定的 `SERVICE_NOT_READY`，不尝试明文或默认凭据链。Chair 只能把委员会绑定到活动配置；不能读取凭据或提交任意 endpoint。
+凭据以实例显式 `QUORUM_STORAGE_MASTER_KEY` 做 AES-256-GCM 认证加密，AAD 绑定配置 ID 与 key version。缺少 master key、版本不匹配、密文篡改或错误 key 均返回稳定的 `SERVICE_NOT_READY`，不尝试明文或默认凭据链。Chair 或 Owner 只能读取本委员会 binding 并把委员会绑定到活动配置；不能读取凭据或提交任意 endpoint。`SYSTEM_ADMIN` 不自动获得委员会 binding 权限。
 
 endpoint 只接受无 URL 凭据、query 或 fragment 的 HTTPS URL。保存时拒绝明显的回环、链路本地、私网和元数据 IP；每次请求 DNS 解析后再次校验所有地址，并把 TLS 主机名连接固定到已校验地址，防止 DNS rebinding。私网对象存储只有系统管理员保存的 `allowPrivateNetwork` 可显式放行。
 
@@ -846,6 +848,16 @@ GET /metrics
 upload 只有 `COMMITTED`、`CANCELLED`，或期限已过的 `FAILED` 可清理；`CREATED`、`RECEIVING` 和 `STAGED` 永不因普通期限、LRU 或容量压力删除。migration item 只有 `COMPLETED` 或 `CANCELLED` 可清理；活动 claim、`PENDING`、`IN_PROGRESS`、`RETRY` 和仍需恢复的失败 copy 保留。退休源 provider 副本仍是明确的安全冗余，本阶段不因压力自动删除。
 
 `/metrics` 使用 Prometheus text exposition，只包含容量采样成功、使用率、可用字节、固定状态、三类 cleanup queue 深度和按固定 kind/outcome 聚合的维护计数。响应与结构化容量/清理日志不得包含 storage path、文件名、正文、Session 或 provider 凭据。
+
+## 11.10 阶段 6.8 浏览器文件契约
+
+自托管 `FilesPanel` 只调用本节 11.4–11.9 的同源接口。选择文件后，浏览器用固定 1 MiB `Blob.slice()` 分块计算 SHA-256，每次只保留当前分块；随后创建 upload，并由带 Cookie、CSRF 和调用方固定 `Idempotency-Key` 的 XHR 直接发送原始 `File`。XHR 的实际字节事件驱动上传进度，`AbortSignal` 可取消哈希或内容发送；provider 失败保留已选择文件，以新 upload 重新尝试。浏览器不把完整文件读入额外 `ArrayBuffer`，也不把凭据或文件内容写入日志。
+
+文件列表以服务端结果为权威。PUBLIC 不显示上传或状态命令，且只会收到公开委员会的 `PUBLISHED` 文件；member 可上传，并仅对自己的文件显示提交审核和永久删除；Chair/Owner 可审核、发布、删除和管理存储。`SYSTEM_ADMIN` 身份本身不产生这些委员会操作。409、容量、provider、暂停和权限错误显示稳定短文案并重新读取列表、binding、迁移或快照，不在客户端合并陈旧 revision。
+
+下载控件只指向 `GET /api/v1/files/:id/download`，依赖服务端 attachment 与安全类型头。浏览器不创建用户文件的 iframe、object、embed、data URL 或同源预览。文件和 storage migration SSE 事件只触发安全刷新；未知事件、序号缺口和过期游标继续使用完整快照/列表恢复。
+
+Chair/Owner 通过 binding 列表选择初始 `SERVER_VOLUME`/S3 storage，并查看迁移的复制、失败、待确认、完成和取消状态；可执行 retry、confirm 和 cancel。系统管理员的 `/storage` 页面可以创建、编辑、停用和验证 S3 配置。保存的 access key 与 secret 不在响应中出现，编辑表单也不回填凭据；仅在同时提供新的两项凭据时才轮换。
 
 ## 12. SSE 格式
 

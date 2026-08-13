@@ -20,7 +20,13 @@ import type {
   RollCall,
   Stage4CommitteeSeat,
   AttendanceEvent,
-  CommitteePoint
+  CommitteePoint,
+  FileEntry,
+  FileUpload,
+  S3ProviderConfigSummary,
+  StorageBinding,
+  StorageMigration,
+  StorageProviderType
 } from '@quorum/contracts';
 import {COMMITTEE_EVENT_DEFINITIONS, type RealtimeSyncState} from '@quorum/contracts';
 
@@ -62,6 +68,55 @@ async function request<T>(path: string, options: {
 }
 
 function key(): string { return crypto.randomUUID(); }
+
+export function newIdempotencyKey(): string { return key(); }
+
+function uploadContentRequest(uploadId: string, file: File, idempotencyKey: string, options: {
+  signal?: AbortSignal;
+  onProgress?: (sentBytes: number, totalBytes: number) => void;
+} = {}): Promise<FileUpload> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    const abort = () => xhr.abort();
+    const finish = () => options.signal?.removeEventListener('abort', abort);
+    xhr.open('PUT', `/api/v1/file-uploads/${encodeURIComponent(uploadId)}/content`);
+    xhr.withCredentials = true;
+    const csrf = cookie('__Host-quorum_csrf');
+    if (csrf) xhr.setRequestHeader('x-csrf-token', csrf);
+    xhr.setRequestHeader('idempotency-key', idempotencyKey);
+    xhr.upload.onprogress = event => options.onProgress?.(event.loaded, event.lengthComputable ? event.total : file.size);
+    xhr.onload = () => {
+      finish();
+      let payload: ApiSuccess<FileUpload> | ApiFailure;
+      try { payload = JSON.parse(xhr.responseText) as ApiSuccess<FileUpload> | ApiFailure; }
+      catch { reject(new SelfHostedApiError(xhr.status, 'INTERNAL_ERROR', 'Upload response was invalid.')); return; }
+      if (xhr.status < 200 || xhr.status >= 300 || 'error' in payload) {
+        const error = 'error' in payload ? payload.error
+          : {code: 'INTERNAL_ERROR', message: 'Upload failed.', requestId: undefined, details: undefined};
+        reject(new SelfHostedApiError(xhr.status, error.code, error.message, error.requestId, error.details));
+        return;
+      }
+      resolve(payload.data);
+    };
+    xhr.onerror = () => { finish(); reject(new SelfHostedApiError(0, 'INTERNAL_ERROR', 'Upload connection was interrupted.')); };
+    xhr.onabort = () => { finish(); reject(new DOMException('Upload cancelled.', 'AbortError')); };
+    if (options.signal?.aborted) { reject(new DOMException('Upload cancelled.', 'AbortError')); return; }
+    options.signal?.addEventListener('abort', abort, {once: true});
+    options.onProgress?.(0, file.size);
+    xhr.send(file);
+  });
+}
+
+export interface S3ProviderConfigInput {
+  displayName: string;
+  endpoint: string;
+  region: string;
+  bucket: string;
+  prefix: string;
+  forcePathStyle: boolean;
+  allowPrivateNetwork: boolean;
+  credentials: {accessKeyId: string; secretAccessKey: string};
+}
 
 const knownCommitteeEvents = new Set<string>(COMMITTEE_EVENT_DEFINITIONS.map(item => item.name));
 
@@ -342,6 +397,86 @@ export const selfHostedApi = {
   },
   resolvePoint(id: string, baseRevision: number, status: string, chairResponse: string) {
     return request<CommitteePoint>(`/api/v1/points/${id}/resolve`, {method: 'POST', body: {baseRevision, status, chairResponse}});
+  },
+  listFiles(committeeId: string) {
+    return request<FileEntry[]>(`/api/v1/committees/${committeeId}/files`);
+  },
+  createFileUpload(committeeId: string, input: {logicalName: string; originalName: string; mediaType: string;
+    expectedSizeBytes: number; sha256: string}, idempotencyKey = key()) {
+    return request<FileUpload>(`/api/v1/committees/${committeeId}/file-uploads`, {method: 'POST',
+      body: input, idempotencyKey});
+  },
+  uploadFileContent(uploadId: string, file: File, idempotencyKey = key(), options: {
+    signal?: AbortSignal; onProgress?: (sentBytes: number, totalBytes: number) => void;
+  } = {}) {
+    return uploadContentRequest(uploadId, file, idempotencyKey, options);
+  },
+  commitFileUpload(uploadId: string, idempotencyKey = key()) {
+    return request<FileEntry>(`/api/v1/file-uploads/${uploadId}/commit`, {method: 'POST', body: {}, idempotencyKey});
+  },
+  submitFileForReview(fileId: string, baseRevision: number, idempotencyKey = key()) {
+    return request<FileEntry>(`/api/v1/files/${fileId}/submit-review`, {method: 'POST',
+      body: {baseRevision}, idempotencyKey});
+  },
+  publishFile(fileId: string, baseRevision: number, idempotencyKey = key()) {
+    return request<FileEntry>(`/api/v1/files/${fileId}/publish`, {method: 'POST',
+      body: {baseRevision}, idempotencyKey});
+  },
+  deleteFile(fileId: string, baseRevision: number, idempotencyKey = key()) {
+    return request<{id: string; fileEntryId: string}>(`/api/v1/files/${fileId}`, {method: 'DELETE',
+      body: {baseRevision}, idempotencyKey});
+  },
+  fileDownloadUrl(fileId: string) {
+    return `/api/v1/files/${encodeURIComponent(fileId)}/download`;
+  },
+  listStorageBindings(committeeId: string) {
+    return request<StorageBinding[]>(`/api/v1/committees/${committeeId}/storage-bindings`);
+  },
+  createServerVolumeBinding(committeeId: string, baseRevision: number, idempotencyKey = key()) {
+    return request<StorageBinding>(`/api/v1/committees/${committeeId}/storage-bindings/server-volume`, {
+      method: 'POST', body: {baseRevision}, idempotencyKey});
+  },
+  createS3Binding(committeeId: string, baseRevision: number, providerConfigId: string, idempotencyKey = key()) {
+    return request<StorageBinding>(`/api/v1/committees/${committeeId}/storage-bindings/s3`, {method: 'POST',
+      body: {baseRevision, providerConfigId}, idempotencyKey});
+  },
+  listS3ProviderConfigs() {
+    return request<S3ProviderConfigSummary[]>('/api/v1/storage-provider-configs/s3');
+  },
+  createS3ProviderConfig(input: S3ProviderConfigInput, idempotencyKey = key()) {
+    return request<S3ProviderConfigSummary>('/api/v1/admin/storage-provider-configs/s3', {method: 'POST',
+      body: input as unknown as Record<string, unknown>, idempotencyKey});
+  },
+  updateS3ProviderConfig(configId: string, baseRevision: number,
+    input: Omit<S3ProviderConfigInput, 'credentials'> & {status: 'ACTIVE' | 'DISABLED';
+      credentials?: S3ProviderConfigInput['credentials']}, idempotencyKey = key()) {
+    return request<S3ProviderConfigSummary>(`/api/v1/admin/storage-provider-configs/${configId}`, {method: 'PUT',
+      body: {baseRevision, ...input} as unknown as Record<string, unknown>, idempotencyKey});
+  },
+  verifyS3ProviderConfig(configId: string, idempotencyKey = key()) {
+    return request<S3ProviderConfigSummary>(`/api/v1/admin/storage-provider-configs/${configId}/verify`, {
+      method: 'POST', body: {}, idempotencyKey});
+  },
+  listStorageMigrations(committeeId: string) {
+    return request<StorageMigration[]>(`/api/v1/committees/${committeeId}/storage-migrations`);
+  },
+  createStorageMigration(committeeId: string, baseRevision: number, targetProviderType: StorageProviderType,
+    targetProviderConfigId?: string, idempotencyKey = key()) {
+    return request<StorageMigration>(`/api/v1/committees/${committeeId}/storage-migrations`, {method: 'POST',
+      body: {baseRevision, targetProviderType,
+        ...(targetProviderConfigId ? {targetProviderConfigId} : {})}, idempotencyKey});
+  },
+  retryStorageMigration(id: string, baseRevision: number, idempotencyKey = key()) {
+    return request<StorageMigration>(`/api/v1/storage-migrations/${id}/retry`, {method: 'POST',
+      body: {baseRevision}, idempotencyKey});
+  },
+  confirmStorageMigration(id: string, baseRevision: number, idempotencyKey = key()) {
+    return request<StorageMigration>(`/api/v1/storage-migrations/${id}/confirm`, {method: 'POST',
+      body: {baseRevision}, idempotencyKey});
+  },
+  cancelStorageMigration(id: string, baseRevision: number, idempotencyKey = key()) {
+    return request<StorageMigration>(`/api/v1/storage-migrations/${id}/cancel`, {method: 'POST',
+      body: {baseRevision}, idempotencyKey});
   }
 };
 

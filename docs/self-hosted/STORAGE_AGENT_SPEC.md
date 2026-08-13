@@ -18,9 +18,9 @@ S3_COMPATIBLE
 
 ### `S3_COMPATIBLE`
 
-系统管理员创建实例级存储配置，保存 endpoint、region、bucket、prefix 和加密凭据。Chair 只能选择获准配置，不能读取凭据。腾讯云 COS 通过其 S3 兼容接口接入；首版不实现 OneDrive、Google Drive 等 OAuth 网盘。
+系统管理员创建实例级存储配置，保存 endpoint、region、bucket、prefix 和加密凭据。Chair 或 Owner 只能选择获准配置，不能读取凭据。腾讯云 COS 通过其 S3 兼容接口接入；首版不实现 OneDrive、Google Drive 等 OAuth 网盘。
 
-当前阶段 6.5 使用显式实例 master key 对凭据执行带配置 ID 与 key version AAD 的 AES-256-GCM 加密。endpoint 只接受 HTTPS；DNS 解析后再次执行网络目标校验并固定连接地址。对象使用 SigV4，key 只由管理员 prefix 和服务器 blob UUID 派生；PUT 后必须 GET 重算大小和 SHA-256，不能只信任 ETag。已有 blob 的读取和删除继续使用其保存的 provider 配置，即使该配置后来停用。
+当前阶段 6 使用显式实例 master key 对凭据执行带配置 ID 与 key version AAD 的 AES-256-GCM 加密。endpoint 只接受 HTTPS；DNS 解析后再次执行网络目标校验并固定连接地址。对象使用 SigV4，key 只由管理员 prefix 和服务器 blob UUID 派生；PUT 后必须 GET 重算大小和 SHA-256，不能只信任 ETag。已有 blob 的读取和删除继续使用其保存的 provider 配置，即使该配置后来停用。
 
 ### `CHAIR_AGENT`
 
@@ -79,6 +79,8 @@ storage_hosts
 ```
 
 上传暂存区是唯一副本时属于 durable staging，不参与 LRU。只有目标提供者确认完整保存后才能删除。
+
+当前自托管浏览器按固定分块计算 SHA-256，再直接流式发送原始 `File`；显示真实上传字节并允许取消或重试。下载始终走服务端 attachment 路由，不在 DOM 中预览用户内容。Chair/Owner 可在委员会页面初始化 storage binding 和操作 provider migration；只有系统管理员页面可以提交 endpoint 或新凭据，保存的凭据不回显。
 
 Chair Agent 模式状态：
 

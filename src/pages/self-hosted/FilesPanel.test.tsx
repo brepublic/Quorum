@@ -1,0 +1,167 @@
+import * as React from 'react';
+import {act} from 'react';
+import {createRoot, type Root} from 'react-dom/client';
+import {afterEach, describe, expect, it, vi} from 'vitest';
+import type {CommitteeWorkspaceSnapshot, FileEntry, StorageMigration} from '@quorum/contracts';
+import type {SelfHostedApi} from '../../services/self-hosted-api';
+import {SelfHostedApiError} from '../../services/self-hosted-api';
+import FilesPanel, {storageErrorText} from './FilesPanel';
+
+(globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT: boolean}).IS_REACT_ACT_ENVIRONMENT = true;
+const committeeId = '20000000-0000-4000-8000-000000000001';
+const file: FileEntry = {id: '30000000-0000-4000-8000-000000000001', committeeId, logicalName: '工作文件一',
+  mediaType: 'image/svg+xml', status: 'UPLOAD_COMPLETE', createdByUserId: 'member', revision: 1,
+  currentVersion: {id: 'version', versionNumber: 1, originalName: 'draft.svg', mediaType: 'image/svg+xml',
+    sizeBytes: 3, sha256: 'a'.repeat(64), blobId: 'blob', createdAt: '2026-08-13T00:00:00.000Z'},
+  submittedAt: null, publishedAt: null, createdAt: '2026-08-13T00:00:00.000Z', updatedAt: '2026-08-13T00:00:00.000Z'};
+
+function snapshot(audience: CommitteeWorkspaceSnapshot['viewer']['audience']): CommitteeWorkspaceSnapshot {
+  return {schemaVersion: 2, committee: {id: committeeId, name: '安理会', chairLabel: '主席', topic: '', conference: '',
+    visibility: audience === 'PUBLIC' ? 'PUBLIC' : 'PRIVATE', operationMode: 'DELEGATE_OPERATED', status: 'ACTIVE',
+    activeRulePackageVersionId: 'rules', revision: 2}, seats: [], viewer: {audience, seatId: null}, attendance: [],
+  points: [], notes: [], textPosts: [], sync: {committeeEventSequence: 1}};
+}
+
+function api(overrides: Partial<SelfHostedApi> = {}): SelfHostedApi {
+  return {listFiles: vi.fn(async () => [file]), fileDownloadUrl: vi.fn(id => `/api/v1/files/${id}/download`),
+    listStorageBindings: vi.fn(async () => []), listS3ProviderConfigs: vi.fn(async () => []),
+    listStorageMigrations: vi.fn(async () => []), ...overrides} as unknown as SelfHostedApi;
+}
+
+let root: Root | undefined; let container: HTMLDivElement | undefined;
+async function render(audience: CommitteeWorkspaceSnapshot['viewer']['audience'], client: SelfHostedApi,
+  currentUserId?: string): Promise<HTMLDivElement> {
+  container = document.createElement('div'); document.body.append(container); root = createRoot(container);
+  await act(async () => {root?.render(<FilesPanel snapshot={snapshot(audience)} api={client}
+    currentUserId={currentUserId} />); await new Promise(resolve => setTimeout(resolve, 0));});
+  return container;
+}
+function button(label: string): HTMLButtonElement | undefined {
+  return Array.from(container?.querySelectorAll('button') ?? []).find(item => item.textContent?.includes(label));
+}
+afterEach(() => {if (root) act(() => root?.unmount()); container?.remove(); root = undefined; container = undefined;
+  vi.restoreAllMocks();});
+
+describe('self-hosted stage 6 file panel', () => {
+  it.each([
+    ['SERVICE_NOT_READY', '存储暂不可用'], ['REVISION_CONFLICT', '状态已更新'],
+    ['IDEMPOTENCY_CONFLICT', '请求内容已变更'], ['FORBIDDEN', '没有权限'],
+    ['PAYLOAD_TOO_LARGE', '文件过大'], ['RESOURCE_CONFLICT', '当前状态不允许']
+  ])('maps %s to a short recovery message', (code, expected) => {
+    expect(storageErrorText(new SelfHostedApiError(409, code, 'internal message'))).toContain(expected);
+  });
+
+  it('keeps the role matrix authoritative and never previews dangerous file content', async () => {
+    let view = await render('PUBLIC', api());
+    expect(view.textContent).toContain('下载文件'); expect(view.textContent).not.toContain('上传文件');
+    expect(view.textContent).not.toContain('提交审核'); expect(view.querySelector('iframe,object,embed,[src^="data:"]')).toBeNull();
+    expect(view.querySelector('a')?.getAttribute('href')).toContain('/download');
+    act(() => root?.unmount()); view.remove(); root = undefined; container = undefined;
+
+    view = await render('MEMBER', api(), 'member');
+    expect(view.textContent).toContain('上传文件'); expect(view.textContent).toContain('提交审核');
+    expect(view.textContent).toContain('永久删除'); expect(view.textContent).not.toContain('文件存储');
+    act(() => root?.unmount()); view.remove(); root = undefined; container = undefined;
+
+    view = await render('CHAIR', api(), 'chair');
+    expect(view.textContent).toContain('文件存储'); expect(view.textContent).toContain('提交审核');
+    act(() => root?.unmount()); view.remove(); root = undefined; container = undefined;
+
+    view = await render('MEMBER', api(), 'system-admin');
+    expect(view.textContent).not.toContain('文件存储');
+    expect(view.textContent).not.toContain('永久删除');
+  });
+
+  it('hashes, streams, reports progress, commits, and refreshes a selected file', async () => {
+    let committed = false;
+    const createFileUpload = vi.fn(async () => ({id: 'upload', status: 'CREATED'}));
+    const uploadFileContent = vi.fn(async (_id, _file, _key, options) => {
+      options.onProgress?.(3, 3); return {id: 'upload', status: 'STAGED'};
+    });
+    const commitFileUpload = vi.fn(async () => {committed = true; return file;});
+    const client = api({listFiles: vi.fn(async () => committed ? [file] : []), createFileUpload,
+      uploadFileContent, commitFileUpload} as unknown as Partial<SelfHostedApi>);
+    const view = await render('MEMBER', client, 'member');
+    const input = view.querySelector('input[type="file"]') as HTMLInputElement;
+    const selected = new File(['abc'], 'working-paper.txt', {type: 'text/plain'});
+    Object.defineProperty(input, 'files', {configurable: true, value: [selected]});
+    await act(async () => {input.dispatchEvent(new Event('change', {bubbles: true}));});
+    await act(async () => {button('上传文件')?.click(); await new Promise(resolve => setTimeout(resolve, 20));});
+    expect(createFileUpload).toHaveBeenCalledWith(committeeId, expect.objectContaining({logicalName: 'working-paper.txt',
+      originalName: 'working-paper.txt', expectedSizeBytes: 3,
+      sha256: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad'}), expect.any(String));
+    expect(uploadFileContent).toHaveBeenCalledWith('upload', selected, expect.any(String), expect.objectContaining({
+      signal: expect.any(AbortSignal), onProgress: expect.any(Function)}));
+    expect(commitFileUpload).toHaveBeenCalledWith('upload', expect.any(String));
+    expect(view.textContent).toContain('工作文件一');
+  });
+
+  it('keeps the selected file available for a retry after a recoverable provider failure', async () => {
+    const uploadFileContent = vi.fn()
+      .mockRejectedValueOnce(new SelfHostedApiError(503, 'SERVICE_NOT_READY', 'Provider failed.'))
+      .mockResolvedValueOnce({id: 'upload-two', status: 'STAGED'});
+    const client = api({listFiles: vi.fn(async () => []),
+      createFileUpload: vi.fn().mockResolvedValueOnce({id: 'upload-one', status: 'CREATED'})
+        .mockResolvedValueOnce({id: 'upload-two', status: 'CREATED'}), uploadFileContent,
+      commitFileUpload: vi.fn(async () => file)} as unknown as Partial<SelfHostedApi>);
+    const view = await render('MEMBER', client, 'member');
+    const input = view.querySelector('input[type="file"]') as HTMLInputElement;
+    Object.defineProperty(input, 'files', {configurable: true, value: [new File(['abc'], 'draft.txt')]});
+    await act(async () => {input.dispatchEvent(new Event('change', {bubbles: true}));});
+    await act(async () => {button('上传文件')?.click(); await new Promise(resolve => setTimeout(resolve, 20));});
+    expect(view.textContent).toContain('存储暂不可用');
+    await act(async () => {button('上传文件')?.click(); await new Promise(resolve => setTimeout(resolve, 20));});
+    expect(uploadFileContent).toHaveBeenCalledTimes(2);
+  });
+
+  it('cancels an in-flight upload through AbortSignal without clearing the selected file', async () => {
+    const uploadFileContent = vi.fn((_id, _file, _key, options) => new Promise((_resolve, reject) => {
+      options.signal?.addEventListener('abort', () => reject(new DOMException('cancelled', 'AbortError')), {once: true});
+    }));
+    const client = api({listFiles: vi.fn(async () => []), createFileUpload: vi.fn(async () => ({id: 'upload',
+      status: 'CREATED'})), uploadFileContent} as unknown as Partial<SelfHostedApi>);
+    const view = await render('MEMBER', client, 'member');
+    const input = view.querySelector('input[type="file"]') as HTMLInputElement;
+    Object.defineProperty(input, 'files', {configurable: true, value: [new File(['abc'], 'draft.txt')]});
+    await act(async () => {input.dispatchEvent(new Event('change', {bubbles: true}));});
+    await act(async () => {button('上传文件')?.click(); await new Promise(resolve => setTimeout(resolve, 20));});
+    expect(button('取消上传')).toBeTruthy();
+    await act(async () => {button('取消上传')?.click(); await new Promise(resolve => setTimeout(resolve, 0));});
+    expect(view.textContent).toContain('已取消上传');
+    expect(button('上传文件')).toBeTruthy();
+  });
+
+  it('shows migration states and only offers valid retry, confirm, and cancel commands', async () => {
+    const migrations = [
+      {id: 'failed', status: 'FAILED', revision: 2, completedItems: 1, totalItems: 2},
+      {id: 'ready', status: 'READY_TO_CONFIRM', revision: 3, completedItems: 2, totalItems: 2},
+      {id: 'copying', status: 'COPYING', revision: 1, completedItems: 0, totalItems: 2},
+      {id: 'completed', status: 'COMPLETED', revision: 4, completedItems: 2, totalItems: 2},
+      {id: 'cancelled', status: 'CANCELLED', revision: 2, completedItems: 0, totalItems: 2}
+    ] as StorageMigration[];
+    const client = api({listStorageBindings: vi.fn(async () => [{id: 'binding', committeeId,
+      providerType: 'SERVER_VOLUME', providerConfigId: null, status: 'ACTIVE', revision: 1,
+      createdAt: '2026-08-13T00:00:00.000Z'}] as Awaited<ReturnType<SelfHostedApi['listStorageBindings']>>),
+      listStorageMigrations: vi.fn(async () => migrations)});
+    const view = await render('OWNER', client, 'owner');
+    expect(view.textContent).toContain('迁移失败'); expect(view.textContent).toContain('等待确认');
+    expect(view.textContent).toContain('正在复制'); expect(view.textContent).toContain('迁移完成');
+    expect(view.textContent).toContain('已取消'); expect(button('重试迁移')).toBeTruthy();
+    expect(button('确认切换')).toBeTruthy();
+  });
+
+  it('publishes with the loaded revision and removes a permanently deleted file after refresh', async () => {
+    let current: FileEntry[] = [{...file, status: 'PENDING_REVIEW', revision: 2}];
+    const publishFile = vi.fn(async () => {current = [{...file, status: 'PUBLISHED', revision: 3}]; return current[0];});
+    const deleteFile = vi.fn(async () => {current = []; return {id: 'tombstone', fileEntryId: file.id};});
+    const client = api({listFiles: vi.fn(async () => current), publishFile, deleteFile});
+    const view = await render('CHAIR', client, 'chair');
+    await act(async () => {button('发布文件')?.click(); await new Promise(resolve => setTimeout(resolve, 0));});
+    expect(publishFile).toHaveBeenCalledWith(file.id, 2);
+    expect(view.textContent).toContain('已发布');
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    await act(async () => {button('永久删除')?.click(); await new Promise(resolve => setTimeout(resolve, 0));});
+    expect(deleteFile).toHaveBeenCalledWith(file.id, 3);
+    expect(view.textContent).not.toContain('工作文件一');
+  });
+});

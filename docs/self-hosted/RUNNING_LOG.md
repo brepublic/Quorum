@@ -6,10 +6,10 @@
 
 - 更新时间：2026-08-13
 - 分支：`self-host`
-- 已确认基线：`c30aafc stage 6.6: migrate storage providers safely`
-- 当前阶段：6.7 磁盘阈值和后台清理已实现并通过当前 WSL 可执行的验证。
-- 当前工作：单独提交阶段 6.7。
-- 下一步：按 `STAGE_6_8_HANDOFF_PROMPT.md` 复跑 6.7 基线，然后实施自托管文件 UI 与阶段 6 收尾。
+- 已确认基线：`f6e82d7 stage 6.7: protect capacity and clean storage`
+- 当前阶段：6.8 自托管文件 UI 与阶段 6 收尾已完成当前 WSL 可执行的验证，等待单独提交。
+- 当前工作：文件生命周期、存储配置和 provider migration 已接入自托管 React 工作区；阶段 6 文档已收尾。
+- 下一步：提交 6.8，然后按 `STAGE_7_HANDOFF_PROMPT.md` 进入 7.1 协议、配对、设备身份与单主机 fencing。
 
 ## 已完成与验证
 
@@ -45,9 +45,9 @@
 - `da454ec`：阶段 6.2 durable staging 与流式上传。
 - `1119c2a`：阶段 6.3 `SERVER_VOLUME` provider。
 - `de214c1`：阶段 6.4 `S3_COMPATIBLE` provider。
-- 阶段 6.5 文件审核、授权下载和永久删除任务：提交以当前 `git log` 为准。
-- 阶段 6.6 provider 切换与失败回退：提交以当前 `git log` 为准。
-- 阶段 6.7 磁盘阈值和后台清理：提交以当前 `git log` 为准。
+- `3fe305d`：阶段 6.5 文件审核、授权下载和永久删除任务。
+- `c30aafc`：阶段 6.6 provider 切换与失败回退。
+- `f6e82d7`：阶段 6.7 磁盘阈值和后台清理。
 
 ### 2026-08-13：阶段 6.3 SERVER_VOLUME provider
 
@@ -129,3 +129,21 @@
 - `git diff --check`：通过。
 - 当前 WSL 没有真实 PostgreSQL、可控持久卷、S3、多实例、只读/满盘或进程终止环境；相关验证与证据要求记录在 `MANUAL_ACCEPTANCE.md` 的 SH-MAN-507。
 - 阶段 6.7 已完成当前 WSL 可执行的验证；单独提交后直接进入 6.8。
+
+### 2026-08-13：阶段 6.8 自托管文件 UI 与阶段收尾
+
+- 阶段 6.7 已单独提交为 `f6e82d7`，提交前工作区差异检查通过。
+- 6.7 基线复跑：30 项针对性测试通过；30 项 PostgreSQL 用例因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip。
+- `pnpm build:self-host`：通过；Vite 仅报告既有的大分块警告。
+- 增加 Chair/Owner 可读的 binding 状态和 `SERVER_VOLUME` 初始化 HTTP；系统管理员不因实例角色自动获得委员会 Chair 权限。初始 binding 可由 Owner 或 Chair 创建，未改变 provider 数据模型。
+- 浏览器以固定 1 MiB `Blob.slice()` 增量计算 SHA-256，并用 XHR 直接发送原始 `File`、报告实际进度和支持取消；重试保留所选文件与稳定幂等键，不在内存中复制完整文件。
+- 自托管工作区增加文件页：PUBLIC 只能下载已发布文件；member 可上传；文件所有者可提交审核和删除；Chair/Owner 可审核、发布、删除、配置 binding 和控制 provider migration。失败后刷新权威状态，409 不由客户端覆盖。
+- 下载只使用同源 attachment URL，不把用户文件送入 DOM、iframe、object、data URL 或预览组件。永久删除使用明确且不可逆的短确认文案。
+- 系统管理员的独立存储配置页可创建、更新、停用和验证 S3 配置；服务端不会回传凭据，浏览器不预填或记录密钥，轮换必须同时提供两项新凭据。
+- 最终针对性验证：7 个测试文件、36 项测试通过；1 个 PostgreSQL 文件、31 项因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip；TypeScript、server build 和 `git diff --check` 通过。
+- `pnpm test:self-host`：43 个文件、208 项通过；6 个 PostgreSQL 集成文件、48 项明确 skip。仅出现既有 React/Semantic UI 弃用警告。
+- 默认 `pnpm build` 与 `pnpm build:self-host` 均通过；contracts、前端、rule-schema 和 server 构建成功，Vite 仅报告既有的大分块警告。
+- `pnpm test:self-host:integration`：6 个文件、48 项因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip。
+- Cypress 13.11.0 在可写临时缓存和沙箱外通过二进制校验；`pnpm test:e2e` 使用 Firebase emulators 与 Electron 118 完成既有 4 个 spec、22 项全通过。该套件验证 Firebase 运行时回归，不替代需要 PostgreSQL、真实 provider 和 TLS 的自托管浏览器验收。
+- 当前 WSL 仍未提供真实 PostgreSQL、Docker 持久卷、S3 compatible 测试桶或 TLS 入口；角色矩阵、真实大文件流、provider 故障/迁移、危险类型下载隔离与可访问性证据记录在 `MANUAL_ACCEPTANCE.md` 的 SH-MAN-508。
+- `git diff --check`：通过。阶段 6.8 完成后直接进入阶段 7.1。

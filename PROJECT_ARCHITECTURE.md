@@ -2,7 +2,7 @@
 
 > 本文件是本仓库的维护入口。后续涉及代码、构建、测试或运行的工作，应先阅读本文件和 `AGENTS.md`，并以实际代码为准更新本文档。
 
-> Quorum 已完成自主托管目标设计，并已落地实施计划阶段 0–5 和阶段 6.1–6.7。`self-hosted` 运行时以 PostgreSQL 为唯一业务真相，通过同源 API 与受众过滤 SSE 提供议事功能；上传可流式暂存并提交到服务器持久卷或 S3 compatible provider，文件可审核、发布、授权下载、异步物理删除并在 provider 之间安全迁移。磁盘阈值、fenced 后台清理与存储指标已接入；文件 UI 尚未接入。
+> Quorum 已完成自主托管目标设计，并已落地实施计划阶段 0–6。`self-hosted` 运行时以 PostgreSQL 为唯一业务真相，通过同源 API 与受众过滤 SSE 提供议事功能；上传可流式暂存并提交到服务器持久卷或 S3 compatible provider，文件可在自托管工作区审核、发布、授权下载、异步物理删除并在 provider 之间安全迁移。磁盘阈值、fenced 后台清理与存储指标已接入；Chair Local Agent 尚未实施。
 
 ## 1. 项目定位与技术栈
 
@@ -85,6 +85,8 @@ flowchart LR
 
 Firebase 运行时的 `Committee` 是委员会工作区壳层，对 `/committees/:committeeID` 建立 Realtime Database `value` 订阅。自托管运行时由 `SelfHostedWorkspace` 接管相同深层路径，先读取 schema v2 快照，再以 `Last-Event-ID`/`after` 连接受众过滤 SSE。序号缺口、未知事件和 410 游标过期都会丢弃增量并重新读取完整快照；心跳不改变业务状态，Caddy 对事件流禁用缓冲。
 
+自托管委员会工作区的“文件”视图由 `FilesPanel` 提供列表、分块 SHA-256、流式上传进度、取消/重试、审核、发布、附件下载和永久删除。Chair/Owner 可读取当前 storage binding 并操作迁移；系统管理员在独立 `/storage` 页面管理 S3 endpoint、状态、验证和凭据，凭据字段不从 API 回显。匿名公开路由只显示服务端授权返回的已发布文件。Firebase 运行时继续使用原 `Files.tsx`，两条路径不双写。
+
 点名页把每个代表团的最终出席/缺席结果保存到成员现有的 `present` 字段，并用 `rollCall/called/{memberID}` 与 `rollCall/currentMemberID` 保存点名进度和当前代表团，因此刷新或重新进入页面后仍可继续。撤销历史和手动翻页位置仅属于当前页面会话状态。委员会设置页只展示总人数、有表决权人数与法定人数，依赖点名结果的出席人数和各类议事门槛会在点名完成后统一展示。
 
 `present` 也是后续议事流程的统一出席来源：缺席代表团会保留在动议、决议表决和发言名单的选择界面中，但以缺席状态灰显且不能操作；已经排入发言队列后才变为缺席的代表团会被自动跳过。决议页的动态、文本、修正案和表决子页共用全宽响应式外框及统一的页边距，以保持标签菜单、决议名称和状态控件在子页间的位置稳定。决议表决页使用可分页的代表团矩阵，逐国记录赞成、反对或弃权，并同时展示简单多数、三分之二多数和实时票数；通常在已达到门槛或剩余票数已不可能达到门槛时自动显示结果，但委员会中存在一票否决席位时，必须等待所有出席且有表决权的代表团完成表决后才显示通过、未通过或被否决的结果。公开动议投票以 `memberID` 作为票键，不再使用浏览器匿名投票者 ID，数据库规则会校验投票代表团仍为出席状态。
@@ -151,16 +153,17 @@ system
 - `countryTemplates/{creatorUid}` 同样仅允许 UID 对应的受管登录用户读写；内置默认国家模板随前端代码发布，不写入 Firebase。
 - `storage.rules` 允许公开读取 `committees/{committeeId}/{fileName}`；上传需写入委员会创建者 UID 元数据。文件拥有者或委员会主任可更新/删除。
 - `Files.tsx` 同时维护 Database 中的文件/帖子元数据和 Storage 中的二进制对象。
-- 自主托管模式的 `src/pages/SelfHostedIdentity.tsx` 与 `SelfHostedWorkspace.tsx` 不复用 Firebase 身份、Database 引用或 Callable。管理员创建普通账号时由服务端生成一次性临时密码；首次登录只能读取当前身份、退出或改密。议事页面通过 `src/services/self-hosted-api.ts` 发送同源 Cookie、CSRF、revision 和幂等键，并由 `src/pages/self-hosted/ProceedingsPanel.tsx` 展示服务器时间推导的计时、名单、动议、表决、意向性投票和决议草案。管理员不能禁用唯一系统管理员；完整账号匿名化与资源转移仍属于后续阶段。
+- 自主托管模式的 `src/pages/SelfHostedIdentity.tsx` 与 `SelfHostedWorkspace.tsx` 不复用 Firebase 身份、Database 引用或 Callable。管理员创建普通账号时由服务端生成一次性临时密码；首次登录只能读取当前身份、退出或改密。`src/services/self-hosted-api.ts` 发送同源 Cookie、CSRF、revision 和幂等键；议事与文件页面分别由 `ProceedingsPanel`、`FilesPanel` 和 `StorageAdminPanel` 接入。管理员不能禁用唯一系统管理员；完整账号匿名化与资源转移仍属于后续阶段。
 - 阶段 6.1 的 `server/src/modules/storage/service.ts` 只提供 provider 校验完成后的内部 PostgreSQL 提交边界。它从 Session 推导 actor，并在同一事务中写入文件状态、委员会事件和审计。逻辑删除立即清除当前版本指针、追加墓碑并把 blob 标记为待物理删除；数据库触发器禁止修改文件版本、墓碑或复活已删除文件。
 - 阶段 6.2 的 `Stage6UploadService` 通过 `POST /api/v1/committees/:id/file-uploads` 创建上传，再由 `PUT /api/v1/file-uploads/:id/content` 直接消费 HTTP 流。`DurableStagingStore` 以服务器 UUID 生成路径，逐块执行全局与单文件上限、实际大小和 SHA-256 校验，并拒绝绝对路径、点路径、符号链接逃逸和非普通文件。完整内容只进入 `STAGED`；本阶段不调用 provider 提交，不创建 `file_entry`、`file_blob` 或 `file_version`。`CREATED`、`RECEIVING` 和 `STAGED` 即使过期也不属于普通清理范围。
-- 阶段 6.3 的 `Stage6ServerVolumeService` 只接收 `STAGED` upload。`ServerVolumeStore` 从暂存文件流式复制到由 blob UUID 派生的 0600 临时文件，执行 `fsync`、无覆盖原子发布和最终重读校验；路径检查拒绝符号链接、硬链接和非普通文件。`POST /api/v1/file-uploads/:id/commit` 在 provider 验证后用一个事务提交 upload、blob、file entry/version、事件、审计和幂等响应。数据库失败会保留暂存与服务器卷副本，重试复用原 blob ID；服务器卷读取原语已实现，但尚未开放下载 HTTP。
-- 阶段 6.4 增加实例级 `S3_COMPATIBLE` 配置、AES-256-GCM 凭据密文和 SigV4 HTTPS 适配器。系统管理员管理配置，Chair 只能把委员会绑定到活动配置。endpoint 在保存时拒绝危险 URL，并在每次 DNS 解析后拒绝非获准私网、回环、链路本地和元数据目标，同时把 TLS 主机名连接固定到已检查地址。S3 object key 只由管理员 prefix 和 blob UUID 派生；上传后 GET 重算大小和 SHA-256，再复用阶段 6.3 的原子发布事务。真实 S3 compatible 服务仍需按人工验收清单验证。
+- 阶段 6.3 的 `Stage6ServerVolumeService` 只接收 `STAGED` upload。`ServerVolumeStore` 从暂存文件流式复制到由 blob UUID 派生的 0600 临时文件，执行 `fsync`、无覆盖原子发布和最终重读校验；路径检查拒绝符号链接、硬链接和非普通文件。`POST /api/v1/file-uploads/:id/commit` 在 provider 验证后用一个事务提交 upload、blob、file entry/version、事件、审计和幂等响应。数据库失败会保留暂存与服务器卷副本，重试复用原 blob ID；阶段 6.5 已把校验读取原语接到下载 HTTP。
+- 阶段 6.4 增加实例级 `S3_COMPATIBLE` 配置、AES-256-GCM 凭据密文和 SigV4 HTTPS 适配器。系统管理员管理配置，Chair 或 Owner 只能把委员会绑定到活动配置。endpoint 在保存时拒绝危险 URL，并在每次 DNS 解析后拒绝非获准私网、回环、链路本地和元数据目标，同时把 TLS 主机名连接固定到已检查地址。S3 object key 只由管理员 prefix 和 blob UUID 派生；上传后 GET 重算大小和 SHA-256，再复用阶段 6.3 的原子发布事务。真实 S3 compatible 服务仍需按人工验收清单验证。
 - 阶段 6.5 增加 `UPLOAD_COMPLETE → PENDING_REVIEW → PUBLISHED` 数据库状态机和同源文件列表、详情、下载、提交审核、发布及删除路由。PUBLIC 访问只看到公开委员会的已发布文件；活动 member、Chair 和 Owner 可读取本委员会未删除文件。状态命令继续执行 Session、Origin、CSRF、revision 与幂等边界，暂停委员会拒绝审核、发布和删除。
 - 下载在发送响应头前从文件版本记录的 provider 重新校验大小和 SHA-256，并始终使用安全编码的 `Content-Disposition: attachment`、`nosniff` 和同源隔离头；HTML、XML、JavaScript 与 SVG 强制作为 `application/octet-stream`。逻辑删除立即隐藏文件、追加墓碑并为每个不可变版本创建 durable delete job；worker 原语对服务器卷和 S3 执行幂等删除，失败退避重试，超时的 `IN_PROGRESS` claim 可恢复。
 - 阶段 6.6 以 `storage_migrations`、逐内容 blob copy item 和 `file_blob_copies` 保存 provider 切换。文件版本继续引用原始不可变内容 blob；读取时用委员会活动 binding 解析同哈希的已验证副本，因此复制期间和失败后仍从旧 provider 服务。后台 worker 经 durable staging 流式复制，使用 claim token、退避与 stale-claim 恢复；只有当前 manifest 的全部历史版本副本再次校验后，确认事务才同时退役源 binding、激活目标 binding 并写事件、审计及幂等响应。S3 目标必须为活动且当前 revision 已验证的配置；取消只把目标副本送入 durable 删除任务。
 - 阶段 6.7 用实际 `QUORUM_STORAGE_PATH` 的 `statfs` 采样容量；默认 80% 记录结构化告警，90% 阻止新的上传字节和 provider copy，但下载、议事与回收任务继续运行。`/health/ready` 在目录不可读写或容量未知时失败，在阈值告警/临界状态仍返回具体状态；`/metrics` 只暴露容量、固定类别队列深度和清理结果计数。
 - 常驻 maintenance worker 优先运行已有 blob delete job，再通过 PostgreSQL claim token 清理符合条件的 upload 与 migration staging。只有 `COMMITTED`、`CANCELLED`、已过期 `FAILED` upload，以及 `COMPLETED`/`CANCELLED` migration item 可清理；`CREATED`、`RECEIVING`、`STAGED`、待重试 copy 和退休源 provider 副本不因期限、LRU 或压力删除。物理删除和暂存清理结果写入追加式 `storage_cleanup_audit`，数据库完成失败、进程中断和 stale claim 可幂等恢复。
+- 阶段 6.8 的浏览器 SHA-256 按固定大小读取 `Blob.slice()`，不创建完整文件副本；XHR 直接发送原始 `File` 并报告实际上传字节，可通过 `AbortSignal` 取消。文件命令失败后重新读取权威列表，409 不在客户端覆盖；SSE 文件和迁移事件仍只触发快照/列表刷新。下载只生成同源 attachment URL，不把用户内容送入 DOM、iframe、object、data URL 或预览组件。
 
 因此，数据库规则和 Storage 元数据是产品的关键安全边界；变更前必须同时审查前端写入路径与这两份规则文件。
 

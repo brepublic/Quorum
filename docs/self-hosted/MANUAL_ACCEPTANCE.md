@@ -279,7 +279,7 @@
 
 ## 阶段 6：服务器卷和 S3 文件
 
-当前环境未提供 `TEST_DATABASE_ADMIN_URL`、PostgreSQL 客户端、Docker 持久卷、S3 兼容测试桶或 TLS 浏览器。阶段 6.1–6.7 的真实 PostgreSQL 集成测试已编写但明确 skip；以下项目尚未通过。
+当前环境未提供 `TEST_DATABASE_ADMIN_URL`、PostgreSQL 客户端、Docker 持久卷、S3 兼容测试桶或 TLS 浏览器。阶段 6.1–6.8 的真实 PostgreSQL 集成测试已编写但明确 skip；以下项目尚未通过。
 
 ### SH-MAN-501 文件版本、绑定、事务和墓碑
 
@@ -343,3 +343,12 @@
 - 自动化覆盖情况：当前 WSL 的阈值边界、容量拒绝、readiness/metrics、staging 路径删除、worker 串行停止、migration copy 门控和静态 migration 测试已通过；真实 PostgreSQL 用例覆盖 upload 幂等回放、严格候选、cleanup 失败恢复、provider 删除数据库完成回滚、stale claim 和追加式审计，未配置 `TEST_DATABASE_ADMIN_URL` 时明确 skip。真实挂载卷使用率、只读/满盘、两个进程、真实 S3、进程终止、Prometheus 抓取和日志采集尚未执行。
 - 当前状态：因无真实 PostgreSQL、可控持久卷、S3 compatible 测试桶和多实例环境延期。
 - 需要保存的证据：`df`/挂载信息、四个阈值的 readiness 与 metrics、上传/下载/议事结果、cleanup claim 和 audit 脱敏查询、staging/provider 对象清单、两个实例日志、每个故障点和恢复时间线、敏感信息搜索结果。不得保存文件正文、Session、CSRF token、S3 凭据、master key 或含秘密的完整路径。
+
+### SH-MAN-508 自托管文件与存储管理浏览器流程
+
+- 前置条件：通过 Caddy TLS 提供 `VITE_RUNTIME_MODE=self-hosted` 构建；真实 PostgreSQL 16、持久 `SERVER_VOLUME` 和独立 S3 compatible 测试桶；PUBLIC 与 PRIVATE 委员会；未登录、非 member、member、Chair、Owner 和仅有 `SYSTEM_ADMIN` 的账号；Chromium、Firefox、Safari，以及窄屏触控设备或模拟器；准备大文件、中文长文件名、HTML、JavaScript、SVG、PDF 和普通二进制文件，并可制造 90% 容量、容量未知、provider 中断、暂停委员会与陈旧 revision。
+- 操作步骤：逐角色进入委员会“文件”视图并记录可见文件和操作；member 选择大文件，观察分块校验、真实上传进度、取消、失败后重试和成功后的“上传完成”；提交审核后确认“待审核”，由 Chair/Owner 发布并确认“已发布”；在另一浏览器同步观察列表刷新。下载每种文件并检查 Network 响应头，确认页面未创建 iframe、object、embed、data URL 或内联预览。确认永久删除后立即再次列表和下载。由 Chair/Owner 初始化服务器卷或 S3，执行 `COPYING`、`FAILED`、`READY_TO_CONFIRM`、`COMPLETED` 和 `CANCELLED` 迁移流程。由系统管理员创建、编辑、停用和验证 S3 配置，检查密码字段、DOM、Network、控制台和日志。分别触发 90% 容量、容量未知、provider 故障、revision/幂等冲突、暂停与权限拒绝。最后用键盘完成文件选择以外的全部操作，检查焦点、可访问名称、44 px 触控目标、窄屏换行和简体中文长文本。
+- 通过条件：PUBLIC 只显示公开委员会已发布文件；member、Chair、Owner 和系统管理员显示/操作矩阵与服务端一致，系统管理员没有隐式 Chair 控件。浏览器校验和上传不复制完整大文件到多份内存，进度对应实际字节，可取消且失败后可重试；成功依次显示“上传完成”“待审核”“已发布”。409 后重新读取权威状态，不静默覆盖。下载只走 attachment 路由，危险 MIME 不在同源页面执行。永久删除后文件立即不可见且下载返回 404。只有系统管理员可编辑 endpoint 和凭据，已保存凭据不在响应、DOM、控制台或日志中回显。迁移操作、错误恢复、键盘、焦点、窄屏和触控均可用。
+- 自动化覆盖情况：当前 WSL 的 API client、增量 SHA-256、XHR 进度/取消、角色矩阵、危险 MIME 无预览、上传成功/失败重试、审核发布删除刷新、迁移状态、S3 凭据不回填、HTTP binding 和共享契约测试已通过；真实 PostgreSQL binding 权限用例未配置 URL 时明确 skip。真实浏览器 File/Blob 内存曲线、XHR 网络进度、下载行为、跨浏览器 SSE、视觉布局、触控、键盘焦点、TLS、真实 provider 和容量故障尚未执行；当前环境缺少 Cypress 二进制，不能以组件测试替代。
+- 当前状态：因无真实 PostgreSQL、持久卷、S3 compatible 测试桶、TLS 浏览器和 Cypress 二进制延期。
+- 需要保存的证据：各角色与状态截图、窄屏和焦点截图、辅助功能树、浏览器任务管理器内存曲线、上传/取消/重试 Network 时间线、SSE 与列表刷新 HAR、attachment 响应头、下载 SHA-256、删除后的 404、binding/migration/file/event/audit/idempotency 脱敏查询、S3 配置响应和凭据泄漏搜索结果。不得保存文件正文、Session、CSRF token、access key、secret 或 master key。

@@ -204,6 +204,19 @@ async function committedServerFile(fixture: Awaited<ReturnType<typeof storageFix
 }
 
 integration('PostgreSQL stage 6 file metadata', () => {
+  it('lists storage binding state only for the committee Owner or Chair', async () => {
+    const fixture = await storageFixture();
+    await expect(storage.listBindings(fixture.owner, fixture.committee.id)).resolves.toEqual([fixture.binding]);
+    await expect(storage.listBindings(fixture.chair, fixture.committee.id)).resolves.toEqual([fixture.binding]);
+    await expect(storage.listBindings(fixture.member, fixture.committee.id)).rejects.toMatchObject({code: 'FORBIDDEN'});
+    await expect(storage.listBindings(administrator, fixture.committee.id)).rejects.toMatchObject({code: 'FORBIDDEN'});
+    const ownerCommittee = await stage4.createCommittee(fixture.owner, {name: 'Owner storage', visibility: 'PRIVATE',
+      countryTemplateKey: 'builtin:default'}, 'owner-storage-committee', context('owner-storage-committee'));
+    await expect(storage.createServerVolumeBinding(fixture.owner, ownerCommittee.id,
+      {baseRevision: ownerCommittee.revision}, 'owner-storage-binding', context('owner-storage-binding')))
+      .resolves.toMatchObject({committeeId: ownerCommittee.id, providerType: 'SERVER_VOLUME', status: 'ACTIVE'});
+  });
+
   it('commits versions, events, audits, and an irreversible tombstone', async () => {
     const fixture = await storageFixture();
     await expect(storage.createServerVolumeBinding(administrator, fixture.committee.id,

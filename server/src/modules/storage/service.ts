@@ -10,9 +10,9 @@ import {
   isChair,
   lockedCommittee,
   requireBusinessIdentity,
-  requireChair,
   requireEditable,
   requireProceedingsActive,
+  transaction,
   type Stage4CommitteeRow,
   type Stage4Context
 } from '../stage4/database.js';
@@ -152,6 +152,12 @@ async function fileState(client: PoolClient, row: FileEntryRow): Promise<FileEnt
   };
 }
 
+async function requireStorageManager(client: PoolClient, committee: Stage4CommitteeRow, userId: string): Promise<void> {
+  if (committee.owner_user_id !== userId && !(await isChair(client, committee.id, userId))) {
+    throw new AppError({code: 'FORBIDDEN', message: 'Chair or committee owner access is required.'});
+  }
+}
+
 async function canContribute(client: PoolClient, committee: Stage4CommitteeRow, userId: string): Promise<boolean> {
   if (committee.owner_user_id === userId || await isChair(client, committee.id, userId)) return true;
   const membership = await client.query(`SELECT 1 FROM committee_memberships
@@ -184,6 +190,22 @@ function requireFileRevision(row: FileEntryRow, value: unknown): void {
 export class Stage6StorageService {
   constructor(private readonly pool: Pool) {}
 
+  async listBindings(auth: AuthenticatedSession, committeeId: string): Promise<StorageBinding[]> {
+    requireBusinessIdentity(auth);
+    return transaction(this.pool, async client => {
+      const found = await client.query<Stage4CommitteeRow>('SELECT * FROM committees WHERE id=$1',
+        [uuid(committeeId, 'Committee ID')]);
+      const committee = found.rows[0];
+      if (!committee || committee.status === 'DELETING') {
+        throw new AppError({code: 'NOT_FOUND', message: 'Committee not found.'});
+      }
+      await requireStorageManager(client, committee, auth.user.id);
+      const result = await client.query<StorageBindingRow>(`SELECT * FROM storage_bindings
+        WHERE committee_id=$1 ORDER BY created_at,id`, [committee.id]);
+      return result.rows.map(binding);
+    });
+  }
+
   async createServerVolumeBinding(auth: AuthenticatedSession, committeeId: string, body: unknown,
     idempotencyKey: string, context: Stage4Context): Promise<StorageBinding> {
     requireBusinessIdentity(auth);
@@ -199,7 +221,7 @@ export class Stage6StorageService {
       work: async client => {
         const committee = await lockedCommittee(client, committeeId);
         requireEditable(committee);
-        await requireChair(client, committee, auth.user.id);
+        await requireStorageManager(client, committee, auth.user.id);
         requireCommitteeRevision(committee, request.baseRevision);
         if (await client.query('SELECT 1 FROM storage_bindings WHERE committee_id=$1 AND status=$2',
           [committee.id, 'ACTIVE']).then(result => Boolean(result.rowCount))) {
@@ -216,7 +238,8 @@ export class Stage6StorageService {
           resourceId: id, revision: committee.revision, audience: 'CHAIR',
           payload: {storageBindingId: id, providerType: 'SERVER_VOLUME'}});
         await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id,
-          capabilities: ['CHAIR'], action: 'storage.binding_changed', resourceType: 'storage_binding', resourceId: id,
+          capabilities: committee.owner_user_id === auth.user.id ? ['OWNER'] : ['CHAIR'],
+          action: 'storage.binding_changed', resourceType: 'storage_binding', resourceId: id,
           after: {providerType: 'SERVER_VOLUME', status: 'ACTIVE', revision: 1}});
         return binding(created.rows[0] as StorageBindingRow);
       }
@@ -239,7 +262,7 @@ export class Stage6StorageService {
       work: async client => {
         const committee = await lockedCommittee(client, committeeId);
         requireEditable(committee);
-        await requireChair(client, committee, auth.user.id);
+        await requireStorageManager(client, committee, auth.user.id);
         requireCommitteeRevision(committee, request.baseRevision);
         const provider = await client.query(`SELECT 1 FROM storage_provider_configs
           WHERE id=$1 AND provider_type='S3_COMPATIBLE' AND status='ACTIVE' FOR SHARE`, [providerConfigId]);
@@ -262,7 +285,8 @@ export class Stage6StorageService {
           resourceId: id, revision: committee.revision, audience: 'CHAIR',
           payload: {storageBindingId: id, providerType: 'S3_COMPATIBLE', providerConfigId}});
         await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id,
-          capabilities: ['CHAIR'], action: 'storage.binding_changed', resourceType: 'storage_binding', resourceId: id,
+          capabilities: committee.owner_user_id === auth.user.id ? ['OWNER'] : ['CHAIR'],
+          action: 'storage.binding_changed', resourceType: 'storage_binding', resourceId: id,
           after: {providerType: 'S3_COMPATIBLE', providerConfigId, status: 'ACTIVE', revision: 1}});
         return binding(created.rows[0] as StorageBindingRow);
       }

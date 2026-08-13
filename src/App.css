@@ -220,6 +220,44 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   max-width: 13rem;
 }
 
+.self-hosted-files .button,
+.self-hosted-storage-admin .button {
+  min-height: 44px;
+}
+
+.self-hosted-file-card .description,
+.self-hosted-storage-admin .description {
+  overflow-wrap: anywhere;
+}
+
+.self-hosted-file-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.self-hosted-file-actions .button {
+  margin: 0 !important;
+}
+
+.self-hosted-storage-panel,
+.self-hosted-migrations {
+  margin-top: 1.5rem !important;
+}
+
+@media (max-width: 767px) {
+  .self-hosted-files .ui.form .fields,
+  .self-hosted-storage-admin .ui.form .fields {
+    display: block;
+  }
+
+  .self-hosted-files .ui.form .fields > .field,
+  .self-hosted-storage-admin .ui.form .fields > .field {
+    width: 100% !important;
+    margin-bottom: 1rem;
+  }
+}
+
 .country-flag-display {
   align-items: center;
   display: inline-flex;

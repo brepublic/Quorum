@@ -1,8 +1,8 @@
 # Quorum 自托管目标架构
 
-本目录描述 Quorum 从 Firebase BaaS 迁移到完全自主托管后的目标架构。阶段 0–5 和 6.1–6.7 已落地：上传内容可持久暂存并原子提交到 `SERVER_VOLUME` 或 `S3_COMPATIBLE`，PostgreSQL 同事务发布对应文件版本，并提供审核、发布、授权下载、durable 物理删除任务、安全 provider 切换、容量保护和后台清理。阶段 6.8 文件 UI 尚未实施；仓库仍未完成全部迁移。当前事实以根目录的 [`PROJECT_ARCHITECTURE.md`](../../PROJECT_ARCHITECTURE.md) 为准。
+本目录描述 Quorum 从 Firebase BaaS 迁移到完全自主托管后的目标架构。阶段 0–6 已落地：上传内容可持久暂存并原子提交到 `SERVER_VOLUME` 或 `S3_COMPATIBLE`，PostgreSQL 同事务发布对应文件版本，并提供文件 UI、审核、发布、授权下载、durable 物理删除任务、安全 provider 切换、容量保护和后台清理。阶段 7 Chair Local Agent 尚未实施；仓库仍未完成全部迁移。当前事实以根目录的 [`PROJECT_ARCHITECTURE.md`](../../PROJECT_ARCHITECTURE.md) 为准。
 
-## 当前阶段 6.7 边界
+## 当前阶段 6 边界
 
 - PostgreSQL migration 已建立身份、凭据、Session、系统设置、未来注册申请和身份审计表。
 - bootstrap secret 只保存哈希，并由 PostgreSQL 事务保证并发初始化只有一个成功；公开状态 API 不返回 secret。
@@ -37,7 +37,10 @@
 - 实际存储挂载点达到默认 80% 时记录告警，达到 90% 时拒绝新上传字节和 provider copy；下载、议事和清理继续可用。容量未知或必要目录不可读写会使 readiness 失败。
 - upload 和 provider migration staging 用独立 claim token、退避及 stale-claim 恢复清理；结果写追加式维护审计。活动、待重试或唯一暂存副本不会被清理，退休源副本也不因压力自动删除。
 - `/metrics` 暴露容量比、固定类别队列深度和成功/失败计数，不包含路径、文件名或凭据。
-- 阶段 6.7 未实现文件 UI 或 Chair Local Agent。
+- 自托管工作区已接入文件列表、浏览器分块 SHA-256、真实上传字节进度、取消/重试、审核、发布、attachment 下载和永久删除；危险 MIME 不进入预览 DOM。
+- Chair/Owner 可查看当前 binding、初始化服务器卷或 S3、创建和操作 provider migration。系统管理员在独立页面创建、更新、停用和验证 S3 配置；浏览器不接收或回填保存的凭据。
+- 文件/迁移 SSE 只触发权威快照或列表刷新。revision、幂等或资源冲突不会由客户端静默覆盖；`SYSTEM_ADMIN` 不自动显示 Chair 操作。
+- 阶段 6 未实现 Chair Local Agent。
 - PostgreSQL、TLS 浏览器和 Compose 实测尚未在当前环境执行，状态及取证要求见 [`MANUAL_ACCEPTANCE.md`](./MANUAL_ACCEPTANCE.md)。
 
 ## 文档索引
@@ -57,7 +60,8 @@
 | [`STAGE_6_5_HANDOFF_PROMPT.md`](./STAGE_6_5_HANDOFF_PROMPT.md) | 已完成阶段 6.5 审核、发布、下载和永久删除的历史交接 Prompt |
 | [`STAGE_6_6_HANDOFF_PROMPT.md`](./STAGE_6_6_HANDOFF_PROMPT.md) | 已完成阶段 6.6 provider 切换与失败回退的历史交接 Prompt |
 | [`STAGE_6_7_HANDOFF_PROMPT.md`](./STAGE_6_7_HANDOFF_PROMPT.md) | 已完成阶段 6.7 磁盘阈值和后台清理的历史交接 Prompt |
-| [`STAGE_6_8_HANDOFF_PROMPT.md`](./STAGE_6_8_HANDOFF_PROMPT.md) | 下一步阶段 6.8 自托管文件 UI 与阶段收尾交接 Prompt |
+| [`STAGE_6_8_HANDOFF_PROMPT.md`](./STAGE_6_8_HANDOFF_PROMPT.md) | 已完成阶段 6.8 自托管文件 UI 与阶段收尾的历史交接 Prompt |
+| [`STAGE_7_HANDOFF_PROMPT.md`](./STAGE_7_HANDOFF_PROMPT.md) | 下一步阶段 7 Chair Local Agent 交接 Prompt |
 | [`RUNNING_LOG.md`](./RUNNING_LOG.md) | 长任务当前进度、验证结果和下一步恢复点 |
 
 ## 当前实施与验证约束

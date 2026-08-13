@@ -15,6 +15,8 @@ import {LanguageMenuItem, t} from '../i18n';
 import {SelfHostedApiError, selfHostedApi, type SelfHostedApi} from '../services/self-hosted-api';
 import type {SelfHostedUser} from '../services/self-hosted-identity';
 import ProceedingsPanel from './self-hosted/ProceedingsPanel';
+import FilesPanel from './self-hosted/FilesPanel';
+import StorageAdminPanel from './self-hosted/StorageAdminPanel';
 
 function errorText(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 
@@ -44,6 +46,7 @@ function AppMenu({user, logout}: {user: SelfHostedUser; logout(): void}) {
     <Menu.Item as={Link} to="/templates">{t('Committee templates')}</Menu.Item>
     <Menu.Item as={Link} to="/countries">{t('Country templates')}</Menu.Item>
     {user.isSystemAdmin && <Menu.Item as={Link} to="/admin">{t('Account administration')}</Menu.Item>}
+    {user.isSystemAdmin && <Menu.Item as={Link} to="/storage">存储配置</Menu.Item>}
     <Menu.Menu position="right"><LanguageMenuItem /><Menu.Item onClick={logout}>{t('Logout')}</Menu.Item></Menu.Menu>
   </Menu>;
 }
@@ -160,7 +163,7 @@ function CommitteeTemplates({api}: {api: SelfHostedApi}) {
   </Container>;
 }
 
-type WorkspaceView = 'overview' | 'notes' | 'posts' | 'roll-call' | 'points' | 'proceedings';
+type WorkspaceView = 'overview' | 'notes' | 'posts' | 'files' | 'roll-call' | 'points' | 'proceedings';
 
 function TextResources({kind, snapshot, run, api}: {kind: 'notes' | 'posts'; snapshot: CommitteeWorkspaceSnapshot;
   run(operation: () => Promise<unknown>): Promise<void>; api: SelfHostedApi}) {
@@ -286,16 +289,17 @@ export function SelfHostedCommitteeWorkspace({api = selfHostedApi, user}: {api?:
     } finally { await refresh(); setWorking(false); } }, [refresh]);
   if (!snapshot && !error) return <Loading />;
   if (!snapshot) return <Container text><Message error content={error} /><Button onClick={() => void refresh()}>{t('Retry')}</Button></Container>;
-  const canChair = snapshot.viewer.audience === 'CHAIR' || Boolean(user && snapshot.chairs?.some(chair => chair.userId === user.id));
+  const canChair = snapshot.viewer.audience === 'CHAIR' || snapshot.viewer.audience === 'OWNER';
   const panels: Record<WorkspaceView, React.ReactNode> = {overview: <Overview snapshot={snapshot} run={run} api={api} canChair={canChair} />,
     notes: <TextResources kind="notes" snapshot={snapshot} run={run} api={api} />, posts: <TextResources kind="posts" snapshot={snapshot} run={run} api={api} />,
+    files: <FilesPanel snapshot={snapshot} api={api} currentUserId={user?.id} />,
     'roll-call': <RollCallPanel snapshot={snapshot} run={run} api={api} canChair={canChair} />,
     points: <PointsPanel snapshot={snapshot} run={run} api={api} canChair={canChair} />,
     proceedings: <ProceedingsPanel snapshot={snapshot} run={run} api={api} canChair={canChair} />};
   const viewLabels: Record<WorkspaceView, string> = {overview: t('overview'), notes: t('notes'), posts: t('posts'),
-    'roll-call': t('roll-call'), points: t('points'), proceedings: '议事'};
+    files: '文件', 'roll-call': t('roll-call'), points: t('points'), proceedings: '议事'};
   return <Container style={{padding: '1em'}}><Header as="h1">{snapshot.committee.name}</Header>{error && <Message error content={error} />}
-    <Menu pointing secondary>{(['overview', 'notes', 'posts', 'roll-call', 'points', 'proceedings'] as WorkspaceView[]).map(item => <Menu.Item key={item}
+    <Menu pointing secondary stackable>{(['overview', 'notes', 'posts', 'files', 'roll-call', 'points', 'proceedings'] as WorkspaceView[]).map(item => <Menu.Item key={item}
       active={view === item} onClick={() => setView(item)}>{viewLabels[item]}</Menu.Item>)}<Menu.Menu position="right"><Menu.Item onClick={() => void refresh()}>
         <Icon name="refresh" />{t('Refresh')}</Menu.Item></Menu.Menu></Menu>
     <Segment loading={working}>{panels[view]}</Segment>
@@ -309,6 +313,7 @@ export default function SelfHostedWorkspace({user, logout, accountManager, api =
     <Route exact path="/committees"><CommitteeList api={api} /></Route>
     <Route exact path="/countries"><CountryTemplates api={api} /></Route>
     <Route exact path="/templates"><CommitteeTemplates api={api} /></Route>
+    {user.isSystemAdmin && <Route exact path="/storage"><Container style={{padding: '1em'}}><StorageAdminPanel api={api} /></Container></Route>}
     <Route path="/committees/:id"><SelfHostedCommitteeWorkspace api={api} user={user} /></Route>
     {user.isSystemAdmin && <Route exact path="/admin">{accountManager}</Route>}
     <Route exact path="/"><Redirect to={user.isSystemAdmin ? '/admin' : '/committees'} /></Route>

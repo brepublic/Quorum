@@ -445,6 +445,19 @@ async function handleStage6UploadRequest(options: {
       idempotencyKey(request), context), requestId));
     return true;
   }
+  const storageBindings = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/storage-bindings$/.exec(pathname);
+  if (method === 'GET' && storageBindings && storage) {
+    const auth = await authenticatedRead(request, identity);
+    sendJson(response, 200, success(await storage.listBindings(auth, storageBindings[1] as string), requestId));
+    return true;
+  }
+  const serverVolumeBinding = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/storage-bindings\/server-volume$/.exec(pathname);
+  if (method === 'POST' && serverVolumeBinding && storage) {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 201, success(await storage.createServerVolumeBinding(auth,
+      serverVolumeBinding[1] as string, body, idempotencyKey(request), context), requestId));
+    return true;
+  }
   const s3Binding = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/storage-bindings\/s3$/.exec(pathname);
   if (method === 'POST' && s3Binding && storage) {
     const auth = await write(); const body = await readJson(request);

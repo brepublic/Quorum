@@ -132,6 +132,25 @@ describe('stage 6 upload HTTP boundary', () => {
       body, 'upload-key', expect.anything());
   });
 
+  it('routes binding state and SERVER_VOLUME initialization through authenticated services', async () => {
+    const committeeId = '20000000-0000-4000-8000-000000000001';
+    const listBindings = vi.fn(async () => [{id: 'binding', providerType: 'SERVER_VOLUME', status: 'ACTIVE'}]);
+    const createServerVolumeBinding = vi.fn(async () => ({id: 'binding', providerType: 'SERVER_VOLUME'}));
+    const storage = {listBindings, createServerVolumeBinding} as unknown as Stage6StorageService;
+    const listed = await send({} as Stage6UploadService, {method: 'GET',
+      path: `/api/v1/committees/${committeeId}/storage-bindings`, chunks: []}, undefined, {storage});
+    expect(listed.statusCode).toBe(200);
+    expect(listBindings).toHaveBeenCalledWith(authenticated, committeeId);
+
+    const body = {baseRevision: 3};
+    const created = await send({} as Stage6UploadService, {method: 'POST',
+      path: `/api/v1/committees/${committeeId}/storage-bindings/server-volume`,
+      chunks: [Buffer.from(JSON.stringify(body))]}, undefined, {storage});
+    expect(created.statusCode).toBe(201);
+    expect(createServerVolumeBinding).toHaveBeenCalledWith(authenticated, committeeId, body, 'upload-key',
+      expect.objectContaining({requestId: expect.any(String)}));
+  });
+
   it('routes file listing, detail, review, publication, and deletion through session-aware services', async () => {
     const files = {list: vi.fn(async () => [{id: 'file'}]), get: vi.fn(async () => ({id: 'file'})),
       submitForReview: vi.fn(async () => ({id: 'file', status: 'PENDING_REVIEW'})),
