@@ -27,6 +27,7 @@ import type {
   S3ProviderConfigSummary,
   StorageBinding,
   StorageMigration,
+  StoragePairingCode,
   StorageProviderType,
   StorageHost
 } from '@quorum/contracts';
@@ -452,6 +453,17 @@ export const selfHostedApi = {
   },
   listStorageHosts(committeeId: string) {
     return request<StorageHost[]>(`/api/v1/committees/${committeeId}/storage-hosts`);
+  },
+  createStoragePairingCode(committeeId: string, baseRevision: number, purpose: 'INITIAL' | 'TRANSFER') {
+    return request<StoragePairingCode>(
+      `/api/v1/committees/${committeeId}/storage-agent/pairing-codes`, {
+        method: 'POST', body: {baseRevision, purpose}
+      });
+  },
+  revokeStorageHost(committeeId: string, hostId: string, baseRevision: number) {
+    return request<StorageHost>(`/api/v1/committees/${committeeId}/storage-hosts/${hostId}/revoke`, {
+      method: 'POST', body: {baseRevision}
+    });
   },
   listS3ProviderConfigs() {
     return request<S3ProviderConfigSummary[]>('/api/v1/storage-provider-configs/s3');

@@ -61,6 +61,20 @@ describe('self-hosted stage 4 API client', () => {
     }
   });
 
+  it('keeps Chair host pairing and revocation on CSRF-protected committee commands', async () => {
+    const fetchMock = vi.fn(async () => ({ok: true, status: 200,
+      json: async () => ({data: {}, meta: {requestId: 'agent'}})}));
+    vi.stubGlobal('fetch', fetchMock);
+    await selfHostedApi.createStoragePairingCode('committee', 4, 'TRANSFER');
+    await selfHostedApi.revokeStorageHost('committee', 'host', 5);
+    expect(fetchMock.mock.calls[0]).toEqual(['/api/v1/committees/committee/storage-agent/pairing-codes',
+      expect.objectContaining({method: 'POST', body: JSON.stringify({baseRevision: 4, purpose: 'TRANSFER'}),
+        headers: expect.objectContaining({'x-csrf-token': 'csrf-token'})})]);
+    expect(fetchMock.mock.calls[1]).toEqual(['/api/v1/committees/committee/storage-hosts/host/revoke',
+      expect.objectContaining({method: 'POST', body: JSON.stringify({baseRevision: 5}),
+        headers: expect.objectContaining({'x-csrf-token': 'csrf-token'})})]);
+  });
+
   it('streams a File through XHR with Cookie credentials, CSRF, progress, cancellation support, and a caller key', async () => {
     class FakeRequest {
       static latest: FakeRequest;

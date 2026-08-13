@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type {CommitteeWorkspaceSnapshot, FileEntry, FileUpload, StorageMigration,
-  StorageProviderType} from '@quorum/contracts';
+  StoragePairingCode, StorageProviderType} from '@quorum/contracts';
 import {Button, Card, Form, Header, Label, Message, Progress, Segment} from 'semantic-ui-react';
 import {SelfHostedApiError, newIdempotencyKey, type SelfHostedApi} from '../../services/self-hosted-api';
 import {sha256File} from '../../services/sha256';
@@ -11,6 +11,7 @@ const FILE_STATUS: Record<FileEntry['status'], string> = {
 const MIGRATION_STATUS: Record<StorageMigration['status'], string> = {
   COPYING: '正在复制', READY_TO_CONFIRM: '等待确认', FAILED: '迁移失败', COMPLETED: '迁移完成', CANCELLED: '已取消'
 };
+const HOST_STATUS = {ACTIVE: '在线', DEGRADED: '离线', REVOKED: '已撤销'} as const;
 
 function migrationFailureText(code: string): string {
   if (code === 'MANIFEST_CHANGED') return '文件列表已变更，请重试迁移。';
@@ -28,6 +29,7 @@ export function storageErrorText(error: unknown): string {
     SERVICE_NOT_READY: '存储暂不可用，请检查容量和存储服务后重试。',
     FORBIDDEN: '你没有权限执行此操作。',
     AUTHENTICATION_REQUIRED: '登录已失效，请重新登录。',
+    LINK_EXPIRED: '配对码已失效，请重新生成。',
     VALIDATION_FAILED: '文件信息无效，请重新选择文件。'
   };
   return messages[error.code] ?? error.message;
@@ -55,6 +57,7 @@ export default function FilesPanel({snapshot, api, currentUserId}: {
   const [configs, setConfigs] = React.useState<Awaited<ReturnType<SelfHostedApi['listS3ProviderConfigs']>>>([]);
   const [migrations, setMigrations] = React.useState<StorageMigration[]>([]);
   const [hosts, setHosts] = React.useState<Awaited<ReturnType<SelfHostedApi['listStorageHosts']>>>([]);
+  const [pairing, setPairing] = React.useState<StoragePairingCode>();
   const [selectedFile, setSelectedFile] = React.useState<File>();
   const [logicalName, setLogicalName] = React.useState('');
   const [targetType, setTargetType] = React.useState<StorageProviderType>('SERVER_VOLUME');
@@ -149,6 +152,13 @@ export default function FilesPanel({snapshot, api, currentUserId}: {
   const createMigration = () => run(() => api.createStorageMigration(committeeId, snapshot.committee.revision,
     targetType, targetType === 'S3_COMPATIBLE' ? targetConfigId : undefined));
   const activeBinding = bindings.find(binding => binding.status === 'ACTIVE');
+  const activeHost = hosts.find(host => host.status === 'ACTIVE' || host.status === 'DEGRADED');
+  const createPairing = async (purpose: 'INITIAL' | 'TRANSFER') => {
+    setWorking(true); setError(undefined);
+    try { setPairing(await api.createStoragePairingCode(committeeId, snapshot.committee.revision, purpose)); }
+    catch (caught) { setError(storageErrorText(caught)); await refresh(false); }
+    finally { setWorking(false); }
+  };
   const targetOptions = [
     ...(!activeBinding || (activeBinding.providerType !== 'SERVER_VOLUME' && activeBinding.providerType !== 'CHAIR_AGENT')
       ? [{key: 'volume', value: 'SERVER_VOLUME', text: '服务器卷'}] : []),
@@ -215,6 +225,27 @@ export default function FilesPanel({snapshot, api, currentUserId}: {
 
     {canManage && <Segment loading={working && !progress} className="self-hosted-storage-panel">
       <Header as="h3">文件存储</Header>
+      <Header as="h4">主席电脑</Header>
+      {activeHost ? <p>{activeHost.deviceLabel} · {HOST_STATUS[activeHost.status]}
+        {activeHost.lastSeenAt ? ` · ${new Date(activeHost.lastSeenAt).toLocaleString('zh-CN')}` : ''}</p>
+        : <p>未配对</p>}
+      {pairing && <Message info><Message.Header>配对码</Message.Header>
+        <code className="self-hosted-pairing-code">{pairing.code}</code>
+        <span> · 有效至 {new Date(pairing.expiresAt).toLocaleTimeString('zh-CN')}</span>
+        <Button type="button" size="small" onClick={() => void navigator.clipboard?.writeText(pairing.code)}>
+          复制配对码
+        </Button>
+      </Message>}
+      {!pairing && <Button type="button" size="small" disabled={working}
+        onClick={() => void createPairing(activeHost ? 'TRANSFER' : 'INITIAL')}>
+        {activeHost ? '转移到其他电脑' : '配对主席电脑'}
+      </Button>}
+      {pairing && <Button type="button" size="small" onClick={() => setPairing(undefined)}>关闭配对码</Button>}
+      {activeHost && <Button type="button" negative size="small" disabled={working} onClick={() => {
+        if (window.confirm(`撤销“${activeHost.deviceLabel}”？`)) {
+          void run(() => api.revokeStorageHost(committeeId, activeHost.id, snapshot.committee.revision));
+        }
+      }}>撤销主席电脑</Button>}
       {activeBinding && <p>当前：{activeBinding.providerType === 'SERVER_VOLUME' ? '服务器卷'
         : activeBinding.providerType === 'CHAIR_AGENT' ? '主席电脑'
           : `S3 · ${configs.find(config => config.id === activeBinding.providerConfigId)?.displayName ?? '已配置存储'}`}</p>}

@@ -6,10 +6,10 @@
 
 - 更新时间：2026-08-13
 - 分支：`self-host`
-- 已确认基线：`ccf6f6a stage 7.3: orchestrate chair agent storage`
-- 当前阶段：7.4 桌面 Agent 文件系统核心与恢复循环已完成当前 WSL 验证，等待独立提交。
-- 当前工作：核对 7.4 最终差异并提交。
-- 下一步：提交 7.4 后实施 7.5 Agent 管理、离线恢复和冲突裁决 UI。
+- 已确认基线：`3af6b1a stage 7.4: add chair agent filesystem core`
+- 当前阶段：7.5 Agent 管理、离线恢复和冲突裁决 UI 正在实施。
+- 当前工作：7.5a Chair/Owner 主机配对、转移与撤销界面已完成定向验证，等待小任务提交。
+- 下一步：提交 7.5a，再增加 migration 23 与 revision-fenced 冲突裁决协议。
 
 ## 已完成与验证
 
@@ -225,3 +225,11 @@
 - `pnpm test:self-host:integration`：7 个文件、61 项因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip；`git diff --check` 通过。
 - 当前 WSL 自动验证不能替代 NTFS/APFS、原生 watcher、Windows ACL、macOS 权限、真实 TLS/PostgreSQL、进程/系统中断和签名发布包；实机步骤与证据记录在 `MANUAL_ACCEPTANCE.md` 的 SH-MAN-512。
 - 已撰写 `STAGE_7_5_HANDOFF_PROMPT.md`；7.5 只实施 Agent 管理、恢复状态和 revision-fenced 冲突裁决 UI，发布包留到 7.6。
+- 阶段 7.4 已单独提交为 `3af6b1a`；提交前 staged diff 检查通过。
+
+### 2026-08-13：阶段 7.5a Agent 主机管理 UI
+
+- 文件存储面板仅向 Owner/Chair 显示当前主席电脑、在线/离线状态、最后在线时间、初始配对、转移和撤销操作；member 与仅有系统管理员身份的用户没有隐式控件。
+- 一次性配对码只保存在当前页面内存，显示过期时间并可复制；关闭后不进入浏览器持久状态。创建、转移和撤销复用既有 Session、Origin、CSRF 与 committee revision 服务端边界。
+- API client 与文件页定向验证：2 个测试文件、24 项通过；`pnpm build:self-host` 通过，Vite 仅报告既有的大分块警告。
+- 本小任务没有改变数据库、Agent 协议或冲突状态；下一小任务继续实现 durable conflict 裁决。

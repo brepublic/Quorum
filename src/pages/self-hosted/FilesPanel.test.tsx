@@ -156,6 +156,39 @@ describe('self-hosted stage 6 file panel', () => {
     expect(createChairAgentBinding).toHaveBeenCalledWith(committeeId, 2);
   });
 
+  it('creates a one-time pairing or transfer code only for a storage manager', async () => {
+    const createStoragePairingCode = vi.fn(async () => ({code: 'QRM-ABCD-EFGH', purpose: 'INITIAL' as const,
+      expiresAt: '2026-08-13T01:00:00.000Z'}));
+    const manager = await render('CHAIR', api({listFiles: vi.fn(async () => []), createStoragePairingCode}), 'chair');
+    await act(async () => {button('配对主席电脑')?.click(); await new Promise(resolve => setTimeout(resolve, 0));});
+    expect(createStoragePairingCode).toHaveBeenCalledWith(committeeId, 2, 'INITIAL');
+    expect(manager.textContent).toContain('QRM-ABCD-EFGH');
+    act(() => root?.unmount()); manager.remove(); root = undefined; container = undefined;
+
+    const member = await render('MEMBER', api({createStoragePairingCode}), 'member');
+    expect(member.textContent).not.toContain('配对主席电脑');
+    expect(createStoragePairingCode).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses the loaded committee revision when transferring or revoking the active host', async () => {
+    const host = {id: 'host', committeeId, deviceId: 'device', deviceLabel: '主席电脑', leaseGeneration: 1,
+      status: 'DEGRADED' as const, revision: 2, lastSeenAt: '2026-08-13T00:00:00.000Z',
+      pairedAt: '2026-08-12T00:00:00.000Z', revokedAt: null};
+    const createStoragePairingCode = vi.fn(async () => ({code: 'QRM-TRANSFER', purpose: 'TRANSFER' as const,
+      expiresAt: '2026-08-13T01:00:00.000Z'}));
+    const revokeStorageHost = vi.fn(async () => ({...host, status: 'REVOKED' as const}));
+    const client = api({listFiles: vi.fn(async () => []), listStorageHosts: vi.fn(async () => [host]),
+      createStoragePairingCode, revokeStorageHost});
+    const view = await render('OWNER', client, 'owner');
+    expect(view.textContent).toContain('主席电脑 · 离线');
+    await act(async () => {button('转移到其他电脑')?.click(); await new Promise(resolve => setTimeout(resolve, 0));});
+    expect(createStoragePairingCode).toHaveBeenCalledWith(committeeId, 2, 'TRANSFER');
+    await act(async () => {button('关闭配对码')?.click();});
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    await act(async () => {button('撤销主席电脑')?.click(); await new Promise(resolve => setTimeout(resolve, 0));});
+    expect(revokeStorageHost).toHaveBeenCalledWith(committeeId, 'host', 2);
+  });
+
   it('cancels an in-flight upload through AbortSignal without clearing the selected file', async () => {
     const uploadFileContent = vi.fn((_id, _file, _key, options) => new Promise((_resolve, reject) => {
       options.signal?.addEventListener('abort', () => reject(new DOMException('cancelled', 'AbortError')), {once: true});
