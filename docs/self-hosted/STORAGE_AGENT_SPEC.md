@@ -158,6 +158,10 @@ POST /api/v1/storage-agent/blobs
 
 每个 task 和内容提交都带 task ID、lease generation、file revision、预期大小和 SHA-256。重复完成同一任务必须幂等。
 
+阶段 7.2 已实现其中的 manifest、tasks、claim、complete、fail 和 blobs 路由。manifest 是按委员会严格递增的追加日志；文件版本和墓碑由数据库触发器在原事务内写入，墓碑事件不会携带内容。当前 host 同时得到固定 generation 的 `STORE_BLOB`/`DELETE_FILE` task，新 host 配对时按每个文件的最新事件补建完整任务集。
+
+task 领取使用 UUID request ID 和服务端 claim token；相同领取或 terminal request 精确重放，不同 terminal outcome 冲突。超过五分钟的旧 claim 可重新领取。所有状态提交再次检查 credential、委员会 generation、host generation、task generation、file revision 和 claim token。provider blob 在服务端复验后流式下载；Agent 上传内容流式写入服务器生成的 durable staging key并校验大小与 SHA-256。网络传输不占用委员会行锁，传输后用短事务重新 fencing。阶段 7.2 尚未开放 `local-changes`，因此 `UPLOAD_BLOB` 的流式接收是协议边界测试能力，生产任务由后续 7.3 编排创建。
+
 ## 7. 本地目录监测
 
 Agent 使用操作系统文件监测作为快速提示，同时定期完整扫描作为最终依据：
@@ -184,7 +188,7 @@ Agent 心跳超过宽限期后，存储状态变为 `STORAGE_DEGRADED`，但不�
 
 Agent 重连后先拉取墓碑和服务端 manifest，再上报本地变化，防止删除文件复活。
 
-阶段 7.1 的常驻 monitor 默认以 45 秒为宽限期，只把 host 从 `ACTIVE` 改为 `DEGRADED` 并发送 `storage_host.status_changed`；不会修改委员会 `ACTIVE`/`PAUSED` 状态。持有当前 generation 的有效 heartbeat 会恢复 `ACTIVE`。墓碑和 manifest 恢复顺序属于后续 7.x。
+阶段 7.1 的常驻 monitor 默认以 45 秒为宽限期，只把 host 从 `ACTIVE` 改为 `DEGRADED` 并发送 `storage_host.status_changed`；不会修改委员会 `ACTIVE`/`PAUSED` 状态。持有当前 generation 的有效 heartbeat 会恢复 `ACTIVE`。阶段 7.2 已保证新 host 可从完整最新 manifest 和任务集开始；墓碑优先的本地扫描、变化上报与冲突处理属于后续 7.x。
 
 ## 9. 存储切换
 

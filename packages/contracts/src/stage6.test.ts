@@ -10,9 +10,8 @@ import {
 } from './stage6';
 
 describe('stage 6 storage contracts', () => {
-  it('publishes only the phase 6 providers and explicit durable states', () => {
-    expect(STORAGE_PROVIDER_TYPES).toEqual(['SERVER_VOLUME', 'S3_COMPATIBLE']);
-    expect(STORAGE_PROVIDER_TYPES).not.toContain('CHAIR_AGENT');
+  it('publishes the durable provider and file states', () => {
+    expect(STORAGE_PROVIDER_TYPES).toEqual(['SERVER_VOLUME', 'CHAIR_AGENT', 'S3_COMPATIBLE']);
     expect(STORAGE_BINDING_STATUSES).toContain('ACTIVE');
     expect(FILE_ENTRY_STATUSES).toEqual(['UPLOAD_COMPLETE', 'PENDING_REVIEW', 'PUBLISHED', 'DELETED']);
     expect(FILE_BLOB_DURABILITY_STATES).toEqual(['COMMITTED', 'DELETE_PENDING', 'DELETED', 'FAILED']);

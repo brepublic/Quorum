@@ -64,6 +64,8 @@ export interface Stage7AgentOptions {
   now?: () => Date;
 }
 
+export type CurrentStorageAgentLease = StorageAgentIdentity & {status: StorageHost['status']};
+
 const DEFAULT_PAIRING_TTL_MS = 10 * 60_000;
 const DEFAULT_OFFLINE_GRACE_MS = 45_000;
 
@@ -266,6 +268,23 @@ export class Stage7StorageAgentService {
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'ACTIVE',$9,$9,$9,$9) RETURNING *`,
       [hostId, committee.id, deviceId, label, publicKey, parsedCredential.tokenHash,
         pairing.created_by_user_id, leaseGeneration, now]);
+      const manifest = await client.query<{
+        kind: 'UPSERT' | 'DELETE'; file_entry_id: string; file_revision: number;
+        blob_id: string | null; size_bytes: string | number | null; sha256: Buffer | null;
+      }>(`SELECT DISTINCT ON (file_entry_id) kind,file_entry_id,file_revision,blob_id,size_bytes,sha256
+        FROM storage_manifest_events WHERE committee_id=$1 ORDER BY file_entry_id,sequence DESC`, [committee.id]);
+      for (const item of manifest.rows) {
+        const allocated = await client.query<{sequence: string | number}>(`UPDATE committees
+          SET next_storage_agent_task_sequence=next_storage_agent_task_sequence+1 WHERE id=$1
+          RETURNING next_storage_agent_task_sequence-1 AS sequence`, [committee.id]);
+        await client.query(`INSERT INTO storage_agent_tasks
+          (id,committee_id,host_id,lease_generation,sequence,task_type,file_entry_id,file_revision,
+           blob_id,expected_size_bytes,expected_sha256)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        [randomUUID(), committee.id, hostId, leaseGeneration, allocated.rows[0]?.sequence,
+          item.kind === 'UPSERT' ? 'STORE_BLOB' : 'DELETE_FILE', item.file_entry_id, item.file_revision,
+          item.blob_id, item.size_bytes, item.sha256]);
+      }
       await client.query('UPDATE storage_pairing_codes SET used_at=$2 WHERE id=$1', [pairing.id, now]);
       await appendEvent(client, committee, {type: 'storage_host.status_changed', resourceType: 'storage_host',
         resourceId: hostId, revision: 1, audience: 'CHAIR',
@@ -333,6 +352,32 @@ export class Stage7StorageAgentService {
     }
     return {hostId: row.id, committeeId: row.committee_id, deviceId: row.device_id,
       leaseGeneration: Number(row.lease_generation)};
+  }
+
+  async withCurrentLease<T>(credential: string, requestedGeneration: number,
+    work: (client: PoolClient, lease: CurrentStorageAgentLease, committee: Stage4CommitteeRow) => Promise<T>): Promise<T> {
+    const parsed = parseDeviceCredential(credential);
+    if (!parsed) throw new AppError({code: 'AUTHENTICATION_REQUIRED', message: 'Agent authentication is required.'});
+    const candidate = await this.pool.query<HostRow>('SELECT * FROM storage_hosts WHERE device_id=$1', [parsed.deviceId]);
+    const candidateRow = candidate.rows[0];
+    if (!candidateRow || !credentialMatches(candidateRow.credential_hash, parsed.tokenHash)) {
+      throw new AppError({code: 'AUTHENTICATION_REQUIRED', message: 'Agent authentication is required.'});
+    }
+    return transaction(this.pool, async client => {
+      const committee = await lockedCommittee(client, candidateRow.committee_id);
+      const found = await client.query<HostRow>('SELECT * FROM storage_hosts WHERE device_id=$1 FOR UPDATE',
+        [parsed.deviceId]);
+      const row = found.rows[0];
+      if (!row || !credentialMatches(row.credential_hash, parsed.tokenHash)) {
+        throw new AppError({code: 'AUTHENTICATION_REQUIRED', message: 'Agent authentication is required.'});
+      }
+      if (row.status === 'REVOKED' || Number(row.lease_generation) !== requestedGeneration
+        || Number(committee.storage_lease_generation) !== requestedGeneration) {
+        throw new AppError({code: 'STALE_STORAGE_LEASE', message: 'Storage host lease is no longer current.'});
+      }
+      return work(client, {hostId: row.id, committeeId: row.committee_id, deviceId: row.device_id,
+        leaseGeneration: Number(row.lease_generation), status: row.status}, committee);
+    });
   }
 
   async heartbeat(credential: string, body: unknown): Promise<StorageHost> {

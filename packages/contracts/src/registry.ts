@@ -97,6 +97,7 @@ export const COMMITTEE_EVENT_DEFINITIONS = [
   {name: 'storage.migration_completed', defaultAudience: 'CHAIR'},
   {name: 'storage.migration_cancelled', defaultAudience: 'CHAIR'},
   {name: 'storage_host.status_changed', defaultAudience: 'CHAIR'},
+  {name: 'storage_agent.task_changed', defaultAudience: 'CHAIR'},
   {name: 'rule_package.activated', defaultAudience: 'MEMBER'},
   {name: 'rule_package.version_created', defaultAudience: 'CHAIR'},
   {name: 'rule_override.created', defaultAudience: 'CHAIR'},
@@ -219,6 +220,10 @@ export const AUDIT_ACTION_DEFINITIONS = [
   'storage.host_transferred',
   'storage.host_revoked',
   'storage.host_status_changed',
+  'storage.agent_task_enqueued',
+  'storage.agent_blob_staged',
+  'storage.agent_task_completed',
+  'storage.agent_task_failed',
   'storage.file_deleted'
 ] as const;
 

@@ -32,7 +32,7 @@ interface FileRow extends QueryResultRow {
   blob_id: string;
   version_created_at: Date;
   storage_key: string;
-  provider_type: 'SERVER_VOLUME' | 'S3_COMPATIBLE';
+  provider_type: 'SERVER_VOLUME' | 'CHAIR_AGENT' | 'S3_COMPATIBLE';
   provider_config_id: string | null;
 }
 
@@ -45,7 +45,15 @@ interface DeleteJobRow extends QueryResultRow {
   id: string; committee_id: string; file_entry_id: string; blob_id: string;
   status: 'PENDING' | 'IN_PROGRESS' | 'RETRY' | 'COMPLETED'; attempts: number;
   next_attempt_at: Date; claimed_at: Date | null; claim_token: string | null; failure_code: string | null;
-  storage_key: string; provider_type: 'SERVER_VOLUME' | 'S3_COMPATIBLE'; provider_config_id: string | null;
+  storage_key: string; provider_type: 'SERVER_VOLUME' | 'CHAIR_AGENT' | 'S3_COMPATIBLE'; provider_config_id: string | null;
+}
+
+interface StoredBlobRow extends QueryResultRow {
+  storage_key: string;
+  size_bytes: string | number;
+  sha256_hex: string;
+  provider_type: 'SERVER_VOLUME' | 'CHAIR_AGENT' | 'S3_COMPATIBLE';
+  provider_config_id: string | null;
 }
 
 type Audience = 'PUBLIC' | 'MEMBER' | 'CHAIR' | 'OWNER';
@@ -158,6 +166,21 @@ export class Stage6FileService {
     await store.verify(row.storage_key, Number(row.size_bytes), row.sha256_hex);
     const content = store.readVerified(row.storage_key);
     return {file, headers: safeDownloadHeaders(file), content};
+  }
+
+  async readStoredBlob(committeeId: string, blobId: string): Promise<{
+    sizeBytes: number; sha256: string; content: AsyncIterable<Buffer>;
+  }> {
+    const result = await this.pool.query<StoredBlobRow>(`SELECT b.storage_key,b.size_bytes,
+      encode(b.sha256,'hex') AS sha256_hex,s.provider_type,s.provider_config_id
+      FROM file_blobs b JOIN storage_bindings s ON s.id=b.storage_binding_id
+      WHERE b.committee_id=$1 AND b.id=$2 AND b.durability_state='COMMITTED'`,
+    [uuid(committeeId, 'Committee ID'), uuid(blobId, 'Blob ID')]);
+    const row = result.rows[0];
+    if (!row) throw new AppError({code: 'NOT_FOUND', message: 'Blob not found.'});
+    const store = await this.store(row.provider_type, row.provider_config_id);
+    await store.verify(row.storage_key, Number(row.size_bytes), row.sha256_hex);
+    return {sizeBytes: Number(row.size_bytes), sha256: row.sha256_hex, content: store.readVerified(row.storage_key)};
   }
 
   async submitForReview(auth: AuthenticatedSession, fileId: string, body: unknown,
@@ -283,8 +306,11 @@ export class Stage6FileService {
     });
   }
 
-  private async store(provider: 'SERVER_VOLUME' | 'S3_COMPATIBLE', configId: string | null): Promise<Store> {
+  private async store(provider: 'SERVER_VOLUME' | 'CHAIR_AGENT' | 'S3_COMPATIBLE', configId: string | null): Promise<Store> {
     if (provider === 'SERVER_VOLUME') return this.serverVolume;
+    if (provider === 'CHAIR_AGENT') {
+      throw new AppError({code: 'SERVICE_NOT_READY', message: 'Chair Agent content is not available on the server.'});
+    }
     if (!configId) throw new AppError({code: 'SERVICE_NOT_READY', message: 'S3 provider config is unavailable.'});
     return this.s3Factory(await this.s3Configs.providerForStoredBlob(configId));
   }

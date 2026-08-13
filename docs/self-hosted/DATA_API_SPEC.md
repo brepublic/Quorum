@@ -888,6 +888,28 @@ POST /api/v1/storage-agent/heartbeat
 
 heartbeat 只刷新固定 host 状态与 `last_seen_at`。默认 45 秒未见心跳的 `ACTIVE` host 由常驻 monitor 改为 `DEGRADED` 并追加 Chair 事件；委员会状态不改变，议事不暂停。有效 heartbeat 可把同一 generation 的 `DEGRADED` host 恢复为 `ACTIVE`。阶段 7.1 尚未增加 Agent task、manifest、内容传输、本地路径或 provider binding。
 
+## 11.12 阶段 7.2 Agent task、manifest 与内容边界
+
+migration 21 增加 `storage_manifest_events` 和 `storage_agent_tasks`，并安全替换 provider enum 以预留 `CHAIR_AGENT`；本阶段尚无创建或激活该 binding 的命令。每个委员会分别保存单调的 manifest sequence 和 task sequence。`file_versions`、`file_tombstones` 的数据库触发器在原文件事务中追加 `UPSERT` 或 `DELETE` manifest；如果当前有 `ACTIVE`/`DEGRADED` host，同一事务再创建绑定该 host 和 lease generation 的 `STORE_BLOB` 或 `DELETE_FILE` task。首次配对或主机转移会读取每个文件最新的 manifest 事件，为新 host 建立完整任务集；旧 host 的任务不迁移 generation，也不能由新 host 领取。
+
+阶段 7.2 Agent 接口为：
+
+```text
+GET  /api/v1/storage-agent/manifest?after=:sequence&limit=:limit
+GET  /api/v1/storage-agent/tasks?after=:sequence&limit=:limit
+POST /api/v1/storage-agent/tasks/:id/claim
+POST /api/v1/storage-agent/tasks/:id/complete
+POST /api/v1/storage-agent/tasks/:id/fail
+GET  /api/v1/storage-agent/blobs/:blobId
+POST /api/v1/storage-agent/blobs
+```
+
+GET 请求通过 `X-Storage-Lease-Generation` 携带 generation；task 写请求体固定携带 `leaseGeneration`、`fileRevision`、UUID request ID，完成/失败另携带 claim token。领取把 `PENDING`/到期 `RETRY` 或超过五分钟的旧 claim 原子改为 `IN_PROGRESS`；相同 request ID 精确重放相同 token。terminal request ID 与 outcome 固定完成结果：同一完成/失败可重放，不同 outcome 返回 `IDEMPOTENCY_CONFLICT`。每次事务先锁委员会、再复核设备 credential、host、委员会 generation 和 task generation；转移、撤销或迟到提交返回 `STALE_STORAGE_LEASE`。
+
+`GET blobs/:id` 只允许持有匹配 `STORE_BLOB` claim 的 Agent 读取该 task 固定的 blob，并在发送正文前从原 provider 复验大小和 SHA-256。`POST blobs` 只允许匹配 `UPLOAD_BLOB` claim，以 task ID、claim token、file revision、generation 和 SHA-256 header 约束原始 HTTP 流；服务端使用 task 派生的内部 staging key，逐块执行容量、Content-Length、实际大小和 SHA-256 校验。流式网络 I/O 在短 claim 事务之外执行，完成时重新取得当前 lease 并复核 claim；旧 host 即使已传完字节也不能在转移后提交 task 状态。只有完整内容进入 `STAGED` 后 `UPLOAD_BLOB` task 才允许完成，断流、短写、长写、超限、哈希或磁盘失败进入 `RETRY` 且不产生文件版本。
+
+阶段 7.2 只建立服务器协议原语；生产路径尚不创建 `UPLOAD_BLOB` task，也未开放 `local-changes`。`CHAIR_AGENT` binding、离线浏览器上传编排、墓碑优先恢复、本地路径/冲突处理和桌面 Agent 属于 7.3 以后。
+
 ## 12. SSE 格式
 
 ```text

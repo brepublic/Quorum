@@ -19,6 +19,7 @@ import type {Stage6FileService} from '../modules/storage/file-service.js';
 import type {Stage6MigrationService} from '../modules/storage/migration-service.js';
 import type {StorageMetricsProvider} from '../modules/storage/maintenance-service.js';
 import type {Stage7StorageAgentService} from '../modules/storage-agent/service.js';
+import type {Stage7StorageTaskService} from '../modules/storage-agent/task-service.js';
 import {AppError, normalizeError} from './errors.js';
 import {
   clearIdentityCookies,
@@ -52,6 +53,7 @@ export interface AppDependencies {
   storageMigrations?: Stage6MigrationService;
   storageMetrics?: StorageMetricsProvider;
   storageAgent?: Stage7StorageAgentService;
+  storageTasks?: Stage7StorageTaskService;
   allowedOrigins?: string[];
 }
 
@@ -189,11 +191,26 @@ function storageAgentCredential(request: IncomingMessage): string {
   return match[1] as string;
 }
 
+function positiveHeader(request: IncomingMessage, name: string): number {
+  const value = singleHeader(request.headers[name]);
+  if (!value || !/^[1-9][0-9]*$/.test(value) || !Number.isSafeInteger(Number(value))) {
+    throw new AppError({code: 'BAD_REQUEST', message: `Header ${name} must be a positive integer.`});
+  }
+  return Number(value);
+}
+
+function requiredHeader(request: IncomingMessage, name: string): string {
+  const value = singleHeader(request.headers[name]);
+  if (!value) throw new AppError({code: 'BAD_REQUEST', message: `Header ${name} is required.`});
+  return value;
+}
+
 async function handleStage7AgentRequest(options: {
   request: IncomingMessage; response: ServerResponse; pathname: string; requestId: string;
-  storageAgent: Stage7StorageAgentService; identity?: IdentityService; allowedOrigins: readonly string[];
+  storageAgent: Stage7StorageAgentService; storageTasks?: Stage7StorageTaskService;
+  identity?: IdentityService; allowedOrigins: readonly string[];
 }): Promise<boolean> {
-  const {request, response, pathname, requestId, storageAgent, identity, allowedOrigins} = options;
+  const {request, response, pathname, requestId, storageAgent, storageTasks, identity, allowedOrigins} = options;
   const method = request.method ?? 'GET';
   const context = identityContext(request, requestId);
   if (method === 'POST' && pathname === '/api/v1/storage-agent/pair') {
@@ -205,6 +222,66 @@ async function handleStage7AgentRequest(options: {
     const body = await readJson(request);
     sendJson(response, 200, success(await storageAgent.heartbeat(storageAgentCredential(request), body), requestId));
     return true;
+  }
+  if (storageTasks && method === 'GET' && pathname === '/api/v1/storage-agent/manifest') {
+    const query = new URL(request.url ?? pathname, 'http://quorum.invalid').searchParams;
+    const after = query.has('after') ? Number(query.get('after')) : 0;
+    const limit = query.has('limit') ? Number(query.get('limit')) : 100;
+    sendJson(response, 200, success(await storageTasks.manifest(storageAgentCredential(request),
+      positiveHeader(request, 'x-storage-lease-generation'), after, limit), requestId));
+    return true;
+  }
+  if (storageTasks && method === 'GET' && pathname === '/api/v1/storage-agent/tasks') {
+    const query = new URL(request.url ?? pathname, 'http://quorum.invalid').searchParams;
+    const after = query.has('after') ? Number(query.get('after')) : 0;
+    const limit = query.has('limit') ? Number(query.get('limit')) : 100;
+    sendJson(response, 200, success(await storageTasks.tasks(storageAgentCredential(request),
+      positiveHeader(request, 'x-storage-lease-generation'), after, limit), requestId));
+    return true;
+  }
+  const agentTask = /^\/api\/v1\/storage-agent\/tasks\/([0-9a-f-]{36})\/(claim|complete|fail)$/.exec(pathname);
+  if (storageTasks && method === 'POST' && agentTask) {
+    const body = await readJson(request); const credential = storageAgentCredential(request);
+    const id = agentTask[1] as string;
+    const result = agentTask[2] === 'claim' ? await storageTasks.claim(credential, id, body)
+      : agentTask[2] === 'complete' ? await storageTasks.complete(credential, id, body, context)
+        : await storageTasks.fail(credential, id, body, context);
+    sendJson(response, 200, success(result, requestId)); return true;
+  }
+  if (storageTasks && method === 'POST' && pathname === '/api/v1/storage-agent/blobs') {
+    try {
+      const result = await storageTasks.receiveContent(storageAgentCredential(request), {
+        taskId: requiredHeader(request, 'x-storage-task-id'),
+        leaseGeneration: positiveHeader(request, 'x-storage-lease-generation'),
+        fileRevision: positiveHeader(request, 'x-storage-file-revision'),
+        claimToken: requiredHeader(request, 'x-storage-task-claim'),
+        expectedSha256: requiredHeader(request, 'x-content-sha256'),
+        contentLength: requestContentLength(request), source: request, context
+      });
+      sendJson(response, 200, success(result, requestId));
+    } finally {
+      request.resume();
+    }
+    return true;
+  }
+  const agentBlob = /^\/api\/v1\/storage-agent\/blobs\/([0-9a-f-]{36})$/.exec(pathname);
+  if (storageTasks && method === 'GET' && agentBlob) {
+    await storageTasks.streamBlob(storageAgentCredential(request), {
+      taskId: requiredHeader(request, 'x-storage-task-id'), blobId: agentBlob[1] as string,
+      leaseGeneration: positiveHeader(request, 'x-storage-lease-generation'),
+      fileRevision: positiveHeader(request, 'x-storage-file-revision'),
+      claimToken: requiredHeader(request, 'x-storage-task-claim')
+    }, {
+      start: metadata => {
+        response.statusCode = 200; response.setHeader('content-type', 'application/octet-stream');
+        response.setHeader('content-length', metadata.sizeBytes); response.setHeader('x-content-sha256', metadata.sha256);
+        response.setHeader('cache-control', 'private, no-store'); response.setHeader('x-content-type-options', 'nosniff');
+      },
+      write: async chunk => {
+        if (!response.write(chunk)) await new Promise<void>(resolve => response.once('drain', resolve));
+      }
+    });
+    response.end(); return true;
   }
   const hosts = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/storage-hosts$/.exec(pathname);
   if (method === 'GET' && hosts && identity) {
@@ -957,7 +1034,7 @@ export function createRequestHandler(dependencies: AppDependencies): RequestList
         pathname = requestUrl.pathname;
 
         if (dependencies.storageAgent && await handleStage7AgentRequest({request, response, pathname, requestId,
-          storageAgent: dependencies.storageAgent, identity: dependencies.identity,
+          storageAgent: dependencies.storageAgent, storageTasks: dependencies.storageTasks, identity: dependencies.identity,
           allowedOrigins: dependencies.allowedOrigins ?? []})) return;
 
         if (dependencies.identity && await handleIdentityRequest({

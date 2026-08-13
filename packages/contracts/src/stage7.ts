@@ -34,3 +34,69 @@ export interface StorageAgentIdentity {
   deviceId: string;
   leaseGeneration: number;
 }
+
+export const STORAGE_AGENT_TASK_TYPES = ['STORE_BLOB', 'UPLOAD_BLOB', 'DELETE_FILE'] as const;
+export type StorageAgentTaskType = typeof STORAGE_AGENT_TASK_TYPES[number];
+
+export const STORAGE_AGENT_TASK_STATUSES = [
+  'PENDING', 'IN_PROGRESS', 'RETRY', 'COMPLETED', 'FAILED', 'CANCELLED'
+] as const;
+export type StorageAgentTaskStatus = typeof STORAGE_AGENT_TASK_STATUSES[number];
+
+export interface StorageAgentTask {
+  id: string;
+  committeeId: string;
+  sequence: number;
+  type: StorageAgentTaskType;
+  fileEntryId: string;
+  fileRevision: number;
+  blobId: string | null;
+  expectedSizeBytes: number | null;
+  expectedSha256: string | null;
+  contentState: 'NONE' | 'RECEIVING' | 'STAGED';
+  receivedSizeBytes: number | null;
+  actualSha256: string | null;
+  leaseGeneration: number;
+  status: StorageAgentTaskStatus;
+  revision: number;
+  attempts: number;
+  claimToken: string | null;
+  failureCode: string | null;
+  nextAttemptAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface StorageAgentTaskPage {
+  tasks: StorageAgentTask[];
+  nextSequence: number;
+  hasMore: boolean;
+}
+
+export type StorageManifestEvent = {
+  sequence: number;
+  kind: 'UPSERT';
+  fileEntryId: string;
+  fileRevision: number;
+  versionId: string;
+  blobId: string;
+  logicalName: string;
+  originalName: string;
+  mediaType: string;
+  sizeBytes: number;
+  sha256: string;
+  createdAt: string;
+} | {
+  sequence: number;
+  kind: 'DELETE';
+  fileEntryId: string;
+  fileRevision: number;
+  deletedAt: string;
+  createdAt: string;
+};
+
+export interface StorageManifestPage {
+  events: StorageManifestEvent[];
+  nextSequence: number;
+  hasMore: boolean;
+}

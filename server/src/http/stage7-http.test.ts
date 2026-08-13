@@ -7,6 +7,7 @@ import {describe, expect, it, vi} from 'vitest';
 import {createLogger} from '../logger';
 import type {IdentityService} from '../modules/identity/service';
 import type {Stage7StorageAgentService} from '../modules/storage-agent/service';
+import type {Stage7StorageTaskService} from '../modules/storage-agent/task-service';
 import {createRequestHandler} from './app';
 
 const authenticated = {sessionId: 'session', user: {id: '10000000-0000-4000-8000-000000000001',
@@ -16,21 +17,25 @@ const authenticated = {sessionId: 'session', user: {id: '10000000-0000-4000-8000
 class TestResponse extends EventEmitter {
   statusCode = 200; headersSent = false; body = ''; readonly headers = new Map<string, unknown>();
   setHeader(name: string, value: unknown): this {this.headers.set(name, value); return this;}
+  write(chunk: Uint8Array | string): boolean {this.headersSent = true;
+    this.body += Buffer.from(chunk).toString('utf8'); return true;}
   end(body?: string): this {this.headersSent = true; if (body !== undefined) this.body += body;
     queueMicrotask(() => this.emit('finish')); return this;}
   destroy(): this {return this;}
 }
 
 async function send(storageAgent: Stage7StorageAgentService, options: {
-  method: 'GET' | 'POST'; path: string; body?: unknown; headers?: Record<string, string>; identity?: IdentityService;
+  method: 'GET' | 'POST'; path: string; body?: unknown; rawBody?: Buffer; headers?: Record<string, string>;
+  identity?: IdentityService; storageTasks?: Stage7StorageTaskService;
 }) {
   const identity = options.identity ?? ({authenticate: vi.fn(async () => authenticated)} as unknown as IdentityService);
   const logs: string[] = [];
   const handler = createRequestHandler({health: {ready: async () => ({ready: true, checks: {
     database: {status: 'ok', migrationVersion: 20}, storage: {status: 'ok'}}})},
   logger: createLogger(line => logs.push(line)), version: 'test', databaseMigrationVersion: 20,
-  identity, storageAgent, allowedOrigins: ['https://quorum.example.com']});
-  const chunks = options.body === undefined ? [] : [Buffer.from(JSON.stringify(options.body))];
+  identity, storageAgent, storageTasks: options.storageTasks, allowedOrigins: ['https://quorum.example.com']});
+  const chunks = options.rawBody ? [options.rawBody]
+    : options.body === undefined ? [] : [Buffer.from(JSON.stringify(options.body))];
   const incoming = Readable.from(chunks) as unknown as IncomingMessage;
   Object.assign(incoming, {method: options.method, url: options.path, headers: {
     origin: 'https://quorum.example.com',
@@ -94,5 +99,57 @@ describe('stage 7 storage Agent HTTP boundary', () => {
       headers: {origin: 'https://attacker.example.com', authorization: 'QuorumAgent qsa1.device.secret'}});
     expect(forbidden.response.statusCode).toBe(403);
     expect(createPairing).toHaveBeenCalledTimes(1);
+  });
+
+  it('forwards fenced manifest cursors and task claims without browser authentication', async () => {
+    const manifest = vi.fn(async () => ({events: [], nextSequence: 12, hasMore: false}));
+    const claim = vi.fn(async () => ({id: 'task', status: 'IN_PROGRESS'}));
+    const storageTasks = {manifest, claim} as unknown as Stage7StorageTaskService;
+    const service = {} as Stage7StorageAgentService;
+    const headers = {authorization: 'QuorumAgent qsa1.device.secret', 'x-storage-lease-generation': '7'};
+    const listed = await send(service, {method: 'GET', path: '/api/v1/storage-agent/manifest?after=12&limit=25',
+      headers, storageTasks});
+    expect(listed.response.statusCode).toBe(200);
+    expect(manifest).toHaveBeenCalledWith('qsa1.device.secret', 7, 12, 25);
+    const body = {leaseGeneration: 7, fileRevision: 3, requestId: '40000000-0000-4000-8000-000000000001'};
+    const claimed = await send(service, {method: 'POST',
+      path: '/api/v1/storage-agent/tasks/30000000-0000-4000-8000-000000000001/claim', body,
+      headers: {authorization: headers.authorization}, storageTasks});
+    expect(claimed.response.statusCode).toBe(200);
+    expect(claim).toHaveBeenCalledWith('qsa1.device.secret', '30000000-0000-4000-8000-000000000001', body);
+    expect(listed.identity.authenticate).not.toHaveBeenCalled();
+  });
+
+  it('streams Agent upload bytes and provider blob bytes through task-scoped headers', async () => {
+    const receiveContent = vi.fn(async (_credential, input) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of input.source) chunks.push(Buffer.from(chunk));
+      return {id: input.taskId, status: 'IN_PROGRESS', received: Buffer.concat(chunks).toString('utf8')};
+    });
+    const streamBlob = vi.fn(async (_credential, input, destination) => {
+      expect(input).toMatchObject({blobId: '50000000-0000-4000-8000-000000000001', leaseGeneration: 8,
+        fileRevision: 4, claimToken: '60000000-0000-4000-8000-000000000001'});
+      destination.start({sizeBytes: 4, sha256: 'a'.repeat(64)});
+      await destination.write(Buffer.from('blob'));
+    });
+    const storageTasks = {receiveContent, streamBlob} as unknown as Stage7StorageTaskService;
+    const service = {} as Stage7StorageAgentService;
+    const headers = {authorization: 'QuorumAgent qsa1.device.secret',
+      'x-storage-task-id': '30000000-0000-4000-8000-000000000001',
+      'x-storage-lease-generation': '8', 'x-storage-file-revision': '4',
+      'x-storage-task-claim': '60000000-0000-4000-8000-000000000001',
+      'x-content-sha256': 'a'.repeat(64), 'content-length': '4'};
+    const uploaded = await send(service, {method: 'POST', path: '/api/v1/storage-agent/blobs',
+      rawBody: Buffer.from('blob'), headers, storageTasks});
+    expect(uploaded.response.statusCode).toBe(200);
+    expect(receiveContent).toHaveBeenCalledWith('qsa1.device.secret', expect.objectContaining({
+      taskId: headers['x-storage-task-id'], leaseGeneration: 8, fileRevision: 4,
+      claimToken: headers['x-storage-task-claim'], expectedSha256: headers['x-content-sha256'], contentLength: 4
+    }));
+    const downloaded = await send(service, {method: 'GET',
+      path: '/api/v1/storage-agent/blobs/50000000-0000-4000-8000-000000000001', headers, storageTasks});
+    expect(downloaded.response.statusCode).toBe(200);
+    expect(downloaded.response.body).toBe('blob');
+    expect(downloaded.response.headers.get('x-content-sha256')).toBe('a'.repeat(64));
   });
 });

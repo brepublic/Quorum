@@ -236,6 +236,25 @@ describe('migration discovery', () => {
     expect(agent?.sql).toContain('schema_compatibility = 20');
   });
 
+  it('adds append-only Agent manifest events and fenced durable tasks', async () => {
+    const migrations = await loadMigrations(resolve('server/migrations'));
+    const tasks = migrations.find(migration => migration.version === 21);
+    expect(tasks?.name).toBe('storage_agent_tasks_manifest');
+    expect(tasks?.sql).toContain("'SERVER_VOLUME', 'CHAIR_AGENT', 'S3_COMPATIBLE'");
+    expect(tasks?.sql).toContain("provider_type IN ('SERVER_VOLUME','CHAIR_AGENT')");
+    expect(tasks?.sql).toContain('CREATE TABLE storage_manifest_events');
+    expect(tasks?.sql).toContain('file_versions_storage_manifest');
+    expect(tasks?.sql).toContain('file_tombstones_storage_manifest');
+    expect(tasks?.sql).toContain('storage manifest events are append-only');
+    expect(tasks?.sql).toContain('CREATE TABLE storage_agent_tasks');
+    expect(tasks?.sql).toContain('claim_request_id uuid');
+    expect(tasks?.sql).toContain('claim_token uuid');
+    expect(tasks?.sql).toContain('lease_generation bigint');
+    expect(tasks?.sql).toContain('content_staging_key text');
+    expect(tasks?.sql).toContain('storage Agent task identity is immutable');
+    expect(tasks?.sql).toContain('schema_compatibility = 21');
+  });
+
   it('rejects SQL files outside the versioned naming contract', async () => {
     const directory = await temporaryDirectory();
     await writeFile(join(directory, 'first.sql'), 'SELECT 1;\n');

@@ -179,7 +179,7 @@ deploy/
 
 ## 10. 阶段 7：Chair Local Agent
 
-状态：7.1 的一次性配对码、设备公钥/凭据哈希、单活动 storage host、lease generation fencing、撤销/转移、心跳与离线降级已完成。7.2 起继续 durable task、manifest 和内容同步；桌面 Agent、目录扫描与发布包尚未完成。
+状态：7.1 的配对、单活动 host 与 lease fencing，以及 7.2 的追加式 manifest、durable task、claim token、幂等完成/失败和服务器流式内容边界已完成。7.3 起继续 `CHAIR_AGENT` binding、本地变化提交与恢复编排；桌面 Agent、目录扫描与发布包尚未完成。
 
 交付：
 
@@ -237,4 +237,4 @@ deploy/
 
 ## 14. 首个实现里程碑
 
-下一步实施 7.2：durable Agent task、manifest sequence、claim token、幂等完成/失败、服务器暂存与 blob 校验。继续使用 7.1 的独立设备认证和 lease fencing；不得把本地目录内容或凭据暴露给浏览器，也不得提前实施桌面目录同步、归档、备份或 Firebase 移除。
+下一步实施 7.3：增加 `CHAIR_AGENT` binding、服务器上传到 host 的 `PENDING_HOST_COMMIT` 编排、本地变化提交、墓碑优先恢复和显式冲突记录。继续使用 7.2 的 manifest/task/claim/content 原语；不得把本地目录或凭据暴露给浏览器，也不得提前实施桌面打包、归档、备份或 Firebase 移除。

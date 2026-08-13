@@ -27,6 +27,7 @@ import {Stage6MigrationService, startStorageMigrationWorker} from './modules/sto
 import {StorageCapacityMonitor} from './modules/storage/capacity.js';
 import {Stage6MaintenanceService, startStorageMaintenanceWorker} from './modules/storage/maintenance-service.js';
 import {Stage7StorageAgentService, startStorageHostMonitor} from './modules/storage-agent/service.js';
+import {Stage7StorageTaskService} from './modules/storage-agent/task-service.js';
 
 const {Pool} = pg;
 const logger = createLogger();
@@ -80,6 +81,7 @@ async function main(): Promise<void> {
       capacity);
     const storageMaintenance = new Stage6MaintenanceService(pool, staging, files, capacity, logger);
     const storageAgent = new Stage7StorageAgentService(pool);
+    const storageTasks = new Stage7StorageTaskService(storageAgent, staging, files, capacity);
     await stage3.ensureBuiltins();
     const bootstrapSecret = await identity.ensureBootstrapSecret();
     if (bootstrapSecret) {
@@ -103,6 +105,7 @@ async function main(): Promise<void> {
       storageMigrations,
       storageMetrics: storageMaintenance,
       storageAgent,
+      storageTasks,
       allowedOrigins: config.allowedOrigins
     });
     const stopStorageMigrationWorker = startStorageMigrationWorker(storageMigrations, logger);

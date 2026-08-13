@@ -24,7 +24,7 @@ export {validateInternalStorageKey} from './paths.js';
 interface StorageBindingRow extends QueryResultRow {
   id: string;
   committee_id: string;
-  provider_type: 'SERVER_VOLUME' | 'S3_COMPATIBLE';
+  provider_type: StorageBinding['providerType'];
   provider_config_id: string | null;
   status: StorageBinding['status'];
   revision: number;

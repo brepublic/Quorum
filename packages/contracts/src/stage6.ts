@@ -1,4 +1,4 @@
-export const STORAGE_PROVIDER_TYPES = ['SERVER_VOLUME', 'S3_COMPATIBLE'] as const;
+export const STORAGE_PROVIDER_TYPES = ['SERVER_VOLUME', 'CHAIR_AGENT', 'S3_COMPATIBLE'] as const;
 export type StorageProviderType = typeof STORAGE_PROVIDER_TYPES[number];
 
 export const STORAGE_BINDING_STATUSES = ['PENDING', 'ACTIVE', 'MIGRATING', 'FAILED', 'RETIRED'] as const;

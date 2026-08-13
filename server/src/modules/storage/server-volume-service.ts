@@ -41,7 +41,7 @@ interface ProviderUploadRow extends QueryResultRow {
 
 interface BindingRow extends QueryResultRow {
   id: string;
-  provider_type: 'SERVER_VOLUME' | 'S3_COMPATIBLE';
+  provider_type: 'SERVER_VOLUME' | 'CHAIR_AGENT' | 'S3_COMPATIBLE';
 }
 
 async function requireContributor(client: PoolClient, committee: {id: string; owner_user_id: string},

@@ -10,7 +10,11 @@ import {IdentityService} from '../identity/service';
 import type {AuthenticatedSession} from '../identity/store';
 import {Stage3Service} from '../stage3/service';
 import {Stage4Service} from '../stage4/service';
+import {Stage6StorageService} from '../storage/service';
+import type {DurableStagingStore} from '../storage/staging';
+import type {Stage6FileService} from '../storage/file-service';
 import {Stage7StorageAgentService} from './service';
+import {Stage7StorageTaskService} from './task-service';
 
 const {Client, Pool} = pg;
 const adminUrl = process.env.TEST_DATABASE_ADMIN_URL;
@@ -21,6 +25,8 @@ let identity: IdentityService;
 let stage3: Stage3Service;
 let stage4: Stage4Service;
 let agent: Stage7StorageAgentService;
+let storage: Stage6StorageService;
+let tasks: Stage7StorageTaskService;
 let administrator: AuthenticatedSession;
 let clock = new Date('2026-08-13T08:00:00.000Z');
 
@@ -39,6 +45,8 @@ beforeEach(async () => {
   identity = new IdentityService(new PostgresIdentityStore(pool));
   stage3 = new Stage3Service(pool); stage4 = new Stage4Service(pool);
   agent = new Stage7StorageAgentService(pool, {now: () => clock, pairingTtlMs: 60_000, offlineGraceMs: 30_000});
+  storage = new Stage6StorageService(pool);
+  tasks = new Stage7StorageTaskService(agent, {} as DurableStagingStore, {} as Stage6FileService);
   await stage3.ensureBuiltins();
   const secret = await identity.ensureBootstrapSecret();
   const session = await identity.bootstrapAdmin({secret: secret as string, email: 'admin@example.com',
@@ -84,6 +92,16 @@ async function pairInitial(owner: AuthenticatedSession, committeeId: string) {
     {baseRevision: await committeeRevision(committeeId), purpose: 'INITIAL'}, context('initial-code'));
   return {pairing, paired: await agent.pair({pairingCode: pairing.code, deviceLabel: 'Chair laptop',
     devicePublicKey: publicKey()}, context('initial-pair'))};
+}
+
+async function committedFile(owner: AuthenticatedSession, committeeId: string) {
+  const binding = await storage.createServerVolumeBinding(owner, committeeId,
+    {baseRevision: await committeeRevision(committeeId)}, randomUUID(), context('binding'));
+  const content = 'manifest content';
+  return storage.recordProviderCommit(owner, committeeId, {bindingId: binding.id, blobId: randomUUID(),
+    logicalName: '议事文件', originalName: 'manifest.txt', mediaType: 'text/plain',
+    sizeBytes: Buffer.byteLength(content), sha256: randomBytes(32).toString('hex'),
+    storageKey: `blobs/aa/${randomUUID().replaceAll('-', '')}`}, randomUUID(), context('file'));
 }
 
 integration('PostgreSQL stage 7 storage Agent identity', () => {
@@ -203,5 +221,69 @@ integration('PostgreSQL stage 7 storage Agent identity', () => {
       (SELECT count(*)::int FROM storage_pairing_codes WHERE used_at IS NOT NULL) AS used,
       (SELECT storage_lease_generation::int FROM committees WHERE id=$1) AS generation`, [value.committee.id]);
     expect(state?.rows[0]).toEqual({hosts: 0, used: 0, generation: 0});
+  });
+
+  it('backfills a strictly ordered manifest and STORE_BLOB task when the first host pairs', async () => {
+    const value = await fixture();
+    const file = await committedFile(value.owner, value.committee.id);
+    const paired = await pairInitial(value.owner, value.committee.id);
+    const manifest = await tasks.manifest(paired.paired.credential, paired.paired.host.leaseGeneration, 0, 100);
+    expect(manifest).toMatchObject({hasMore: false, nextSequence: 1});
+    expect(manifest.events).toEqual([expect.objectContaining({kind: 'UPSERT', fileEntryId: file.id,
+      fileRevision: file.revision, blobId: file.currentVersion.blobId})]);
+    const pending = await tasks.tasks(paired.paired.credential, paired.paired.host.leaseGeneration, 0, 100);
+    expect(pending.tasks).toEqual([expect.objectContaining({type: 'STORE_BLOB', fileEntryId: file.id,
+      blobId: file.currentVersion.blobId, status: 'PENDING'})]);
+  });
+
+  it('claims and completes a task idempotently while rejecting a different terminal outcome', async () => {
+    const value = await fixture(); await committedFile(value.owner, value.committee.id);
+    const paired = await pairInitial(value.owner, value.committee.id);
+    const pending = (await tasks.tasks(paired.paired.credential, paired.paired.host.leaseGeneration)).tasks[0]!;
+    const claimRequest = randomUUID();
+    const claimed = await tasks.claim(paired.paired.credential, pending.id, {leaseGeneration: pending.leaseGeneration,
+      fileRevision: pending.fileRevision, requestId: claimRequest});
+    const replay = await tasks.claim(paired.paired.credential, pending.id, {leaseGeneration: pending.leaseGeneration,
+      fileRevision: pending.fileRevision, requestId: claimRequest});
+    expect(replay.claimToken).toBe(claimed.claimToken);
+    const completeRequest = randomUUID();
+    const completed = await tasks.complete(paired.paired.credential, pending.id,
+      {leaseGeneration: pending.leaseGeneration, fileRevision: pending.fileRevision,
+        claimToken: claimed.claimToken, requestId: completeRequest}, context('complete-task'));
+    await expect(tasks.complete(paired.paired.credential, pending.id,
+      {leaseGeneration: pending.leaseGeneration, fileRevision: pending.fileRevision,
+        claimToken: claimed.claimToken, requestId: completeRequest}, context('complete-replay')))
+      .resolves.toEqual(completed);
+    await expect(tasks.fail(paired.paired.credential, pending.id,
+      {leaseGeneration: pending.leaseGeneration, fileRevision: pending.fileRevision,
+        claimToken: claimed.claimToken, requestId: randomUUID(), failureCode: 'LOCAL_WRITE_FAILED'},
+      context('different-outcome'))).rejects.toMatchObject({code: 'IDEMPOTENCY_CONFLICT'});
+    const recorded = await pool?.query(`SELECT
+      (SELECT count(*)::int FROM committee_events WHERE committee_id=$1
+        AND event_type='storage_agent.task_changed') AS events,
+      (SELECT count(*)::int FROM audit_log WHERE committee_id=$1
+        AND action='storage.agent_task_completed') AS audits`, [value.committee.id]);
+    expect(recorded?.rows[0]).toEqual({events: 1, audits: 1});
+  });
+
+  it('rolls task state and event back when completion audit persistence fails', async () => {
+    const value = await fixture(); await committedFile(value.owner, value.committee.id);
+    const paired = await pairInitial(value.owner, value.committee.id);
+    const pending = (await tasks.tasks(paired.paired.credential, paired.paired.host.leaseGeneration)).tasks[0]!;
+    const claimed = await tasks.claim(paired.paired.credential, pending.id, {leaseGeneration: pending.leaseGeneration,
+      fileRevision: pending.fileRevision, requestId: randomUUID()});
+    await pool?.query(`CREATE FUNCTION fail_storage_agent_task_audit() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN IF NEW.action='storage.agent_task_completed' THEN RAISE EXCEPTION 'injected task audit failure'; END IF;
+      RETURN NEW; END; $$;
+      CREATE TRIGGER fail_storage_agent_task_audit BEFORE INSERT ON audit_log
+      FOR EACH ROW EXECUTE FUNCTION fail_storage_agent_task_audit()`);
+    await expect(tasks.complete(paired.paired.credential, pending.id,
+      {leaseGeneration: pending.leaseGeneration, fileRevision: pending.fileRevision,
+        claimToken: claimed.claimToken, requestId: randomUUID()}, context('atomic-task'))).rejects.toThrow();
+    const state = await pool?.query(`SELECT t.status,t.claim_token,
+      (SELECT count(*)::int FROM committee_events WHERE committee_id=t.committee_id
+        AND event_type='storage_agent.task_changed') AS events
+      FROM storage_agent_tasks t WHERE t.id=$1`, [pending.id]);
+    expect(state?.rows[0]).toMatchObject({status: 'IN_PROGRESS', claim_token: claimed.claimToken, events: 0});
   });
 });

@@ -122,7 +122,7 @@
 
 - 前置条件：PostgreSQL 16；`TEST_DATABASE_ADMIN_URL` 指向可创建和删除数据库的管理员连接。
 - 操作步骤：执行 `TEST_DATABASE_ADMIN_URL=postgresql://... pnpm test:self-host:integration`；确认测试创建随机临时数据库，从空库执行全部 migration，再执行一次；检查阶段 3 表、外键、部分唯一索引、邀请码约束、已发布规则版本和审计追加限制。
-- 通过条件：两次 migration 均成功；当前 schema compatibility 为 20，且 12 个阶段 3 核心表继续存在；同一用户的第二个活动席位被拒绝；已发布规则版本和审计记录不能更新或删除；测试数据库最终清理。
+- 通过条件：两次 migration 均成功；当前 schema compatibility 为 21，且 12 个阶段 3 核心表继续存在；同一用户的第二个活动席位被拒绝；已发布规则版本和审计记录不能更新或删除；测试数据库最终清理。
 - 自动化覆盖情况：`server/src/db/migrations.integration.test.ts` 检查空库、重复执行和表清单；`server/src/modules/stage3/postgres.integration.test.ts` 检查索引、外键、历史行和不可变触发器。未配置 URL 时测试明确 skip。
 - 当前状态：因无服务器延期。
 - 需要保存的证据：测试输出、`quorum_meta.schema_migrations`、表与索引查询、触发器失败结果和临时数据库清理记录。
@@ -160,7 +160,7 @@
 
 - 前置条件：PostgreSQL 16；`TEST_DATABASE_ADMIN_URL` 指向可创建和删除数据库的管理员连接。
 - 操作步骤：执行 `TEST_DATABASE_ADMIN_URL=postgresql://... pnpm test:self-host:integration`；检查 migration 4、模板隔离、幂等键、revision 冲突、软删除、并发点名和追加式出席事件用例。
-- 通过条件：schema compatibility 为 20；migration 4 的表、外键、唯一索引和追加式触发器均生效；并发写只有一个符合 revision 的请求成功；临时数据库最终清理。
+- 通过条件：schema compatibility 为 21；migration 4 的表、外键、唯一索引和追加式触发器均生效；并发写只有一个符合 revision 的请求成功；临时数据库最终清理。
 - 自动化覆盖情况：migration 与 `server/src/modules/stage4/postgres.integration.test.ts` 已实现；当前环境未提供 PostgreSQL，因此明确 skip。
 - 当前状态：因无服务器延期。
 - 需要保存的证据：测试输出、migration 表、阶段 4 表与索引查询、并发结果和临时数据库清理记录。
@@ -209,7 +209,7 @@
 
 - 前置条件：PostgreSQL 16；`TEST_DATABASE_ADMIN_URL` 指向可创建和删除数据库的管理员连接。
 - 操作步骤：执行 `TEST_DATABASE_ADMIN_URL=postgresql://... pnpm test:self-host:integration`；保留 migration 5–12、两名 Chair 并发重排和同席位两名代表并发投票的输出。
-- 通过条件：schema compatibility 为 20；空库 migration 和重复执行成功；并发重排只有一个 revision 成功且活动位置唯一；同席位并发投票只有一张当前票；临时数据库被清理。
+- 通过条件：schema compatibility 为 21；空库 migration 和重复执行成功；并发重排只有一个 revision 成功且活动位置唯一；同席位并发投票只有一张当前票；临时数据库被清理。
 - 自动化覆盖情况：`server/src/db/migrations.integration.test.ts` 与 `server/src/modules/stage5/postgres.integration.test.ts` 已实现；未配置 URL 时明确 skip。
 - 当前状态：因无服务器延期。
 - 需要保存的证据：完整测试输出、`quorum_meta.schema_migrations`、相关唯一索引和触发器查询、两组并发结果及临时数据库清理记录。
@@ -285,7 +285,7 @@
 
 - 前置条件：PostgreSQL 16；`TEST_DATABASE_ADMIN_URL` 指向可创建和删除数据库的管理员连接。
 - 操作步骤：执行 `TEST_DATABASE_ADMIN_URL=postgresql://... pnpm test:self-host:integration`；检查 migration 13；创建服务器卷绑定和两个文件版本；注入审计写入失败；删除文件后尝试修改版本、删除墓碑和追加旧文件版本。
-- 通过条件：schema compatibility 为 20；一个委员会最多一个活动 binding；版本保存服务端大小和 SHA-256 且不可修改；故障时文件、事件、审计和幂等记录全部回滚；删除立即清除当前版本、追加唯一墓碑并标记 blob 待删；旧副本不能追加版本；系统管理员没有隐式 Chair 权限。
+- 通过条件：schema compatibility 为 21；一个委员会最多一个活动 binding；版本保存服务端大小和 SHA-256 且不可修改；故障时文件、事件、审计和幂等记录全部回滚；删除立即清除当前版本、追加唯一墓碑并标记 blob 待删；旧副本不能追加版本；系统管理员没有隐式 Chair 权限。
 - 自动化覆盖情况：migration 静态测试和无数据库校验已通过；`server/src/modules/storage/postgres.integration.test.ts` 覆盖真实 PostgreSQL 事务、追加历史、故障回滚和删除防复活，未配置 URL 时明确 skip。
 - 当前状态：因无服务器延期。
 - 需要保存的证据：完整测试输出、migration 13 表/约束/触发器查询、file entry/version/blob/tombstone 脱敏查询、事件与审计计数、故障注入回滚结果和临时数据库清理记录。证据不得包含二进制内容或 provider 密钥。
@@ -355,7 +355,7 @@
 
 ## 阶段 7：Chair Local Agent
 
-当前环境未提供 `TEST_DATABASE_ADMIN_URL`、自托管 TLS 实例、第二台真实设备或桌面发布/签名环境。阶段 7.1 的 PostgreSQL 集成测试已编写但明确 skip；以下项目尚未通过。
+当前环境未提供 `TEST_DATABASE_ADMIN_URL`、自托管 TLS 实例、第二台真实设备或桌面发布/签名环境。阶段 7.1–7.2 的 PostgreSQL 集成测试已编写但明确 skip；以下项目尚未通过。
 
 ### SH-MAN-509 Agent 配对、单主机 fencing 与离线降级
 
@@ -365,3 +365,12 @@
 - 自动化覆盖情况：当前 WSL 的 migration、共享状态、配对码/凭据格式、HTTP 独立认证和秘密不入日志测试已通过；真实 PostgreSQL 用例覆盖角色、哈希保存、一次性消费、并发转移、撤销 fencing、失权/过期、超时降级、恢复及故障回滚，未配置 `TEST_DATABASE_ADMIN_URL` 时明确 skip。真实 TLS、两设备、代理日志、浏览器一次性显示和长时间网络分区尚未执行。
 - 当前状态：因无真实 PostgreSQL、自托管 TLS 实例和第二设备延期。
 - 需要保存的证据：完整集成输出、migration 20 表/索引/触发器、脱敏 host/code/event/audit 查询、两个设备的 generation/响应时间线、断网期间议事结果、恢复事件、浏览器一次性显示截图和全链路秘密搜索结果。不得保存配对码、设备凭据、Session、CSRF token、私钥、本地路径或文件正文。
+
+### SH-MAN-510 Agent manifest、任务 fencing 与流式内容
+
+- 前置条件：真实 PostgreSQL 16；通过反向代理和 TLS 运行的自托管服务；一个含多文件、历史版本和墓碑的委员会；两个隔离 Agent 测试进程；可控制慢速、断流、超限、短写、长写、哈希错误、磁盘故障和进程终止；服务器卷及一个真实 S3 compatible 测试 provider。
+- 操作步骤：在配对前创建、修改和删除文件，再配对 A 并分页拉取 manifest/task；在线时继续创建版本和墓碑，核对 sequence 与任务。重复领取同一 task，再用不同 request ID 并发领取；分别重复 complete/fail 和改用相反 outcome。对 `STORE_BLOB` 从服务器卷和 S3 下载并重算哈希；对测试 `UPLOAD_BLOB` 分别执行成功、断流、短写、长写、超限、哈希错误和磁盘写入失败。传输过程中把 host 转移给 B，再让 A 完成；让 stale claim 超过五分钟后由当前 host 重新领取。注入 event/audit 写入失败并检查事务回滚。确认长时间慢速传输期间点名、动议、投票和计时写入不被委员会行锁阻塞。
+- 通过条件：manifest sequence 严格递增且墓碑覆盖旧版本；配对时每个文件只有最新状态任务，在线新版本/墓碑与文件事务原子出现。task 只可由相同 host/generation 领取；相同 request 精确重放，不同 terminal outcome 冲突，旧 claim 和旧 host 不能覆盖新状态。所有 blob 内容只通过匹配 task/claim 传输，provider 读取和 Agent 上传的实际大小/SHA-256 匹配；失败不产生完整状态或文件版本，部分暂存不可见。transfer 后 A 的完成返回 `STALE_STORAGE_LEASE`。慢速传输不长期占用委员会行锁；状态、事件和审计在故障下共同提交或回滚。
+- 自动化覆盖情况：当前 WSL 的共享契约、migration 静态、HTTP 原始流、durable staging 和任务状态机测试已通过；真实 PostgreSQL 用例覆盖 manifest 回填、初始 task、claim 重放、幂等完成、相反 outcome 拒绝及 event/audit 回滚，未配置 `TEST_DATABASE_ADMIN_URL` 时明确 skip。真实 provider、TLS 反向代理、两个进程、网络分区、进程终止和数据库锁时间线尚未执行。
+- 当前状态：因无真实 PostgreSQL、自托管 TLS 实例、第二设备和可控 provider 故障环境延期。
+- 需要保存的证据：migration 21 表/触发器/约束、脱敏 manifest/task/event/audit 查询、sequence 与 generation 时间线、claim 重放响应、内容传输响应头与 SHA-256、失败矩阵、转移竞态结果、`pg_stat_activity`/锁等待记录和议事写入延迟。不得保存设备凭据、claim token、本地路径或文件正文。

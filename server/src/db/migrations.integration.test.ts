@@ -57,11 +57,11 @@ integration('PostgreSQL migrations', () => {
       );
       const applied = await pool.query('SELECT version FROM quorum_meta.schema_migrations');
 
-      expect(first).toEqual(expect.objectContaining({ready: true, latestAppliedVersion: 20}));
+      expect(first).toEqual(expect.objectContaining({ready: true, latestAppliedVersion: 21}));
       expect(second).toEqual(expect.objectContaining({ready: true, pendingVersions: []}));
       expect(status.ready).toBe(true);
-      expect(runtime.rows[0]?.schema_compatibility).toBe(20);
-      expect(applied.rowCount).toBe(20);
+      expect(runtime.rows[0]?.schema_compatibility).toBe(21);
+      expect(applied.rowCount).toBe(21);
       const stage3Tables = await pool.query<{name: string}>(`SELECT table_name AS name FROM information_schema.tables
         WHERE table_schema='public' AND table_name IN ('committees','committee_memberships','committee_capabilities',
         'committee_seats','seat_assignments','seat_invitations','rule_packages','rule_package_versions',
@@ -79,8 +79,9 @@ integration('PostgreSQL migrations', () => {
         'storage_migrations','storage_migration_items','file_blob_copies','storage_cleanup_audit')`);
       expect(stage6Tables.rowCount).toBe(12);
       const stage7Tables = await pool.query<{name: string}>(`SELECT table_name AS name FROM information_schema.tables
-        WHERE table_schema='public' AND table_name IN ('storage_pairing_codes','storage_hosts')`);
-      expect(stage7Tables.rowCount).toBe(2);
+        WHERE table_schema='public' AND table_name IN
+          ('storage_pairing_codes','storage_hosts','storage_manifest_events','storage_agent_tasks')`);
+      expect(stage7Tables.rowCount).toBe(4);
     } finally {
       await pool.end();
     }

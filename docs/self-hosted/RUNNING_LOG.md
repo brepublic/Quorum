@@ -6,10 +6,10 @@
 
 - 更新时间：2026-08-13
 - 分支：`self-host`
-- 已确认基线：`c722f95 stage 6.8: add self-hosted file workspace`
-- 当前阶段：7.1 Agent 协议、配对、设备身份与单主机 fencing 已完成当前 WSL 可执行的验证，等待单独提交。
-- 当前工作：一次性配对、独立设备认证、单活动 host、撤销/转移、lease fencing、心跳与离线降级已落地。
-- 下一步：提交 7.1，然后按 `STAGE_7_2_HANDOFF_PROMPT.md` 实施 durable Agent task、manifest 与服务器内容边界。
+- 已确认基线：`a7dd0fd stage 7.1: fence chair storage agents`
+- 当前阶段：7.2 durable Agent task、manifest 与服务器内容边界已完成当前 WSL 可执行的验证，等待单独提交。
+- 当前工作：migration 21、共享契约、任务状态机、独立 Agent HTTP 和流式内容校验已落地。
+- 下一步：提交 7.2，然后按 `STAGE_7_3_HANDOFF_PROMPT.md` 实施 `CHAIR_AGENT` provider、本地变化和恢复编排。
 
 ## 已完成与验证
 
@@ -49,6 +49,7 @@
 - `c30aafc`：阶段 6.6 provider 切换与失败回退。
 - `f6e82d7`：阶段 6.7 磁盘阈值和后台清理。
 - `c722f95`：阶段 6.8 自托管文件 UI 与阶段 6 收尾。
+- `a7dd0fd`：阶段 7.1 Agent 配对、设备身份与单主机 fencing。
 
 ### 2026-08-13：阶段 6.3 SERVER_VOLUME provider
 
@@ -167,3 +168,22 @@
 - `pnpm test:self-host:integration`：7 个文件、54 项因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip。
 - 当前 WSL 没有真实 PostgreSQL、自托管 TLS 实例或第二设备；真实并发配对、两设备转移、网络分区、代理/浏览器秘密泄漏搜索和长时间离线恢复记录在 `MANUAL_ACCEPTANCE.md` 的 SH-MAN-509。
 - `git diff --check`：通过。阶段 7.1 完成后直接进入 7.2。
+
+### 2026-08-13：阶段 7.2 Agent task 与 manifest
+
+- 阶段 7.1 已单独提交为 `a7dd0fd`；提交后工作区干净。
+- 7.1 基线复跑：5 个测试文件、28 项通过；1 个 PostgreSQL 文件、6 项因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip。
+- `pnpm build:self-host`：通过；contracts、前端、rule-schema 和 server 构建成功，Vite 仅报告既有的大分块警告。
+- 7.2 只实施 durable task、manifest sequence、claim/complete/fail fencing 和服务器流式内容边界；桌面 Agent、目录监测、完整扫描与发布包留给后续 7.x。
+- migration 21 预留 `CHAIR_AGENT` provider enum/约束，并增加按委员会严格递增的追加式 manifest、按 host/generation 固定的 durable task、claim/terminal request、内容暂存状态和不可变身份约束；schema compatibility 为 21。binding 命令和提交仍留到 7.3。
+- 文件版本和墓碑由数据库触发器在原事务追加 manifest 并为当前 host 创建 `STORE_BLOB`/`DELETE_FILE`；新 host 配对时按每个文件最新 manifest 补建完整任务集。
+- Agent manifest/task 支持游标分页；claim、complete 和 fail 复核 credential、委员会/host/task generation、file revision 和 claim token。相同 request 精确重放，不同 terminal outcome 冲突。
+- `GET /api/v1/storage-agent/blobs/:id` 只为匹配的 `STORE_BLOB` claim 流式返回已复验 provider 内容；`POST /api/v1/storage-agent/blobs` 只为匹配的 `UPLOAD_BLOB` claim 流式写入服务器内部 durable staging 并校验大小与 SHA-256。
+- 网络传输位于短数据库事务之外，完成时再次复核当前 lease；慢速 Agent 不长期持有委员会行锁，转移后的旧 host 不能提交完成状态。
+- 阶段 7.2 尚未创建生产 `UPLOAD_BLOB` task，也未实施 `local-changes`、`CHAIR_AGENT` binding、本地目录扫描、冲突处理、桌面程序或 task staging cleanup。
+- 最终针对性测试：4 个文件、10 项通过；1 个 PostgreSQL 文件、9 项因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip。另有 migration/tokens 针对性测试一并通过。
+- `pnpm test:self-host`：47 个文件、222 项通过；7 个 PostgreSQL 集成文件、57 项明确 skip。仅有既有 React/Semantic UI 弃用警告。
+- `pnpm build:self-host` 与 `pnpm build`：通过；Vite 仅报告既有的大分块警告。
+- `pnpm test:self-host:integration`：7 个文件、57 项因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip。
+- `git diff --check`：通过。
+- 当前 WSL 未提供真实 PostgreSQL、自托管 TLS、真实 provider、第二设备或可控网络/进程终止环境；实机步骤和证据要求记录在 `MANUAL_ACCEPTANCE.md` 的 SH-MAN-510。
