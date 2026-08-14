@@ -343,3 +343,12 @@
 - `pnpm build:self-host`、server build、Storage Agent build 和 `git diff --check` 通过，仅有既有 Vite 大分块警告。集成入口 8 个文件、67 项因当前 WSL 缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip。
 - SH-MAN-520 记录 clean checkout、镜像层/SBOM、Caddy TLS、多角色 HAR、DNS/代理、SSE、PostgreSQL 单写和深层路由的目标环境验收。当前未运行浏览器、Compose、真实 PostgreSQL 或生产网络，未把静态搜索冒充实机证据。
 - 阶段 9.2 已单独提交为 `67d978e`；代码迁移完成，只保留 `MANUAL_ACCEPTANCE.md` 中明确延期的实机取证与发现问题后的修复。
+
+### 2026-08-14：腾讯云全新 Ubuntu 部署手册
+
+- 新增 `DEPLOYMENT_RUNBOOK.md`，以腾讯云 Ubuntu Server 26.04 LTS 空白主机为起点，覆盖安全组与 DNS、SSH 保护、Docker 官方仓库、固定 Git commit、生产环境秘密、Compose 首启、Caddy TLS、唯一管理员、真实业务/SSE、SERVER_VOLUME、容量与主机重启、备份恢复和上线审批。
+- 每个阶段均给出可执行命令、通过条件和失败即停止的验收清单；S3 与 Chair Agent 只在实际启用时执行各自人工验收，不用 SERVER_VOLUME 结果替代。
+- 官方资料核对确认 Docker 当前支持 Ubuntu 26.04 LTS；Caddy 公网证书要求正确 A/AAAA、可达的 TCP 80/443 和持久证书目录。手册明确 Docker 端口可能绕过 UFW，公网边界首先由腾讯云安全组限制，3000/5432 不得开放。
+- 已识别生产恢复关卡：当前 `self-host:backup` 依赖 Node/pnpm 与 `pg_dump`，最小 Docker 主机和 app runtime 不保证具备该工具链。上线前须建立受控运维环境或经评审的专用备份镜像/profile，并完成异地复制和隔离恢复；在此之前不能宣称生产可恢复。
+- `deploy/README.md` 已链接完整手册。文档存在性、章节结构与 `git diff --check` 已验证；本次仅改文档，未重跑应用测试或构建。
+- 下一步：在目标腾讯云主机依次执行阶段 0–12，将结果回填 `MANUAL_ACCEPTANCE.md`；若要消除备份工具链缺口，应单独实施并测试 Docker 化备份入口。
