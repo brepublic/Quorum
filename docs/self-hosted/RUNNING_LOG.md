@@ -6,10 +6,10 @@
 
 - 更新时间：2026-08-14
 - 分支：`self-host`
-- 已确认基线：`450c35c stage 8.2: permanently delete committees`
+- 已确认基线：`ce4776e stage 8.3: transfer and anonymize accounts`
 - 当前阶段：8 归档、删除与运维正在实施。
-- 当前工作：阶段 8.3 账号资源转移与匿名化已实现，正在完成全量验证与文档收尾。
-- 下一步：单独提交 8.3；随后实施事件、Session、任务和日志保留策略，不提前移除 Firebase。
+- 当前工作：阶段 8.3 已完成并单独提交；正在盘点阶段 8.4 的保留对象和不可删除历史边界。
+- 下一步：实施可配置、可观测的 Session、幂等结果、已完成任务和日志保留策略；委员会事件与审计默认保留。
 
 ## 已完成与验证
 
@@ -299,3 +299,4 @@
 - 定向 migration、identity service、HTTP、页面及类型构建通过。`pnpm test:self-host`：57 个文件通过、8 个文件明确 skip；322 项通过、66 项明确 skip。
 - `pnpm exec vitest run`：76 个文件通过、8 个文件明确 skip；477 项通过、66 项明确 skip。`pnpm build:self-host` 通过，仅有既有 Vite 大分块警告。
 - `pnpm test:self-host:integration`：8 个文件、66 项因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip。真实 PostgreSQL、TLS 浏览器、故障注入和辅助功能步骤记录在 `MANUAL_ACCEPTANCE.md` 的 SH-MAN-517，未伪造实机结果。
+- 阶段 8.3 已单独提交为 `ce4776e`；继续阶段 8.4 保留策略。
