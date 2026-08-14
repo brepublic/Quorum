@@ -6,10 +6,10 @@
 
 - 更新时间：2026-08-14
 - 分支：`self-host`
-- 已确认基线：`b5d6062 stage 9.1: remove Firebase runtime and emulator stack`
+- 已确认基线：`67d978e stage 9.2: finalize self-hosted architecture and runtime checks`
 - 当前阶段：0–9 已完成当前 WSL 能够完成的实施与自动验收。
-- 当前工作：阶段 9.2 当前架构、部署/README、实施状态、人工验收和可重复零残留检查已完成最终门禁，待单独提交。
-- 下一步：提交阶段 9.2 并关闭代码迁移；取得目标环境后从 SH-MAN-001 开始补齐 PostgreSQL、Compose/Caddy TLS、provider、浏览器、原生 Agent、备份恢复和 SH-MAN-520 生产网络证据。
+- 当前工作：阶段 9.2 已提交；`docs/self-hosted/IMPLEMENTATION_PLAN.md` 的代码迁移全部完成。
+- 下一步：取得目标环境后从 SH-MAN-001 开始补齐 PostgreSQL、Compose/Caddy TLS、provider、浏览器、原生 Agent、备份恢复和 SH-MAN-520 生产网络证据；实机发现问题时从本提交继续修复。
 
 ## 已完成与验证
 
@@ -342,4 +342,4 @@
 - `pnpm install --frozen-lockfile --offline` 通过。`pnpm test:self-host`：60 个文件通过、8 个文件明确 skip；330 项通过、67 项明确 skip。全仓 Vitest：63 个文件通过、8 个文件明确 skip；359 项通过、67 项明确 skip。
 - `pnpm build:self-host`、server build、Storage Agent build 和 `git diff --check` 通过，仅有既有 Vite 大分块警告。集成入口 8 个文件、67 项因当前 WSL 缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip。
 - SH-MAN-520 记录 clean checkout、镜像层/SBOM、Caddy TLS、多角色 HAR、DNS/代理、SSE、PostgreSQL 单写和深层路由的目标环境验收。当前未运行浏览器、Compose、真实 PostgreSQL 或生产网络，未把静态搜索冒充实机证据。
-- 阶段 9.2 待单独提交；提交后代码迁移完成，只保留 `MANUAL_ACCEPTANCE.md` 中明确延期的实机取证与发现问题后的修复。
+- 阶段 9.2 已单独提交为 `67d978e`；代码迁移完成，只保留 `MANUAL_ACCEPTANCE.md` 中明确延期的实机取证与发现问题后的修复。
