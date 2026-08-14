@@ -1,6 +1,6 @@
 # Quorum
 
-Quorum 是一款用于模拟联合国（Model UN）委员会管理的免费开源 Web 应用。它支持实时协作，涵盖发言名单、核心磋商、动议、决议草案与修正案、表决、文件分享和会场统计等常用流程。
+Quorum 是一款用于模拟联合国委员会管理的免费开源 Web 应用，支持账号与席位、点名、发言名单、核心磋商、动议、决议草案与修正案、正式表决、文件协作、归档和审计。
 
 源码仓库：[github.com/brepublic/Quorum](https://github.com/brepublic/Quorum)
 
@@ -8,60 +8,52 @@ Quorum 是一款用于模拟联合国（Model UN）委员会管理的免费开�
 
 ## 技术栈
 
-- React 18、TypeScript、Vite 与 Semantic UI React
-- Firebase Authentication、Realtime Database、Cloud Storage 与 Cloud Functions
-- Vitest 单元测试、Cypress 端到端测试
-- 英语与简体中文界面
+- React 18、TypeScript、Vite、Semantic UI React；
+- Node.js 22 模块化单体、PostgreSQL 16、同源 API 与 SSE；
+- Caddy、Docker Compose、服务器持久卷、S3 compatible provider；
+- 可选 Chair Local Agent；
+- Vitest 与真实 PostgreSQL integration tests；
+- 英语与简体中文界面。
 
 ## 本地开发
 
-需要 Node.js 22、pnpm，以及运行 Firebase Emulator Suite 所需的 Java 21 或更高版本。
-
-在 WSL 中，先从仓库根目录加载项目工具链环境：
+需要 Node.js 22 和 pnpm。所有项目命令前先加载 WSL 工具链：
 
 ```sh
 source scripts/wsl-env.sh
 ```
 
-安装依赖并启动开发服务器：
+安装依赖并启动浏览器开发服务器：
 
 ```sh
 pnpm install --frozen-lockfile
 pnpm start
 ```
 
-应用默认通过 [http://localhost:5173](http://localhost:5173) 访问。默认配置会连接现有 Firebase 项目；本地开发和测试应优先使用模拟器，避免改动生产数据。
+浏览器默认访问 [http://localhost:5173](http://localhost:5173)。应用只使用自托管运行路径，并要求同源 `/api/v1` 后端；完整浏览器联调请使用 `deploy/compose.yaml`，或配置本地反向代理。
 
-## 使用 Firebase 模拟器
-
-分别在两个终端运行：
+本地 PostgreSQL 16 测试服务：
 
 ```sh
-pnpm emulators
+pnpm self-host:test-db:up
+pnpm test:self-host:integration
+pnpm self-host:test-db:down
 ```
 
-```sh
-VITE_USE_FIREBASE_EMULATORS=true pnpm start
-```
-
-模拟器端口为 Auth 9099、Realtime Database 9000、Storage 9199、Functions 5001，管理界面位于 4000。
-
-首次打开一套全新部署时，Quorum 会强制进入管理员账号创建程序。初始化完成后，网页只保留登录入口；新账号、密码重置和账号删除统一由管理员在 `/admin` 完成。后台创建的账号会获得受管账号声明，数据库规则会拒绝绕过网页自行注册的身份执行主任写入。生产发布前应先部署数据库规则和账号管理 Functions：
-
-```sh
-pnpm deploy:database-rules
-pnpm deploy:functions
-```
+该服务只绑定 `127.0.0.1:55432` 并使用隔离测试数据。integration tests 通过 `TEST_DATABASE_ADMIN_URL` 创建随机临时数据库，未配置时会明确 skip。
 
 ## 测试与构建
 
 ```sh
-pnpm exec vitest run  # 一次性运行单元测试
-pnpm test:e2e         # 使用 Firebase 模拟器运行 Cypress 集成测试
-pnpm build            # TypeScript 检查并生成生产构建
+pnpm exec vitest run             # 全仓单元、契约与 HTTP 测试
+pnpm test:self-host              # 自托管有限测试集
+pnpm test:self-host:integration  # 真实 PostgreSQL integration
+pnpm build:self-host             # 完整生产构建
+pnpm verify:no-legacy-runtime    # 检查生产源码、依赖、配置与构建产物
+pnpm exec tsc --noEmit           # 浏览器类型检查
 ```
 
-`pnpm test` 会以监听模式运行 Vitest，不会自动退出。生产构建输出到 `build/`。
+`pnpm test` 会以监听模式运行 Vitest，不会自动退出。生产构建输出到 `build/`。部署、容量、备份与恢复步骤见 [`deploy/README.md`](./deploy/README.md) 和 [`docs/self-hosted/RECOVERY.md`](./docs/self-hosted/RECOVERY.md)。当前架构与延期实机验收分别见 [`PROJECT_ARCHITECTURE.md`](./PROJECT_ARCHITECTURE.md) 和 [`docs/self-hosted/MANUAL_ACCEPTANCE.md`](./docs/self-hosted/MANUAL_ACCEPTANCE.md)。
 
 ## 参与贡献
 

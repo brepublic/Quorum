@@ -9,4 +9,4 @@ const result = validateRulePackage(JSON.parse(text));
 if (!result.ok) console.error(result.issues);
 ```
 
-`fixtures/quorum-default.v1.json` 冻结现有产品中已经存在的默认行为；`fixtures/beijing-academic.v1.json` 只表达目标规格已经确认的北京包差异。两者当前都不会被 Firebase 前端自动加载。
+`fixtures/quorum-default.v1.json` 冻结产品默认行为；`fixtures/beijing-academic.v1.json` 只表达目标规格已经确认的北京包差异。内置包由自主托管后端显式初始化和版本化。

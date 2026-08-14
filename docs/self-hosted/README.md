@@ -1,14 +1,14 @@
-# Quorum 自托管目标架构
+# Quorum 自托管架构
 
-本目录描述 Quorum 从 Firebase BaaS 迁移到完全自主托管后的目标架构。阶段 0–8 已落地；阶段 8 已接入委员会归档/导出、durable 永久删除、账号处置、保留 worker、管理员运行状态和恢复工具。阶段 9 Firebase 移除仍待实施。当前事实以根目录的 [`PROJECT_ARCHITECTURE.md`](../../PROJECT_ARCHITECTURE.md) 为准。
+本目录保存 Quorum 自主托管规格、实施历史、恢复和人工验收。阶段 0–9 已落地；浏览器、后端、数据库、文件 provider、Chair Agent、归档删除和运维工具均使用单一自主托管路径。当前事实以根目录的 [`PROJECT_ARCHITECTURE.md`](../../PROJECT_ARCHITECTURE.md) 为准。
 
-## 当前阶段 8.5 边界
+## 当前阶段 9 边界
 
 - PostgreSQL migration 已建立身份、凭据、Session、系统设置、未来注册申请和身份审计表。
 - bootstrap secret 只保存哈希，并由 PostgreSQL 事务保证并发初始化只有一个成功；公开状态 API 不返回 secret。
 - 密码使用 Argon2id；Session token 只保存哈希；Cookie、CSRF、Origin、限流、锁定和 Session 轮换在服务端执行。
 - 自主托管前端已接入首次管理员、登录、强制修改临时密码、退出和账号管理。
-- `VITE_RUNTIME_MODE=self-hosted` 显示自主托管身份、账号管理、委员会、模板和议事工作区；默认和 `firebase` 模式保持现有 Firebase 页面，因此没有双写。
+- `App` 始终显示自主托管身份、账号管理、委员会、模板和议事工作区；没有运行模式开关或双写路径。
 - PostgreSQL 已建立委员会、membership、Chair capability、席位、席位历史、邀请码、规则包版本、规则绑定、主席覆盖、委员会事件和业务审计。
 - 同源 API 已提供阶段 3 委员会、席位、邀请码、快照和规则包命令。所有写入继续执行 Session、CSRF 和 Origin 校验。
 - Committee Owner、Chair、membership、seat assignment 和 `SYSTEM_ADMIN` 分别授权。系统管理员和 Committee Owner 都不会隐式获得 Chair 能力。
@@ -100,7 +100,7 @@
 - 依赖真实服务器、Docker、Caddy、浏览器、TLS、持久卷或容量环境的项目统一记录在 [`MANUAL_ACCEPTANCE.md`](./MANUAL_ACCEPTANCE.md)。每项记录前置条件、步骤、通过条件、证据和状态。
 - 延期验收必须标明未执行原因。单元测试、mock、静态配置检查和构建成功不能替代容器、浏览器、网络、持久性或容量证据。
 - 取得服务器后按人工验收清单补测，不因后续阶段已经实现而跳过较早阶段的部署验收。
-- Firebase 旧栈与 PostgreSQL 新栈在迁移期间通过显式配置二选一。同一业务动作不得双写；只有全部纵向切片通过验收后才能删除 Firebase 运行路径。
+- 浏览器源码、依赖、Functions/Rules/emulator 资产和生产构建中的旧运行依赖已删除；历史基线与交接文档只作为迁移证据保留。
 
 ## 已确认的产品决策
 

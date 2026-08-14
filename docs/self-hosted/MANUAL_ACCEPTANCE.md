@@ -109,12 +109,12 @@
 
 ### SH-MAN-104 自托管身份浏览器流程
 
-- 前置条件：以 `VITE_RUNTIME_MODE=self-hosted` 构建并通过同源 HTTPS 提供；全新数据库；管理员及普通账号各一。
-- 操作步骤：完成首次管理员创建、管理员登录、创建普通账号、临时密码首次登录、强制改密、退出、重置密码、禁用和 Session 撤销；另以默认构建访问 Firebase 页面。
-- 通过条件：临时密码只能进入改密流程；旧 Session 在每项撤销操作后失效；普通账号看不到或不能调用管理功能；默认 Firebase 路由仍可用；没有同一动作双写。
-- 自动化覆盖情况：前端组件和 API client 测试覆盖状态分支；真实浏览器、Firebase emulator 回归和网络请求检查需人工或 E2E 执行。
+- 前置条件：以当前生产构建通过同源 HTTPS 提供；全新数据库；管理员及普通账号各一。
+- 操作步骤：完成首次管理员创建、管理员登录、创建普通账号、临时密码首次登录、强制改密、退出、重置密码、禁用和 Session 撤销；保存页面与同源网络记录。
+- 通过条件：临时密码只能进入改密流程；旧 Session 在每项撤销操作后失效；普通账号看不到或不能调用管理功能；浏览器只请求同源身份 API。
+- 自动化覆盖情况：前端组件和 API client 测试覆盖状态分支；真实 TLS 浏览器和网络请求检查需人工执行。
 - 当前状态：因无服务器延期。
-- 需要保存的证据：关键页面截图、脱敏 HTTP 记录、Firebase emulator 结果和 PostgreSQL 查询。
+- 需要保存的证据：关键页面截图、脱敏 HTTP 记录和 PostgreSQL 查询。
 
 ## 阶段 3：委员会、席位和规则包
 
@@ -167,7 +167,7 @@
 
 ### SH-MAN-302 模板、席位、笔记和文本帖子浏览器流程
 
-- 前置条件：通过 TLS 提供 `VITE_RUNTIME_MODE=self-hosted` 构建；Owner、Chair 和两个 member 账号；两个独立浏览器配置文件。
+- 前置条件：通过 TLS 提供当前生产构建；Owner、Chair 和两个 member 账号；两个独立浏览器配置文件。
 - 操作步骤：创建、克隆、重命名和删除账号级国家/委员会模板；从模板创建委员会；修改源模板并确认席位/国旗快照不变；创建、编辑和删除笔记及文本帖子；制造陈旧 revision 后刷新。
 - 通过条件：账号模板互相隔离；模板删除冲突列出当前账号占用项；席位快照不随源模板变化；帖子权限符合 member/Chair/Owner 矩阵；删除后正文清空；409 后页面重新读取且不覆盖新版本。
 - 自动化覆盖情况：契约、HTTP、前端和 PostgreSQL 集成测试覆盖命令与权限；真实 WebP 选择、双浏览器交互和代理 Cookie 仍需人工确认。
@@ -196,7 +196,7 @@
 
 - 前置条件：PUBLIC 与 PRIVATE 委员会；匿名、非 member、member、Chair、Owner 和系统管理员访问者；两个浏览器。
 - 操作步骤：访问深层委员会路由并刷新；比较各 audience 快照；在一个浏览器修改笔记、点名或问题，在另一个窗口重新聚焦并显式刷新；检查网络请求。
-- 通过条件：PUBLIC 匿名页面可读取公开字段；PRIVATE 未授权访问统一 404；公开响应不含 owner、用户 ID、actor、私有正文、主席内部回应或审计；member/Chair/Owner 字段逐级增加；重新聚焦可取得最新快照；网络中没有 Firebase 请求。
+- 通过条件：PUBLIC 匿名页面可读取公开字段；PRIVATE 未授权访问统一 404；公开响应不含 owner、用户 ID、actor、私有正文、主席内部回应或审计；member/Chair/Owner 字段逐级增加；重新聚焦可取得最新快照；网络中没有旧 BaaS 请求。
 - 自动化覆盖情况：快照过滤、HTTP 匿名路由、前端 focus revalidation 和静态边界已有测试；阶段 5 会在同源 `/events` 上建立 SSE，真实深层 SPA fallback、TLS、多浏览器和网络面板需人工确认。
 - 当前状态：因无服务器延期。
 - 需要保存的证据：各 audience 脱敏响应差异、浏览器截图、网络 HAR、深层路由刷新结果和代理日志。
@@ -268,14 +268,14 @@
 - 当前状态：因无服务器延期。
 - 需要保存的证据：document/version/action/discussion/ballot/event/audit 查询、拒绝响应、规则快照和各状态页面截图。
 
-### SH-MAN-408 Firebase 与自托管运行时回归
+### SH-MAN-408 单一自主托管运行时回归
 
-- 前置条件：Java 21、Firebase Emulator Suite、已安装 Cypress 二进制，以及独立自托管测试实例。
-- 操作步骤：运行 `pnpm test:e2e`；分别构建默认与 `VITE_RUNTIME_MODE=self-hosted`；在两个浏览器检查网络请求和相同业务动作。
-- 通过条件：Firebase emulator/Cypress 既有用例通过；默认构建仍只走 Firebase；自托管构建只走同源 API/SSE；任何动作都不双写；简体中文议事控件和状态可读。
-- 自动化覆盖情况：两个生产构建和 runtime 静态测试已实现。当前 WSL 已在 Firebase Auth、Database、Storage、Functions emulators 与 Electron 118 上运行 Cypress 13.11.0，4 个 spec、22 项全部通过；该套件只验证既有 Firebase 运行时，不能替代自托管 PostgreSQL 网络与视觉验收。
-- 当前状态：Firebase emulator/Cypress 回归已通过；自托管 TLS、多浏览器网络和双写检查因无服务器延期。
-- 需要保存的证据：Cypress 输出、两个构建日志、两份 HAR、浏览器截图及 Firebase/PostgreSQL 写入对比。
+- 前置条件：当前生产构建、真实 PostgreSQL 16、Caddy TLS 和两个独立浏览器配置文件。
+- 操作步骤：完成登录、委员会读取/写入、SSE 重连和简体中文议事流程；检查浏览器 Network、存储和服务端日志。
+- 通过条件：浏览器只通过同源 API/SSE 读写 PostgreSQL-backed 服务；不存在第二运行模式、双写或旧服务请求；简体中文议事控件和状态可读。
+- 自动化覆盖情况：单入口测试、全仓 Vitest、PostgreSQL integration 入口和生产构建已实现；真实 TLS、多浏览器网络与视觉检查需人工执行。
+- 当前状态：代码和构建静态边界已通过；真实 PostgreSQL、TLS 与多浏览器因当前 WSL 无目标服务延期。
+- 需要保存的证据：生产构建日志、脱敏 HAR、浏览器截图、SSE 重连时间线和 PostgreSQL 查询。
 
 ## 阶段 6：服务器卷和 S3 文件
 
@@ -346,10 +346,10 @@
 
 ### SH-MAN-508 自托管文件与存储管理浏览器流程
 
-- 前置条件：通过 Caddy TLS 提供 `VITE_RUNTIME_MODE=self-hosted` 构建；真实 PostgreSQL 16、持久 `SERVER_VOLUME` 和独立 S3 compatible 测试桶；PUBLIC 与 PRIVATE 委员会；未登录、非 member、member、Chair、Owner 和仅有 `SYSTEM_ADMIN` 的账号；Chromium、Firefox、Safari，以及窄屏触控设备或模拟器；准备大文件、中文长文件名、HTML、JavaScript、SVG、PDF 和普通二进制文件，并可制造 90% 容量、容量未知、provider 中断、暂停委员会与陈旧 revision。
+- 前置条件：通过 Caddy TLS 提供当前生产构建；真实 PostgreSQL 16、持久 `SERVER_VOLUME` 和独立 S3 compatible 测试桶；PUBLIC 与 PRIVATE 委员会；未登录、非 member、member、Chair、Owner 和仅有 `SYSTEM_ADMIN` 的账号；Chromium、Firefox、Safari，以及窄屏触控设备或模拟器；准备大文件、中文长文件名、HTML、JavaScript、SVG、PDF 和普通二进制文件，并可制造 90% 容量、容量未知、provider 中断、暂停委员会与陈旧 revision。
 - 操作步骤：逐角色进入委员会“文件”视图并记录可见文件和操作；member 选择大文件，观察分块校验、真实上传进度、取消、失败后重试和成功后的“上传完成”；提交审核后确认“待审核”，由 Chair/Owner 发布并确认“已发布”；在另一浏览器同步观察列表刷新。下载每种文件并检查 Network 响应头，确认页面未创建 iframe、object、embed、data URL 或内联预览。确认永久删除后立即再次列表和下载。由 Chair/Owner 初始化服务器卷或 S3，执行 `COPYING`、`FAILED`、`READY_TO_CONFIRM`、`COMPLETED` 和 `CANCELLED` 迁移流程。由系统管理员创建、编辑、停用和验证 S3 配置，检查密码字段、DOM、Network、控制台和日志。分别触发 90% 容量、容量未知、provider 故障、revision/幂等冲突、暂停与权限拒绝。最后用键盘完成文件选择以外的全部操作，检查焦点、可访问名称、44 px 触控目标、窄屏换行和简体中文长文本。
 - 通过条件：PUBLIC 只显示公开委员会已发布文件；member、Chair、Owner 和系统管理员显示/操作矩阵与服务端一致，系统管理员没有隐式 Chair 控件。浏览器校验和上传不复制完整大文件到多份内存，进度对应实际字节，可取消且失败后可重试；成功依次显示“上传完成”“待审核”“已发布”。409 后重新读取权威状态，不静默覆盖。下载只走 attachment 路由，危险 MIME 不在同源页面执行。永久删除后文件立即不可见且下载返回 404。只有系统管理员可编辑 endpoint 和凭据，已保存凭据不在响应、DOM、控制台或日志中回显。迁移操作、错误恢复、键盘、焦点、窄屏和触控均可用。
-- 自动化覆盖情况：当前 WSL 的 API client、增量 SHA-256、XHR 进度/取消、角色矩阵、危险 MIME 无预览、上传成功/失败重试、审核发布删除刷新、迁移状态、S3 凭据不回填、HTTP binding 和共享契约测试已通过；真实 PostgreSQL binding 权限用例未配置 URL 时明确 skip。Cypress 13.11.0 已运行既有 Firebase 4 个 spec、22 项全通过，但尚无覆盖自托管文件页的 Cypress spec。真实浏览器 File/Blob 内存曲线、XHR 网络进度、下载行为、跨浏览器 SSE、视觉布局、触控、键盘焦点、TLS、真实 provider 和容量故障仍未执行。
+- 自动化覆盖情况：当前 WSL 的 API client、增量 SHA-256、XHR 进度/取消、角色矩阵、危险 MIME 无预览、上传成功/失败重试、审核发布删除刷新、迁移状态、S3 凭据不回填、HTTP binding 和共享契约测试已通过；真实 PostgreSQL binding 权限用例未配置 URL 时明确 skip。真实浏览器 File/Blob 内存曲线、XHR 网络进度、下载行为、跨浏览器 SSE、视觉布局、触控、键盘焦点、TLS、真实 provider 和容量故障仍未执行。
 - 当前状态：因无真实 PostgreSQL、持久卷、S3 compatible 测试桶和 TLS 自托管实例延期。
 - 需要保存的证据：各角色与状态截图、窄屏和焦点截图、辅助功能树、浏览器任务管理器内存曲线、上传/取消/重试 Network 时间线、SSE 与列表刷新 HAR、attachment 响应头、下载 SHA-256、删除后的 404、binding/migration/file/event/audit/idempotency 脱敏查询、S3 配置响应和凭据泄漏搜索结果。不得保存文件正文、Session、CSRF token、access key、secret 或 master key。
 
@@ -398,7 +398,7 @@
 - 前置条件：真实 PostgreSQL 16；TLS 自托管实例；Owner、Chair、member 和仅有 `SYSTEM_ADMIN` 的账号；两台隔离 Chair Agent 主机；可注入数据库事务失败、Agent 断网、磁盘只读/满盘和进程终止；至少包含本地新增、修改、重命名、删除、同名和 host transfer 冲突。
 - 操作步骤：逐角色打开文件页，创建初始配对码和转移码，检查当前主机、在线/离线状态、最后在线时间、关闭配对码和撤销操作。制造五类 conflict，分别选择保留服务端、采用本地和另存为新文件；名称冲突输入新名称。每次在裁决前并发修改 conflict、host generation 或 file revision，并重复相同幂等键及用不同 body 复用 key。对已删除文件尝试采用本地，对旧 host 内容尝试非丢弃裁决。分别在裁决事件、审计、Agent 本地状态保存、文件移动、下载/上传和 task 完成前注入失败并重启。运行 `quorum-storage-agent status`；搜索全链路中的设备秘密和绝对路径，并确认 Agent status/stdout/stderr 不含文件名、哈希或正文。最后只用键盘处理冲突，并检查窄屏、焦点和简体中文长名称。
 - 通过条件：只有 Owner/Chair 能查看和执行主机管理与裁决；member 和系统管理员没有隐式权限。裁决绑定 conflict revision、当前 lease generation 和 file revision；陈旧请求返回稳定冲突并保留待裁决状态。相同请求精确重放，不同请求不能重复应用同一 conflict；状态、事件、审计、幂等响应和裁决 task 共同提交或回滚。墓碑不能被采用本地复活，旧 host 不能提交内容。Agent 重启后使用同一 request ID 收敛，裁决写失败保持可重试；force apply 不能覆盖无关本地文件，另存/改名目标经过 portable path 和内容复验。状态命令只输出 generation、manifest sequence 和聚合计数。浏览器和日志不出现设备秘密、本地绝对路径或文件正文。
-- 自动化覆盖情况：migration 23 静态契约、共享类型、Agent HTTP client/runtime/filesystem/status、HTTP 认证分离、API client 和文件页交互测试已在 WSL 通过。真实 PostgreSQL 用例覆盖 Owner/Chair 权限、路径拒绝、revision/lease/file fencing、幂等重放、一次性裁决应用以及 event/audit 故障回滚；未配置 `TEST_DATABASE_ADMIN_URL` 时明确 skip。`pnpm test:self-host` 为 53 个文件、295 项通过，7 个 PostgreSQL 文件、63 项明确 skip；默认构建与自托管构建通过。真实 PostgreSQL、TLS、双设备、原生目录、浏览器视觉/键盘/辅助功能和故障注入尚未执行。
+- 自动化覆盖情况：migration 23 静态契约、共享类型、Agent HTTP client/runtime/filesystem/status、HTTP 认证分离、API client 和文件页交互测试已在 WSL 通过。真实 PostgreSQL 用例覆盖 Owner/Chair 权限、路径拒绝、revision/lease/file fencing、幂等重放、一次性裁决应用以及 event/audit 故障回滚；未配置 `TEST_DATABASE_ADMIN_URL` 时明确 skip。阶段 7.5 当时 `pnpm test:self-host` 为 53 个文件、295 项通过，7 个 PostgreSQL 文件、63 项明确 skip；生产构建通过。真实 PostgreSQL、TLS、双设备、原生目录、浏览器视觉/键盘/辅助功能和故障注入尚未执行。
 - 当前状态：因无真实 PostgreSQL、TLS 自托管实例、第二设备、原生桌面目录和浏览器验收环境延期。
 - 需要保存的证据：migration 23 enum/列/约束/触发器与 application 表；脱敏 conflict/change/task/event/audit/idempotency 查询；三种裁决及五类原因时间线；故障前后 revision、task 和本地 SHA-256；角色、窄屏、焦点与键盘截图；status 和全链路秘密搜索结果。不得保存配对码、设备凭据、私钥、claim token、Session、CSRF token、本地绝对路径或正文。
 
@@ -455,3 +455,12 @@
 - 自动化覆盖情况：当前 WSL 的服务、HTTP、API client、页面和类型/生产构建测试覆盖系统管理员边界、固定聚合字段、容量提示、队列显示及敏感字段不返回。备份 CLI 可由 TypeScript 构建验证，但当前环境没有已配置的真实 PostgreSQL/provider 恢复点，不能把 mock 或静态文档当作实际 `pg_dump`、权限、跨 provider 一致性或恢复证据。
 - 当前状态：`pnpm test:self-host` 330 项通过、67 项明确 skip；全仓 Vitest 485 项通过、67 项明确 skip；`pnpm build:self-host` 通过；集成入口 67 项因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip。当前 WSL 也没有 `pg_dump`，真实 PostgreSQL dump/restore、TLS 浏览器、真实 provider 对象核对、权限/进程参数检查、故障恢复与 durable worker 收敛延期。
 - 需要保存的证据：角色/API 矩阵与页面截图、脱敏聚合查询、容量状态与队列对照、备份命令退出码、目录/文件权限、进程参数搜索、metadata SHA-256、manifest 记录数及逐 provider 核对汇总、隔离恢复 schema/行数/下载哈希、篡改拒绝和 worker 收敛时间线。不得保存 dump、manifest 内容、provider key、绝对路径、邮箱、Session、CSRF token、设备凭据、S3 密钥、文件名或正文。
+
+### SH-MAN-520 阶段 9 单一运行时与生产网络零残留
+
+- 前置条件：从干净 checkout 执行 frozen install 和 `pnpm build:self-host`；使用该产物、当前 server 镜像、PostgreSQL 16 和 Caddy TLS 启动隔离实例；准备匿名、普通、Chair、Owner 和系统管理员浏览器会话，并可查看 DNS、代理和浏览器 HAR。
+- 操作步骤：检查 manifest、lockfile、workspace、镜像层、浏览器 JS/CSS、服务端产物和进程依赖树；以所有角色完成 bootstrap/登录、委员会创建和读取、模板、点名、计时器、发言、动议、表决、决议、文件上传/下载、SSE 重连、归档和运维状态；清空缓存后再次加载深层路由。保存 HAR、DNS/代理日志和数据库写入计数，确认没有旧运行配置、域名、SDK 协议、Functions/Rules/emulator 路由或第二数据写入。
+- 通过条件：`App` 无模式选择，所有业务请求只走当前 Origin 的 `/api/v1`、委员会 SSE 和明确配置的可观测性 endpoint；浏览器不直连数据库、文件 provider 或 Chair Agent。仓库生产源码、依赖与构建产物不含旧 SDK/CLI；容器不复制旧工作区或配置；每个业务动作只产生一组 PostgreSQL 状态/事件/审计结果。深层路由刷新、缓存清空和断线重连后仍进入同一自托管应用。
+- 自动化覆盖情况：当前 WSL 已验证单一入口、manifest/lock/workspace 清理、frozen install、全仓 Vitest、自托管测试、TypeScript、生产构建、静态源码与构建产物搜索。`pnpm test:self-host` 为 330 项通过、67 项明确 skip；全仓 Vitest 为 359 项通过、67 项明确 skip；生产构建和 `pnpm verify:no-legacy-runtime` 通过。GitHub Actions 已改为 PostgreSQL 16 service 上的 API integration。当前 WSL 未运行 Caddy TLS、浏览器 HAR、DNS/代理观察、容器层检查或真实 PostgreSQL 网络写入对照。
+- 当前状态：代码、依赖、CI 配置、frozen install 和构建静态零运行依赖通过；集成入口 67 项因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip。真实生产网络、Compose 镜像和多浏览器证据延期。
+- 需要保存的证据：clean checkout commit、frozen install/build/test 输出、镜像 SBOM/层清单、生产产物搜索、各角色脱敏 HAR、DNS/代理日志、SSE 时间线、PostgreSQL 状态/事件/审计计数和深层路由截图。不得保存 Session、CSRF token、密码、设备凭据、S3 密钥、文件正文或完整数据库 dump。

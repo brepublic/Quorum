@@ -50,7 +50,7 @@ deploy/
 - 为本目录规格建立 schema 和示例 fixture；
 - 明确当前行为与 `Quorum Default`、北京规则包的差异；
 - 建立 API 错误码、事件名和审计动作注册表；
-- 保留现有 Vitest/Cypress 用例作为回归基线。
+- 用 `CURRENT_BEHAVIOR_BASELINE.md` 和 Vitest 冻结旧行为基线；阶段 9 在 API/integration 覆盖形成后删除旧浏览器套件。
 
 验收：所有现有一次性单元测试和生产构建通过，规则 fixture 能在无服务器环境校验。
 
@@ -132,7 +132,7 @@ deploy/
 
 ## 8. 阶段 5：实时与高并发议事
 
-状态：5.1–5.8 代码、无数据库自动测试和生产构建已完成；真实 PostgreSQL、代理/TLS、多浏览器和 Firebase emulator/Cypress 回归按 `MANUAL_ACCEPTANCE.md` 延期。
+状态：5.1–5.8 代码、无数据库自动测试和生产构建已完成；真实 PostgreSQL、代理/TLS 与多浏览器回归按 `MANUAL_ACCEPTANCE.md` 延期。
 
 迁移顺序：
 
@@ -216,7 +216,9 @@ deploy/
 
 ## 12. 阶段 9：移除 Firebase
 
-只有当所有功能纵向切片通过验收后才执行：
+状态：已完成当前仓库和 WSL 可执行验收。旧运行代码、Functions、Rules、emulator/Cypress、SDK/CLI 依赖和双运行时开关已删除；GitHub Actions 改用 PostgreSQL 16/API integration。TLS 浏览器生产网络证据按 `MANUAL_ACCEPTANCE.md` 的 SH-MAN-520 延期。
+
+已交付：
 
 - 删除 Firebase Auth、Realtime Database、Storage 和 Functions 运行时代码；
 - 删除 Rules、Functions 和 emulator 编排；
@@ -239,4 +241,4 @@ deploy/
 
 ## 14. 当前实现里程碑
 
-下一步执行阶段 9：盘点并删除 Firebase Auth、Realtime Database、Storage、Functions、Rules、emulator 与依赖，切换为单一自托管生产路径，并用 PostgreSQL/API 测试替代旧 emulator 测试边界。
+自主托管实施计划阶段 0–9 已完成。下一步不是继续迁移代码，而是在目标 PostgreSQL、Compose、TLS、provider、浏览器和原生 Agent 环境按 `MANUAL_ACCEPTANCE.md` 补齐延期证据，并处理实机发现的问题。

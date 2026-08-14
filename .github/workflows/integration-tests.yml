@@ -49,3 +49,6 @@ jobs:
 
       - name: Build production artifacts
         run: pnpm build:self-host
+
+      - name: Verify the single production runtime
+        run: pnpm verify:no-legacy-runtime

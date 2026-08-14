@@ -6,10 +6,10 @@
 
 - 更新时间：2026-08-14
 - 分支：`self-host`
-- 已确认基线：`0644875 stage 8.5: add operations status and recovery tools`
-- 当前阶段：9 移除 Firebase 正在实施。
-- 当前工作：阶段 9.1 已把前端切换为单一自托管入口，删除旧运行图、SDK/CLI、Functions、Rules、emulator/Cypress 资产，并把 CI 改为真实 PostgreSQL/API 集成；正在提交该小任务。
-- 下一步：完成阶段 9.2 架构、部署、README 和人工验收文档，执行全仓文本、依赖树、构建产物与浏览器生产网络零残留验证。
+- 已确认基线：`b5d6062 stage 9.1: remove Firebase runtime and emulator stack`
+- 当前阶段：0–9 已完成当前 WSL 能够完成的实施与自动验收。
+- 当前工作：阶段 9.2 当前架构、部署/README、实施状态、人工验收和可重复零残留检查已完成最终门禁，待单独提交。
+- 下一步：提交阶段 9.2 并关闭代码迁移；取得目标环境后从 SH-MAN-001 开始补齐 PostgreSQL、Compose/Caddy TLS、provider、浏览器、原生 Agent、备份恢复和 SH-MAN-520 生产网络证据。
 
 ## 已完成与验证
 
@@ -331,4 +331,15 @@
 - `pnpm install --frozen-lockfile --offline` 通过并从本地依赖树移除 712 个旧包。源码、manifest、lock、部署、CI、脚本和新生产构建中没有 Firebase/Cypress 引用。
 - `pnpm test:self-host`：60 个文件通过、8 个文件明确 skip；330 项通过、67 项明确 skip。全仓 Vitest：63 个文件通过、8 个文件明确 skip；359 项通过、67 项明确 skip。
 - `pnpm build:self-host` 通过，前端由 1375 个模块/约 2.30 MiB JS 降至 953 个模块/约 553 KiB JS，仅保留既有大分块警告。集成入口 67 项因当前 WSL 未配置 `TEST_DATABASE_ADMIN_URL` 明确 skip；`git diff --check` 通过。
-- 阶段 9.1 待单独提交；阶段 9.2 仍需更新所有当前架构/测试/部署说明，并在 TLS 浏览器保存没有旧服务网络请求的 HAR 证据。
+- 阶段 9.1 已单独提交为 `b5d6062`；阶段 9.2 仍需更新所有当前架构/测试/部署说明，并在 TLS 浏览器保存没有旧服务网络请求的 HAR 证据。
+
+### 2026-08-14：阶段 9.2 当前架构、零残留门禁与迁移收尾
+
+- `PROJECT_ARCHITECTURE.md` 已从双运行时历史重写为单一自托管当前事实，覆盖浏览器、同源边界、模块化单体、PostgreSQL、三类 provider、Chair Agent、归档删除、运维、仓库结构和验证边界。
+- 根 README、服务端/规则 README、主题指南、自托管索引与实施计划均移除已失效的旧运行说明；阶段 0–9 标记为当前 WSL 可执行部分完成。历史 baseline、handoff 和 running log 继续保留迁移证据。
+- 删除静态 Netlify 部署入口以及旧 Functions 工作区基线中误跟踪的 node_modules 链接；当前生产部署只以 `deploy/compose.yaml` 的 Caddy、应用和 PostgreSQL 拓扑为准。
+- 新增 `pnpm verify:no-legacy-runtime`，检查禁止路径和生产源码、manifest、lock、workspace、CI、部署、server/packages 及实际 build 文本产物；GitHub Actions 在完整构建后执行同一检查。本轮检查通过。
+- `pnpm install --frozen-lockfile --offline` 通过。`pnpm test:self-host`：60 个文件通过、8 个文件明确 skip；330 项通过、67 项明确 skip。全仓 Vitest：63 个文件通过、8 个文件明确 skip；359 项通过、67 项明确 skip。
+- `pnpm build:self-host`、server build、Storage Agent build 和 `git diff --check` 通过，仅有既有 Vite 大分块警告。集成入口 8 个文件、67 项因当前 WSL 缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip。
+- SH-MAN-520 记录 clean checkout、镜像层/SBOM、Caddy TLS、多角色 HAR、DNS/代理、SSE、PostgreSQL 单写和深层路由的目标环境验收。当前未运行浏览器、Compose、真实 PostgreSQL 或生产网络，未把静态搜索冒充实机证据。
+- 阶段 9.2 待单独提交；提交后代码迁移完成，只保留 `MANUAL_ACCEPTANCE.md` 中明确延期的实机取证与发现问题后的修复。

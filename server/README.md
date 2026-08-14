@@ -1,6 +1,6 @@
 # Quorum 自托管后端
 
-当前已实现自主托管阶段 1–8：PostgreSQL、同源 API、SSE、完整文件 provider、Chair Agent、归档/永久删除、账号处置、保留 worker、管理员运行状态和恢复点工具均已接入。阶段 9 Firebase 移除仍待完成。
+自主托管阶段 1–9 已完成：PostgreSQL、同源 API、SSE、完整文件 provider、Chair Agent、归档/永久删除、账号处置、保留 worker、管理员运行状态和恢复点工具均已接入；浏览器只有这一条生产运行路径。
 
 本机运行：
 
