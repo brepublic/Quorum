@@ -12,6 +12,12 @@ export interface SelfHostedUser {
   disabledAt: string | null;
 }
 
+export interface AccountAnonymizationResult {
+  user: SelfHostedUser;
+  replacementUserId: string;
+  transferred: {committees: number; countryTemplates: number; committeeTemplates: number; rulePackages: number};
+}
+
 interface ApiSuccess<T> {
   data: T;
   meta: {requestId: string};
@@ -41,6 +47,7 @@ export interface SelfHostedIdentityClient {
   resetPassword(userId: string): Promise<{user: SelfHostedUser; temporaryPassword: string}>;
   disableUser(userId: string): Promise<void>;
   revokeSessions(userId: string): Promise<void>;
+  anonymizeUser(userId: string, replacementUserId: string, confirmationEmail: string): Promise<AccountAnonymizationResult>;
 }
 
 function cookie(name: string): string | undefined {
@@ -49,13 +56,16 @@ function cookie(name: string): string | undefined {
     .find(value => value.startsWith(prefix))?.slice(prefix.length);
 }
 
-async function request<T>(path: string, options: {method?: 'POST'; body?: Record<string, unknown>; csrf?: boolean} = {}): Promise<T> {
+async function request<T>(path: string, options: {
+  method?: 'POST'; body?: Record<string, unknown>; csrf?: boolean; idempotencyKey?: string;
+} = {}): Promise<T> {
   const headers: Record<string, string> = {};
   if (options.body) headers['content-type'] = 'application/json';
   if (options.csrf) {
     const csrf = cookie('__Host-quorum_csrf');
     if (csrf) headers['x-csrf-token'] = csrf;
   }
+  if (options.idempotencyKey) headers['idempotency-key'] = options.idempotencyKey;
   const response = await fetch(path, {
     method: options.method ?? 'GET',
     credentials: 'same-origin',
@@ -110,5 +120,10 @@ export const selfHostedIdentityClient: SelfHostedIdentityClient = {
   },
   async revokeSessions(userId) {
     await request(`/api/v1/admin/users/${userId}/revoke-sessions`, {method: 'POST', csrf: true});
+  },
+  anonymizeUser(userId, replacementUserId, confirmationEmail) {
+    return request(`/api/v1/admin/users/${userId}/anonymize`, {
+      method: 'POST', csrf: true, idempotencyKey: crypto.randomUUID(), body: {replacementUserId, confirmationEmail}
+    });
   }
 };

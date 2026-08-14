@@ -8,8 +8,8 @@
 - 分支：`self-host`
 - 已确认基线：`450c35c stage 8.2: permanently delete committees`
 - 当前阶段：8 归档、删除与运维正在实施。
-- 当前工作：阶段 8.2 已完成并单独提交；正在细化账号资源转移与匿名化边界。
-- 下一步：实施账号资源处置小任务并验证；随后完成保留策略、运维状态和恢复说明，不提前移除 Firebase。
+- 当前工作：阶段 8.3 账号资源转移与匿名化已实现，正在完成全量验证与文档收尾。
+- 下一步：单独提交 8.3；随后实施事件、Session、任务和日志保留策略，不提前移除 Firebase。
 
 ## 已完成与验证
 
@@ -288,3 +288,14 @@
 - `pnpm test:self-host:integration`：8 个文件、65 项因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip；`git diff --check` 通过。
 - 当前 WSL 没有真实 PostgreSQL、TLS 自托管实例、S3 测试桶、可检查持久卷、Chair 真机和可控进程终止环境；上机步骤与证据要求记录在 `MANUAL_ACCEPTANCE.md` 的 SH-MAN-516，未伪造物理多 provider 删除成功。
 - 阶段 8.2 已单独提交为 `450c35c`；继续阶段 8 的账号资源处置。
+
+### 2026-08-14：阶段 8.3 账号资源转移与匿名化
+
+- migration 25 允许匿名化账号清空邮箱，增加匿名字段一致性约束、不可恢复触发器、可延迟校验的模板所有权关联和 durable 身份命令幂等结果；schema compatibility 为 25。
+- 只有系统管理员可匿名化已禁用普通账号，并须指定另一个活动账号和规范化后匹配的确认邮箱。唯一系统管理员、活动/已匿名化目标、无效接收方、错误确认及仍拥有 `DELETING` 委员会均被拒绝。
+- 同一事务锁定账号和所属委员会，转移委员会、国家模板、委员会模板与规则包；每个委员会递增 revision，并追加 Chair 事件和系统管理员业务审计。历史议事、席位、事件和审计 actor ID 不改写。
+- 资源转移后删除目标凭据与全部 Session，清空邮箱并把显示名替换为“匿名账号”。匿名化账号不能再执行密码重置、重复禁用或数据库身份恢复。相同幂等请求返回原结果，不同 body 返回稳定冲突。
+- 账号管理页面只为已禁用普通账号提供“匿名化账号”，先选择活动接收账号，再以待处置邮箱确认；页面不添加无助于决定的说明段落。
+- 定向 migration、identity service、HTTP、页面及类型构建通过。`pnpm test:self-host`：57 个文件通过、8 个文件明确 skip；322 项通过、66 项明确 skip。
+- `pnpm exec vitest run`：76 个文件通过、8 个文件明确 skip；477 项通过、66 项明确 skip。`pnpm build:self-host` 通过，仅有既有 Vite 大分块警告。
+- `pnpm test:self-host:integration`：8 个文件、66 项因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip。真实 PostgreSQL、TLS 浏览器、故障注入和辅助功能步骤记录在 `MANUAL_ACCEPTANCE.md` 的 SH-MAN-517，未伪造实机结果。

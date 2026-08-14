@@ -167,6 +167,8 @@ Chair Agent 下线只切换为 `STORAGE_DEGRADED` 并显示警告，不自动暂
 
 委员会永久删除是分阶段状态机，不是同步级联删除。Owner 先把委员会归档并精确确认名称；接受后状态进入 `DELETING`，所有普通读取和写入停止，但 durable deletion job、文件墓碑、provider delete job、Agent task 和 staging 记录继续存在。只有服务器卷、S3、当前 Agent 与三类 staging 的清理全部完成后，worker 才以当前 job claim 限定的事务清除 PostgreSQL 委员会数据。物理清理或数据库清除失败均退避重试，不能先丢失追踪元数据。
 
+账号匿名化先禁用，再在一个 PostgreSQL 事务内把委员会、账号级模板和规则包转给指定活动账号。委员会转移递增 revision，并追加 Chair 事件与系统管理员审计；历史 actor、席位和审计外键不改写。资源全部转移后才删除凭据与 Session、清除邮箱和个人显示名。`DELETING` 委员会、无效接收账号、错误确认邮箱或幂等冲突会使整个事务回滚。
+
 ## 11. 部署与容量
 
 目标基线：Ubuntu Server x86-64、2 核、2 GiB 内存、40 GiB SSD、约 200 个账号、一个活动委员会、100 个席位、150 个并发浏览器、单文件 20 MiB、每委员会约 100 个文件。

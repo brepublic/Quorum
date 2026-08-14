@@ -13,7 +13,7 @@ import type {
 
 interface UserRow {
   id: string;
-  email: string;
+  email: string | null;
   display_name: string;
   status: IdentityUser['status'];
   is_system_admin: boolean;
@@ -32,7 +32,7 @@ interface LoginRow extends UserRow {
 function userFromRow(row: UserRow): IdentityUser {
   return {
     id: row.id,
-    email: row.email,
+    email: row.email ?? '',
     displayName: row.display_name,
     status: row.status,
     isSystemAdmin: row.is_system_admin,
@@ -284,11 +284,12 @@ export class PostgresIdentityStore implements IdentityStore {
     });
   }
 
-  async resetPassword(input: Parameters<IdentityStore['resetPassword']>[0]): Promise<IdentityUser | null> {
+  async resetPassword(input: Parameters<IdentityStore['resetPassword']>[0]): ReturnType<IdentityStore['resetPassword']> {
     return this.transaction(async client => {
       const result = await client.query<UserRow>('SELECT * FROM users WHERE id = $1 FOR UPDATE', [input.targetUserId]);
       const row = result.rows[0];
       if (!row) return null;
+      if (row.status !== 'ACTIVE') return 'not_active';
       const updated = await client.query<UserRow>(
         `UPDATE users SET session_version = session_version + 1, must_change_password = true, updated_at = $2
          WHERE id = $1 RETURNING *`, [row.id, input.now]
@@ -304,12 +305,13 @@ export class PostgresIdentityStore implements IdentityStore {
     });
   }
 
-  async disableUser(input: Parameters<IdentityStore['disableUser']>[0]): Promise<'disabled' | 'not_found' | 'system_admin'> {
+  async disableUser(input: Parameters<IdentityStore['disableUser']>[0]): ReturnType<IdentityStore['disableUser']> {
     return this.transaction(async client => {
       const result = await client.query<UserRow>('SELECT * FROM users WHERE id = $1 FOR UPDATE', [input.targetUserId]);
       const row = result.rows[0];
       if (!row) return 'not_found';
       if (row.is_system_admin) return 'system_admin';
+      if (row.status !== 'ACTIVE') return 'not_active';
       await client.query(
         `UPDATE users SET status = 'DISABLED', disabled_at = $2, updated_at = $2,
           session_version = session_version + 1 WHERE id = $1`, [row.id, input.now]
@@ -331,6 +333,111 @@ export class PostgresIdentityStore implements IdentityStore {
       await client.query('UPDATE sessions SET revoked_at = $2 WHERE user_id = $1 AND revoked_at IS NULL', [row.id, input.now]);
       await audit(client, input.audit, {actorUserId: input.actor.user.id, action: 'identity.session_revoked', targetUserId: row.id});
       return true;
+    });
+  }
+
+  async anonymizeUser(input: Parameters<IdentityStore['anonymizeUser']>[0]): ReturnType<IdentityStore['anonymizeUser']> {
+    return this.transaction(async client => {
+      const replay = await client.query<{request_hash: Buffer; response_body: ReturnType<typeof userFromRow> & Record<string, unknown>}>(
+        `SELECT request_hash, response_body FROM identity_idempotency_keys
+         WHERE actor_user_id = $1 AND idempotency_key = $2 FOR UPDATE`,
+        [input.actor.user.id, input.idempotencyKey]
+      );
+      if (replay.rows[0]) {
+        if (!replay.rows[0].request_hash.equals(input.requestHash)) return 'idempotency_conflict';
+        return replay.rows[0].response_body as unknown as Awaited<ReturnType<IdentityStore['anonymizeUser']>>;
+      }
+
+      const users = await client.query<UserRow>(
+        `SELECT * FROM users WHERE id = ANY($1::uuid[]) ORDER BY id FOR UPDATE`,
+        [[input.targetUserId, input.replacementUserId]]
+      );
+      const target = users.rows.find(row => row.id === input.targetUserId);
+      const replacement = users.rows.find(row => row.id === input.replacementUserId);
+      if (!target) return 'not_found';
+      if (target.is_system_admin) return 'system_admin';
+      if (target.status !== 'DISABLED') return 'not_disabled';
+      if (!replacement || replacement.id === target.id || replacement.status !== 'ACTIVE') return 'invalid_replacement';
+      if (target.email?.toLowerCase() !== input.confirmationEmail) return 'confirmation_mismatch';
+
+      const deleting = await client.query(
+        `SELECT id FROM committees WHERE owner_user_id = $1 AND status = 'DELETING' LIMIT 1 FOR UPDATE`,
+        [target.id]
+      );
+      if (deleting.rowCount) return 'deletion_in_progress';
+
+      await client.query('SET CONSTRAINTS committee_templates_owner_country_template_fk DEFERRED');
+      const committees = await client.query<{id: string; revision: number; next_event_sequence: string}>(
+        `SELECT id, revision, next_event_sequence FROM committees
+         WHERE owner_user_id = $1 ORDER BY id FOR UPDATE`, [target.id]
+      );
+      for (const committee of committees.rows) {
+        const revision = committee.revision + 1;
+        await client.query(
+          `UPDATE committees SET owner_user_id = $2, revision = $3,
+             next_event_sequence = next_event_sequence + 1, updated_at = $4 WHERE id = $1`,
+          [committee.id, replacement.id, revision, input.now]
+        );
+        await client.query(
+          `INSERT INTO committee_events
+            (committee_id, sequence, event_type, resource_type, resource_id, resource_revision, payload, audience)
+           VALUES ($1, $2, 'committee.owner_transferred', 'committee', $1, $3, '{}'::jsonb, 'CHAIR')`,
+          [committee.id, committee.next_event_sequence, revision]
+        );
+        await client.query(
+          `INSERT INTO audit_log
+            (id, request_id, committee_id, actor_user_id, effective_capabilities, action, resource_type,
+             resource_id, result, before_summary, after_summary, source_ip_hash)
+           VALUES ($1, $2, $3, $4, ARRAY['SYSTEM_ADMIN'], 'admin.committee_owner_transferred', 'committee',
+             $3, 'SUCCEEDED', jsonb_build_object('ownerUserId', $5::text),
+             jsonb_build_object('ownerUserId', $6::text), $7)`,
+          [randomUUID(), input.audit.requestId, committee.id, input.actor.user.id, target.id, replacement.id,
+            input.audit.sourceIpHash]
+        );
+      }
+
+      const countryTemplates = await client.query(
+        'UPDATE country_templates SET owner_user_id = $2, revision = revision + 1, updated_at = $3 WHERE owner_user_id = $1',
+        [target.id, replacement.id, input.now]
+      );
+      const committeeTemplates = await client.query(
+        'UPDATE committee_templates SET owner_user_id = $2, revision = revision + 1, updated_at = $3 WHERE owner_user_id = $1',
+        [target.id, replacement.id, input.now]
+      );
+      const rulePackages = await client.query(
+        'UPDATE rule_packages SET owner_user_id = $2, updated_at = $3 WHERE owner_user_id = $1',
+        [target.id, replacement.id, input.now]
+      );
+
+      await client.query('DELETE FROM sessions WHERE user_id = $1', [target.id]);
+      await client.query('DELETE FROM user_credentials WHERE user_id = $1', [target.id]);
+      const updated = await client.query<UserRow>(
+        `UPDATE users SET email = NULL, display_name = '匿名账号', status = 'ANONYMIZED',
+           session_version = session_version + 1, must_change_password = false,
+           updated_at = $2, anonymized_at = $2 WHERE id = $1 RETURNING *`,
+        [target.id, input.now]
+      );
+      await audit(client, input.audit, {
+        actorUserId: input.actor.user.id,
+        action: 'admin.user_anonymized',
+        targetUserId: target.id
+      });
+      const result = {
+        user: userFromRow(updated.rows[0] as UserRow),
+        replacementUserId: replacement.id,
+        transferred: {
+          committees: committees.rowCount ?? 0,
+          countryTemplates: countryTemplates.rowCount ?? 0,
+          committeeTemplates: committeeTemplates.rowCount ?? 0,
+          rulePackages: rulePackages.rowCount ?? 0
+        }
+      };
+      await client.query(
+        `INSERT INTO identity_idempotency_keys
+          (actor_user_id, idempotency_key, request_hash, response_body) VALUES ($1, $2, $3, $4)`,
+        [input.actor.user.id, input.idempotencyKey, input.requestHash, result]
+      );
+      return result;
     });
   }
 }

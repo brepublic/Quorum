@@ -186,6 +186,19 @@ function AccountManager({client, currentUser, onLogout}: {
     await refresh();
   });
 
+  const anonymize = (target: SelfHostedUser) => run(async () => {
+    const recipientEmail = window.prompt(t('Enter the email of the account that will receive these resources:'))?.trim().toLowerCase();
+    if (!recipientEmail) return;
+    const replacement = users.find(candidate => candidate.id !== target.id && candidate.status === 'ACTIVE'
+      && candidate.email.toLowerCase() === recipientEmail);
+    if (!replacement) throw new Error(t('Select an active replacement account.'));
+    const confirmation = window.prompt(t('This cannot be undone. Enter “{email}” to anonymize this account:',
+      {email: target.email}))?.trim().toLowerCase();
+    if (!confirmation) return;
+    await client.anonymizeUser(target.id, replacement.id, confirmation);
+    await refresh();
+  });
+
   return <Container style={{padding: '2em 1em'}}>
     <Header as="h1"><Icon name="users" />{t('Account administration')}</Header>
     {error && <Message error content={error} onDismiss={() => setError(undefined)} />}
@@ -214,12 +227,13 @@ function AccountManager({client, currentUser, onLogout}: {
           <Table.HeaderCell>{t('Actions')}</Table.HeaderCell>
         </Table.Row></Table.Header>
         <Table.Body>{users.map(account => <Table.Row key={account.id} disabled={account.status !== 'ACTIVE'}>
-          <Table.Cell>{account.email}</Table.Cell>
+          <Table.Cell>{account.email || t('Anonymous account')}</Table.Cell>
           <Table.Cell>{account.displayName}</Table.Cell>
           <Table.Cell>{t(account.status)}</Table.Cell>
           <Table.Cell>
-            <Button size="small" onClick={() => reset(account)}>{t('Reset password')}</Button>
-            <Button size="small" onClick={() => run(async () => {
+            <Button size="small" disabled={account.status !== 'ACTIVE'}
+              onClick={() => reset(account)}>{t('Reset password')}</Button>
+            <Button size="small" disabled={account.status === 'ANONYMIZED'} onClick={() => run(async () => {
               if (window.confirm(t('Revoke all sessions for {email}?', {email: account.email}))) {
                 await client.revokeSessions(account.id);
               }
@@ -231,6 +245,9 @@ function AccountManager({client, currentUser, onLogout}: {
                   await refresh();
                 }
               })}>{t('Disable account')}</Button>
+            <Button size="small" negative disabled={account.isSystemAdmin || account.status !== 'DISABLED'
+              || !users.some(candidate => candidate.id !== account.id && candidate.status === 'ACTIVE')}
+              onClick={() => anonymize(account)}>{t('Anonymize account')}</Button>
           </Table.Cell>
         </Table.Row>)}</Table.Body>
       </Table>

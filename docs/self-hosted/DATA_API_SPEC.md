@@ -974,6 +974,17 @@ DELETE /api/v1/committees/:id
 
 常驻 deletion worker 使用 claim token 和五分钟 stale claim 恢复。它等待服务器卷/S3 blob delete job、upload/migration/Agent task staging，以及本次记录的 Agent 删除 task 全部完成。阻塞时写 `CLEANUP_PENDING` 并退避，不把唯一暂存副本当作普通过期数据删除。全部屏障清空后，worker 在单个 PostgreSQL 事务中删除委员会的议事、文件、成员、事件、审计和委员会级规则数据；append-only 历史只在当前 deletion job ID 与 claim token 同时匹配的事务内允许删除。任一语句失败都会回滚全部数据库清除并把 job 改为可重试；完成后委员会行不存在，只保留不含名称明文的 job 状态。
 
+### 11.18 阶段 8.3 账号资源转移与匿名化
+
+```text
+POST /api/v1/admin/users/:id/anonymize
+body: {replacementUserId, confirmationEmail}
+```
+
+该命令只允许已完成临时密码修改的 `SYSTEM_ADMIN`，并要求 Session、允许的 Origin、匹配的 CSRF token 和 `Idempotency-Key`。目标必须是已禁用的普通账号；接收方必须是另一个活动账号；确认邮箱按登录邮箱规范化后匹配。唯一系统管理员、活动或已匿名化账号、无效接收方以及仍拥有 `DELETING` 委员会的账号均返回稳定错误，且不发生部分转移。
+
+事务锁定目标、接收方及全部所属委员会，把委员会、国家模板、委员会模板和规则包所有权转给接收方。每个委员会同时递增 revision，追加 `committee.owner_transferred` Chair 事件和 `admin.committee_owner_transferred` 审计。随后删除目标账号的凭据与全部 Session，把邮箱置空、显示名替换为“匿名账号”并设为 `ANONYMIZED`；议事、席位、事件和审计中的历史用户外键不改写。数据库约束和触发器禁止恢复匿名化身份。相同 actor/幂等键与相同 body 返回原结果，不同 body 返回 `IDEMPOTENCY_CONFLICT`。
+
 ## 12. SSE 格式
 
 ```text

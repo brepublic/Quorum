@@ -27,6 +27,7 @@ afterEach(() => {
   container?.remove();
   root = undefined;
   container = undefined;
+  vi.restoreAllMocks();
 });
 
 function client(overrides: Partial<SelfHostedIdentityClient>): SelfHostedIdentityClient {
@@ -43,6 +44,11 @@ function client(overrides: Partial<SelfHostedIdentityClient>): SelfHostedIdentit
     resetPassword: vi.fn(async () => ({user: admin, temporaryPassword: 'temporary'})),
     disableUser: vi.fn(async () => undefined),
     revokeSessions: vi.fn(async () => undefined),
+    anonymizeUser: vi.fn(async () => ({
+      user: {...admin, email: '', displayName: '匿名账号', status: 'ANONYMIZED' as const},
+      replacementUserId: admin.id,
+      transferred: {committees: 0, countryTemplates: 0, committeeTemplates: 0, rulePackages: 0}
+    })),
     ...overrides
   };
 }
@@ -84,5 +90,30 @@ describe('self-hosted identity screens', () => {
     expect(text).toContain('Account administration');
     expect(text).toContain('Disable account');
     expect(text).toContain('Revoke sessions');
+  });
+
+  it('only offers irreversible anonymization for a disabled account with an active recipient', async () => {
+    const disabled = {...admin, id: '20000000-0000-4000-8000-000000000001', email: 'old@example.com',
+      displayName: 'Old', status: 'DISABLED' as const, isSystemAdmin: false};
+    const anonymizeUser = vi.fn(async () => ({
+      user: {...disabled, email: '', displayName: '匿名账号', status: 'ANONYMIZED' as const},
+      replacementUserId: admin.id,
+      transferred: {committees: 1, countryTemplates: 1, committeeTemplates: 1, rulePackages: 1}
+    }));
+    const identityClient = client({listUsers: vi.fn(async () => [admin, disabled]), anonymizeUser});
+    await renderClient(identityClient);
+    vi.spyOn(window, 'prompt').mockReturnValueOnce(admin.email).mockReturnValueOnce(disabled.email);
+    const button = [...container!.querySelectorAll('button')].find(item =>
+      item.textContent?.includes('Anonymize account') && !item.disabled)!;
+
+    await act(async () => {
+      button.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(window.prompt).toHaveBeenNthCalledWith(2,
+      'This cannot be undone. Enter “old@example.com” to anonymize this account:');
+    expect(anonymizeUser).toHaveBeenCalledWith(disabled.id, admin.id, disabled.email);
   });
 });

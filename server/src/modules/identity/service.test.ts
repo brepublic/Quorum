@@ -44,6 +44,11 @@ function store(overrides: Partial<IdentityStore> = {}): IdentityStore {
     resetPassword: vi.fn(async () => user),
     disableUser: vi.fn(async () => 'disabled'),
     revokeUserSessions: vi.fn(async () => true),
+    anonymizeUser: vi.fn(async () => ({
+      user: {...user, email: '', displayName: '匿名账号', status: 'ANONYMIZED'},
+      replacementUserId: admin.id,
+      transferred: {committees: 0, countryTemplates: 0, committeeTemplates: 0, rulePackages: 0}
+    })),
     ...overrides
   };
 }
@@ -114,6 +119,24 @@ describe('identity service policy', () => {
 
     await expect(service.disableUser(auth(admin), admin.id, {requestId: 'request'}))
       .rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
+  });
+
+  it('requires disablement and binds account anonymization to an idempotent resource transfer request', async () => {
+    const anonymizeUser = vi.fn(async () => 'not_disabled' as const);
+    const fake = store({anonymizeUser});
+    const service = new IdentityService(fake, {now: () => now});
+
+    await expect(service.anonymizeUser(auth(admin), user.id, {
+      replacementUserId: admin.id,
+      confirmationEmail: 'USER@example.com '
+    }, 'anonymize-request', {requestId: 'request'})).rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
+    expect(anonymizeUser).toHaveBeenCalledWith(expect.objectContaining({
+      targetUserId: user.id,
+      replacementUserId: admin.id,
+      confirmationEmail: 'user@example.com',
+      idempotencyKey: 'anonymize-request',
+      requestHash: expect.any(Buffer)
+    }));
   });
 
   it('returns unified authentication and authorization errors without secrets', () => {

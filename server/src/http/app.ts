@@ -1071,7 +1071,7 @@ async function handleIdentityRequest(options: {
     return true;
   }
 
-  const adminCommand = /^\/api\/v1\/admin\/users\/([0-9a-f-]{36})\/(reset-password|disable|revoke-sessions)$/.exec(pathname);
+  const adminCommand = /^\/api\/v1\/admin\/users\/([0-9a-f-]{36})\/(reset-password|disable|revoke-sessions|anonymize)$/.exec(pathname);
   if (method === 'POST' && adminCommand) {
     requireOrigin(request, allowedOrigins);
     const auth = await authenticatedWrite(request, identity);
@@ -1081,9 +1081,15 @@ async function handleIdentityRequest(options: {
     } else if (adminCommand[2] === 'disable') {
       await identity.disableUser(auth, targetUserId, context);
       sendJson(response, 200, success({disabled: true}, requestId));
-    } else {
+    } else if (adminCommand[2] === 'revoke-sessions') {
       await identity.revokeUserSessions(auth, targetUserId, context);
       sendJson(response, 200, success({revoked: true}, requestId));
+    } else {
+      const body = await readJson(request);
+      sendJson(response, 200, success(await identity.anonymizeUser(auth, targetUserId, {
+        replacementUserId: stringField(body, 'replacementUserId') as string,
+        confirmationEmail: stringField(body, 'confirmationEmail') as string
+      }, idempotencyKey(request), context), requestId));
     }
     return true;
   }

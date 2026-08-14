@@ -36,6 +36,19 @@ export interface AuditContext {
   sourceIpHash: Buffer | null;
 }
 
+export interface IdentityResourceTransferCounts {
+  committees: number;
+  countryTemplates: number;
+  committeeTemplates: number;
+  rulePackages: number;
+}
+
+export interface IdentityAnonymizationResult {
+  user: IdentityUser;
+  replacementUserId: string;
+  transferred: IdentityResourceTransferCounts;
+}
+
 export interface IdentityStore {
   bootstrapStatus(): Promise<boolean>;
   ensureBootstrapSecret(): Promise<string | null>;
@@ -86,17 +99,28 @@ export interface IdentityStore {
     passwordHash: string;
     now: Date;
     audit: AuditContext;
-  }): Promise<IdentityUser | null>;
+  }): Promise<IdentityUser | 'not_active' | null>;
   disableUser(input: {
     actor: AuthenticatedSession;
     targetUserId: string;
     now: Date;
     audit: AuditContext;
-  }): Promise<'disabled' | 'not_found' | 'system_admin'>;
+  }): Promise<'disabled' | 'not_found' | 'system_admin' | 'not_active'>;
   revokeUserSessions(input: {
     actor: AuthenticatedSession;
     targetUserId: string;
     now: Date;
     audit: AuditContext;
   }): Promise<boolean>;
+  anonymizeUser(input: {
+    actor: AuthenticatedSession;
+    targetUserId: string;
+    replacementUserId: string;
+    confirmationEmail: string;
+    idempotencyKey: string;
+    requestHash: Buffer;
+    now: Date;
+    audit: AuditContext;
+  }): Promise<IdentityAnonymizationResult | 'not_found' | 'system_admin' | 'not_disabled' | 'invalid_replacement'
+    | 'confirmation_mismatch' | 'deletion_in_progress' | 'idempotency_conflict'>;
 }

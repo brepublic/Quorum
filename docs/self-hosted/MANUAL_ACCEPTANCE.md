@@ -428,3 +428,12 @@
 - 自动化覆盖情况：当前 WSL 的 migration 静态契约、删除服务、HTTP、API client、工作区和 maintenance 测试覆盖 Owner/归档/revision/精确名称、Origin/CSRF/幂等边界、原子冻结与排队、Chair provider 可恢复性、blob 元数据缺口回滚、cleanup blocker、stale durable claim、数据库清除失败回滚、Agent staging 清理和短确认文案。真实 PostgreSQL 集成用例会从空库执行 migration 24，并对无文件委员会完成实际 scoped purge；未设置 `TEST_DATABASE_ADMIN_URL` 时明确 skip。当前没有真实 PostgreSQL、TLS、S3、持久卷、Chair 真机或可控进程终止环境，不能声称物理多 provider 删除已实机通过。
 - 当前状态：`pnpm test:self-host` 318 项通过、65 项明确 skip；全仓 Vitest 473 项通过、65 项明确 skip；`pnpm build:self-host` 通过；集成入口 65 项因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip。真实 PostgreSQL、多 provider、Agent 离线恢复、浏览器视觉/键盘和进程终止验收延期。
 - 需要保存的证据：migration 24 表、索引、触发器和 deferred FK 查询；角色/请求矩阵；删除 job、required Agent task、blob/staging queue 的脱敏时间线；每次故障前后 claim、attempt 和聚合计数；数据库事务回滚证据；服务器卷/S3/Agent/staging 最终清单与 SHA-256 对照；浏览器确认框、焦点和窄屏截图；全链路秘密/正文搜索结果。不得保存 Session、CSRF token、幂等键、Agent 凭据、claim token、S3 密钥、绝对路径或文件正文。
+
+### SH-MAN-517 账号资源转移与匿名化
+
+- 前置条件：真实 PostgreSQL 16 与 TLS 自托管实例；系统管理员、一个已禁用待处置账号、两个活动接收账号；待处置账号拥有活动/归档委员会、互相关联的国家模板与委员会模板、规则包，并在历史议事、席位、事件和审计中出现。只使用隔离测试账号。
+- 操作步骤：以普通账号和未完成临时密码修改的管理员尝试调用；测试活动目标、系统管理员目标、已匿名化目标、目标自身/禁用接收方、错误确认邮箱、缺少 Origin/CSRF/幂等键及不同 body 复用幂等键。创建一个归属目标且处于 `DELETING` 的委员会，确认匿名化拒绝且无资源部分转移；清除该条件后在浏览器选择接收邮箱并逐字确认待处置邮箱。提交期间分别在委员会、模板、规则包、凭据删除和用户更新语句注入失败，再重试相同幂等键。完成后核对接收账号的资源、委员会 revision/事件/审计、目标账号字段、凭据、Session 和全部历史 actor 外键；尝试密码重置、重复禁用和 SQL 恢复。
+- 通过条件：只有系统管理员可操作，账号必须先禁用；所有资源转移与匿名化要么完整提交，要么完整回滚。委员会接收方、revision、`committee.owner_transferred` 和管理员审计一致；模板关联在转移后仍有效。目标邮箱为 NULL、显示名为“匿名账号”、凭据与 Session 不存在，历史议事/席位/事件/审计仍引用同一稳定用户 ID。相同幂等请求返回原结果，不同请求冲突；匿名化账号不能登录、重置、重复禁用或恢复个人信息。
+- 自动化覆盖情况：当前 WSL 的 migration、identity service、HTTP 和账号管理页面测试覆盖禁用前置、系统管理员保护、活动接收方、确认邮箱、Origin/CSRF/幂等键、短确认文案及不可恢复约束。真实 PostgreSQL 集成用例会创建委员会、关联模板和规则包并核对原子转移、历史 actor 保留、凭据/Session 删除、幂等重放和恢复拒绝；未配置 `TEST_DATABASE_ADMIN_URL` 时明确 skip。
+- 当前状态：`pnpm test:self-host` 322 项通过、66 项明确 skip；全仓 Vitest 477 项通过、66 项明确 skip；`pnpm build:self-host` 通过；集成入口 66 项因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip。真实 PostgreSQL、TLS 浏览器、并发故障注入和辅助功能验收延期。
+- 需要保存的证据：角色/请求矩阵、目标与接收账号脱敏 ID、转移前后资源计数、委员会 revision/事件/审计、幂等重放结果、事务故障回滚查询、目标用户/凭据/Session 查询，以及确认框焦点、键盘和窄屏截图。不得保存邮箱明文截图、密码、Session/CSRF token、幂等键、源 IP 摘要或议事正文。

@@ -2,7 +2,7 @@
 
 > 本文件是本仓库的维护入口。后续涉及代码、构建、测试或运行的工作，应先阅读本文件和 `AGENTS.md`，并以实际代码为准更新本文档。
 
-> Quorum 已完成自主托管目标设计，并已落地实施计划阶段 0–7 与阶段 8.1–8.2。`self-hosted` 运行时以 PostgreSQL 为唯一业务真相，通过同源 API 与受众过滤 SSE 提供议事功能；上传可流式暂存并提交到服务器持久卷、S3 compatible provider 或当前主席电脑。文件可在自托管工作区审核、发布、授权下载、异步物理删除并在服务器卷与 S3 之间安全迁移。委员会可进入全工作区只读归档，由 Owner 流式导出记录，或经精确名称确认进入 durable 永久删除；删除 worker 等待 provider、Agent 和全部暂存副本清理后，才在单个事务中清除委员会业务数据。桌面 Agent 已具备安全目录、墓碑优先同步、原子落盘、全量扫描、中断恢复和显式冲突裁决，并可生成携带固定运行时的 Windows、macOS 与 Linux 发布包。原生签名、公证和安装证据仍须在目标系统取得。
+> Quorum 已完成自主托管目标设计，并已落地实施计划阶段 0–7 与阶段 8.1–8.3。`self-hosted` 运行时以 PostgreSQL 为唯一业务真相，通过同源 API 与受众过滤 SSE 提供议事功能；上传可流式暂存并提交到服务器持久卷、S3 compatible provider 或当前主席电脑。文件可在自托管工作区审核、发布、授权下载、异步物理删除并在服务器卷与 S3 之间安全迁移。委员会可进入全工作区只读归档，由 Owner 流式导出记录，或经精确名称确认进入 durable 永久删除；删除 worker 等待 provider、Agent 和全部暂存副本清理后，才在单个事务中清除委员会业务数据。禁用账号可在资源原子转移后不可逆匿名化，历史议事与审计继续引用无个人信息的稳定用户 ID。桌面 Agent 已具备安全目录、墓碑优先同步、原子落盘、全量扫描、中断恢复和显式冲突裁决，并可生成携带固定运行时的 Windows、macOS 与 Linux 发布包。原生签名、公证和安装证据仍须在目标系统取得。
 
 ## 1. 项目定位与技术栈
 
@@ -153,7 +153,7 @@ system
 - `countryTemplates/{creatorUid}` 同样仅允许 UID 对应的受管登录用户读写；内置默认国家模板随前端代码发布，不写入 Firebase。
 - `storage.rules` 允许公开读取 `committees/{committeeId}/{fileName}`；上传需写入委员会创建者 UID 元数据。文件拥有者或委员会主任可更新/删除。
 - `Files.tsx` 同时维护 Database 中的文件/帖子元数据和 Storage 中的二进制对象。
-- 自主托管模式的 `src/pages/SelfHostedIdentity.tsx` 与 `SelfHostedWorkspace.tsx` 不复用 Firebase 身份、Database 引用或 Callable。管理员创建普通账号时由服务端生成一次性临时密码；首次登录只能读取当前身份、退出或改密。`src/services/self-hosted-api.ts` 发送同源 Cookie、CSRF、revision 和幂等键；议事与文件页面分别由 `ProceedingsPanel`、`FilesPanel` 和 `StorageAdminPanel` 接入。管理员不能禁用唯一系统管理员；完整账号匿名化与资源转移仍属于后续阶段。
+- 自主托管模式的 `src/pages/SelfHostedIdentity.tsx` 与 `SelfHostedWorkspace.tsx` 不复用 Firebase 身份、Database 引用或 Callable。管理员创建普通账号时由服务端生成一次性临时密码；首次登录只能读取当前身份、退出或改密。`src/services/self-hosted-api.ts` 发送同源 Cookie、CSRF、revision 和幂等键；议事与文件页面分别由 `ProceedingsPanel`、`FilesPanel` 和 `StorageAdminPanel` 接入。管理员不能禁用或匿名化唯一系统管理员。普通账号必须先禁用，再把委员会、账号级模板和规则包原子转移给另一个活动账号；匿名化随后清除邮箱、个人显示名、凭据与 Session，数据库触发器禁止恢复，历史议事与审计保留稳定用户 ID。
 - 阶段 6.1 的 `server/src/modules/storage/service.ts` 只提供 provider 校验完成后的内部 PostgreSQL 提交边界。它从 Session 推导 actor，并在同一事务中写入文件状态、委员会事件和审计。逻辑删除立即清除当前版本指针、追加墓碑并把 blob 标记为待物理删除；数据库触发器禁止修改文件版本、墓碑或复活已删除文件。
 - 阶段 6.2 的 `Stage6UploadService` 通过 `POST /api/v1/committees/:id/file-uploads` 创建上传，再由 `PUT /api/v1/file-uploads/:id/content` 直接消费 HTTP 流。`DurableStagingStore` 以服务器 UUID 生成路径，逐块执行全局与单文件上限、实际大小和 SHA-256 校验，并拒绝绝对路径、点路径、符号链接逃逸和非普通文件。完整内容只进入 `STAGED`；本阶段不调用 provider 提交，不创建 `file_entry`、`file_blob` 或 `file_version`。`CREATED`、`RECEIVING` 和 `STAGED` 即使过期也不属于普通清理范围。
 - 阶段 6.3 的 `Stage6ServerVolumeService` 只接收 `STAGED` upload。`ServerVolumeStore` 从暂存文件流式复制到由 blob UUID 派生的 0600 临时文件，执行 `fsync`、无覆盖原子发布和最终重读校验；路径检查拒绝符号链接、硬链接和非普通文件。`POST /api/v1/file-uploads/:id/commit` 在 provider 验证后用一个事务提交 upload、blob、file entry/version、事件、审计和幂等响应。数据库失败会保留暂存与服务器卷副本，重试复用原 blob ID；阶段 6.5 已把校验读取原语接到下载 HTTP。
@@ -171,6 +171,7 @@ system
 - 阶段 7.6 固定 Agent 0.1.0 与 Node.js 22.23.2，为 Windows x86-64、macOS x86-64/arm64 和非阻断 Linux x86-64 生成自包含发布包。构建先校验 Node 官方归档 SHA-256，只携带运行时、编译 JS、入口、许可证和安装说明；归档路径顺序、时间戳、权限及 release manifest 可复现。签名脚本只引用 Windows 证书存储 thumbprint 或 macOS keychain identity/profile，不接收私钥和密码。当前 WSL 已验证未签名包、SHA-256、内容、权限、秘密扫描与 Linux 运行；Windows/macOS 签名、公证、ACL、Gatekeeper、SmartScreen 和原生文件系统仍是人工验收项。
 - 阶段 8.1 允许 Committee Owner 归档活动委员会。归档后同源 API 在既有领域服务边界拒绝委员会、议事、文本和文件写入，前端只保留按角色读取及文件下载；Owner 可从 PostgreSQL `REPEATABLE READ READ ONLY` 快照分页流式导出 JSON Lines。导出使用显式列白名单，包含议事记录、审计和文件大小/SHA-256 manifest，不包含凭据哈希、Session、设备秘密、provider storage key、源 IP 摘要或文件正文。
 - 阶段 8.2 只允许归档委员会的 Owner 在精确输入委员会名称后请求永久删除。请求事务把状态改为 `DELETING`，撤销配对码，取消未完成上传、迁移和旧 Agent task，为所有文件写墓碑并排队 provider/当前 Agent 删除；该委员会立即从列表、快照和 SSE 边界隐藏。常驻 deletion worker 只有在 blob delete job、upload/migration/Agent staging 和本次必需的 `DELETE_FILE` task 全部完成后，才使用当前 claim token 限定的数据库清除权限，在一个事务中删除委员会议事、文件、事件、审计、成员和委员会级规则数据并保留不含名称明文的 deletion job 结果。中途失败回滚数据库清除并退避重试。
+- 阶段 8.3 增加带 Origin、CSRF 和 durable 幂等键的账号匿名化命令。系统管理员只能处置已禁用普通账号，并必须选择另一个活动账号接收委员会、国家模板、委员会模板和规则包；处于 `DELETING` 的所属委员会会阻止操作。每个委员会的 Owner、revision、Chair 事件和业务审计与资源转移同事务提交，随后删除目标账号凭据与 Session，把邮箱置空并以“匿名账号”替换个人显示名。历史 actor 外键不改写，匿名化账号不能通过密码重置、重复禁用或直接数据库更新恢复。
 
 因此，数据库规则和 Storage 元数据是产品的关键安全边界；变更前必须同时审查前端写入路径与这两份规则文件。
 

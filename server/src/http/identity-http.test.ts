@@ -59,6 +59,7 @@ function fakeIdentity(overrides: Record<string, unknown> = {}): IdentityService 
     resetPassword: vi.fn(async () => ({user, temporaryPassword: 'temporary-password'})),
     disableUser: vi.fn(async () => undefined),
     revokeUserSessions: vi.fn(async () => undefined),
+    anonymizeUser: vi.fn(async () => ({user: {...user, email: '', displayName: '匿名账号', status: 'ANONYMIZED'}})),
     ...overrides
   } as unknown as IdentityService;
 }
@@ -140,6 +141,26 @@ describe('identity HTTP security boundary', () => {
     expect(rejected.status).toBe(403);
     expect(accepted.status).toBe(201);
     expect(identity.createUser).toHaveBeenCalledTimes(1);
+  });
+
+  it('routes account anonymization with CSRF, server actor and an idempotency key', async () => {
+    const identity = fakeIdentity();
+    const response = await request(identity, {
+      path: `/api/v1/admin/users/${user.id}/anonymize`,
+      method: 'POST',
+      headers: {
+        origin: 'https://quorum.example.com',
+        cookie: '__Host-quorum_session=session; __Host-quorum_csrf=expected',
+        'x-csrf-token': 'expected',
+        'idempotency-key': 'account-disposition'
+      },
+      body: {replacementUserId: '20000000-0000-4000-8000-000000000001', confirmationEmail: user.email}
+    });
+
+    expect(response.status).toBe(200);
+    expect(identity.anonymizeUser).toHaveBeenCalledWith(expect.objectContaining({user}), user.id, {
+      replacementUserId: '20000000-0000-4000-8000-000000000001', confirmationEmail: user.email
+    }, 'account-disposition', expect.anything());
   });
 
   it('returns the unified 401 and does not leak internal failures', async () => {

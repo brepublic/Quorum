@@ -152,6 +152,98 @@ integration('PostgreSQL identity integration', () => {
     await expect(identity.disableUser(adminAuth, adminAuth.user.id, context)).rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
   });
 
+  it('atomically transfers owned resources before irreversibly anonymizing a disabled account', async () => {
+    const identity = service();
+    const secret = await identity.ensureBootstrapSecret();
+    const administrator = await identity.bootstrapAdmin({secret: secret as string, email: 'admin@example.com',
+      displayName: 'Admin', password: 'admin-password-123'}, context);
+    const adminAuth = await identity.authenticate(administrator.sessionToken);
+    const replacement = await identity.createUser(adminAuth,
+      {email: 'replacement@example.com', displayName: 'Replacement'}, context);
+    const target = await identity.createUser(adminAuth, {email: 'departing@example.com', displayName: 'Departing'}, context);
+    await identity.login({email: target.user.email, password: target.temporaryPassword}, context);
+
+    const countryTemplateId = randomUUID();
+    const committeeTemplateId = randomUUID();
+    const packageId = randomUUID();
+    const versionId = randomUUID();
+    const committeeId = randomUUID();
+    await pool?.query(
+      `INSERT INTO country_templates (id, owner_user_id, names, default_language, country_languages)
+       VALUES ($1, $2, '{"en":"Countries"}'::jsonb, 'en', ARRAY['en'])`,
+      [countryTemplateId, target.user.id]
+    );
+    await pool?.query(
+      `INSERT INTO committee_templates
+        (id, owner_user_id, names, default_language, country_template_key, country_template_id)
+       VALUES ($1, $2, '{"en":"Committee"}'::jsonb, 'en', $3, $4)`,
+      [committeeTemplateId, target.user.id, `custom:${countryTemplateId}`, countryTemplateId]
+    );
+    await pool?.query(
+      `INSERT INTO rule_packages (id, scope, owner_user_id, stable_key) VALUES ($1, 'SYSTEM', $2, $3)`,
+      [packageId, target.user.id, `account-disposition-${packageId}`]
+    );
+    await pool?.query(
+      `INSERT INTO rule_package_versions
+        (id, package_id, version, status, definition, schema_version, created_by_user_id, published_at)
+       VALUES ($1, $2, 1, 'PUBLISHED', '{}'::jsonb, 1, $3, now())`,
+      [versionId, packageId, target.user.id]
+    );
+    await pool?.query(
+      `INSERT INTO committees
+        (id, owner_user_id, name, visibility, operation_mode, active_rule_package_version_id,
+         source_committee_template_id, country_template_key, temporary_template)
+       VALUES ($1, $2, 'Transfer committee', 'PRIVATE', 'CHAIR_OPERATED', $3, $4, $5, false)`,
+      [committeeId, target.user.id, versionId, committeeTemplateId, `custom:${countryTemplateId}`]
+    );
+    await identity.disableUser(adminAuth, target.user.id, context);
+
+    const result = await identity.anonymizeUser(adminAuth, target.user.id, {
+      replacementUserId: replacement.user.id,
+      confirmationEmail: target.user.email
+    }, 'account-anonymization', context);
+    expect(result.transferred).toEqual({committees: 1, countryTemplates: 1, committeeTemplates: 1, rulePackages: 1});
+    expect(result.user).toMatchObject({email: '', displayName: '匿名账号', status: 'ANONYMIZED'});
+
+    const stored = await pool?.query(
+      `SELECT u.email, u.display_name, u.status, u.anonymized_at,
+        EXISTS (SELECT 1 FROM user_credentials c WHERE c.user_id = u.id) AS has_credential,
+        EXISTS (SELECT 1 FROM sessions s WHERE s.user_id = u.id) AS has_session
+       FROM users u WHERE u.id = $1`, [target.user.id]
+    );
+    expect(stored?.rows[0]).toMatchObject({email: null, display_name: '匿名账号', status: 'ANONYMIZED',
+      has_credential: false, has_session: false});
+    expect(stored?.rows[0].anonymized_at).toBeInstanceOf(Date);
+    const owners = await pool?.query(
+      `SELECT
+        (SELECT owner_user_id FROM committees WHERE id = $1) AS committee_owner,
+        (SELECT owner_user_id FROM country_templates WHERE id = $2) AS country_owner,
+        (SELECT owner_user_id FROM committee_templates WHERE id = $3) AS template_owner,
+        (SELECT owner_user_id FROM rule_packages WHERE id = $4) AS package_owner,
+        (SELECT created_by_user_id FROM rule_package_versions WHERE id = $5) AS historical_actor`,
+      [committeeId, countryTemplateId, committeeTemplateId, packageId, versionId]
+    );
+    expect(owners?.rows[0]).toEqual({
+      committee_owner: replacement.user.id,
+      country_owner: replacement.user.id,
+      template_owner: replacement.user.id,
+      package_owner: replacement.user.id,
+      historical_actor: target.user.id
+    });
+    const replay = await identity.anonymizeUser(adminAuth, target.user.id, {
+      replacementUserId: replacement.user.id,
+      confirmationEmail: target.user.email
+    }, 'account-anonymization', context);
+    expect(replay).toEqual(result);
+    await expect(identity.anonymizeUser(adminAuth, target.user.id, {
+      replacementUserId: adminAuth.user.id,
+      confirmationEmail: target.user.email
+    }, 'account-anonymization', context)).rejects.toMatchObject({code: 'IDEMPOTENCY_CONFLICT'});
+    await expect((pool as pg.Pool).query(
+      "UPDATE users SET status = 'DISABLED', email = 'restored@example.com' WHERE id = $1", [target.user.id]
+    )).rejects.toThrow('cannot be restored');
+  });
+
   it('locks an account after repeated failed logins', async () => {
     const identity = service();
     const secret = await identity.ensureBootstrapSecret();

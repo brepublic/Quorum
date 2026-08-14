@@ -105,7 +105,8 @@ export const COMMITTEE_EVENT_DEFINITIONS = [
   {name: 'rule_package.version_created', defaultAudience: 'CHAIR'},
   {name: 'rule_override.created', defaultAudience: 'CHAIR'},
   {name: 'committee.archived', defaultAudience: 'MEMBER'},
-  {name: 'committee.deletion_started', defaultAudience: 'MEMBER'}
+  {name: 'committee.deletion_started', defaultAudience: 'MEMBER'},
+  {name: 'committee.owner_transferred', defaultAudience: 'CHAIR'}
 ] as const;
 
 export type EventAudience = 'PUBLIC' | 'MEMBER' | 'CHAIR';
@@ -122,6 +123,7 @@ export const AUDIT_ACTION_DEFINITIONS = [
   'admin.user_password_reset',
   'admin.user_disabled',
   'admin.user_anonymized',
+  'admin.committee_owner_transferred',
   'committee.created',
   'committee.updated',
   'committee.operation_mode_changed',

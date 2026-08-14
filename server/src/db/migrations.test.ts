@@ -294,6 +294,20 @@ describe('migration discovery', () => {
     expect(deletion?.sql).toContain('schema_compatibility=24');
   });
 
+  it('adds irreversible account anonymization and durable identity idempotency', async () => {
+    const migrations = await loadMigrations(resolve('server/migrations'));
+    const account = migrations.find(item => item.version === 25);
+    expect(account?.name).toBe('account_anonymization');
+    expect(account?.sql).toContain('ALTER COLUMN email DROP NOT NULL');
+    expect(account?.sql).toContain('users_anonymized_identity_cleared');
+    expect(account?.sql).toContain('CREATE TABLE identity_idempotency_keys');
+    expect(account?.sql).toContain('prevent_anonymized_user_restore');
+    expect(account?.sql).toContain('committee_templates_owner_country_template_fk');
+    expect(account?.sql).toContain('DEFERRABLE INITIALLY IMMEDIATE');
+    expect(account?.sql).toContain('schema_compatibility = 25');
+    expect(account?.sql).toContain('UPDATE system_settings');
+  });
+
   it('rejects SQL files outside the versioned naming contract', async () => {
     const directory = await temporaryDirectory();
     await writeFile(join(directory, 'first.sql'), 'SELECT 1;\n');

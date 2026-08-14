@@ -1,8 +1,8 @@
 # Quorum 自托管目标架构
 
-本目录描述 Quorum 从 Firebase BaaS 迁移到完全自主托管后的目标架构。阶段 0–7 已落地；阶段 8.1–8.2 已接入委员会只读归档、一致性流式导出和 durable 永久删除。账号资源处置、运维恢复和阶段 9 Firebase 移除仍待实施。当前事实以根目录的 [`PROJECT_ARCHITECTURE.md`](../../PROJECT_ARCHITECTURE.md) 为准。
+本目录描述 Quorum 从 Firebase BaaS 迁移到完全自主托管后的目标架构。阶段 0–7 已落地；阶段 8.1–8.3 已接入委员会归档/导出、durable 永久删除，以及账号资源转移与匿名化。保留策略、运维恢复和阶段 9 Firebase 移除仍待实施。当前事实以根目录的 [`PROJECT_ARCHITECTURE.md`](../../PROJECT_ARCHITECTURE.md) 为准。
 
-## 当前阶段 8.2 边界
+## 当前阶段 8.3 边界
 
 - PostgreSQL migration 已建立身份、凭据、Session、系统设置、未来注册申请和身份审计表。
 - bootstrap secret 只保存哈希，并由 PostgreSQL 事务保证并发初始化只有一个成功；公开状态 API 不返回 secret。
@@ -13,7 +13,7 @@
 - 同源 API 已提供阶段 3 委员会、席位、邀请码、快照和规则包命令。所有写入继续执行 Session、CSRF 和 Origin 校验。
 - Committee Owner、Chair、membership、seat assignment 和 `SYSTEM_ADMIN` 分别授权。系统管理员和 Committee Owner 都不会隐式获得 Chair 能力。
 - 邀请码只保存哈希；规则模拟不写议事状态；内置包和已发布版本不可原地修改。
-- schema compatibility 24 覆盖阶段 4–5 业务表、完整阶段 6 文件能力、Agent 配对/任务/冲突，以及委员会永久删除 job、Agent staging 清理与 scoped purge fencing。
+- schema compatibility 25 覆盖阶段 4–5 业务表、完整阶段 6 文件能力、Agent 配对/任务/冲突、委员会永久删除，以及账号匿名化约束和身份命令幂等结果。
 - 自托管 React 页面只调用同源 API；一浏览器一委员会一条 SSE，游标过期、序号缺口或未知事件回退完整快照。
 - 服务器时间是计时真相；PostgreSQL 唯一约束和行锁保护队列顺序、当前发言人及一席一票。
 - 正式 ballot 冻结资格、门槛、must-vote、否决席位和规则版本；票更正追加历史，匿名意向性投票不保存投票人与选项关联。
@@ -57,6 +57,7 @@
 - 归档 Owner 可流式导出同一 `REPEATABLE READ READ ONLY` 快照中的议事记录、审计和文件 manifest。导出不缓冲完整结果，排除邀请/设备/Session 等凭据、provider storage key、源 IP 摘要和文件正文。
 - 归档 Owner 可在精确输入委员会名称后请求永久删除。请求原子冻结委员会并排队 provider、Agent 和 staging 清理；当前 Chair provider 不可恢复时拒绝启动，避免产生无法完成的删除。
 - 删除 worker 只在所有物理副本、唯一暂存副本和本次必需的 Agent 删除任务均完成后清除数据库。清除事务由 deletion job 的当前 claim token 限定；失败整体回滚并退避重试。完成后只保留不含委员会名称明文的 durable job 结果。
+- 系统管理员只能匿名化已禁用普通账号，并须选择另一个活动账号接收委员会、账号级模板与规则包。转移、委员会 revision/事件/审计、凭据与 Session 删除和个人信息清除同事务提交；历史 actor ID 保留且匿名化不可恢复。
 - PostgreSQL、TLS 浏览器和 Compose 实测尚未在当前环境执行，状态及取证要求见 [`MANUAL_ACCEPTANCE.md`](./MANUAL_ACCEPTANCE.md)。
 
 ## 文档索引

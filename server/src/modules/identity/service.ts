@@ -1,4 +1,4 @@
-import {randomUUID} from 'node:crypto';
+import {createHash, randomUUID} from 'node:crypto';
 import {AppError} from '../../http/errors.js';
 import {createTemporaryPassword, hashPassword, verifyPassword} from './password.js';
 import {LoginRateLimiter} from './rate-limit.js';
@@ -221,6 +221,7 @@ export class IdentityService {
       audit: this.audit(context)
     });
     if (!user) throw new AppError({code: 'NOT_FOUND', message: 'User not found.'});
+    if (user === 'not_active') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Only active accounts can be reset.'});
     return {user, temporaryPassword};
   }
 
@@ -231,6 +232,9 @@ export class IdentityService {
     if (result === 'system_admin') {
       throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The system administrator cannot be disabled.'});
     }
+    if (result === 'not_active') {
+      throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Only active accounts can be disabled.'});
+    }
   }
 
   async revokeUserSessions(auth: AuthenticatedSession, targetUserId: string,
@@ -238,6 +242,52 @@ export class IdentityService {
     this.requireAdministrator(auth);
     const found = await this.store.revokeUserSessions({actor: auth, targetUserId, now: this.now(), audit: this.audit(context)});
     if (!found) throw new AppError({code: 'NOT_FOUND', message: 'User not found.'});
+  }
+
+  async anonymizeUser(auth: AuthenticatedSession, targetUserId: string, input: {
+    replacementUserId: string;
+    confirmationEmail: string;
+  }, idempotencyKey: string, context: RequestIdentityContext) {
+    this.requireAdministrator(auth);
+    if (!idempotencyKey || idempotencyKey.length > 200) {
+      throw new AppError({code: 'BAD_REQUEST', message: 'Idempotency-Key is required.'});
+    }
+    const confirmationEmail = input.confirmationEmail.trim().toLowerCase();
+    const requestHash = createHash('sha256').update(JSON.stringify({
+      targetUserId,
+      replacementUserId: input.replacementUserId,
+      confirmationEmail
+    })).digest();
+    const result = await this.store.anonymizeUser({
+      actor: auth,
+      targetUserId,
+      replacementUserId: input.replacementUserId,
+      confirmationEmail,
+      idempotencyKey,
+      requestHash,
+      now: this.now(),
+      audit: this.audit(context)
+    });
+    if (result === 'not_found') throw new AppError({code: 'NOT_FOUND', message: 'User not found.'});
+    if (result === 'system_admin') {
+      throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The system administrator cannot be anonymized.'});
+    }
+    if (result === 'not_disabled') {
+      throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Disable the account before anonymizing it.'});
+    }
+    if (result === 'invalid_replacement') {
+      throw new AppError({code: 'VALIDATION_FAILED', message: 'Select an active replacement account.'});
+    }
+    if (result === 'confirmation_mismatch') {
+      throw new AppError({code: 'VALIDATION_FAILED', message: 'The confirmation email does not match.'});
+    }
+    if (result === 'deletion_in_progress') {
+      throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Wait for committee deletion to finish.'});
+    }
+    if (result === 'idempotency_conflict') {
+      throw new AppError({code: 'IDEMPOTENCY_CONFLICT', message: 'Idempotency key was already used for another request.'});
+    }
+    return result;
   }
 
   private requireAdministrator(auth: AuthenticatedSession): void {
