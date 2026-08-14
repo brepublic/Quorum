@@ -42,9 +42,18 @@ describe('server configuration', () => {
     expect(config.storageCriticalPercent).toBe(90);
     expect(config.maxUploadRequestBytes).toBe(21 * 1024 * 1024);
     expect(config.uploadTtlSeconds).toBe(24 * 60 * 60);
+    expect(config.retentionSessionDays).toBe(30);
+    expect(config.retentionIdentityIdempotencyDays).toBe(30);
+    expect(config.retentionSecretDays).toBe(7);
+    expect(config.retentionRegistrationDays).toBe(90);
     expect(() => loadConfig({DATABASE_URL: 'postgresql://localhost/quorum',
       QUORUM_MAX_FILE_BYTES: '20', QUORUM_MAX_UPLOAD_REQUEST_BYTES: '19'}))
       .toThrow('must be at least');
+  });
+
+  it('requires positive retention periods', () => {
+    expect(() => loadConfig({DATABASE_URL: 'postgresql://localhost/quorum', QUORUM_RETENTION_SESSION_DAYS: '0'}))
+      .toThrow('positive integer');
   });
 
   it('requires ordered storage capacity percentages', () => {

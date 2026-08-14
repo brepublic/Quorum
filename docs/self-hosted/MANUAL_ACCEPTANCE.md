@@ -437,3 +437,12 @@
 - 自动化覆盖情况：当前 WSL 的 migration、identity service、HTTP 和账号管理页面测试覆盖禁用前置、系统管理员保护、活动接收方、确认邮箱、Origin/CSRF/幂等键、短确认文案及不可恢复约束。真实 PostgreSQL 集成用例会创建委员会、关联模板和规则包并核对原子转移、历史 actor 保留、凭据/Session 删除、幂等重放和恢复拒绝；未配置 `TEST_DATABASE_ADMIN_URL` 时明确 skip。
 - 当前状态：`pnpm test:self-host` 322 项通过、66 项明确 skip；全仓 Vitest 477 项通过、66 项明确 skip；`pnpm build:self-host` 通过；集成入口 66 项因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip。真实 PostgreSQL、TLS 浏览器、并发故障注入和辅助功能验收延期。
 - 需要保存的证据：角色/请求矩阵、目标与接收账号脱敏 ID、转移前后资源计数、委员会 revision/事件/审计、幂等重放结果、事务故障回滚查询、目标用户/凭据/Session 查询，以及确认框焦点、键盘和窄屏截图。不得保存邮箱明文截图、密码、Session/CSRF token、幂等键、源 IP 摘要或议事正文。
+
+### SH-MAN-518 数据与日志保留策略
+
+- 前置条件：真实 PostgreSQL 16；两个同时运行的应用实例；可写入各期限两侧的测试时间戳；可查看 Prometheus 指标与 Docker `json-file` 日志。准备活动/撤销/过期 Session、两类幂等结果、有效/使用/撤销/过期邀请码和配对码、各状态注册申请，以及委员会事件、两类审计、Agent task、blob/deletion job 和墓碑。
+- 操作步骤：按默认 30/30/7/90 天分别放置期限前后记录，同时触发两个 worker；核对只有一个 advisory lock 获胜。分别在六类 DELETE 和运行证据 INSERT 处注入失败并重跑。修改四个正整数环境变量后重启并复核边界，测试 0/负数配置启动失败。抓取 `/metrics`，连续写日志超过 30 MiB 并检查 app、Caddy 与 PostgreSQL 轮换。搜索被保留及删除对象、日志与指标中的秘密字段。
+- 通过条件：只删除符合期限的 Session、幂等结果、终态一次性秘密和已决定注册申请；pending/有效记录不删。一个 sweep 全部提交或回滚，失败仅记录稳定码，下一轮可恢复；多实例不重复执行。委员会事件、业务/身份审计、Agent task、provider/delete job、deletion job 和墓碑保持不变。指标只含聚合次数/时间；每个容器最多保留 3 个 10 MiB JSON 日志文件，结构化日志仍脱敏。
+- 自动化覆盖情况：当前 WSL 的配置、migration、worker 和故障测试覆盖正整数期限、严格 DELETE 集合、advisory lock、事务回滚、追加式运行证据、固定指标和秘密不入日志。真实 PostgreSQL 用例会验证过期身份记录删除而委员会事件/审计保留；未配置 `TEST_DATABASE_ADMIN_URL` 时明确 skip。双实例竞争、Docker 实际日志轮换、时间边界和磁盘故障仍需实机执行。
+- 当前状态：`pnpm test:self-host` 326 项通过、67 项明确 skip；全仓 Vitest 481 项通过、67 项明确 skip；`pnpm build:self-host` 通过；集成入口 67 项因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip。真实 PostgreSQL/Compose 双实例与日志轮换延期。
+- 需要保存的证据：脱敏期限 fixture、每类删除前后计数、advisory lock/事务时间线、`operations_retention_runs`、Prometheus 抓取、Docker logging 配置与轮换文件清单、故障恢复日志和秘密搜索结果。不得保存 Session token、幂等 request/response body、邀请码、配对码、邮箱、源 IP 摘要或用户内容。

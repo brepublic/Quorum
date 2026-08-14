@@ -33,6 +33,7 @@ import {Stage7LocalChangeService} from './modules/storage-agent/local-change-ser
 import {Stage7ConflictService} from './modules/storage-agent/conflict-service.js';
 import {Stage8ArchiveService} from './modules/operations/archive-service.js';
 import {Stage8DeletionService, startCommitteeDeletionWorker} from './modules/operations/deletion-service.js';
+import {Stage8RetentionService, startRetentionWorker} from './modules/operations/retention-service.js';
 
 const {Pool} = pg;
 const logger = createLogger();
@@ -93,6 +94,12 @@ async function main(): Promise<void> {
     const storageConflicts = new Stage7ConflictService(pool, storageAgent);
     const archives = new Stage8ArchiveService(pool);
     const committeeDeletions = new Stage8DeletionService(pool);
+    const retention = new Stage8RetentionService(pool, {
+      sessionDays: config.retentionSessionDays,
+      identityIdempotencyDays: config.retentionIdentityIdempotencyDays,
+      secretDays: config.retentionSecretDays,
+      registrationDays: config.retentionRegistrationDays
+    }, logger);
     await stage3.ensureBuiltins();
     const bootstrapSecret = await identity.ensureBootstrapSecret();
     if (bootstrapSecret) {
@@ -114,7 +121,7 @@ async function main(): Promise<void> {
       storage: metadata,
       files,
       storageMigrations,
-      storageMetrics: storageMaintenance,
+      storageMetrics: {renderMetrics: async () => `${await storageMaintenance.renderMetrics()}${await retention.renderMetrics()}`},
       storageAgent,
       storageTasks,
       storageLocalChanges,
@@ -127,6 +134,7 @@ async function main(): Promise<void> {
     const stopStorageMaintenanceWorker = startStorageMaintenanceWorker(storageMaintenance, logger);
     const stopStorageHostMonitor = startStorageHostMonitor(storageAgent, logger);
     const stopCommitteeDeletionWorker = startCommitteeDeletionWorker(committeeDeletions, logger);
+    const stopRetentionWorker = startRetentionWorker(retention, logger);
 
     server.listen(config.port, config.host, () => {
       logger.info('server.started', {
@@ -146,6 +154,7 @@ async function main(): Promise<void> {
       stopStorageMaintenanceWorker();
       stopStorageHostMonitor();
       stopCommitteeDeletionWorker();
+      stopRetentionWorker();
       logger.info('server.shutdown.started', {signal});
 
       const forceTimer = setTimeout(() => {

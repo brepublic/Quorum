@@ -1,6 +1,6 @@
 # Quorum 自托管后端
 
-当前实现阶段 1–6：PostgreSQL 已保存文件元数据、不可变版本、审核状态、blob 完整性、活动存储绑定、删除墓碑、durable upload、物理删除任务、provider migration、fenced staging cleanup 和加密 S3 provider 配置；HTTP 内容流可持久暂存并原子提交到服务器卷或 S3 compatible provider，并提供授权下载、provider 切换、容量保护和维护指标。自托管文件与存储管理 UI 已接入；Local Agent 尚未实施。
+当前已实现自主托管阶段 1–7 与阶段 8.1–8.4：PostgreSQL、同源 API、SSE、完整文件 provider、Chair Agent、归档/永久删除、账号处置和保留 worker 均已接入。管理状态/恢复工具和阶段 9 Firebase 移除仍待完成。
 
 本机运行：
 
@@ -71,6 +71,8 @@ POST /api/v1/storage-agent/{pair,heartbeat}
 ```
 
 `/health/ready` 只有在数据库可访问、所有仓库 migration 已应用、存储目录可读写、容量可采样且可用字节不为零时返回 200。仍有可用空间的 warning/critical 状态返回 200 并报告状态，因为下载、议事和清理仍可用；critical 只拒绝新的上传字节和 provider copy。`/metrics` 以 Prometheus text 暴露容量与固定类别清理指标。
+
+retention worker 默认保留已撤销/到期 Session 30 天、身份幂等结果 30 天、终态一次性秘密 7 天、已决定注册申请 90 天；环境变量见 `docs/self-hosted/DATA_API_SPEC.md`。委员会事件、审计和 durable task 不按普通期限删除。Compose 的 `json-file` 日志固定为每个服务 10 MiB × 3 文件。
 
 首次启动会在服务器控制台显示一次 bootstrap secret。数据库只保存其哈希，管理员初始化成功后立即清除；不要把该控制台行复制到工单、测试证据或普通应用日志。
 

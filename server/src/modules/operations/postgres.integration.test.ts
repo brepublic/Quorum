@@ -5,12 +5,14 @@ import {resolve} from 'node:path';
 import pg from 'pg';
 import {afterEach, beforeEach, describe, expect, it} from 'vitest';
 import {runMigrations} from '../../db/migrations';
+import {createLogger} from '../../logger';
 import {PostgresIdentityStore} from '../identity/postgres';
 import {IdentityService} from '../identity/service';
 import type {AuthenticatedSession} from '../identity/store';
 import {Stage3Service} from '../stage3/service';
 import {Stage8ArchiveService} from './archive-service';
 import {Stage8DeletionService} from './deletion-service';
+import {Stage8RetentionService} from './retention-service';
 
 const {Client, Pool} = pg;
 const adminUrl = process.env.TEST_DATABASE_ADMIN_URL;
@@ -21,6 +23,7 @@ let identity: IdentityService;
 let stage3: Stage3Service;
 let archives: Stage8ArchiveService;
 let deletions: Stage8DeletionService;
+let retention: Stage8RetentionService;
 let administrator: AuthenticatedSession;
 
 function quoteIdentifier(value: string): string { return `"${value.replaceAll('"', '""')}"`; }
@@ -36,6 +39,9 @@ beforeEach(async () => {
   await runMigrations(pool, resolve('server/migrations'));
   identity = new IdentityService(new PostgresIdentityStore(pool));
   stage3 = new Stage3Service(pool); archives = new Stage8ArchiveService(pool); deletions = new Stage8DeletionService(pool);
+  retention = new Stage8RetentionService(pool, {sessionDays: 30, identityIdempotencyDays: 30,
+    secretDays: 7, registrationDays: 90}, createLogger(() => undefined),
+  () => new Date('2026-08-14T00:00:00.000Z'));
   await stage3.ensureBuiltins();
   const secret = await identity.ensureBootstrapSecret();
   const session = await identity.bootstrapAdmin({secret: secret as string, email: 'admin@example.com',
@@ -100,5 +106,22 @@ integration('PostgreSQL stage 8 integration', () => {
     expect((await pool?.query('SELECT 1 FROM committees WHERE id=$1', [committee.id]))?.rowCount).toBe(0);
     expect((await pool?.query('SELECT status FROM committee_deletion_jobs WHERE id=$1', [job.id]))?.rows[0])
       .toEqual({status: 'COMPLETED'});
+  });
+
+  it('deletes expired ephemeral identity records without deleting committee history', async () => {
+    const owner = await user('retentionowner');
+    const committee = await stage3.createCommittee(owner, {name: 'Retained history', visibility: 'PRIVATE'},
+      context('retention-committee'));
+    await pool?.query("UPDATE sessions SET revoked_at='2026-06-01T00:00:00Z' WHERE user_id=$1", [owner.user.id]);
+    await pool?.query(`INSERT INTO identity_idempotency_keys
+      (actor_user_id,idempotency_key,request_hash,response_body,created_at)
+      VALUES ($1,'old-key',decode(repeat('00',32),'hex'),'{}'::jsonb,'2026-06-01T00:00:00Z')`, [owner.user.id]);
+    const result = await retention.runOnce();
+    expect(result).toEqual(expect.objectContaining({sessions: expect.any(Number), identityIdempotencyKeys: 1}));
+    expect((await pool?.query('SELECT 1 FROM sessions WHERE user_id=$1', [owner.user.id]))?.rowCount).toBe(0);
+    expect((await pool?.query('SELECT 1 FROM committee_events WHERE committee_id=$1', [committee.id]))?.rowCount)
+      .toBeGreaterThan(0);
+    expect((await pool?.query('SELECT 1 FROM audit_log WHERE committee_id=$1', [committee.id]))?.rowCount)
+      .toBeGreaterThan(0);
   });
 });

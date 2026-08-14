@@ -8,8 +8,8 @@
 - 分支：`self-host`
 - 已确认基线：`ce4776e stage 8.3: transfer and anonymize accounts`
 - 当前阶段：8 归档、删除与运维正在实施。
-- 当前工作：阶段 8.3 已完成并单独提交；正在盘点阶段 8.4 的保留对象和不可删除历史边界。
-- 下一步：实施可配置、可观测的 Session、幂等结果、已完成任务和日志保留策略；委员会事件与审计默认保留。
+- 当前工作：阶段 8.4 保留 worker、配置、指标和日志轮换边界已实现，正在完成全量验证。
+- 下一步：单独提交 8.4；随后实现管理状态页、容量告警汇总和恢复工具/说明。
 
 ## 已完成与验证
 
@@ -300,3 +300,13 @@
 - `pnpm exec vitest run`：76 个文件通过、8 个文件明确 skip；477 项通过、66 项明确 skip。`pnpm build:self-host` 通过，仅有既有 Vite 大分块警告。
 - `pnpm test:self-host:integration`：8 个文件、66 项因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip。真实 PostgreSQL、TLS 浏览器、故障注入和辅助功能步骤记录在 `MANUAL_ACCEPTANCE.md` 的 SH-MAN-517，未伪造实机结果。
 - 阶段 8.3 已单独提交为 `ce4776e`；继续阶段 8.4 保留策略。
+
+### 2026-08-14：阶段 8.4 数据与日志保留策略
+
+- migration 26 增加追加式 `operations_retention_runs`、Session/身份幂等结果/已决定注册申请候选索引，schema compatibility 为 26。
+- 常驻 worker 默认每小时运行，以 PostgreSQL transaction advisory lock 协调多实例。一个 sweep 原子清理撤销/到期后 30 天的 Session、到期业务幂等结果、30 天身份幂等结果、到期/撤销邀请码、终态后 7 天 Agent 配对码和决定后 90 天注册申请；失败全部回滚并只记录稳定码。
+- 四个期限均由正整数环境变量配置，0 或负数使启动配置校验失败。`/metrics` 增加 retention 完成/失败次数和最后运行时间，不含用户标识或请求正文。
+- 委员会事件、业务/身份审计、Agent task、provider/delete job、deletion job 和墓碑不参与普通期限清理。Compose 已有的 app、Caddy、PostgreSQL `json-file` 日志固定为 10 MiB × 3 文件；结构化字段继续脱敏。
+- 定向配置、migration、worker、事务故障和 server build 测试通过。`pnpm test:self-host`：58 个文件通过、8 个文件明确 skip；326 项通过、67 项明确 skip。
+- `pnpm exec vitest run`：77 个文件通过、8 个文件明确 skip；481 项通过、67 项明确 skip。`pnpm build:self-host` 通过，仅有既有 Vite 大分块警告。
+- `pnpm test:self-host:integration`：8 个文件、67 项因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip。真实 PostgreSQL、双实例、Docker 日志轮换和时间边界步骤记录在 `MANUAL_ACCEPTANCE.md` 的 SH-MAN-518。

@@ -15,6 +15,10 @@ export interface ServerConfig {
   storageMasterKey: Buffer | null;
   storageMasterKeyVersion: number;
   shutdownGraceMs: number;
+  retentionSessionDays: number;
+  retentionIdentityIdempotencyDays: number;
+  retentionSecretDays: number;
+  retentionRegistrationDays: number;
   allowedOrigins: string[];
 }
 
@@ -102,6 +106,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
       ? integer(env.QUORUM_STORAGE_MASTER_KEY_VERSION, 1, 'QUORUM_STORAGE_MASTER_KEY_VERSION')
       : 1,
     shutdownGraceMs: integer(env.SHUTDOWN_GRACE_MS, 10_000, 'SHUTDOWN_GRACE_MS'),
+    retentionSessionDays: integer(env.QUORUM_RETENTION_SESSION_DAYS, 30, 'QUORUM_RETENTION_SESSION_DAYS'),
+    retentionIdentityIdempotencyDays: integer(env.QUORUM_RETENTION_IDEMPOTENCY_DAYS, 30,
+      'QUORUM_RETENTION_IDEMPOTENCY_DAYS'),
+    retentionSecretDays: integer(env.QUORUM_RETENTION_SECRET_DAYS, 7, 'QUORUM_RETENTION_SECRET_DAYS'),
+    retentionRegistrationDays: integer(env.QUORUM_RETENTION_REGISTRATION_DAYS, 90,
+      'QUORUM_RETENTION_REGISTRATION_DAYS'),
     allowedOrigins
   };
 }

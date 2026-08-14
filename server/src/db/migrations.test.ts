@@ -308,6 +308,16 @@ describe('migration discovery', () => {
     expect(account?.sql).toContain('UPDATE system_settings');
   });
 
+  it('adds append-only retention run evidence and candidate indexes', async () => {
+    const migrations = await loadMigrations(resolve('server/migrations'));
+    const retention = migrations.find(item => item.version === 26);
+    expect(retention?.name).toBe('retention_policy');
+    expect(retention?.sql).toContain('CREATE TABLE operations_retention_runs');
+    expect(retention?.sql).toContain('retention run records are append-only');
+    expect(retention?.sql).toContain('sessions_retention_candidates');
+    expect(retention?.sql).toContain('schema_compatibility = 26');
+  });
+
   it('rejects SQL files outside the versioned naming contract', async () => {
     const directory = await temporaryDirectory();
     await writeFile(join(directory, 'first.sql'), 'SELECT 1;\n');

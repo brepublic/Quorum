@@ -985,6 +985,12 @@ body: {replacementUserId, confirmationEmail}
 
 事务锁定目标、接收方及全部所属委员会，把委员会、国家模板、委员会模板和规则包所有权转给接收方。每个委员会同时递增 revision，追加 `committee.owner_transferred` Chair 事件和 `admin.committee_owner_transferred` 审计。随后删除目标账号的凭据与全部 Session，把邮箱置空、显示名替换为“匿名账号”并设为 `ANONYMIZED`；议事、席位、事件和审计中的历史用户外键不改写。数据库约束和触发器禁止恢复匿名化身份。相同 actor/幂等键与相同 body 返回原结果，不同 body 返回 `IDEMPOTENCY_CONFLICT`。
 
+### 11.19 阶段 8.4 保留策略
+
+常驻 retention worker 默认每小时运行一次，并使用 transaction advisory lock 保证多个应用实例中只有一个 sweep 生效。保留期通过正整数环境变量设置：`QUORUM_RETENTION_SESSION_DAYS=30`、`QUORUM_RETENTION_IDEMPOTENCY_DAYS=30`、`QUORUM_RETENTION_SECRET_DAYS=7`、`QUORUM_RETENTION_REGISTRATION_DAYS=90`。Session 从撤销或到期时间计算；身份命令幂等结果从创建时间计算；席位邀请码与 Agent 配对码只有失效、撤销或使用后才可清理；注册申请只有终态且已决定后才可清理。业务 `idempotency_keys` 继续以每条记录自己的 `expires_at` 为准。
+
+每个 sweep 在一个事务内删除合格记录并写 `operations_retention_runs` 聚合计数；任一 SQL 失败全部回滚，再以独立事务记录固定 `RETENTION_SWEEP_FAILED`。运行证据不可修改，指标只暴露完成/失败次数和最后运行时间。委员会事件、`audit_log`、`identity_audit_log`、Agent task、provider/delete job、deletion job 和文件墓碑不参与普通期限清理。Compose 对 app、Caddy 和 PostgreSQL 的 JSON 日志固定使用 10 MiB × 3 文件轮换，日志继续执行字段级秘密脱敏。
+
 ## 12. SSE 格式
 
 ```text
