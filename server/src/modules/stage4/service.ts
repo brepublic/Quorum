@@ -57,6 +57,11 @@ import {
   validateFlag,
   validateLocalizedNames
 } from './validation.js';
+import {
+  BUILTIN_COMMITTEE_TEMPLATE_DEFINITIONS,
+  builtinCommitteeDefinition,
+  type BuiltinCommitteeTemplateDefinition
+} from './builtin-committee-templates.js';
 
 interface CountryTemplateRow extends QueryResultRow {
   id: string; names: LocalizedNames; default_language: string; country_languages: string[];
@@ -96,6 +101,27 @@ function builtinCountryTemplate(): CountryTemplate {
       defaultLanguage: 'en', continent: null, sortOrder,
       flag: code === 'un' ? {type: 'EMOJI', value: '🇺🇳'} : {type: 'STANDARD', value: code}, revision: 1
     }))
+  };
+}
+
+function builtinCommitteeTemplate(definition: BuiltinCommitteeTemplateDefinition): CommitteeTemplate {
+  const veto = new Set(definition.vetoMembers ?? []);
+  return {
+    id: definition.key, key: definition.key, builtin: true, names: definition.names, defaultLanguage: 'zh-CN',
+    countryTemplateKey: 'builtin:default', revision: 1, createdAt: null, updatedAt: null,
+    members: definition.members.map((code, sortOrder) => {
+      const organization = code === 'organization:african-union'
+        ? {stableKey: 'african-union', names: {'zh-CN': '非洲联盟', en: 'African Union'}, flag: {type: 'EMOJI', value: '🌍'} as const}
+        : code === 'organization:european-union'
+          ? {stableKey: 'european-union', names: {'zh-CN': '欧洲联盟', en: 'European Union'}, flag: {type: 'STANDARD', value: 'eu'} as const}
+          : undefined;
+      const stableKey = organization?.stableKey ?? code;
+      const rank = veto.has(code) ? 'VETO' : 'STANDARD';
+      return {id: `${definition.key}:${stableKey}`, stableKey,
+        names: organization?.names ?? {'zh-CN': builtInCountryName(code, 'zh-CN'), en: builtInCountryName(code, 'en')},
+        defaultLanguage: 'zh-CN', rank, canVote: true, hasVeto: rank === 'VETO', mustVote: false, sortOrder,
+        flag: organization?.flag ?? {type: 'STANDARD', value: code}, revision: 1};
+    })
   };
 }
 
@@ -358,7 +384,7 @@ async function countryTemplate(client: PoolClient, row: CountryTemplateRow): Pro
 async function committeeTemplate(client: PoolClient, row: CommitteeTemplateRow): Promise<CommitteeTemplate> {
   const members = await client.query<TemplateMemberRow>(`SELECT * FROM committee_template_members
     WHERE committee_template_id=$1 ORDER BY sort_order,stable_key`, [row.id]);
-  return {id: row.id, names: row.names, defaultLanguage: row.default_language,
+  return {id: row.id, key: `custom:${row.id}`, builtin: false, names: row.names, defaultLanguage: row.default_language,
     countryTemplateKey: row.country_template_key, revision: row.revision,
     createdAt: row.created_at.toISOString(), updatedAt: row.updated_at.toISOString(),
     members: members.rows.map(item => ({id: item.id, stableKey: item.stable_key, names: item.names,
@@ -497,12 +523,16 @@ export class Stage4Service {
     requireBusinessIdentity(auth); const client = await this.pool.connect();
     try {
       const rows = await client.query<CommitteeTemplateRow>('SELECT * FROM committee_templates WHERE owner_user_id=$1 ORDER BY created_at,id', [auth.user.id]);
-      return Promise.all(rows.rows.map(row => committeeTemplate(client, row)));
+      return [...BUILTIN_COMMITTEE_TEMPLATE_DEFINITIONS.map(builtinCommitteeTemplate),
+        ...await Promise.all(rows.rows.map(row => committeeTemplate(client, row)))];
     } finally { client.release(); }
   }
 
   async getCommitteeTemplate(auth: AuthenticatedSession, id: string): Promise<CommitteeTemplate> {
-    requireBusinessIdentity(auth); const client = await this.pool.connect();
+    requireBusinessIdentity(auth);
+    const builtin = builtinCommitteeDefinition(id);
+    if (builtin) return builtinCommitteeTemplate(builtin);
+    const client = await this.pool.connect();
     try { return committeeTemplate(client, await committeeTemplateById(client, auth.user.id, id)); }
     finally { client.release(); }
   }
@@ -529,6 +559,9 @@ export class Stage4Service {
   async updateCommitteeTemplate(auth: AuthenticatedSession, id: string, input: Record<string, unknown>,
     context: Stage4Context): Promise<CommitteeTemplate> {
     requireBusinessIdentity(auth); assertExactBody(input, ['baseRevision', 'template']);
+    if (builtinCommitteeDefinition(id)) {
+      throw new AppError({code: 'FORBIDDEN', message: 'Built-in templates cannot be changed.'});
+    }
     const baseRevision = positiveRevision(input.baseRevision); const value = validateCommitteeTemplate(input.template);
     return transaction(this.pool, async client => {
       const current = await committeeTemplateById(client, auth.user.id, id, true);
@@ -576,6 +609,9 @@ export class Stage4Service {
 
   async deleteCommitteeTemplate(auth: AuthenticatedSession, id: string, context: Stage4Context): Promise<void> {
     requireBusinessIdentity(auth);
+    if (builtinCommitteeDefinition(id)) {
+      throw new AppError({code: 'FORBIDDEN', message: 'Built-in templates cannot be deleted.'});
+    }
     await transaction(this.pool, async client => {
       const current = await committeeTemplateById(client, auth.user.id, id, true);
       await client.query('DELETE FROM committee_template_members WHERE committee_template_id=$1', [id]);
@@ -586,7 +622,12 @@ export class Stage4Service {
     });
   }
 
-  async listCommittees(auth: AuthenticatedSession): Promise<CommitteeSummary[]> {
+  async listCommittees(auth?: AuthenticatedSession): Promise<CommitteeSummary[]> {
+    if (!auth) {
+      const result = await this.pool.query<Stage4CommitteeRow>(`SELECT * FROM committees
+        WHERE visibility='PUBLIC' AND status<>'DELETING' ORDER BY updated_at DESC,id`);
+      return result.rows.map(committeeSummary);
+    }
     requireBusinessIdentity(auth);
     const result = await this.pool.query<Stage4CommitteeRow>(`SELECT DISTINCT c.* FROM committees c
       LEFT JOIN committee_memberships m ON m.committee_id=c.id AND m.user_id=$1 AND m.status='ACTIVE'
@@ -769,8 +810,10 @@ export class Stage4Service {
   async createCommittee(auth: AuthenticatedSession, input: Record<string, unknown>, idempotencyKey: string,
     context: Stage4Context): Promise<CommitteeSummary> {
     requireBusinessIdentity(auth);
-    assertExactBody(input, ['name', 'visibility', 'operationMode', 'activeRulePackageVersionId', 'committeeTemplateId', 'countryTemplateKey']);
+    assertExactBody(input, ['name', 'topic', 'conference', 'visibility', 'operationMode', 'activeRulePackageVersionId', 'committeeTemplateId', 'countryTemplateKey']);
     const name = requiredText(input.name, 'Committee name');
+    const topic = optionalText(input.topic, 'Committee topic', 500);
+    const conference = optionalText(input.conference, 'Conference name', 200);
     if (!['PUBLIC', 'PRIVATE'].includes(input.visibility as string)) throw new AppError({code: 'VALIDATION_FAILED', message: 'Committee visibility is invalid.'});
     const operationMode = input.operationMode ?? 'DELEGATE_OPERATED';
     if (!['DELEGATE_OPERATED', 'CHAIR_OPERATED'].includes(operationMode as string)) {
@@ -794,17 +837,20 @@ export class Stage4Service {
           WHERE v.id=$1 AND v.status='PUBLISHED' AND p.scope IN ('BUILTIN','SYSTEM')`, [versionId]);
         if (!available.rowCount) throw new AppError({code: 'VALIDATION_FAILED', message: 'Rule package version is not published.'});
         let template: CommitteeTemplate | null = null;
-        if (committeeTemplateId) template = await committeeTemplate(client,
-          await committeeTemplateById(client, auth.user.id, committeeTemplateId, true));
+        if (committeeTemplateId) {
+          const builtin = builtinCommitteeDefinition(committeeTemplateId);
+          template = builtin ? builtinCommitteeTemplate(builtin) : await committeeTemplate(client,
+            await committeeTemplateById(client, auth.user.id, committeeTemplateId, true));
+        }
         const countryTemplateKey = template?.countryTemplateKey ?? requestedCountryKey as string;
         await resolveCountryTemplateReference(client, auth.user.id, countryTemplateKey);
         const id = randomUUID();
         const inserted = await client.query<Stage4CommitteeRow>(`INSERT INTO committees
-          (id,owner_user_id,name,visibility,operation_mode,active_rule_package_version_id,
+          (id,owner_user_id,name,topic,conference,visibility,operation_mode,active_rule_package_version_id,
            source_committee_template_id,country_template_key,temporary_template,next_event_sequence)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,2) RETURNING *`,
-        [id, auth.user.id, name, input.visibility, operationMode, versionId, committeeTemplateId,
-          countryTemplateKey, !template]);
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,2) RETURNING *`,
+        [id, auth.user.id, name, topic, conference, input.visibility, operationMode, versionId,
+          template?.builtin ? null : committeeTemplateId, countryTemplateKey, !template]);
         const row = inserted.rows[0] as Stage4CommitteeRow;
         await client.query(`INSERT INTO committee_rule_bindings
           (id,committee_id,package_version_id,effective_from_event_sequence,activated_by_user_id)

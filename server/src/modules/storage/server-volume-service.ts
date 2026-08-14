@@ -6,6 +6,7 @@ import type {AuthenticatedSession} from '../identity/store.js';
 import {
   appendEvent,
   audit,
+  idempotencyLockKey,
   idempotentTransaction,
   isChair,
   lockedCommittee,
@@ -166,7 +167,7 @@ export class Stage6ServerVolumeService {
     const hash = requestHash({});
     return transaction(this.pool, async client => {
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
-        [`${auth.user.id}\0${route}\0${key}`]);
+        [idempotencyLockKey(auth.user.id, route, key)]);
       const existing = await client.query<{request_hash: Buffer; response_body: FileEntry}>(`SELECT request_hash,response_body
         FROM idempotency_keys WHERE user_id=$1 AND route=$2 AND key=$3`, [auth.user.id, route, key]);
       if (existing.rows[0]) {

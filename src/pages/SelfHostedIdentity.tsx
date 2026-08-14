@@ -9,7 +9,7 @@ import {
   type SelfHostedIdentityClient,
   type SelfHostedUser
 } from '../services/self-hosted-identity';
-import SelfHostedWorkspace, {SelfHostedCommitteeWorkspace} from './SelfHostedWorkspace';
+import SelfHostedWorkspace, {SelfHostedCommitteeWorkspace, SelfHostedPublicCommittees} from './SelfHostedWorkspace';
 
 type Screen = 'loading' | 'bootstrap' | 'login' | 'change-password' | 'home';
 
@@ -40,16 +40,23 @@ function LoginForm({client, onAuthenticated}: IdentityFormProps) {
     }
   };
 
-  return <IdentityShell title={t('Login')} icon="sign in">
-    {error && <Message error content={error} />}
-    <Form onSubmit={submit} loading={working}>
-      <Form.Input label={t('Email')} type="email" autoComplete="username" required value={email}
-        onChange={event => setEmail(event.currentTarget.value)} />
-      <Form.Input label={t('Password')} type="password" autoComplete="current-password" required value={password}
-        onChange={event => setPassword(event.currentTarget.value)} />
-      <Button primary fluid disabled={working || !email || !password}>{t('Login')}</Button>
-    </Form>
-  </IdentityShell>;
+  return <Container text style={{padding: '3em 1em'}}>
+    <LanguageMenuItem position="right" />
+    <Header as="h3" attached="top">{t('Login')}</Header>
+    <Segment attached="bottom">
+      <Form onSubmit={submit} loading={working} error={!!error}>
+        <Form.Input label={t('Email')} type="email" autoComplete="username" required value={email}
+          onChange={event => setEmail(event.currentTarget.value)} />
+        <Form.Input label={t('Password')} type="password" autoComplete="current-password" required value={password}
+          onChange={event => setPassword(event.currentTarget.value)} />
+        {error && <Message error content={error} />}
+        <Button primary fluid disabled={working || !email || !password}>{t('Login')}</Button>
+        <Button as={Link} to="/committees" basic fluid style={{marginTop: '0.75em'}}>
+          <Icon name="users" />{t('Browse public committees')}
+        </Button>
+      </Form>
+    </Segment>
+  </Container>;
 }
 
 function BootstrapForm({client, onAuthenticated}: IdentityFormProps) {
@@ -95,19 +102,18 @@ function BootstrapForm({client, onAuthenticated}: IdentityFormProps) {
 }
 
 function ChangePasswordForm({client, onAuthenticated}: IdentityFormProps) {
-  const [currentPassword, setCurrentPassword] = React.useState('');
   const [newPassword, setNewPassword] = React.useState('');
   const [confirmation, setConfirmation] = React.useState('');
   const [error, setError] = React.useState<string>();
   const [working, setWorking] = React.useState(false);
-  const valid = currentPassword && newPassword.length >= 12 && newPassword === confirmation;
+  const valid = newPassword.length >= 12 && newPassword === confirmation;
 
   const submit = async () => {
     if (!valid) return;
     setWorking(true);
     setError(undefined);
     try {
-      onAuthenticated(await client.changePassword(currentPassword, newPassword));
+      onAuthenticated(await client.changePassword(newPassword));
     } catch (caught) {
       setError(message(caught));
     } finally {
@@ -118,8 +124,6 @@ function ChangePasswordForm({client, onAuthenticated}: IdentityFormProps) {
   return <IdentityShell title={t('Change temporary password')} icon="key">
     {error && <Message error content={error} />}
     <Form onSubmit={submit} loading={working}>
-      <Form.Input label={t('Temporary password')} type="password" autoComplete="current-password" required
-        value={currentPassword} onChange={event => setCurrentPassword(event.currentTarget.value)} />
       <Form.Input label={t('New password')} type="password" minLength={12} autoComplete="new-password" required
         value={newPassword} onChange={event => setNewPassword(event.currentTarget.value)} />
       <Form.Input label={t('Confirm password')} type="password" minLength={12} autoComplete="new-password" required
@@ -302,6 +306,7 @@ export default function SelfHostedIdentity({client = selfHostedIdentityClient}: 
   if (error) return <IdentityShell title={t('Authentication error')} icon="warning sign"><Message error content={error} /></IdentityShell>;
   if (screen === 'loading') return <Loading />;
   if (screen === 'bootstrap') return <BootstrapForm client={client} onAuthenticated={authenticated} />;
+  if (screen === 'login' && location.pathname === '/committees') return <SelfHostedPublicCommittees />;
   if (screen === 'login' && /^\/committees\/[^/]+/.test(location.pathname)) return <>
     <Menu><Menu.Item header>Quorum</Menu.Item><Menu.Menu position="right"><Menu.Item as={Link} to="/login">{t('Login')}</Menu.Item></Menu.Menu></Menu>
     <SelfHostedCommitteeWorkspace />

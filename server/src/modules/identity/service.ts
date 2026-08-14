@@ -162,12 +162,14 @@ export class IdentityService {
     return {user, sessionToken: session.token, csrfToken: createOpaqueToken()};
   }
 
-  async changePassword(auth: AuthenticatedSession, input: {currentPassword: string; newPassword: string},
+  async changePassword(auth: AuthenticatedSession, input: {currentPassword?: string; newPassword: string},
     context: RequestIdentityContext): Promise<SessionResult> {
     requirePassword(input.newPassword);
-    const login = await this.store.findLogin(auth.user.email);
-    if (!login || !(await verifyPassword(login.passwordHash, input.currentPassword))) {
-      throw new AppError({code: 'FORBIDDEN', message: 'Current password is incorrect.'});
+    if (!auth.user.mustChangePassword) {
+      const login = await this.store.findLogin(auth.user.email);
+      if (!input.currentPassword || !login || !(await verifyPassword(login.passwordHash, input.currentPassword))) {
+        throw new AppError({code: 'FORBIDDEN', message: 'Current password is incorrect.'});
+      }
     }
     const passwordHash = await hashPassword(input.newPassword);
     const session = this.newSession(context);

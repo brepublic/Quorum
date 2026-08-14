@@ -144,6 +144,20 @@ describe('identity HTTP security boundary', () => {
     expect(identity.createUser).not.toHaveBeenCalled();
   });
 
+  it('changes a temporary password from the authenticated Session without resending it', async () => {
+    const changePassword = vi.fn(async () => ({user, sessionToken: 'changed-session', csrfToken: 'changed-csrf'}));
+    const identity = fakeIdentity({changePassword});
+    const response = await request(identity, {
+      path: '/api/v1/auth/change-password', method: 'POST',
+      headers: {origin: 'https://quorum.example.com', cookie: '__Host-quorum_session=session; __Host-quorum_csrf=expected',
+        'x-csrf-token': 'expected'}, body: {newPassword: 'new-password-123'}
+    });
+
+    expect(response.status).toBe(200);
+    expect(changePassword).toHaveBeenCalledWith(expect.objectContaining({user}),
+      {currentPassword: undefined, newPassword: 'new-password-123'}, expect.anything());
+  });
+
   it('accepts a matching CSRF token and rejects a non-allowed Origin', async () => {
     const identity = fakeIdentity();
     const cookie = '__Host-quorum_session=session; __Host-quorum_csrf=expected';

@@ -33,10 +33,10 @@ flowchart LR
 
 `src/index.tsx` 初始化浏览器 history、语言、主题、Semantic UI、Sentry 与 Google Analytics，再挂载 `src/App.tsx`。`App` 无运行模式分支，始终进入 `SelfHostedIdentity`。浏览器身份使用 Secure、HttpOnly、SameSite=Lax Session Cookie；客户端只通过 `src/services/self-hosted-identity.ts` 和 `self-hosted-api.ts` 请求同源 `/api/v1`。
 
-`SelfHostedIdentity` 覆盖首次管理员初始化、登录、临时密码强制修改、退出和系统管理员账号管理。`SelfHostedWorkspace` 提供：
+`SelfHostedIdentity` 覆盖首次管理员初始化、登录、基于已认证 Session 的临时密码强制修改、匿名公开委员会入口、退出和系统管理员账号管理。`SelfHostedWorkspace` 提供：
 
 - `/committees`：公开/私有委员会列表与创建；
-- `/countries`、`/templates`：账号级国家模板和委员会模板；
+- `/countries`、`/templates`：沿用迁移前的表格编辑交互管理账号级国家模板和委员会模板；国家模板先按名称创建空模板再编辑国家，内置国家模板可查看和克隆，委员会创建器提供内置委员会模板；
 - `/committees/:id`：委员会概览、成员/席位、规则、点名、问题、文本、计时器、发言名单、动议、表决、意向性投票、决议、文件、归档与删除；
 - `/storage`：仅系统管理员使用的 S3 配置；
 - `/operations`：仅系统管理员使用的容量、队列与 retention 聚合状态；

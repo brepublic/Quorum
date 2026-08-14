@@ -23,4 +23,17 @@ describe('self-hosted identity client', () => {
     expect(selfHostedIdentityClient).not.toHaveProperty('register');
     expect(selfHostedIdentityClient).not.toHaveProperty('createRegistrationRequest');
   });
+
+  it('does not resend the temporary password when setting the permanent password', async () => {
+    vi.spyOn(document, 'cookie', 'get').mockReturnValue('__Host-quorum_csrf=test-csrf');
+    const fetchMock = vi.fn(async () => ({ok: true, status: 200,
+      json: async () => ({data: {user: {id: 'user'}}, meta: {requestId: 'request'}})}));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await selfHostedIdentityClient.changePassword('new-password-123');
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/auth/change-password', expect.objectContaining({
+      body: JSON.stringify({newPassword: 'new-password-123'})
+    }));
+  });
 });

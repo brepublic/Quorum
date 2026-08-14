@@ -40,7 +40,7 @@ export interface SelfHostedIdentityClient {
   me(): Promise<SelfHostedUser>;
   login(email: string, password: string): Promise<SelfHostedUser>;
   logout(): Promise<void>;
-  changePassword(currentPassword: string, newPassword: string): Promise<SelfHostedUser>;
+  changePassword(newPassword: string, currentPassword?: string): Promise<SelfHostedUser>;
   elevate(password: string): Promise<SelfHostedUser>;
   listUsers(): Promise<SelfHostedUser[]>;
   createUser(email: string, displayName: string): Promise<{user: SelfHostedUser; temporaryPassword: string}>;
@@ -96,9 +96,9 @@ export const selfHostedIdentityClient: SelfHostedIdentityClient = {
   async logout() {
     await request('/api/v1/auth/logout', {method: 'POST', csrf: true});
   },
-  async changePassword(currentPassword, newPassword) {
+  async changePassword(newPassword, currentPassword) {
     return (await request<{user: SelfHostedUser}>('/api/v1/auth/change-password', {
-      method: 'POST', csrf: true, body: {currentPassword, newPassword}
+      method: 'POST', csrf: true, body: {...(currentPassword ? {currentPassword} : {}), newPassword}
     })).user;
   },
   async elevate(password) {

@@ -95,6 +95,28 @@ describe('identity service policy', () => {
     }));
   });
 
+  it('uses the authenticated temporary-password Session to set the permanent password', async () => {
+    const fake = store();
+    const service = new IdentityService(fake, {now: () => now});
+    const result = await service.changePassword(auth(user), {newPassword: 'new-password-123'}, {requestId: 'request'});
+
+    expect(fake.findLogin).not.toHaveBeenCalled();
+    expect(fake.changePassword).toHaveBeenCalledWith(expect.objectContaining({
+      actor: auth(user), replacementSession: expect.objectContaining({tokenHash: hashOpaqueToken(result.sessionToken)})
+    }));
+  });
+
+  it('still verifies the current password for a voluntary password change', async () => {
+    const permanentUser = {...user, mustChangePassword: false};
+    const fake = store({findLogin: vi.fn(async () => loginRecord({...permanentUser, passwordHash}))});
+    const service = new IdentityService(fake, {now: () => now});
+
+    await service.changePassword(auth(permanentUser), {
+      currentPassword: 'valid-password-123', newPassword: 'new-password-123'
+    }, {requestId: 'request'});
+    expect(fake.findLogin).toHaveBeenCalledWith(permanentUser.email);
+  });
+
   it('enforces account lock and returns a stable rate-limit error', async () => {
     const fake = store({findLogin: vi.fn(async () => loginRecord({lockedUntil: new Date(now.getTime() + 60_000)}))});
     const service = new IdentityService(fake, {now: () => now});

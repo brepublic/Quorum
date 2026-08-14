@@ -191,7 +191,13 @@ function requestContentLength(request: IncomingMessage): number | undefined {
 
 async function optionalAuthentication(request: IncomingMessage, identity: IdentityService): Promise<AuthenticatedSession | undefined> {
   const token = identityCookies(request).get(SESSION_COOKIE_NAME);
-  return token ? identity.authenticate(token) : undefined;
+  if (!token) return undefined;
+  try {
+    return await identity.authenticate(token);
+  } catch (error) {
+    if (error instanceof AppError && error.code === 'AUTHENTICATION_REQUIRED') return undefined;
+    throw error;
+  }
 }
 
 function storageAgentCredential(request: IncomingMessage): string {
@@ -355,7 +361,8 @@ async function handleStage4Request(options: {
   const write = async () => { requireOrigin(request, allowedOrigins); return authenticatedWrite(request, identity); };
 
   if (method === 'GET' && pathname === '/api/v1/committees') {
-    sendJson(response, 200, success({committees: await stage4.listCommittees(await read())}, requestId)); return true;
+    sendJson(response, 200, success({committees: await stage4.listCommittees(
+      await optionalAuthentication(request, identity))}, requestId)); return true;
   }
   if (method === 'POST' && pathname === '/api/v1/committees') {
     const auth = await write(); const body = await readJson(request);
@@ -405,9 +412,9 @@ async function handleStage4Request(options: {
       sendJson(response, 201, success(await stage4.createCommitteeTemplate(auth, body, idempotencyKey(request), context), requestId)); return true;
     }
   }
-  const committeeTemplate = /^\/api\/v1\/committee-templates\/([0-9a-f-]{36})(?:\/(clone))?$/.exec(pathname);
+  const committeeTemplate = /^\/api\/v1\/committee-templates\/([^/]+?)(?:\/(clone))?$/.exec(pathname);
   if (committeeTemplate) {
-    const id = committeeTemplate[1] as string;
+    const id = decodeURIComponent(committeeTemplate[1] as string);
     if (method === 'GET' && !committeeTemplate[2]) {
       sendJson(response, 200, success(await stage4.getCommitteeTemplate(await read(), id), requestId)); return true;
     }
@@ -1038,7 +1045,7 @@ async function handleIdentityRequest(options: {
     const auth = await authenticatedWrite(request, identity);
     const body = await readJson(request);
     const session = await identity.changePassword(auth, {
-      currentPassword: stringField(body, 'currentPassword') as string,
+      currentPassword: typeof body.currentPassword === 'string' ? body.currentPassword : undefined,
       newPassword: stringField(body, 'newPassword') as string
     }, context);
     setSessionCookies(response, session);

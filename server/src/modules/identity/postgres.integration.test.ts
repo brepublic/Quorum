@@ -118,7 +118,6 @@ integration('PostgreSQL identity integration', () => {
     await expect(identity.listUsers(await identity.authenticate(firstLogin.sessionToken))).rejects.toMatchObject({code: 'FORBIDDEN'});
 
     const changed = await identity.changePassword(await identity.authenticate(firstLogin.sessionToken), {
-      currentPassword: created.temporaryPassword,
       newPassword: 'new-user-password-123'
     }, context);
     await expect(identity.authenticate(firstLogin.sessionToken)).rejects.toMatchObject({code: 'AUTHENTICATION_REQUIRED'});

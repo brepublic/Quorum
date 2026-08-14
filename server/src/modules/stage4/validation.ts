@@ -121,7 +121,7 @@ export function validateCountryTemplate(value: unknown): CountryTemplateInput {
   if (countryLanguages.length !== raw.countryLanguages.length
     || countryLanguages.some(language => !LANGUAGE.test(language))
     || !countryLanguages.includes(localized.defaultLanguage)) invalid('Country languages are invalid.');
-  if (!Array.isArray(raw.countries) || raw.countries.length < 1 || raw.countries.length > 512) {
+  if (!Array.isArray(raw.countries) || raw.countries.length > 512) {
     invalid('Countries are invalid.');
   }
   const stableKeys = new Set<string>();

@@ -27,7 +27,7 @@ class TestResponse extends EventEmitter {
 
 function identity(): IdentityService {
   return {authenticate: vi.fn(async token => {
-    if (!token) throw new AppError({code: 'AUTHENTICATION_REQUIRED', message: 'Authentication is required.'});
+    if (!token || token === 'stale') throw new AppError({code: 'AUTHENTICATION_REQUIRED', message: 'Authentication is required.'});
     return authenticated;
   })} as unknown as IdentityService;
 }
@@ -58,6 +58,23 @@ async function request(stage4: Stage4Service, options: {path: string; method?: s
 }
 
 describe('stage 4 template and seat HTTP boundary', () => {
+  it('lists only public committees without requiring a Session', async () => {
+    const listCommittees = vi.fn(async () => []); const stage4 = domain({listCommittees});
+    const response = await request(stage4, {path: '/api/v1/committees'});
+
+    expect(response.status).toBe(200);
+    expect(listCommittees).toHaveBeenCalledWith(undefined);
+  });
+
+  it('treats a stale optional Session as anonymous on the public committee list', async () => {
+    const listCommittees = vi.fn(async () => []); const stage4 = domain({listCommittees});
+    const response = await request(stage4, {path: '/api/v1/committees',
+      headers: {cookie: '__Host-quorum_session=stale'}});
+
+    expect(response.status).toBe(200);
+    expect(listCommittees).toHaveBeenCalledWith(undefined);
+  });
+
   it('requires Session for account templates and never accepts an account owner from the body', async () => {
     const stage4 = domain();
     expect((await request(stage4, {path: '/api/v1/country-templates'})).status).toBe(401);
@@ -74,6 +91,37 @@ describe('stage 4 template and seat HTTP boundary', () => {
       headers: {...protectedHeaders, 'idempotency-key': ''}, body: {name: 'One', visibility: 'PRIVATE', countryTemplateKey: 'builtin:default'}});
     expect(response.status).toBe(400);
     expect(stage4.createCommittee).not.toHaveBeenCalled();
+  });
+
+  it('passes the restored onboarding fields to committee creation', async () => {
+    const createCommittee = vi.fn(async () => ({id: 'committee'})); const stage4 = domain({createCommittee});
+    const body = {name: 'Security Council', topic: 'Peace and security', conference: 'Annual conference',
+      visibility: 'PRIVATE', committeeTemplateId: 'builtin:un-security-council'};
+    const response = await request(stage4, {path: '/api/v1/committees', method: 'POST', headers: protectedHeaders, body});
+
+    expect(response.status).toBe(201);
+    expect(createCommittee).toHaveBeenCalledWith(authenticated, body, 'request-one',
+      expect.objectContaining({requestId: expect.any(String)}));
+  });
+
+  it('decodes stable built-in template keys for viewing and cloning', async () => {
+    const getCommitteeTemplate = vi.fn(async () => ({id: 'builtin:un-security-council'}));
+    const cloneCommitteeTemplate = vi.fn(async () => ({id: 'copy'}));
+    const cloneCountryTemplate = vi.fn(async () => ({id: 'country-copy'}));
+    const stage4 = domain({getCommitteeTemplate, cloneCommitteeTemplate, cloneCountryTemplate});
+
+    expect((await request(stage4, {path: '/api/v1/committee-templates/builtin%3Aun-security-council',
+      headers: {cookie: '__Host-quorum_session=session'}})).status).toBe(200);
+    expect(getCommitteeTemplate).toHaveBeenCalledWith(authenticated, 'builtin:un-security-council');
+    expect((await request(stage4, {path: '/api/v1/committee-templates/builtin%3Aun-security-council/clone', method: 'POST',
+      headers: protectedHeaders, body: {}})).status).toBe(201);
+    expect(cloneCommitteeTemplate).toHaveBeenCalledWith(authenticated, 'builtin:un-security-council', {}, 'request-one',
+      expect.objectContaining({requestId: expect.any(String)}));
+    const countryNames = {'zh-CN': '默认国家（副本）'};
+    expect((await request(stage4, {path: '/api/v1/country-templates/builtin%3Adefault/clone', method: 'POST',
+      headers: protectedHeaders, body: {names: countryNames, defaultLanguage: 'zh-CN'}})).status).toBe(201);
+    expect(cloneCountryTemplate).toHaveBeenCalledWith(authenticated, 'builtin:default',
+      {names: countryNames, defaultLanguage: 'zh-CN'}, 'request-one', expect.objectContaining({requestId: expect.any(String)}));
   });
 
   it('routes seat updates through the explicit revision command', async () => {

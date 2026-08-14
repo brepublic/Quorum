@@ -16,6 +16,7 @@ import type {
   CommitteeWorkspaceSnapshot,
   CountryTemplate,
   CountryTemplateInput,
+  LocalizedNames,
   MeetingSession,
   PendingHostCommit,
   RollCall,
@@ -215,7 +216,7 @@ export const selfHostedApi = {
   async listCommittees(): Promise<CommitteeSummary[]> {
     return (await request<{committees: CommitteeSummary[]}>('/api/v1/committees')).committees;
   },
-  createCommittee(input: {name: string; visibility: 'PUBLIC' | 'PRIVATE'; committeeTemplateId?: string; countryTemplateKey?: string}) {
+  createCommittee(input: {name: string; topic?: string; conference?: string; visibility: 'PUBLIC' | 'PRIVATE'; committeeTemplateId?: string; countryTemplateKey?: string}) {
     return request<CommitteeSummary>('/api/v1/committees', {method: 'POST', body: input, idempotencyKey: key()});
   },
   snapshot(id: string) { return request<CommitteeWorkspaceSnapshot>(`/api/v1/committees/${id}/snapshot`); },
@@ -338,8 +339,9 @@ export const selfHostedApi = {
   createCountryTemplate(input: CountryTemplateInput) {
     return request<CountryTemplate>('/api/v1/country-templates', {method: 'POST', body: input as unknown as Record<string, unknown>, idempotencyKey: key()});
   },
-  cloneCountryTemplate(id: string) {
-    return request<CountryTemplate>(`/api/v1/country-templates/${encodeURIComponent(id)}/clone`, {method: 'POST', body: {}, idempotencyKey: key()});
+  cloneCountryTemplate(id: string, names?: LocalizedNames, defaultLanguage?: string) {
+    return request<CountryTemplate>(`/api/v1/country-templates/${encodeURIComponent(id)}/clone`, {method: 'POST',
+      body: names && defaultLanguage ? {names, defaultLanguage} : {}, idempotencyKey: key()});
   },
   updateCountryTemplate(id: string, baseRevision: number, template: CountryTemplateInput) {
     return request<CountryTemplate>(`/api/v1/country-templates/${id}`, {method: 'PUT',
@@ -353,14 +355,14 @@ export const selfHostedApi = {
     return request<CommitteeTemplate>('/api/v1/committee-templates', {method: 'POST', body: input as unknown as Record<string, unknown>, idempotencyKey: key()});
   },
   cloneCommitteeTemplate(id: string) {
-    return request<CommitteeTemplate>(`/api/v1/committee-templates/${id}/clone`, {method: 'POST', body: {}, idempotencyKey: key()});
+    return request<CommitteeTemplate>(`/api/v1/committee-templates/${encodeURIComponent(id)}/clone`, {method: 'POST', body: {}, idempotencyKey: key()});
   },
   updateCommitteeTemplate(id: string, baseRevision: number, template: CommitteeTemplateInput) {
-    return request<CommitteeTemplate>(`/api/v1/committee-templates/${id}`, {method: 'PUT',
+    return request<CommitteeTemplate>(`/api/v1/committee-templates/${encodeURIComponent(id)}`, {method: 'PUT',
       body: {baseRevision, template: template as unknown as Record<string, unknown>}});
   },
   deleteCommitteeTemplate(id: string) {
-    return request<{deleted: true}>(`/api/v1/committee-templates/${id}`, {method: 'DELETE'});
+    return request<{deleted: true}>(`/api/v1/committee-templates/${encodeURIComponent(id)}`, {method: 'DELETE'});
   },
   createSeat(committeeId: string, input: Record<string, unknown>) {
     return request<Stage4CommitteeSeat>(`/api/v1/committees/${committeeId}/seats`, {method: 'POST', body: input, idempotencyKey: key()});

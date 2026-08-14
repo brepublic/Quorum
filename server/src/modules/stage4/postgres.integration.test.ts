@@ -53,7 +53,7 @@ async function user(name: string): Promise<AuthenticatedSession> {
   const created = await identity.createUser(administrator, {email: `${name}@example.com`, displayName: name}, context(`create-${name}`));
   const login = await identity.login({email: created.user.email, password: created.temporaryPassword}, context(`login-${name}`));
   const changed = await identity.changePassword(await identity.authenticate(login.sessionToken), {
-    currentPassword: created.temporaryPassword, newPassword: `${name}-permanent-password-123`
+    newPassword: `${name}-permanent-password-123`
   }, context(`password-${name}`));
   return identity.authenticate(changed.sessionToken);
 }
@@ -67,6 +67,35 @@ const committeeTemplate = (countryTemplateKey: string) => ({names: {en: 'Council
     canVote: true, hasVeto: true, mustVote: false, sortOrder: 1, flag: {type: 'STANDARD' as const, value: 'cn'}}]});
 
 integration('PostgreSQL stage 4 templates and seat snapshots', () => {
+  it('clones the built-in countries and creates committees from the restored built-in templates', async () => {
+    const owner = await user('builtinowner');
+    const clonedCountries = await stage4.cloneCountryTemplate(owner, 'builtin:default', {}, 'clone-default-countries',
+      context('clone-default-countries'));
+    expect(clonedCountries).toEqual(expect.objectContaining({builtin: false, revision: 1}));
+    expect(clonedCountries.countries).toHaveLength(250);
+
+    const emptyCountries = await stage4.createCountryTemplate(owner, {names: {'zh-CN': '空白国家模板'},
+      defaultLanguage: 'zh-CN', countryLanguages: ['zh-CN'], countries: []}, 'empty-countries', context('empty-countries'));
+    expect(emptyCountries.countries).toEqual([]);
+
+    const builtins = (await stage4.listCommitteeTemplates(owner)).filter(template => template.builtin);
+    expect(builtins.map(template => template.key)).toEqual([
+      'builtin:african-union', 'builtin:asean', 'builtin:brics', 'builtin:european-union',
+      'builtin:g20', 'builtin:nato', 'builtin:un-security-council'
+    ]);
+    const securityCouncil = builtins.find(template => template.key === 'builtin:un-security-council')!;
+    expect(securityCouncil.members.filter(member => member.hasVeto)).toHaveLength(5);
+
+    const committee = await stage4.createCommittee(owner, {name: '联合国安全理事会', topic: '和平与安全',
+      conference: '测试会场', visibility: 'PRIVATE', committeeTemplateId: securityCouncil.id},
+    'builtin-committee', context('builtin-committee'));
+    expect((await pool?.query('SELECT topic,conference,active_rule_package_version_id,source_committee_template_id,temporary_template FROM committees WHERE id=$1',
+      [committee.id]))?.rows).toEqual([expect.objectContaining({topic: '和平与安全', conference: '测试会场',
+      active_rule_package_version_id: expect.any(String), source_committee_template_id: null, temporary_template: false})]);
+    expect((await pool?.query('SELECT count(*)::int AS count FROM committee_seats WHERE committee_id=$1', [committee.id]))?.rows)
+      .toEqual([{count: securityCouncil.members.length}]);
+  });
+
   it('isolates account templates, protects references, snapshots seats, and enforces revisions and Chair capability', async () => {
     const owner = await user('templateowner'); const other = await user('templateother'); const chair = await user('templatechair');
     const countries = await stage4.createCountryTemplate(owner, countryTemplate, 'countries-one', context('countries'));

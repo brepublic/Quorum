@@ -24,6 +24,11 @@ describe('stage 4 template validation', () => {
         flag: {type: 'STANDARD', value: 'cn'}}]})).toThrow('declared country languages');
   });
 
+  it('allows an empty country template so countries can be added after creation', () => {
+    expect(validateCountryTemplate({names: {en: 'Countries'}, defaultLanguage: 'en', countryLanguages: ['en'],
+      countries: []}).countries).toEqual([]);
+  });
+
   it('keeps voting eligibility, veto, and must-vote independent', () => {
     const template = validateCommitteeTemplate({names: {en: 'Security Council'}, defaultLanguage: 'en',
       countryTemplateKey: 'builtin:default', members: [{stableKey: 'china', names: {en: 'China'}, defaultLanguage: 'en',

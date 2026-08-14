@@ -3,7 +3,7 @@ import type {Pool, PoolClient, QueryResultRow} from 'pg';
 import type {FileEntry} from '@quorum/contracts';
 import {AppError} from '../../http/errors.js';
 import type {AuthenticatedSession} from '../identity/store.js';
-import {appendEvent, audit, idempotentTransaction, isChair, lockedCommittee, requestHash,
+import {appendEvent, audit, idempotencyLockKey, idempotentTransaction, isChair, lockedCommittee, requestHash,
   requireBusinessIdentity, requireProceedingsActive, transaction, type Stage4Context} from '../stage4/database.js';
 import {assertExactBody} from '../stage4/validation.js';
 import type {Stage6S3ConfigService} from './s3-config-service.js';
@@ -143,7 +143,7 @@ export class Stage6S3CommitService {
     const route = `/api/v1/file-uploads/${uploadId}/commit`;
     return transaction(this.pool, async client => {
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
-        [`${auth.user.id}\0${route}\0${key}`]);
+        [idempotencyLockKey(auth.user.id, route, key)]);
       const existing = await client.query<{request_hash: Buffer; response_body: FileEntry}>(`SELECT request_hash,response_body
         FROM idempotency_keys WHERE user_id=$1 AND route=$2 AND key=$3`, [auth.user.id, route, key]);
       if (existing.rows[0]) {

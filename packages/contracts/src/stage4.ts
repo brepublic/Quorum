@@ -52,13 +52,15 @@ export interface CommitteeTemplateMember {
 
 export interface CommitteeTemplate {
   id: string;
+  key: string;
+  builtin: boolean;
   names: LocalizedNames;
   defaultLanguage: string;
   countryTemplateKey: string;
   members: CommitteeTemplateMember[];
   revision: number;
-  createdAt: string;
-  updatedAt: string;
+  createdAt: string | null;
+  updatedAt: string | null;
 }
 
 export interface CountryTemplateInput {
@@ -109,6 +111,8 @@ export interface CloneAccountTemplateRequest {
 
 export interface CreateCommitteeFromTemplateRequest {
   name: string;
+  topic?: string;
+  conference?: string;
   visibility: CommitteeVisibility;
   operationMode?: CommitteeOperationMode;
   activeRulePackageVersionId?: string;

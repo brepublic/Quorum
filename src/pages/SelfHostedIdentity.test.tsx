@@ -81,7 +81,17 @@ describe('self-hosted identity screens', () => {
     const text = await renderClient(identityClient);
 
     expect(text).toContain('Change temporary password');
+    expect(text).not.toContain('Temporary password');
     expect(text).not.toContain('Account administration');
+  });
+
+  it('offers anonymous access from the login screen', async () => {
+    const identityClient = client({me: vi.fn(async () => { throw new (await import('../services/self-hosted-identity')).IdentityApiError(
+      401, 'AUTHENTICATION_REQUIRED', 'Authentication is required.'); })});
+    const text = await renderClient(identityClient);
+
+    expect(text).toContain('Browse public committees');
+    expect(container?.querySelector('a[href="/committees"]')).toBeTruthy();
   });
 
   it('shows account administration only to the system administrator', async () => {

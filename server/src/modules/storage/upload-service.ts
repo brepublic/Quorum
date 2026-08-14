@@ -6,6 +6,7 @@ import type {AuthenticatedSession} from '../identity/store.js';
 import {
   appendEvent,
   audit,
+  idempotencyLockKey,
   idempotentTransaction,
   isChair,
   lockedCommittee,
@@ -271,7 +272,7 @@ export class Stage6UploadService {
     const hash = requestHash({uploadId});
     return transaction(this.pool, async client => {
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
-        [`${auth.user.id}\0${route}\0${key}`]);
+        [idempotencyLockKey(auth.user.id, route, key)]);
       const existing = await client.query<{request_hash: Buffer; response_body: StoredAttempt}>(`SELECT request_hash,response_body
         FROM idempotency_keys WHERE user_id=$1 AND route=$2 AND key=$3`, [auth.user.id, route, key]);
       if (existing.rows[0]) {
@@ -309,7 +310,7 @@ export class Stage6UploadService {
     const hash = requestHash({uploadId: claimed.id});
     return transaction(this.pool, async client => {
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
-        [`${auth.user.id}\0${route}\0${key}`]);
+        [idempotencyLockKey(auth.user.id, route, key)]);
       const upload = await uploadForUpdate(client, claimed.id);
       const committee = await lockedCommittee(client, upload.committee_id);
       requireProceedingsActive(committee);
@@ -346,7 +347,7 @@ export class Stage6UploadService {
     const hash = requestHash({uploadId: claimed.id});
     await transaction(this.pool, async client => {
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
-        [`${auth.user.id}\0${route}\0${key}`]);
+        [idempotencyLockKey(auth.user.id, route, key)]);
       const upload = await uploadForUpdate(client, claimed.id);
       const committee = await lockedCommittee(client, upload.committee_id);
       if (upload.created_by_user_id !== auth.user.id || upload.status !== 'RECEIVING'

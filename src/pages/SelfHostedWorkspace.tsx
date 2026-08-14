@@ -9,7 +9,7 @@ import type {
   Stage4CommitteeSeat
 } from '@quorum/contracts';
 import {Link, Redirect, Route, Switch, useHistory, useParams} from 'react-router-dom';
-import {Button, Card, Container, Form, Header, Icon, Label, List, Menu, Message, Segment, Table} from 'semantic-ui-react';
+import {Button, Card, Container, Form, Header, Icon, Label, List, Menu, Message, Popup, Segment, Table} from 'semantic-ui-react';
 import Loading from '../components/Loading';
 import {LanguageMenuItem, t} from '../i18n';
 import {SelfHostedApiError, selfHostedApi, type SelfHostedApi} from '../services/self-hosted-api';
@@ -18,6 +18,12 @@ import ProceedingsPanel from './self-hosted/ProceedingsPanel';
 import FilesPanel from './self-hosted/FilesPanel';
 import StorageAdminPanel from './self-hosted/StorageAdminPanel';
 import OperationsPanel from './self-hosted/OperationsPanel';
+import {
+  CommitteeTemplateManager,
+  CountryTemplateManager,
+  localizedDisplayName,
+  TemplatePreview
+} from './self-hosted/TemplateManagers';
 
 function errorText(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 
@@ -25,19 +31,6 @@ function Flag({seat}: {seat: Pick<Stage4CommitteeSeat, 'flag' | 'displayName'>})
   if (seat.flag.type === 'IMAGE') return <img src={seat.flag.value} alt="" style={{width: '2em', maxHeight: '1.4em', objectFit: 'contain'}} />;
   if (seat.flag.type === 'STANDARD') return <span className={`fi fi-${seat.flag.value}`} aria-hidden="true" />;
   return <span aria-hidden="true">{seat.flag.value}</span>;
-}
-
-function countryTemplateInput(item: CountryTemplate) {
-  return {names: item.names, defaultLanguage: item.defaultLanguage, countryLanguages: item.countryLanguages,
-    countries: item.countries.map(country => ({stableKey: country.stableKey, names: country.names,
-      defaultLanguage: country.defaultLanguage, continent: country.continent, sortOrder: country.sortOrder, flag: country.flag}))};
-}
-
-function committeeTemplateInput(item: CommitteeTemplate) {
-  return {names: item.names, defaultLanguage: item.defaultLanguage, countryTemplateKey: item.countryTemplateKey,
-    members: item.members.map(member => ({stableKey: member.stableKey, names: member.names,
-      defaultLanguage: member.defaultLanguage, rank: member.rank, canVote: member.canVote, hasVeto: member.hasVeto,
-      mustVote: member.mustVote, sortOrder: member.sortOrder, flag: member.flag}))};
 }
 
 function AppMenu({user, logout}: {user: SelfHostedUser; logout(): void}) {
@@ -57,22 +50,24 @@ function CommitteeList({api}: {api: SelfHostedApi}) {
   const history = useHistory(); const [committees, setCommittees] = React.useState<Awaited<ReturnType<SelfHostedApi['listCommittees']>>>([]);
   const [countryTemplates, setCountryTemplates] = React.useState<CountryTemplate[]>([]);
   const [committeeTemplates, setCommitteeTemplates] = React.useState<CommitteeTemplate[]>([]);
-  const [name, setName] = React.useState(''); const [visibility, setVisibility] = React.useState<'PUBLIC' | 'PRIVATE'>('PRIVATE');
+  const [name, setName] = React.useState(''); const [topic, setTopic] = React.useState(''); const [conference, setConference] = React.useState('');
+  const [visibility, setVisibility] = React.useState<'PUBLIC' | 'PRIVATE'>('PRIVATE');
   const [templateId, setTemplateId] = React.useState(''); const [countryKey, setCountryKey] = React.useState('builtin:default');
   const [error, setError] = React.useState<string>(); const [working, setWorking] = React.useState(false);
+  const [loading, setLoading] = React.useState(true);
   const refresh = React.useCallback(async () => {
     try {
       const [nextCommittees, nextCountries, nextTemplates] = await Promise.all([
         api.listCommittees(), api.listCountryTemplates(), api.listCommitteeTemplates()
       ]);
       setCommittees(nextCommittees); setCountryTemplates(nextCountries); setCommitteeTemplates(nextTemplates);
-    } catch (caught) { setError(errorText(caught)); }
+    } catch (caught) { setError(errorText(caught)); } finally { setLoading(false); }
   }, [api]);
   React.useEffect(() => void refresh(), [refresh]);
   const create = async () => {
     setWorking(true); setError(undefined);
     try {
-      const committee = await api.createCommittee({name: name.trim(), visibility,
+      const committee = await api.createCommittee({name: name.trim(), topic: topic.trim(), conference: conference.trim(), visibility,
         ...(templateId ? {committeeTemplateId: templateId} : {countryTemplateKey: countryKey})});
       history.push(`/committees/${committee.id}`);
     } catch (caught) { setError(errorText(caught)); } finally { setWorking(false); }
@@ -80,21 +75,33 @@ function CommitteeList({api}: {api: SelfHostedApi}) {
   return <Container style={{padding: '1em'}}>
     <Header as="h1">{t('Committees')}</Header>{error && <Message error content={error} />}
     <Segment><Form onSubmit={create} loading={working}>
-      <Form.Input label={t('Committee name')} required value={name} onChange={event => setName(event.currentTarget.value)} />
-      <Form.Group widths="equal">
-        <Form.Select label={t('Visibility')} value={visibility} options={[
-          {key: 'private', value: 'PRIVATE', text: t('Private')}, {key: 'public', value: 'PUBLIC', text: t('Public')}
-        ]} onChange={(_, data) => setVisibility(data.value as 'PUBLIC' | 'PRIVATE')} />
-        <Form.Select label={t('Committee template')} clearable value={templateId}
-          options={committeeTemplates.map(item => ({key: item.id, value: item.id, text: item.names[item.defaultLanguage] ?? item.id}))}
-          onChange={(_, data) => setTemplateId(String(data.value ?? ''))} />
-        {!templateId && <Form.Select label={t('Country template')} value={countryKey}
-          options={countryTemplates.map(item => ({key: item.key, value: item.key, text: item.names[item.defaultLanguage] ?? item.key}))}
-          onChange={(_, data) => setCountryKey(String(data.value))} />}
+      <Form.Group unstackable className="template-picker-row">
+        <Form.Dropdown className="template-picker-field" label={t('Template')} search clearable fluid selection
+          placeholder={t('Template to skip manual member creation (optional)')} value={templateId}
+          options={committeeTemplates.map(item => ({key: item.id, value: item.id,
+            text: localizedDisplayName(item.names, item.defaultLanguage), description: item.builtin ? t('Built-in') : t('My template')}))}
+          onChange={(_, data) => {const nextId = String(data.value ?? ''); const selected = committeeTemplates.find(item => item.id === nextId);
+            setTemplateId(nextId); if (selected) {setCountryKey(selected.countryTemplateKey); setName(localizedDisplayName(selected.names, selected.defaultLanguage));}}} />
+        <Popup basic pinned hoverable position="bottom left" trigger={<Form.Button type="button" icon="question circle outline" />}>
+          <Popup.Content><TemplatePreview template={committeeTemplates.find(item => item.id === templateId)} /></Popup.Content>
+        </Popup>
       </Form.Group>
-      <Button primary disabled={!name.trim()}>{t('Create committee')}</Button>
+      <Form.Select className="template-picker-field" label={t('Country template')} required disabled={!!templateId} value={countryKey}
+        options={countryTemplates.map(item => ({key: item.key, value: item.key, text: localizedDisplayName(item.names, item.defaultLanguage),
+          description: item.builtin ? t('Built-in') : t('My template')}))}
+        onChange={(_, data) => setCountryKey(String(data.value))} />
+      <Form.Input label={t('Name')} required fluid value={name} placeholder={t('Committee name')}
+        onChange={event => setName(event.currentTarget.value)} />
+      <Form.Input label={t('Topic')} fluid value={topic} placeholder={t('Committee topic')}
+        onChange={event => setTopic(event.currentTarget.value)} />
+      <Form.Input label={t('Conference')} fluid value={conference} placeholder={t('Conference name')}
+        onChange={event => setConference(event.currentTarget.value)} />
+      <Form.Select label={t('Visibility')} value={visibility} options={[
+        {key: 'private', value: 'PRIVATE', text: t('Private')}, {key: 'public', value: 'PUBLIC', text: t('Public')}
+      ]} onChange={(_, data) => setVisibility(data.value as 'PUBLIC' | 'PRIVATE')} />
+      <Button primary fluid disabled={!name.trim() || (!templateId && !countryKey)}>{t('Create committee')}<Icon name="arrow right" /></Button>
     </Form></Segment>
-    {committees.length === 0 ? <Message content={t('No committees created')} /> : <Card.Group>
+    {loading ? <Loading /> : committees.length === 0 ? <Message content={t('No committees created')} /> : <Card.Group>
       {committees.map(committee => <Card key={committee.id} as={Link} to={`/committees/${committee.id}`}>
         <Card.Content><Card.Header>{committee.name}</Card.Header><Card.Meta>{t(committee.status)}</Card.Meta></Card.Content>
       </Card>)}
@@ -102,67 +109,30 @@ function CommitteeList({api}: {api: SelfHostedApi}) {
   </Container>;
 }
 
-function CountryTemplates({api}: {api: SelfHostedApi}) {
-  const [items, setItems] = React.useState<CountryTemplate[]>([]); const [name, setName] = React.useState('');
-  const [countryName, setCountryName] = React.useState(''); const [countryCode, setCountryCode] = React.useState('');
-  const [error, setError] = React.useState<string>(); const [working, setWorking] = React.useState(false);
-  const refresh = React.useCallback(() => api.listCountryTemplates().then(setItems).catch(caught => setError(errorText(caught))), [api]);
-  React.useEffect(() => void refresh(), [refresh]);
-  const run = async (operation: () => Promise<unknown>) => { setWorking(true); setError(undefined);
-    try { await operation(); await refresh(); } catch (caught) { setError(errorText(caught)); } finally { setWorking(false); } };
-  const create = () => run(() => api.createCountryTemplate({names: {'zh-CN': name.trim()}, defaultLanguage: 'zh-CN',
-    countryLanguages: ['zh-CN'], countries: countryName.trim() ? [{stableKey: countryCode.trim().toLowerCase(),
-      names: {'zh-CN': countryName.trim()}, defaultLanguage: 'zh-CN', sortOrder: 0,
-      flag: {type: 'STANDARD', value: countryCode.trim().toLowerCase()}}] : []}));
-  return <Container style={{padding: '1em'}}><Header as="h1">{t('Country templates')}</Header>
-    {error && <Message error content={error} />}<Segment loading={working}><Form onSubmit={create}>
-      <Form.Group widths="equal"><Form.Input label={t('Template name')} required value={name} onChange={e => setName(e.currentTarget.value)} />
-        <Form.Input label={t('Country name')} required value={countryName} onChange={e => setCountryName(e.currentTarget.value)} />
-        <Form.Input label={t('Flag code')} required minLength={2} maxLength={2} value={countryCode} onChange={e => setCountryCode(e.currentTarget.value)} /></Form.Group>
-      <Button primary disabled={!name.trim() || !countryName.trim() || countryCode.trim().length !== 2}>{t('Create country template')}</Button>
-    </Form></Segment>
-    <Card.Group>{items.map(item => <Card key={item.id}><Card.Content><Card.Header>{item.names[item.defaultLanguage] ?? item.key}</Card.Header>
-      <Card.Meta>{item.countries.length} {t('countries')}</Card.Meta></Card.Content><Card.Content extra>
-        <Button size="small" onClick={() => run(() => api.cloneCountryTemplate(item.id))}>{t('Clone')}</Button>
-        {!item.builtin && <><Button size="small" onClick={() => { const next = window.prompt(t('Template name'), item.names[item.defaultLanguage]);
-          if (next) void run(() => api.updateCountryTemplate(item.id, item.revision,
-            {...countryTemplateInput(item), names: {...item.names, [item.defaultLanguage]: next}})); }}>{t('Rename')}</Button>
-          <Button size="small" negative onClick={() => {if (window.confirm(t('Delete country template?'))) void run(() => api.deleteCountryTemplate(item.id));}}>{t('Delete')}</Button></>}
-      </Card.Content></Card>)}</Card.Group>
-  </Container>;
-}
-
-function CommitteeTemplates({api}: {api: SelfHostedApi}) {
-  const [items, setItems] = React.useState<CommitteeTemplate[]>([]); const [countries, setCountries] = React.useState<CountryTemplate[]>([]);
-  const [name, setName] = React.useState(''); const [memberName, setMemberName] = React.useState('');
-  const [countryKey, setCountryKey] = React.useState('builtin:default'); const [error, setError] = React.useState<string>();
-  const [working, setWorking] = React.useState(false);
-  const refresh = React.useCallback(async () => { try { const [templates, countryItems] = await Promise.all([
-    api.listCommitteeTemplates(), api.listCountryTemplates()]); setItems(templates); setCountries(countryItems);
-  } catch (caught) { setError(errorText(caught)); } }, [api]);
-  React.useEffect(() => void refresh(), [refresh]);
-  const run = async (operation: () => Promise<unknown>) => { setWorking(true); setError(undefined);
-    try { await operation(); await refresh(); } catch (caught) { setError(errorText(caught)); } finally { setWorking(false); } };
-  const create = () => run(() => api.createCommitteeTemplate({names: {'zh-CN': name.trim()}, defaultLanguage: 'zh-CN', countryTemplateKey: countryKey,
-    members: memberName.trim() ? [{stableKey: memberName.trim().toLowerCase().replace(/\s+/g, '-'), names: {'zh-CN': memberName.trim()},
-      defaultLanguage: 'zh-CN', rank: 'STANDARD', canVote: true, hasVeto: false, mustVote: false, sortOrder: 0,
-      flag: {type: 'EMOJI', value: '🏳️'}}] : []}));
-  return <Container style={{padding: '1em'}}><Header as="h1">{t('Committee templates')}</Header>{error && <Message error content={error} />}
-    <Segment loading={working}><Form onSubmit={create}><Form.Group widths="equal">
-      <Form.Input label={t('Template name')} required value={name} onChange={e => setName(e.currentTarget.value)} />
-      <Form.Select label={t('Country template')} value={countryKey} options={countries.map(item => ({key: item.key, value: item.key,
-        text: item.names[item.defaultLanguage] ?? item.key}))} onChange={(_, data) => setCountryKey(String(data.value))} />
-      <Form.Input label={t('First seat')} required value={memberName} onChange={e => setMemberName(e.currentTarget.value)} />
-    </Form.Group><Button primary disabled={!name.trim() || !memberName.trim()}>{t('Create committee template')}</Button></Form></Segment>
-    <Card.Group>{items.map(item => <Card key={item.id}><Card.Content><Card.Header>{item.names[item.defaultLanguage] ?? item.id}</Card.Header>
-      <Card.Meta>{item.members.length} {t('seats')}</Card.Meta></Card.Content><Card.Content extra>
-        <Button size="small" onClick={() => run(() => api.cloneCommitteeTemplate(item.id))}>{t('Clone')}</Button>
-        <Button size="small" onClick={() => { const next = window.prompt(t('Template name'), item.names[item.defaultLanguage]);
-          if (next) void run(() => api.updateCommitteeTemplate(item.id, item.revision,
-            {...committeeTemplateInput(item), names: {...item.names, [item.defaultLanguage]: next}})); }}>{t('Rename')}</Button>
-        <Button size="small" negative onClick={() => {if (window.confirm(t('Delete committee template?'))) void run(() => api.deleteCommitteeTemplate(item.id));}}>{t('Delete')}</Button>
-      </Card.Content></Card>)}</Card.Group>
-  </Container>;
+export function SelfHostedPublicCommittees({api = selfHostedApi}: {api?: SelfHostedApi}) {
+  const [committees, setCommittees] = React.useState<Awaited<ReturnType<SelfHostedApi['listCommittees']>>>([]);
+  const [error, setError] = React.useState<string>(); const [loading, setLoading] = React.useState(true);
+  React.useEffect(() => {
+    let active = true;
+    void api.listCommittees().then(items => { if (active) setCommittees(items); })
+      .catch(caught => { if (active) setError(errorText(caught)); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [api]);
+  return <>
+    <Menu><Menu.Item header>Quorum</Menu.Item><Menu.Menu position="right">
+      <LanguageMenuItem /><Menu.Item as={Link} to="/login">{t('Login')}</Menu.Item>
+    </Menu.Menu></Menu>
+    <Container style={{padding: '1em'}}>
+      <Header as="h1">{t('Public committees')}</Header>
+      {error && <Message error content={error} />}
+      {loading ? <Loading /> : !error && committees.length === 0 ? <Message content={t('No public committees')} /> : <Card.Group>
+        {committees.map(committee => <Card key={committee.id} as={Link} to={`/committees/${committee.id}`}>
+          <Card.Content><Card.Header>{committee.name}</Card.Header><Card.Meta>{t(committee.status)}</Card.Meta></Card.Content>
+        </Card>)}
+      </Card.Group>}
+    </Container>
+  </>;
 }
 
 type WorkspaceView = 'overview' | 'notes' | 'posts' | 'files' | 'roll-call' | 'points' | 'proceedings';
@@ -327,8 +297,8 @@ export default function SelfHostedWorkspace({user, logout, accountManager, api =
 }) {
   return <><AppMenu user={user} logout={logout} /><Switch>
     <Route exact path="/committees"><CommitteeList api={api} /></Route>
-    <Route exact path="/countries"><CountryTemplates api={api} /></Route>
-    <Route exact path="/templates"><CommitteeTemplates api={api} /></Route>
+    <Route exact path="/countries"><CountryTemplateManager api={api} /></Route>
+    <Route exact path="/templates"><CommitteeTemplateManager api={api} /></Route>
     {user.isSystemAdmin && <Route exact path="/storage"><Container style={{padding: '1em'}}><StorageAdminPanel api={api} /></Container></Route>}
     {user.isSystemAdmin && <Route exact path="/operations"><Container style={{padding: '1em'}}><OperationsPanel api={api} /></Container></Route>}
     <Route path="/committees/:id"><SelfHostedCommitteeWorkspace api={api} user={user} /></Route>

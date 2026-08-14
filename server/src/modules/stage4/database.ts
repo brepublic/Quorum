@@ -56,6 +56,10 @@ export function requestHash(value: unknown): Buffer {
   return createHash('sha256').update(JSON.stringify(canonical(value))).digest();
 }
 
+export function idempotencyLockKey(userId: string, route: string, key: string): string {
+  return JSON.stringify([userId, route, key]);
+}
+
 export async function idempotentTransaction<T>(input: {
   pool: Pool;
   auth: AuthenticatedSession;
@@ -71,7 +75,7 @@ export async function idempotentTransaction<T>(input: {
   const hash = requestHash(input.request);
   return transaction(input.pool, async client => {
     await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
-      [`${input.auth.user.id}\0${input.route}\0${input.key}`]);
+      [idempotencyLockKey(input.auth.user.id, input.route, input.key)]);
     const existing = await client.query<{request_hash: Buffer; response_body: T}>(`SELECT request_hash,response_body
       FROM idempotency_keys WHERE user_id=$1 AND route=$2 AND key=$3`,
     [input.auth.user.id, input.route, input.key]);
