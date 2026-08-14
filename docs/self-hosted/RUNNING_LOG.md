@@ -6,10 +6,10 @@
 
 - 更新时间：2026-08-14
 - 分支：`self-host`
-- 已确认基线：`b4b7e6e stage 8.1: archive and export committees`
+- 已确认基线：`450c35c stage 8.2: permanently delete committees`
 - 当前阶段：8 归档、删除与运维正在实施。
-- 当前工作：阶段 8.2 委员会永久删除的实现、自动化测试、构建和文档已完成，等待单独提交。
-- 下一步：提交 8.2；随后实施账号资源转移、匿名化和保留策略，不提前移除 Firebase。
+- 当前工作：阶段 8.2 已完成并单独提交；正在细化账号资源转移与匿名化边界。
+- 下一步：实施账号资源处置小任务并验证；随后完成保留策略、运维状态和恢复说明，不提前移除 Firebase。
 
 ## 已完成与验证
 
@@ -287,3 +287,4 @@
 - `pnpm exec vitest run`：76 个文件通过、8 个文件明确 skip；473 项通过、65 项明确 skip。`pnpm build:self-host` 通过，仅有既有 Vite 大分块警告。
 - `pnpm test:self-host:integration`：8 个文件、65 项因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip；`git diff --check` 通过。
 - 当前 WSL 没有真实 PostgreSQL、TLS 自托管实例、S3 测试桶、可检查持久卷、Chair 真机和可控进程终止环境；上机步骤与证据要求记录在 `MANUAL_ACCEPTANCE.md` 的 SH-MAN-516，未伪造物理多 provider 删除成功。
+- 阶段 8.2 已单独提交为 `450c35c`；继续阶段 8 的账号资源处置。
