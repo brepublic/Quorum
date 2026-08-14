@@ -6,10 +6,10 @@
 
 - 更新时间：2026-08-14
 - 分支：`self-host`
-- 已确认基线：`a588f88 stage 8.4: enforce retention policy`
-- 当前阶段：8 归档、删除与运维已完成当前 WSL 可执行验收。
-- 当前工作：阶段 8.5 管理状态、恢复点工具和恢复说明已实现并通过完整门禁，待单独提交。
-- 下一步：提交阶段 8.5；随后进入阶段 9，盘点并删除 Firebase 运行路径、依赖、Rules、Functions 与 emulator 编排。
+- 已确认基线：`0644875 stage 8.5: add operations status and recovery tools`
+- 当前阶段：9 移除 Firebase 正在实施。
+- 当前工作：阶段 8 已完成当前 WSL 可执行验收并全部单独提交；正在盘点 Firebase 运行路径、依赖、Rules、Functions、emulator 与测试替代边界。
+- 下一步：形成阶段 9 精确删除清单，切换为单一自托管入口，删除旧运行代码和依赖，并执行源码/依赖/构建产物/生产网络的 Firebase 零残留验证。
 
 ## 已完成与验证
 
@@ -321,4 +321,4 @@
 - `pnpm test:self-host`：60 个文件通过、8 个文件明确 skip；330 项通过、67 项明确 skip。`pnpm exec vitest run`：79 个文件通过、8 个文件明确 skip；485 项通过、67 项明确 skip。
 - `pnpm build:self-host` 通过，仅有既有 Vite 大分块警告；`pnpm test:self-host:integration` 的 8 个文件、67 项因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip；`git diff --check` 通过。
 - 当前 WSL 没有 `pg_dump`、真实 PostgreSQL、TLS 自托管实例、真实 provider 和浏览器恢复环境。SH-MAN-519 记录了角色矩阵、权限/进程参数、dump/manifest 篡改、隔离恢复、逐对象 SHA-256 和 durable worker 收敛的上机步骤，未伪造恢复成功。
-- 阶段 8.5 待单独提交；提交后进入阶段 9 Firebase 移除。
+- 阶段 8.5 已单独提交为 `0644875`；阶段 8 完成，进入阶段 9 Firebase 移除。
