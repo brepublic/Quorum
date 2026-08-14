@@ -59,6 +59,49 @@ describe('self-hosted stage 4 API client', () => {
     } satisfies Partial<SelfHostedApiError>));
   });
 
+  it('sends a typed point ruling with an optional attendance change', async () => {
+    const fetchMock = vi.fn(async () => ({ok: true, status: 200,
+      json: async () => ({data: {id: 'point'}, meta: {requestId: 'point'}})}));
+    vi.stubGlobal('fetch', fetchMock);
+    await selfHostedApi.resolvePoint('point', {baseRevision: 3, status: 'UPHELD', chairResponse: 'Please step out.',
+      attendanceChange: {type: 'TEMPORARILY_LEFT'}});
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/points/point/resolve', expect.objectContaining({
+      method: 'POST', credentials: 'same-origin', body: JSON.stringify({baseRevision: 3, status: 'UPHELD',
+        chairResponse: 'Please step out.', attendanceChange: {type: 'TEMPORARILY_LEFT'}}),
+      headers: expect.objectContaining({'x-csrf-token': 'csrf-token'})
+    }));
+  });
+
+  it('adapts existing Chair, assignment, invitation, mode, status, and rule routes', async () => {
+    const fetchMock = vi.fn(async () => ({ok: true, status: 200,
+      json: async () => ({data: {}, meta: {requestId: 'adapter'}})}));
+    vi.stubGlobal('fetch', fetchMock);
+    await selfHostedApi.revokeChair('committee', 'chair', 2);
+    await selfHostedApi.endSeatAssignment('committee', 'assignment');
+    await selfHostedApi.createSeatInvitation('committee', {seatId: 'seat', maxUses: 1, expiresAt: '2026-08-14T12:00:00.000Z'});
+    await selfHostedApi.setOperationMode('committee', 'CHAIR_OPERATED', 3);
+    await selfHostedApi.setCommitteeStatus('committee', 'PAUSED', 4);
+    await selfHostedApi.listRulePackages();
+    await selfHostedApi.activateRules('committee', 'version', 5);
+    const calls = fetchMock.mock.calls as unknown as Array<[string, RequestInit]>;
+    expect(calls.map(call => call[0])).toEqual([
+      '/api/v1/committees/committee/chairs/chair',
+      '/api/v1/committees/committee/seat-assignments',
+      '/api/v1/committees/committee/seat-invitations',
+      '/api/v1/committees/committee/operation-mode',
+      '/api/v1/committees/committee/status',
+      '/api/v1/rule-packages',
+      '/api/v1/committees/committee/rules/activate'
+    ]);
+    expect(calls[0]?.[1]).toEqual(expect.objectContaining({method: 'DELETE', body: JSON.stringify({baseRevision: 2})}));
+    expect(calls[1]?.[1]).toEqual(expect.objectContaining({method: 'POST',
+      body: JSON.stringify({action: 'END', assignmentId: 'assignment'})}));
+    expect(calls[4]?.[1]).toEqual(expect.objectContaining({method: 'POST',
+      body: JSON.stringify({status: 'PAUSED', baseRevision: 4})}));
+    expect(calls[6]?.[1]).toEqual(expect.objectContaining({method: 'POST',
+      body: JSON.stringify({rulePackageVersionId: 'version', baseRevision: 5})}));
+  });
+
   it('sends file revisions and stable idempotency keys and exposes only the attachment route', async () => {
     const fetchMock = vi.fn(async () => ({ok: true, status: 200,
       json: async () => ({data: {id: 'file', status: 'PENDING_REVIEW'}, meta: {requestId: 'file-request'}})}));

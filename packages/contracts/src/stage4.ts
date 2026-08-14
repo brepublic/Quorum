@@ -288,6 +288,20 @@ export interface ResolvePointRequest {
   attendanceChange?: {type: AttendanceEventType};
 }
 
+export interface CommitteeRuleReadModel {
+  versionId: string;
+  activePhaseId: string | null;
+  phases: Array<{id: string; names?: LocalizedNames}>;
+  attendanceResponses: string[];
+  pointTypes: Array<{id: string; names?: LocalizedNames; interruptRequested: boolean}>;
+  motionTypes: Array<{id: string; names?: LocalizedNames; procedural: boolean; requiredSecondCount: number}>;
+  speakerLists: Array<{id: string; defaultDurationSeconds?: number; defaultTotalDurationSeconds?: number;
+    defaultSpeakerDurationSeconds?: number; allowDelegateRequests?: boolean; yieldTypes?: string[]}>;
+  ballots: {delegateMayChangeVote: boolean; chairMayCorrectVote: boolean; anonymousStrawpoll: boolean;
+    mustCollectAllVotesWhenVetoSeatEligible: boolean};
+  documents: {amendmentsPublicByDefault: boolean};
+}
+
 export interface CommitteeWorkspaceSnapshot {
   schemaVersion: 2;
   committee: Omit<CommitteeSummary, 'ownerUserId'> & {ownerUserId?: string};
@@ -303,6 +317,7 @@ export interface CommitteeWorkspaceSnapshot {
   notes: CommitteeNote[];
   textPosts: CommitteeTextPost[];
   sync: {committeeEventSequence: number};
+  activeRules: CommitteeRuleReadModel;
   timers?: import('./stage5.js').AuthoritativeTimer[];
   speakerLists?: import('./stage5.js').SpeakerList[];
   motions?: import('./stage5.js').ProceedingMotion[];

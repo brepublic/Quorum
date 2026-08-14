@@ -23,6 +23,8 @@ import type {
   Stage4CommitteeSeat,
   AttendanceEvent,
   CommitteePoint,
+  ResolvePointRequest,
+  AttendanceEventType,
   CommitteeDeletionJob,
   FileEntry,
   FileUpload,
@@ -33,7 +35,11 @@ import type {
   StorageProviderType,
   StorageHost,
   StorageAgentConflict,
-  StorageAgentConflictResolution
+  StorageAgentConflictResolution,
+  UpdateCommitteeRequest,
+  CommitteeOperationMode,
+  CommitteeStatus,
+  RulePackageSummary
 } from '@quorum/contracts';
 import {COMMITTEE_EVENT_DEFINITIONS, type RealtimeSyncState} from '@quorum/contracts';
 
@@ -55,7 +61,7 @@ function cookie(name: string): string | undefined {
 type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
 async function request<T>(path: string, options: {
-  method?: Method; body?: Record<string, unknown>; idempotencyKey?: string;
+  method?: Method; body?: object; idempotencyKey?: string;
 } = {}): Promise<T> {
   const method = options.method ?? 'GET'; const headers: Record<string, string> = {};
   if (options.body) headers['content-type'] = 'application/json';
@@ -324,7 +330,7 @@ export const selfHostedApi = {
     return request<ProceedingDocument>(`/api/v1/documents/${id}/discussion`, {method: 'POST',
       body: input, idempotencyKey: key()});
   },
-  updateCommittee(id: string, baseRevision: number, patch: Record<string, unknown>) {
+  updateCommittee(id: string, baseRevision: number, patch: UpdateCommitteeRequest['patch']) {
     return request<CommitteeSummary>(`/api/v1/committees/${id}`, {method: 'PATCH', body: {baseRevision, patch}});
   },
   archiveCommittee(id: string, baseRevision: number) {
@@ -373,8 +379,39 @@ export const selfHostedApi = {
   grantChair(committeeId: string, userId: string, baseRevision: number) {
     return request<CommitteeSummary>(`/api/v1/committees/${committeeId}/chairs`, {method: 'POST', body: {userId, baseRevision}});
   },
+  revokeChair(committeeId: string, userId: string, baseRevision: number) {
+    return request<CommitteeSummary>(`/api/v1/committees/${committeeId}/chairs/${userId}`, {method: 'DELETE', body: {baseRevision}});
+  },
   assignSeat(committeeId: string, seatId: string, userId: string) {
     return request<{id: string}>(`/api/v1/committees/${committeeId}/seat-assignments`, {method: 'POST', body: {seatId, userId}});
+  },
+  endSeatAssignment(committeeId: string, assignmentId: string) {
+    return request<{id: string}>(`/api/v1/committees/${committeeId}/seat-assignments`, {method: 'POST',
+      body: {action: 'END', assignmentId}});
+  },
+  createSeatInvitation(committeeId: string, input: {seatId: string; maxUses: number; expiresAt: string}) {
+    return request<{id: string; code: string; seatId: string; maxUses: number; expiresAt: string}>(
+      `/api/v1/committees/${committeeId}/seat-invitations`, {method: 'POST', body: input});
+  },
+  revokeSeatInvitation(committeeId: string, invitationId: string) {
+    return request<{revoked: true}>(`/api/v1/committees/${committeeId}/seat-invitations/${invitationId}/revoke`,
+      {method: 'POST', body: {}});
+  },
+  redeemSeatInvitation(code: string) {
+    return request<{committeeId: string; seatId: string; assignmentId: string}>('/api/v1/seat-invitations/redeem',
+      {method: 'POST', body: {code}});
+  },
+  setOperationMode(committeeId: string, operationMode: CommitteeOperationMode, baseRevision: number) {
+    return request<CommitteeSummary>(`/api/v1/committees/${committeeId}/operation-mode`, {method: 'POST',
+      body: {operationMode, baseRevision}});
+  },
+  setCommitteeStatus(committeeId: string, status: Extract<CommitteeStatus, 'ACTIVE' | 'PAUSED'>, baseRevision: number) {
+    return request<CommitteeSummary>(`/api/v1/committees/${committeeId}/status`, {method: 'POST', body: {status, baseRevision}});
+  },
+  listRulePackages: async () => (await request<{rulePackages: RulePackageSummary[]}>('/api/v1/rule-packages')).rulePackages,
+  activateRules(committeeId: string, rulePackageVersionId: string, baseRevision: number) {
+    return request<CommitteeSummary>(`/api/v1/committees/${committeeId}/rules/activate`, {method: 'POST',
+      body: {rulePackageVersionId, baseRevision}});
   },
   createNote(committeeId: string, input: {title?: string; content: string; sortOrder?: number}) {
     return request<CommitteeNote>(`/api/v1/committees/${committeeId}/notes`, {method: 'POST', body: input, idempotencyKey: key()});
@@ -412,15 +449,15 @@ export const selfHostedApi = {
   resetRollCall(id: string, baseRevision: number) {
     return request<RollCall>(`/api/v1/roll-calls/${id}/reset`, {method: 'POST', body: {baseRevision}});
   },
-  createAttendanceEvent(committeeId: string, meetingSessionId: string, seatId: string, type: string) {
+  createAttendanceEvent(committeeId: string, meetingSessionId: string, seatId: string, type: AttendanceEventType) {
     return request<AttendanceEvent>(`/api/v1/committees/${committeeId}/attendance-events`,
       {method: 'POST', body: {meetingSessionId, seatId, type}});
   },
   createPoint(committeeId: string, input: {meetingSessionId: string; pointTypeId: string; content: string; onBehalfOfSeatId?: string}) {
     return request<CommitteePoint>(`/api/v1/committees/${committeeId}/points`, {method: 'POST', body: input, idempotencyKey: key()});
   },
-  resolvePoint(id: string, baseRevision: number, status: string, chairResponse: string) {
-    return request<CommitteePoint>(`/api/v1/points/${id}/resolve`, {method: 'POST', body: {baseRevision, status, chairResponse}});
+  resolvePoint(id: string, input: ResolvePointRequest) {
+    return request<CommitteePoint>(`/api/v1/points/${id}/resolve`, {method: 'POST', body: input});
   },
   listFiles(committeeId: string) {
     return request<FileEntry[]>(`/api/v1/committees/${committeeId}/files`);

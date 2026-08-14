@@ -33,16 +33,16 @@ flowchart LR
 
 `src/index.tsx` 初始化浏览器 history、语言、主题、Semantic UI、Sentry 与 Google Analytics，再挂载 `src/App.tsx`。`App` 无运行模式分支，始终进入 `SelfHostedIdentity`。浏览器身份使用 Secure、HttpOnly、SameSite=Lax Session Cookie；客户端只通过 `src/services/self-hosted-identity.ts` 和 `self-hosted-api.ts` 请求同源 `/api/v1`。
 
-`SelfHostedIdentity` 覆盖首次管理员初始化、登录、基于已认证 Session 的临时密码强制修改、匿名公开委员会入口、退出和系统管理员账号管理。`SelfHostedWorkspace` 提供：
+`SelfHostedIdentity` 覆盖首次管理员初始化、登录、基于已认证 Session 的临时密码强制修改、匿名公开委员会入口、退出和系统管理员账号管理。`SelfHostedWorkspace` 使用基于 URL 的响应式会议导航：桌面端为横向菜单，移动端为侧栏；模板、系统运维、语言、主题和退出入口集中在账户菜单。它提供：
 
 - `/committees`：公开/私有委员会列表与创建；
 - `/countries`、`/templates`：沿用迁移前的表格编辑交互管理账号级国家模板和委员会模板；国家模板先按名称创建空模板再编辑国家，内置国家模板可查看和克隆，委员会创建器提供内置委员会模板；
-- `/committees/:id`：委员会概览、成员/席位、规则、点名、问题、文本、计时器、发言名单、动议、表决、意向性投票、决议、文件、归档与删除；
+- `/committees/:id`：委员会概览、会场设置、点名、动议、自由磋商、发言名单、决议草案、意向性投票、问题、笔记、资料、统计、设置和帮助；动态发言名单、决议草案与意向性投票使用资源 ID 子路由，资料页分为文本、附件和存储；
 - `/storage`：仅系统管理员使用的 S3 配置；
 - `/operations`：仅系统管理员使用的容量、队列与 retention 聚合状态；
 - `/admin`：账号创建、重置、禁用、Session 撤销和不可逆匿名化。
 
-委员会工作区先获取受众过滤快照，再为一个委员会保持最多一条 SSE。客户端检测事件序号缺口、未知事件或过期游标时丢弃增量并重新取完整快照，不从本地猜测权威状态。陈旧 revision、幂等冲突和规则冲突均要求显式刷新或裁决，不静默覆盖。
+委员会工作区 Context 统一持有受众过滤快照、活动规则只读模型、SSE 游标、连接状态、刷新和命令执行器；各路由子页不重复建立监听。一个委员会保持最多一条 SSE。客户端检测事件序号缺口、未知事件或过期游标时丢弃增量并重新取完整快照，不从本地猜测权威状态。陈旧 revision 会刷新快照并要求用户确认最新状态后重试；幂等冲突和规则冲突均要求显式刷新或裁决，不静默覆盖。`OFFLINE_READONLY` 状态在整个委员会工作区撤销写控件。活动规则只读模型由现有 `rule_package_versions.definition` 派生，不增加数据库表或 migration。
 
 `src/i18n.tsx` 提供英语与简体中文界面，使用大陆模拟联合国术语。语言选择继续保存在兼容键 `muncoordinated-language`。`src/theme/` 的 Theme API 2 只接受白名单声明式设置；旧 API 1 主题和既有 localStorage 键继续作为显式兼容边界。主题不能隐藏、重排或改写业务控件和数据。
 

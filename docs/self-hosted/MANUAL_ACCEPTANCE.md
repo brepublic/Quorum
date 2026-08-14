@@ -464,3 +464,12 @@
 - 自动化覆盖情况：当前 WSL 已验证单一入口、manifest/lock/workspace 清理、frozen install、全仓 Vitest、自托管测试、TypeScript、生产构建、静态源码与构建产物搜索。`pnpm test:self-host` 为 330 项通过、67 项明确 skip；全仓 Vitest 为 359 项通过、67 项明确 skip；生产构建和 `pnpm verify:no-legacy-runtime` 通过。GitHub Actions 已改为 PostgreSQL 16 service 上的 API integration。当前 WSL 未运行 Caddy TLS、浏览器 HAR、DNS/代理观察、容器层检查或真实 PostgreSQL 网络写入对照。
 - 当前状态：代码、依赖、CI 配置、frozen install 和构建静态零运行依赖通过；集成入口 67 项因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip。真实生产网络、Compose 镜像和多浏览器证据延期。
 - 需要保存的证据：clean checkout commit、frozen install/build/test 输出、镜像 SBOM/层清单、生产产物搜索、各角色脱敏 HAR、DNS/代理日志、SSE 时间线、PostgreSQL 状态/事件/审计计数和深层路由截图。不得保存 Session、CSRF token、密码、设备凭据、S3 密钥、文件正文或完整数据库 dump。
+
+### SH-MAN-521 老版信息架构的自托管工作区浏览器验收
+
+- 前置条件：当前自托管生产构建；真实 PostgreSQL 16；Caddy TLS；Owner、Chair、member、公开访客和仅有 `SYSTEM_ADMIN` 的账号；含活动规则、点名、发言名单、动议、表决、决议草案、意向性投票、文件和归档数据的隔离委员会；Chromium、Firefox、Safari。
+- 操作步骤：以 `master` 老版页面为视觉对照，在 1440px、768px、390px 检查桌面横向菜单和移动侧栏；分别切换中英文、明暗 Theme API 2 主题、长委员会名称和高密度席位列表。逐角色遍历概览、会场设置、点名、动议、自由磋商、发言名单、决议草案四页签、意向性投票、问题、笔记、资料三页签、统计、设置和帮助；检查模板与系统运维只在账户菜单。用键盘执行所有非文件选择操作，记录焦点、可访问名称和状态文本。制造 revision 冲突、SSE 序号缺口、未知事件、过期游标、断网与恢复；归档后尝试所有写控件，最后输入精确委员会名称请求删除。
+- 通过条件：页面结构与旧版信息架构一致，但所有数据只来自同源快照、命令和 SSE；不存在稳定 ID 文本框、Firebase 监听或双写。每个委员会只有一条 SSE；409 后刷新并要求重试，游标异常完整重同步，离线状态全工作区只读。Owner、Chair、member、公开访客和系统管理员控件矩阵符合服务端权限，系统管理员无隐式 Chair 权限；状态不只靠颜色；动态菜单和页签高亮正确；模板和运维不进入委员会一级菜单。三种宽度、两种语言、明暗主题、键盘、长名称和高密度列表均可用。
+- 自动化覆盖情况：Vitest 覆盖路由与动态菜单、桌面/移动导航结构、Owner/Chair/member/public/system-admin 可见性、规则驱动阶段/动议/问题、点名、问题裁决与关联出席、发言当前/下一位与计时器、决议页签、资料分区、统计、归档删除、revision 冲突、SSE 状态和离线只读；生产构建与 legacy runtime 扫描纳入阶段末检查。自动化 DOM 测试不作为真实浏览器视觉、键盘、主题、TLS、PostgreSQL 或多浏览器证据。
+- 当前状态：全仓 Vitest 394 项通过、68 项明确 skip；`pnpm test:self-host` 365 项通过、68 项明确 skip；`pnpm build:self-host`、`pnpm verify:no-legacy-runtime` 和 `git diff --check` 通过。集成入口 68 项因缺少 `TEST_DATABASE_ADMIN_URL` 全部明确 skip。当前环境未提供 TLS 自托管实例、真实 PostgreSQL、多浏览器和可保存截图的完整测试数据，因此 1440px、768px、390px 视觉、真实键盘焦点、跨浏览器 SSE 和明暗主题验收延期。
+- 需要保存的证据：每个角色、宽度、语言和主题的截图；辅助功能树与键盘焦点顺序；导航/页签 URL 与高亮记录；断线/重同步 Network 时间线；冲突前后 revision；归档和删除请求；PostgreSQL 事件、审计和幂等结果脱敏对照。不得保存 Session、CSRF token、邀请码、匿名投票码、文件正文或用户隐私数据。

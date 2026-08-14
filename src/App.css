@@ -10,6 +10,60 @@
 .thirdwidth {
   width: 33%;
 }
+
+.committee-navigation-desktop {
+  display: flex !important;
+  margin-bottom: 0 !important;
+  overflow-x: auto;
+}
+
+.committee-navigation-mobile,
+.committee-mobile-sidebar {
+  display: none !important;
+}
+
+.committee-primary-navigation > .item,
+.committee-primary-navigation > .menu > .item,
+.committee-mobile-sidebar > .item {
+  white-space: nowrap;
+}
+
+.realtime-status-live {
+  color: #18794e !important;
+}
+
+.realtime-status-degraded,
+.realtime-status-offline_readonly {
+  color: #9c2f2f !important;
+}
+
+.account-language {
+  cursor: default !important;
+}
+
+@media only screen and (max-width: 991px) {
+  .committee-navigation-desktop {
+    display: none !important;
+  }
+
+  .committee-navigation-mobile {
+    display: flex !important;
+    margin-bottom: 0 !important;
+  }
+
+  .committee-navigation-mobile > .header.item {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .committee-mobile-sidebar {
+    display: flex !important;
+    max-height: 100vh;
+    overflow-y: auto;
+  }
+}
 .language-switcher {
   align-items: center;
   display: flex;
@@ -324,6 +378,27 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   .ui.table.country-editor-table {
     min-width: 48rem;
   }
+}
+
+.notes-editor {
+  display: grid;
+  grid-template-columns: minmax(12rem, 18rem) minmax(0, 1fr);
+  gap: 1rem;
+}
+
+.proceedings-timers {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.proceedings-timer time {
+  font-variant-numeric: tabular-nums;
+}
+
+@media only screen and (max-width: 767px) {
+  .notes-editor,
+  .proceedings-timers { grid-template-columns: minmax(0, 1fr); }
 }
 
 .committee-menu > .item,

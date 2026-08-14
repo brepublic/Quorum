@@ -17,6 +17,10 @@ const snapshot: CommitteeWorkspaceSnapshot = {schemaVersion: 2,
   seats: [{id: 'seat', stableKey: 'china', displayName: 'China', rank: 'VETO', canVote: true, hasVeto: true,
     mustVote: false, sortOrder: 0, active: true, revision: 1, flag: {type: 'STANDARD', value: 'cn'}}],
   viewer: {audience: 'MEMBER', seatId: 'seat'}, attendance: [], points: [],
+  activeRules: {versionId: 'rules', activePhaseId: null, phases: [], attendanceResponses: ['PRESENT', 'ABSENT'],
+    pointTypes: [], motionTypes: [], speakerLists: [], ballots: {delegateMayChangeVote: false,
+      chairMayCorrectVote: true, anonymousStrawpoll: false, mustCollectAllVotesWhenVetoSeatEligible: true},
+    documents: {amendmentsPublicByDefault: false}},
   notes: [{id: 'note', title: 'Agenda', content: 'Opening debate', sortOrder: 0, revision: 1, createdByUserId: 'user',
     createdAt: '2026-08-13T00:00:00.000Z', updatedAt: '2026-08-13T00:00:00.000Z', deletedAt: null}],
   textPosts: [], sync: {committeeEventSequence: 7}};
@@ -26,15 +30,25 @@ afterEach(() => { if (root) act(() => root?.unmount()); container?.remove(); roo
 
 describe('self-hosted stage 4 workspace', () => {
   it('loads the API snapshot and revalidates when the window regains focus', async () => {
-    const api = {snapshot: vi.fn(async () => snapshot), openCommitteeEvents: vi.fn(() => () => undefined)} as unknown as SelfHostedApi;
+    let callbacks: Parameters<SelfHostedApi['openCommitteeEvents']>[2] | undefined;
+    const api = {snapshot: vi.fn(async () => snapshot), openCommitteeEvents: vi.fn((_id, _after, next) => {
+      callbacks = next; return () => undefined;
+    })} as unknown as SelfHostedApi;
     container = document.createElement('div'); document.body.append(container); root = createRoot(container);
     await act(async () => { root?.render(<MemoryRouter initialEntries={['/committees/committee']}>
       <SelfHostedWorkspace user={user} logout={() => undefined} api={api} />
     </MemoryRouter>); await Promise.resolve(); await Promise.resolve(); });
     expect(container.textContent).toContain('Security Council');
-    expect(container.textContent).toContain('China');
+    expect(container.textContent).toContain('Share committee');
     expect(api.snapshot).toHaveBeenCalledTimes(1);
     expect(api.openCommitteeEvents).toHaveBeenCalledWith('committee', 7, expect.any(Object));
+    act(() => callbacks?.onState('OFFLINE_READONLY'));
+    expect(container.textContent).toContain('Offline read-only');
+    const notes = container.querySelector<HTMLAnchorElement>('a[href="/committees/committee/notes"]');
+    await act(async () => {notes?.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true}));});
+    expect(container.textContent).toContain('Opening debate');
+    expect(container.textContent).not.toContain('New note');
+    expect(container.textContent).not.toContain('Save note');
     await act(async () => { window.dispatchEvent(new Event('focus')); await Promise.resolve(); await Promise.resolve(); });
     expect(api.snapshot).toHaveBeenCalledTimes(2);
   });
@@ -49,12 +63,28 @@ describe('self-hosted stage 4 workspace', () => {
     await act(async () => { root?.render(<MemoryRouter initialEntries={['/committees/committee']}>
       <SelfHostedWorkspace user={user} logout={() => undefined} api={api} />
     </MemoryRouter>); await Promise.resolve(); await Promise.resolve(); });
-    const item = Array.from(container.querySelectorAll('.item')).find(node => node.textContent === '议事');
+    const item = container.querySelector<HTMLAnchorElement>('a[href="/committees/committee/motions"]');
     expect(item).toBeTruthy();
-    await act(async () => { item?.dispatchEvent(new MouseEvent('click', {bubbles: true})); });
-    expect(container.textContent).toContain('发言名单');
-    expect(container.textContent).toContain('正式表决');
-    expect(container.textContent).toContain('决议草案与修正案');
+    await act(async () => { item?.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true})); });
+    expect(container.textContent).toContain('Motions');
+    expect(container.textContent).toContain('Formal ballot');
+    expect(container.querySelector('.committee-workspace-page')?.textContent).not.toContain('Create strawpoll');
+  });
+
+  it('offers point types from the active rule read model', async () => {
+    const ruleDriven: CommitteeWorkspaceSnapshot = {...snapshot,
+      meetingSession: {id: 'session', committeeId: 'committee', phaseId: 'formal-debate', activeRulePackageVersionId: 'rules',
+        status: 'OPEN', revision: 1, createdAt: '2026-08-13T00:00:00.000Z', closedAt: null},
+      activeRules: {...snapshot.activeRules, activePhaseId: 'formal-debate', pointTypes: [
+        {id: 'point-of-order', names: {en: 'Point of order', 'zh-CN': '程序性问题'}, interruptRequested: true}
+      ]}};
+    const api = {snapshot: vi.fn(async () => ruleDriven), openCommitteeEvents: vi.fn(() => () => undefined)} as unknown as SelfHostedApi;
+    container = document.createElement('div'); document.body.append(container); root = createRoot(container);
+    await act(async () => { root?.render(<MemoryRouter initialEntries={['/committees/committee/points']}>
+      <SelfHostedWorkspace user={user} logout={() => undefined} api={api} />
+    </MemoryRouter>); await Promise.resolve(); await Promise.resolve(); });
+    expect(container.textContent).toContain('Point of order');
+    expect(container.querySelector('input[value="point-of-order"]')).toBeNull();
   });
 
   it('lets only the owner archive an active committee and export an archived committee', async () => {
@@ -62,13 +92,14 @@ describe('self-hosted stage 4 workspace', () => {
       viewer: {audience: 'OWNER', seatId: null}, committee: {...snapshot.committee, ownerUserId: user.id}};
     const archiveCommittee = vi.fn(async () => ({...ownerSnapshot.committee, status: 'ARCHIVED' as const, revision: 2}));
     const activeApi = {snapshot: vi.fn(async () => ownerSnapshot), openCommitteeEvents: vi.fn(() => () => undefined),
-      archiveCommittee, committeeExportUrl: vi.fn(() => '/api/v1/committees/committee/export')} as unknown as SelfHostedApi;
+      archiveCommittee, committeeExportUrl: vi.fn(() => '/api/v1/committees/committee/export'),
+      listRulePackages: vi.fn(async () => [])} as unknown as SelfHostedApi;
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     container = document.createElement('div'); document.body.append(container); root = createRoot(container);
-    await act(async () => { root?.render(<MemoryRouter initialEntries={['/committees/committee']}>
+    await act(async () => { root?.render(<MemoryRouter initialEntries={['/committees/committee/settings']}>
       <SelfHostedWorkspace user={user} logout={() => undefined} api={activeApi} />
     </MemoryRouter>); await Promise.resolve(); await Promise.resolve(); });
-    const archive = Array.from(container.querySelectorAll('button')).find(item => item.textContent === '归档委员会');
+    const archive = Array.from(container.querySelectorAll('button')).find(item => item.textContent === 'Archive committee');
     await act(async () => { archive?.click(); await Promise.resolve(); await Promise.resolve(); });
     expect(archiveCommittee).toHaveBeenCalledWith('committee', 1);
     act(() => root?.unmount()); root = undefined; container.remove();
@@ -82,27 +113,28 @@ describe('self-hosted stage 4 workspace', () => {
     const archivedApi = {snapshot: vi.fn(async () => archived), openCommitteeEvents: vi.fn(() => () => undefined),
       committeeExportUrl: vi.fn(() => '/api/v1/committees/committee/export'), requestCommitteeDeletion} as unknown as SelfHostedApi;
     container = document.createElement('div'); document.body.append(container); root = createRoot(container);
-    await act(async () => { root?.render(<MemoryRouter initialEntries={['/committees/committee']}>
+    await act(async () => { root?.render(<MemoryRouter initialEntries={['/committees/committee/settings']}>
       <SelfHostedWorkspace user={user} logout={() => undefined} api={archivedApi} />
     </MemoryRouter>); await Promise.resolve(); await Promise.resolve(); });
-    const link = Array.from(container.querySelectorAll('a')).find(item => item.textContent === '导出记录');
+    const link = Array.from(container.querySelectorAll('a')).find(item => item.textContent === 'Export records');
     expect(link?.getAttribute('href')).toBe('/api/v1/committees/committee/export');
-    const prompt = vi.spyOn(window, 'prompt').mockReturnValue('Security Council');
-    const remove = Array.from(container.querySelectorAll('button')).find(item => item.textContent === '永久删除委员会');
+    const confirmation = container.querySelector('input');
+    await act(async () => {if (confirmation) {Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+      ?.call(confirmation, 'Security Council'); confirmation.dispatchEvent(new Event('input', {bubbles: true}));}});
+    const remove = Array.from(container.querySelectorAll('button')).find(item => item.textContent === 'Permanently delete committee');
     await act(async () => {remove?.click(); await Promise.resolve(); await Promise.resolve();});
-    expect(prompt).toHaveBeenCalledWith('此操作不可恢复。请输入委员会名称“Security Council”确认永久删除：');
     expect(requestCommitteeDeletion).toHaveBeenCalledWith('committee', 2, 'Security Council');
-    expect(container.textContent).not.toContain('保存更改');
-    expect(container.textContent).not.toContain('归档委员会');
-    const notes = Array.from(container.querySelectorAll('.item')).find(item => item.textContent === 'notes');
-    await act(async () => {notes?.dispatchEvent(new MouseEvent('click', {bubbles: true}));});
+    expect(container.textContent).not.toContain('Save changes');
+    expect(container.textContent).not.toContain('Archive committee');
+    const notes = container.querySelector<HTMLAnchorElement>('a[href="/committees/committee/notes"]');
+    await act(async () => {notes?.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true}));});
     expect(container.textContent).toContain('Opening debate');
     const noteButtons = Array.from(container.querySelectorAll('button')).map(item => item.textContent);
     expect(noteButtons).not.toContain('Edit'); expect(noteButtons).not.toContain('Delete');
-    const proceedings = Array.from(container.querySelectorAll('.item')).find(item => item.textContent === '议事');
-    await act(async () => {proceedings?.dispatchEvent(new MouseEvent('click', {bubbles: true}));});
-    expect(container.textContent).toContain('正式表决');
-    expect(container.textContent).not.toContain('提出动议');
+    const proceedings = container.querySelector<HTMLAnchorElement>('a[href="/committees/committee/motions"]');
+    await act(async () => {proceedings?.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true}));});
+    expect(container.textContent).toContain('Formal ballot');
+    expect(container.textContent).not.toContain('Propose motion');
     expect(container.textContent).not.toContain('新建决议草案');
   });
 });

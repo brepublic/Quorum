@@ -47,10 +47,11 @@ function formatBytes(bytes: number): string {
 
 type UploadProgress = {phase: 'HASHING' | 'UPLOADING' | 'COMMITTING'; processed: number; total: number};
 
-export default function FilesPanel({snapshot, api, currentUserId}: {
+export default function FilesPanel({snapshot, api, currentUserId, section = 'all'}: {
   snapshot: CommitteeWorkspaceSnapshot;
   api: SelfHostedApi;
   currentUserId?: string;
+  section?: 'attachments' | 'storage' | 'all';
 }) {
   const committeeId = snapshot.committee.id;
   const readOnly = snapshot.committee.status === 'ARCHIVED' || snapshot.committee.status === 'DELETING';
@@ -196,6 +197,7 @@ export default function FilesPanel({snapshot, api, currentUserId}: {
 
   return <div className="self-hosted-files">
     {error && <Message error role="alert" content={error} />}
+    {section !== 'storage' && <>
     {pendingHostCommits.length > 0 && <Message info header="等待主席电脑保存"
       list={pendingHostCommits.map(item => item.logicalName)} />}
     {canUpload && <Segment loading={working && !progress}><Header as="h3">上传文件</Header>
@@ -240,9 +242,9 @@ export default function FilesPanel({snapshot, api, currentUserId}: {
           }}>永久删除</Button>}
         </Card.Content></Card>;
       })}
-    </Card.Group>}
+    </Card.Group>}</>}
 
-    {canManage && <Segment loading={working && !progress} className="self-hosted-storage-panel">
+    {section !== 'attachments' && canManage && <Segment loading={working && !progress} className="self-hosted-storage-panel">
       <Header as="h3">文件存储</Header>
       <Header as="h4">主席电脑</Header>
       {activeHost ? <p>{activeHost.deviceLabel} · {HOST_STATUS[activeHost.status]}

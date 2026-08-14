@@ -20,7 +20,10 @@ function snapshot(audience: CommitteeWorkspaceSnapshot['viewer']['audience'],
   return {schemaVersion: 2, committee: {id: committeeId, name: '安理会', chairLabel: '主席', topic: '', conference: '',
     visibility: audience === 'PUBLIC' ? 'PUBLIC' : 'PRIVATE', operationMode: 'DELEGATE_OPERATED', status,
     activeRulePackageVersionId: 'rules', revision: 2}, seats: [], viewer: {audience, seatId: null}, attendance: [],
-  points: [], notes: [], textPosts: [], sync: {committeeEventSequence: 1}};
+  points: [], notes: [], textPosts: [], activeRules: {versionId: 'rules', activePhaseId: null, phases: [],
+    attendanceResponses: [], pointTypes: [], motionTypes: [], speakerLists: [], ballots: {delegateMayChangeVote: false,
+      chairMayCorrectVote: true, anonymousStrawpoll: false, mustCollectAllVotesWhenVetoSeatEligible: true},
+    documents: {amendmentsPublicByDefault: false}}, sync: {committeeEventSequence: 1}};
 }
 
 function api(overrides: Partial<SelfHostedApi> = {}): SelfHostedApi {

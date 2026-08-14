@@ -291,6 +291,9 @@ integration('PostgreSQL stage 4 templates and seat snapshots', () => {
     expect(publicView.viewer).toEqual({audience: 'PUBLIC', seatId: null});
     expect(publicView.committee).not.toHaveProperty('ownerUserId');
     expect(publicView).toEqual(expect.objectContaining({schemaVersion: 2, notes: [], textPosts: [], attendance: [], points: []}));
+    expect(publicView.activeRules).toEqual(expect.objectContaining({versionId: committee.activeRulePackageVersionId,
+      attendanceResponses: expect.arrayContaining(['PRESENT', 'ABSENT']), motionTypes: expect.any(Array),
+      pointTypes: expect.any(Array), speakerLists: expect.any(Array)}));
     expect(publicView.memberships).toBeUndefined();
     const adminView = await stage4.snapshot(committee.id, administrator);
     expect(adminView.viewer.audience).toBe('PUBLIC');

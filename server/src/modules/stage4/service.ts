@@ -685,9 +685,34 @@ export class Stage4Service {
           createdAt: row.created_at.toISOString(), resolvedAt: row.resolved_at?.toISOString() ?? null})) : pointRows.rows.map(point);
       }
       const summary = committeeSummary(committee); const {ownerUserId: _ownerUserId, ...publicCommittee} = summary;
+      const ruleResult = await client.query<{definition: {
+        phases?: Array<{id: string; names?: Record<string, string>}>;
+        attendance?: {responses?: string[]};
+        points?: Array<{id: string; names?: Record<string, string>; interruptRequested?: boolean}>;
+        motions?: Array<{id: string; names?: Record<string, string>; procedural?: boolean; requiredSecondCount?: number}>;
+        speakerLists?: Array<{id: string; defaultDurationSeconds?: number; defaultTotalDurationSeconds?: number;
+          defaultSpeakerDurationSeconds?: number; allowDelegateRequests?: boolean; yieldTypes?: string[]}>;
+        ballots?: {delegateMayChangeVote?: boolean; chairMayCorrectVote?: boolean; anonymousStrawpoll?: boolean;
+          mustCollectAllVotesWhenVetoSeatEligible?: boolean};
+        documents?: {amendmentsPublicByDefault?: boolean};
+      }}>('SELECT definition FROM rule_package_versions WHERE id=$1', [committee.active_rule_package_version_id]);
+      const rules = ruleResult.rows[0]?.definition;
+      if (!rules) throw new AppError({code: 'SERVICE_NOT_READY', message: 'Active rules are unavailable.'});
       const result: CommitteeWorkspaceSnapshot = {schemaVersion: 2,
         committee: viewer.audience === 'OWNER' || viewer.audience === 'CHAIR' ? summary : publicCommittee,
         seats: seats.rows, viewer, attendance, points, notes: [], textPosts: [],
+        activeRules: {versionId: committee.active_rule_package_version_id, activePhaseId: currentSession?.phase_id ?? null,
+          phases: rules.phases ?? [], attendanceResponses: rules.attendance?.responses ?? [],
+          pointTypes: (rules.points ?? []).map(item => ({id: item.id, ...(item.names ? {names: item.names} : {}),
+            interruptRequested: item.interruptRequested === true})),
+          motionTypes: (rules.motions ?? []).map(item => ({id: item.id, ...(item.names ? {names: item.names} : {}),
+            procedural: item.procedural === true, requiredSecondCount: item.requiredSecondCount ?? 0})),
+          speakerLists: rules.speakerLists ?? [],
+          ballots: {delegateMayChangeVote: rules.ballots?.delegateMayChangeVote === true,
+            chairMayCorrectVote: rules.ballots?.chairMayCorrectVote === true,
+            anonymousStrawpoll: rules.ballots?.anonymousStrawpoll === true,
+            mustCollectAllVotesWhenVetoSeatEligible: rules.ballots?.mustCollectAllVotesWhenVetoSeatEligible === true},
+          documents: {amendmentsPublicByDefault: rules.documents?.amendmentsPublicByDefault === true}},
         sync: {committeeEventSequence: Number(committee.next_event_sequence) - 1},
         ...(currentSession ? {meetingSession: meetingSession(currentSession)} : {}),
         ...(currentRollCall ? {rollCall: currentRollCall} : {})};
