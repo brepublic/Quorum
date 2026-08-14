@@ -8,8 +8,8 @@
 - 分支：`self-host`
 - 已确认基线：`0644875 stage 8.5: add operations status and recovery tools`
 - 当前阶段：9 移除 Firebase 正在实施。
-- 当前工作：阶段 8 已完成当前 WSL 可执行验收并全部单独提交；正在盘点 Firebase 运行路径、依赖、Rules、Functions、emulator 与测试替代边界。
-- 下一步：形成阶段 9 精确删除清单，切换为单一自托管入口，删除旧运行代码和依赖，并执行源码/依赖/构建产物/生产网络的 Firebase 零残留验证。
+- 当前工作：阶段 9.1 已把前端切换为单一自托管入口，删除旧运行图、SDK/CLI、Functions、Rules、emulator/Cypress 资产，并把 CI 改为真实 PostgreSQL/API 集成；正在提交该小任务。
+- 下一步：完成阶段 9.2 架构、部署、README 和人工验收文档，执行全仓文本、依赖树、构建产物与浏览器生产网络零残留验证。
 
 ## 已完成与验证
 
@@ -322,3 +322,13 @@
 - `pnpm build:self-host` 通过，仅有既有 Vite 大分块警告；`pnpm test:self-host:integration` 的 8 个文件、67 项因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip；`git diff --check` 通过。
 - 当前 WSL 没有 `pg_dump`、真实 PostgreSQL、TLS 自托管实例、真实 provider 和浏览器恢复环境。SH-MAN-519 记录了角色矩阵、权限/进程参数、dump/manifest 篡改、隔离恢复、逐对象 SHA-256 和 durable worker 收敛的上机步骤，未伪造恢复成功。
 - 阶段 8.5 已单独提交为 `0644875`；阶段 8 完成，进入阶段 9 Firebase 移除。
+
+### 2026-08-14：阶段 9.1 单一自托管运行图与测试替代
+
+- `App` 不再读取运行模式或初始化外部 BaaS；前端始终进入 `SelfHostedIdentity`，所有业务请求走同源 `/api/v1` 与 SSE。
+- 删除旧浏览器页面、模型、Firebase Auth/Realtime Database/Storage/Functions 调用、Cloud Functions 工作区、Rules、hosting/emulator 配置和相关脚本。删除 `firebase`、`react-firebase-hooks`、`firebase-tools`、Cypress 依赖与锁文件传递依赖。
+- 删除只覆盖旧运行时的 Cypress fixture/spec/plugin，GitHub Actions 改用 PostgreSQL 16 service，依次执行自托管测试、真实 PostgreSQL integration 和完整生产构建。Docker 构建不再复制 Functions manifest。
+- `pnpm install --frozen-lockfile --offline` 通过并从本地依赖树移除 712 个旧包。源码、manifest、lock、部署、CI、脚本和新生产构建中没有 Firebase/Cypress 引用。
+- `pnpm test:self-host`：60 个文件通过、8 个文件明确 skip；330 项通过、67 项明确 skip。全仓 Vitest：63 个文件通过、8 个文件明确 skip；359 项通过、67 项明确 skip。
+- `pnpm build:self-host` 通过，前端由 1375 个模块/约 2.30 MiB JS 降至 953 个模块/约 553 KiB JS，仅保留既有大分块警告。集成入口 67 项因当前 WSL 未配置 `TEST_DATABASE_ADMIN_URL` 明确 skip；`git diff --check` 通过。
+- 阶段 9.1 待单独提交；阶段 9.2 仍需更新所有当前架构/测试/部署说明，并在 TLS 浏览器保存没有旧服务网络请求的 HAR 证据。

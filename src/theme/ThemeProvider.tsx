@@ -211,7 +211,7 @@ function ThemeManager(props: {
             : props.activeTheme.manifest.description}</p>}
         </div>
         {notice && <Message error={notice.error} positive={!notice.error} content={notice.text} />}
-        <Message info content={t('Imported themes stay in this browser. API 2 themes contain validated settings only and never write to Firebase. Legacy API 1 CSS themes remain supported for compatibility.')} />
+        <Message info content={t('Imported themes stay in this browser. API 2 themes contain validated settings only. Legacy API 1 CSS themes remain supported for compatibility.')} />
         <input
           ref={inputRef}
           className="quorum-theme-file-input"

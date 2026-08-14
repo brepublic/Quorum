@@ -10,29 +10,26 @@ boundary, or deployment model.
 ## Local WSL Toolchain
 
 - Source `scripts/wsl-env.sh` before using project commands. It prepends the
-  repository-local Node 22 and pnpm binaries and configures Java 21 when those
-  tools have been installed under `.tools/`.
+  repository-local Node 22 and pnpm binaries when those tools have been
+  installed under `.tools/`.
 - The repository-local `.tools/` directory is intentionally ignored: it is a
   reproducible per-checkout tool cache, not source code. If it is absent, use
   the documented system prerequisites or reinstall the local tools.
 
-## Firebase Emulators And Cypress
+## PostgreSQL Integration
 
-- Use `pnpm test:e2e` for integration tests. It starts the Firebase Auth, Realtime Database, and Storage emulators, starts Vite with `VITE_USE_FIREBASE_EMULATORS=true`, seeds deterministic Cypress data, and runs the Cypress specs.
-- To inspect the app manually against local Firebase services, run `pnpm emulators` in one terminal and `VITE_USE_FIREBASE_EMULATORS=true pnpm start` in another.
-- The emulator suite requires Java 21 or newer. The scripts automatically prefer a Homebrew OpenJDK 21 install on macOS when available.
-- Do not point Cypress integration tests at the production Firebase project. Seed test users and database state through `cypress/plugins/firebaseEmulator.js`.
+- Use `pnpm test:self-host:integration` for database integration tests. It creates isolated temporary databases through `TEST_DATABASE_ADMIN_URL` and must never target a production database.
+- Use `pnpm self-host:test-db:up` and `pnpm self-host:test-db:reset` for the repository PostgreSQL 16 test service when Docker is available.
+- If `TEST_DATABASE_ADMIN_URL` is absent, integration tests must report an explicit skip. Do not replace PostgreSQL behavior with an in-memory database.
 
 ## Cursor Cloud specific instructions
 
-- Node 22, `pnpm`, and OpenJDK 21 are preinstalled; the update script only runs `pnpm install`. Java 21 satisfies the emulator suite requirement (the macOS Homebrew JDK lookup in `scripts/firebase-emulators.mjs` is a no-op here).
+- Node 22 and `pnpm` are preinstalled; the update script only runs `pnpm install`.
 - Scripts/commands are defined in `package.json`. Notable gotchas:
   - `pnpm test` runs Vitest in watch mode (never exits). For a one-shot run use `pnpm exec vitest run`.
   - There is no `lint` script. Typecheck with `pnpm exec tsc --noEmit` (production `pnpm build` runs `tsc && vite build`).
 - The dev server (`pnpm start`, Vite) binds to `localhost` only, so `curl http://127.0.0.1:5173` fails while `curl http://localhost:5173` works. Pass `--host` to expose it on other interfaces.
-- The Firebase web config in `src/App.tsx` is a hardcoded public config, so no secrets are needed. By default the app talks to the real `muncoordinated` Firebase project; set `VITE_USE_FIREBASE_EMULATORS=true` to wire it to the local emulators (Auth 9099, DB 9000, Storage 9199, UI 4000). Prefer emulators for local testing to avoid writing to production.
-- Emulator startup logs `gcp-metadata` `ECONNRESET` and "Unable to fetch the CLI MOTD" warnings due to restricted egress; these are non-fatal and the emulators still start.
-- Cypress e2e (`pnpm test:e2e`, `pnpm cypress:run`) is blocked in this environment: the Cypress binary is not downloaded by `pnpm install`, and fetching it from `download.cypress.io` is blocked by network egress. Unit tests and manual/emulator testing work without it.
+- `pnpm start` serves the self-hosted browser application. It expects the same-origin `/api/v1` backend; use the Compose deployment or an explicit local reverse proxy for end-to-end browser checks.
 
 ## User-facing copy
 

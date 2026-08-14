@@ -1,5 +1,4 @@
 packages:
-  - functions
   - packages/*
   - server
 
@@ -9,7 +8,6 @@ overrides:
 onlyBuiltDependencies:
   - "@swc/core"
   - argon2
-  - cypress
   - esbuild
   - protobufjs
   - re2

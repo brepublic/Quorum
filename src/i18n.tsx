@@ -41,7 +41,7 @@ const zhCN: Record<string, string> = {
   'The built-in Quorum interface. It inherits the application styles without adding overrides.': 'Quorum 当前内置界面，不附加任何覆盖样式。',
   'Active theme': '当前主题',
   'Theme API 2 controls approved colors, typography, shape, density, materials, motion, components, and page widths without changing Quorum data or behavior.': '主题 API 2 只能控制经批准的颜色、排版、形状、密度、材质、动态、组件外观和页面宽度，不能改变 Quorum 的数据或业务行为。',
-  'Imported themes stay in this browser. API 2 themes contain validated settings only and never write to Firebase. Legacy API 1 CSS themes remain supported for compatibility.': '导入的主题仅保存在当前浏览器中。API 2 主题只包含经过校验的设置，绝不会写入 Firebase；旧版 API 1 CSS 主题继续兼容。',
+  'Imported themes stay in this browser. API 2 themes contain validated settings only. Legacy API 1 CSS themes remain supported for compatibility.': '导入的主题仅保存在当前浏览器中。API 2 主题只包含经过校验的设置；旧版 API 1 CSS 主题继续兼容。',
   'Theme API': '主题 API',
   'Built-in theme': '内置主题',
   'Legacy CSS theme': '旧版 CSS 主题',

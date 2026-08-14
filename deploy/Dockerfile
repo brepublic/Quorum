@@ -6,7 +6,6 @@ RUN corepack enable
 WORKDIR /workspace
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json tsconfig.test.json vite.config.ts ./
-COPY functions/package.json functions/package.json
 COPY packages/contracts/package.json packages/contracts/package.json
 COPY packages/rule-schema/package.json packages/rule-schema/package.json
 COPY server/package.json server/package.json
