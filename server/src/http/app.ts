@@ -24,6 +24,7 @@ import type {Stage7LocalChangeService} from '../modules/storage-agent/local-chan
 import type {Stage7ConflictService} from '../modules/storage-agent/conflict-service.js';
 import type {Stage8ArchiveService} from '../modules/operations/archive-service.js';
 import type {Stage8DeletionService} from '../modules/operations/deletion-service.js';
+import type {Stage8OperationsStatusService} from '../modules/operations/status-service.js';
 import {AppError, normalizeError} from './errors.js';
 import {
   clearIdentityCookies,
@@ -62,6 +63,7 @@ export interface AppDependencies {
   storageConflicts?: Stage7ConflictService;
   archives?: Stage8ArchiveService;
   committeeDeletions?: Stage8DeletionService;
+  operationsStatus?: Stage8OperationsStatusService;
   allowedOrigins?: string[];
 }
 
@@ -976,9 +978,10 @@ async function handleIdentityRequest(options: {
   pathname: string;
   requestId: string;
   identity: IdentityService;
+  operationsStatus?: Stage8OperationsStatusService;
   allowedOrigins: readonly string[];
 }): Promise<boolean> {
-  const {request, response, pathname, requestId, identity, allowedOrigins} = options;
+  const {request, response, pathname, requestId, identity, operationsStatus, allowedOrigins} = options;
   const method = request.method ?? 'GET';
   const context = identityContext(request, requestId);
   const cookies = identityCookies(request);
@@ -1056,6 +1059,12 @@ async function handleIdentityRequest(options: {
   if (method === 'GET' && pathname === '/api/v1/admin/users') {
     const auth = await identity.authenticate(cookies.get(SESSION_COOKIE_NAME));
     sendJson(response, 200, success({users: await identity.listUsers(auth)}, requestId));
+    return true;
+  }
+
+  if (method === 'GET' && pathname === '/api/v1/admin/operations/status' && operationsStatus) {
+    const auth = await identity.authenticate(cookies.get(SESSION_COOKIE_NAME));
+    sendJson(response, 200, success(await operationsStatus.status(auth), requestId));
     return true;
   }
 
@@ -1140,6 +1149,7 @@ export function createRequestHandler(dependencies: AppDependencies): RequestList
           pathname,
           requestId,
           identity: dependencies.identity,
+          operationsStatus: dependencies.operationsStatus,
           allowedOrigins: dependencies.allowedOrigins ?? []
         })) return;
 

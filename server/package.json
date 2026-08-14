@@ -7,7 +7,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "node --enable-source-maps dist/index.js",
-    "migrate": "node --enable-source-maps dist/db/migrate-cli.js"
+    "migrate": "node --enable-source-maps dist/db/migrate-cli.js",
+    "backup": "node --enable-source-maps dist/operations/backup-cli.js"
   },
   "dependencies": {
     "@quorum/contracts": "workspace:*",

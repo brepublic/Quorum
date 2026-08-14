@@ -34,6 +34,7 @@ import {Stage7ConflictService} from './modules/storage-agent/conflict-service.js
 import {Stage8ArchiveService} from './modules/operations/archive-service.js';
 import {Stage8DeletionService, startCommitteeDeletionWorker} from './modules/operations/deletion-service.js';
 import {Stage8RetentionService, startRetentionWorker} from './modules/operations/retention-service.js';
+import {Stage8OperationsStatusService} from './modules/operations/status-service.js';
 
 const {Pool} = pg;
 const logger = createLogger();
@@ -100,6 +101,7 @@ async function main(): Promise<void> {
       secretDays: config.retentionSecretDays,
       registrationDays: config.retentionRegistrationDays
     }, logger);
+    const operationsStatus = new Stage8OperationsStatusService(pool, capacity);
     await stage3.ensureBuiltins();
     const bootstrapSecret = await identity.ensureBootstrapSecret();
     if (bootstrapSecret) {
@@ -128,6 +130,7 @@ async function main(): Promise<void> {
       storageConflicts,
       archives,
       committeeDeletions,
+      operationsStatus,
       allowedOrigins: config.allowedOrigins
     });
     const stopStorageMigrationWorker = startStorageMigrationWorker(storageMigrations, logger);

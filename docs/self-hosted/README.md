@@ -1,8 +1,8 @@
 # Quorum 自托管目标架构
 
-本目录描述 Quorum 从 Firebase BaaS 迁移到完全自主托管后的目标架构。阶段 0–7 已落地；阶段 8.1–8.4 已接入委员会归档/导出、durable 永久删除、账号处置与保留 worker。运维状态/恢复和阶段 9 Firebase 移除仍待实施。当前事实以根目录的 [`PROJECT_ARCHITECTURE.md`](../../PROJECT_ARCHITECTURE.md) 为准。
+本目录描述 Quorum 从 Firebase BaaS 迁移到完全自主托管后的目标架构。阶段 0–8 已落地；阶段 8 已接入委员会归档/导出、durable 永久删除、账号处置、保留 worker、管理员运行状态和恢复工具。阶段 9 Firebase 移除仍待实施。当前事实以根目录的 [`PROJECT_ARCHITECTURE.md`](../../PROJECT_ARCHITECTURE.md) 为准。
 
-## 当前阶段 8.4 边界
+## 当前阶段 8.5 边界
 
 - PostgreSQL migration 已建立身份、凭据、Session、系统设置、未来注册申请和身份审计表。
 - bootstrap secret 只保存哈希，并由 PostgreSQL 事务保证并发初始化只有一个成功；公开状态 API 不返回 secret。
@@ -59,6 +59,8 @@
 - 删除 worker 只在所有物理副本、唯一暂存副本和本次必需的 Agent 删除任务均完成后清除数据库。清除事务由 deletion job 的当前 claim token 限定；失败整体回滚并退避重试。完成后只保留不含委员会名称明文的 durable job 结果。
 - 系统管理员只能匿名化已禁用普通账号，并须选择另一个活动账号接收委员会、账号级模板与规则包。转移、委员会 revision/事件/审计、凭据与 Session 删除和个人信息清除同事务提交；历史 actor ID 保留且匿名化不可恢复。
 - 常驻 retention worker 只清理过期/撤销 Session、到期幂等结果、终态一次性秘密和已决定注册申请；多实例由 advisory lock 协调，失败整体回滚。事件、审计、Agent task 和删除追踪记录默认保留，Compose 日志固定轮换上限。
+- 系统管理员运行状态页只展示 schema compatibility、容量、账号/委员会数量、固定队列深度和最近 retention 结果；普通账号无权访问，响应不含业务标识、内部路径、provider key 或凭据。
+- `pnpm self-host:backup -- <new-directory>` 输出 PostgreSQL custom dump、文件 provider manifest 和 SHA-256 元数据。数据库与 provider 字节不是跨介质原子快照，必须按 [`RECOVERY.md`](./RECOVERY.md) 在隔离环境核对并演练；首版不调度自动备份或自动恢复。
 - PostgreSQL、TLS 浏览器和 Compose 实测尚未在当前环境执行，状态及取证要求见 [`MANUAL_ACCEPTANCE.md`](./MANUAL_ACCEPTANCE.md)。
 
 ## 文档索引
@@ -73,6 +75,7 @@
 | [`IMPLEMENTATION_PLAN.md`](./IMPLEMENTATION_PLAN.md) | 分阶段实现顺序、迁移边界和验收门槛 |
 | [`CURRENT_BEHAVIOR_BASELINE.md`](./CURRENT_BEHAVIOR_BASELINE.md) | 阶段 0 当前行为清单、规则 fixture 差异和稳定注册表 |
 | [`MANUAL_ACCEPTANCE.md`](./MANUAL_ACCEPTANCE.md) | 当前环境无法自动执行的部署、浏览器和容量验收 |
+| [`RECOVERY.md`](./RECOVERY.md) | 数据库 dump、文件 manifest、隔离恢复与校验流程 |
 | [`STAGE_6_HANDOFF_PROMPT.md`](./STAGE_6_HANDOFF_PROMPT.md) | 阶段 6 服务器卷与 S3 文件实施交接 Prompt |
 | [`STAGE_6_3_HANDOFF_PROMPT.md`](./STAGE_6_3_HANDOFF_PROMPT.md) | 已完成阶段 6.3 SERVER_VOLUME provider 的历史交接 Prompt |
 | [`STAGE_6_4_HANDOFF_PROMPT.md`](./STAGE_6_4_HANDOFF_PROMPT.md) | 已完成阶段 6.4 S3 compatible provider 的历史交接 Prompt |

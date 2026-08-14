@@ -991,6 +991,16 @@ body: {replacementUserId, confirmationEmail}
 
 每个 sweep 在一个事务内删除合格记录并写 `operations_retention_runs` 聚合计数；任一 SQL 失败全部回滚，再以独立事务记录固定 `RETENTION_SWEEP_FAILED`。运行证据不可修改，指标只暴露完成/失败次数和最后运行时间。委员会事件、`audit_log`、`identity_audit_log`、Agent task、provider/delete job、deletion job 和文件墓碑不参与普通期限清理。Compose 对 app、Caddy 和 PostgreSQL 的 JSON 日志固定使用 10 MiB × 3 文件轮换，日志继续执行字段级秘密脱敏。
 
+### 11.20 阶段 8.5 运维状态与恢复点
+
+```text
+GET /api/v1/admin/operations/status
+```
+
+该接口只接受已完成临时密码修改的 `SYSTEM_ADMIN` Session。响应固定聚合 schema compatibility、服务器时间、容量状态与使用率、账号/委员会状态计数、blob 删除/upload staging/provider migration/Agent task/委员会删除队列深度，以及最近 retention 状态与完成时间。响应不含用户、委员会或文件标识，不含内部路径、provider key、endpoint、密文或凭据。
+
+`pnpm self-host:backup -- <new-directory>` 要求目标目录不存在并创建 0700 目录。它调用 `pg_dump --format=custom --no-owner --no-privileges` 生成 0600 的 `database.dump`，再生成 0600 的 `file-manifest.jsonl` 与 `backup-metadata.json`。manifest 只记录恢复所需的 blob/副本 ID、委员会 ID、provider 类型、内部 key、大小、SHA-256 和 durability 状态；数据库连接字符串不进入进程参数。dump 与 manifest 文件分别带 SHA-256，但数据库和 provider 字节不是跨介质原子快照。恢复需按 [`RECOVERY.md`](./RECOVERY.md) 在隔离实例逐对象校验；没有自动备份调度或破坏性 restore API。
+
 ## 12. SSE 格式
 
 ```text

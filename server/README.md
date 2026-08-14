@@ -1,6 +1,6 @@
 # Quorum 自托管后端
 
-当前已实现自主托管阶段 1–7 与阶段 8.1–8.4：PostgreSQL、同源 API、SSE、完整文件 provider、Chair Agent、归档/永久删除、账号处置和保留 worker 均已接入。管理状态/恢复工具和阶段 9 Firebase 移除仍待完成。
+当前已实现自主托管阶段 1–8：PostgreSQL、同源 API、SSE、完整文件 provider、Chair Agent、归档/永久删除、账号处置、保留 worker、管理员运行状态和恢复点工具均已接入。阶段 9 Firebase 移除仍待完成。
 
 本机运行：
 
@@ -22,6 +22,7 @@ GET /api/v1/bootstrap/status
 POST /api/v1/bootstrap/admin
 POST /api/v1/auth/login
 GET /api/v1/auth/me
+GET /api/v1/admin/operations/status
 POST /api/v1/auth/elevate
 POST /api/v1/auth/change-password
 POST /api/v1/auth/logout
@@ -73,6 +74,8 @@ POST /api/v1/storage-agent/{pair,heartbeat}
 `/health/ready` 只有在数据库可访问、所有仓库 migration 已应用、存储目录可读写、容量可采样且可用字节不为零时返回 200。仍有可用空间的 warning/critical 状态返回 200 并报告状态，因为下载、议事和清理仍可用；critical 只拒绝新的上传字节和 provider copy。`/metrics` 以 Prometheus text 暴露容量与固定类别清理指标。
 
 retention worker 默认保留已撤销/到期 Session 30 天、身份幂等结果 30 天、终态一次性秘密 7 天、已决定注册申请 90 天；环境变量见 `docs/self-hosted/DATA_API_SPEC.md`。委员会事件、审计和 durable task 不按普通期限删除。Compose 的 `json-file` 日志固定为每个服务 10 MiB × 3 文件。
+
+仅系统管理员可在工作区“运行状态”页面查看固定聚合容量、账号/委员会、队列和 retention 状态。创建恢复点时运行 `pnpm self-host:backup -- /absolute/new/backup-directory`；目标目录必须不存在。数据库与 provider 字节不是跨介质原子快照，恢复与逐对象校验步骤见 `docs/self-hosted/RECOVERY.md`。
 
 首次启动会在服务器控制台显示一次 bootstrap secret。数据库只保存其哈希，管理员初始化成功后立即清除；不要把该控制台行复制到工单、测试证据或普通应用日志。
 

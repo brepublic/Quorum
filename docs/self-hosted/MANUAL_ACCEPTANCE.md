@@ -446,3 +446,12 @@
 - 自动化覆盖情况：当前 WSL 的配置、migration、worker 和故障测试覆盖正整数期限、严格 DELETE 集合、advisory lock、事务回滚、追加式运行证据、固定指标和秘密不入日志。真实 PostgreSQL 用例会验证过期身份记录删除而委员会事件/审计保留；未配置 `TEST_DATABASE_ADMIN_URL` 时明确 skip。双实例竞争、Docker 实际日志轮换、时间边界和磁盘故障仍需实机执行。
 - 当前状态：`pnpm test:self-host` 326 项通过、67 项明确 skip；全仓 Vitest 481 项通过、67 项明确 skip；`pnpm build:self-host` 通过；集成入口 67 项因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip。真实 PostgreSQL/Compose 双实例与日志轮换延期。
 - 需要保存的证据：脱敏期限 fixture、每类删除前后计数、advisory lock/事务时间线、`operations_retention_runs`、Prometheus 抓取、Docker logging 配置与轮换文件清单、故障恢复日志和秘密搜索结果。不得保存 Session token、幂等 request/response body、邀请码、配对码、邮箱、源 IP 摘要或用户内容。
+
+### SH-MAN-519 管理状态、备份与隔离恢复
+
+- 前置条件：真实 PostgreSQL 16，已完成全部 migration；TLS 自托管实例；可检查的服务器持久卷、S3 compatible 测试桶和一台 Chair Agent；系统管理员与普通账号；含文件历史版本、provider 副本及待处理 retention/delete/migration/Agent/deletion task 的隔离数据；同版本 `pg_dump`/`pg_restore` 与足够的加密备份空间。禁止用生产实例作为首次恢复演练目标。
+- 操作步骤：分别以匿名、普通、强制改密和系统管理员身份请求运行状态并打开页面；调整容量到 normal/warning/critical，制造各固定队列与 retention 成功/失败记录，核对聚合值。运行 `pnpm self-host:backup -- <new-directory>`，再对已存在目录、不可写父目录、`pg_dump` 失败和数据库断连执行失败测试；检查进程参数、权限、日志及输出清单。停止写入并复制各 provider 字节，按 [`RECOVERY.md`](./RECOVERY.md) 在隔离 PostgreSQL 和隔离 provider 恢复；先验证正常恢复，再分别篡改 dump、manifest、一个 provider 对象，并制造缺少/额外对象和 pending worker 中断，逐项重跑探针、登录、快照、导出与下载。
+- 通过条件：只有完成改密的系统管理员可访问运行状态；页面和 API 的 schema、容量、账号/委员会计数、固定队列和 retention 汇总与数据库一致，不暴露标识、名称、路径、provider key、endpoint 或凭据。备份目标必须是新建 0700 目录，三个文件均为 0600；数据库 URL 不出现在进程参数或普通日志。正确恢复后 schema、记录数量、文件大小/SHA-256 和授权行为一致，durable worker 从已保存状态收敛；dump/manifest/对象任一不匹配都明确失败，演练实例不会连接或改写生产 provider。
+- 自动化覆盖情况：当前 WSL 的服务、HTTP、API client、页面和类型/生产构建测试覆盖系统管理员边界、固定聚合字段、容量提示、队列显示及敏感字段不返回。备份 CLI 可由 TypeScript 构建验证，但当前环境没有已配置的真实 PostgreSQL/provider 恢复点，不能把 mock 或静态文档当作实际 `pg_dump`、权限、跨 provider 一致性或恢复证据。
+- 当前状态：`pnpm test:self-host` 330 项通过、67 项明确 skip；全仓 Vitest 485 项通过、67 项明确 skip；`pnpm build:self-host` 通过；集成入口 67 项因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip。当前 WSL 也没有 `pg_dump`，真实 PostgreSQL dump/restore、TLS 浏览器、真实 provider 对象核对、权限/进程参数检查、故障恢复与 durable worker 收敛延期。
+- 需要保存的证据：角色/API 矩阵与页面截图、脱敏聚合查询、容量状态与队列对照、备份命令退出码、目录/文件权限、进程参数搜索、metadata SHA-256、manifest 记录数及逐 provider 核对汇总、隔离恢复 schema/行数/下载哈希、篡改拒绝和 worker 收敛时间线。不得保存 dump、manifest 内容、provider key、绝对路径、邮箱、Session、CSRF token、设备凭据、S3 密钥、文件名或正文。

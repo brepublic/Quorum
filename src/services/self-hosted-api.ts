@@ -204,6 +204,14 @@ function openCommitteeEventStream(committeeId: string, initialAfter: number,
 }
 
 export const selfHostedApi = {
+  operationsStatus() {
+    return request<{database: {schemaCompatibility: number; serverTime: string};
+      storage: {state: 'normal' | 'warning' | 'critical'; usageRatio: number; availableBytes: number};
+      accounts: Record<'active' | 'disabled' | 'anonymized', number>;
+      committees: Record<'active' | 'paused' | 'archived' | 'deleting', number>;
+      queues: {blobDelete: number; uploadStaging: number; migration: number; agentTasks: number; committeeDeletion: number};
+      retention: {lastStatus: string | null; lastCompletedAt: string | null}}>('/api/v1/admin/operations/status');
+  },
   async listCommittees(): Promise<CommitteeSummary[]> {
     return (await request<{committees: CommitteeSummary[]}>('/api/v1/committees')).committees;
   },

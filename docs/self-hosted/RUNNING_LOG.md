@@ -6,10 +6,10 @@
 
 - 更新时间：2026-08-14
 - 分支：`self-host`
-- 已确认基线：`ce4776e stage 8.3: transfer and anonymize accounts`
-- 当前阶段：8 归档、删除与运维正在实施。
-- 当前工作：阶段 8.4 保留 worker、配置、指标和日志轮换边界已实现，正在完成全量验证。
-- 下一步：单独提交 8.4；随后实现管理状态页、容量告警汇总和恢复工具/说明。
+- 已确认基线：`a588f88 stage 8.4: enforce retention policy`
+- 当前阶段：8 归档、删除与运维已完成当前 WSL 可执行验收。
+- 当前工作：阶段 8.5 管理状态、恢复点工具和恢复说明已实现并通过完整门禁，待单独提交。
+- 下一步：提交阶段 8.5；随后进入阶段 9，盘点并删除 Firebase 运行路径、依赖、Rules、Functions 与 emulator 编排。
 
 ## 已完成与验证
 
@@ -310,3 +310,15 @@
 - 定向配置、migration、worker、事务故障和 server build 测试通过。`pnpm test:self-host`：58 个文件通过、8 个文件明确 skip；326 项通过、67 项明确 skip。
 - `pnpm exec vitest run`：77 个文件通过、8 个文件明确 skip；481 项通过、67 项明确 skip。`pnpm build:self-host` 通过，仅有既有 Vite 大分块警告。
 - `pnpm test:self-host:integration`：8 个文件、67 项因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip。真实 PostgreSQL、双实例、Docker 日志轮换和时间边界步骤记录在 `MANUAL_ACCEPTANCE.md` 的 SH-MAN-518。
+- 阶段 8.4 已单独提交为 `a588f88`；继续阶段 8.5 运维状态与恢复。
+
+### 2026-08-14：阶段 8.5 管理状态与恢复工具
+
+- 新增仅系统管理员可读的 `/api/v1/admin/operations/status` 与工作区“运行状态”页面。响应固定聚合 schema compatibility、容量状态、账号/委员会状态计数、五类队列深度和最近 retention 结果，不返回业务标识、路径、provider key、endpoint 或凭据。
+- 新增 `pnpm self-host:backup -- <new-directory>`：在 0700 新目录中调用 `pg_dump` custom format，生成 0600 的数据库 dump、文件 provider manifest 和双文件 SHA-256 元数据。数据库连接 URL 不放入 `pg_dump` argv。
+- `RECOVERY.md` 明确数据库与 provider 字节不是跨介质原子快照，要求停止写入、复制 provider、在隔离 PostgreSQL/provider 中校验每个对象并运行探针、登录、快照、导出和下载；不提供自动计划或破坏性 restore。
+- 定向状态服务、HTTP 和页面测试 10 项通过；server build 与前端 `tsc --noEmit` 通过。
+- `pnpm test:self-host`：60 个文件通过、8 个文件明确 skip；330 项通过、67 项明确 skip。`pnpm exec vitest run`：79 个文件通过、8 个文件明确 skip；485 项通过、67 项明确 skip。
+- `pnpm build:self-host` 通过，仅有既有 Vite 大分块警告；`pnpm test:self-host:integration` 的 8 个文件、67 项因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip；`git diff --check` 通过。
+- 当前 WSL 没有 `pg_dump`、真实 PostgreSQL、TLS 自托管实例、真实 provider 和浏览器恢复环境。SH-MAN-519 记录了角色矩阵、权限/进程参数、dump/manifest 篡改、隔离恢复、逐对象 SHA-256 和 durable worker 收敛的上机步骤，未伪造恢复成功。
+- 阶段 8.5 待单独提交；提交后进入阶段 9 Firebase 移除。

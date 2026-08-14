@@ -171,6 +171,8 @@ Chair Agent 下线只切换为 `STORAGE_DEGRADED` 并显示警告，不自动暂
 
 保留 worker 只删除有明确期限且不再授权或承载业务真相的记录：过期/撤销 Session、到期幂等结果、终态一次性邀请/配对秘密和已决定注册申请。advisory transaction lock 限制多实例并发 sweep；一次 sweep 全部提交或回滚，并写不含用户内容的追加式结果。委员会事件、业务/身份审计、Agent task 和删除追踪记录默认保留到所属委员会按永久删除流程清除。
 
+运维状态由仅系统管理员可读的同源 API 聚合，字段固定为 schema compatibility、容量状态、账号/委员会状态计数、待处理队列计数和最近 retention 结果。它不返回用户或委员会标识、文件名、内部路径、provider key、endpoint 或凭据。首版不调度自动备份；运维人员显式运行标准 PostgreSQL custom dump，并同时导出文件元数据 manifest 与校验哈希。数据库与 provider 字节不是跨介质原子快照，恢复必须在隔离实例中逐对象核对，不提供自动覆盖生产数据的 restore 路径。
+
 ## 11. 部署与容量
 
 目标基线：Ubuntu Server x86-64、2 核、2 GiB 内存、40 GiB SSD、约 200 个账号、一个活动委员会、100 个席位、150 个并发浏览器、单文件 20 MiB、每委员会约 100 个文件。

@@ -69,6 +69,7 @@ async function request(identity: IdentityService, options: {
   method?: string;
   headers?: Record<string, string>;
   body?: Record<string, unknown>;
+  operationsStatus?: {status: (auth: unknown) => Promise<unknown>};
 }) {
   const logs: string[] = [];
   const handler = createRequestHandler({
@@ -77,6 +78,7 @@ async function request(identity: IdentityService, options: {
     version: 'test',
     databaseMigrationVersion: 2,
     identity,
+    operationsStatus: options.operationsStatus as never,
     allowedOrigins: ['https://quorum.example.com']
   });
   const body = options.body ? JSON.stringify(options.body) : '';
@@ -96,6 +98,20 @@ async function request(identity: IdentityService, options: {
 }
 
 describe('identity HTTP security boundary', () => {
+  it('authenticates the administrator operations status route', async () => {
+    const identity = fakeIdentity();
+    const operationsStatus = {status: vi.fn(async () => ({storage: {state: 'normal'}}))};
+    const response = await request(identity, {
+      path: '/api/v1/admin/operations/status',
+      headers: {cookie: '__Host-quorum_session=session'},
+      operationsStatus
+    });
+
+    expect(response.status).toBe(200);
+    expect(identity.authenticate).toHaveBeenCalledWith('session');
+    expect(operationsStatus.status).toHaveBeenCalledWith(expect.objectContaining({user}));
+  });
+
   it('rotates the login Session and sets secure Cookie attributes', async () => {
     const identity = fakeIdentity();
     const response = await request(identity, {

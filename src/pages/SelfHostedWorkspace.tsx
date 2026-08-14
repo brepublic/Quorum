@@ -17,6 +17,7 @@ import type {SelfHostedUser} from '../services/self-hosted-identity';
 import ProceedingsPanel from './self-hosted/ProceedingsPanel';
 import FilesPanel from './self-hosted/FilesPanel';
 import StorageAdminPanel from './self-hosted/StorageAdminPanel';
+import OperationsPanel from './self-hosted/OperationsPanel';
 
 function errorText(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 
@@ -47,6 +48,7 @@ function AppMenu({user, logout}: {user: SelfHostedUser; logout(): void}) {
     <Menu.Item as={Link} to="/countries">{t('Country templates')}</Menu.Item>
     {user.isSystemAdmin && <Menu.Item as={Link} to="/admin">{t('Account administration')}</Menu.Item>}
     {user.isSystemAdmin && <Menu.Item as={Link} to="/storage">存储配置</Menu.Item>}
+    {user.isSystemAdmin && <Menu.Item as={Link} to="/operations">运行状态</Menu.Item>}
     <Menu.Menu position="right"><LanguageMenuItem /><Menu.Item onClick={logout}>{t('Logout')}</Menu.Item></Menu.Menu>
   </Menu>;
 }
@@ -328,6 +330,7 @@ export default function SelfHostedWorkspace({user, logout, accountManager, api =
     <Route exact path="/countries"><CountryTemplates api={api} /></Route>
     <Route exact path="/templates"><CommitteeTemplates api={api} /></Route>
     {user.isSystemAdmin && <Route exact path="/storage"><Container style={{padding: '1em'}}><StorageAdminPanel api={api} /></Container></Route>}
+    {user.isSystemAdmin && <Route exact path="/operations"><Container style={{padding: '1em'}}><OperationsPanel api={api} /></Container></Route>}
     <Route path="/committees/:id"><SelfHostedCommitteeWorkspace api={api} user={user} /></Route>
     {user.isSystemAdmin && <Route exact path="/admin">{accountManager}</Route>}
     <Route exact path="/"><Redirect to={user.isSystemAdmin ? '/admin' : '/committees'} /></Route>

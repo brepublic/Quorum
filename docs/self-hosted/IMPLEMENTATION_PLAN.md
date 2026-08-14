@@ -201,7 +201,7 @@ deploy/
 
 ## 11. 阶段 8：归档、删除与运维
 
-状态：实施中。8.1–8.3 已落地归档/导出、durable 永久删除和账号资源处置；8.4 已落地 Session、幂等结果、一次性秘密、注册申请与容器日志保留边界。管理状态页和运维恢复仍待后续小任务。
+状态：已完成。8.1–8.5 已落地归档/导出、durable 永久删除、账号资源处置、Session/幂等结果/一次性秘密/注册申请与容器日志保留边界，以及管理员运行状态、数据库 dump、文件 manifest 和隔离恢复说明。真实 PostgreSQL、provider、Compose 和浏览器证据按 `MANUAL_ACCEPTANCE.md` 延期。
 
 交付：
 
@@ -237,6 +237,6 @@ deploy/
 - 浏览器或 E2E 未运行时明确说明，不能用单元测试代替视觉或运行证据；
 - `PROJECT_ARCHITECTURE.md` 只描述已经落地的当前事实，目标设计继续维护在本目录。
 
-## 14. 首个实现里程碑
+## 14. 当前实现里程碑
 
-下一步继续阶段 8：实现管理状态页、容量告警汇总、数据库 dump/文件 manifest 和恢复说明。Firebase 移除必须等阶段 8 完成并通过当前环境可执行的验证后再开始。
+下一步执行阶段 9：盘点并删除 Firebase Auth、Realtime Database、Storage、Functions、Rules、emulator 与依赖，切换为单一自托管生产路径，并用 PostgreSQL/API 测试替代旧 emulator 测试边界。
