@@ -7,7 +7,7 @@ import type {DurableStagingStore} from './staging.js';
 import {UploadStreamError} from './staging.js';
 import {transaction} from '../stage4/database.js';
 
-type CleanupKind = 'FILE_UPLOAD_STAGING' | 'MIGRATION_STAGING';
+type CleanupKind = 'FILE_UPLOAD_STAGING' | 'MIGRATION_STAGING' | 'AGENT_TASK_STAGING';
 
 interface CleanupCandidate extends QueryResultRow {
   kind: CleanupKind;
@@ -62,12 +62,15 @@ export class Stage6MaintenanceService implements StorageMetricsProvider {
     try {
       capacity = await this.capacity.sample();
     } catch {}
-    const queues = await this.pool.query<{blob_delete: number; upload_staging: number; migration_staging: number}>(`SELECT
+    const queues = await this.pool.query<{blob_delete: number; upload_staging: number; migration_staging: number;
+      agent_task_staging: number}>(`SELECT
       (SELECT count(*)::int FROM file_blob_delete_jobs WHERE status<>'COMPLETED') AS blob_delete,
       (SELECT count(*)::int FROM file_uploads WHERE staging_deleted_at IS NULL
         AND (status IN ('COMMITTED','CANCELLED') OR (status='FAILED' AND expires_at<=now()))) AS upload_staging,
       (SELECT count(*)::int FROM storage_migration_items WHERE staging_deleted_at IS NULL
-        AND status IN ('COMPLETED','CANCELLED')) AS migration_staging`);
+        AND status IN ('COMPLETED','CANCELLED')) AS migration_staging,
+      (SELECT count(*)::int FROM storage_agent_tasks WHERE content_staging_key IS NOT NULL
+        AND staging_deleted_at IS NULL AND status IN ('COMPLETED','FAILED','CANCELLED')) AS agent_task_staging`);
     const audits = await this.pool.query<{resource_type: string; outcome: string; count: number}>(`SELECT
       resource_type,outcome,count(*)::int AS count FROM storage_cleanup_audit GROUP BY resource_type,outcome`);
     const totals = new Map(audits.rows.map(row => [`${row.resource_type}:${row.outcome}`, Number(row.count)]));
@@ -86,9 +89,10 @@ export class Stage6MaintenanceService implements StorageMetricsProvider {
       `quorum_storage_cleanup_queue{kind="blob_delete"} ${Number(queues.rows[0]?.blob_delete ?? 0)}`,
       `quorum_storage_cleanup_queue{kind="upload_staging"} ${Number(queues.rows[0]?.upload_staging ?? 0)}`,
       `quorum_storage_cleanup_queue{kind="migration_staging"} ${Number(queues.rows[0]?.migration_staging ?? 0)}`,
+      `quorum_storage_cleanup_queue{kind="agent_task_staging"} ${Number(queues.rows[0]?.agent_task_staging ?? 0)}`,
       '# TYPE quorum_storage_cleanup_total counter'
     ];
-    for (const kind of ['BLOB_DELETE', 'FILE_UPLOAD_STAGING', 'MIGRATION_STAGING']) {
+    for (const kind of ['BLOB_DELETE', 'FILE_UPLOAD_STAGING', 'MIGRATION_STAGING', 'AGENT_TASK_STAGING']) {
       for (const outcome of ['SUCCEEDED', 'FAILED']) {
         lines.push(`quorum_storage_cleanup_total{kind="${kind.toLowerCase()}",outcome="${outcome.toLowerCase()}"} ${totals.get(`${kind}:${outcome}`) ?? 0}`);
       }
@@ -110,13 +114,21 @@ export class Stage6MaintenanceService implements StorageMetricsProvider {
           AND cleanup_next_attempt_at<=now()
           AND (cleanup_claimed_at IS NULL OR cleanup_claimed_at<=now()-interval '5 minutes')
         ORDER BY cleanup_next_attempt_at,created_at,id FOR UPDATE SKIP LOCKED LIMIT 1`);
-      return migration.rows[0] ? this.claim(client, 'MIGRATION_STAGING', migration.rows[0]) : null;
+      if (migration.rows[0]) return this.claim(client, 'MIGRATION_STAGING', migration.rows[0]);
+      const agentTask = await client.query<{id: string; staging_key: string}>(`SELECT id,
+        content_staging_key AS staging_key FROM storage_agent_tasks WHERE content_staging_key IS NOT NULL
+          AND staging_deleted_at IS NULL AND status IN ('COMPLETED','FAILED','CANCELLED')
+          AND cleanup_next_attempt_at<=now()
+          AND (cleanup_claimed_at IS NULL OR cleanup_claimed_at<=now()-interval '5 minutes')
+        ORDER BY cleanup_next_attempt_at,created_at,id FOR UPDATE SKIP LOCKED LIMIT 1`);
+      return agentTask.rows[0] ? this.claim(client, 'AGENT_TASK_STAGING', agentTask.rows[0]) : null;
     });
   }
 
   private async claim(client: PoolClient, kind: CleanupKind,
     row: {id: string; staging_key: string}): Promise<CleanupCandidate> {
-    const table = kind === 'FILE_UPLOAD_STAGING' ? 'file_uploads' : 'storage_migration_items';
+    const table = kind === 'FILE_UPLOAD_STAGING' ? 'file_uploads'
+      : kind === 'MIGRATION_STAGING' ? 'storage_migration_items' : 'storage_agent_tasks';
     const token = randomUUID();
     await client.query(`UPDATE ${table} SET cleanup_attempts=cleanup_attempts+1,cleanup_claimed_at=now(),
       cleanup_claim_token=$2,cleanup_failure_code=NULL,cleanup_failure_reason=NULL,updated_at=now() WHERE id=$1`,
@@ -126,7 +138,8 @@ export class Stage6MaintenanceService implements StorageMetricsProvider {
 
   private async finishStaging(candidate: CleanupCandidate): Promise<StorageMaintenanceResult | null> {
     return transaction(this.pool, async client => {
-      const table = candidate.kind === 'FILE_UPLOAD_STAGING' ? 'file_uploads' : 'storage_migration_items';
+      const table = candidate.kind === 'FILE_UPLOAD_STAGING' ? 'file_uploads'
+        : candidate.kind === 'MIGRATION_STAGING' ? 'storage_migration_items' : 'storage_agent_tasks';
       const completed = await client.query(`UPDATE ${table} SET staging_deleted_at=now(),cleanup_claimed_at=NULL,
         cleanup_claim_token=NULL,cleanup_failure_code=NULL,cleanup_failure_reason=NULL,updated_at=now()
         WHERE id=$1 AND cleanup_claim_token=$2 AND staging_deleted_at IS NULL RETURNING id`,
@@ -142,7 +155,8 @@ export class Stage6MaintenanceService implements StorageMetricsProvider {
     const failureCode = error instanceof UploadStreamError ? error.failureCode : 'STAGING_CLEANUP_FAILED';
     const failureReason = error instanceof Error ? error.message.slice(0, 240) : 'Staging cleanup failed.';
     return transaction(this.pool, async client => {
-      const table = candidate.kind === 'FILE_UPLOAD_STAGING' ? 'file_uploads' : 'storage_migration_items';
+      const table = candidate.kind === 'FILE_UPLOAD_STAGING' ? 'file_uploads'
+        : candidate.kind === 'MIGRATION_STAGING' ? 'storage_migration_items' : 'storage_agent_tasks';
       const failed = await client.query(`UPDATE ${table} SET cleanup_claimed_at=NULL,cleanup_claim_token=NULL,
         cleanup_failure_code=$3,cleanup_failure_reason=$4,
         cleanup_next_attempt_at=now()+(least(300,power(2,least(cleanup_attempts,8)))::text||' seconds')::interval,

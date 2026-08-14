@@ -233,7 +233,7 @@ S3 目标要求当前配置 revision 已由系统管理员完成连通性验证�
 
 阶段 6.7 的容量采样固定指向实际 `QUORUM_STORAGE_PATH`。80%/90% 是可配置默认阈值：warning 只告警，critical 阻止新的 upload 字节和 provider copy；两者都不停止下载、议事和清理。采样未知或必要目录不可读写才使 readiness 失败，临界容量通过 readiness 详情和 `/metrics` 明确暴露。
 
-maintenance worker 先处理 durable blob delete job，再处理 upload/migration staging。所有 cleanup claim 都有 token、五分钟 stale 回收和指数退避；unlink 后进程中断可按“目标已不存在”收敛。upload 只清理 `COMMITTED`、`CANCELLED` 或过期 `FAILED`；migration staging 只清理 `COMPLETED` 或 `CANCELLED`。任何 `STAGED`、待重试 copy、活动 claim 和退休源副本都不参与压力清理。
+maintenance worker 先处理 durable blob delete job，再处理 upload、provider migration 和 Agent 入站 task staging。所有 cleanup claim 都有 token、五分钟 stale 回收和指数退避；unlink 后进程中断可按“目标已不存在”收敛。upload 只清理 `COMMITTED`、`CANCELLED` 或过期 `FAILED`；migration staging 只清理 `COMPLETED` 或 `CANCELLED`；Agent task staging 只清理 `COMPLETED`、`FAILED` 或 `CANCELLED` task。任何 `STAGED` upload、非终态 Agent task、待重试 copy、活动 claim 和退休源副本都不参与压力清理。委员会永久删除会先把未完成工作转为可清理终态，并等待这些 fenced cleanup 全部完成。
 
 ## 11. Agent 发布目标
 

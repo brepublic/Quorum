@@ -10,6 +10,7 @@ import {IdentityService} from '../identity/service';
 import type {AuthenticatedSession} from '../identity/store';
 import {Stage3Service} from '../stage3/service';
 import {Stage8ArchiveService} from './archive-service';
+import {Stage8DeletionService} from './deletion-service';
 
 const {Client, Pool} = pg;
 const adminUrl = process.env.TEST_DATABASE_ADMIN_URL;
@@ -19,6 +20,7 @@ let pool: pg.Pool | undefined;
 let identity: IdentityService;
 let stage3: Stage3Service;
 let archives: Stage8ArchiveService;
+let deletions: Stage8DeletionService;
 let administrator: AuthenticatedSession;
 
 function quoteIdentifier(value: string): string { return `"${value.replaceAll('"', '""')}"`; }
@@ -33,7 +35,7 @@ beforeEach(async () => {
   pool = new Pool({connectionString: url.toString()});
   await runMigrations(pool, resolve('server/migrations'));
   identity = new IdentityService(new PostgresIdentityStore(pool));
-  stage3 = new Stage3Service(pool); archives = new Stage8ArchiveService(pool);
+  stage3 = new Stage3Service(pool); archives = new Stage8ArchiveService(pool); deletions = new Stage8DeletionService(pool);
   await stage3.ensureBuiltins();
   const secret = await identity.ensureBootstrapSecret();
   const session = await identity.bootstrapAdmin({secret: secret as string, email: 'admin@example.com',
@@ -82,5 +84,21 @@ integration('PostgreSQL stage 8 integration', () => {
     expect(records).toContainEqual(expect.objectContaining({type: 'record', section: 'committee_events'}));
     expect(records).toContainEqual(expect.objectContaining({type: 'record', section: 'audit_log'}));
     expect(records.at(-1)).toEqual(expect.objectContaining({type: 'complete', recordCount: expect.any(Number)}));
+  });
+
+  it('atomically removes an archived committee after its durable cleanup boundary is clear', async () => {
+    const owner = await user('deleteowner');
+    const committee = await stage3.createCommittee(owner, {name: 'Delete Committee', visibility: 'PRIVATE'},
+      context('delete-committee'));
+    await stage3.archiveCommittee(owner, committee.id, committee.revision, context('delete-archive'));
+    const job = await deletions.requestDeletion(owner, committee.id,
+      {baseRevision: committee.revision + 1, confirmationName: 'Delete Committee'}, 'delete-key', context('delete'));
+    expect(job.status).toBe('PENDING');
+    await expect(stage3.snapshot(committee.id, owner)).rejects.toMatchObject({code: 'NOT_FOUND'});
+    const completed = await deletions.processNext();
+    expect(completed).toEqual(expect.objectContaining({id: job.id, status: 'COMPLETED'}));
+    expect((await pool?.query('SELECT 1 FROM committees WHERE id=$1', [committee.id]))?.rowCount).toBe(0);
+    expect((await pool?.query('SELECT status FROM committee_deletion_jobs WHERE id=$1', [job.id]))?.rows[0])
+      .toEqual({status: 'COMPLETED'});
   });
 });

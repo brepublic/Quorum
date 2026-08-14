@@ -419,3 +419,12 @@
 - 自动化覆盖情况：当前 WSL 的服务、HTTP、API client 和工作区/文件页测试覆盖 Owner 边界、归档状态、只读控件、只读事务、分页流、查询失败回滚、慢客户端断开时销毁流、安全响应头及秘密列白名单。真实 PostgreSQL 用例会执行全部导出 SQL 并核对权限和归档状态；未配置 `TEST_DATABASE_ADMIN_URL` 时明确 skip。真实 TLS、慢客户端、大数据量内存、并发快照、浏览器下载和数据库断流尚未执行。
 - 当前状态：因无真实 PostgreSQL、TLS 自托管实例、大数据 fixture 和浏览器故障注入环境延期。
 - 需要保存的证据：角色/路由矩阵、归档前后 revision 与事件审计、全写命令拒绝结果、导出响应头、记录数量和文件 SHA-256 对照、进程 RSS 曲线、数据库事务/连接快照、故障时间线及秘密搜索结果。不得保存真实 Session、CSRF token、邀请码、设备凭据、S3 密文、provider key、源 IP 摘要或文件正文。
+
+### SH-MAN-516 委员会永久删除与物理清理屏障
+
+- 前置条件：真实 PostgreSQL 16；TLS 自托管实例；可检查的服务器持久卷与 S3 compatible 测试桶；一台已配对 Chair Agent；包含议事、成员、审计、多个文件版本、provider migration 副本、失败 upload、Agent 入站 staging 和已归档状态的专用测试委员会。使用隔离测试数据，禁止对生产委员会执行。
+- 操作步骤：分别以 member、Chair、仅有 `SYSTEM_ADMIN` 的账号和 Owner 请求删除；测试未归档、陈旧 revision、错误大小写/空格的名称、缺少 Origin/CSRF/幂等键和不同 body 复用幂等键。先让当前 Chair host 撤销或保留非活动 Chair binding，确认删除拒绝；恢复当前 host 后提交。立即检查列表、快照、SSE 和全部写路由均不可见或拒绝。分别在服务器卷删除、S3 删除、Agent `DELETE_FILE`、三类 staging unlink、数据库清除中途和 job 完成提交前终止进程；每次重启服务并等待收敛。让 Agent 离线后再上线，并注入 provider 删除失败、只读 staging、满盘和一次数据库语句失败。完成后核对数据库所有委员会业务表、服务器卷、S3 key 和 Agent 目录；搜索委员会名称、文件名、正文、邀请码、设备凭据和 provider key。最后确认 deletion job 只保留哈希与状态，不保留名称明文。
+- 通过条件：只有归档委员会的 Owner 能以精确名称启动；系统管理员无隐式权限。接受后委员会立即进入不可读写的 `DELETING`，但 durable job、墓碑、provider delete job、必需 Agent task 和 staging 记录仍可恢复。任何物理副本或唯一暂存副本未清理时不得删除数据库追踪记录；Agent task 失败或离线时 job 保持可重试。数据库清除要么删除全部委员会业务数据，要么整体回滚；重启和 stale claim 不重复产生副本、事件或不可追踪文件。最终服务器卷、S3、Agent 和 staging 均无该委员会内容，数据库无委员会、议事、成员、事件、审计和委员会规则行；只剩不含名称明文的 completed job。
+- 自动化覆盖情况：当前 WSL 的 migration 静态契约、删除服务、HTTP、API client、工作区和 maintenance 测试覆盖 Owner/归档/revision/精确名称、Origin/CSRF/幂等边界、原子冻结与排队、Chair provider 可恢复性、blob 元数据缺口回滚、cleanup blocker、stale durable claim、数据库清除失败回滚、Agent staging 清理和短确认文案。真实 PostgreSQL 集成用例会从空库执行 migration 24，并对无文件委员会完成实际 scoped purge；未设置 `TEST_DATABASE_ADMIN_URL` 时明确 skip。当前没有真实 PostgreSQL、TLS、S3、持久卷、Chair 真机或可控进程终止环境，不能声称物理多 provider 删除已实机通过。
+- 当前状态：`pnpm test:self-host` 318 项通过、65 项明确 skip；全仓 Vitest 473 项通过、65 项明确 skip；`pnpm build:self-host` 通过；集成入口 65 项因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip。真实 PostgreSQL、多 provider、Agent 离线恢复、浏览器视觉/键盘和进程终止验收延期。
+- 需要保存的证据：migration 24 表、索引、触发器和 deferred FK 查询；角色/请求矩阵；删除 job、required Agent task、blob/staging queue 的脱敏时间线；每次故障前后 claim、attempt 和聚合计数；数据库事务回滚证据；服务器卷/S3/Agent/staging 最终清单与 SHA-256 对照；浏览器确认框、焦点和窄屏截图；全链路秘密/正文搜索结果。不得保存 Session、CSRF token、幂等键、Agent 凭据、claim token、S3 密钥、绝对路径或文件正文。

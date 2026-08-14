@@ -280,6 +280,20 @@ describe('migration discovery', () => {
     expect(resolution?.sql).toContain('schema_compatibility=23');
   });
 
+  it('adds durable committee deletion with scoped append-only purge exceptions', async () => {
+    const migrations = await loadMigrations(resolve('server/migrations'));
+    const deletion = migrations.find(item => item.version === 24);
+    expect(deletion?.name).toBe('committee_deletion_jobs');
+    expect(deletion?.sql).toContain('CREATE TABLE committee_deletion_jobs');
+    expect(deletion?.sql).toContain('CREATE TABLE committee_deletion_agent_tasks');
+    expect(deletion?.sql).toContain("'PENDING', 'IN_PROGRESS', 'RETRY', 'COMPLETED'");
+    expect(deletion?.sql).toContain('quorum_meta.committee_purge_allowed');
+    expect(deletion?.sql).toContain("current_setting('quorum.committee_purge_token',true)");
+    expect(deletion?.sql).toContain('storage_agent_tasks_cleanup_candidates');
+    expect(deletion?.sql).toContain('DEFERRABLE INITIALLY IMMEDIATE');
+    expect(deletion?.sql).toContain('schema_compatibility=24');
+  });
+
   it('rejects SQL files outside the versioned naming contract', async () => {
     const directory = await temporaryDirectory();
     await writeFile(join(directory, 'first.sql'), 'SELECT 1;\n');

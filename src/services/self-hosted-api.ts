@@ -22,6 +22,7 @@ import type {
   Stage4CommitteeSeat,
   AttendanceEvent,
   CommitteePoint,
+  CommitteeDeletionJob,
   FileEntry,
   FileUpload,
   S3ProviderConfigSummary,
@@ -319,6 +320,10 @@ export const selfHostedApi = {
   },
   archiveCommittee(id: string, baseRevision: number) {
     return request<CommitteeSummary>(`/api/v1/committees/${id}/archive`, {method: 'POST', body: {baseRevision}});
+  },
+  requestCommitteeDeletion(id: string, baseRevision: number, confirmationName: string) {
+    return request<CommitteeDeletionJob>(`/api/v1/committees/${id}`, {method: 'DELETE',
+      body: {baseRevision, confirmationName}, idempotencyKey: key()});
   },
   committeeExportUrl(id: string) { return `/api/v1/committees/${encodeURIComponent(id)}/export`; },
   listCountryTemplates: async () => (await request<{countryTemplates: CountryTemplate[]}>('/api/v1/country-templates')).countryTemplates,

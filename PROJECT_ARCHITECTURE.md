@@ -2,7 +2,7 @@
 
 > 本文件是本仓库的维护入口。后续涉及代码、构建、测试或运行的工作，应先阅读本文件和 `AGENTS.md`，并以实际代码为准更新本文档。
 
-> Quorum 已完成自主托管目标设计，并已落地实施计划阶段 0–7 与阶段 8.1。`self-hosted` 运行时以 PostgreSQL 为唯一业务真相，通过同源 API 与受众过滤 SSE 提供议事功能；上传可流式暂存并提交到服务器持久卷、S3 compatible provider 或当前主席电脑。文件可在自托管工作区审核、发布、授权下载、异步物理删除并在服务器卷与 S3 之间安全迁移。委员会可进入全工作区只读归档，并由 Owner 流式导出议事记录、审计和文件 manifest。桌面 Agent 已具备安全目录、墓碑优先同步、原子落盘、全量扫描、中断恢复和显式冲突裁决，并可生成携带固定运行时的 Windows、macOS 与 Linux 发布包。原生签名、公证和安装证据仍须在目标系统取得。
+> Quorum 已完成自主托管目标设计，并已落地实施计划阶段 0–7 与阶段 8.1–8.2。`self-hosted` 运行时以 PostgreSQL 为唯一业务真相，通过同源 API 与受众过滤 SSE 提供议事功能；上传可流式暂存并提交到服务器持久卷、S3 compatible provider 或当前主席电脑。文件可在自托管工作区审核、发布、授权下载、异步物理删除并在服务器卷与 S3 之间安全迁移。委员会可进入全工作区只读归档，由 Owner 流式导出记录，或经精确名称确认进入 durable 永久删除；删除 worker 等待 provider、Agent 和全部暂存副本清理后，才在单个事务中清除委员会业务数据。桌面 Agent 已具备安全目录、墓碑优先同步、原子落盘、全量扫描、中断恢复和显式冲突裁决，并可生成携带固定运行时的 Windows、macOS 与 Linux 发布包。原生签名、公证和安装证据仍须在目标系统取得。
 
 ## 1. 项目定位与技术栈
 
@@ -45,7 +45,7 @@ flowchart LR
 
 `src/index.tsx` 初始化 Google Analytics、Sentry、浏览器 history 与 Semantic UI 样式，并把 `App` 挂载到 `#root`。`VITE_RUNTIME_MODE` 显式选择运行路径：未设置或为 `firebase` 时保持原行为，`src/App.tsx` 初始化 Firebase，并在显示普通路由前调用 Functions 检查管理员初始化；`VITE_USE_FIREBASE_EMULATORS=true` 时连接本机模拟器，否则连接 `muncoordinated`。`VITE_RUNTIME_MODE=self-hosted` 使用 `SelfHostedIdentity` 与 `SelfHostedWorkspace`：身份、账号管理、委员会列表、模板和议事工作区均调用同源 `/api/v1`；每个浏览器对一个委员会最多保持一条 SSE。公开委员会深层路由可匿名读取过滤后的快照。两个运行时没有双写。
 
-`server/` 是自主托管模块化单体。它启动时通过 PostgreSQL advisory lock 执行带 SHA-256 校验和的 migration；数据库版本不兼容时 readiness 失败。阶段 2–4 migration 建立身份、委员会、规则包、模板及低并发议事。阶段 5 migration 5–12 增加实时议事、表决和版本化决议草案。migration 13 增加存储绑定、逻辑文件、不可变文件版本、blob 完整性元数据和不可变删除墓碑；migration 14 增加 durable upload；migration 15 把 provider blob 目标和已提交 file entry/version 绑定到 upload；migration 16 增加 S3 provider 配置和加密凭据列；migration 17 增加审核状态机和 durable 物理删除任务；migration 18 增加 provider migration、fenced copy item 和跨 binding 已验证副本；migration 19 增加 fenced staging cleanup 与追加式维护审计；migration 20 增加一次性 Agent 配对、设备身份、单活动 host 和 lease generation；migration 21 增加追加式 Agent manifest、按主机 generation 固定的 durable task、claim token 和任务内容暂存状态；migration 22 增加 host-bound `CHAIR_AGENT` binding、文件同步状态、待 host 提交的 upload 以及不可静默覆盖的本地变化与冲突记录；migration 23 增加不可变冲突裁决、裁决 task 关联和一次性应用记录。schema compatibility 为 23。
+`server/` 是自主托管模块化单体。它启动时通过 PostgreSQL advisory lock 执行带 SHA-256 校验和的 migration；数据库版本不兼容时 readiness 失败。阶段 2–4 migration 建立身份、委员会、规则包、模板及低并发议事。阶段 5 migration 5–12 增加实时议事、表决和版本化决议草案。migration 13 增加存储绑定、逻辑文件、不可变文件版本、blob 完整性元数据和不可变删除墓碑；migration 14 增加 durable upload；migration 15 把 provider blob 目标和已提交 file entry/version 绑定到 upload；migration 16 增加 S3 provider 配置和加密凭据列；migration 17 增加审核状态机和 durable 物理删除任务；migration 18 增加 provider migration、fenced copy item 和跨 binding 已验证副本；migration 19 增加 fenced staging cleanup 与追加式维护审计；migration 20 增加一次性 Agent 配对、设备身份、单活动 host 和 lease generation；migration 21 增加追加式 Agent manifest、按主机 generation 固定的 durable task、claim token 和任务内容暂存状态；migration 22 增加 host-bound `CHAIR_AGENT` binding、文件同步状态、待 host 提交的 upload 以及不可静默覆盖的本地变化与冲突记录；migration 23 增加不可变冲突裁决、裁决 task 关联和一次性应用记录；migration 24 增加委员会永久删除 job、所需 Agent 删除任务集合、Agent 入站暂存清理状态，以及只对当前 fenced deletion claim 开放的历史清除通道。schema compatibility 为 24。
 
 首次启动生成高熵 bootstrap secret，只把 SHA-256 哈希写入数据库，并在专用控制台行显示一次；初始化事务锁定单行设置、创建唯一 `SYSTEM_ADMIN` 后清除哈希。密码使用固定参数 Argon2id；Session Cookie 为 `Secure`、`HttpOnly`、`SameSite=Lax`，数据库只保存 Session token 的 SHA-256；写请求同时校验允许 Origin 和双提交 CSRF token。登录、密码确认提权和改密会轮换 Session，重置密码、禁用账号和用户级撤销通过 `session_version` 与撤销时间立即使旧 Session 失效。
 
@@ -170,6 +170,7 @@ system
 - 阶段 7.5 在文件页增加当前主机、在线状态、最后在线时间、一次性配对/转移码和撤销操作。Owner/Chair 可读取 durable conflict，并以 conflict revision、当前 lease generation、file revision 和幂等键选择保留服务端、采用本地或另存为新文件；暂停、陈旧状态、墓碑复活和旧主机写入均被拒绝。浏览器 conflict 响应只保留文件名，不返回 Agent 相对目录。裁决状态、Chair 事件和审计同事务提交，Agent 以持久 request ID 重放本地裁决；磁盘/网络故障保留 task 重试，裁决后的新本地编辑形成新的 durable conflict。`status` 命令只输出 generation、manifest sequence 和聚合计数。
 - 阶段 7.6 固定 Agent 0.1.0 与 Node.js 22.23.2，为 Windows x86-64、macOS x86-64/arm64 和非阻断 Linux x86-64 生成自包含发布包。构建先校验 Node 官方归档 SHA-256，只携带运行时、编译 JS、入口、许可证和安装说明；归档路径顺序、时间戳、权限及 release manifest 可复现。签名脚本只引用 Windows 证书存储 thumbprint 或 macOS keychain identity/profile，不接收私钥和密码。当前 WSL 已验证未签名包、SHA-256、内容、权限、秘密扫描与 Linux 运行；Windows/macOS 签名、公证、ACL、Gatekeeper、SmartScreen 和原生文件系统仍是人工验收项。
 - 阶段 8.1 允许 Committee Owner 归档活动委员会。归档后同源 API 在既有领域服务边界拒绝委员会、议事、文本和文件写入，前端只保留按角色读取及文件下载；Owner 可从 PostgreSQL `REPEATABLE READ READ ONLY` 快照分页流式导出 JSON Lines。导出使用显式列白名单，包含议事记录、审计和文件大小/SHA-256 manifest，不包含凭据哈希、Session、设备秘密、provider storage key、源 IP 摘要或文件正文。
+- 阶段 8.2 只允许归档委员会的 Owner 在精确输入委员会名称后请求永久删除。请求事务把状态改为 `DELETING`，撤销配对码，取消未完成上传、迁移和旧 Agent task，为所有文件写墓碑并排队 provider/当前 Agent 删除；该委员会立即从列表、快照和 SSE 边界隐藏。常驻 deletion worker 只有在 blob delete job、upload/migration/Agent staging 和本次必需的 `DELETE_FILE` task 全部完成后，才使用当前 claim token 限定的数据库清除权限，在一个事务中删除委员会议事、文件、事件、审计、成员和委员会级规则数据并保留不含名称明文的 deletion job 结果。中途失败回滚数据库清除并退避重试。
 
 因此，数据库规则和 Storage 元数据是产品的关键安全边界；变更前必须同时审查前端写入路径与这两份规则文件。
 

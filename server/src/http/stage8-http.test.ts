@@ -7,6 +7,7 @@ import {describe, expect, it, vi} from 'vitest';
 import {createLogger} from '../logger';
 import type {IdentityService} from '../modules/identity/service';
 import type {Stage8ArchiveService} from '../modules/operations/archive-service';
+import type {Stage8DeletionService} from '../modules/operations/deletion-service';
 import {createRequestHandler} from './app';
 
 const committeeId = '20000000-0000-4000-8000-000000000001';
@@ -23,6 +24,46 @@ class TestResponse extends EventEmitter {
 }
 
 describe('stage 8 archive HTTP boundary', () => {
+  it('requires the destructive write boundary and returns the durable deletion job', async () => {
+    const identity = {authenticate: vi.fn(async () => authenticated)} as unknown as IdentityService;
+    const requestDeletion = vi.fn(async () => ({id: '30000000-0000-4000-8000-000000000001', committeeId,
+      status: 'PENDING' as const, requestedAt: '2026-08-14T00:00:00.000Z', completedAt: null, failureCode: null}));
+    const handler = createRequestHandler({health: {ready: async () => ({ready: true,
+      checks: {database: {status: 'ok', migrationVersion: 24}, storage: {status: 'ok'}}})},
+    logger: createLogger(() => undefined), version: 'test', databaseMigrationVersion: 24, identity,
+    archives: {} as Stage8ArchiveService,
+    committeeDeletions: {requestDeletion} as unknown as Stage8DeletionService,
+    allowedOrigins: ['https://quorum.example']});
+    const body = {baseRevision: 9, confirmationName: 'Security Council'};
+    const incoming = Readable.from([JSON.stringify(body)]) as unknown as IncomingMessage;
+    Object.assign(incoming, {method: 'DELETE', url: `/api/v1/committees/${committeeId}`, headers: {
+      origin: 'https://quorum.example', cookie: '__Host-quorum_session=session; __Host-quorum_csrf=csrf',
+      'x-csrf-token': 'csrf', 'idempotency-key': 'delete-key'}, socket: {remoteAddress: '127.0.0.1'}});
+    const response = new TestResponse(); const finished = once(response, 'finish');
+    handler(incoming, response as unknown as ServerResponse); await finished;
+    expect(response.statusCode).toBe(202);
+    expect(JSON.parse(response.body).data).toEqual(expect.objectContaining({status: 'PENDING'}));
+    expect(requestDeletion).toHaveBeenCalledWith(authenticated, committeeId, body, 'delete-key',
+      expect.objectContaining({sourceIp: '127.0.0.1'}));
+  });
+
+  it('rejects deletion before authentication when Origin is missing', async () => {
+    const identity = {authenticate: vi.fn(async () => authenticated)} as unknown as IdentityService;
+    const requestDeletion = vi.fn();
+    const handler = createRequestHandler({health: {ready: async () => ({ready: true,
+      checks: {database: {status: 'ok', migrationVersion: 24}, storage: {status: 'ok'}}})},
+    logger: createLogger(() => undefined), version: 'test', databaseMigrationVersion: 24, identity,
+    archives: {} as Stage8ArchiveService,
+    committeeDeletions: {requestDeletion} as unknown as Stage8DeletionService,
+    allowedOrigins: ['https://quorum.example']});
+    const incoming = Readable.from(['{}']) as unknown as IncomingMessage;
+    Object.assign(incoming, {method: 'DELETE', url: `/api/v1/committees/${committeeId}`,
+      headers: {cookie: '__Host-quorum_session=session'}, socket: {remoteAddress: '127.0.0.1'}});
+    const response = new TestResponse(); const finished = once(response, 'finish');
+    handler(incoming, response as unknown as ServerResponse); await finished;
+    expect(response.statusCode).toBe(403); expect(requestDeletion).not.toHaveBeenCalled();
+  });
+
   it('requires Session and returns an attachment stream without CSRF on GET', async () => {
     const identity = {authenticate: vi.fn(async () => authenticated)} as unknown as IdentityService;
     const exportCommittee = vi.fn(async () => ({fileName: `quorum-committee-${committeeId}.jsonl`,

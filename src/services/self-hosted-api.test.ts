@@ -38,6 +38,18 @@ describe('self-hosted stage 4 API client', () => {
     expect(selfHostedApi.committeeExportUrl('committee id')).toBe('/api/v1/committees/committee%20id/export');
   });
 
+  it('sends exact-name committee deletion through the destructive command boundary', async () => {
+    const fetchMock = vi.fn(async () => ({ok: true, status: 202,
+      json: async () => ({data: {id: 'job', status: 'PENDING'}, meta: {requestId: 'delete'}})}));
+    vi.stubGlobal('fetch', fetchMock);
+    await selfHostedApi.requestCommitteeDeletion('committee', 9, 'Security Council');
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/committees/committee', expect.objectContaining({
+      method: 'DELETE', credentials: 'same-origin',
+      body: JSON.stringify({baseRevision: 9, confirmationName: 'Security Council'}),
+      headers: expect.objectContaining({'x-csrf-token': 'csrf-token', 'idempotency-key': 'request-key'})
+    }));
+  });
+
   it('preserves stable API errors so callers can revalidate after revision conflicts', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ok: false, status: 409,
       json: async () => ({error: {code: 'REVISION_CONFLICT', message: 'Changed.', requestId: 'two',

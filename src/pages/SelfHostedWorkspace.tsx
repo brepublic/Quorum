@@ -193,6 +193,7 @@ function TextResources({kind, snapshot, run, api}: {kind: 'notes' | 'posts'; sna
 
 function Overview({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspaceSnapshot; run(operation: () => Promise<unknown>): Promise<void>;
   api: SelfHostedApi; canChair: boolean}) {
+  const history = useHistory();
   const [name, setName] = React.useState(snapshot.committee.name); const [seatName, setSeatName] = React.useState('');
   const [chairUserId, setChairUserId] = React.useState(''); const [assignmentUserId, setAssignmentUserId] = React.useState('');
   const [assignmentSeatId, setAssignmentSeatId] = React.useState(snapshot.seats[0]?.id ?? '');
@@ -205,7 +206,12 @@ function Overview({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspaceS
       snapshot.committee.id, chairUserId.trim(), snapshot.committee.revision)); setChairUserId(''); }}>
       <Form.Input label={t('Account ID')} required value={chairUserId} onChange={e => setChairUserId(e.currentTarget.value)} />
       <Button primary disabled={!chairUserId.trim()}>{t('Grant Chair')}</Button></Form></>}
-    {owner && snapshot.committee.status === 'ARCHIVED' && <Button as="a" href={api.committeeExportUrl(snapshot.committee.id)} download>导出记录</Button>}
+    {owner && snapshot.committee.status === 'ARCHIVED' && <><Button as="a" href={api.committeeExportUrl(snapshot.committee.id)} download>导出记录</Button>
+      <Button negative onClick={() => {const confirmationName = window.prompt(
+        `此操作不可恢复。请输入委员会名称“${snapshot.committee.name}”确认永久删除：`);
+      if (confirmationName === null) return;
+      void run(async () => {await api.requestCommitteeDeletion(snapshot.committee.id,
+        snapshot.committee.revision, confirmationName); history.replace('/committees');});}}>永久删除委员会</Button></>}
     {owner && !readOnly && <Button negative onClick={() => {if (window.confirm('归档后委员会只读。继续？')) {
       void run(() => api.archiveCommittee(snapshot.committee.id, snapshot.committee.revision));
     }}}>归档委员会</Button>}

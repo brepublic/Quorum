@@ -32,6 +32,7 @@ import {Stage7ChairAgentProviderService} from './modules/storage-agent/chair-pro
 import {Stage7LocalChangeService} from './modules/storage-agent/local-change-service.js';
 import {Stage7ConflictService} from './modules/storage-agent/conflict-service.js';
 import {Stage8ArchiveService} from './modules/operations/archive-service.js';
+import {Stage8DeletionService, startCommitteeDeletionWorker} from './modules/operations/deletion-service.js';
 
 const {Pool} = pg;
 const logger = createLogger();
@@ -91,6 +92,7 @@ async function main(): Promise<void> {
     const storageLocalChanges = new Stage7LocalChangeService(storageAgent);
     const storageConflicts = new Stage7ConflictService(pool, storageAgent);
     const archives = new Stage8ArchiveService(pool);
+    const committeeDeletions = new Stage8DeletionService(pool);
     await stage3.ensureBuiltins();
     const bootstrapSecret = await identity.ensureBootstrapSecret();
     if (bootstrapSecret) {
@@ -118,11 +120,13 @@ async function main(): Promise<void> {
       storageLocalChanges,
       storageConflicts,
       archives,
+      committeeDeletions,
       allowedOrigins: config.allowedOrigins
     });
     const stopStorageMigrationWorker = startStorageMigrationWorker(storageMigrations, logger);
     const stopStorageMaintenanceWorker = startStorageMaintenanceWorker(storageMaintenance, logger);
     const stopStorageHostMonitor = startStorageHostMonitor(storageAgent, logger);
+    const stopCommitteeDeletionWorker = startCommitteeDeletionWorker(committeeDeletions, logger);
 
     server.listen(config.port, config.host, () => {
       logger.info('server.started', {
@@ -141,6 +145,7 @@ async function main(): Promise<void> {
       stopStorageMigrationWorker();
       stopStorageMaintenanceWorker();
       stopStorageHostMonitor();
+      stopCommitteeDeletionWorker();
       logger.info('server.shutdown.started', {signal});
 
       const forceTimer = setTimeout(() => {

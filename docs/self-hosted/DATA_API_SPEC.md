@@ -962,6 +962,18 @@ GET  /api/v1/committees/:id/export
 
 导出只允许归档委员会的 Owner。服务端在 `REPEATABLE READ READ ONLY` 事务内分页查询，并以 JSON Lines 流式返回委员会资料、议事记录、不可变审计和文件 manifest；不会把完整导出装入内存。响应强制 attachment、`nosniff` 和 `no-store`。导出显式排除邀请码/匿名投票凭据哈希、Session、设备凭据、S3 密文、provider storage key、源 IP 摘要和文件正文；文件记录保留原始大小与 SHA-256，便于另行核对内容副本。流中最后的 `complete` 记录仅在全部查询成功后出现；断流或查询失败会回滚只读快照。
 
+### 11.17 阶段 8.2 委员会永久删除
+
+```text
+DELETE /api/v1/committees/:id
+```
+
+该命令只允许 `ARCHIVED` 委员会的 Owner，并要求 Session、允许的 Origin、匹配的 CSRF token、`Idempotency-Key`、当前 `baseRevision` 和与数据库值逐字相同的 `confirmationName`。服务端不接受 actor、Owner 或删除目标路径。请求成功返回 `202` durable deletion job；事务同时把委员会改为 `DELETING`，使列表、快照、SSE 和普通写入立即不可用。
+
+请求事务撤销未使用配对码，取消非终态 upload、provider migration 和既有 Agent task，把未删除文件写为墓碑，并为每个非删除 blob 创建物理删除 job。墓碑为当前 host 生成本次必须完成的 `DELETE_FILE` task。非活动 Chair binding 仍有内容或当前 Chair host 已撤销时返回 `SERVICE_NOT_READY`；不会先删除数据库记录再遗失 provider 清理目标。委员会名称只以 SHA-256 保存在 durable job 中。
+
+常驻 deletion worker 使用 claim token 和五分钟 stale claim 恢复。它等待服务器卷/S3 blob delete job、upload/migration/Agent task staging，以及本次记录的 Agent 删除 task 全部完成。阻塞时写 `CLEANUP_PENDING` 并退避，不把唯一暂存副本当作普通过期数据删除。全部屏障清空后，worker 在单个 PostgreSQL 事务中删除委员会的议事、文件、成员、事件、审计和委员会级规则数据；append-only 历史只在当前 deletion job ID 与 claim token 同时匹配的事务内允许删除。任一语句失败都会回滚全部数据库清除并把 job 改为可重试；完成后委员会行不存在，只保留不含名称明文的 job 状态。
+
 ## 12. SSE 格式
 
 ```text

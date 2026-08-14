@@ -23,6 +23,7 @@ import type {Stage7StorageTaskService} from '../modules/storage-agent/task-servi
 import type {Stage7LocalChangeService} from '../modules/storage-agent/local-change-service.js';
 import type {Stage7ConflictService} from '../modules/storage-agent/conflict-service.js';
 import type {Stage8ArchiveService} from '../modules/operations/archive-service.js';
+import type {Stage8DeletionService} from '../modules/operations/deletion-service.js';
 import {AppError, normalizeError} from './errors.js';
 import {
   clearIdentityCookies,
@@ -60,6 +61,7 @@ export interface AppDependencies {
   storageLocalChanges?: Stage7LocalChangeService;
   storageConflicts?: Stage7ConflictService;
   archives?: Stage8ArchiveService;
+  committeeDeletions?: Stage8DeletionService;
   allowedOrigins?: string[];
 }
 
@@ -672,12 +674,22 @@ async function handleStage6UploadRequest(options: {
 }
 
 async function handleStage8Request(options: {
-  request: IncomingMessage; response: ServerResponse; pathname: string;
-  identity: IdentityService; archives: Stage8ArchiveService;
+  request: IncomingMessage; response: ServerResponse; pathname: string; requestId: string;
+  identity: IdentityService; archives: Stage8ArchiveService; deletions?: Stage8DeletionService;
+  allowedOrigins: readonly string[];
 }): Promise<boolean> {
-  const {request, response, pathname, identity, archives} = options;
+  const {request, response, pathname, requestId, identity, archives, deletions, allowedOrigins} = options;
+  const method = request.method ?? 'GET';
+  const deleting = /^\/api\/v1\/committees\/([0-9a-f-]{36})$/.exec(pathname);
+  if (method === 'DELETE' && deleting && deletions) {
+    requireOrigin(request, allowedOrigins);
+    const auth = await authenticatedWrite(request, identity); const requestBody = await readJson(request);
+    const result = await deletions.requestDeletion(auth, deleting[1] as string, requestBody,
+      idempotencyKey(request), identityContext(request, requestId));
+    sendJson(response, 202, success(result, requestId)); return true;
+  }
   const match = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/export$/.exec(pathname);
-  if ((request.method ?? 'GET') !== 'GET' || !match) return false;
+  if (method !== 'GET' || !match) return false;
   const result = await archives.exportCommittee(await authenticatedRead(request, identity), match[1] as string);
   response.statusCode = 200;
   response.setHeader('content-type', 'application/x-ndjson; charset=utf-8');
@@ -850,12 +862,10 @@ async function handleStage3Request(options: {
   }
 
   const committee = /^\/api\/v1\/committees\/([0-9a-f-]{36})$/.exec(pathname);
-  if (committee && (method === 'PATCH' || method === 'DELETE')) {
+  if (committee && method === 'PATCH') {
     const auth = await write(); const body = await readJson(request); const id = committee[1] as string;
-    const result = method === 'PATCH'
-      ? await stage3.updateCommittee(auth, id, integerField(body, 'baseRevision'),
-        (body.patch && typeof body.patch === 'object' && !Array.isArray(body.patch) ? body.patch : {}) as Record<string, unknown>, context)
-      : await stage3.deleteCommittee(auth, id, integerField(body, 'baseRevision'), context);
+    const result = await stage3.updateCommittee(auth, id, integerField(body, 'baseRevision'),
+      (body.patch && typeof body.patch === 'object' && !Array.isArray(body.patch) ? body.patch : {}) as Record<string, unknown>, context);
     sendJson(response, 200, success(result, requestId));
     return true;
   }
@@ -1135,7 +1145,8 @@ export function createRequestHandler(dependencies: AppDependencies): RequestList
         }
 
         if (dependencies.identity && dependencies.archives && await handleStage8Request({
-          request, response, pathname, identity: dependencies.identity, archives: dependencies.archives
+          request, response, pathname, requestId, identity: dependencies.identity, archives: dependencies.archives,
+          deletions: dependencies.committeeDeletions, allowedOrigins: dependencies.allowedOrigins ?? []
         })) return;
 
         if (dependencies.identity && dependencies.uploads && await handleStage6UploadRequest({

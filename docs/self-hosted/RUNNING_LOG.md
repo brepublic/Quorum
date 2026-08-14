@@ -4,12 +4,12 @@
 
 ## 当前状态
 
-- 更新时间：2026-08-13
+- 更新时间：2026-08-14
 - 分支：`self-host`
-- 已确认基线：`ae2fd72 docs: advance self-host log to stage 8`
+- 已确认基线：`b4b7e6e stage 8.1: archive and export committees`
 - 当前阶段：8 归档、删除与运维正在实施。
-- 当前工作：阶段 8.1 委员会只读归档与一致性导出已完成当前 WSL 验证，等待单独提交。
-- 下一步：提交 8.1 后实施带明确确认、durable job 和 provider 清理边界的委员会永久删除。
+- 当前工作：阶段 8.2 委员会永久删除的实现、自动化测试、构建和文档已完成，等待单独提交。
+- 下一步：提交 8.2；随后实施账号资源转移、匿名化和保留策略，不提前移除 Firebase。
 
 ## 已完成与验证
 
@@ -276,3 +276,14 @@
 - 定向 Vitest：5 个文件、37 项通过。`pnpm test:self-host`：56 个文件、307 项通过；8 个 PostgreSQL 文件、64 项明确 skip。`pnpm exec vitest run`：75 个文件、462 项通过；相同 8 个文件、64 项明确 skip。
 - `pnpm build:self-host`：通过；Vite 仅报告既有大分块警告。`pnpm test:self-host:integration`：8 个文件、64 项因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip；`git diff --check` 通过。
 - 当前 WSL 没有真实 PostgreSQL、TLS 浏览器、大数据量 fixture 或可控慢客户端/数据库断流环境；上机步骤与证据要求记录在 `MANUAL_ACCEPTANCE.md` 的 SH-MAN-515。
+
+### 2026-08-14：阶段 8.2 委员会永久删除
+
+- migration 24 增加不保留委员会名称明文的 durable deletion job、本次删除必需的 Agent task 关联、Agent 入站暂存清理 claim，以及由当前 job claim token 限定的数据库清除权限；相关循环外键改为只在删除事务末尾校验，schema compatibility 为 24。
+- 只有归档委员会的 Owner 能以当前 revision、精确委员会名称、Origin、CSRF 和幂等键启动删除。请求事务把委员会冻结为 `DELETING`，撤销配对码，取消未完成上传、迁移和旧 Agent task，为文件写墓碑，并排队服务器卷、S3 和当前 Chair Agent 的物理删除。
+- 委员会进入 `DELETING` 后立即离开列表、快照和 SSE 读取边界。常驻 worker 等待 blob delete job、upload/migration/Agent staging 和本次必需的 `DELETE_FILE` task 全部完成后，才在单个事务中清除委员会议事、文件、事件、审计、成员和委员会级规则数据；失败整体回滚并退避重试。
+- 已修正 Chair Agent 删除完成回写，使由 `file_blob_copies` 产生的删除 job 也能完成；stale claim 可恢复，未清理的物理副本或暂存副本会阻止数据库清除。
+- 定向测试覆盖角色、状态、revision、名称、请求边界、原子冻结/排队、provider 缺口、cleanup blocker、stale claim、清除失败回滚、Agent staging、API client 与工作区确认文案。`pnpm test:self-host`：57 个文件通过、8 个文件明确 skip；318 项通过、65 项明确 skip。
+- `pnpm exec vitest run`：76 个文件通过、8 个文件明确 skip；473 项通过、65 项明确 skip。`pnpm build:self-host` 通过，仅有既有 Vite 大分块警告。
+- `pnpm test:self-host:integration`：8 个文件、65 项因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip；`git diff --check` 通过。
+- 当前 WSL 没有真实 PostgreSQL、TLS 自托管实例、S3 测试桶、可检查持久卷、Chair 真机和可控进程终止环境；上机步骤与证据要求记录在 `MANUAL_ACCEPTANCE.md` 的 SH-MAN-516，未伪造物理多 provider 删除成功。

@@ -149,8 +149,11 @@ export class Stage7ChairAgentProviderService implements StorageAgentTaskCompleti
         throw new AppError({code: 'STALE_STORAGE_LEASE', message: 'Storage host lease is no longer current.'});
       }
       const blobs = await client.query<{id: string}>(`UPDATE file_blobs blob SET durability_state='DELETED',updated_at=now()
-        FROM file_versions version WHERE version.file_entry_id=$1 AND version.blob_id=blob.id
-          AND blob.storage_binding_id=$2 AND blob.durability_state='DELETE_PENDING' RETURNING blob.id`,
+        WHERE blob.storage_binding_id=$2 AND blob.durability_state='DELETE_PENDING' AND (
+          EXISTS (SELECT 1 FROM file_versions version WHERE version.file_entry_id=$1 AND version.blob_id=blob.id)
+          OR EXISTS (SELECT 1 FROM file_blob_copies copy JOIN file_versions version
+            ON version.blob_id=copy.content_blob_id WHERE version.file_entry_id=$1 AND copy.copy_blob_id=blob.id)
+        ) RETURNING blob.id`,
       [task.fileEntryId, binding.rows[0].id]);
       if (blobs.rows.length) await client.query(`UPDATE file_blob_delete_jobs SET status='COMPLETED',completed_at=now(),
         claimed_at=NULL,claim_token=NULL,failure_code=NULL,failure_reason=NULL,updated_at=now()

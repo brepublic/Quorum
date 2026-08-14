@@ -17,7 +17,7 @@ describe('storage maintenance worker and metrics', () => {
 
   it('renders bounded storage and cleanup metrics without paths or filenames', async () => {
     const query = vi.fn()
-      .mockResolvedValueOnce({rows: [{blob_delete: 2, upload_staging: 3, migration_staging: 4}]})
+      .mockResolvedValueOnce({rows: [{blob_delete: 2, upload_staging: 3, migration_staging: 4, agent_task_staging: 6}]})
       .mockResolvedValueOnce({rows: [{resource_type: 'BLOB_DELETE', outcome: 'SUCCEEDED', count: 5}]});
     const capacity = {sample: vi.fn().mockResolvedValue({state: 'warning', usageRatio: 0.8, usagePercent: 80,
       totalBytes: 1000, availableBytes: 200}), assertWriteAllowed: vi.fn()};
@@ -26,6 +26,7 @@ describe('storage maintenance worker and metrics', () => {
     const output = await service.renderMetrics();
     expect(output).toContain('quorum_storage_usage_ratio 0.8');
     expect(output).toContain('quorum_storage_cleanup_queue{kind="upload_staging"} 3');
+    expect(output).toContain('quorum_storage_cleanup_queue{kind="agent_task_staging"} 6');
     expect(output).toContain('quorum_storage_cleanup_total{kind="blob_delete",outcome="succeeded"} 5');
     expect(output).not.toMatch(/path|filename|secret/i);
   });
