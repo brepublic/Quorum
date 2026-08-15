@@ -222,11 +222,13 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
   const [totalMinutes, setTotalMinutes] = React.useState(Math.ceil((defaults?.defaultTotalDurationSeconds ?? 600) / 60));
   const [yieldType, setYieldType] = React.useState<YieldType>('CHAIR'); const [yieldSeat, setYieldSeat] = React.useState('');
   const [contribution, setContribution] = React.useState('');
-  const [nameDraft, setNameDraft] = React.useState(list?.name ?? '');
+  const displayedListName = list ? localizeGeneratedName(list.name) : '';
+  const [nameDraft, setNameDraft] = React.useState(displayedListName);
   const [topicDraft, setTopicDraft] = React.useState(list?.topic ?? '');
   const [queueDuration, setQueueDuration] = React.useState('60');
   const [queueUnit, setQueueUnit] = React.useState<'sec' | 'min'>('sec');
-  React.useEffect(() => {setNameDraft(list?.name ?? ''); setTopicDraft(list?.topic ?? '');}, [list?.id, list?.name, list?.topic]);
+  React.useEffect(() => {setNameDraft(list ? localizeGeneratedName(list.name) : ''); setTopicDraft(list?.topic ?? '');},
+    [list?.id, list?.name, list?.topic]);
   React.useEffect(() => {
     if (!list) return; const seconds = Math.max(1, Math.ceil(list.defaultSpeechMs / 1000));
     if (seconds % 60 === 0) {setQueueUnit('min'); setQueueDuration(String(seconds / 60));}
@@ -263,7 +265,8 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
   const persistHeader = (change: {name?: string; topic?: string}) => {
     if (!canChair) return;
     const cleaned = {...change, ...(change.name !== undefined ? {name: change.name.trim()} : {})};
-    if (cleaned.name === '' || cleaned.name === list.name || cleaned.topic === list.topic) return;
+    if (cleaned.name === '' || cleaned.name === list.name || cleaned.name === localizeGeneratedName(list.name)
+      || cleaned.topic === list.topic) return;
     void run(() => api.updateSpeakerList(list.id, list.revision, cleaned));
   };
   const joinQueue = (stance: SpeakerStance) => {
@@ -646,6 +649,25 @@ const motionDestinationLabel = (id: string) => ({'open-moderated-caucus': 'Caucu
 const motionSeconds = (value: number, unit: MotionTimeUnit) => unit === 'min' ? value * 60 : value;
 const linkedResolutionMotionValue = (resolutionId: string) => `open-moderated-caucus::resolution::${resolutionId}`;
 const linkedResolutionMotionPrefix = 'open-moderated-caucus::resolution::';
+const motionTypeFallbackLabels: Record<string, string> = {
+  'open-unmoderated-caucus': 'Open unmoderated caucus',
+  'open-moderated-caucus': 'Open moderated caucus',
+  'extend-unmoderated-caucus': 'Extend unmoderated caucus',
+  'extend-moderated-caucus': 'Extend moderated caucus',
+  'close-moderated-caucus': 'Close moderated caucus',
+  'introduce-draft-resolution': 'Introduce draft resolution',
+  'introduce-amendment': 'Introduce amendment',
+  'vote-on-amendment': 'Vote on amendment',
+  'suspend-draft-resolution-speakers-list': 'Suspend draft resolution speakers list',
+  'vote-on-resolution': 'Vote on resolution',
+  'open-debate': 'Open debate',
+  'suspend-debate': 'Suspend debate',
+  'resume-debate': 'Resume debate',
+  'close-debate': 'Close debate',
+  'reorder-draft-resolutions': 'Reorder draft resolutions',
+  'propose-strawpoll': 'Propose strawpoll',
+  'introduce-working-paper': 'Introduce working paper'
+};
 
 function Motions({snapshot, run, api, canChair}: CommonProps) {
   const session = snapshot.meetingSession?.status === 'OPEN' ? snapshot.meetingSession : undefined;
@@ -689,7 +711,7 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
     && document.proposerSeatId && document.seconderSeatId && !linkedResolutionIds.has(document.id));
   const motionOptions = [
     ...types.map(type => ({key: type.id, value: type.id,
-      text: type.names ? localizedDisplayName(type.names, 'zh-CN') : type.id})),
+      text: type.names ? localizedDisplayName(type.names, 'zh-CN') : t(motionTypeFallbackLabels[type.id] ?? type.id)})),
     ...(types.some(type => type.id === 'open-moderated-caucus') ? caucusResolutionOptions.map(document => ({
       key: linkedResolutionMotionValue(document.id), value: linkedResolutionMotionValue(document.id),
       text: `${t('Moderated caucus')} - ${localizeGeneratedName(document.title)}`})) : [])

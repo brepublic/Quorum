@@ -44,7 +44,11 @@
 .committee-navigation-desktop {
   display: flex !important;
   margin-bottom: 0 !important;
-  overflow-x: auto;
+  overflow: visible;
+}
+
+.committee-primary-navigation {
+  min-width: max-content;
 }
 
 .committee-navigation-mobile,

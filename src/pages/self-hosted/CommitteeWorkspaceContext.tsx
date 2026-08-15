@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type {CommitteeWorkspaceSnapshot} from '@quorum/contracts';
+import {useLocation} from 'react-router-dom';
 import {t} from '../../i18n';
 import {SelfHostedApiError, type SelfHostedApi} from '../../services/self-hosted-api';
 import type {RealtimeStatus} from './WorkspaceNavigation';
@@ -22,13 +23,22 @@ const CommitteeWorkspaceContext = React.createContext<CommitteeWorkspaceValue | 
 export function CommitteeWorkspaceProvider({committeeId, api, children}: React.PropsWithChildren<{
   committeeId: string; api: SelfHostedApi;
 }>) {
+  const location = useLocation();
+  const pathname = location.pathname;
+  const pathnameRef = React.useRef(pathname);
   const [snapshot, setSnapshot] = React.useState<CommitteeWorkspaceSnapshot>();
   const [streamAfter, setStreamAfter] = React.useState<number>();
   const [realtimeStatus, setRealtimeStatus] = React.useState<RealtimeStatus>('CONNECTING');
   const [error, setError] = React.useState<string>();
   const [working, setWorking] = React.useState(false);
 
+  React.useEffect(() => {
+    pathnameRef.current = pathname;
+    setError(undefined);
+  }, [pathname]);
+
   const refresh = React.useCallback(async () => {
+    const requestPathname = pathnameRef.current;
     try {
       const next = await api.snapshot(committeeId);
       setSnapshot(next);
@@ -36,7 +46,7 @@ export function CommitteeWorkspaceProvider({committeeId, api, children}: React.P
       setError(undefined);
       return next;
     } catch (caught) {
-      setError(errorText(caught));
+      if (pathnameRef.current === requestPathname) setError(errorText(caught));
       return undefined;
     }
   }, [api, committeeId]);
@@ -58,6 +68,7 @@ export function CommitteeWorkspaceProvider({committeeId, api, children}: React.P
   }, [api, committeeId, refresh, streamAfter]);
 
   const run = React.useCallback(async (operation: () => Promise<unknown>) => {
+    const operationPathname = pathnameRef.current;
     setWorking(true); setError(undefined);
     try {
       await operation();
@@ -65,10 +76,12 @@ export function CommitteeWorkspaceProvider({committeeId, api, children}: React.P
     } catch (caught) {
       if (caught instanceof SelfHostedApiError && caught.code === 'REVISION_CONFLICT') {
         await refresh();
-        setError(t('Committee data changed. Review the latest state and try again.'));
+        if (pathnameRef.current === operationPathname) {
+          setError(t('Committee data changed. Review the latest state and try again.'));
+        }
       } else {
         await refresh();
-        setError(errorText(caught));
+        if (pathnameRef.current === operationPathname) setError(errorText(caught));
       }
     } finally {
       setWorking(false);
