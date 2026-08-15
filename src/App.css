@@ -11,6 +11,36 @@
   width: 33%;
 }
 
+.committee-create-page {
+  padding: 1em 0;
+}
+
+.committee-create-page > .ui.header {
+  margin-bottom: 1rem;
+}
+
+.committee-create-page .ui.cards {
+  margin-bottom: 1rem;
+}
+
+.committee-setup-page {
+  padding: 1em 0 1.5em;
+}
+
+.committee-setup-page .members-table .ui.input,
+.committee-setup-page .members-table .ui.dropdown {
+  min-width: 0;
+  width: 100%;
+}
+
+.statistics-page {
+  padding: 1em 0 1.5em;
+}
+
+.help-page {
+  padding: 1em 0;
+}
+
 .committee-navigation-desktop {
   display: flex !important;
   margin-bottom: 0 !important;
@@ -20,6 +50,23 @@
 .committee-navigation-mobile,
 .committee-mobile-sidebar {
   display: none !important;
+}
+
+.committee-navigation-pushable.ui.pushable {
+  min-height: calc(100vh - 41px);
+  overflow: visible;
+}
+
+.committee-navigation-pushable > .pusher {
+  min-height: inherit;
+}
+
+.ui.fluid.container.committee-workspace-page {
+  box-sizing: border-box;
+  margin: 0 !important;
+  max-width: none !important;
+  padding: 1rem;
+  width: 100% !important;
 }
 
 .committee-primary-navigation > .item,
@@ -49,6 +96,11 @@
   .committee-navigation-mobile {
     display: flex !important;
     margin-bottom: 0 !important;
+  }
+
+  .committee-navigation-pushable.ui.pushable {
+    min-height: 100vh;
+    overflow: hidden;
   }
 
   .committee-navigation-mobile > .header.item {
@@ -396,6 +448,45 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   font-variant-numeric: tabular-nums;
 }
 
+.ui.container.legacy-speaker-workspace {
+  box-sizing: border-box;
+  max-width: 1127px !important;
+  padding-bottom: 2em;
+}
+
+.ui.text.container.legacy-unmod-page {
+  padding-bottom: 2em;
+}
+
+.legacy-speaker-workspace > .ui.grid > .row:first-child textarea {
+  border-radius: 0 0 0.28571429rem 0.28571429rem;
+  min-height: 2.9rem;
+  resize: vertical;
+  width: 100%;
+}
+
+.legacy-timer .legacy-timer-display time {
+  display: inline-block;
+  min-width: 4.4ch;
+}
+
+.legacy-speaker-workspace .speaker-drag-handle {
+  cursor: grab;
+  display: inline-block;
+  font-size: 1.25rem;
+  margin-left: 1rem;
+  padding: 0 0.5rem;
+  touch-action: none;
+}
+
+.legacy-speaker-workspace .speaker-drag-handle:active {
+  cursor: grabbing;
+}
+
+.legacy-speaker-workspace .absent-member {
+  opacity: 0.55;
+}
+
 @media only screen and (max-width: 767px) {
   .notes-editor,
   .proceedings-timers { grid-template-columns: minmax(0, 1fr); }
@@ -488,6 +579,49 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   height: 3.25rem;
   padding: 0;
   text-align: left;
+}
+
+.roll-call-member:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.roll-call-member:disabled:hover .roll-call-member-name {
+  box-shadow: none;
+}
+
+.motions-page {
+  padding-bottom: 3rem;
+  padding-top: 1rem;
+}
+
+.motion-proposal-form.ui.form {
+  margin: 0 auto;
+}
+
+.motion-proposal-form .ui.button[type='submit'] {
+  min-height: 2.75rem;
+}
+
+.motion-queue.ui.cards {
+  margin-left: 0;
+  margin-right: 0;
+}
+
+.motion-queue.ui.cards > .motion-card.card {
+  margin-left: 0;
+  margin-right: 0;
+  width: 100%;
+}
+
+.motion-card .extra.content > .ui.button {
+  margin-bottom: 0.35rem;
+}
+
+.motion-seat-option {
+  align-items: center;
+  display: inline-flex;
+  min-width: 0;
 }
 
 .roll-call-status-light {

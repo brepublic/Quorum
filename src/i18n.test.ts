@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import * as React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { Dropdown } from 'semantic-ui-react';
-import { getLanguage, LanguageMenuItem, LanguageProvider, setLanguage, t } from './i18n';
+import { getLanguage, LanguageMenuItem, LanguageProvider, localizeGeneratedName, setLanguage, t } from './i18n';
 
 function EmptySearchDropdown() {
   return React.createElement(Dropdown, { open: true, options: [], search: true });
@@ -39,6 +39,8 @@ describe('i18n', () => {
     expect(t('Absent')).toBe('缺席');
     expect(t('Voting delegation')).toBe('投票代表团');
     expect(t('Now voting')).toBe('当前表决国家');
+    expect(localizeGeneratedName('New draft resolution 12')).toBe('新决议草案12');
+    expect(localizeGeneratedName('New strawpoll 2')).toBe('新意向性投票2');
   });
 
   it('falls back to the English key when a Chinese entry is unavailable', () => {

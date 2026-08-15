@@ -144,7 +144,7 @@ integration('PostgreSQL stage 3 integration', () => {
     const redeemed = await pool?.query(`SELECT count(*)::int AS count FROM committee_memberships m
       JOIN seat_assignments a ON a.committee_id=m.committee_id AND a.user_id=m.user_id
       WHERE m.committee_id=$1 AND a.seat_id=$2 AND a.status='ACTIVE' AND m.status='ACTIVE'`, [committee.id, seat.id]);
-    expect(redeemed?.rows[0].count).toBe(2 + 1);
+    expect(redeemed?.rows[0].count).toBe(2);
     expect(JSON.stringify(await pool?.query('SELECT after_summary FROM audit_log WHERE committee_id=$1', [committee.id])))
       .not.toContain(invitation.code);
     await expect(stage3.redeemInvitation(fourth, 'wrong-invitation-code', context('wrong-code')))

@@ -14,6 +14,10 @@ export interface Stage4CommitteeRow extends QueryResultRow {
   conference: string;
   visibility: 'PUBLIC' | 'PRIVATE';
   operation_mode: 'DELEGATE_OPERATED' | 'CHAIR_OPERATED';
+  delegate_motion_proposals_enabled: boolean;
+  delegate_motion_voting_enabled: boolean;
+  move_queue_up: boolean;
+  timers_in_separate_columns: boolean;
   status: 'ACTIVE' | 'PAUSED' | 'ARCHIVED' | 'DELETING';
   active_rule_package_version_id: string;
   active_storage_binding_id: string | null;

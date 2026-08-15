@@ -2,7 +2,7 @@ import * as React from 'react';
 import type {CommitteeWorkspaceSnapshot} from '@quorum/contracts';
 import {Dropdown, Icon, Menu, Sidebar} from 'semantic-ui-react';
 import {Link, useLocation} from 'react-router-dom';
-import {LanguageSwitcher, t} from '../../i18n';
+import {LanguageSwitcher, localizeGeneratedName, t} from '../../i18n';
 import type {SelfHostedUser} from '../../services/self-hosted-identity';
 
 export type RealtimeStatus = 'CONNECTING' | 'LIVE' | 'RESYNCING' | 'OFFLINE_READONLY' | 'DEGRADED';
@@ -64,21 +64,27 @@ function PrimaryItems({snapshot, onNavigate}: {snapshot: CommitteeWorkspaceSnaps
       </Dropdown.Menu>
     </Dropdown>;
   };
-  const speakerLists = (snapshot.speakerLists ?? []).map(list => ({id: list.id,
-    label: list.topic || (list.kind === 'GENERAL' ? t('General speakers list') : t('Moderated caucus'))}));
+  const generalSpeakerList = (snapshot.speakerLists ?? []).find(list => list.kind === 'GENERAL');
+  const caucuses = (snapshot.speakerLists ?? []).filter(list => list.kind === 'MODERATED_CAUCUS').map(list => ({id: list.id,
+    label: localizeGeneratedName(list.name || list.topic || 'untitled caucus')}));
   const resolutions = (snapshot.documents ?? []).filter(document => document.kind === 'RESOLUTION')
-    .map(document => ({id: document.id, label: document.title}));
-  const strawpolls = (snapshot.strawpolls ?? []).map(poll => ({id: poll.id, label: poll.question}));
+    .map(document => ({id: document.id, label: localizeGeneratedName(document.title)}));
+  const strawpolls = (snapshot.strawpolls ?? []).filter(poll => !poll.supersededById)
+    .map(poll => ({id: poll.id, label: localizeGeneratedName(poll.question)}));
 
   return <>
     <Menu.Item header as={Link} to={base} active={location.pathname === base} onClick={onNavigate}>{snapshot.committee.name}</Menu.Item>
-    {item('/setup', 'Venue setup')}
+    {item('/setup', 'Setup')}
     {item('/roll-call', 'Roll call')}
     {item('/motions', 'Motions')}
-    {item('/unmod', 'Unmoderated caucus')}
-    {dynamic('caucuses', 'Speaker lists / moderated caucuses', 'Create speaker list', speakerLists)}
-    {dynamic('resolutions', 'Draft resolutions', 'Create draft resolution', resolutions)}
-    {dynamic('strawpolls', 'Strawpolls', 'Create strawpoll', strawpolls)}
+    {generalSpeakerList && <Menu.Item key="general-speakers-list" as={Link}
+      to={`${base}/caucuses/${generalSpeakerList.id}`}
+      active={routeActive(location.pathname, `${base}/caucuses/${generalSpeakerList.id}`)} onClick={onNavigate}>
+      {t("General Speakers' List")}</Menu.Item>}
+    {item('/unmod', 'Unmod')}
+    {dynamic('caucuses', 'Caucuses', 'New caucus', caucuses)}
+    {dynamic('resolutions', 'Resolutions', 'New resolution', resolutions)}
+    {dynamic('strawpolls', 'Strawpolls', 'New strawpoll', strawpolls)}
     {item('/points', 'Points')}
     {item('/notes', 'Notes')}
     {item('/posts', 'Files')}
@@ -88,26 +94,37 @@ function PrimaryItems({snapshot, onNavigate}: {snapshot: CommitteeWorkspaceSnaps
   </>;
 }
 
-export function CommitteeNavigation({snapshot, user, logout, realtimeStatus = 'CONNECTING'}: {
+export function CommitteeNavigation({snapshot, user, logout, realtimeStatus = 'CONNECTING', children}: {
   snapshot: CommitteeWorkspaceSnapshot; user?: SelfHostedUser; logout(): void; realtimeStatus?: RealtimeStatus;
+  children?: React.ReactNode;
 }) {
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
-  return <nav aria-label={t('Committee navigation')}>
-    <Menu className="committee-primary-navigation committee-navigation-desktop" size="small" fluid>
-      <PrimaryItems snapshot={snapshot} />
-      <Menu.Menu position="right"><RealtimeStatusItem status={realtimeStatus} />
-        {user && <AccountMenu user={user} logout={logout} />}</Menu.Menu>
-    </Menu>
-    <Menu className="committee-navigation-mobile" size="large">
-      <Menu.Item aria-label={t('Open committee navigation')} onClick={() => setSidebarOpen(true)}><Icon name="sidebar" /></Menu.Item>
-      <Menu.Item header as={Link} to={`/committees/${snapshot.committee.id}`}>{snapshot.committee.name}</Menu.Item>
-      <Menu.Menu position="right">{user && <AccountMenu user={user} logout={logout} />}</Menu.Menu>
-    </Menu>
-    <Sidebar className="committee-mobile-sidebar" as={Menu} animation="overlay" vertical visible={sidebarOpen}
-      onHide={() => setSidebarOpen(false)}>
-      <Menu.Item onClick={() => setSidebarOpen(false)}><Icon name="close" />{t('Close navigation')}</Menu.Item>
-      <RealtimeStatusItem status={realtimeStatus} />
-      <PrimaryItems snapshot={snapshot} onNavigate={() => setSidebarOpen(false)} />
-    </Sidebar>
-  </nav>;
+  return <>
+    <nav className="committee-navigation-desktop" aria-label={t('Committee navigation')}>
+      <Menu className="committee-primary-navigation" size="small" fluid>
+        <PrimaryItems snapshot={snapshot} />
+        <Menu.Menu position="right"><RealtimeStatusItem status={realtimeStatus} />
+          {user && <AccountMenu user={user} logout={logout} />}</Menu.Menu>
+      </Menu>
+    </nav>
+    <Sidebar.Pushable className="committee-navigation-pushable">
+      <Sidebar className="committee-mobile-sidebar" as={Menu} animation="uncover" vertical visible={sidebarOpen}
+        onHide={() => setSidebarOpen(false)}>
+        <RealtimeStatusItem status={realtimeStatus} />
+        <PrimaryItems snapshot={snapshot} onNavigate={() => setSidebarOpen(false)} />
+      </Sidebar>
+      <Sidebar.Pusher dimmed={sidebarOpen} onClick={() => sidebarOpen && setSidebarOpen(false)}>
+        <nav aria-label={t('Committee navigation')}>
+          <Menu className="committee-navigation-mobile" size="large">
+            <Menu.Item aria-label={t('Open committee navigation')} onClick={() => setSidebarOpen(open => !open)}>
+              <Icon name="sidebar" />
+            </Menu.Item>
+            <Menu.Item header as={Link} to={`/committees/${snapshot.committee.id}`}>{snapshot.committee.name}</Menu.Item>
+            <Menu.Menu position="right">{user && <AccountMenu user={user} logout={logout} />}</Menu.Menu>
+          </Menu>
+        </nav>
+        {children}
+      </Sidebar.Pusher>
+    </Sidebar.Pushable>
+  </>;
 }

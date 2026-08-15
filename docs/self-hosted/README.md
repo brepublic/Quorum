@@ -75,6 +75,7 @@
 | [`IMPLEMENTATION_PLAN.md`](./IMPLEMENTATION_PLAN.md) | 分阶段实现顺序、迁移边界和验收门槛 |
 | [`CURRENT_BEHAVIOR_BASELINE.md`](./CURRENT_BEHAVIOR_BASELINE.md) | 阶段 0 当前行为清单、规则 fixture 差异和稳定注册表 |
 | [`MANUAL_ACCEPTANCE.md`](./MANUAL_ACCEPTANCE.md) | 当前环境无法自动执行的部署、浏览器和容量验收 |
+| [`WINDOWS_UI_ACCEPTANCE_HANDOFF.md`](./WINDOWS_UI_ACCEPTANCE_HANDOFF.md) | Windows Chrome 旧版 UI/UX、自主托管网络与新功能验收交接 |
 | [`RECOVERY.md`](./RECOVERY.md) | 数据库 dump、文件 manifest、隔离恢复与校验流程 |
 | [`STAGE_6_HANDOFF_PROMPT.md`](./STAGE_6_HANDOFF_PROMPT.md) | 阶段 6 服务器卷与 S3 文件实施交接 Prompt |
 | [`STAGE_6_3_HANDOFF_PROMPT.md`](./STAGE_6_3_HANDOFF_PROMPT.md) | 已完成阶段 6.3 SERVER_VOLUME provider 的历史交接 Prompt |

@@ -318,6 +318,135 @@ describe('migration discovery', () => {
     expect(retention?.sql).toContain('schema_compatibility = 26');
   });
 
+  it('adds independent legacy motion interaction settings', async () => {
+    const migrations = await loadMigrations(resolve('server/migrations'));
+    const settings = migrations.find(item => item.version === 27);
+    expect(settings?.name).toBe('motion_interaction_settings');
+    expect(settings?.sql).toContain('delegate_motion_proposals_enabled boolean NOT NULL DEFAULT false');
+    expect(settings?.sql).toContain('delegate_motion_voting_enabled boolean NOT NULL DEFAULT false');
+    expect(settings?.sql).toContain('schema_compatibility = 27');
+  });
+
+  it('keeps retracted ballot votes in append-only history', async () => {
+    const migrations = await loadMigrations(resolve('server/migrations'));
+    const votes = migrations.find(item => item.version === 28);
+    expect(votes?.name).toBe('ballot_vote_retractions');
+    expect(votes?.sql).toContain('ADD COLUMN retracted_at timestamptz');
+    expect(votes?.sql).toContain('ALTER COLUMN new_choice DROP NOT NULL');
+    expect(votes?.sql).toContain('ballot_vote_revisions_has_state');
+    expect(votes?.sql).toContain('schema_compatibility = 28');
+  });
+
+  it('stores local motion destinations and fixes withdrawn decision evidence', async () => {
+    const migrations = await loadMigrations(resolve('server/migrations'));
+    const enactment = migrations.find(item => item.version === 29);
+    expect(enactment?.name).toBe('motion_enactment_destinations');
+    expect(enactment?.sql).toContain("status IN ('PASSED','FAILED','WITHDRAWN')");
+    expect(enactment?.sql).toContain('ADD COLUMN destination_path text');
+    expect(enactment?.sql).toContain("destination_path ~ '^/committees/[0-9a-f-]{36}/'");
+    expect(enactment?.sql).toContain('document_versions_content_length');
+    expect(enactment?.sql).toContain('schema_compatibility = 29');
+  });
+
+  it('keeps legacy motion direct votes and setting changes append-only', async () => {
+    const migration = (await loadMigrations(resolve('server/migrations')))
+      .find(item => item.version === 30);
+    expect(migration?.sql).toContain('CREATE TABLE motion_direct_votes');
+    expect(migration?.sql).toContain('CREATE TABLE motion_direct_vote_revisions');
+    expect(migration?.sql).toContain('CREATE TABLE motion_direct_vote_setting_revisions');
+    expect(migration?.sql).toContain('motion direct vote history is append-only');
+  });
+
+  it('adds the legacy speaker workspace state without client-side persistence', async () => {
+    const migration = (await loadMigrations(resolve('server/migrations')))
+      .find(item => item.version === 31);
+    expect(migration?.name).toBe('legacy_speaker_workspace');
+    expect(migration?.sql).toContain('delegates_can_queue');
+    expect(migration?.sql).toContain('speaker_stance');
+    expect(migration?.sql).toContain('speech_duration_ms');
+    expect(migration?.sql).toContain('speech_yield_decision_status');
+    expect(migration?.sql).toContain("'YIELD_REJECTED'");
+    expect(migration?.sql).toContain('schema_compatibility = 31');
+  });
+
+  it('keeps legacy resolution votes, settings, and result corrections append-only', async () => {
+    const migration = (await loadMigrations(resolve('server/migrations')))
+      .find(item => item.version === 32);
+    expect(migration?.name).toBe('legacy_resolution_workspace');
+    expect(migration?.sql).toContain('CREATE TABLE resolution_direct_votes');
+    expect(migration?.sql).toContain('CREATE TABLE resolution_direct_vote_revisions');
+    expect(migration?.sql).toContain('CREATE TABLE document_result_decisions');
+    expect(migration?.sql).toContain('legacy document history is append-only');
+    expect(migration?.sql).toContain('schema_compatibility=32');
+  });
+
+  it('adds legacy strawpoll rounds, vote changes, and manual tallies without replacing anonymous receipts', async () => {
+    const migration = (await loadMigrations(resolve('server/migrations')))
+      .find(item => item.version === 33);
+    expect(migration?.name).toBe('legacy_strawpoll_rounds');
+    expect(migration?.sql).toContain('strawpolls_series_round_unique');
+    expect(migration?.sql).toContain('CREATE TABLE strawpoll_seat_vote_revisions');
+    expect(migration?.sql).toContain('CREATE TABLE strawpoll_manual_tally_revisions');
+    expect(migration?.sql).not.toContain('DROP TABLE strawpoll_anonymous_receipts');
+    expect(migration?.sql).toContain('schema_compatibility=33');
+  });
+
+  it('allows an unintroduced resolution draft to exist before a proposer or body is recorded', async () => {
+    const migration = (await loadMigrations(resolve('server/migrations')))
+      .find(item => item.version === 34);
+    expect(migration?.name).toBe('draft_resolution_introduction');
+    expect(migration?.sql).toContain('length(content) BETWEEN 0 AND 200000');
+    expect(migration?.sql).toContain('created_on_behalf_of_seat_id DROP NOT NULL');
+    expect(migration?.sql).toContain('proposer_seat_id DROP NOT NULL');
+    expect(migration?.sql).toContain('schema_compatibility=34');
+  });
+
+  it('stores a resolution version as either text or one uploaded file', async () => {
+    const migration = (await loadMigrations(resolve('server/migrations')))
+      .find(item => item.version === 35);
+    expect(migration?.name).toBe('resolution_file_content');
+    expect(migration?.sql).toContain('content_file_entry_id uuid REFERENCES file_entries(id)');
+    expect(migration?.sql).toContain("content_file_entry_id IS NULL OR content=''");
+    expect(migration?.sql).toContain('schema_compatibility=35');
+  });
+
+  it('associates at most one moderated caucus with a resolution draft', async () => {
+    const migration = (await loadMigrations(resolve('server/migrations')))
+      .find(item => item.version === 36);
+    expect(migration?.name).toBe('resolution_linked_caucus');
+    expect(migration?.sql).toContain('linked_resolution_document_id uuid REFERENCES resolutions(document_id)');
+    expect(migration?.sql).toContain('speaker_lists_one_caucus_per_resolution');
+    expect(migration?.sql).toContain('schema_compatibility=36');
+  });
+
+  it('retains deleted amendments while hiding them from active document snapshots', async () => {
+    const migration = (await loadMigrations(resolve('server/migrations')))
+      .find(item => item.version === 37);
+    expect(migration?.name).toBe('amendment_workflow');
+    expect(migration?.sql).toContain('ADD COLUMN deleted_at timestamptz');
+    expect(migration?.sql).toContain('documents_deletion_metadata_complete');
+    expect(migration?.sql).toContain('schema_compatibility=37');
+  });
+
+  it('persists legacy workspace layout settings and one main speakers list per meeting', async () => {
+    const migrations = await loadMigrations(resolve('server/migrations'));
+    const migration = migrations.find(item => item.version === 38);
+    expect(migration?.sql).toContain('move_queue_up boolean');
+    expect(migration?.sql).toContain('timers_in_separate_columns boolean');
+    expect(migration?.sql).toContain("WHERE kind = 'GENERAL'");
+    expect(migration?.sql).toContain("WHERE session.status='OPEN'");
+    expect(migration?.sql).toContain("item->>'defaultDurationSeconds'");
+    expect(migration?.sql).toContain('migration.main_speaker_list_backfilled');
+    expect(migration?.sql).toContain('schema_compatibility=38');
+  });
+
+  it('allows logical deletion to clear the reviewed file current version', async () => {
+    const migration = (await loadMigrations(resolve('server/migrations'))).find(item => item.version === 39);
+    expect(migration?.name).toBe('file_delete_review_transition');
+    expect(migration?.sql).toContain("NEW.status NOT IN ('UPLOAD_COMPLETE', 'DELETED')");
+    expect(migration?.sql).toContain('schema_compatibility=39');
+  });
+
   it('rejects SQL files outside the versioned naming contract', async () => {
     const directory = await temporaryDirectory();
     await writeFile(join(directory, 'first.sql'), 'SELECT 1;\n');

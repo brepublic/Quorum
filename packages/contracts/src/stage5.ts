@@ -36,6 +36,7 @@ export interface AuthoritativeTimer {
 export type SpeakerListKind = 'GENERAL' | 'MODERATED_CAUCUS';
 export type SpeakerListStatus = 'OPEN' | 'CLOSED';
 export type SpeakerQueueStatus = 'QUEUED' | 'CURRENT' | 'COMPLETED' | 'SKIPPED';
+export type SpeakerStance = 'FOR' | 'NEUTRAL' | 'AGAINST';
 
 export interface SpeakerQueueEntry {
   id: string;
@@ -43,6 +44,8 @@ export interface SpeakerQueueEntry {
   seatDisplayName: string;
   position: number;
   status: SpeakerQueueStatus;
+  stance: SpeakerStance;
+  speechDurationMs: number;
   createdAt: string;
 }
 
@@ -52,12 +55,15 @@ export interface SpeakerList {
   meetingSessionId: string;
   kind: SpeakerListKind;
   status: SpeakerListStatus;
+  name: string;
   topic: string;
   defaultSpeechMs: number;
+  delegatesCanQueue: boolean;
   rulePackageVersionId: string;
   currentEntryId: string | null;
   speechTimerId: string;
   totalTimerId: string | null;
+  linkedResolutionId: string | null;
   revision: number;
   queue: SpeakerQueueEntry[];
   createdAt: string;
@@ -68,10 +74,12 @@ export interface SpeakerList {
 export type SpeechKind = 'ORIGINAL' | 'INHERITED';
 export type SpeechStatus = 'READY' | 'RUNNING' | 'PAUSED' | 'COMPLETED';
 export type YieldType = 'CHAIR' | 'SEAT' | 'QUESTIONS' | 'COMMENTS';
+export type SpeechYieldDecisionStatus = 'PENDING' | 'ACCEPTED' | 'REJECTED';
 
 export interface SpeechActionRecord {
   id: string;
-  action: 'STARTED' | 'PAUSED' | 'RESUMED' | 'COMPLETED' | 'YIELDED' | 'QUESTION_RECORDED' | 'COMMENT_RECORDED';
+  action: 'STARTED' | 'PAUSED' | 'RESUMED' | 'COMPLETED' | 'YIELDED' | 'YIELD_OFFERED'
+    | 'YIELD_ACCEPTED' | 'YIELD_REJECTED' | 'QUESTION_RECORDED' | 'COMMENT_RECORDED';
   remainingMs: number;
   targetType: YieldType | null;
   targetSeatId: string | null;
@@ -100,6 +108,8 @@ export interface SpeechRecord {
   canYield: boolean;
   yieldType: YieldType | null;
   yieldTargetSeatId: string | null;
+  yieldDecisionStatus: SpeechYieldDecisionStatus | null;
+  interactionTargetSeatId: string | null;
   revision: number;
   startedAt: string | null;
   endedAt: string | null;
@@ -108,12 +118,33 @@ export interface SpeechRecord {
 }
 
 export type MotionStatus = 'PENDING' | 'SECONDED' | 'VOTING' | 'PASSED' | 'FAILED' | 'WITHDRAWN' | 'SUPERSEDED';
+export type BallotChoice = 'FOR' | 'AGAINST' | 'ABSTAIN';
 
 export interface MotionSecond {
   id: string;
   seatId: string;
   seatDisplayName: string;
   createdAt: string;
+}
+
+export interface MotionDirectVote {
+  id: string;
+  seatId: string;
+  seatDisplayName: string;
+  choice: BallotChoice;
+  revision: number;
+  castAt: string;
+}
+
+export interface MotionDirectVoteState {
+  includeNonVotingSeats: boolean;
+  startedAt: string | null;
+  settingsRevision: number;
+  eligibility: Array<{seatId: string; seatDisplayName: string}>;
+  choices: BallotChoice[];
+  threshold: number;
+  automaticResult: 'PASSED' | 'FAILED' | null;
+  votes: MotionDirectVote[];
 }
 
 export interface ProceedingMotion {
@@ -129,13 +160,14 @@ export interface ProceedingMotion {
   ruleEvaluation: FrozenRuleEvaluation;
   requiredSecondCount: number;
   seconds: MotionSecond[];
+  directVote: MotionDirectVoteState;
   revision: number;
   createdAt: string;
   decidedAt: string | null;
+  destinationPath: string | null;
 }
 
 export type BallotStatus = 'OPEN' | 'CLOSED' | 'PUBLISHED';
-export type BallotChoice = 'FOR' | 'AGAINST' | 'ABSTAIN';
 
 export interface BallotEligibilitySeat {
   seatId: string;
@@ -183,6 +215,14 @@ export interface StrawpollOptionResult {
   voteCount: number;
 }
 
+export interface StrawpollSeatVote {
+  id: string;
+  seatId: string;
+  optionIds: string[];
+  revision: number;
+  castAt: string;
+}
+
 export interface Strawpoll {
   id: string;
   committeeId: string;
@@ -191,7 +231,14 @@ export interface Strawpoll {
   votingMode: StrawpollVotingMode;
   multipleChoice: boolean;
   status: 'OPEN' | 'CLOSED';
+  stage: 'PREPARING' | 'VOTING' | 'RESULTS';
+  medium: 'LINK' | 'MANUAL';
+  optionsArePublic: boolean;
+  seriesId: string;
+  roundNumber: number;
+  supersededById: string | null;
   options: StrawpollOptionResult[];
+  seatVotes: StrawpollSeatVote[];
   revision: number;
   createdAt: string;
   closedAt: string | null;
@@ -209,6 +256,13 @@ export interface ProceedingDocumentVersion {
   id: string;
   versionNumber: number;
   content: string;
+  contentFile: {
+    id: string;
+    logicalName: string;
+    originalName: string;
+    mediaType: string;
+    status: 'UPLOAD_COMPLETE' | 'PENDING_REVIEW' | 'PUBLISHED';
+  } | null;
   createdAt: string;
 }
 
@@ -218,6 +272,27 @@ export interface DocumentDiscussionEntry {
   seatDisplayName: string;
   content: string;
   ruleStableId: string;
+  createdAt: string;
+}
+
+export type ResolutionDirectVoteMajority = 'SIMPLE_MAJORITY' | 'TWO_THIRDS' | 'TWO_THIRDS_NON_ABSTAINING';
+
+export interface ResolutionDirectVoteState {
+  majority: ResolutionDirectVoteMajority;
+  startedAt: string | null;
+  settingsRevision: number;
+  eligibility: Array<{seatId: string; seatDisplayName: string; mustVote: boolean; hasVeto: boolean}>;
+  threshold: number;
+  automaticResult: 'PASSED' | 'FAILED' | 'VETOED' | null;
+  votes: BallotVote[];
+}
+
+export interface DocumentResultDecision {
+  id: string;
+  previousStatus: ProceedingDocumentStatus;
+  newStatus: ProceedingDocumentStatus;
+  reason: string | null;
+  correctsDecisionId: string | null;
   createdAt: string;
 }
 
@@ -233,6 +308,11 @@ export interface ProceedingDocument {
   currentVersion: ProceedingDocumentVersion;
   votingVersionId: string | null;
   public: boolean;
+  proposerSeatId: string | null;
+  seconderSeatId: string | null;
+  delegatesCanAmend: boolean;
+  directVote: ResolutionDirectVoteState | null;
+  resultDecisions: DocumentResultDecision[];
   revision: number;
   discussion: DocumentDiscussionEntry[];
   createdAt: string;

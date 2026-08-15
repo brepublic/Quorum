@@ -168,7 +168,7 @@ rule_package_version_id
 
 ### `speaker_lists`
 
-保存类型、状态、当前发言、默认时长、关联 caucus 和 revision。GSL 是 `kind = GENERAL` 的普通列表，不使用特殊固定路径。
+保存类型、名称、主题、状态、当前发言、默认时长、代表排队开关、关联 caucus 和 revision。GSL 是 `kind = GENERAL` 的普通列表，不使用特殊固定路径。`CHAIR_OPERATED` 只屏蔽代表排队开关，不改写已保存值。
 
 ### `speaker_requests`
 
@@ -176,11 +176,11 @@ rule_package_version_id
 
 ### `speaker_queue_entries`
 
-保存稳定顺序键、席位、speech kind、来源请求和状态。同一席位是否可重复由规则包评估；数据库只保证队列结构有效。
+保存稳定顺序键、席位、立场、入队时冻结的发言时长、speech kind、来源请求和状态。同一席位是否可重复由规则包评估；数据库保证活动队列结构有效。
 
 ### `speaker_actions`
 
-追加记录开始、暂停、继续、完成、跳过、移序和让渡。统计和审计不依赖可变的人名。
+追加记录开始、暂停、继续、完成、跳过、移序、让渡提出、接受和拒绝。speech 保存让渡决定及互动目标；统计和审计不依赖可变的人名。
 
 ### `caucuses`
 
@@ -197,6 +197,8 @@ parameters jsonb
 status enum(PENDING, SECONDED, VOTING, PASSED, FAILED, WITHDRAWN, SUPERSEDED)
 rule_package_version_id
 rule_evaluation jsonb
+direct_vote_include_non_voting, direct_vote_started_at, direct_vote_settings_revision
+destination_path
 decided_at, created_at
 revision
 ```
@@ -204,6 +206,10 @@ revision
 ### `motion_seconds`
 
 按席位记录附议和实际操作者。规则包决定需要多少附议；主席可以裁决继续，但实际缺少的附议不会被伪造成存在。
+
+### `motion_direct_votes` 与历史
+
+旧版动议直投与正式 ballot 分离。当前表一席一行；同键撤回、异键改答都追加 `motion_direct_vote_revisions`，资格选项变更追加 `motion_direct_vote_setting_revisions`。默认纳入出席的无实质性投票权席位，严格简单多数为 `floor(当前符合资格席位数 / 2) + 1`。代表直投产生首票后不能改变资格选项；`CHAIR_OPERATED` 主席代办可以改变，既有票不删除，只按当前资格计数。
 
 ### `timer_states`
 
@@ -439,22 +445,30 @@ POST /api/v1/committees/:id/status
 ```text
 POST /api/v1/committees/:id/roll-calls
 POST /api/v1/roll-calls/:id/record-response
+POST /api/v1/roll-calls/:id/set-response
 POST /api/v1/committees/:id/attendance-events
 
 POST /api/v1/committees/:id/points
 POST /api/v1/points/:id/resolve
 
 POST /api/v1/committees/:id/speaker-lists
+POST /api/v1/speaker-lists/:id/settings
+POST /api/v1/speaker-lists/:id/status
 POST /api/v1/speaker-lists/:id/queue
+POST /api/v1/speaker-lists/:id/queue/:entryId/remove
 POST /api/v1/speaker-lists/:id/advance
 POST /api/v1/speaker-lists/:id/reorder
 POST /api/v1/speaker-lists/:id/speech/{start,pause,resume,complete}
 POST /api/v1/speeches/:id/yield
+POST /api/v1/speeches/:id/yield-decision
 POST /api/v1/speeches/:id/contributions
 
 POST /api/v1/committees/:id/motions
 POST /api/v1/motions/:id/second
 POST /api/v1/motions/:id/decide
+POST /api/v1/motions/:id/withdraw
+POST /api/v1/motions/:id/direct-vote
+POST /api/v1/motions/:id/direct-vote-settings
 
 POST /api/v1/committees/:id/timers
 POST /api/v1/timers/:id/start
@@ -466,6 +480,7 @@ POST /api/v1/timers/:id/expire
 
 POST /api/v1/committees/:id/ballots
 POST /api/v1/ballots/:id/votes
+POST /api/v1/ballots/:id/set-vote
 POST /api/v1/ballots/:id/correct-vote
 POST /api/v1/ballots/:id/close
 POST /api/v1/ballots/:id/publish
@@ -667,6 +682,7 @@ POST /api/v1/committees/:id/meeting-sessions
 POST /api/v1/meeting-sessions/:id/close
 POST /api/v1/committees/:id/roll-calls
 POST /api/v1/roll-calls/:id/record-response
+POST /api/v1/roll-calls/:id/set-response
 POST /api/v1/roll-calls/:id/undo
 POST /api/v1/roll-calls/:id/reset
 POST /api/v1/committees/:id/attendance-events
@@ -677,6 +693,8 @@ POST /api/v1/committees/:id/attendance-events
 开始点名请求为 `{meetingSessionId}`，要求 `Idempotency-Key`。同一会期最多一个 `IN_PROGRESS` 点名。点名冻结规则版本、`attendance.responses`、开始时的活动席位顺序和每个席位显示名。规则响应为空、重复或包含未知值时返回 422。
 
 记录请求为 `{baseRevision, seatId, response}`。只接受冻结名单中尚未记录的席位和冻结回答；每次成功递增 roll call revision 并移动 `currentSeatId`。最后一席成功后把点名标记为 `COMPLETED`，并为每席追加来源为 roll-call entry 的 `PRESENT` 或 `ABSENT` attendance event。`PRESENT_AND_VOTING` 映射为当前出席 `PRESENT`，但 entry 保留原回答。并发请求以 roll call 行锁和 revision 保证只有一个成功。
+
+`set-response` 使用相同的 `{baseRevision, seatId, response}`，但允许 Chair 直接选择冻结名单中的任意席位。目标席位已有有效 entry 时，服务端先为旧 entry 写入撤销时间，再追加新 entry；不物理覆盖历史。进行中点名随后把 `currentSeatId` 移到冻结顺序中最早的未回答席位，全部回答后完成点名并生成出席事件。已完成点名允许更正并追加新的 attendance event；原完成时间和其他席位回答不变。命令记录 `directSelection`、被替代 entry、actor、事件和审计，仍受委员会活动状态、Chair 权限、行锁和 revision 约束。
 
 `undo` 只撤销当前 `IN_PROGRESS` 点名的最后一个 entry：entry 保存撤销时间，不物理删除；点名恢复该席位为当前席位。完成后的点名不可撤销。`reset` 把当前点名标记 `ABANDONED` 并在同一会期创建新的 `IN_PROGRESS` 点名；旧 entries 保留。它不修改已完成点名或其 attendance events。
 
@@ -1019,9 +1037,11 @@ point.raised
 point.resolved
 speaker_request.created
 speaker_list.created
+speaker_list.changed
 speaker_queue.changed
 speech.changed
 speech.yielded
+speech.yield_decision_changed
 speech.contribution_recorded
 timer.changed
 timer.expired

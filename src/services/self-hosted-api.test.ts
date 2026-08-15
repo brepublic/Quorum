@@ -72,6 +72,86 @@ describe('self-hosted stage 4 API client', () => {
     }));
   });
 
+  it('sets an arbitrary frozen roll-call seat through the audited correction route', async () => {
+    const fetchMock = vi.fn(async () => ({ok: true, status: 200,
+      json: async () => ({data: {id: 'roll-call', revision: 5}, meta: {requestId: 'roll-call'}})}));
+    vi.stubGlobal('fetch', fetchMock);
+    await selfHostedApi.setRollCallResponse('roll-call', 4, 'seat-two', 'PRESENT');
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/roll-calls/roll-call/set-response', expect.objectContaining({
+      method: 'POST', credentials: 'same-origin',
+      body: JSON.stringify({baseRevision: 4, seatId: 'seat-two', response: 'PRESENT'}),
+      headers: expect.objectContaining({'x-csrf-token': 'csrf-token'})
+    }));
+  });
+
+  it('withdraws a pending motion with its loaded revision', async () => {
+    const fetchMock = vi.fn(async () => ({ok: true, status: 200,
+      json: async () => ({data: {id: 'motion', status: 'WITHDRAWN'}, meta: {requestId: 'motion'}})}));
+    vi.stubGlobal('fetch', fetchMock);
+    await selfHostedApi.withdrawMotion('motion', 4);
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/motions/motion/withdraw', expect.objectContaining({method: 'POST',
+      body: JSON.stringify({baseRevision: 4}), headers: expect.objectContaining({'x-csrf-token': 'csrf-token'})}));
+  });
+
+  it('sets or retracts a represented seat vote with the loaded ballot revision', async () => {
+    const fetchMock = vi.fn(async () => ({ok: true, status: 200,
+      json: async () => ({data: {id: 'ballot', revision: 5}, meta: {requestId: 'vote'}})}));
+    vi.stubGlobal('fetch', fetchMock);
+    await selfHostedApi.setBallotVote('ballot', 4, null, 'seat-two');
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/ballots/ballot/set-vote', expect.objectContaining({method: 'POST',
+      body: JSON.stringify({baseRevision: 4, choice: null, onBehalfOfSeatId: 'seat-two'}),
+      headers: expect.objectContaining({'x-csrf-token': 'csrf-token'})}));
+  });
+
+  it('sets legacy direct motion votes without opening a formal ballot', async () => {
+    const fetchMock = vi.fn(async () => ({ok: true, status: 200,
+      json: async () => ({data: {id: 'motion'}, meta: {requestId: 'direct-vote'}})}));
+    vi.stubGlobal('fetch', fetchMock);
+    await selfHostedApi.setMotionDirectVote('motion', 'FOR', 'seat-two');
+    await selfHostedApi.setMotionDirectVoteSettings('motion', 2, false);
+    expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/v1/motions/motion/direct-vote', expect.objectContaining({
+      method: 'POST', body: JSON.stringify({choice: 'FOR', onBehalfOfSeatId: 'seat-two'})}));
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/v1/motions/motion/direct-vote-settings', expect.objectContaining({
+      method: 'POST', body: JSON.stringify({baseRevision: 2, includeNonVotingSeats: false})}));
+  });
+
+  it('sends legacy speaker workspace changes through audited self-hosted commands', async () => {
+    const fetchMock = vi.fn(async () => ({ok: true, status: 200,
+      json: async () => ({data: {id: 'list'}, meta: {requestId: 'speaker'}})}));
+    vi.stubGlobal('fetch', fetchMock);
+    await selfHostedApi.updateSpeakerList('list', 2, {name: '主发言名单', delegatesCanQueue: true});
+    await selfHostedApi.joinSpeakerQueue('list', 'seat', 'FOR');
+    await selfHostedApi.removeSpeakerQueueEntry('list', 'entry', 3);
+    await selfHostedApi.setSpeakerListStatus('list', 4, 'CLOSED');
+    await selfHostedApi.yieldSpeech('speech', 5, 'QUESTIONS', 'questioner');
+    await selfHostedApi.decideSpeechYield('speech', 6, 'ACCEPT');
+    const calls = fetchMock.mock.calls as unknown as Array<[string, RequestInit]>;
+    expect(calls.map(call => call[0])).toEqual([
+      '/api/v1/speaker-lists/list/settings',
+      '/api/v1/speaker-lists/list/queue',
+      '/api/v1/speaker-lists/list/queue/entry/remove',
+      '/api/v1/speaker-lists/list/status',
+      '/api/v1/speeches/speech/yield',
+      '/api/v1/speeches/speech/yield-decision'
+    ]);
+    expect(calls[0]?.[1].body).toBe(JSON.stringify({baseRevision: 2, name: '主发言名单', delegatesCanQueue: true}));
+    expect(calls[1]?.[1].body).toBe(JSON.stringify({seatId: 'seat', stance: 'FOR'}));
+    expect(calls[4]?.[1].body).toBe(JSON.stringify({baseRevision: 5, type: 'QUESTIONS', targetSeatId: 'questioner'}));
+    expect(calls[5]?.[1].body).toBe(JSON.stringify({baseRevision: 6, decision: 'ACCEPT'}));
+  });
+
+  it('keeps the Chair proposer and initial seconder in one motion command', async () => {
+    const fetchMock = vi.fn(async () => ({ok: true, status: 201,
+      json: async () => ({data: {id: 'motion', status: 'SECONDED'}, meta: {requestId: 'motion'}})}));
+    vi.stubGlobal('fetch', fetchMock);
+    await selfHostedApi.proposeMotion('committee', {meetingSessionId: 'meeting', motionTypeId: 'introduce-draft-resolution',
+      onBehalfOfSeatId: 'proposer', secondedBySeatId: 'seconder', parameters: {proposal: 'A/RES/1'}});
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/committees/committee/motions', expect.objectContaining({method: 'POST',
+      body: JSON.stringify({meetingSessionId: 'meeting', motionTypeId: 'introduce-draft-resolution',
+        onBehalfOfSeatId: 'proposer', secondedBySeatId: 'seconder', parameters: {proposal: 'A/RES/1'}}),
+      headers: expect.objectContaining({'x-csrf-token': 'csrf-token', 'idempotency-key': expect.any(String)})}));
+  });
+
   it('adapts existing Chair, assignment, invitation, mode, status, and rule routes', async () => {
     const fetchMock = vi.fn(async () => ({ok: true, status: 200,
       json: async () => ({data: {}, meta: {requestId: 'adapter'}})}));
@@ -80,6 +160,7 @@ describe('self-hosted stage 4 API client', () => {
     await selfHostedApi.endSeatAssignment('committee', 'assignment');
     await selfHostedApi.createSeatInvitation('committee', {seatId: 'seat', maxUses: 1, expiresAt: '2026-08-14T12:00:00.000Z'});
     await selfHostedApi.setOperationMode('committee', 'CHAIR_OPERATED', 3);
+    await selfHostedApi.setLayoutSettings('committee', {moveQueueUp: true, timersInSeparateColumns: false}, 4);
     await selfHostedApi.setCommitteeStatus('committee', 'PAUSED', 4);
     await selfHostedApi.listRulePackages();
     await selfHostedApi.activateRules('committee', 'version', 5);
@@ -89,6 +170,7 @@ describe('self-hosted stage 4 API client', () => {
       '/api/v1/committees/committee/seat-assignments',
       '/api/v1/committees/committee/seat-invitations',
       '/api/v1/committees/committee/operation-mode',
+      '/api/v1/committees/committee/layout-settings',
       '/api/v1/committees/committee/status',
       '/api/v1/rule-packages',
       '/api/v1/committees/committee/rules/activate'
@@ -97,8 +179,10 @@ describe('self-hosted stage 4 API client', () => {
     expect(calls[1]?.[1]).toEqual(expect.objectContaining({method: 'POST',
       body: JSON.stringify({action: 'END', assignmentId: 'assignment'})}));
     expect(calls[4]?.[1]).toEqual(expect.objectContaining({method: 'POST',
+      body: JSON.stringify({settings: {moveQueueUp: true, timersInSeparateColumns: false}, baseRevision: 4})}));
+    expect(calls[5]?.[1]).toEqual(expect.objectContaining({method: 'POST',
       body: JSON.stringify({status: 'PAUSED', baseRevision: 4})}));
-    expect(calls[6]?.[1]).toEqual(expect.objectContaining({method: 'POST',
+    expect(calls[7]?.[1]).toEqual(expect.objectContaining({method: 'POST',
       body: JSON.stringify({rulePackageVersionId: 'version', baseRevision: 5})}));
   });
 

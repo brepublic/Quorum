@@ -238,13 +238,25 @@ export const selfHostedApi = {
       body: {baseRevision, ...(durationMs === undefined ? {} : {durationMs})}});
   },
   createSpeakerList(committeeId: string, input: {meetingSessionId: string; kind: 'GENERAL' | 'MODERATED_CAUCUS';
-    topic?: string; defaultSpeechMs: number; totalDurationMs?: number}) {
+    name?: string; topic?: string; defaultSpeechMs: number; totalDurationMs?: number; delegatesCanQueue?: boolean}) {
     return request<SpeakerList>(`/api/v1/committees/${committeeId}/speaker-lists`, {method: 'POST',
       body: input, idempotencyKey: key()});
   },
-  joinSpeakerQueue(id: string, seatId?: string) {
+  updateSpeakerList(id: string, baseRevision: number, input: {name?: string; topic?: string; defaultSpeechMs?: number;
+    delegatesCanQueue?: boolean}) {
+    return request<SpeakerList>(`/api/v1/speaker-lists/${id}/settings`, {method: 'POST',
+      body: {baseRevision, ...input}});
+  },
+  setSpeakerListStatus(id: string, baseRevision: number, status: 'OPEN' | 'CLOSED') {
+    return request<SpeakerList>(`/api/v1/speaker-lists/${id}/status`, {method: 'POST', body: {baseRevision, status}});
+  },
+  joinSpeakerQueue(id: string, seatId?: string, stance?: 'FOR' | 'NEUTRAL' | 'AGAINST') {
     return request<SpeakerList>(`/api/v1/speaker-lists/${id}/queue`, {method: 'POST',
-      body: seatId ? {seatId} : {}, idempotencyKey: key()});
+      body: {...(seatId ? {seatId} : {}), ...(stance ? {stance} : {})}, idempotencyKey: key()});
+  },
+  removeSpeakerQueueEntry(id: string, entryId: string, baseRevision: number) {
+    return request<SpeakerList>(`/api/v1/speaker-lists/${id}/queue/${entryId}/remove`, {method: 'POST',
+      body: {baseRevision}});
   },
   reorderSpeakerQueue(id: string, baseRevision: number, entryIds: string[]) {
     return request<SpeakerList>(`/api/v1/speaker-lists/${id}/reorder`, {method: 'POST', body: {baseRevision, entryIds}});
@@ -260,12 +272,16 @@ export const selfHostedApi = {
     return request<SpeechRecord>(`/api/v1/speeches/${id}/yield`, {method: 'POST',
       body: {baseRevision, type, ...(targetSeatId ? {targetSeatId} : {})}});
   },
+  decideSpeechYield(id: string, baseRevision: number, decision: 'ACCEPT' | 'REJECT') {
+    return request<SpeakerList>(`/api/v1/speeches/${id}/yield-decision`, {method: 'POST',
+      body: {baseRevision, decision}});
+  },
   recordSpeechContribution(id: string, type: 'QUESTION' | 'COMMENT', content: string, seatId?: string) {
     return request<SpeechRecord>(`/api/v1/speeches/${id}/contributions`, {method: 'POST',
       body: {type, content, ...(seatId ? {seatId} : {})}});
   },
   proposeMotion(committeeId: string, input: {meetingSessionId: string; motionTypeId: string;
-    parameters?: Record<string, unknown>; onBehalfOfSeatId?: string}) {
+    parameters?: Record<string, unknown>; onBehalfOfSeatId?: string; secondedBySeatId?: string}) {
     return request<ProceedingMotion>(`/api/v1/committees/${committeeId}/motions`, {method: 'POST',
       body: input, idempotencyKey: key()});
   },
@@ -276,6 +292,17 @@ export const selfHostedApi = {
   decideMotion(id: string, baseRevision: number, result: 'PASSED' | 'FAILED') {
     return request<ProceedingMotion>(`/api/v1/motions/${id}/decide`, {method: 'POST', body: {baseRevision, result}});
   },
+  withdrawMotion(id: string, baseRevision: number) {
+    return request<ProceedingMotion>(`/api/v1/motions/${id}/withdraw`, {method: 'POST', body: {baseRevision}});
+  },
+  setMotionDirectVote(id: string, choice: 'FOR' | 'AGAINST' | 'ABSTAIN' | null, onBehalfOfSeatId?: string) {
+    return request<ProceedingMotion>(`/api/v1/motions/${id}/direct-vote`, {method: 'POST',
+      body: {choice, ...(onBehalfOfSeatId ? {onBehalfOfSeatId} : {})}});
+  },
+  setMotionDirectVoteSettings(id: string, baseRevision: number, includeNonVotingSeats: boolean) {
+    return request<ProceedingMotion>(`/api/v1/motions/${id}/direct-vote-settings`, {method: 'POST',
+      body: {baseRevision, includeNonVotingSeats}});
+  },
   createBallot(committeeId: string, input: {meetingSessionId: string; subjectType: 'MOTION' | 'RESOLUTION' | 'AMENDMENT';
     subjectId: string; procedural: boolean; thresholdKind: 'SIMPLE_MAJORITY' | 'TWO_THIRDS'}) {
     return request<FormalBallot>(`/api/v1/committees/${committeeId}/ballots`, {method: 'POST',
@@ -284,6 +311,11 @@ export const selfHostedApi = {
   castVote(id: string, choice: 'FOR' | 'AGAINST' | 'ABSTAIN', onBehalfOfSeatId?: string) {
     return request<FormalBallot>(`/api/v1/ballots/${id}/votes`, {method: 'POST',
       body: {choice, ...(onBehalfOfSeatId ? {onBehalfOfSeatId} : {})}, idempotencyKey: key()});
+  },
+  setBallotVote(id: string, baseRevision: number, choice: 'FOR' | 'AGAINST' | 'ABSTAIN' | null,
+    onBehalfOfSeatId?: string) {
+    return request<FormalBallot>(`/api/v1/ballots/${id}/set-vote`, {method: 'POST',
+      body: {baseRevision, choice, ...(onBehalfOfSeatId ? {onBehalfOfSeatId} : {})}});
   },
   correctVote(id: string, baseRevision: number, seatId: string, choice: 'FOR' | 'AGAINST' | 'ABSTAIN', reason: string) {
     return request<FormalBallot>(`/api/v1/ballots/${id}/correct-vote`, {method: 'POST',
@@ -296,7 +328,8 @@ export const selfHostedApi = {
     return request<FormalBallot>(`/api/v1/ballots/${id}/publish`, {method: 'POST', body: {baseRevision}});
   },
   createStrawpoll(committeeId: string, input: {meetingSessionId: string; question: string;
-    votingMode: 'ANONYMOUS' | 'SEAT_AUTHENTICATED'; multipleChoice: boolean; options: string[]}) {
+    votingMode: 'ANONYMOUS' | 'SEAT_AUTHENTICATED'; multipleChoice: boolean; options: string[];
+    medium?: 'LINK' | 'MANUAL'; optionsArePublic?: boolean}) {
     return request<CreatedStrawpoll>(`/api/v1/committees/${committeeId}/strawpolls`, {method: 'POST',
       body: input, idempotencyKey: key()});
   },
@@ -306,6 +339,19 @@ export const selfHostedApi = {
   },
   closeStrawpoll(id: string, baseRevision: number) {
     return request<Strawpoll>(`/api/v1/strawpolls/${id}/close`, {method: 'POST', body: {baseRevision}});
+  },
+  reviseStrawpoll(id: string, input: {baseRevision: number; question: string;
+    votingMode: 'ANONYMOUS' | 'SEAT_AUTHENTICATED'; multipleChoice: boolean; options: string[];
+    medium: 'LINK' | 'MANUAL'; optionsArePublic: boolean}) {
+    return request<CreatedStrawpoll>(`/api/v1/strawpolls/${id}/rounds`, {method: 'POST', body: input,
+      idempotencyKey: key()});
+  },
+  commandStrawpollStage(id: string, baseRevision: number, action: 'START' | 'VIEW_RESULTS' | 'REOPEN') {
+    return request<Strawpoll>(`/api/v1/strawpolls/${id}/stage`, {method: 'POST', body: {baseRevision, action}});
+  },
+  setStrawpollManualTally(id: string, baseRevision: number, optionId: string, tally: number) {
+    return request<Strawpoll>(`/api/v1/strawpolls/${id}/manual-tallies`, {method: 'POST',
+      body: {baseRevision, optionId, tally}});
   },
   createResolution(committeeId: string, input: {meetingSessionId: string; title: string; content: string;
     onBehalfOfSeatId?: string}) {
@@ -317,7 +363,10 @@ export const selfHostedApi = {
     return request<ProceedingDocument>(`/api/v1/resolutions/${resolutionId}/amendments`, {method: 'POST',
       body: input, idempotencyKey: key()});
   },
-  createDocumentVersion(id: string, input: {baseRevision: number; title: string; content: string;
+  deleteAmendment(id: string, baseRevision: number) {
+    return request<{id: string; deleted: true}>(`/api/v1/documents/${id}`, {method: 'DELETE', body: {baseRevision}});
+  },
+  createDocumentVersion(id: string, input: {baseRevision: number; title: string; content: string; contentFileEntryId?: string | null;
     onBehalfOfSeatId?: string}) {
     return request<ProceedingDocument>(`/api/v1/documents/${id}/versions`, {method: 'POST', body: input});
   },
@@ -325,6 +374,20 @@ export const selfHostedApi = {
     ruleStableId: string) {
     return request<ProceedingDocument>(`/api/v1/documents/${id}/commands`, {method: 'POST',
       body: {baseRevision, action, ruleStableId}});
+  },
+  updateDocumentSettings(id: string, input: {baseRevision: number; proposerSeatId?: string;
+    seconderSeatId?: string | null; delegatesCanAmend?: boolean;
+    majority?: 'SIMPLE_MAJORITY' | 'TWO_THIRDS' | 'TWO_THIRDS_NON_ABSTAINING'}) {
+    return request<ProceedingDocument>(`/api/v1/documents/${id}/settings`, {method: 'POST', body: input});
+  },
+  setResolutionDirectVote(id: string, seatId: string, choice: 'FOR' | 'AGAINST' | 'ABSTAIN' | null) {
+    return request<ProceedingDocument>(`/api/v1/resolutions/${id}/direct-vote`, {method: 'POST',
+      body: {seatId, choice}});
+  },
+  recordDocumentResult(id: string, baseRevision: number,
+    outcome: 'PASSED' | 'FAILED' | 'INCORPORATED' | 'REJECTED', reason?: string) {
+    return request<ProceedingDocument>(`/api/v1/documents/${id}/result`, {method: 'POST',
+      body: {baseRevision, outcome, ...(reason ? {reason} : {})}});
   },
   addDocumentDiscussion(id: string, input: {content: string; ruleStableId: string; onBehalfOfSeatId?: string}) {
     return request<ProceedingDocument>(`/api/v1/documents/${id}/discussion`, {method: 'POST',
@@ -405,6 +468,16 @@ export const selfHostedApi = {
     return request<CommitteeSummary>(`/api/v1/committees/${committeeId}/operation-mode`, {method: 'POST',
       body: {operationMode, baseRevision}});
   },
+  setMotionSettings(committeeId: string, settings: {delegateMotionProposalsEnabled: boolean;
+    delegateMotionVotingEnabled: boolean}, baseRevision: number) {
+    return request<{delegateMotionProposalsEnabled: boolean; delegateMotionVotingEnabled: boolean; revision: number}>(
+      `/api/v1/committees/${committeeId}/motion-settings`, {method: 'POST', body: {settings, baseRevision}});
+  },
+  setLayoutSettings(committeeId: string, settings: {moveQueueUp: boolean; timersInSeparateColumns: boolean},
+    baseRevision: number) {
+    return request<{moveQueueUp: boolean; timersInSeparateColumns: boolean; revision: number}>(
+      `/api/v1/committees/${committeeId}/layout-settings`, {method: 'POST', body: {settings, baseRevision}});
+  },
   setCommitteeStatus(committeeId: string, status: Extract<CommitteeStatus, 'ACTIVE' | 'PAUSED'>, baseRevision: number) {
     return request<CommitteeSummary>(`/api/v1/committees/${committeeId}/status`, {method: 'POST', body: {status, baseRevision}});
   },
@@ -442,6 +515,9 @@ export const selfHostedApi = {
   },
   recordRollCallResponse(id: string, baseRevision: number, seatId: string, response: string) {
     return request<RollCall>(`/api/v1/roll-calls/${id}/record-response`, {method: 'POST', body: {baseRevision, seatId, response}});
+  },
+  setRollCallResponse(id: string, baseRevision: number, seatId: string, response: string) {
+    return request<RollCall>(`/api/v1/roll-calls/${id}/set-response`, {method: 'POST', body: {baseRevision, seatId, response}});
   },
   undoRollCall(id: string, baseRevision: number) {
     return request<RollCall>(`/api/v1/roll-calls/${id}/undo`, {method: 'POST', body: {baseRevision}});

@@ -4,12 +4,76 @@
 
 ## 当前状态
 
-- 更新时间：2026-08-14
-- 分支：`self-host`
-- 已确认基线：`67d978e stage 9.2: finalize self-hosted architecture and runtime checks`
-- 当前阶段：0–9 已完成当前 WSL 能够完成的实施与自动验收。
-- 当前工作：阶段 9.2 已提交；`docs/self-hosted/IMPLEMENTATION_PLAN.md` 的代码迁移全部完成。
-- 下一步：取得目标环境后从 SH-MAN-001 开始补齐 PostgreSQL、Compose/Caddy TLS、provider、浏览器、原生 Agent、备份恢复和 SH-MAN-520 生产网络证据；实机发现问题时从本提交继续修复。
+- 更新时间：2026-08-15
+- 分支：`fix`
+- 已确认基线：`fdd1a06 fix uiux`
+- 当前阶段：自托管阶段 0–9 保持完成；开始把迁移前成熟交互与页面结构移植到自托管浏览器应用。
+- 当前工作：全局工作区壳层、点名、旧版动议、独立直投和发言工作区已恢复到自托管 API。
+- 下一步：保存发言切片检查点，再迁移决议草案、意向性投票和工作文件页面。
+
+### 2026-08-14：界面与交互恢复定向
+
+- 切换前 `master` 为 `681e481`，目标 `fix` 为 `fdd1a06`；两者 merge-base 为 `681e481`。
+- 原工作区有 `deploy/`、`docs/`、`packages/`、`release/`、`server/` 五个未跟踪目录。其中包括 6 份与 `fix` 不同的自托管规格、本地 `deploy/.env`、编译输出和约 570 MiB Agent 发布产物；未覆盖或删除。
+- `/home/makoto/code/Quorum-old` 保存从 `master@681e481` 导出的纯净旧版源码；`/home/makoto/code/Quorum-pre-fix-switch-20260814` 保存上述切换前残留及文件清单。
+- 已切换到干净的 `fix@fdd1a06`。`pnpm install --frozen-lockfile` 从依赖树移除 Firebase SDK、Firebase CLI、Cypress 与 emulator 相关依赖。
+- 首次 `pnpm test:self-host` 因刚移走未跟踪的 `packages/contracts/dist` 而无法解析 workspace 入口；先执行 `pnpm build:self-host` 后复跑即通过。该首次失败是构建顺序问题，不是仓库代码回归。
+- `pnpm build:self-host`：通过；仅有既有 Vite 大分块警告。
+- `pnpm test:self-host`：66 个文件通过、8 个 PostgreSQL 文件明确跳过；365 项通过、68 项跳过。
+- `pnpm test:self-host:integration`：未配置 `TEST_DATABASE_ADMIN_URL`，8 个文件、68 项全部明确跳过。
+- `pnpm verify:no-legacy-runtime`：通过。
+- 已查看 4 张旧版参考图并读取 `master` 的导航、点名、动议和发言名单实现；恢复计划记录在 `UI_RESTORATION_PLAN.md`。
+
+### 2026-08-14：界面恢复切片 1——工作区壳层
+
+- 先增加结构测试，证明旧实现把所有委员会页面包在非全宽 `Container` 和统一 `Segment` 中。
+- 委员会工作区现使用全宽容器，不再强制所有子页共享一张通用卡片；各页面可以恢复迁移前的信息架构和密度。
+- 顶部路由导航、动态资源菜单、实时状态、账户菜单、主题/语言入口、系统管理入口和移动侧栏未改变。
+- 针对性 Vitest：3 个文件、21 项测试通过；仅有既有 Semantic UI 弃用警告。
+- `pnpm build:self-host`：通过；仅有既有 Vite 大分块警告。
+- `pnpm verify:no-legacy-runtime`：通过。
+- `git diff --check`：通过。
+
+### 2026-08-14：界面恢复切片 2——点名矩阵与任意席位改答
+
+- 按用户确认恢复 18 席/页、三列状态矩阵、当前席位控制区、状态图例、分页、撤销、重置和完成摘要；Chair 可直接点击任意冻结席位，并可再次点击改答。
+- 新增 `POST /api/v1/roll-calls/:id/set-response`。它与原顺序录入命令分离，继续由 Session 推导 actor，并在同一 PostgreSQL 事务中执行 Chair 权限、委员会状态、行锁、revision、entry 历史、事件和审计。
+- 进行中直接录入后，服务端选择冻结顺序中最早的未回答席位；全部回答后完成点名并生成出席事件。已完成点名的更正会追加 entry 和 attendance event，不覆盖历史。
+- TypeScript 类型检查通过；页面、HTTP 和 API 客户端 3 个定向测试文件共 43 项通过。
+- `pnpm test:self-host`：66 个文件通过、8 个 PostgreSQL 文件明确跳过；369 项通过、69 项跳过。
+- `pnpm test:self-host:integration`：未配置 `TEST_DATABASE_ADMIN_URL`，8 个文件、69 项全部明确跳过；没有将跳过记为通过。
+- `pnpm build:self-host`：通过；仅有既有 Vite 大分块警告。
+- `pnpm verify:no-legacy-runtime`：通过，生产源码、依赖、配置和构建输出未发现旧运行时引用。
+- `git diff --check`：通过。
+- 已保存仓库外回滚点 `/home/makoto/code/Quorum-checkpoints/02-roll-call/`；累计补丁 SHA-256 为 `a71796d140486356fcb229c979e34ba1e5e851f7422457aa00806193f8a70051`。
+
+### 2026-08-14：界面恢复切片 3——旧版动议与独立直投
+
+- 旧版动议表单、排序、卡片、删除、决定按钮与目标按钮继续沿用原布局和动画；主题、决议草案名称、修正案正文、意向性投票问题和工作文件任务在前端标为必填。
+- migration 27 保存两个代表权限开关；`CHAIR_OPERATED` 只屏蔽其生效和显示，不清除已保存值。migration 28 为正式投票增加改答和撤回答案历史，正式投票新功能保持独立。
+- migration 29 保存通过动议产生的站内目标，并让动议结果与计时器、磋商、决议草案、修正案或意向性投票资源在同一事务提交。点击“通过”不自动跳转，决定后显示旧版目标按钮。
+- migration 30 增加独立动议直投当前值、追加式改答/撤回历史和资格设置历史。默认纳入出席的无实质性投票权席位；主席可在首票前取消。代表直投开始后冻结该选项，`CHAIR_OPERATED` 主席代办可继续调整。
+- 动议直投采用严格简单多数 `floor(资格席位数 / 2) + 1`；红/黄/绿按钮同键撤回、异键改答。正式投票的开启、关闭和发布状态机未被替代。
+- 内置规则以不可变 v2 新版本补齐旧版 16 种动议；新委员会默认最新版本，既有已冻结会期不被后台静默改写。
+- 页面回归确认“纳入无投票权席位”默认开启；Chair 的直投席位选择默认落在首个席位，仍可切换至包括观察国在内的其他合资格席位。
+- 本地隔离 PostgreSQL 16 已执行 migration 1–30 并重复运行；migration 与阶段 5 共 11 项真实数据库用例通过。另增 `CHAIR_OPERATED` 用例，确认未附议只作为建议、点击通过原子创建决议草案并返回目标路径。
+- 真实数据库首次暴露两个点名路径缺少 `roll_call_status` 显式转换，导致所有并发结果都回滚；确认根因后只修复同范围 SQL。阶段 4 的 7 项真实 PostgreSQL 用例随后全部通过，包括顺序录入、乱序点选、改答和完成后更正。
+- `pnpm test:self-host`：66 个文件通过、8 个 PostgreSQL 文件明确跳过；382 项通过、76 项跳过。TypeScript、`pnpm build:self-host` 与 `pnpm verify:no-legacy-runtime` 均通过；构建仅有既有 Vite 大分块警告。
+- 全套真实 PostgreSQL 集成测试为 55 项通过、21 项失败。migration、身份、阶段 4 和阶段 5 文件全部通过；失败集中在既有阶段 3 邀请计数以及阶段 6–8 归档/存储枚举参数和触发器，未在本切片扩大修复范围，也未把全套测试标记为通过。
+- 已保存仓库外回滚点 `/home/makoto/code/Quorum-checkpoints/04-motion-direct-vote/`；验证结束后已关闭并移除隔离 PostgreSQL 测试容器。
+
+### 2026-08-15：界面恢复切片 4——发言名单与有主持核心磋商
+
+- 实施前保存仓库外回滚点 `/home/makoto/code/Quorum-checkpoints/05-speaker-pre-implementation/`。migration 31 保存发言名单名称、代表排队开关、队列立场、逐项发言时长、让渡决定和互动目标；schema compatibility 更新为 31。
+- 旧版双栏工作台现显示标题与状态、当前和下一位发言人、队列、立场、席位旗帜、大计时器、拖放重排、交错排序、快捷键和让渡卡片。客户端只发送命令；计时、队列和历史仍由 PostgreSQL 决定。
+- 有主持核心磋商同时开始或暂停总计时器和发言计时器。关闭会暂停两者、完成当前 speech 并保留当前席位、等待队列和剩余时间；重开后可从保留状态继续。通过“结束有主持核心磋商”动议采用相同语义。
+- 代表排队开关在 `CHAIR_OPERATED` 中显示为关闭且不可操作，数据库保留原值；切回 `DELEGATE_OPERATED` 后恢复。Chair 可继续代任意出席席位排队。
+- GSL 让渡恢复旧版流程：让渡给代表先记录 offer，再记录接受或拒绝；提问只选择提问席位，原发言席继承剩余时间回答；评论由所选席位继承；详细问题或评论正文保持可选。继承时间不能再次让渡。
+- 有主持核心磋商队列恢复旧版单击“让渡”。前端一次点击依次暂停、记录让渡并接受，后台保留每一步。删除当前发言人、关闭名单和关闭动议均追加 timer、speech、yield、queue 事件与审计。
+- 修复 Stage 4 委员会创建路径未排序内置规则版本的问题；新委员会明确绑定最新已发布版本。真实 PostgreSQL 首次用例据此暴露旧 v1 误绑定，修正后“结束有主持核心磋商”动议事务通过。
+- 本地隔离 PostgreSQL 16：migration 空库与重复执行通过；Stage 5 的 15 项用例全部通过，包括并发、双计时、关闭/重开、四类让渡、动议关闭保留队列、直投和正式 ballot。`pg` 的同一 client 并行 query 警告也已通过顺序读取消除。
+- `pnpm test:self-host`：66 个文件通过、8 个 PostgreSQL 文件明确跳过；387 项通过、81 项跳过。TypeScript、`pnpm build:self-host`、`pnpm verify:no-legacy-runtime` 和 `git diff --check` 均通过；构建只有既有大分块警告。
+- 已保存仓库外回滚点 `/home/makoto/code/Quorum-checkpoints/06-speaker-workspace-complete/`；副本与工作区状态清单 SHA-256 均为 `899dead67f599e152d339c439ab1ce789c90f8b7122ad9275e9b9154e2628bd9`。
 
 ## 已完成与验证
 
@@ -352,3 +416,49 @@
 - 已识别生产恢复关卡：当前 `self-host:backup` 依赖 Node/pnpm 与 `pg_dump`，最小 Docker 主机和 app runtime 不保证具备该工具链。上线前须建立受控运维环境或经评审的专用备份镜像/profile，并完成异地复制和隔离恢复；在此之前不能宣称生产可恢复。
 - `deploy/README.md` 已链接完整手册。文档存在性、章节结构与 `git diff --check` 已验证；本次仅改文档，未重跑应用测试或构建。
 - 下一步：在目标腾讯云主机依次执行阶段 0–12，将结果回填 `MANUAL_ACCEPTANCE.md`；若要消除备份工具链缺口，应单独实施并测试 Docker 化备份入口。
+
+### 2026-08-15：旧版 UI/UX 自托管恢复节点 18
+
+- 以 `/home/makoto/code/Quorum-old` 的 `master@681e481` 为视觉和交互基线，生产路径继续只有同源 API/SSE、Node 服务和 PostgreSQL；未恢复 Firebase、客户端写库或双写。
+- 已恢复旧版导航、委员会创建、会场设置、18 席分页点名、动议、动议直投、自由磋商、主发言名单、有主持核心磋商、决议草案、修正案、意向性投票、笔记、资料、统计和帮助布局；保留正式 ballot、规则包、文件审核/provider、Chair Agent、归档删除和运维能力。
+- 每次会期启动事务自动创建唯一主发言名单和发言计时器；有主持核心磋商仍由必填主题表单或通过的动议创建。移动端侧栏动画恢复为旧版 `uncover`。
+- 笔记保留多笔记选择器，停止输入约 600 ms 后使用 revision 命令自动保存；两项旧版布局设置由 PostgreSQL 持久化并随工作区快照下发。migration 38 增加布局列和每会期唯一 GENERAL 发言名单约束，schema compatibility 为 38。
+- 全仓有限 Vitest：69 个文件、442 项通过；8 个 PostgreSQL 文件、84 项因没有可用 `TEST_DATABASE_ADMIN_URL` 明确 skip。导航、笔记自动保存及切换前落盘、TypeScript 和 diff 检查亦通过。
+- `pnpm build:self-host`、`pnpm verify:no-legacy-runtime` 与 `git diff --check` 通过；Vite 仅报告既有大分块警告。
+- 当前 WSL 的 `docker` 命令不可用，且 5432/55432/80/443 无监听；migration 38、当前 Stage 4/5 PostgreSQL 用例、Compose、TLS、真实浏览器视觉/拖放/动画仍未验收，不能把 skip 或 jsdom 页面测试记为实机通过。
+- 完整回滚副本：`/home/makoto/code/Quorum-checkpoints/18-main-list-notes-layout`。未经用户授权未提交、推送、部署或删除 Docker volume。
+
+### 2026-08-15：旧版 UI/UX 自托管恢复节点 20
+
+- 移动端委员会壳层恢复迁移前的 `Sidebar.Pushable`、`Sidebar.Pusher`、`uncover` 动画和点击遮罩关闭交互；工作区内容只挂载一次，桌面端继续使用紧凑横向导航。
+- migration 38 保留“一场会议只能有一个主发言名单”的数据库唯一索引。按用户确认，不为不存在的生产历史重复名单增加转换逻辑；为升级时开放且尚无主发言名单的会议自动补建名单和发言计时器，优先读取规则包默认时间并以 60 秒兜底，同时追加公开事件和 `migration.main_speaker_list_backfilled` 系统审计。
+- 两项旧版布局设置增加页面级证据：队列上下位置按快照设置切换，发言/磋商计时器可分列，设置页以委员会 revision 一次提交完整设置。修正磋商计时器大按钮和 Alt+C 误调用发言命令的问题，现由磋商计时器自身的权威 timer 命令控制。
+- 定向测试：migration、导航和工作区路由共 78 项通过；全仓有限 Vitest 为 69 个文件、444 项通过，8 个 PostgreSQL 文件、84 项因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip。
+- `pnpm build:self-host`、`pnpm verify:no-legacy-runtime` 与 `git diff --check` 通过；Vite 仅报告既有大分块警告。真实 migration 38、PostgreSQL 集成、Compose/TLS 和浏览器动画仍需 Docker 引擎可用后取证。
+- migration 38 另有真实 PostgreSQL 升级路径测试：先应用 1–37，建立开放会期，再应用 38，并核对 75 秒规则时长、计时器、公开事件、系统审计及唯一索引；当前因无 `TEST_DATABASE_ADMIN_URL` 明确 skip，server TypeScript 构建与 SQL 静态契约测试通过。
+
+### 2026-08-15：旧版 UI/UX 自托管恢复节点 22
+
+- Docker Desktop Linux Engine 与 Debian WSL integration 已可用；只启动独立的 `quorum-test-db-postgres-test-1` PostgreSQL 16 测试服务，未启动、重建或清除既有 `quorum-app-1`、`quorum-caddy-1`、`quorum-postgres-1` 及其卷。
+- migration 38 的真实 37→38 升级测试通过：开放会期补建唯一主发言名单、规则包 75 秒发言计时器、公开事件和系统迁移审计。migration 39 修正文件进入审核流程后无法逻辑删除的触发器边界；仍禁止删除记录重新获得正文或从删除状态恢复，schema compatibility 为 39。
+- 修正真实 PostgreSQL 暴露的 enum/UUID 参数类型推断、归档 fixture、测试身份唯一性、provider 删除成功但完成事务回滚后的重试，以及 Chair Agent 文件落库期间三个连续事件共用陈旧序号的问题。所有修复保持原事务、事件、审计和幂等边界，没有增加旁路或客户端写库。
+- `node server/scripts/test-db.mjs test`：8 个文件、85 项真实 PostgreSQL 集成测试全部通过；空库应用 39 个 migration 并重复执行亦通过。测试使用临时数据库并在结束后清理。
+- `pnpm exec vitest run`：69 个文件、445 项通过；8 个 PostgreSQL 文件、85 项在未注入数据库 URL 的普通测试入口中按设计明确 skip，同一 85 项已由上述真实测试库入口全部通过。
+- `pnpm build:self-host`、`pnpm verify:no-legacy-runtime` 与 `git diff --check` 通过；生产源码、依赖、配置和构建产物未发现 Firebase 或旧运行时引用。仅有既有 Vite 大分块和第三方 React defaultProps 弃用警告。
+- Compose/Caddy TLS、真实浏览器视觉、拖放、移动侧栏动画及 HAR 网络验收仍未执行；不能以 jsdom 和数据库集成测试替代。完整检查点将在本节点验证后保存。
+
+### 2026-08-15：旧版 UI/UX 自托管恢复节点 23
+
+- 首次以既有持久卷启动当前镜像时，migration 校验和门禁拒绝 app：数据库已应用的 migration 30 哈希为 `1800f199...7f12`，工作树从节点 08 起把同一 migration 的 `direct_vote_include_non_voting` 默认值由 `true` 改成了 `false`。没有改写数据库 migration 记录或清除卷。
+- 从节点 06 的原始副本恢复不可变 migration 30，文件哈希重新与数据库一致；原值 `true` 同时符合“观察国默认参加程序性动议投票”的产品决定，因此不需要追加纠正 migration 或转换数据。真实 PostgreSQL migration 与 Stage 5 定向测试 20 项全部通过。
+- `docker compose --env-file deploy/.env -f deploy/compose.yaml up -d --build` 使用原卷成功：PostgreSQL 与 app 健康，Caddy 启动；服务端记录 migration version 39。数据库 `schema_migrations` 为 39 条、最大版本 39，runtime schema compatibility 为 39。
+- 经 Caddy `https://localhost/health/live` 与 `/health/ready` 均返回 HTTP/2 200；readiness 报告 database migrationVersion 39、storage normal。命令行使用跳过证书校验仅确认 HTTPS 连通性，不作为 Windows Chrome 信任、本地登录 Cookie 或真实页面验收。
+- 浏览器控制通道在建立连接时因桌面运行环境的工作区 URI 元数据错误而失败，未打开或操作页面。旧版视觉、拖放、移动侧栏动画、全流程点击与 HAR 零旧服务请求仍待真实浏览器验收。
+- 完整回滚副本：`/home/makoto/code/Quorum-checkpoints/22-postgres-integration-green`（Compose 启动前）及待保存的节点 23。未提交、推送、删除卷或改写既有 migration 记录。
+
+### 2026-08-15：Windows 浏览器验收交接
+
+- 当前 WSL 无法正常连接浏览器技能或 Computer Use；真实浏览器验收转移到 Windows 环境，不把命令行 HTTPS、jsdom 或静态测试替代为浏览器证据。
+- 新增 `WINDOWS_UI_ACCEPTANCE_HANDOFF.md`，记录当前 Compose/schema 39/自动化证据、旧版参照与节点 22–23、Windows 接手命令、测试角色与数据、桌面和窄屏矩阵、逐页旧版交互、动画、正式 ballot 与新增功能回归、HAR/SSE/PostgreSQL 证据、停止决策条件和完整完成标准。
+- 交接清单固化已确认产品语义：任意席位点名和改答、动议直投历史与观察国默认纳入、简单多数超过 50%、通过后先执行再显示目标按钮、唯一主发言名单、文本/文件二选一和审核发布、修正案删除边界、匿名提交后锁定、旧版移动 `uncover` 动画及两个运作模式开关的临时遮蔽/恢复。
+- 文档明确禁止修改已应用 migration、删除 Compose 卷、恢复 Firebase、合并旧直投与正式 ballot，或在旧版交互与新后端冲突时自行决定产品取舍。

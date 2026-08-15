@@ -186,7 +186,7 @@ const zhCN: Record<string, string> = {
   'Close navigation': '关闭导航',
   'Venue setup': '会场设置',
   'Speaker lists / moderated caucuses': '发言名单/有主持核心磋商',
-  'General speakers list': '一般发言名单',
+  'General speakers list': '主发言名单',
   'Moderated caucus': '有主持核心磋商',
   'Create speaker list': '新建发言名单',
   'Draft resolutions': '决议草案',
@@ -295,7 +295,10 @@ const zhCN: Record<string, string> = {
   'Attendance change': '出席变化',
   'No attendance change': '不改变出席状态',
   'No timer': '暂无计时器',
+  'Mute': '静音',
+  'Unmute': '取消静音',
   'Duration in minutes': '时长（分钟）',
+  'Target document': '目标文件',
   'Create timer': '新建计时器',
   'start': '开始',
   'pause': '暂停',
@@ -336,11 +339,14 @@ const zhCN: Record<string, string> = {
   'ABSTAIN': '弃权',
   'Motion type': '动议类型',
   'Propose motion': '提出动议',
+  'Withdraw motion': '撤回动议',
+  'No motions': '暂无动议',
   'Seconds': '附议数',
   'Second': '附议',
   'Pass': '通过',
   'Fail': '未通过',
   'Open procedural ballot': '开始程序性表决',
+  'Open substantive ballot': '开始实质性表决',
   'Options separated by commas': '选项（逗号分隔）',
   'Voting mode': '投票方式',
   'Seat-authenticated': '席位记名',
@@ -494,6 +500,7 @@ const zhCN: Record<string, string> = {
   'NGO': '非政府组织',
   'Observer': '观察员',
   'Present': '出席',
+  'Present and voting': '出席并参与表决',
   'Absent': '缺席',
   'Must Vote': '必须投票',
   'Add at least one committee member to proceed': '请至少添加一名委员会成员后再继续',
@@ -520,6 +527,11 @@ const zhCN: Record<string, string> = {
   'Speakers list complete': '主发言名单已结束',
   'Resolutions': '决议草案',
   'New resolution': '新建决议草案',
+  'New draft resolution {count}': '新决议草案{count}',
+  'New amendment {count}': '新修正案{count}',
+  'Target amendment': '目标修正案',
+  'Amendment file': '修正案文件',
+  'New strawpoll {count}': '新意向性投票{count}',
   'Strawpolls': '意向性投票',
   'New strawpoll': '新建意向性投票',
   'Notes': '笔记',
@@ -604,6 +616,8 @@ const zhCN: Record<string, string> = {
   'Delegates can vote on motions': '代表可对动议投票',
   'Voting delegation': '投票代表团',
   'Select your delegation': '选择您的代表团',
+  'Include non-voting seats': '纳入无投票权席位',
+  'Rules recommend a seconder': '议事规则建议记录附议方',
   'Sorted from most to least disruptive.': '按对议程影响程度从高到低排序。',
   '{count} votes required to pass a motion': '动议需获得 {count} 票方可通过',
   'Clear': '清空',
@@ -668,6 +682,23 @@ const zhCN: Record<string, string> = {
   'Link': '链接',
   'Body': '正文',
   'File': '文件',
+  'Choose file': '选择文件',
+  'Resolution file': '决议草案文件',
+  'Upload file': '上传文件',
+  'Existing file': '已有文件',
+  'Attach file': '关联文件',
+  'Download': '下载',
+  'Upload complete': '上传完成',
+  'Pending review': '待审核',
+  'Submit for review': '提交审核',
+  'Publish file': '发布文件',
+  'Waiting for Chair computer to save the file': '等待主席电脑保存文件',
+  'Publish the resolution content file before introducing the draft.': '请先发布决议草案文件，再通过展示动议。',
+  'Publish the amendment content file before introducing it.': '请先发布修正案文件，再通过展示动议。',
+  'Add amendment text or a file before introducing it.': '请先填写修正案正文或选择文件。',
+  'An amendment cannot be deleted after voting begins.': '修正案进入表决后不可删除。',
+  'Introduce the amendment before recording its result.': '请先通过动议展示修正案。',
+  'Publish the formal ballot result for this amendment.': '该修正案已进入正式表决，请发布表决结果。',
   'storage/unauthorized': '没有权限上传此文件。',
   'View posts only by': '仅查看以下人员发布的资料',
   'uploaded a file': '上传了文件',
@@ -895,6 +926,12 @@ const GENERATED_NAME_KEYS = new Set([
 ]);
 
 export function localizeGeneratedName(value: string): string {
+  const draftResolution = /^New draft resolution (\d+)$/.exec(value);
+  if (draftResolution) return t('New draft resolution {count}', {count: Number(draftResolution[1])});
+  const amendment = /^New amendment (\d+)$/.exec(value);
+  if (amendment) return t('New amendment {count}', {count: Number(amendment[1])});
+  const strawpoll = /^New strawpoll (\d+)$/.exec(value);
+  if (strawpoll) return t('New strawpoll {count}', {count: Number(strawpoll[1])});
   return GENERATED_NAME_KEYS.has(value) ? t(value) : value;
 }
 

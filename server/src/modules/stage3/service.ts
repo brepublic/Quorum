@@ -24,8 +24,52 @@ type Audience = 'PUBLIC' | 'MEMBER' | 'CHAIR' | 'OWNER';
 interface CommitteeRow extends QueryResultRow {
   id: string; owner_user_id: string; name: string; chair_label: string; topic: string; conference: string;
   visibility: CommitteeVisibility; operation_mode: CommitteeOperationMode;
+  delegate_motion_proposals_enabled: boolean; delegate_motion_voting_enabled: boolean;
+  move_queue_up: boolean; timers_in_separate_columns: boolean;
   status: CommitteeSummary['status']; active_rule_package_version_id: string;
   revision: number; next_event_sequence: string | number;
+}
+
+const legacyMotionDefinitions = [
+  {id: 'open-unmoderated-caucus', names: {'zh-CN': '开启自由磋商', en: 'Open unmoderated caucus'}, procedural: true,
+    effects: [{type: 'START_TIMER'}]},
+  {id: 'open-moderated-caucus', names: {'zh-CN': '开启有主持核心磋商', en: 'Open moderated caucus'}, procedural: true,
+    effects: [{type: 'CREATE_CAUCUS'}]},
+  {id: 'extend-unmoderated-caucus', names: {'zh-CN': '延长自由磋商', en: 'Extend unmoderated caucus'}, procedural: true,
+    effects: [{type: 'START_TIMER'}]},
+  {id: 'extend-moderated-caucus', names: {'zh-CN': '延长有主持核心磋商', en: 'Extend moderated caucus'}, procedural: true,
+    effects: [{type: 'CREATE_CAUCUS'}]},
+  {id: 'close-moderated-caucus', names: {'zh-CN': '结束有主持核心磋商', en: 'Close moderated caucus'}, procedural: true,
+    effects: [{type: 'CREATE_CAUCUS'}]},
+  {id: 'introduce-draft-resolution', names: {'zh-CN': '介绍决议草案', en: 'Introduce draft resolution'},
+    requiredSecondCount: 1, effects: [{type: 'SET_DOCUMENT_STATUS'}]},
+  {id: 'introduce-amendment', names: {'zh-CN': '介绍修正案', en: 'Introduce amendment'},
+    effects: [{type: 'SET_DOCUMENT_STATUS'}]},
+  {id: 'vote-on-amendment', names: {'zh-CN': '对修正案投票', en: 'Vote on amendment'},
+    effects: [{type: 'START_BALLOT'}]},
+  {id: 'suspend-draft-resolution-speakers-list', names: {'zh-CN': '暂停决议草案发言名单',
+    en: 'Suspend draft resolution speakers list'}, effects: [{type: 'SET_DOCUMENT_STATUS'}]},
+  {id: 'vote-on-resolution', names: {'zh-CN': '对决议草案投票', en: 'Vote on resolution'}, effects: [{type: 'START_BALLOT'}]},
+  {id: 'open-debate', names: {'zh-CN': '开始辩论', en: 'Open debate'}, procedural: true, effects: [{type: 'OPEN_DISCUSSION'}]},
+  {id: 'suspend-debate', names: {'zh-CN': '暂停辩论', en: 'Suspend debate'}, procedural: true,
+    effects: [{type: 'OPEN_DISCUSSION'}]},
+  {id: 'resume-debate', names: {'zh-CN': '恢复辩论', en: 'Resume debate'}, procedural: true,
+    effects: [{type: 'OPEN_DISCUSSION'}]},
+  {id: 'close-debate', names: {'zh-CN': '结束辩论', en: 'Close debate'}, procedural: true,
+    effects: [{type: 'OPEN_DISCUSSION'}]},
+  {id: 'reorder-draft-resolutions', names: {'zh-CN': '调整决议草案顺序', en: 'Reorder draft resolutions'},
+    effects: [{type: 'SET_DOCUMENT_STATUS'}]},
+  {id: 'propose-strawpoll', names: {'zh-CN': '提出意向性投票', en: 'Propose strawpoll'}, effects: [{type: 'START_BALLOT'}]},
+  {id: 'introduce-working-paper', names: {'zh-CN': '介绍工作文件', en: 'Introduce working paper'},
+    effects: [{type: 'START_TIMER'}]}
+] as const;
+
+function builtInVersion2(definition: RulePackageDefinition): RulePackageDefinition {
+  const existing = new Map((definition.motions ?? []).map(motion => [motion.id, motion]));
+  for (const motion of legacyMotionDefinitions) existing.set(motion.id, structuredClone(motion));
+  const phases = (definition.phases ?? []).map(phase => phase.id === 'open-debate'
+    ? {...phase, id: 'formal-debate'} : phase);
+  return {...structuredClone(definition), phases, motions: [...existing.values()]};
 }
 
 function committee(row: CommitteeRow): CommitteeSummary {
@@ -218,16 +262,18 @@ export class Stage3Service {
       JSON.parse(await readFile(new URL(`../../../../packages/rule-schema/fixtures/${name}`, import.meta.url), 'utf8')) as RulePackageDefinition));
     await transaction(this.pool, async client => {
       for (const definition of definitions) {
-        const validated = validateRulePackage(definition);
-        if (!validated.ok) throw new Error(`Invalid built-in rule package: ${definition.key}`);
         const packageId = randomUUID();
         const inserted = await client.query<{id: string}>(`INSERT INTO rule_packages
           (id, scope, stable_key) VALUES ($1,'BUILTIN',$2)
           ON CONFLICT (scope, stable_key) DO UPDATE SET stable_key=EXCLUDED.stable_key RETURNING id`, [packageId, definition.key]);
-        await client.query(`INSERT INTO rule_package_versions
-          (id, package_id, version, status, definition, schema_version, validation_result, published_at)
-          VALUES ($1,$2,1,'PUBLISHED',$3,$4,$5,now()) ON CONFLICT (package_id, version) DO NOTHING`,
-        [randomUUID(), inserted.rows[0]?.id, definition, RULE_SCHEMA_VERSION, {valid: true, issues: []}]);
+        for (const [index, versionDefinition] of [definition, builtInVersion2(definition)].entries()) {
+          const validated = validateRulePackage(versionDefinition);
+          if (!validated.ok) throw new Error(`Invalid built-in rule package: ${definition.key} v${index + 1}: ${JSON.stringify(validated.issues)}`);
+          await client.query(`INSERT INTO rule_package_versions
+            (id, package_id, version, status, definition, schema_version, validation_result, published_at)
+            VALUES ($1,$2,$3,'PUBLISHED',$4,$5,$6,now()) ON CONFLICT (package_id, version) DO NOTHING`,
+          [randomUUID(), inserted.rows[0]?.id, index + 1, versionDefinition, RULE_SCHEMA_VERSION, {valid: true, issues: []}]);
+        }
       }
     });
   }
@@ -247,7 +293,8 @@ export class Stage3Service {
       let versionId = typeof input.activeRulePackageVersionId === 'string' ? input.activeRulePackageVersionId : undefined;
       if (!versionId) {
         const builtin = await client.query<{id: string}>(`SELECT v.id FROM rule_package_versions v
-          JOIN rule_packages p ON p.id=v.package_id WHERE p.stable_key='builtin:quorum-default' AND v.status='PUBLISHED'`);
+          JOIN rule_packages p ON p.id=v.package_id WHERE p.stable_key='builtin:quorum-default' AND v.status='PUBLISHED'
+          ORDER BY v.version DESC LIMIT 1`);
         versionId = builtin.rows[0]?.id;
       }
       if (!versionId) throw new AppError({code: 'SERVICE_NOT_READY', message: 'Built-in rules are not installed.'});
@@ -362,8 +409,9 @@ export class Stage3Service {
         throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Committee deletion has already started.'});
       }
       revision(row, baseRevision);
-      const updated = await client.query<CommitteeRow>(`UPDATE committees SET status=$2,revision=revision+1,updated_at=now(),
-        archived_at=CASE WHEN $2='ARCHIVED' THEN now() ELSE archived_at END WHERE id=$1 RETURNING *`, [committeeId, status]);
+      const updated = await client.query<CommitteeRow>(`UPDATE committees SET status=$2::committee_status,revision=revision+1,updated_at=now(),
+        archived_at=CASE WHEN $2::committee_status='ARCHIVED'::committee_status THEN now() ELSE archived_at END
+        WHERE id=$1 RETURNING *`, [committeeId, status]);
       const changed = updated.rows[0] as CommitteeRow;
       await appendEvent(client, changed, {type: status === 'ARCHIVED' ? 'committee.archived' : 'committee.deletion_started',
         resourceType: 'committee', resourceId: committeeId, revision: changed.revision, payload: {status}});
@@ -416,6 +464,62 @@ export class Stage3Service {
         action: 'committee.operation_mode_changed', resourceType: 'committee', resourceId: committeeId,
         before: {operationMode: row.operation_mode}, after: {operationMode: mode}});
       return committee(changed);
+    });
+  }
+
+  async setMotionSettings(auth: AuthenticatedSession, committeeId: string, input: unknown, baseRevision: number,
+    context: Context): Promise<{delegateMotionProposalsEnabled: boolean; delegateMotionVotingEnabled: boolean; revision: number}> {
+    requireBusinessIdentity(auth);
+    const settings = input && typeof input === 'object' && !Array.isArray(input)
+      ? input as Record<string, unknown> : {};
+    if (typeof settings.delegateMotionProposalsEnabled !== 'boolean'
+      || typeof settings.delegateMotionVotingEnabled !== 'boolean'
+      || Object.keys(settings).some(key => !['delegateMotionProposalsEnabled', 'delegateMotionVotingEnabled'].includes(key))) {
+      throw new AppError({code: 'VALIDATION_FAILED', message: 'Motion settings are invalid.'});
+    }
+    return transaction(this.pool, async client => {
+      const row = await lockedCommittee(client, committeeId); await requireChair(client, row, auth.user.id);
+      requireEditable(row); revision(row, baseRevision);
+      const before = {delegateMotionProposalsEnabled: row.delegate_motion_proposals_enabled,
+        delegateMotionVotingEnabled: row.delegate_motion_voting_enabled};
+      const updated = await client.query<CommitteeRow>(`UPDATE committees
+        SET delegate_motion_proposals_enabled=$2,delegate_motion_voting_enabled=$3,
+          revision=revision+1,updated_at=now() WHERE id=$1 RETURNING *`,
+      [committeeId, settings.delegateMotionProposalsEnabled, settings.delegateMotionVotingEnabled]);
+      const changed = updated.rows[0] as CommitteeRow;
+      const after = {delegateMotionProposalsEnabled: changed.delegate_motion_proposals_enabled,
+        delegateMotionVotingEnabled: changed.delegate_motion_voting_enabled};
+      await appendEvent(client, changed, {type: 'motion_settings.changed', resourceType: 'committee', resourceId: committeeId,
+        revision: changed.revision, payload: after});
+      await audit(client, context, {committeeId, actorUserId: auth.user.id, capabilities: ['CHAIR'],
+        action: 'committee.motion_settings_changed', resourceType: 'committee', resourceId: committeeId, before, after});
+      return {...after, revision: changed.revision};
+    });
+  }
+
+  async setLayoutSettings(auth: AuthenticatedSession, committeeId: string, input: unknown, baseRevision: number,
+    context: Context): Promise<{moveQueueUp: boolean; timersInSeparateColumns: boolean; revision: number}> {
+    requireBusinessIdentity(auth);
+    const settings = input && typeof input === 'object' && !Array.isArray(input)
+      ? input as Record<string, unknown> : {};
+    if (typeof settings.moveQueueUp !== 'boolean' || typeof settings.timersInSeparateColumns !== 'boolean'
+      || Object.keys(settings).some(key => !['moveQueueUp', 'timersInSeparateColumns'].includes(key))) {
+      throw new AppError({code: 'VALIDATION_FAILED', message: 'Layout settings are invalid.'});
+    }
+    return transaction(this.pool, async client => {
+      const row = await lockedCommittee(client, committeeId); await requireChair(client, row, auth.user.id);
+      requireEditable(row); revision(row, baseRevision);
+      const before = {moveQueueUp: row.move_queue_up, timersInSeparateColumns: row.timers_in_separate_columns};
+      const updated = await client.query<CommitteeRow>(`UPDATE committees
+        SET move_queue_up=$2,timers_in_separate_columns=$3,revision=revision+1,updated_at=now()
+        WHERE id=$1 RETURNING *`, [committeeId, settings.moveQueueUp, settings.timersInSeparateColumns]);
+      const changed = updated.rows[0] as CommitteeRow;
+      const after = {moveQueueUp: changed.move_queue_up, timersInSeparateColumns: changed.timers_in_separate_columns};
+      await appendEvent(client, changed, {type: 'layout_settings.changed', resourceType: 'committee', resourceId: committeeId,
+        revision: changed.revision, payload: after});
+      await audit(client, context, {committeeId, actorUserId: auth.user.id, capabilities: ['CHAIR'],
+        action: 'committee.layout_settings_changed', resourceType: 'committee', resourceId: committeeId, before, after});
+      return {...after, revision: changed.revision};
     });
   }
 

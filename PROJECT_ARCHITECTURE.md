@@ -33,7 +33,7 @@ flowchart LR
 
 `src/index.tsx` 初始化浏览器 history、语言、主题、Semantic UI、Sentry 与 Google Analytics，再挂载 `src/App.tsx`。`App` 无运行模式分支，始终进入 `SelfHostedIdentity`。浏览器身份使用 Secure、HttpOnly、SameSite=Lax Session Cookie；客户端只通过 `src/services/self-hosted-identity.ts` 和 `self-hosted-api.ts` 请求同源 `/api/v1`。
 
-`SelfHostedIdentity` 覆盖首次管理员初始化、登录、基于已认证 Session 的临时密码强制修改、匿名公开委员会入口、退出和系统管理员账号管理。`SelfHostedWorkspace` 使用基于 URL 的响应式会议导航：桌面端为横向菜单，移动端为侧栏；模板、系统运维、语言、主题和退出入口集中在账户菜单。它提供：
+`SelfHostedIdentity` 覆盖首次管理员初始化、登录、基于已认证 Session 的临时密码强制修改、匿名公开委员会入口、退出和系统管理员账号管理。`SelfHostedWorkspace` 使用基于 URL 的响应式会议导航：桌面端为横向菜单，移动端沿用迁移前的 `Pushable/Pusher`、内容遮罩点击关闭和 `uncover` 侧栏；模板、系统运维、语言、主题和退出入口集中在账户菜单。它提供：
 
 - `/committees`：公开/私有委员会列表与创建；
 - `/countries`、`/templates`：沿用迁移前的表格编辑交互管理账号级国家模板和委员会模板；国家模板先按名称创建空模板再编辑国家，内置国家模板可查看和克隆，委员会创建器提供内置委员会模板；
@@ -44,11 +44,17 @@ flowchart LR
 
 委员会工作区 Context 统一持有受众过滤快照、活动规则只读模型、SSE 游标、连接状态、刷新和命令执行器；各路由子页不重复建立监听。一个委员会保持最多一条 SSE。客户端检测事件序号缺口、未知事件或过期游标时丢弃增量并重新取完整快照，不从本地猜测权威状态。陈旧 revision 会刷新快照并要求用户确认最新状态后重试；幂等冲突和规则冲突均要求显式刷新或裁决，不静默覆盖。`OFFLINE_READONLY` 状态在整个委员会工作区撤销写控件。活动规则只读模型由现有 `rule_package_versions.definition` 派生，不增加数据库表或 migration。
 
+点名页恢复迁移前的 18 席分页三列矩阵。Chair 可直接选择冻结名单中的任意席位并改答；浏览器仍只提交 `baseRevision`、目标席位和冻结回答，服务端在事务内追加新的 entry、撤销被替代 entry，并生成事件、审计及完成后的出席事件。原有顺序录入、撤销和重置命令继续保留。
+
+每个 meeting session 在启动事务中自动创建唯一的主发言名单及发言计时器；migration 38 也会为升级时开放且尚无主发言名单的会议补建同一资源、公开事件和系统迁移审计，发言时间优先取活动规则包并以 60 秒兜底。普通有主持核心磋商仍由主席通过必填主题表单或已通过动议创建。旧版的队列顺序和双计时器分列设置保存在委员会行中，经 revision 命令、事件和审计更新，并随工作区快照下发。笔记保留多笔记选择器，浏览器停止输入约 600ms 后调用原有版本化笔记命令，服务端仍保存每次已提交修改的历史边界。
+
+决议草案与修正案沿用迁移前的即时加号和卡片编辑交互，正文均支持文本或单个已审核文件。修正案先作为系统顺序命名的草稿创建，只有通过“展示修正案”动议才能公开；动议引用既有修正案，不重复创建资源。未产生正式表决、未进入结果状态的修正案可逻辑删除，正文和版本继续保留并追加审计；一旦产生表决或记录结果，服务端拒绝删除。主席在旧版状态下拉中记录纳入或未采纳，结果更正继续追加历史。“对修正案投票”动议通过后冻结当前版本并进入 `VOTING`，卡片内创建和显示保留的新式正式 ballot；此后人工状态下拉锁定，发布 ballot 结果原子写入纳入或未采纳状态。
+
 `src/i18n.tsx` 提供英语与简体中文界面，使用大陆模拟联合国术语。语言选择继续保存在兼容键 `muncoordinated-language`。`src/theme/` 的 Theme API 2 只接受白名单声明式设置；旧 API 1 主题和既有 localStorage 键继续作为显式兼容边界。主题不能隐藏、重排或改写业务控件和数据。
 
 ## 3. 服务端模块与数据边界
 
-`server/` 是单进程模块化单体。启动时使用 PostgreSQL advisory lock 执行带 SHA-256 校验和的顺序 migration；当前 schema compatibility 为 26。数据库版本、连接、存储目录可写性或容量采样不满足要求时 readiness 失败。
+`server/` 是单进程模块化单体。启动时使用 PostgreSQL advisory lock 执行带 SHA-256 校验和的顺序 migration；当前 schema compatibility 为 39。数据库版本、连接、存储目录可写性或容量采样不满足要求时 readiness 失败。
 
 | 模块 | 责任 |
 | --- | --- |

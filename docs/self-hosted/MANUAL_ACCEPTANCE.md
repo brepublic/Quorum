@@ -122,7 +122,7 @@
 
 - 前置条件：PostgreSQL 16；`TEST_DATABASE_ADMIN_URL` 指向可创建和删除数据库的管理员连接。
 - 操作步骤：执行 `TEST_DATABASE_ADMIN_URL=postgresql://... pnpm test:self-host:integration`；确认测试创建随机临时数据库，从空库执行全部 migration，再执行一次；检查阶段 3 表、外键、部分唯一索引、邀请码约束、已发布规则版本和审计追加限制。
-- 通过条件：两次 migration 均成功；当前 schema compatibility 为 21，且 12 个阶段 3 核心表继续存在；同一用户的第二个活动席位被拒绝；已发布规则版本和审计记录不能更新或删除；测试数据库最终清理。
+- 通过条件：两次 migration 均成功；当前 schema compatibility 为 39，且 12 个阶段 3 核心表继续存在；同一用户的第二个活动席位被拒绝；已发布规则版本和审计记录不能更新或删除；测试数据库最终清理。
 - 自动化覆盖情况：`server/src/db/migrations.integration.test.ts` 检查空库、重复执行和表清单；`server/src/modules/stage3/postgres.integration.test.ts` 检查索引、外键、历史行和不可变触发器。未配置 URL 时测试明确 skip。
 - 当前状态：因无服务器延期。
 - 需要保存的证据：测试输出、`quorum_meta.schema_migrations`、表与索引查询、触发器失败结果和临时数据库清理记录。
@@ -160,7 +160,7 @@
 
 - 前置条件：PostgreSQL 16；`TEST_DATABASE_ADMIN_URL` 指向可创建和删除数据库的管理员连接。
 - 操作步骤：执行 `TEST_DATABASE_ADMIN_URL=postgresql://... pnpm test:self-host:integration`；检查 migration 4、模板隔离、幂等键、revision 冲突、软删除、并发点名和追加式出席事件用例。
-- 通过条件：schema compatibility 为 21；migration 4 的表、外键、唯一索引和追加式触发器均生效；并发写只有一个符合 revision 的请求成功；临时数据库最终清理。
+- 通过条件：schema compatibility 为 39；migration 4 的表、外键、唯一索引和追加式触发器均生效；并发写只有一个符合 revision 的请求成功；临时数据库最终清理。
 - 自动化覆盖情况：migration 与 `server/src/modules/stage4/postgres.integration.test.ts` 已实现；当前环境未提供 PostgreSQL，因此明确 skip。
 - 当前状态：因无服务器延期。
 - 需要保存的证据：测试输出、migration 表、阶段 4 表与索引查询、并发结果和临时数据库清理记录。
@@ -177,10 +177,10 @@
 ### SH-MAN-303 点名、出席与暂停状态
 
 - 前置条件：真实阶段 4 实例；含至少三个活动席位的委员会；两名 Chair 登录不同浏览器。
-- 操作步骤：开始会期和点名；同时提交同一 revision；撤销和重置；完成含“出席并参与表决”的点名；追加暂时离场、返回和缺席事件；把委员会暂停后重试议事命令。
-- 通过条件：同一会期只有一个进行中点名；并发提交只有一个成功；冻结席位名称和规则回答不受后续修改影响；完成后当前出席可由事件重建；暂停时会期、点名和出席命令返回 409，笔记和帖子仍可编辑。
-- 自动化覆盖情况：服务端和真实 PostgreSQL 集成用例已编写；当前环境只执行了无数据库测试。
-- 当前状态：因无服务器延期。
+- 操作步骤：开始会期和点名；不按当前顺序直接点选任意席位并连续改答两次；同时提交同一 revision；撤销和重置；完成含“出席并参与表决”的点名；完成后再次更正一席；追加暂时离场、返回和缺席事件；把委员会暂停后重试议事命令。
+- 通过条件：同一会期只有一个进行中点名；三列矩阵可分页且任意冻结席位可直接点选/改答；被替代 entry 只标记撤销、不删除；并发提交只有一个成功；冻结席位名称和规则回答不受后续修改影响；完成后更正会追加 attendance event，当前出席可由事件重建；暂停时会期、点名和出席命令返回 409，笔记和帖子仍可编辑。
+- 自动化覆盖情况：HTTP、客户端与页面 Vitest 覆盖独立直接点选命令和分页矩阵；本地隔离 PostgreSQL 16 的阶段 4 集成文件 7 项全部通过，覆盖乱序录入、进行中改答、完成、完成后更正和并发 revision。真实多浏览器仍未执行。
+- 当前状态：待执行。
 - 需要保存的证据：两个浏览器的响应、点名/entry/attendance 表查询、事件 sequence、审计记录和暂停状态结果。
 
 ### SH-MAN-304 问题、主席代办与关联出席事件
@@ -203,15 +203,15 @@
 
 ## 阶段 5：实时与高并发议事
 
-当前环境未提供 `TEST_DATABASE_ADMIN_URL`、Docker、Caddy、TLS 或多浏览器。阶段 5 的真实 PostgreSQL 集成文件已编写但在本环境明确 skip；以下项目均未标记为通过。
+当前 WSL 环境未检测到 Docker 命令或 PostgreSQL 监听端口，也没有 Caddy、TLS 或多浏览器。集成测试会明确 skip；以下项目仍需在恢复 Docker WSL Integration 后执行。
 
 ### SH-MAN-401 migration 5–12 与并发约束
 
 - 前置条件：PostgreSQL 16；`TEST_DATABASE_ADMIN_URL` 指向可创建和删除数据库的管理员连接。
 - 操作步骤：执行 `TEST_DATABASE_ADMIN_URL=postgresql://... pnpm test:self-host:integration`；保留 migration 5–12、两名 Chair 并发重排和同席位两名代表并发投票的输出。
-- 通过条件：schema compatibility 为 21；空库 migration 和重复执行成功；并发重排只有一个 revision 成功且活动位置唯一；同席位并发投票只有一张当前票；临时数据库被清理。
-- 自动化覆盖情况：`server/src/db/migrations.integration.test.ts` 与 `server/src/modules/stage5/postgres.integration.test.ts` 已实现；未配置 URL 时明确 skip。
-- 当前状态：因无服务器延期。
+- 通过条件：schema compatibility 为 39；空库 migration 和重复执行成功；并发重排只有一个 revision 成功且活动位置唯一；同席位并发投票只有一张当前票；临时数据库被清理。
+- 自动化覆盖情况：`server/src/db/migrations.integration.test.ts` 与 `server/src/modules/stage5/postgres.integration.test.ts` 已包含相应用例；当前未配置可用 PostgreSQL，测试明确 skip。
+- 当前状态：待执行。
 - 需要保存的证据：完整测试输出、`quorum_meta.schema_migrations`、相关唯一索引和触发器查询、两组并发结果及临时数据库清理记录。
 
 ### SH-MAN-402 SSE 游标、断线补偿和权限变化
@@ -235,20 +235,20 @@
 ### SH-MAN-404 权威计时、发言队列、让渡和主席代办
 
 - 前置条件：两个 Chair、三个出席席位、`DELEGATE_OPERATED` 与 `CHAIR_OPERATED` 委员会各一；两个浏览器。
-- 操作步骤：开始、暂停、恢复、延长、重置并等待到期；修改客户端系统时钟；并发重排和切换发言人；尝试未暂停切换；完成不足一次发言时间的有主持核心磋商；执行四类让渡并尝试二次让渡；由 Chair 代席位记录问题和评论。
-- 通过条件：数据库不产生每秒写入；显示由服务器基线和单调时钟推导，修改系统时钟不改变真实剩余时间；队列顺序和当前发言人唯一；未暂停不能切换；不足完整发言时结束磋商；继承时间不能再次让渡；审计同时记录真实 actor 与代行席位。
-- 自动化覆盖情况：计时纯函数、服务命令、迁移约束和 PostgreSQL 并发测试覆盖核心边界；真实时钟篡改、两个浏览器和长时间到期需人工确认。
+- 操作步骤：开始、暂停、恢复、延长、重置并等待到期；修改客户端系统时钟；并发重排和切换发言人；拖放与交错排序；尝试未暂停切换；关闭并重开发言名单；完成不足一次发言时间的有主持核心磋商；执行四类让渡并尝试二次让渡；测试有主持核心磋商队列单击让渡；由 Chair 代席位选择提问人或评论人，不填写正文。
+- 通过条件：数据库不产生每秒写入；显示由服务器基线和单调时钟推导，修改系统时钟不改变真实剩余时间；队列顺序和当前发言人唯一；有主持核心磋商的双计时器原子切换；关闭保留当前席位、等待队列和剩余时间；继承时间不能再次让渡；提问由原发言席回答，评论由所选席位发言；审计同时记录真实 actor 与代行席位。
+- 自动化覆盖情况：迁移、服务、HTTP、客户端、页面和本地 PostgreSQL 16 的 15 项 Stage 5 用例覆盖双计时、并发队列、关闭/重开、四类让渡、单击让渡命令链和历史。真实时钟篡改、两个浏览器、拖放动画和长时间到期需人工确认。
 - 当前状态：因无服务器延期。
 - 需要保存的证据：数据库写入时间线、两浏览器响应、计时截图、queue/timer/speech/action/audit 查询和时钟修改前后对比。
 
 ### SH-MAN-405 动议与正式 ballot
 
-- 前置条件：已发布规则包；含普通、must-vote 和否决席位的委员会；同一席位绑定两名代表；两名 Chair。
-- 操作步骤：由出席和缺席席位分别提出及附议；并发裁决同一 revision；创建程序性与实质性 ballot；同席位并发投票；代表尝试改票；Chair 更正；在 must-vote 未齐和否决席位未齐时结束；收齐后公布通过、未通过和否决结果。
-- 通过条件：动议规则版本和评估快照冻结；状态只能经命令迁移且通过/未通过都保留时间和 actor；ballot 冻结资格、门槛、must-vote、否决和规则版本；程序性 ballot 无弃权；代表不能改票；更正追加历史；否决席位存在时收齐合资格票后才公布。
-- 自动化覆盖情况：迁移、服务、HTTP 和 PostgreSQL 并发测试覆盖状态机、一席一票及历史；真实多账号 UI 和全部结果矩阵需人工确认。
-- 当前状态：因无服务器延期。
-- 需要保存的证据：motion/ballot/vote/revision/event/audit 查询、并发响应、公布前后快照和各角色页面截图。
+- 前置条件：已发布规则包；含普通、观察国、must-vote 和否决席位的委员会；同一席位绑定两名代表；两名 Chair。
+- 操作步骤：由出席和缺席席位分别提出及附议；在动议直投前确认默认纳入观察国，取消纳入后再开始另一轮；分别以代表和主席代办方式点选、改答、撤回；以偶数资格席位验证恰好 50% 不通过；开始代表直投后尝试修改资格选项，再切换 `CHAIR_OPERATED` 由主席修改；并发裁决同一 revision；点击“通过”后确认先创建目标资源、记录结果并显示目标按钮，未自动跳转；另行创建程序性与实质性正式 ballot，验证同席位并发投票、改答、撤回、must-vote、否决和公布。
+- 通过条件：动议直投与正式 ballot 相互独立；观察国默认有程序性直投资格；严格简单多数为 `floor(n / 2) + 1`；每次点选、改答和撤回均保留历史；代表直投开始后资格选项冻结，主席代办不冻结；动议规则版本和评估快照冻结；`CHAIR_OPERATED` 的规则偏离只警告；通过结果与目标资源同事务提交，页面只在结果确定后显示目标按钮；正式 ballot 保留冻结资格、must-vote、否决、状态机和历史。
+- 自动化覆盖情况：migration、服务、HTTP、客户端和页面测试覆盖独立直投、默认观察国资格、严格多数、历史、设置锁、正式 ballot 与目标按钮；真实 PostgreSQL 16 已通过 migration 重跑及 Stage 5 的 15 项用例。真实多账号浏览器、动画、全部动议类型和结果矩阵仍需人工确认。
+- 当前状态：待执行。
+- 需要保存的证据：motion/direct-vote/ballot/vote/revision/event/audit 查询、并发响应、资源创建事务、公布前后快照和各角色页面录像。
 
 ### SH-MAN-406 匿名与席位意向性投票
 
@@ -279,15 +279,15 @@
 
 ## 阶段 6：服务器卷和 S3 文件
 
-当前环境未提供 `TEST_DATABASE_ADMIN_URL`、PostgreSQL 客户端、Docker 持久卷、S3 兼容测试桶或 TLS 浏览器。阶段 6.1–6.8 的真实 PostgreSQL 集成测试已编写但明确 skip；以下项目尚未通过。
+当前 WSL 已通过独立 Docker PostgreSQL 16 测试服务执行全套数据库集成测试；未注入 `TEST_DATABASE_ADMIN_URL` 的普通测试入口仍按设计明确 skip。Docker 持久文件卷、S3 兼容测试桶和 TLS 浏览器验收尚未提供；以下项目不能仅凭数据库测试判定全部通过。
 
 ### SH-MAN-501 文件版本、绑定、事务和墓碑
 
 - 前置条件：PostgreSQL 16；`TEST_DATABASE_ADMIN_URL` 指向可创建和删除数据库的管理员连接。
 - 操作步骤：执行 `TEST_DATABASE_ADMIN_URL=postgresql://... pnpm test:self-host:integration`；检查 migration 13；创建服务器卷绑定和两个文件版本；注入审计写入失败；删除文件后尝试修改版本、删除墓碑和追加旧文件版本。
-- 通过条件：schema compatibility 为 21；一个委员会最多一个活动 binding；版本保存服务端大小和 SHA-256 且不可修改；故障时文件、事件、审计和幂等记录全部回滚；删除立即清除当前版本、追加唯一墓碑并标记 blob 待删；旧副本不能追加版本；系统管理员没有隐式 Chair 权限。
+- 通过条件：schema compatibility 为 39；一个委员会最多一个活动 binding；版本保存服务端大小和 SHA-256 且不可修改；故障时文件、事件、审计和幂等记录全部回滚；删除立即清除当前版本、追加唯一墓碑并标记 blob 待删；旧副本不能追加版本；系统管理员没有隐式 Chair 权限。
 - 自动化覆盖情况：migration 静态测试和无数据库校验已通过；`server/src/modules/storage/postgres.integration.test.ts` 覆盖真实 PostgreSQL 事务、追加历史、故障回滚和删除防复活，未配置 URL 时明确 skip。
-- 当前状态：因无服务器延期。
+- 当前状态：真实 PostgreSQL 事务、迁移、文件审核和删除路径已通过自动化；持久文件卷、TLS 浏览器及真实 provider 故障验收延期。
 - 需要保存的证据：完整测试输出、migration 13 表/约束/触发器查询、file entry/version/blob/tombstone 脱敏查询、事件与审计计数、故障注入回滚结果和临时数据库清理记录。证据不得包含二进制内容或 provider 密钥。
 
 ### SH-MAN-502 durable staging、HTTP 流和故障恢复
@@ -471,5 +471,5 @@
 - 操作步骤：以 `master` 老版页面为视觉对照，在 1440px、768px、390px 检查桌面横向菜单和移动侧栏；分别切换中英文、明暗 Theme API 2 主题、长委员会名称和高密度席位列表。逐角色遍历概览、会场设置、点名、动议、自由磋商、发言名单、决议草案四页签、意向性投票、问题、笔记、资料三页签、统计、设置和帮助；检查模板与系统运维只在账户菜单。用键盘执行所有非文件选择操作，记录焦点、可访问名称和状态文本。制造 revision 冲突、SSE 序号缺口、未知事件、过期游标、断网与恢复；归档后尝试所有写控件，最后输入精确委员会名称请求删除。
 - 通过条件：页面结构与旧版信息架构一致，但所有数据只来自同源快照、命令和 SSE；不存在稳定 ID 文本框、Firebase 监听或双写。每个委员会只有一条 SSE；409 后刷新并要求重试，游标异常完整重同步，离线状态全工作区只读。Owner、Chair、member、公开访客和系统管理员控件矩阵符合服务端权限，系统管理员无隐式 Chair 权限；状态不只靠颜色；动态菜单和页签高亮正确；模板和运维不进入委员会一级菜单。三种宽度、两种语言、明暗主题、键盘、长名称和高密度列表均可用。
 - 自动化覆盖情况：Vitest 覆盖路由与动态菜单、桌面/移动导航结构、Owner/Chair/member/public/system-admin 可见性、规则驱动阶段/动议/问题、点名、问题裁决与关联出席、发言当前/下一位与计时器、决议页签、资料分区、统计、归档删除、revision 冲突、SSE 状态和离线只读；生产构建与 legacy runtime 扫描纳入阶段末检查。自动化 DOM 测试不作为真实浏览器视觉、键盘、主题、TLS、PostgreSQL 或多浏览器证据。
-- 当前状态：全仓 Vitest 394 项通过、68 项明确 skip；`pnpm test:self-host` 365 项通过、68 项明确 skip；`pnpm build:self-host`、`pnpm verify:no-legacy-runtime` 和 `git diff --check` 通过。集成入口 68 项因缺少 `TEST_DATABASE_ADMIN_URL` 全部明确 skip。当前环境未提供 TLS 自托管实例、真实 PostgreSQL、多浏览器和可保存截图的完整测试数据，因此 1440px、768px、390px 视觉、真实键盘焦点、跨浏览器 SSE 和明暗主题验收延期。
+- 当前状态：`pnpm test:self-host` 387 项通过、81 项明确 skip；`pnpm build:self-host`、`pnpm verify:no-legacy-runtime` 和 `git diff --check` 通过。migration 和 Stage 5 共 16 项本地 PostgreSQL 16 用例通过。当前环境未提供 TLS 自托管实例、多浏览器和可保存截图的完整测试数据，因此 1440px、768px、390px 视觉、真实键盘焦点、跨浏览器 SSE 和明暗主题验收延期。
 - 需要保存的证据：每个角色、宽度、语言和主题的截图；辅助功能树与键盘焦点顺序；导航/页签 URL 与高亮记录；断线/重同步 Network 时间线；冲突前后 revision；归档和删除请求；PostgreSQL 事件、审计和幂等结果脱敏对照。不得保存 Session、CSRF token、邀请码、匿名投票码、文件正文或用户隐私数据。

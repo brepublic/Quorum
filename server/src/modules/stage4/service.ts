@@ -225,22 +225,26 @@ interface SnapshotTimerRow extends QueryResultRow {
 
 interface SnapshotSpeakerListRow extends QueryResultRow {
   id: string; committee_id: string; meeting_session_id: string; kind: SpeakerList['kind']; status: SpeakerList['status'];
-  topic: string; default_speech_ms: string | number; rule_package_version_id: string; current_entry_id: string | null;
-  speech_timer_id: string; total_timer_id: string | null; revision: number; created_at: Date; closed_at: Date | null;
+  name: string; topic: string; default_speech_ms: string | number; delegates_can_queue: boolean;
+  rule_package_version_id: string; current_entry_id: string | null;
+  speech_timer_id: string; total_timer_id: string | null; linked_resolution_document_id: string | null;
+  revision: number; created_at: Date; closed_at: Date | null;
 }
 
 interface SnapshotSpeechRow extends QueryResultRow {
   id: string; speaker_list_id: string; queue_entry_id: string; seat_id: string; seat_display_name: string;
   kind: SpeechRecord['kind']; status: SpeechRecord['status']; inherited_from_speech_id: string | null;
   inherited_time_ms: string | number | null; can_yield: boolean; yield_type: SpeechRecord['yieldType'];
-  yield_target_seat_id: string | null; revision: number; started_at: Date | null; ended_at: Date | null;
+  yield_target_seat_id: string | null; yield_decision_status: SpeechRecord['yieldDecisionStatus'];
+  interaction_target_seat_id: string | null; revision: number; started_at: Date | null; ended_at: Date | null;
 }
 
 interface SnapshotMotionRow extends QueryResultRow {
   id: string; committee_id: string; meeting_session_id: string; motion_type_id: string; proposed_by_seat_id: string;
   proposed_by_seat_display_name: string; parameters: Record<string, unknown>; status: ProceedingMotion['status'];
   rule_package_version_id: string; rule_evaluation: FrozenRuleEvaluation; required_second_count: number;
-  revision: number; created_at: Date; decided_at: Date | null;
+  revision: number; created_at: Date; decided_at: Date | null; destination_path: string | null;
+  direct_vote_include_non_voting: boolean; direct_vote_started_at: Date | null; direct_vote_settings_revision: number;
 }
 
 interface SnapshotBallotRow extends QueryResultRow {
@@ -253,7 +257,9 @@ interface SnapshotBallotRow extends QueryResultRow {
 
 interface SnapshotStrawpollRow extends QueryResultRow {
   id: string; committee_id: string; meeting_session_id: string; question: string;
-  voting_mode: Strawpoll['votingMode']; multiple_choice: boolean; status: Strawpoll['status']; revision: number;
+  voting_mode: Strawpoll['votingMode']; multiple_choice: boolean; status: Strawpoll['status']; stage: Strawpoll['stage'];
+  medium: Strawpoll['medium']; options_are_public: boolean; series_id: string; round_number: number;
+  superseded_by_id: string | null; revision: number;
   created_at: Date; closed_at: Date | null;
 }
 
@@ -279,7 +285,9 @@ async function snapshotSpeeches(client: PoolClient, listId: string): Promise<Spe
       seatDisplayName: row.seat_display_name, kind: row.kind, status: row.status,
       inheritedFromSpeechId: row.inherited_from_speech_id,
       inheritedTimeMs: row.inherited_time_ms === null ? null : Number(row.inherited_time_ms), canYield: row.can_yield,
-      yieldType: row.yield_type, yieldTargetSeatId: row.yield_target_seat_id, revision: row.revision,
+      yieldType: row.yield_type, yieldTargetSeatId: row.yield_target_seat_id,
+      yieldDecisionStatus: row.yield_decision_status, interactionTargetSeatId: row.interaction_target_seat_id,
+      revision: row.revision,
       startedAt: row.started_at?.toISOString() ?? null, endedAt: row.ended_at?.toISOString() ?? null,
       actions: actions.rows.map(action => ({id: action.id, action: action.action, remainingMs: Number(action.remaining_ms),
         targetType: action.target_type, targetSeatId: action.target_seat_id, createdAt: action.created_at.toISOString()})),
@@ -701,6 +709,10 @@ export class Stage4Service {
       const result: CommitteeWorkspaceSnapshot = {schemaVersion: 2,
         committee: viewer.audience === 'OWNER' || viewer.audience === 'CHAIR' ? summary : publicCommittee,
         seats: seats.rows, viewer, attendance, points, notes: [], textPosts: [],
+        motionSettings: {delegateMotionProposalsEnabled: committee.delegate_motion_proposals_enabled,
+          delegateMotionVotingEnabled: committee.delegate_motion_voting_enabled},
+        layoutSettings: {moveQueueUp: committee.move_queue_up,
+          timersInSeparateColumns: committee.timers_in_separate_columns},
         activeRules: {versionId: committee.active_rule_package_version_id, activePhaseId: currentSession?.phase_id ?? null,
           phases: rules.phases ?? [], attendanceResponses: rules.attendance?.responses ?? [],
           pointTypes: (rules.points ?? []).map(item => ({id: item.id, ...(item.names ? {names: item.names} : {}),
@@ -720,36 +732,69 @@ export class Stage4Service {
         WHERE committee_id=$1 ORDER BY created_at,id`, [committeeId]);
       result.speakerLists = await Promise.all(speakerRows.rows.map(async row => {
         const queue = await client.query<{id: string; seat_id: string; seat_display_name: string; position: number;
-          status: SpeakerList['queue'][number]['status']; created_at: Date}>(`SELECT id,seat_id,seat_display_name,position,status,created_at
+          status: SpeakerList['queue'][number]['status']; stance: SpeakerList['queue'][number]['stance'];
+          speech_duration_ms: string | number; created_at: Date}>(`SELECT id,seat_id,seat_display_name,position,status,
+          stance,speech_duration_ms,created_at
           FROM speaker_queue_entries WHERE speaker_list_id=$1 ORDER BY position,created_at,id`, [row.id]);
         return {id: row.id, committeeId: row.committee_id, meetingSessionId: row.meeting_session_id, kind: row.kind,
-          status: row.status, topic: row.topic, defaultSpeechMs: Number(row.default_speech_ms),
+          status: row.status, name: row.name, topic: row.topic, defaultSpeechMs: Number(row.default_speech_ms),
+          delegatesCanQueue: row.delegates_can_queue,
           rulePackageVersionId: row.rule_package_version_id, currentEntryId: row.current_entry_id,
-          speechTimerId: row.speech_timer_id, totalTimerId: row.total_timer_id, revision: row.revision,
+          speechTimerId: row.speech_timer_id, totalTimerId: row.total_timer_id,
+          linkedResolutionId: row.linked_resolution_document_id, revision: row.revision,
           queue: queue.rows.map(entry => ({id: entry.id, seatId: entry.seat_id, seatDisplayName: entry.seat_display_name,
-            position: entry.position, status: entry.status, createdAt: entry.created_at.toISOString()})),
+            position: entry.position, status: entry.status, stance: entry.stance,
+            speechDurationMs: Number(entry.speech_duration_ms), createdAt: entry.created_at.toISOString()})),
           createdAt: row.created_at.toISOString(), closedAt: row.closed_at?.toISOString() ?? null,
           speeches: await snapshotSpeeches(client, row.id)};
       }));
       const motionRows = await client.query<SnapshotMotionRow>('SELECT * FROM motions WHERE committee_id=$1 ORDER BY created_at,id', [committeeId]);
       result.motions = await Promise.all(motionRows.rows.map(async row => {
-        const seconds = await client.query<{id: string; seat_id: string; seat_display_name: string; created_at: Date}>(`SELECT
-          id,seat_id,seat_display_name,created_at FROM motion_seconds WHERE motion_id=$1 ORDER BY created_at,id`, [row.id]);
+        const [seconds, eligible, directVotes] = await Promise.all([
+          client.query<{id: string; seat_id: string; seat_display_name: string; created_at: Date}>(`SELECT
+            id,seat_id,seat_display_name,created_at FROM motion_seconds WHERE motion_id=$1 ORDER BY created_at,id`, [row.id]),
+          client.query<{seat_id: string; seat_display_name: string}>(`SELECT s.id AS seat_id,s.display_name AS seat_display_name
+            FROM committee_seats s JOIN current_attendance a ON a.seat_id=s.id
+              AND a.meeting_session_id=$2 AND a.state='PRESENT'
+            WHERE s.committee_id=$1 AND s.active=true AND ($3 OR s.can_vote=true)
+            ORDER BY s.sort_order,s.stable_key,s.id`, [row.committee_id, row.meeting_session_id,
+            row.direct_vote_include_non_voting]),
+          client.query<{id: string; seat_id: string; seat_display_name: string; current_choice: BallotChoice;
+            revision: number; cast_at: Date}>(`SELECT id,seat_id,seat_display_name,current_choice,revision,cast_at
+            FROM motion_direct_votes WHERE motion_id=$1 AND retracted_at IS NULL ORDER BY seat_id`, [row.id])
+        ]);
+        const eligibleIds = new Set(eligible.rows.map(item => item.seat_id));
+        const currentVotes = directVotes.rows.filter(item => eligibleIds.has(item.seat_id));
+        const threshold = Math.floor(eligible.rows.length / 2) + 1;
+        const forCount = currentVotes.filter(item => item.current_choice === 'FOR').length;
+        const remaining = Math.max(0, eligible.rows.length - currentVotes.length);
+        const automaticResult = eligible.rows.length === 0 || forCount + remaining < threshold ? 'FAILED'
+          : forCount >= threshold ? 'PASSED' : null;
+        const procedural = row.rule_evaluation.resolvedValues.procedural === true;
         return {id: row.id, committeeId: row.committee_id, meetingSessionId: row.meeting_session_id,
           motionTypeId: row.motion_type_id, proposedBySeatId: row.proposed_by_seat_id,
           proposedBySeatDisplayName: row.proposed_by_seat_display_name, parameters: row.parameters, status: row.status,
           rulePackageVersionId: row.rule_package_version_id, ruleEvaluation: row.rule_evaluation,
           requiredSecondCount: row.required_second_count,
           seconds: seconds.rows.map(item => ({id: item.id, seatId: item.seat_id, seatDisplayName: item.seat_display_name,
-            createdAt: item.created_at.toISOString()})), revision: row.revision, createdAt: row.created_at.toISOString(),
-          decidedAt: row.decided_at?.toISOString() ?? null};
+            createdAt: item.created_at.toISOString()})), directVote: {
+            includeNonVotingSeats: row.direct_vote_include_non_voting,
+            startedAt: row.direct_vote_started_at?.toISOString() ?? null,
+            settingsRevision: row.direct_vote_settings_revision,
+            eligibility: eligible.rows.map(item => ({seatId: item.seat_id, seatDisplayName: item.seat_display_name})),
+            choices: procedural ? ['FOR', 'AGAINST'] as BallotChoice[] : ['FOR', 'AGAINST', 'ABSTAIN'] as BallotChoice[],
+            threshold, automaticResult,
+            votes: currentVotes.map(item => ({id: item.id, seatId: item.seat_id, seatDisplayName: item.seat_display_name,
+              choice: item.current_choice, revision: item.revision, castAt: item.cast_at.toISOString()}))
+          }, revision: row.revision, createdAt: row.created_at.toISOString(),
+          decidedAt: row.decided_at?.toISOString() ?? null, destinationPath: row.destination_path};
       }));
       const ballotRows = await client.query<SnapshotBallotRow>('SELECT * FROM ballots WHERE committee_id=$1 ORDER BY opened_at,id', [committeeId]);
       result.ballots = await Promise.all(ballotRows.rows.map(async row => {
         const revealVotes = viewer.audience === 'CHAIR' || viewer.audience === 'OWNER' || row.status === 'PUBLISHED';
         const votes = revealVotes ? await client.query<{id: string; seat_id: string; seat_display_name: string;
           current_choice: BallotChoice; revision: number; cast_at: Date}>(`SELECT id,seat_id,seat_display_name,current_choice,
-          revision,cast_at FROM ballot_votes WHERE ballot_id=$1 ORDER BY seat_id`, [row.id]) : {rows: []};
+          revision,cast_at FROM ballot_votes WHERE ballot_id=$1 AND retracted_at IS NULL ORDER BY seat_id`, [row.id]) : {rows: []};
         return {id: row.id, committeeId: row.committee_id, meetingSessionId: row.meeting_session_id,
           subjectType: row.subject_type, subjectId: row.subject_id, status: row.status, procedural: row.procedural,
           choices: row.choices, rulePackageVersionId: row.rule_package_version_id, ruleEvaluation: row.rule_evaluation,
@@ -764,36 +809,116 @@ export class Stage4Service {
         'SELECT * FROM strawpolls WHERE committee_id=$1 ORDER BY created_at,id', [committeeId]);
       result.strawpolls = await Promise.all(strawpollRows.rows.map(async row => {
         const options = await client.query<{id: string; label: string; sort_order: number; vote_count: string}>(`WITH votes AS (
-            SELECT unnest(option_ids) AS option_id FROM strawpoll_seat_votes WHERE strawpoll_id=$1
+            SELECT unnest(option_ids) AS option_id FROM strawpoll_seat_votes WHERE strawpoll_id=$1 AND retracted_at IS NULL
             UNION ALL
             SELECT unnest(option_ids) AS option_id FROM strawpoll_anonymous_votes WHERE strawpoll_id=$1
-          ) SELECT o.id,o.label,o.sort_order,count(v.option_id)::text AS vote_count FROM strawpoll_options o
+          ) SELECT o.id,o.label,o.sort_order,
+            CASE WHEN $2='MANUAL' THEN o.manual_tally ELSE count(v.option_id)::int END::text AS vote_count FROM strawpoll_options o
             LEFT JOIN votes v ON v.option_id=o.id WHERE o.strawpoll_id=$1
-            GROUP BY o.id,o.label,o.sort_order ORDER BY o.sort_order,o.id`, [row.id]);
+            GROUP BY o.id,o.label,o.sort_order,o.manual_tally ORDER BY o.sort_order,o.id`, [row.id, row.medium]);
+        const revealAllSeatVotes = viewer.audience === 'CHAIR' || viewer.audience === 'OWNER';
+        const seatVotes = viewer.audience === 'PUBLIC' ? {rows: []} : await client.query<{id: string; seat_id: string;
+          option_ids: string[]; revision: number; created_at: Date}>(`SELECT id,seat_id,option_ids,revision,created_at
+          FROM strawpoll_seat_votes WHERE strawpoll_id=$1 AND retracted_at IS NULL AND ($2 OR seat_id=$3)
+          ORDER BY seat_id`, [row.id, revealAllSeatVotes, viewer.seatId]);
         return {id: row.id, committeeId: row.committee_id, meetingSessionId: row.meeting_session_id,
           question: row.question, votingMode: row.voting_mode, multipleChoice: row.multiple_choice, status: row.status,
+          stage: row.stage, medium: row.medium, optionsArePublic: row.options_are_public, seriesId: row.series_id,
+          roundNumber: row.round_number, supersededById: row.superseded_by_id,
           options: options.rows.map(option => ({id: option.id, label: option.label, sortOrder: option.sort_order,
-            voteCount: Number(option.vote_count)})), revision: row.revision, createdAt: row.created_at.toISOString(),
+            voteCount: Number(option.vote_count)})), seatVotes: seatVotes.rows.map(vote => ({id: vote.id,
+            seatId: vote.seat_id, optionIds: vote.option_ids, revision: vote.revision,
+            castAt: vote.created_at.toISOString()})), revision: row.revision, createdAt: row.created_at.toISOString(),
           closedAt: row.closed_at?.toISOString() ?? null};
       }));
       const documentRows = await client.query<SnapshotDocumentRow>(`SELECT d.*,a.resolution_document_id FROM documents d
-        LEFT JOIN amendments a ON a.document_id=d.id WHERE d.committee_id=$1 ORDER BY d.created_at,d.id`, [committeeId]);
+        LEFT JOIN amendments a ON a.document_id=d.id WHERE d.committee_id=$1 AND d.deleted_at IS NULL
+        ORDER BY d.created_at,d.id`, [committeeId]);
       const visibleDocuments = viewer.audience === 'PUBLIC' ? documentRows.rows.filter(row => row.is_public) : documentRows.rows;
       result.documents = await Promise.all(visibleDocuments.map(async row => {
-        const [version, discussion] = await Promise.all([
-          client.query<{id: string; version_number: number; content: string; created_at: Date}>(`SELECT id,version_number,
-            content,created_at FROM document_versions WHERE document_id=$1 AND id=$2`, [row.id, row.current_version_id]),
+        const [version, discussion, decisions] = await Promise.all([
+          client.query<{id: string; version_number: number; content: string; content_file_entry_id: string | null;
+            logical_name: string | null; original_name: string | null; media_type: string | null;
+            file_status: 'UPLOAD_COMPLETE' | 'PENDING_REVIEW' | 'PUBLISHED' | null; created_at: Date}>(`SELECT
+            v.id,v.version_number,v.content,v.content_file_entry_id,e.logical_name,f.original_name,f.media_type,
+            CASE WHEN e.status='DELETED' THEN NULL ELSE e.status END AS file_status,v.created_at
+            FROM document_versions v LEFT JOIN file_entries e ON e.id=v.content_file_entry_id
+            LEFT JOIN file_versions f ON f.id=e.current_version_id WHERE v.document_id=$1 AND v.id=$2`,
+          [row.id, row.current_version_id]),
           client.query<{id: string; seat_id: string; seat_display_name: string; content: string; rule_stable_id: string;
             created_at: Date}>(`SELECT id,seat_id,seat_display_name,content,rule_stable_id,created_at FROM discussion_entries
-            WHERE document_id=$1 ORDER BY created_at,id`, [row.id])
+            WHERE document_id=$1 ORDER BY created_at,id`, [row.id]),
+          client.query<{id: string; previous_status: ProceedingDocument['status']; new_status: ProceedingDocument['status'];
+            reason: string | null; corrects_decision_id: string | null; created_at: Date}>(`SELECT id,previous_status,new_status,
+            reason,corrects_decision_id,created_at FROM document_result_decisions WHERE document_id=$1 ORDER BY created_at,id`, [row.id])
         ]);
         const current = version.rows[0];
         if (!current) throw new AppError({code: 'INTERNAL_ERROR', message: 'Document version is unavailable.'});
+        let proposerSeatId: string | null = null; let seconderSeatId: string | null = null;
+        let delegatesCanAmend = false; let directVote: ProceedingDocument['directVote'] = null;
+        if (row.kind === 'RESOLUTION') {
+          const metadata = await client.query<{proposer_seat_id: string; seconder_seat_id: string | null;
+            delegates_can_amend: boolean; direct_vote_majority: NonNullable<ProceedingDocument['directVote']>['majority'];
+            direct_vote_started_at: Date | null; direct_vote_revision: number}>('SELECT * FROM resolutions WHERE document_id=$1', [row.id]);
+          const resolution = metadata.rows[0];
+          if (!resolution) throw new AppError({code: 'INTERNAL_ERROR', message: 'Resolution metadata is unavailable.'});
+          proposerSeatId = resolution.proposer_seat_id; seconderSeatId = resolution.seconder_seat_id;
+          delegatesCanAmend = resolution.delegates_can_amend;
+          const eligibility = await client.query<{seat_id: string; seat_display_name: string; must_vote: boolean; has_veto: boolean}>(
+          `SELECT s.id AS seat_id,s.display_name AS seat_display_name,s.must_vote,s.has_veto FROM committee_seats s
+            JOIN current_attendance a ON a.seat_id=s.id AND a.meeting_session_id=$2 AND a.state='PRESENT'
+            WHERE s.committee_id=$1 AND s.active=true AND s.can_vote=true ORDER BY s.sort_order,s.stable_key,s.id`,
+          [row.committee_id, row.meeting_session_id]);
+          const votes = await client.query<{id: string; seat_id: string; seat_display_name: string; current_choice: BallotChoice;
+            revision: number; cast_at: Date}>(`SELECT id,seat_id,seat_display_name,current_choice,revision,cast_at
+            FROM resolution_direct_votes WHERE resolution_document_id=$1 AND retracted_at IS NULL ORDER BY seat_id`, [row.id]);
+          const eligibleIds = new Set(eligibility.rows.map(item => item.seat_id));
+          const currentVotes = votes.rows.filter(vote => eligibleIds.has(vote.seat_id));
+          const forCount = currentVotes.filter(vote => vote.current_choice === 'FOR').length;
+          const againstCount = currentVotes.filter(vote => vote.current_choice === 'AGAINST').length;
+          const castCount = currentVotes.length; const eligibleCount = eligibility.rows.length;
+          const hasVetoSeat = eligibility.rows.some(item => item.has_veto);
+          const vetoed = castCount >= eligibleCount && currentVotes.some(vote => vote.current_choice === 'AGAINST'
+            && eligibility.rows.some(item => item.seat_id === vote.seat_id && item.has_veto));
+          let threshold: number; let automaticResult: NonNullable<ProceedingDocument['directVote']>['automaticResult'] = null;
+          if (resolution.direct_vote_majority === 'TWO_THIRDS_NON_ABSTAINING') {
+            threshold = Math.ceil(2 * (forCount + againstCount) / 3);
+            const remaining = Math.max(0, eligibleCount - castCount); const bestFor = forCount + remaining;
+            const bestThreshold = Math.ceil(2 * (forCount + againstCount + remaining) / 3);
+            if (vetoed) automaticResult = 'VETOED';
+            else if ((!hasVetoSeat || castCount >= eligibleCount) && forCount > 0 && forCount >= threshold) automaticResult = 'PASSED';
+            else if (eligibleCount === 0 || bestFor < bestThreshold) automaticResult = 'FAILED';
+          } else {
+            threshold = resolution.direct_vote_majority === 'TWO_THIRDS'
+              ? Math.ceil(2 * eligibleCount / 3) : Math.floor(eligibleCount / 2) + 1;
+            const remaining = Math.max(0, eligibleCount - castCount);
+            if (vetoed) automaticResult = 'VETOED';
+            else if ((!hasVetoSeat || castCount >= eligibleCount) && forCount >= threshold) automaticResult = 'PASSED';
+            else if (eligibleCount === 0 || forCount + remaining < threshold) automaticResult = 'FAILED';
+          }
+          directVote = {majority: resolution.direct_vote_majority,
+            startedAt: resolution.direct_vote_started_at?.toISOString() ?? null,
+            settingsRevision: resolution.direct_vote_revision,
+            eligibility: eligibility.rows.map(item => ({seatId: item.seat_id, seatDisplayName: item.seat_display_name,
+              mustVote: item.must_vote, hasVeto: item.has_veto})), threshold, automaticResult,
+            votes: currentVotes.map(vote => ({id: vote.id, seatId: vote.seat_id, seatDisplayName: vote.seat_display_name,
+              choice: vote.current_choice, revision: vote.revision, castAt: vote.cast_at.toISOString()}))};
+        } else {
+          const amendment = await client.query<{proposer_seat_id: string}>('SELECT proposer_seat_id FROM amendments WHERE document_id=$1', [row.id]);
+          proposerSeatId = amendment.rows[0]?.proposer_seat_id ?? null;
+        }
         return {id: row.id, committeeId: row.committee_id, meetingSessionId: row.meeting_session_id, kind: row.kind,
           resolutionId: row.resolution_document_id, title: row.title, status: row.status,
           rulePackageVersionId: row.rule_package_version_id,
           currentVersion: {id: current.id, versionNumber: current.version_number, content: current.content,
+            contentFile: current.content_file_entry_id && current.logical_name && current.original_name && current.media_type
+              && current.file_status ? {id: current.content_file_entry_id, logicalName: current.logical_name,
+                originalName: current.original_name, mediaType: current.media_type, status: current.file_status} : null,
             createdAt: current.created_at.toISOString()}, votingVersionId: row.voting_version_id, public: row.is_public,
+          proposerSeatId, seconderSeatId, delegatesCanAmend, directVote,
+          resultDecisions: decisions.rows.map(item => ({id: item.id, previousStatus: item.previous_status,
+            newStatus: item.new_status, reason: item.reason, correctsDecisionId: item.corrects_decision_id,
+            createdAt: item.created_at.toISOString()})),
           revision: row.revision, discussion: discussion.rows.map(entry => ({id: entry.id, seatId: entry.seat_id,
             seatDisplayName: entry.seat_display_name, content: entry.content, ruleStableId: entry.rule_stable_id,
             createdAt: entry.created_at.toISOString()})), createdAt: row.created_at.toISOString(),
@@ -854,7 +979,8 @@ export class Stage4Service {
         let versionId = typeof input.activeRulePackageVersionId === 'string' ? input.activeRulePackageVersionId : null;
         if (!versionId) {
           const builtin = await client.query<{id: string}>(`SELECT v.id FROM rule_package_versions v JOIN rule_packages p ON p.id=v.package_id
-            WHERE p.stable_key='builtin:quorum-default' AND v.status='PUBLISHED'`);
+            WHERE p.stable_key='builtin:quorum-default' AND v.status='PUBLISHED'
+            ORDER BY v.version DESC LIMIT 1`);
           versionId = builtin.rows[0]?.id ?? null;
         }
         if (!versionId) throw new AppError({code: 'SERVICE_NOT_READY', message: 'Built-in rules are not installed.'});
@@ -1137,7 +1263,8 @@ export class Stage4Service {
     return transaction(this.pool, async client => {
       const committee = await lockedCommittee(client, committeeId); await requireChair(client, committee, auth.user.id);
       requireProceedingsActive(committee);
-      const definition = await client.query<{definition: {phases?: unknown}}>(`SELECT definition FROM rule_package_versions
+      const definition = await client.query<{definition: {phases?: unknown; speakerLists?: Array<{
+        id?: unknown; defaultDurationSeconds?: unknown}>}}>(`SELECT definition FROM rule_package_versions
         WHERE id=$1 AND status='PUBLISHED'`, [committee.active_rule_package_version_id]);
       const phases = definition.rows[0]?.definition.phases;
       if (!definition.rows[0] || !Array.isArray(phases)) {
@@ -1154,11 +1281,32 @@ export class Stage4Service {
         (id,committee_id,phase_id,active_rule_package_version_id,created_by_user_id)
         VALUES ($1,$2,$3,$4,$5) RETURNING *`,
       [id, committeeId, phaseId, committee.active_rule_package_version_id, auth.user.id]);
+      const generalRule = definition.rows[0].definition.speakerLists?.find(item => item.id === 'general-speakers-list');
+      const configuredDuration = generalRule?.defaultDurationSeconds;
+      const defaultSpeechMs = typeof configuredDuration === 'number' && Number.isSafeInteger(configuredDuration)
+        && configuredDuration > 0 ? configuredDuration * 1000 : 60_000;
+      const speakerListId = randomUUID(); const speechTimerId = randomUUID();
+      await client.query(`INSERT INTO timer_states
+        (id,committee_id,owner_type,owner_id,remaining_at_start_ms,created_by_user_id)
+        VALUES ($1,$2,'SPEAKER_LIST',$3,$4,$5)`,
+      [speechTimerId, committeeId, speakerListId, defaultSpeechMs, auth.user.id]);
+      await client.query(`INSERT INTO speaker_lists
+        (id,committee_id,meeting_session_id,kind,name,topic,default_speech_ms,delegates_can_queue,
+         rule_package_version_id,speech_timer_id,created_by_user_id)
+        VALUES ($1,$2,$3,'GENERAL','General Speakers'' List','',$4,true,$5,$6,$7)`,
+      [speakerListId, committeeId, id, defaultSpeechMs, committee.active_rule_package_version_id,
+        speechTimerId, auth.user.id]);
       await appendEvent(client, committee, {type: 'meeting_session.started', resourceType: 'meeting_session',
-        resourceId: id, revision: 1, payload: {phaseId, rulePackageVersionId: committee.active_rule_package_version_id}});
+        resourceId: id, revision: 1, payload: {phaseId, rulePackageVersionId: committee.active_rule_package_version_id,
+          generalSpeakerListId: speakerListId}});
+      await appendEvent(client, committee, {type: 'speaker_list.created', resourceType: 'speaker_list',
+        resourceId: speakerListId, revision: 1, payload: {kind: 'GENERAL', name: "General Speakers' List", topic: '',
+          defaultSpeechMs, totalDurationMs: null, delegatesCanQueue: true,
+          rulePackageVersionId: committee.active_rule_package_version_id}, audience: 'PUBLIC'});
       await audit(client, context, {committeeId, actorUserId: auth.user.id, capabilities: ['CHAIR'],
         action: 'proceedings.meeting_session_started', resourceType: 'meeting_session', resourceId: id,
-        after: {phaseId, rulePackageVersionId: committee.active_rule_package_version_id}});
+        after: {phaseId, rulePackageVersionId: committee.active_rule_package_version_id,
+          generalSpeakerListId: speakerListId, generalSpeakerDefaultSpeechMs: defaultSpeechMs}});
       return meetingSession(inserted.rows[0] as MeetingSessionRow);
     });
   }
@@ -1260,8 +1408,9 @@ export class Stage4Service {
           WHERE e.roll_call_id=s.roll_call_id AND e.seat_id=s.seat_id AND e.undone_at IS NULL)
         ORDER BY s.sort_order LIMIT 1`, [rollCallId, frozen.rows[0].sort_order]);
       const completed = !next.rows[0];
-      const updated = await client.query<RollCallRow>(`UPDATE roll_calls SET current_seat_id=$2,status=$3,
-        completed_at=CASE WHEN $3='COMPLETED' THEN now() ELSE NULL END,revision=revision+1 WHERE id=$1 RETURNING *`,
+      const updated = await client.query<RollCallRow>(`UPDATE roll_calls SET current_seat_id=$2,status=$3::roll_call_status,
+        completed_at=CASE WHEN $3::roll_call_status='COMPLETED'::roll_call_status THEN now() ELSE NULL END,
+        revision=revision+1 WHERE id=$1 RETURNING *`,
       [rollCallId, next.rows[0]?.seat_id ?? null, completed ? 'COMPLETED' : 'IN_PROGRESS']);
       await appendEvent(client, committee, {type: 'roll_call.response_recorded', resourceType: 'roll_call',
         resourceId: rollCallId, revision: current.revision + 1, payload: {entryId, seatId, response}});
@@ -1287,6 +1436,90 @@ export class Stage4Service {
           after: {meetingSessionId: current.meeting_session_id, seatCount: entries.rows.length}});
       }
       return rollCall(client, updated.rows[0] as RollCallRow);
+    });
+  }
+
+  async setRollCallResponse(auth: AuthenticatedSession, rollCallId: string, input: Record<string, unknown>,
+    context: Stage4Context): Promise<RollCall> {
+    requireBusinessIdentity(auth); assertExactBody(input, ['baseRevision', 'seatId', 'response']);
+    const baseRevision = positiveRevision(input.baseRevision); const seatId = requiredText(input.seatId, 'Seat ID');
+    const response = requiredText(input.response, 'Response', 128);
+    return transaction(this.pool, async client => {
+      const found = await client.query<RollCallRow>('SELECT * FROM roll_calls WHERE id=$1 FOR UPDATE', [rollCallId]);
+      const current = found.rows[0]; if (!current) throw new AppError({code: 'NOT_FOUND', message: 'Roll call not found.'});
+      const committee = await lockedCommittee(client, current.committee_id); await requireChair(client, committee, auth.user.id);
+      requireProceedingsActive(committee);
+      if (current.status === 'ABANDONED') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Roll call is not active.'});
+      if (current.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT',
+        message: 'This roll call changed since it was loaded.', details: {currentRevision: current.revision}});
+      if (!current.allowed_responses.includes(response)) throw new AppError({code: 'VALIDATION_FAILED',
+        message: 'Roll-call response is not allowed.'});
+      const frozen = await client.query<{seat_display_name: string; sort_order: number}>(`SELECT seat_display_name,sort_order
+        FROM roll_call_seats WHERE roll_call_id=$1 AND seat_id=$2`, [rollCallId, seatId]);
+      const frozenSeat = frozen.rows[0];
+      if (!frozenSeat) throw new AppError({code: 'VALIDATION_FAILED', message: 'Seat is not part of this roll call.'});
+      const previous = await client.query<RollCallEntryRow>(`SELECT * FROM roll_call_entries
+        WHERE roll_call_id=$1 AND seat_id=$2 AND undone_at IS NULL FOR UPDATE`, [rollCallId, seatId]);
+      const previousEntry = previous.rows[0];
+      if (previousEntry) await client.query('UPDATE roll_call_entries SET undone_at=now() WHERE id=$1', [previousEntry.id]);
+
+      const entryId = randomUUID();
+      await client.query(`INSERT INTO roll_call_entries
+        (id,committee_id,roll_call_id,seat_id,seat_display_name,response,actor_user_id,on_behalf_of_seat_id,rule_package_version_id)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$4,$8)`,
+      [entryId, current.committee_id, rollCallId, seatId, frozenSeat.seat_display_name, response,
+        auth.user.id, current.rule_package_version_id]);
+
+      await appendEvent(client, committee, {type: 'roll_call.response_recorded', resourceType: 'roll_call',
+        resourceId: rollCallId, revision: current.revision + 1,
+        payload: {entryId, seatId, response, directSelection: true, replacedEntryId: previousEntry?.id ?? null}});
+
+      let updated: RollCallRow;
+      if (current.status === 'COMPLETED') {
+        const result = await client.query<RollCallRow>(`UPDATE roll_calls SET revision=revision+1 WHERE id=$1 RETURNING *`, [rollCallId]);
+        updated = result.rows[0] as RollCallRow;
+        await insertAttendanceEvent(client, {committeeId: current.committee_id, meetingSessionId: current.meeting_session_id,
+          seatId, seatDisplayName: frozenSeat.seat_display_name, type: response === 'ABSENT' ? 'ABSENT' : 'PRESENT',
+          actorUserId: auth.user.id, sourceRollCallEntryId: entryId});
+        await appendEvent(client, committee, {type: 'attendance.changed', resourceType: 'meeting_session',
+          resourceId: current.meeting_session_id, revision: current.revision + 1,
+          payload: {source: 'ROLL_CALL_CORRECTION', rollCallId, seatId}});
+      } else {
+        const next = await client.query<{seat_id: string}>(`SELECT s.seat_id FROM roll_call_seats s
+          WHERE s.roll_call_id=$1 AND NOT EXISTS (SELECT 1 FROM roll_call_entries e
+            WHERE e.roll_call_id=s.roll_call_id AND e.seat_id=s.seat_id AND e.undone_at IS NULL)
+          ORDER BY s.sort_order LIMIT 1`, [rollCallId]);
+        const completed = !next.rows[0];
+        const result = await client.query<RollCallRow>(`UPDATE roll_calls SET current_seat_id=$2,status=$3::roll_call_status,
+          completed_at=CASE WHEN $3::roll_call_status='COMPLETED'::roll_call_status THEN now() ELSE NULL END,
+          revision=revision+1 WHERE id=$1 RETURNING *`,
+        [rollCallId, next.rows[0]?.seat_id ?? null, completed ? 'COMPLETED' : 'IN_PROGRESS']);
+        updated = result.rows[0] as RollCallRow;
+        if (completed) {
+          const entries = await client.query<RollCallEntryRow>(`SELECT * FROM roll_call_entries
+            WHERE roll_call_id=$1 AND undone_at IS NULL ORDER BY recorded_at,id`, [rollCallId]);
+          for (const entry of entries.rows) {
+            await insertAttendanceEvent(client, {committeeId: current.committee_id, meetingSessionId: current.meeting_session_id,
+              seatId: entry.seat_id, seatDisplayName: entry.seat_display_name,
+              type: entry.response === 'ABSENT' ? 'ABSENT' : 'PRESENT', actorUserId: auth.user.id,
+              sourceRollCallEntryId: entry.id});
+          }
+          await appendEvent(client, committee, {type: 'roll_call.completed', resourceType: 'roll_call', resourceId: rollCallId,
+            revision: current.revision + 1, payload: {meetingSessionId: current.meeting_session_id, seatCount: entries.rows.length}});
+          await appendEvent(client, committee, {type: 'attendance.changed', resourceType: 'meeting_session',
+            resourceId: current.meeting_session_id, revision: current.revision + 1,
+            payload: {source: 'ROLL_CALL', rollCallId, seatCount: entries.rows.length}});
+          await audit(client, context, {committeeId: current.committee_id, actorUserId: auth.user.id, capabilities: ['CHAIR'],
+            action: 'proceedings.roll_call_completed', resourceType: 'roll_call', resourceId: rollCallId,
+            after: {meetingSessionId: current.meeting_session_id, seatCount: entries.rows.length}});
+        }
+      }
+
+      await audit(client, context, {committeeId: current.committee_id, actorUserId: auth.user.id, capabilities: ['CHAIR'],
+        onBehalfOfSeatId: seatId, action: 'proceedings.roll_call_response_recorded', resourceType: 'roll_call_entry',
+        resourceId: entryId, before: previousEntry ? {entryId: previousEntry.id, response: previousEntry.response} : undefined,
+        after: {rollCallId, seatId, response, rulePackageVersionId: current.rule_package_version_id, directSelection: true}});
+      return rollCall(client, updated);
     });
   }
 

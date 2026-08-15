@@ -16,6 +16,13 @@ export interface UpdateCommitteeRequest extends CommitteeRevisionRequest {
 }
 export interface SetChairRequest extends CommitteeRevisionRequest {userId: string}
 export interface SetOperationModeRequest extends CommitteeRevisionRequest {operationMode: CommitteeOperationMode}
+export interface CommitteeMotionSettings {
+  delegateMotionProposalsEnabled: boolean;
+  delegateMotionVotingEnabled: boolean;
+}
+export interface SetCommitteeMotionSettingsRequest extends CommitteeRevisionRequest {
+  settings: CommitteeMotionSettings;
+}
 export interface SetCommitteeStatusRequest extends CommitteeRevisionRequest {status: 'ACTIVE' | 'PAUSED'}
 export interface CreateSeatRequest {
   stableKey: string; displayName: string; rank?: string; canVote?: boolean; hasVeto?: boolean; sortOrder?: number;

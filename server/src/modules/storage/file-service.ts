@@ -245,7 +245,7 @@ export class Stage6FileService {
     try {
       await (await this.store(claimed.provider_type, claimed.provider_config_id)).delete(claimed.storage_key);
       providerDeleted = true;
-      return transaction(this.pool, async client => {
+      return await transaction(this.pool, async client => {
         const completed = await client.query<DeleteJobRow>(`UPDATE file_blob_delete_jobs SET status='COMPLETED',
           completed_at=now(),claimed_at=NULL,claim_token=NULL,failure_code=NULL,failure_reason=NULL,updated_at=now()
           WHERE id=$1 AND status='IN_PROGRESS' AND claim_token=$2 RETURNING *`, [claimed.id, claimed.claim_token]);
@@ -302,10 +302,10 @@ export class Stage6FileService {
       if (entry.status !== expected) {
         throw new AppError({code: 'RESOURCE_CONFLICT', message: 'File status does not allow this action.'});
       }
-      const updated = await client.query<EntryRow>(`UPDATE file_entries SET status=$2,
-        submitted_at=CASE WHEN $2='PENDING_REVIEW' THEN now() ELSE submitted_at END,
-        published_at=CASE WHEN $2='PUBLISHED' THEN now() ELSE NULL END,
-        published_by_user_id=CASE WHEN $2='PUBLISHED' THEN $3 ELSE NULL END,
+      const updated = await client.query<EntryRow>(`UPDATE file_entries SET status=$2::file_entry_status,
+        submitted_at=CASE WHEN $2::file_entry_status='PENDING_REVIEW'::file_entry_status THEN now() ELSE submitted_at END,
+        published_at=CASE WHEN $2::file_entry_status='PUBLISHED'::file_entry_status THEN now() ELSE NULL END,
+        published_by_user_id=CASE WHEN $2::file_entry_status='PUBLISHED'::file_entry_status THEN $3::uuid ELSE NULL END,
         revision=revision+1,updated_at=now() WHERE id=$1 RETURNING *`, [entry.id, next, auth.user.id]);
       const current = updated.rows[0] as EntryRow;
       await appendEvent(client, committee, {type: eventType, resourceType: 'file_entry', resourceId: entry.id,

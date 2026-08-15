@@ -17,6 +17,8 @@ const snapshot: CommitteeWorkspaceSnapshot = {schemaVersion: 2,
   seats: [{id: 'seat', stableKey: 'china', displayName: 'China', rank: 'VETO', canVote: true, hasVeto: true,
     mustVote: false, sortOrder: 0, active: true, revision: 1, flag: {type: 'STANDARD', value: 'cn'}}],
   viewer: {audience: 'MEMBER', seatId: 'seat'}, attendance: [], points: [],
+  motionSettings: {delegateMotionProposalsEnabled: false, delegateMotionVotingEnabled: false},
+  layoutSettings: {moveQueueUp: false, timersInSeparateColumns: false},
   activeRules: {versionId: 'rules', activePhaseId: null, phases: [], attendanceResponses: ['PRESENT', 'ABSENT'],
     pointTypes: [], motionTypes: [], speakerLists: [], ballots: {delegateMayChangeVote: false,
       chairMayCorrectVote: true, anonymousStrawpoll: false, mustCollectAllVotesWhenVetoSeatEligible: true},
@@ -29,6 +31,26 @@ let root: Root | undefined; let container: HTMLDivElement | undefined;
 afterEach(() => { if (root) act(() => root?.unmount()); container?.remove(); root = undefined; container = undefined; });
 
 describe('self-hosted stage 4 workspace', () => {
+  it('restores the legacy two-column committee creation workspace without dropping self-hosted templates', async () => {
+    const logout = vi.fn();
+    const api = {
+      listCommittees: vi.fn(async () => [{id: 'committee', name: 'Security Council', status: 'ACTIVE'}]),
+      listCountryTemplates: vi.fn(async () => [{key: 'builtin:default', names: {en: 'Default countries'},
+        defaultLanguage: 'en', builtin: true}]),
+      listCommitteeTemplates: vi.fn(async () => []),
+    } as unknown as SelfHostedApi;
+    container = document.createElement('div'); document.body.append(container); root = createRoot(container);
+    await act(async () => { root?.render(<MemoryRouter initialEntries={['/committees']}>
+      <SelfHostedWorkspace user={user} logout={logout} api={api} />
+    </MemoryRouter>); await Promise.resolve(); await Promise.resolve(); });
+    const page = container.querySelector('.committee-create-page');
+    expect(page?.querySelectorAll(':scope > .ui.grid > .column')).toHaveLength(2);
+    expect(page?.textContent).toContain('User');
+    expect(page?.textContent).toContain('Security Council');
+    expect(page?.textContent).toContain('Create committee');
+    expect(page?.textContent).toContain('Country template');
+  });
+
   it('loads the API snapshot and revalidates when the window regains focus', async () => {
     let callbacks: Parameters<SelfHostedApi['openCommitteeEvents']>[2] | undefined;
     const api = {snapshot: vi.fn(async () => snapshot), openCommitteeEvents: vi.fn((_id, _after, next) => {

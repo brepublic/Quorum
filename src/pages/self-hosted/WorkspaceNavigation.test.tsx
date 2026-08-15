@@ -39,7 +39,9 @@ describe('self-hosted workspace navigation', () => {
     const links = Array.from(page.querySelectorAll('a')).map(link => link.getAttribute('href'));
     expect(links).toContain('/committees/committee/setup');
     expect(links).toContain('/committees/committee/roll-call');
+    expect(links).toContain('/committees/committee/caucuses/gsl');
     expect(links).toContain('/committees/committee/caucuses/mod');
+    expect(page.querySelector('a[href="/committees/committee/caucuses/gsl"]')?.textContent).toBe("General Speakers' List");
     const active = page.querySelector('a.active');
     expect(active?.getAttribute('href')).toBe('/committees/committee/caucuses/mod');
   });
@@ -59,5 +61,25 @@ describe('self-hosted workspace navigation', () => {
     expect(page.querySelector('a[href="/admin"]')).toBeNull();
     expect(page.querySelector('a[href="/storage"]')).toBeNull();
     expect(page.querySelector('a[href="/operations"]')).toBeNull();
+  });
+
+  it('uses the legacy uncover sidebar around the workspace and closes it from the pusher', () => {
+    const page = render(<CommitteeNavigation snapshot={snapshot} user={user} logout={() => undefined}>
+      <main data-testid="workspace">Workspace</main>
+    </CommitteeNavigation>);
+    const pushable = page.querySelector('.committee-navigation-pushable');
+    const sidebar = pushable?.querySelector('.committee-mobile-sidebar');
+    const pusher = pushable?.querySelector('.pusher');
+    const toggle = pushable?.querySelector<HTMLElement>('[aria-label="Open committee navigation"]');
+    expect(sidebar?.getAttribute('class')).toContain('uncover');
+    expect(pusher?.querySelector('[data-testid="workspace"]')?.textContent).toBe('Workspace');
+
+    act(() => toggle?.click());
+    expect(sidebar?.getAttribute('class')).toContain('visible');
+    expect(pusher?.getAttribute('class')).toContain('dimmed');
+
+    act(() => (pusher as HTMLElement | null)?.click());
+    expect(sidebar?.getAttribute('class')).not.toContain('visible');
+    expect(pusher?.getAttribute('class')).not.toContain('dimmed');
   });
 });

@@ -412,9 +412,13 @@ export class Stage7StorageTaskService {
           expectedSizeBytes: row.expected_size_bytes === null ? null : Number(row.expected_size_bytes),
           expectedSha256: row.expected_sha256_hex, contentStagingKey: row.content_staging_key,
           sourceUploadId: row.source_upload_id, resolutionConflictId: row.resolution_conflict_id}, committee, context);
+        const refreshed = await client.query<{next_event_sequence: string | number}>(
+          'SELECT next_event_sequence FROM committees WHERE id=$1', [committee.id]);
+        committee.next_event_sequence = Number(refreshed.rows[0]?.next_event_sequence ?? committee.next_event_sequence);
       }
-      const updated = await client.query<TaskRow>(`UPDATE storage_agent_tasks SET status=$2,
-        terminal_request_id=$3,terminal_outcome=$2,completed_at=CASE WHEN $2='COMPLETED' THEN now() ELSE NULL END,
+      const updated = await client.query<TaskRow>(`UPDATE storage_agent_tasks SET status=$2::storage_agent_task_status,
+        terminal_request_id=$3,terminal_outcome=$2::storage_agent_task_status,
+        completed_at=CASE WHEN $2::storage_agent_task_status='COMPLETED'::storage_agent_task_status THEN now() ELSE NULL END,
         failure_code=$4,failure_reason=$5,claimed_at=NULL,claim_request_id=NULL,claim_token=NULL,
         revision=revision+1,updated_at=now() WHERE id=$1
         RETURNING *,encode(expected_sha256,'hex') AS expected_sha256_hex,

@@ -198,6 +198,11 @@ integration('PostgreSQL stage 4 templates and seat snapshots', () => {
     const second = await stage4.createSeat(chair, committee.id, {stableKey: 'second', displayName: 'Second', sortOrder: 20},
       'roll-seat-second', context('roll-seat-second'));
     const session = await stage4.startMeetingSession(chair, committee.id, {}, context('meeting-start'));
+    expect((await pool?.query(`SELECT l.kind,l.name,l.topic,l.default_speech_ms,l.delegates_can_queue,
+      t.remaining_at_start_ms FROM speaker_lists l JOIN timer_states t ON t.id=l.speech_timer_id
+      WHERE l.meeting_session_id=$1`, [session.id]))?.rows).toEqual([{
+      kind: 'GENERAL', name: "General Speakers' List", topic: '', default_speech_ms: '60000',
+      delegates_can_queue: true, remaining_at_start_ms: '60000'}]);
     await expect(stage4.startMeetingSession(chair, committee.id, {}, context('meeting-duplicate')))
       .rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
     const started = await stage4.startRollCall(chair, committee.id, {meetingSessionId: session.id},
@@ -234,6 +239,39 @@ integration('PostgreSQL stage 4 templates and seat snapshots', () => {
       [session.id, second.id]))?.rows).toEqual([{type: 'ABSENT'}, {type: 'RETURNED'}]);
     const closed = await stage4.closeMeetingSession(chair, session.id, {baseRevision: 1}, context('meeting-close'));
     expect(closed.status).toBe('CLOSED');
+  });
+
+  it('sets and corrects frozen roll-call seats out of order without losing response history', async () => {
+    const owner = await user('freeorderowner'); const chair = await user('freeorderchair');
+    const committee = await stage4.createCommittee(owner, {name: 'Free Order Council', visibility: 'PRIVATE',
+      countryTemplateKey: 'builtin:default'}, 'free-order-committee', context('free-order-committee'));
+    await stage3.setChair(owner, committee.id, chair.user.id, true, 1, context('free-order-chair'));
+    const first = await stage4.createSeat(chair, committee.id, {stableKey: 'first', displayName: 'First', sortOrder: 10},
+      'free-order-first', context('free-order-first'));
+    const second = await stage4.createSeat(chair, committee.id, {stableKey: 'second', displayName: 'Second', sortOrder: 20},
+      'free-order-second', context('free-order-second'));
+    const session = await stage4.startMeetingSession(chair, committee.id, {}, context('free-order-session'));
+    const started = await stage4.startRollCall(chair, committee.id, {meetingSessionId: session.id},
+      'free-order-start', context('free-order-start'));
+
+    const future = await stage4.setRollCallResponse(chair, started.id,
+      {baseRevision: 1, seatId: second.id, response: 'PRESENT'}, context('free-order-future'));
+    expect(future).toEqual(expect.objectContaining({revision: 2, currentSeatId: first.id, status: 'IN_PROGRESS'}));
+    const corrected = await stage4.setRollCallResponse(chair, started.id,
+      {baseRevision: 2, seatId: second.id, response: 'ABSENT'}, context('free-order-correction'));
+    expect(corrected.entries).toEqual([expect.objectContaining({seatId: second.id, response: 'ABSENT'})]);
+    const history = await pool?.query(`SELECT response,undone_at IS NOT NULL AS undone FROM roll_call_entries
+      WHERE roll_call_id=$1 AND seat_id=$2 ORDER BY recorded_at,id`, [started.id, second.id]);
+    expect(history?.rows).toEqual([{response: 'PRESENT', undone: true}, {response: 'ABSENT', undone: false}]);
+
+    const completed = await stage4.setRollCallResponse(chair, started.id,
+      {baseRevision: 3, seatId: first.id, response: 'PRESENT'}, context('free-order-complete'));
+    expect(completed).toEqual(expect.objectContaining({revision: 4, currentSeatId: null, status: 'COMPLETED'}));
+    const recorrected = await stage4.setRollCallResponse(chair, started.id,
+      {baseRevision: 4, seatId: second.id, response: 'PRESENT'}, context('free-order-after-complete'));
+    expect(recorrected).toEqual(expect.objectContaining({revision: 5, currentSeatId: null, status: 'COMPLETED'}));
+    expect((await pool?.query(`SELECT state FROM current_attendance WHERE meeting_session_id=$1 AND seat_id=$2`,
+      [session.id, second.id]))?.rows).toEqual([{state: 'PRESENT'}]);
   });
 
   it('enforces operation-mode point actors and resolves personal privilege with linked attendance', async () => {

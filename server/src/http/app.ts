@@ -495,11 +495,13 @@ async function handleStage4Request(options: {
     sendJson(response, 201, success(await stage4.startRollCall(auth, rollCalls[1] as string, body,
       idempotencyKey(request), context), requestId)); return true;
   }
-  const rollCallCommand = /^\/api\/v1\/roll-calls\/([0-9a-f-]{36})\/(record-response|undo|reset)$/.exec(pathname);
+  const rollCallCommand = /^\/api\/v1\/roll-calls\/([0-9a-f-]{36})\/(record-response|set-response|undo|reset)$/.exec(pathname);
   if (rollCallCommand && method === 'POST') {
     const auth = await write(); const body = await readJson(request); const id = rollCallCommand[1] as string;
     const result = rollCallCommand[2] === 'record-response'
       ? await stage4.recordRollCallResponse(auth, id, body, context)
+      : rollCallCommand[2] === 'set-response'
+        ? await stage4.setRollCallResponse(auth, id, body, context)
       : rollCallCommand[2] === 'undo'
         ? await stage4.undoRollCallResponse(auth, id, body, context)
         : await stage4.resetRollCall(auth, id, body, context);
@@ -741,6 +743,20 @@ async function handleStage5Request(options: {
     sendJson(response, 201, success(await stage5.createSpeakerList(auth, speakerLists[1] as string, body,
       idempotencyKey(request), context), requestId)); return true;
   }
+  const speakerListChange = /^\/api\/v1\/speaker-lists\/([0-9a-f-]{36})\/(settings|status)$/.exec(pathname);
+  if (method === 'POST' && speakerListChange) {
+    const auth = await write(); const body = await readJson(request); const id = speakerListChange[1] as string;
+    const result = speakerListChange[2] === 'settings'
+      ? await stage5.updateSpeakerList(auth, id, body, context)
+      : await stage5.setSpeakerListStatus(auth, id, body, context);
+    sendJson(response, 200, success(result, requestId)); return true;
+  }
+  const removeSpeaker = /^\/api\/v1\/speaker-lists\/([0-9a-f-]{36})\/queue\/([0-9a-f-]{36})\/remove$/.exec(pathname);
+  if (method === 'POST' && removeSpeaker) {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 200, success(await stage5.removeSpeakerQueueEntry(auth, removeSpeaker[1] as string,
+      removeSpeaker[2] as string, body, context), requestId)); return true;
+  }
   const speakerCommand = /^\/api\/v1\/speaker-lists\/([0-9a-f-]{36})\/(queue|reorder|advance)$/.exec(pathname);
   if (method === 'POST' && speakerCommand) {
     const auth = await write(); const body = await readJson(request); const id = speakerCommand[1] as string;
@@ -763,6 +779,12 @@ async function handleStage5Request(options: {
     sendJson(response, 200, success(await stage5.yieldSpeech(auth, yieldSpeech[1] as string, body, context), requestId));
     return true;
   }
+  const yieldDecision = /^\/api\/v1\/speeches\/([0-9a-f-]{36})\/yield-decision$/.exec(pathname);
+  if (method === 'POST' && yieldDecision) {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 200, success(await stage5.decideSpeechYield(auth, yieldDecision[1] as string, body, context), requestId));
+    return true;
+  }
   const contribution = /^\/api\/v1\/speeches\/([0-9a-f-]{36})\/contributions$/.exec(pathname);
   if (method === 'POST' && contribution) {
     const auth = await write(); const body = await readJson(request);
@@ -775,12 +797,18 @@ async function handleStage5Request(options: {
     sendJson(response, 201, success(await stage5.proposeMotion(auth, motions[1] as string, body,
       idempotencyKey(request), context), requestId)); return true;
   }
-  const motionCommand = /^\/api\/v1\/motions\/([0-9a-f-]{36})\/(second|decide)$/.exec(pathname);
+  const motionCommand = /^\/api\/v1\/motions\/([0-9a-f-]{36})\/(second|decide|withdraw|direct-vote|direct-vote-settings)$/.exec(pathname);
   if (method === 'POST' && motionCommand) {
     const auth = await write(); const body = await readJson(request); const id = motionCommand[1] as string;
     const result = motionCommand[2] === 'second'
       ? await stage5.secondMotion(auth, id, body, idempotencyKey(request), context)
-      : await stage5.decideMotion(auth, id, body, context);
+      : motionCommand[2] === 'withdraw'
+        ? await stage5.withdrawMotion(auth, id, body, context)
+        : motionCommand[2] === 'direct-vote'
+          ? await stage5.setMotionDirectVote(auth, id, body, context)
+          : motionCommand[2] === 'direct-vote-settings'
+            ? await stage5.setMotionDirectVoteSettings(auth, id, body, context)
+            : await stage5.decideMotion(auth, id, body, context);
     sendJson(response, motionCommand[2] === 'second' ? 201 : 200, success(result, requestId)); return true;
   }
   const ballots = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/ballots$/.exec(pathname);
@@ -789,10 +817,11 @@ async function handleStage5Request(options: {
     sendJson(response, 201, success(await stage5.createBallot(auth, ballots[1] as string, body,
       idempotencyKey(request), context), requestId)); return true;
   }
-  const ballotCommand = /^\/api\/v1\/ballots\/([0-9a-f-]{36})\/(votes|correct-vote|close|publish)$/.exec(pathname);
+  const ballotCommand = /^\/api\/v1\/ballots\/([0-9a-f-]{36})\/(votes|set-vote|correct-vote|close|publish)$/.exec(pathname);
   if (method === 'POST' && ballotCommand) {
     const auth = await write(); const body = await readJson(request); const id = ballotCommand[1] as string;
     const result = ballotCommand[2] === 'votes' ? await stage5.castVote(auth, id, body, idempotencyKey(request), context)
+      : ballotCommand[2] === 'set-vote' ? await stage5.setBallotVote(auth, id, body, context)
       : ballotCommand[2] === 'correct-vote' ? await stage5.correctVote(auth, id, body, context)
         : ballotCommand[2] === 'close' ? await stage5.closeBallot(auth, id, body, context)
           : await stage5.publishBallot(auth, id, body, context);
@@ -804,13 +833,17 @@ async function handleStage5Request(options: {
     sendJson(response, 201, success(await stage5.createStrawpoll(auth, strawpolls[1] as string, body,
       idempotencyKey(request), context), requestId)); return true;
   }
-  const strawpollCommand = /^\/api\/v1\/strawpolls\/([0-9a-f-]{36})\/(votes|close)$/.exec(pathname);
+  const strawpollCommand = /^\/api\/v1\/strawpolls\/([0-9a-f-]{36})\/(votes|close|rounds|stage|manual-tallies)$/.exec(pathname);
   if (method === 'POST' && strawpollCommand) {
     const auth = await write(); const body = await readJson(request); const id = strawpollCommand[1] as string;
     const result = strawpollCommand[2] === 'votes'
       ? await stage5.voteStrawpoll(auth, id, body, idempotencyKey(request), context)
-      : await stage5.closeStrawpoll(auth, id, body, context);
-    sendJson(response, strawpollCommand[2] === 'votes' ? 201 : 200, success(result, requestId)); return true;
+      : strawpollCommand[2] === 'rounds' ? await stage5.reviseStrawpoll(auth, id, body, idempotencyKey(request), context)
+        : strawpollCommand[2] === 'stage' ? await stage5.commandStrawpollStage(auth, id, body, context)
+          : strawpollCommand[2] === 'manual-tallies' ? await stage5.setStrawpollManualTally(auth, id, body, context)
+            : await stage5.closeStrawpoll(auth, id, body, context);
+    sendJson(response, ['votes', 'rounds'].includes(strawpollCommand[2] as string) ? 201 : 200,
+      success(result, requestId)); return true;
   }
   const resolutions = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/resolutions$/.exec(pathname);
   if (method === 'POST' && resolutions) {
@@ -824,19 +857,34 @@ async function handleStage5Request(options: {
     sendJson(response, 201, success(await stage5.createAmendment(auth, amendments[1] as string, body,
       idempotencyKey(request), context), requestId)); return true;
   }
-  const documentCommand = /^\/api\/v1\/documents\/([0-9a-f-]{36})\/(versions|commands|discussion)$/.exec(pathname);
+  const resolutionDirectVote = /^\/api\/v1\/resolutions\/([0-9a-f-]{36})\/direct-vote$/.exec(pathname);
+  if (method === 'POST' && resolutionDirectVote) {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 200, success(await stage5.setResolutionDirectVote(auth, resolutionDirectVote[1] as string,
+      body, context), requestId)); return true;
+  }
+  const documentCommand = /^\/api\/v1\/documents\/([0-9a-f-]{36})\/(versions|commands|discussion|settings|result)$/.exec(pathname);
   if (method === 'POST' && documentCommand) {
     const auth = await write(); const body = await readJson(request); const id = documentCommand[1] as string;
     const result = documentCommand[2] === 'versions' ? await stage5.createDocumentVersion(auth, id, body, context)
       : documentCommand[2] === 'commands' ? await stage5.commandDocument(auth, id, body, context)
-        : await stage5.addDocumentDiscussion(auth, id, body, idempotencyKey(request), context);
-    sendJson(response, documentCommand[2] === 'commands' ? 200 : 201, success(result, requestId)); return true;
+        : documentCommand[2] === 'settings' ? await stage5.updateDocumentSettings(auth, id, body, context)
+          : documentCommand[2] === 'result' ? await stage5.recordDocumentResult(auth, id, body, context)
+            : await stage5.addDocumentDiscussion(auth, id, body, idempotencyKey(request), context);
+    sendJson(response, ['versions', 'discussion'].includes(documentCommand[2] as string) ? 201 : 200,
+      success(result, requestId)); return true;
   }
   const timerCommand = /^\/api\/v1\/timers\/([0-9a-f-]{36})\/(start|pause|resume|extend|reset|expire)$/.exec(pathname);
   if (method === 'POST' && timerCommand) {
     const auth = await write(); const body = await readJson(request);
     sendJson(response, 200, success(await stage5.commandTimer(auth, timerCommand[1] as string,
       timerCommand[2] as 'start' | 'pause' | 'resume' | 'extend' | 'reset' | 'expire', body, context), requestId));
+    return true;
+  }
+  const document = /^\/api\/v1\/documents\/([0-9a-f-]{36})$/.exec(pathname);
+  if (method === 'DELETE' && document) {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 200, success(await stage5.deleteAmendment(auth, document[1] as string, body, context), requestId));
     return true;
   }
   return false;
@@ -899,6 +947,21 @@ async function handleStage3Request(options: {
     const auth = await write(); const body = await readJson(request);
     sendJson(response, 200, success(await stage3.setOperationMode(auth, operationMode[1] as string,
       body.operationMode, integerField(body, 'baseRevision'), context), requestId)); return true;
+  }
+
+
+  const motionSettings = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/motion-settings$/.exec(pathname);
+  if (method === 'POST' && motionSettings) {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 200, success(await stage3.setMotionSettings(auth, motionSettings[1] as string,
+      body.settings, integerField(body, 'baseRevision'), context), requestId)); return true;
+  }
+
+  const layoutSettings = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/layout-settings$/.exec(pathname);
+  if (method === 'POST' && layoutSettings) {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 200, success(await stage3.setLayoutSettings(auth, layoutSettings[1] as string,
+      body.settings, integerField(body, 'baseRevision'), context), requestId)); return true;
   }
 
   const committeeStatus = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/status$/.exec(pathname);

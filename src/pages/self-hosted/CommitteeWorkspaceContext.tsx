@@ -5,7 +5,7 @@ import {SelfHostedApiError, type SelfHostedApi} from '../../services/self-hosted
 import type {RealtimeStatus} from './WorkspaceNavigation';
 
 function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return t(error instanceof Error ? error.message : String(error));
 }
 
 interface CommitteeWorkspaceValue {

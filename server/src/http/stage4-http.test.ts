@@ -182,6 +182,18 @@ describe('stage 4 template and seat HTTP boundary', () => {
       expect.objectContaining({requestId: expect.any(String)}));
   });
 
+  it('routes out-of-order roll-call corrections through a distinct Chair command', async () => {
+    const setRollCallResponse = vi.fn(async () => ({id: 'roll-call', revision: 4}));
+    const stage4 = domain({setRollCallResponse}); const rollCallId = '50000000-0000-4000-8000-000000000001';
+    const body = {baseRevision: 3, seatId: '60000000-0000-4000-8000-000000000002', response: 'ABSENT'};
+    const response = await request(stage4, {path: `/api/v1/roll-calls/${rollCallId}/set-response`, method: 'POST',
+      headers: protectedHeaders, body});
+
+    expect(response.status).toBe(200);
+    expect(setRollCallResponse).toHaveBeenCalledWith(authenticated, rollCallId, body,
+      expect.objectContaining({requestId: expect.any(String)}));
+  });
+
   it('requires idempotency for starting a roll call', async () => {
     const stage4 = domain(); const committeeId = '20000000-0000-4000-8000-000000000001';
     const response = await request(stage4, {path: `/api/v1/committees/${committeeId}/roll-calls`, method: 'POST',

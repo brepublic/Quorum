@@ -214,8 +214,8 @@ export class Stage6MigrationService {
       const outstanding = await client.query(`SELECT 1 FROM storage_migration_items
         WHERE migration_id=$1 AND status IN ('PENDING','IN_PROGRESS','RETRY') LIMIT 1`, [row.id]);
       const next = outstanding.rowCount ? 'COPYING' : 'READY_TO_CONFIRM';
-      await client.query(`UPDATE storage_migrations SET status=$2,manifest_revision=$3,revision=revision+1,
-        ready_at=CASE WHEN $2='READY_TO_CONFIRM' THEN now() ELSE NULL END,
+      await client.query(`UPDATE storage_migrations SET status=$2::storage_migration_status,manifest_revision=$3,revision=revision+1,
+        ready_at=CASE WHEN $2::storage_migration_status='READY_TO_CONFIRM'::storage_migration_status THEN now() ELSE NULL END,
         failure_code=NULL,failure_reason=NULL,updated_at=now() WHERE id=$1`,
       [row.id, next, committee.file_manifest_revision]);
       await appendEvent(client, committee, {type: 'storage.migration_retried', resourceType: 'storage_migration',
@@ -382,10 +382,11 @@ export class Stage6MigrationService {
         const committee = await lockedCommittee(client, migration.committee_id);
         const manifestMatches = committee.file_manifest_revision === migration.manifest_revision;
         const next = manifestMatches ? 'READY_TO_CONFIRM' : 'FAILED';
-        await client.query(`UPDATE storage_migrations SET status=$2,revision=revision+1,
-          ready_at=CASE WHEN $2='READY_TO_CONFIRM' THEN now() ELSE NULL END,
-          failure_code=CASE WHEN $2='FAILED' THEN 'MANIFEST_CHANGED' ELSE NULL END,
-          failure_reason=CASE WHEN $2='FAILED' THEN 'The file manifest changed during copying.' ELSE NULL END,
+        await client.query(`UPDATE storage_migrations SET status=$2::storage_migration_status,revision=revision+1,
+          ready_at=CASE WHEN $2::storage_migration_status='READY_TO_CONFIRM'::storage_migration_status THEN now() ELSE NULL END,
+          failure_code=CASE WHEN $2::storage_migration_status='FAILED'::storage_migration_status THEN 'MANIFEST_CHANGED' ELSE NULL END,
+          failure_reason=CASE WHEN $2::storage_migration_status='FAILED'::storage_migration_status
+            THEN 'The file manifest changed during copying.' ELSE NULL END,
           updated_at=now() WHERE id=$1`, [migration.id, next]);
         await appendEvent(client, committee, {type: manifestMatches ? 'storage.migration_ready' : 'storage.migration_failed',
           resourceType: 'storage_migration', resourceId: migration.id, revision: migration.revision + 1,

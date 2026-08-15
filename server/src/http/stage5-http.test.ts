@@ -73,6 +73,29 @@ describe('stage 5 timer HTTP boundary', () => {
     expect(response.statusCode).toBe(422);
   });
 
+  it('routes legacy speaker settings, removal, status, and yield decisions through revisions', async () => {
+    const updateSpeakerList = vi.fn(async () => ({id: 'list'}));
+    const setSpeakerListStatus = vi.fn(async () => ({id: 'list'}));
+    const removeSpeakerQueueEntry = vi.fn(async () => ({id: 'list'}));
+    const decideSpeechYield = vi.fn(async () => ({id: 'list'}));
+    const stage5 = {updateSpeakerList, setSpeakerListStatus, removeSpeakerQueueEntry,
+      decideSpeechYield} as unknown as Stage5Service;
+    const listId = '30000000-0000-4000-8000-000000000001';
+    const entryId = '30000000-0000-4000-8000-000000000002';
+    await send(stage5, `/api/v1/speaker-lists/${listId}/settings`, {baseRevision: 2, delegatesCanQueue: true});
+    await send(stage5, `/api/v1/speaker-lists/${listId}/status`, {baseRevision: 3, status: 'CLOSED'});
+    await send(stage5, `/api/v1/speaker-lists/${listId}/queue/${entryId}/remove`, {baseRevision: 4});
+    await send(stage5, `/api/v1/speeches/${entryId}/yield-decision`, {baseRevision: 5, decision: 'REJECT'});
+    expect(updateSpeakerList).toHaveBeenCalledWith(authenticated, listId,
+      {baseRevision: 2, delegatesCanQueue: true}, expect.any(Object));
+    expect(setSpeakerListStatus).toHaveBeenCalledWith(authenticated, listId,
+      {baseRevision: 3, status: 'CLOSED'}, expect.any(Object));
+    expect(removeSpeakerQueueEntry).toHaveBeenCalledWith(authenticated, listId, entryId,
+      {baseRevision: 4}, expect.any(Object));
+    expect(decideSpeechYield).toHaveBeenCalledWith(authenticated, entryId,
+      {baseRevision: 5, decision: 'REJECT'}, expect.any(Object));
+  });
+
   it('uses idempotency for motion proposals and seconds', async () => {
     const proposeMotion = vi.fn(async () => ({id: 'motion'})); const secondMotion = vi.fn(async () => ({id: 'motion'}));
     const stage5 = {proposeMotion, secondMotion} as unknown as Stage5Service;
@@ -85,11 +108,45 @@ describe('stage 5 timer HTTP boundary', () => {
       {}, 'timer-key', expect.any(Object));
   });
 
+  it('routes motion withdrawal through the Chair revision command', async () => {
+    const withdrawMotion = vi.fn(async () => ({id: 'motion', status: 'WITHDRAWN'}));
+    const stage5 = {withdrawMotion} as unknown as Stage5Service;
+    const response = await send(stage5, '/api/v1/motions/30000000-0000-4000-8000-000000000001/withdraw',
+      {baseRevision: 4});
+    expect(response.statusCode).toBe(200);
+    expect(withdrawMotion).toHaveBeenCalledWith(authenticated, '30000000-0000-4000-8000-000000000001',
+      {baseRevision: 4}, expect.any(Object));
+  });
+
+  it('routes direct motion votes and their frozen eligibility setting', async () => {
+    const setMotionDirectVote = vi.fn(async () => ({id: 'motion'}));
+    const setMotionDirectVoteSettings = vi.fn(async () => ({id: 'motion'}));
+    const stage5 = {setMotionDirectVote, setMotionDirectVoteSettings} as unknown as Stage5Service;
+    await send(stage5, '/api/v1/motions/30000000-0000-4000-8000-000000000001/direct-vote',
+      {choice: 'FOR', onBehalfOfSeatId: '40000000-0000-4000-8000-000000000001'});
+    await send(stage5, '/api/v1/motions/30000000-0000-4000-8000-000000000001/direct-vote-settings',
+      {baseRevision: 1, includeNonVotingSeats: false});
+    expect(setMotionDirectVote).toHaveBeenCalledWith(authenticated, '30000000-0000-4000-8000-000000000001',
+      {choice: 'FOR', onBehalfOfSeatId: '40000000-0000-4000-8000-000000000001'}, expect.any(Object));
+    expect(setMotionDirectVoteSettings).toHaveBeenCalledWith(authenticated, '30000000-0000-4000-8000-000000000001',
+      {baseRevision: 1, includeNonVotingSeats: false}, expect.any(Object));
+  });
+
   it('uses idempotency for the first vote from a seat', async () => {
     const castVote = vi.fn(async () => ({id: 'ballot'})); const stage5 = {castVote} as unknown as Stage5Service;
     await send(stage5, '/api/v1/ballots/30000000-0000-4000-8000-000000000001/votes', {choice: 'FOR'});
     expect(castVote).toHaveBeenCalledWith(authenticated, '30000000-0000-4000-8000-000000000001',
       {choice: 'FOR'}, 'timer-key', expect.any(Object));
+  });
+
+  it('routes the legacy set-or-retract vote interaction through a revision command', async () => {
+    const setBallotVote = vi.fn(async () => ({id: 'ballot'}));
+    const stage5 = {setBallotVote} as unknown as Stage5Service;
+    const response = await send(stage5, '/api/v1/ballots/30000000-0000-4000-8000-000000000001/set-vote',
+      {baseRevision: 4, choice: null, onBehalfOfSeatId: '40000000-0000-4000-8000-000000000001'});
+    expect(response.statusCode).toBe(200);
+    expect(setBallotVote).toHaveBeenCalledWith(authenticated, '30000000-0000-4000-8000-000000000001',
+      {baseRevision: 4, choice: null, onBehalfOfSeatId: '40000000-0000-4000-8000-000000000001'}, expect.any(Object));
   });
 
   it('routes explicit timer commands with CSRF and revision', async () => {
@@ -126,6 +183,23 @@ describe('stage 5 timer HTTP boundary', () => {
       expect.any(Object), 'timer-key', expect.any(Object));
     expect(voteStrawpoll).toHaveBeenCalledWith(authenticated, '30000000-0000-4000-8000-000000000001',
       expect.any(Object), 'timer-key', expect.any(Object));
+  });
+
+  it('routes strawpoll rounds, stages, and manual tallies through their command boundaries', async () => {
+    const reviseStrawpoll = vi.fn(async () => ({id: 'next-round'}));
+    const commandStrawpollStage = vi.fn(async () => ({id: 'strawpoll'}));
+    const setStrawpollManualTally = vi.fn(async () => ({id: 'strawpoll'}));
+    const stage5 = {reviseStrawpoll, commandStrawpollStage, setStrawpollManualTally} as unknown as Stage5Service;
+    const id = '30000000-0000-4000-8000-000000000001';
+    expect((await send(stage5, `/api/v1/strawpolls/${id}/rounds`, {baseRevision: 1, question: 'Question',
+      votingMode: 'SEAT_AUTHENTICATED', multipleChoice: false, options: ['Yes', 'No'], medium: 'LINK',
+      optionsArePublic: false})).statusCode).toBe(201);
+    expect((await send(stage5, `/api/v1/strawpolls/${id}/stage`, {baseRevision: 1, action: 'START'})).statusCode).toBe(200);
+    expect((await send(stage5, `/api/v1/strawpolls/${id}/manual-tallies`, {baseRevision: 2,
+      optionId: '40000000-0000-4000-8000-000000000001', tally: 3})).statusCode).toBe(200);
+    expect(reviseStrawpoll).toHaveBeenCalledWith(authenticated, id, expect.any(Object), 'timer-key', expect.any(Object));
+    expect(commandStrawpollStage).toHaveBeenCalledWith(authenticated, id, expect.any(Object), expect.any(Object));
+    expect(setStrawpollManualTally).toHaveBeenCalledWith(authenticated, id, expect.any(Object), expect.any(Object));
   });
 
   it('routes versioned resolution commands without accepting actor fields', async () => {

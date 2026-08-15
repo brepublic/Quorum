@@ -77,6 +77,8 @@ integration('PostgreSQL stage 8 integration', () => {
     const owner = await user('archiveowner'); const outsider = await user('archiveoutsider');
     const committee = await stage3.createCommittee(owner, {name: 'Archived Committee', visibility: 'PRIVATE'},
       context('committee'));
+    await pool?.query(`INSERT INTO committee_memberships (committee_id,user_id,status)
+      VALUES ($1,$2,'ACTIVE')`, [committee.id, outsider.user.id]);
     await expect(archives.exportCommittee(owner, committee.id)).rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
     const archived = await stage3.archiveCommittee(owner, committee.id, 1, context('archive'));
     expect(archived).toEqual(expect.objectContaining({status: 'ARCHIVED', revision: 2}));
