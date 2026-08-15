@@ -670,6 +670,27 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
     expect(timer?.rows[0]).toEqual({running: false, remaining_at_start_ms: '600000'});
   });
 
+  it('starts, presents results, and reopens a prepared strawpoll', async () => {
+    const fixture = await meetingFixture();
+    const created = await stage5.createStrawpoll(fixture.firstChair, fixture.committee.id, {
+      meetingSessionId: fixture.session.id, question: 'Agenda?', votingMode: 'SEAT_AUTHENTICATED',
+      multipleChoice: false, options: []}, 'prepared-strawpoll', context('prepared-strawpoll'));
+    const prepared = await stage5.reviseStrawpoll(fixture.firstChair, created.id, {
+      baseRevision: created.revision, question: 'Agenda?', votingMode: 'SEAT_AUTHENTICATED',
+      multipleChoice: false, options: ['For', 'Against'], medium: 'LINK', optionsArePublic: false},
+    'prepare-strawpoll', context('prepare-strawpoll'));
+    expect(prepared.stage).toBe('PREPARING');
+    const voting = await stage5.commandStrawpollStage(fixture.firstChair, prepared.id,
+      {baseRevision: prepared.revision, action: 'START'}, context('start-strawpoll'));
+    expect(voting).toMatchObject({stage: 'VOTING', status: 'OPEN', closedAt: null});
+    const results = await stage5.commandStrawpollStage(fixture.firstChair, voting.id,
+      {baseRevision: voting.revision, action: 'VIEW_RESULTS'}, context('results-strawpoll'));
+    expect(results).toMatchObject({stage: 'RESULTS', status: 'CLOSED'});
+    const reopened = await stage5.commandStrawpollStage(fixture.firstChair, results.id,
+      {baseRevision: results.revision, action: 'REOPEN'}, context('reopen-strawpoll'));
+    expect(reopened).toMatchObject({stage: 'VOTING', status: 'OPEN', closedAt: null});
+  });
+
   it('separates anonymous selections and freezes a document version under vote', async () => {
     const fixture = await meetingFixture();
     const strawpoll = await stage5.createStrawpoll(fixture.firstChair, fixture.committee.id, {meetingSessionId: fixture.session.id,

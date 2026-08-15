@@ -244,17 +244,20 @@ function NotesPanel({snapshot, run, api}: {snapshot: CommitteeWorkspaceSnapshot;
   </div>;
 }
 
+function LinkResources({snapshot, run, api}: {snapshot: CommitteeWorkspaceSnapshot; run: WorkspaceCommand; api: SelfHostedApi}) { const [title, setTitle] = React.useState(''); const [url, setUrl] = React.useState(''); const canWrite = snapshot.viewer.audience !== 'PUBLIC' && snapshot.committee.status === 'ACTIVE'; const links = snapshot.textPosts.filter(post => post.content.startsWith('link:')).map(post => ({post, url: post.content.slice(5)})).filter(({url}) => {try {return ['http:', 'https:'].includes(new URL(url).protocol);} catch {return false;}}); const create = async () => {if (url.trim()) {await run(() => api.createTextPost(snapshot.committee.id, {title, content: `link:${url.trim()}`})); setTitle(''); setUrl('');}}; return <><Form onSubmit={create}>{canWrite && <><Form.Input label={t('Title')} value={title} onChange={event => setTitle(event.currentTarget.value)} /><Form.Input label={t('URL')} type="url" required value={url} onChange={event => setUrl(event.currentTarget.value)} /><Button primary disabled={!url.trim()}>{t('Publish link')}</Button></>}</Form><List divided relaxed>{links.map(({post, url}) => <List.Item key={post.id}>{canWrite && <List.Content floated="right"><Button size="mini" negative onClick={() => void run(() => api.deleteTextPost(post.id, post.revision))}>{t('Delete')}</Button></List.Content>}<List.Header>{post.title || t('Untitled')}</List.Header><List.Description><a href={url} target="_blank" rel="noreferrer">{url}</a></List.Description><List.Description>{t('Publisher')}: {post.authorDisplayName}</List.Description></List.Item>)}</List></>; }
 function PostsPanel({snapshot, run, api, userId, tab}: {snapshot: CommitteeWorkspaceSnapshot; run: WorkspaceCommand;
   api: SelfHostedApi; userId?: string; tab?: string}) {
   const canManageStorage = snapshot.viewer.audience === 'CHAIR' || snapshot.viewer.audience === 'OWNER';
-  const active = tab === 'attachments' || tab === 'storage' ? tab : 'text';
+  const active = tab === 'links' || tab === 'attachments' || tab === 'storage' ? tab : 'text';
   const base = `/committees/${snapshot.committee.id}/posts`;
   return <><Menu pointing secondary aria-label={t('Resource sections')}>
     <Menu.Item as={Link} to={base} active={active === 'text'}>{t('Text resources')}</Menu.Item>
+    <Menu.Item as={Link} to={`${base}/links`} active={active === 'links'}>{t('Link resources')}</Menu.Item>
     <Menu.Item as={Link} to={`${base}/attachments`} active={active === 'attachments'}>{t('Attachments')}</Menu.Item>
     {canManageStorage && <Menu.Item as={Link} to={`${base}/storage`} active={active === 'storage'}>{t('Storage')}</Menu.Item>}
   </Menu>
     {active === 'text' && <TextResources kind="posts" snapshot={snapshot} run={run} api={api} />}
+    {active === 'links' && <LinkResources snapshot={snapshot} run={run} api={api} />}
     {active === 'attachments' && <FilesPanel section="attachments" snapshot={snapshot} api={api} currentUserId={userId} />}
     {active === 'storage' && canManageStorage && <FilesPanel section="storage" snapshot={snapshot} api={api} currentUserId={userId} />}
   </>;

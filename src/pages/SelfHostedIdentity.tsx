@@ -227,12 +227,16 @@ function AccountManager({client, currentUser, onLogout}: {
         <Table.Header><Table.Row>
           <Table.HeaderCell>{t('Email')}</Table.HeaderCell>
           <Table.HeaderCell>{t('Display name')}</Table.HeaderCell>
+          <Table.HeaderCell>{t('Account ID')}</Table.HeaderCell>
           <Table.HeaderCell>{t('Status')}</Table.HeaderCell>
           <Table.HeaderCell>{t('Actions')}</Table.HeaderCell>
         </Table.Row></Table.Header>
         <Table.Body>{users.map(account => <Table.Row key={account.id} disabled={account.status !== 'ACTIVE'}>
           <Table.Cell>{account.email || t('Anonymous account')}</Table.Cell>
           <Table.Cell>{account.displayName}</Table.Cell>
+          <Table.Cell><code>{account.id}</code><Button basic size="mini" type="button"
+            aria-label={`${t('Copy')} ${t('Account ID')} · ${account.email || account.displayName}`}
+            onClick={() => void navigator.clipboard?.writeText(account.id)}>{t('Copy')}</Button></Table.Cell>
           <Table.Cell>{t(account.status)}</Table.Cell>
           <Table.Cell>
             <Button size="small" disabled={account.status !== 'ACTIVE'}

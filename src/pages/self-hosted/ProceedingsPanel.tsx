@@ -1046,7 +1046,8 @@ function StrawpollWorkspace({snapshot, run, api, canChair, resourceId}: CommonPr
       </List.Item></List>}
       <List>{optionLabels.map((label, index) => <List.Item key={`${poll.id}-${index}`}><Input fluid action value={label}
         placeholder={t('Enter poll option')} disabled={!canChair}
-        onChange={event => setOptionLabels(current => current.map((value, item) => item === index ? event.currentTarget.value : value))}
+        onChange={(_, data) => setOptionLabels(current => current.map((value, item) => item === index
+          ? String(data.value ?? '') : value))}
         onBlur={() => {const next = optionLabels.map(value => value.trim());
           if (canChair && next[index] && next.join('\0') !== poll.options.map(option => option.label).join('\0')) void revise({options: next});}}>
         <input />{canChair && <Button negative basic icon="trash" onClick={() => {const next = optionLabels.filter((_, item) => item !== index);

@@ -2676,8 +2676,8 @@ export class Stage5Service {
       const stage: Strawpoll['stage'] = action === 'VIEW_RESULTS' ? 'RESULTS' : 'VOTING';
       const status: Strawpoll['status'] = stage === 'RESULTS' ? 'CLOSED' : 'OPEN'; const now = this.now();
       const updated = await client.query<StrawpollRow>(`UPDATE strawpolls SET stage=$2,status=$3,
-        closed_at=CASE WHEN $2='RESULTS' THEN $4 ELSE NULL END,revision=revision+1 WHERE id=$1 RETURNING *`,
-      [strawpollId, stage, status, now]);
+        closed_at=$4,revision=revision+1 WHERE id=$1 RETURNING *`,
+      [strawpollId, stage, status, stage === 'RESULTS' ? now : null]);
       await appendEvent(client, committee, {type: 'strawpoll.stage_changed', resourceType: 'strawpoll',
         resourceId: strawpollId, revision: poll.revision + 1, payload: {stage}, audience: 'PUBLIC'});
       await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id, capabilities: ['CHAIR'],
