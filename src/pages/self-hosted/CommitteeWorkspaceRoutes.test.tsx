@@ -357,8 +357,7 @@ describe('committee workspace routes and roles', () => {
     expect(withdrawMotion).toHaveBeenCalledWith('motion', 1);
   });
 
-  it('includes observer seats in legacy motion voting by default and sends a direct vote', async () => {
-    const setMotionDirectVote = vi.fn(async (): Promise<ProceedingMotion> => ({}) as ProceedingMotion);
+  it('shows read-only counts and the non-voting-seat setting in delegate-operated motion cards', async () => {
     const motion: ProceedingMotion = {id: 'motion', committeeId: 'committee', meetingSessionId: 'meeting',
       motionTypeId: 'open-unmoderated-caucus', proposedBySeatId: 'seat', proposedBySeatDisplayName: 'China',
       parameters: {caucusDuration: 10, caucusUnit: 'min'}, status: 'SECONDED', rulePackageVersionId: 'rules',
@@ -381,12 +380,14 @@ describe('committee workspace routes and roles', () => {
         lastEventId: 'attendance-2', updatedAt: '2026-08-14T00:00:00.000Z'}], motions: [motion],
       activeRules: {...value.activeRules, motionTypes: [{id: 'open-unmoderated-caucus',
         names: {en: 'Open an unmoderated caucus', 'zh-CN': '开启自由磋商'}, procedural: true,
-        requiredSecondCount: 0}]}}), {setMotionDirectVote});
+        requiredSecondCount: 0}]}}));
 
     expect(page.querySelector<HTMLInputElement>('.motion .ui.toggle.checkbox input')?.checked).toBe(true);
-    const favour = [...page.querySelectorAll<HTMLButtonElement>('.motion-vote-panel button')].at(-1);
-    await act(async () => {favour?.click(); await Promise.resolve();});
-    expect(setMotionDirectVote).toHaveBeenCalledWith('motion', 'FOR', 'seat');
+    const counts = [...page.querySelectorAll<HTMLButtonElement>('.motion-vote-panel button')];
+    expect(counts).toHaveLength(2);
+    expect(counts.every(button => button.disabled)).toBe(true);
+    expect(counts.map(button => button.textContent?.trim())).toEqual(['0', '0']);
+    expect(page.querySelector('.motion > .buttons')).toBeNull();
   });
 
   it('opens a formal motion ballot with the frozen procedural classification', async () => {

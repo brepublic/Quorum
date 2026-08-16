@@ -89,7 +89,7 @@ describe('self-hosted stage 4 workspace', () => {
     expect(item).toBeTruthy();
     await act(async () => { item?.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true})); });
     expect(container.textContent).toContain('Motions');
-    expect(container.textContent).toContain('Formal ballot');
+    expect(container.textContent).not.toContain('Formal ballot');
     expect(container.querySelector('.committee-workspace-page')?.textContent).not.toContain('Create strawpoll');
   });
 
@@ -155,7 +155,7 @@ describe('self-hosted stage 4 workspace', () => {
     expect(noteButtons).not.toContain('Edit'); expect(noteButtons).not.toContain('Delete');
     const proceedings = container.querySelector<HTMLAnchorElement>('a[href="/committees/committee/motions"]');
     await act(async () => {proceedings?.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true}));});
-    expect(container.textContent).toContain('Formal ballot');
+    expect(container.textContent).not.toContain('Formal ballot');
     expect(container.textContent).not.toContain('Propose motion');
     expect(container.textContent).not.toContain('新建决议草案');
   });

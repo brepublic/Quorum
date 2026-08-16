@@ -156,7 +156,7 @@ describe('self-hosted stage 4 API client', () => {
     const fetchMock = vi.fn(async () => ({ok: true, status: 200,
       json: async () => ({data: {}, meta: {requestId: 'adapter'}})}));
     vi.stubGlobal('fetch', fetchMock);
-    await selfHostedApi.revokeChair('committee', 'chair', 2);
+    await selfHostedApi.revokeChair('committee', 'chair@example.com', 2);
     await selfHostedApi.endSeatAssignment('committee', 'assignment');
     await selfHostedApi.createSeatInvitation('committee', {seatId: 'seat', maxUses: 1, expiresAt: '2026-08-14T12:00:00.000Z'});
     await selfHostedApi.setOperationMode('committee', 'CHAIR_OPERATED', 3);
@@ -166,7 +166,7 @@ describe('self-hosted stage 4 API client', () => {
     await selfHostedApi.activateRules('committee', 'version', 5);
     const calls = fetchMock.mock.calls as unknown as Array<[string, RequestInit]>;
     expect(calls.map(call => call[0])).toEqual([
-      '/api/v1/committees/committee/chairs/chair',
+      '/api/v1/committees/committee/chairs',
       '/api/v1/committees/committee/seat-assignments',
       '/api/v1/committees/committee/seat-invitations',
       '/api/v1/committees/committee/operation-mode',
@@ -175,7 +175,7 @@ describe('self-hosted stage 4 API client', () => {
       '/api/v1/rule-packages',
       '/api/v1/committees/committee/rules/activate'
     ]);
-    expect(calls[0]?.[1]).toEqual(expect.objectContaining({method: 'DELETE', body: JSON.stringify({baseRevision: 2})}));
+    expect(calls[0]?.[1]).toEqual(expect.objectContaining({method: 'DELETE', body: JSON.stringify({email: 'chair@example.com', baseRevision: 2})}));
     expect(calls[1]?.[1]).toEqual(expect.objectContaining({method: 'POST',
       body: JSON.stringify({action: 'END', assignmentId: 'assignment'})}));
     expect(calls[4]?.[1]).toEqual(expect.objectContaining({method: 'POST',

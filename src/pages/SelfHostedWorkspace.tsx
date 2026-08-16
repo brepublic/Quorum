@@ -293,7 +293,7 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
   const [seatName, setSeatName] = React.useState('');
   const [seatRank, setSeatRank] = React.useState<'STANDARD' | 'VETO' | 'NGO' | 'OBSERVER'>('STANDARD');
   const [seatCanVote, setSeatCanVote] = React.useState(true); const [seatMustVote, setSeatMustVote] = React.useState(false);
-  const [chairEmail, setChairUserId] = React.useState(''); const [assignmentEmail, setAssignmentUserId] = React.useState('');
+  const [chairEmail, setChairEmail] = React.useState(''); const [assignmentEmail, setAssignmentEmail] = React.useState('');
   const [assignmentSeatId, setAssignmentSeatId] = React.useState(snapshot.seats[0]?.id ?? '');
   const [invitationSeatId, setInvitationSeatId] = React.useState(snapshot.seats[0]?.id ?? '');
   const [invitationExpiresAt, setInvitationExpiresAt] = React.useState(() => new Date(Date.now() + 86_400_000).toISOString().slice(0, 16));
@@ -366,8 +366,8 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
     </Grid.Column><Grid.Column width={7}>
     {owner && !readOnly && <><Header as="h2">{t('Chairs')}</Header>
       <Form onSubmit={async () => {await execute('grant-chair', () => api.grantChair(snapshot.committee.id,
-        chairEmail.trim(), snapshot.committee.revision)); setChairUserId('');}}>
-        <Form.Input label={t('Email')} required value={chairEmail} onChange={event => setChairUserId(event.currentTarget.value)} />
+        chairEmail.trim(), snapshot.committee.revision)); setChairEmail('');}}>
+        <Form.Input label={t('Email')} required type="email" value={chairEmail} onChange={(_, data) => setChairEmail(String(data.value ?? ""))} />
         <Button primary loading={pending === 'grant-chair'} disabled={!chairEmail.trim()}>{t('Grant Chair')}</Button>
       </Form>
       <List divided>{(snapshot.chairs ?? []).map(chair => <List.Item key={chair.userEmail}>
@@ -379,10 +379,10 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
     {canChair && !readOnly && snapshot.seats.length > 0 && <>
       <Header as="h2">{t('Seat assignments')}</Header>
       <Form onSubmit={async () => {await execute('assign-seat', () => api.assignSeat(snapshot.committee.id,
-        assignmentSeatId, assignmentEmail.trim())); setAssignmentUserId('');}}>
+        assignmentSeatId, assignmentEmail.trim())); setAssignmentEmail('');}}>
         <Form.Select label={t('Seat')} value={assignmentSeatId} options={snapshot.seats.map(seat =>
           ({key: seat.id, value: seat.id, text: seat.displayName}))} onChange={(_, data) => setAssignmentSeatId(String(data.value))} />
-        <Form.Input label={t('Email')} required value={assignmentEmail} onChange={event => setAssignmentUserId(event.currentTarget.value)} />
+        <Form.Input label={t('Email')} required type="email" value={assignmentEmail} onChange={(_, data) => setAssignmentEmail(String(data.value ?? ""))} />
         <Button primary loading={pending === 'assign-seat'} disabled={!assignmentSeatId || !assignmentEmail.trim()}>{t('Assign seat')}</Button>
       </Form>
       <List divided>{(snapshot.assignments ?? []).map(assignment => <List.Item key={assignment.id}>

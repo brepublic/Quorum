@@ -690,10 +690,8 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
   const delegateMode = snapshot.committee.operationMode === 'DELEGATE_OPERATED';
   const chairAdvisoryMode = snapshot.committee.operationMode === 'CHAIR_OPERATED' && canChair;
   const delegateMayPropose = delegateMode && snapshot.motionSettings.delegateMotionProposalsEnabled;
-  const delegateMayVote = delegateMode && snapshot.motionSettings.delegateMotionVotingEnabled;
   const canPropose = snapshot.committee.status === 'ACTIVE' && (canChair
     || snapshot.viewer.audience === 'MEMBER' && delegateMayPropose);
-  const showDirectVotes = canChair || snapshot.viewer.audience === 'MEMBER' && delegateMayVote;
   if (!session) return <Message content={t('Start a meeting first.')} />;
 
   const selectedType = types.find(type => type.id === motionType);
@@ -838,9 +836,6 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
       checked={delegateMode && snapshot.motionSettings.delegateMotionVotingEnabled}
       onChange={(_, data) => void run(() => api.setMotionSettings(snapshot.committee.id, {
         ...snapshot.motionSettings, delegateMotionVotingEnabled: data.checked ?? false}, snapshot.committee.revision))} /></>}
-    {showDirectVotes && canChair && <Form.Select className="motion-voter" label={t('Voting delegation')}
-      placeholder={t('Select your delegation')} search selection fluid value={votingSeatId || false}
-      options={seatOptions} onChange={(_, data) => setVotingSeatId(String(data.value))} />}
     <Divider />
     <Icon name="sort numeric ascending" /> {t('Sorted from most to least disruptive.')}
     <Divider hidden />
@@ -859,16 +854,8 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
       const proceduralMotion = motion.ruleEvaluation.resolvedValues.procedural === true;
       const availableSeconders = presentSeats.filter(seat => seat.id !== motion.proposedBySeatId);
       const additionalSeconder = secondSeats[motion.id] ?? availableSeconders[0]?.id ?? '';
-      const selectedVoteSeatId = canChair ? votingSeatId : snapshot.viewer.seatId ?? '';
-      const selectedVote = motion.directVote.votes.find(vote => vote.seatId === selectedVoteSeatId);
-      const canSelectedSeatVote = !decided && motion.directVote.eligibility.some(seat => seat.seatId === selectedVoteSeatId);
       const counts = {FOR: 0, AGAINST: 0, ABSTAIN: 0};
       for (const vote of motion.directVote.votes) counts[vote.choice] += 1;
-      const setDirectVote = (choice: 'FOR' | 'AGAINST' | 'ABSTAIN') => {
-        if (!canSelectedSeatVote) return;
-        void run(() => api.setMotionDirectVote(motion.id, selectedVote?.choice === choice ? null : choice,
-          canChair ? selectedVoteSeatId : undefined));
-      };
       return <Card className="motion" key={motion.id}><Card.Content>
         <div className="motion-heading"><Card.Header>{time && `${time} `}{type?.names
           ? localizedDisplayName(type.names, 'zh-CN') : motion.motionTypeId}</Card.Header>
@@ -903,24 +890,22 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
         <Button size="mini" disabled={!additionalSeconder}
           onClick={() => void run(() => api.secondMotion(motion.id, additionalSeconder))}>{t('Second')}</Button>
       </Card.Content>}
-      {showDirectVotes && <Card.Content extra>
+      {delegateMode && <Card.Content extra>
         {canChair && <Checkbox toggle label={t('Include non-voting seats')}
           disabled={Boolean(motion.directVote.startedAt) && delegateMode}
           checked={motion.directVote.includeNonVotingSeats}
           onChange={(_, data) => void run(() => api.setMotionDirectVoteSettings(motion.id,
             motion.directVote.settingsRevision, data.checked ?? false))} />}
         <div className="motion-vote-panel"><Button.Group fluid>
-          <Popup content={t('Against')} trigger={<Button color="red" disabled={!canSelectedSeatVote}
-            active={selectedVote?.choice === 'AGAINST'} onClick={() => setDirectVote('AGAINST')}>
-            <Icon name={selectedVote?.choice === 'AGAINST' ? 'thumbs down' : 'thumbs down outline'} />
+          <Popup content={t('Against')} trigger={<Button color="red" disabled aria-label={t('Against')}>
+            <Icon name="thumbs down outline" />
             {counts.AGAINST}</Button>} />
           {motion.directVote.choices.includes('ABSTAIN') && <Popup content={t('Abstain')} trigger={<Button color="yellow"
-            disabled={!canSelectedSeatVote} active={selectedVote?.choice === 'ABSTAIN'} onClick={() => setDirectVote('ABSTAIN')}>
-            <Icon name={selectedVote?.choice === 'ABSTAIN' ? 'circle' : 'circle outline'} />
+            disabled aria-label={t('Abstain')}>
+            <Icon name="circle outline" />
             {counts.ABSTAIN}</Button>} />}
-          <Popup content={t('In favour')} trigger={<Button color="green" disabled={!canSelectedSeatVote}
-            active={selectedVote?.choice === 'FOR'} onClick={() => setDirectVote('FOR')}>
-            <Icon name={selectedVote?.choice === 'FOR' ? 'thumbs up' : 'thumbs up outline'} />
+          <Popup content={t('In favour')} trigger={<Button color="green" disabled aria-label={t('In favour')}>
+            <Icon name="thumbs up outline" />
             {counts.FOR}</Button>} />
         </Button.Group><div className="motion-vote-result">
           <span>{t('{count} votes required to pass a motion', {count: motion.directVote.threshold})}</span>
@@ -933,7 +918,7 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
           {meetingSessionId: session.id, subjectType: 'MOTION', subjectId: motion.id, procedural: proceduralMotion,
             thresholdKind: 'SIMPLE_MAJORITY'}))}>{t(proceduralMotion ? 'Open procedural ballot' : 'Open substantive ballot')}</Button>
       </Card.Content>}
-      {!decided && canChair && <>
+      {!decided && chairAdvisoryMode && <>
         <Button.Group fluid attached="bottom"><Button negative
           onClick={() => void run(() => api.decideMotion(motion.id, motion.revision, 'FAILED'))}>{t('Failed')}</Button>
           <Button positive disabled={!chairAdvisoryMode && !['SECONDED', 'VOTING'].includes(motion.status)}
@@ -945,7 +930,6 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
         <Icon name="arrow right" /></Button>}
       </Card>;
     })}</Card.Group>
-    <Ballots snapshot={snapshot} run={run} api={api} canChair={canChair} />
   </Container>;
 }
 

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import {Button, Container, Form, Header, Icon, Menu, Message, Segment, Table} from 'semantic-ui-react';
-import {Link, useLocation} from 'react-router-dom';
+import {Link, useHistory, useLocation} from 'react-router-dom';
 import Loading from '../components/Loading';
 import {LanguageMenuItem, t} from '../i18n';
 import {
@@ -267,6 +267,7 @@ function AccountManager({client, currentUser, onLogout}: {
 
 export default function SelfHostedIdentity({client = selfHostedIdentityClient}: {client?: SelfHostedIdentityClient}) {
   const location = useLocation();
+  const history = useHistory();
   const [screen, setScreen] = React.useState<Screen>('loading');
   const [user, setUser] = React.useState<SelfHostedUser>();
   const [error, setError] = React.useState<string>();
@@ -304,6 +305,7 @@ export default function SelfHostedIdentity({client = selfHostedIdentityClient}: 
     } finally {
       setUser(undefined);
       setScreen('login');
+      history.replace('/');
     }
   };
 
