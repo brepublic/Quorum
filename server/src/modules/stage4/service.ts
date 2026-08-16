@@ -942,11 +942,11 @@ export class Stage4Service {
       }
       if (viewer.audience === 'OWNER' || viewer.audience === 'CHAIR') {
         const [memberships, chairs, assignments] = await Promise.all([
-          client.query<{userId: string; status: string}>(`SELECT user_id AS "userId",status FROM committee_memberships WHERE committee_id=$1 ORDER BY user_id`, [committeeId]),
-          client.query<{userId: string}>(`SELECT user_id AS "userId" FROM committee_capabilities
-            WHERE committee_id=$1 AND capability='CHAIR' AND revoked_at IS NULL ORDER BY user_id`, [committeeId]),
-          client.query<{id: string; seatId: string; userId: string; status: string}>(`SELECT id,seat_id AS "seatId",user_id AS "userId",status
-            FROM seat_assignments WHERE committee_id=$1 ORDER BY assigned_at,id`, [committeeId])
+          client.query<{userEmail: string | null; status: string}>(`SELECT u.email AS "userEmail",m.status FROM committee_memberships m JOIN users u ON u.id=m.user_id WHERE m.committee_id=$1 ORDER BY u.email`, [committeeId]),
+          client.query<{userEmail: string}>(`SELECT u.email AS "userEmail" FROM committee_capabilities c JOIN users u ON u.id=c.user_id
+            WHERE c.committee_id=$1 AND c.capability='CHAIR' AND c.revoked_at IS NULL ORDER BY u.email`, [committeeId]),
+          client.query<{id: string; seatId: string; userEmail: string | null; status: string}>(`SELECT a.id,a.seat_id AS "seatId",u.email AS "userEmail",a.status
+            FROM seat_assignments a JOIN users u ON u.id=a.user_id WHERE a.committee_id=$1 ORDER BY a.assigned_at,a.id`, [committeeId])
         ]);
         result.memberships = memberships.rows; result.chairs = chairs.rows; result.assignments = assignments.rows;
       }

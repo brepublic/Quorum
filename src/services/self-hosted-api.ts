@@ -439,14 +439,14 @@ export const selfHostedApi = {
   updateSeat(committeeId: string, seatId: string, baseRevision: number, patch: Record<string, unknown>) {
     return request<Stage4CommitteeSeat>(`/api/v1/committees/${committeeId}/seats/${seatId}`, {method: 'PUT', body: {baseRevision, patch}});
   },
-  grantChair(committeeId: string, userId: string, baseRevision: number) {
-    return request<CommitteeSummary>(`/api/v1/committees/${committeeId}/chairs`, {method: 'POST', body: {userId, baseRevision}});
+  grantChair(committeeId: string, email: string, baseRevision: number) {
+    return request<CommitteeSummary>(`/api/v1/committees/${committeeId}/chairs`, {method: 'POST', body: {email, baseRevision}});
   },
-  revokeChair(committeeId: string, userId: string, baseRevision: number) {
-    return request<CommitteeSummary>(`/api/v1/committees/${committeeId}/chairs/${userId}`, {method: 'DELETE', body: {baseRevision}});
+  revokeChair(committeeId: string, email: string, baseRevision: number) {
+    return request<CommitteeSummary>(`/api/v1/committees/${committeeId}/chairs`, {method: 'DELETE', body: {email, baseRevision}});
   },
-  assignSeat(committeeId: string, seatId: string, userId: string) {
-    return request<{id: string}>(`/api/v1/committees/${committeeId}/seat-assignments`, {method: 'POST', body: {seatId, userId}});
+  assignSeat(committeeId: string, seatId: string, email: string) {
+    return request<{id: string}>(`/api/v1/committees/${committeeId}/seat-assignments`, {method: 'POST', body: {seatId, email}});
   },
   endSeatAssignment(committeeId: string, assignmentId: string) {
     return request<{id: string}>(`/api/v1/committees/${committeeId}/seat-assignments`, {method: 'POST',

@@ -25,10 +25,10 @@ function snapshot(audience: CommitteeWorkspaceSnapshot['viewer']['audience']): C
     revision: 2, flag: {type: 'STANDARD', value: 'cn'}}], viewer: {audience, seatId: audience === 'MEMBER' ? 'seat' : null},
   motionSettings: {delegateMotionProposalsEnabled: false, delegateMotionVotingEnabled: false},
   layoutSettings: {moveQueueUp: false, timersInSeparateColumns: false},
-  memberships: audience === 'CHAIR' || audience === 'OWNER' ? [{userId: 'delegate', status: 'ACTIVE'}] : undefined,
-  chairs: audience === 'CHAIR' || audience === 'OWNER' ? [{userId: 'chair-user'}] : undefined,
+  memberships: audience === 'CHAIR' || audience === 'OWNER' ? [{userEmail: 'delegate@example.com', status: 'ACTIVE'}] : undefined,
+  chairs: audience === 'CHAIR' || audience === 'OWNER' ? [{userEmail: 'chair@example.com'}] : undefined,
   assignments: audience === 'CHAIR' || audience === 'OWNER'
-    ? [{id: 'assignment', seatId: 'seat', userId: 'delegate', status: 'ACTIVE'}] : undefined,
+    ? [{id: 'assignment', seatId: 'seat', userEmail: 'delegate@example.com', status: 'ACTIVE'}] : undefined,
   attendance: [], points: [], notes: [], textPosts: [], activeRules: {versionId: 'rules', activePhaseId: null,
     phases: [{id: 'formal-debate', names: {en: 'Formal debate', 'zh-CN': '正式辩论'}}],
     attendanceResponses: ['PRESENT', 'ABSENT'], pointTypes: [], motionTypes: [], speakerLists: [],

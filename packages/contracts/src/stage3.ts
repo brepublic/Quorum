@@ -14,7 +14,7 @@ export interface CommitteeRevisionRequest {baseRevision: number}
 export interface UpdateCommitteeRequest extends CommitteeRevisionRequest {
   patch: Partial<Pick<CommitteeSummary, 'name' | 'chairLabel' | 'topic' | 'conference' | 'visibility'>>;
 }
-export interface SetChairRequest extends CommitteeRevisionRequest {userId: string}
+export interface SetChairRequest extends CommitteeRevisionRequest {email: string}
 export interface SetOperationModeRequest extends CommitteeRevisionRequest {operationMode: CommitteeOperationMode}
 export interface CommitteeMotionSettings {
   delegateMotionProposalsEnabled: boolean;
@@ -27,7 +27,7 @@ export interface SetCommitteeStatusRequest extends CommitteeRevisionRequest {sta
 export interface CreateSeatRequest {
   stableKey: string; displayName: string; rank?: string; canVote?: boolean; hasVeto?: boolean; sortOrder?: number;
 }
-export type SeatAssignmentRequest = {seatId: string; userId: string} | {action: 'END'; assignmentId: string};
+export type SeatAssignmentRequest = {seatId: string; email: string} | {action: 'END'; assignmentId: string};
 export interface CreateSeatInvitationRequest {seatId: string; maxUses: number; expiresAt: string}
 export interface RedeemSeatInvitationRequest {code: string}
 export interface ImportRulePackageRequest {
@@ -72,9 +72,9 @@ export interface CommitteeSnapshot {
   committee: CommitteeSummary;
   seats: CommitteeSeat[];
   viewer: {audience: 'PUBLIC' | 'MEMBER' | 'CHAIR' | 'OWNER'; seatId: string | null};
-  memberships?: Array<{userId: string; status: string}>;
-  chairs?: Array<{userId: string}>;
-  assignments?: Array<{id: string; seatId: string; userId: string; status: string}>;
+  memberships?: Array<{userEmail: string | null; status: string}>;
+  chairs?: Array<{userEmail: string}>;
+  assignments?: Array<{id: string; seatId: string; userEmail: string | null; status: string}>;
   sync: {committeeEventSequence: number};
 }
 

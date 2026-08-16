@@ -934,11 +934,11 @@ async function handleStage3Request(options: {
       integerField(body, 'baseRevision'), context), requestId)); return true;
   }
 
-  const chairs = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/chairs(?:\/([0-9a-f-]{36}))?$/.exec(pathname);
-  if (chairs && ((method === 'POST' && !chairs[2]) || (method === 'DELETE' && chairs[2]))) {
+  const chairs = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/chairs$/.exec(pathname);
+  if (chairs && (method === 'POST' || method === 'DELETE')) {
     const auth = await write(); const body = await readJson(request);
-    const userId = chairs[2] ?? stringField(body, 'userId') as string;
-    sendJson(response, 200, success(await stage3.setChair(auth, chairs[1] as string, userId,
+    const email = stringField(body, 'email') as string;
+    sendJson(response, 200, success(await stage3.setChair(auth, chairs[1] as string, email,
       method === 'POST', integerField(body, 'baseRevision'), context), requestId)); return true;
   }
 

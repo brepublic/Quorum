@@ -89,6 +89,14 @@ function requiredString(value: unknown, name: string, max = 200): string {
   return value.trim();
 }
 
+function requiredEmail(value: unknown): string {
+  const email = requiredString(value, 'Email', 254).toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new AppError({code: 'VALIDATION_FAILED', message: 'Enter a valid email address.'});
+  }
+  return email;
+}
+
 function textField(value: unknown, name: string, max: number): string {
   if (typeof value !== 'string' || value.length > max) {
     throw new AppError({code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
@@ -337,10 +345,12 @@ export class Stage3Service {
         viewer, sync: {committeeEventSequence: Number(row.next_event_sequence) - 1}};
       if (viewer.audience === 'OWNER' || viewer.audience === 'CHAIR') {
         const [memberships, chairs, assignments] = await Promise.all([
-          client.query(`SELECT user_id AS "userId", status FROM committee_memberships WHERE committee_id=$1`, [committeeId]),
-          client.query(`SELECT user_id AS "userId" FROM committee_capabilities
-            WHERE committee_id=$1 AND capability='CHAIR' AND revoked_at IS NULL`, [committeeId]),
-          client.query(`SELECT id, seat_id AS "seatId", user_id AS "userId", status FROM seat_assignments WHERE committee_id=$1`, [committeeId])
+          client.query(`SELECT u.email AS "userEmail", m.status FROM committee_memberships m
+            JOIN users u ON u.id=m.user_id WHERE m.committee_id=$1`, [committeeId]),
+          client.query(`SELECT u.email AS "userEmail" FROM committee_capabilities c
+            JOIN users u ON u.id=c.user_id WHERE c.committee_id=$1 AND c.capability='CHAIR' AND c.revoked_at IS NULL`, [committeeId]),
+          client.query(`SELECT a.id, a.seat_id AS "seatId", u.email AS "userEmail", a.status FROM seat_assignments a
+            JOIN users u ON u.id=a.user_id WHERE a.committee_id=$1`, [committeeId])
         ]);
         snapshot.memberships = memberships.rows as CommitteeSnapshot['memberships'];
         snapshot.chairs = chairs.rows as CommitteeSnapshot['chairs'];
@@ -421,16 +431,18 @@ export class Stage3Service {
     });
   }
 
-  async setChair(auth: AuthenticatedSession, committeeId: string, userId: string, grant: boolean,
+  async setChair(auth: AuthenticatedSession, committeeId: string, email: string, grant: boolean,
     baseRevision: number, context: Context): Promise<CommitteeSummary> {
     requireBusinessIdentity(auth);
     return transaction(this.pool, async client => {
       const row = await lockedCommittee(client, committeeId); requireOwner(row, auth.user.id); requireEditable(row); revision(row, baseRevision);
-      const user = await client.query<{is_system_admin: boolean}>(`SELECT is_system_admin FROM users WHERE id=$1 AND status='ACTIVE'`, [userId]);
+      const user = await client.query<{id: string; is_system_admin: boolean}>(`SELECT id,is_system_admin FROM users
+        WHERE email=$1 AND status='ACTIVE'`, [requiredEmail(email)]);
       if (!user.rowCount) throw new AppError({code: 'NOT_FOUND', message: 'User not found.'});
       if (grant && user.rows[0]?.is_system_admin) {
         throw new AppError({code: 'FORBIDDEN', message: 'The system administrator cannot receive Chair capability.'});
       }
+      const userId = user.rows[0]?.id as string;
       if (grant) await client.query(`INSERT INTO committee_capabilities
         (committee_id,user_id,capability,granted_by_user_id) VALUES ($1,$2,'CHAIR',$3)
         ON CONFLICT (committee_id,user_id,capability) DO UPDATE SET granted_by_user_id=EXCLUDED.granted_by_user_id,
@@ -440,7 +452,7 @@ export class Stage3Service {
       const updated = await client.query<CommitteeRow>('UPDATE committees SET revision=revision+1,updated_at=now() WHERE id=$1 RETURNING *', [committeeId]);
       const changed = updated.rows[0] as CommitteeRow;
       await appendEvent(client, changed, {type: grant ? 'committee.chair_granted' : 'committee.chair_revoked', resourceType: 'committee', resourceId: committeeId,
-        revision: changed.revision, audience: 'MEMBER', payload: {chairUserId: userId, granted: grant}});
+        revision: changed.revision, audience: 'MEMBER', payload: {chairEmail: email, granted: grant}});
       await audit(client, context, {committeeId, actorUserId: auth.user.id, capabilities: ['COMMITTEE_OWNER'],
         action: grant ? 'committee.chair_granted' : 'committee.chair_revoked', resourceType: 'committee_capability', resourceId: userId});
       return committee(changed);
@@ -582,7 +594,10 @@ export class Stage3Service {
           action: 'committee.seat_assignment_ended', resourceType: 'seat_assignment', resourceId: assignmentId});
         return ended.rows[0];
       }
-      const seatId = requiredString(input.seatId, 'Seat ID'); const userId = requiredString(input.userId, 'User ID');
+      const seatId = requiredString(input.seatId, 'Seat ID'); const email = requiredEmail(input.email);
+      const user = await client.query<{id: string}>(`SELECT id FROM users WHERE email=$1 AND status='ACTIVE'`, [email]);
+      if (!user.rowCount) throw new AppError({code: 'NOT_FOUND', message: 'User not found.'});
+      const userId = user.rows[0]?.id as string;
       const id = randomUUID();
       const inserted = await client.query(`INSERT INTO seat_assignments
         (id,committee_id,seat_id,user_id,assigned_by_user_id) VALUES ($1,$2,$3,$4,$5)

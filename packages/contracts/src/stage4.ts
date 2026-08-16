@@ -307,9 +307,9 @@ export interface CommitteeWorkspaceSnapshot {
   committee: Omit<CommitteeSummary, 'ownerUserId'> & {ownerUserId?: string};
   seats: Stage4CommitteeSeat[];
   viewer: {audience: 'PUBLIC' | 'MEMBER' | 'CHAIR' | 'OWNER'; seatId: string | null};
-  memberships?: Array<{userId: string; status: string}>;
-  chairs?: Array<{userId: string}>;
-  assignments?: Array<{id: string; seatId: string; userId: string; status: string}>;
+  memberships?: Array<{userEmail: string | null; status: string}>;
+  chairs?: Array<{userEmail: string}>;
+  assignments?: Array<{id: string; seatId: string; userEmail: string | null; status: string}>;
   meetingSession?: MeetingSession;
   rollCall?: RollCall;
   attendance: AttendanceState[];
