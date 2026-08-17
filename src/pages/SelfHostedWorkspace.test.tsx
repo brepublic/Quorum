@@ -97,7 +97,7 @@ describe('self-hosted stage 4 workspace', () => {
 
   it('exposes stage 5 proceedings from the same-origin workspace', async () => {
     const proceedings: CommitteeWorkspaceSnapshot = {...snapshot,
-      meetingSession: {id: 'session', committeeId: 'committee', phaseId: 'formal-debate', activeRulePackageVersionId: 'rules',
+      meetingSession: {id: 'session', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate', activeRulePackageVersionId: 'rules',
         status: 'OPEN', revision: 1, createdAt: '2026-08-13T00:00:00.000Z', closedAt: null},
       timers: [], speakerLists: [], motions: [], ballots: [], strawpolls: [], documents: []};
     const api = {snapshot: vi.fn(async () => proceedings), openCommitteeEvents: vi.fn(() => () => undefined)} as unknown as SelfHostedApi;
@@ -115,7 +115,7 @@ describe('self-hosted stage 4 workspace', () => {
 
   it('offers point types from the active rule read model', async () => {
     const ruleDriven: CommitteeWorkspaceSnapshot = {...snapshot,
-      meetingSession: {id: 'session', committeeId: 'committee', phaseId: 'formal-debate', activeRulePackageVersionId: 'rules',
+      meetingSession: {id: 'session', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate', activeRulePackageVersionId: 'rules',
         status: 'OPEN', revision: 1, createdAt: '2026-08-13T00:00:00.000Z', closedAt: null},
       activeRules: {...snapshot.activeRules, activePhaseId: 'formal-debate', pointTypes: [
         {id: 'point-of-order', names: {en: 'Point of order', 'zh-CN': '程序性问题'}, interruptRequested: true}
@@ -148,7 +148,7 @@ describe('self-hosted stage 4 workspace', () => {
 
     const archived: CommitteeWorkspaceSnapshot = {...ownerSnapshot,
       committee: {...ownerSnapshot.committee, status: 'ARCHIVED' as const, revision: 2},
-      meetingSession: {id: 'session', committeeId: 'committee', phaseId: 'formal-debate', activeRulePackageVersionId: 'rules',
+      meetingSession: {id: 'session', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate', activeRulePackageVersionId: 'rules',
         status: 'OPEN', revision: 1, createdAt: '2026-08-13T00:00:00.000Z', closedAt: null},
       timers: [], speakerLists: [], motions: [], ballots: [], strawpolls: [], documents: []};
     const requestCommitteeDeletion = vi.fn(async () => { throw new Error('cleanup queued'); });

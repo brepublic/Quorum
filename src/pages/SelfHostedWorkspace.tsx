@@ -329,7 +329,7 @@ function CommitteeOverviewPanel({snapshot}: {snapshot: CommitteeWorkspaceSnapsho
       <List.Item><List.Icon name="building outline" /><List.Content><List.Header>{t('Conference')}</List.Header>
         <List.Description>{snapshot.committee.conference || '—'}</List.Description></List.Content></List.Item>
       <List.Item><List.Icon name="signal" /><List.Content><List.Header>{t('Meeting status')}</List.Header>
-        <List.Description>{t(snapshot.committee.status)}{snapshot.meetingSession ? ` · ${t(snapshot.meetingSession.status)}` : ''}</List.Description>
+        <List.Description>{t(snapshot.committee.status)}{snapshot.meetingSession ? ` · ${snapshot.meetingSession.name} · ${t(snapshot.meetingSession.status)}` : ''}</List.Description>
       </List.Content></List.Item>
     </List>
     <Button icon="share alternate" content={t('Share committee')} onClick={() => void share()} />
@@ -528,8 +528,8 @@ function SettingsPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
 function RollCallPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspaceSnapshot; run(operation: () => Promise<unknown>): Promise<void>;
   api: SelfHostedApi; canChair: boolean}) {
   const chair = canChair; const session = snapshot.meetingSession; const rollCall = snapshot.rollCall;
+  const sessionName = session?.status === 'PENDING' ? session.name : snapshot.nextMeetingSessionName;
   const [pending, setPending] = React.useState<string>();
-  const [phaseId, setPhaseId] = React.useState(snapshot.activeRules.activePhaseId ?? snapshot.activeRules.phases[0]?.id ?? '');
   const [page, setPage] = React.useState(0); const [resetOpen, setResetOpen] = React.useState(false);
   const [gridColumns, setGridColumns] = React.useState(() => rollCallGridColumnCount());
   const execute = async (key: string, operation: () => Promise<unknown>) => {
@@ -547,10 +547,9 @@ function RollCallPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
     window.addEventListener('resize', updateGridColumns);
     return () => window.removeEventListener('resize', updateGridColumns);
   }, []);
-  if (!rollCall) return <>{chair && !session && <Form onSubmit={() => execute('meeting', () => api.startMeetingSession(snapshot.committee.id, phaseId || undefined))}>
-      <Form.Select label={t('Meeting phase')} value={phaseId} options={snapshot.activeRules.phases.map(phase => ({key: phase.id, value: phase.id,
-        text: phase.names ? localizedDisplayName(phase.names, 'zh-CN') : phase.id}))} onChange={(_, data) => setPhaseId(String(data.value))} />
-      <Button primary loading={pending === 'meeting'} disabled={!phaseId}>{t('Start meeting')}</Button>
+  if (!rollCall) return <>{chair && (!session || session.status === 'PENDING') && <Form onSubmit={() => execute('meeting', () => api.startMeetingSession(snapshot.committee.id))}>
+      <Form.Input label={t('Meeting session')} value={sessionName ?? ''} readOnly />
+      <Button primary loading={pending === 'meeting'}>{t('Start meeting')}</Button>
     </Form>}
     {chair && session?.status === 'OPEN' && !rollCall && <Button primary loading={pending === 'roll-call'}
       onClick={() => void execute('roll-call', () => api.startRollCall(snapshot.committee.id, session.id))}>{t('Start roll call')}</Button>}
@@ -695,6 +694,14 @@ function PointsPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspa
       <Button positive onClick={() => resolve(point, 'UPHELD')}>{t('Approve point')}</Button></Button.Group>
     : <PointResolutionForm point={point} run={run} api={api} />;
   const points = [...snapshot.points].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+  const sessionNames = new Map((snapshot.meetingSessions ?? []).map(item => [item.id, item.name]));
+  if (snapshot.meetingSession) sessionNames.set(snapshot.meetingSession.id, snapshot.meetingSession.name);
+  const pointGroups = points.reduce<Array<{meetingSessionId: string; points: typeof points}>>((groups, point) => {
+    const group = groups.at(-1);
+    if (group?.meetingSessionId === point.meetingSessionId) group.points.push(point);
+    else groups.push({meetingSessionId: point.meetingSessionId, points: [point]});
+    return groups;
+  }, []);
   const canRaise = snapshot.viewer.audience !== 'PUBLIC' && snapshot.committee.status === 'ACTIVE';
   return <Container text className="points-page">
     {canRaise && session?.status === 'OPEN' && <Form className="point-proposal-form" onSubmit={create}>
@@ -710,7 +717,10 @@ function PointsPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspa
       <Button type="submit" icon="plus" basic primary fluid aria-label={t('Raise point')}
         disabled={!type || canChair && !seatId || !chairOperated && !content.trim()} />
     </Form>}<Divider hidden />
-    <Card.Group itemsPerRow={1} className="point-list">{points.map(item => {
+    {snapshot.meetingSession && <Divider horizontal className="history-session-divider current-session-divider">{snapshot.meetingSession.name}</Divider>}
+    {pointGroups.map(group => <React.Fragment key={group.meetingSessionId}>
+      {group.meetingSessionId !== snapshot.meetingSession?.id && <Divider horizontal className="history-session-divider">{sessionNames.get(group.meetingSessionId) ?? t('Meeting session')}</Divider>}
+      <Card.Group itemsPerRow={1} className="point-list">{group.points.map(item => {
       const point = 'content' in item ? item as CommitteePoint : undefined;
       const definition = types.find(candidate => candidate.id === item.pointTypeId);
       return <Card className="point-card" key={item.id}><Card.Content>
@@ -727,7 +737,8 @@ function PointsPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspa
       {canChair && item.status === 'PENDING' && point && <Card.Content extra>
         {chairOperated ? actions(point) : <PointResolutionForm point={point} run={run} api={api} />}
       </Card.Content>}</Card>;
-    })}</Card.Group>
+      })}</Card.Group>
+    </React.Fragment>)}
   </Container>;
 }
 

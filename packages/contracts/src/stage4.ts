@@ -170,10 +170,11 @@ export interface UpdateTextResourceRequest {
   patch: {title?: string; content?: string; sortOrder?: number};
 }
 
-export type MeetingSessionStatus = 'OPEN' | 'CLOSED';
+export type MeetingSessionStatus = 'PENDING' | 'OPEN' | 'CLOSED';
 export interface MeetingSession {
   id: string;
   committeeId: string;
+  name: string;
   phaseId: string;
   activeRulePackageVersionId: string;
   status: MeetingSessionStatus;
@@ -313,6 +314,8 @@ export interface CommitteeWorkspaceSnapshot {
   chairs?: Array<{userEmail: string}>;
   assignments?: Array<{id: string; seatId: string; userEmail: string | null; status: string}>;
   meetingSession?: MeetingSession;
+  meetingSessions?: MeetingSession[];
+  nextMeetingSessionName?: string;
   rollCall?: RollCall;
   attendance: AttendanceState[];
   points: Array<CommitteePoint | PublicCommitteePoint>;

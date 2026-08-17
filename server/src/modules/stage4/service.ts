@@ -203,8 +203,8 @@ interface TextPostRow extends QueryResultRow {
 }
 
 interface MeetingSessionRow extends QueryResultRow {
-  id: string; committee_id: string; phase_id: string; active_rule_package_version_id: string;
-  status: 'OPEN' | 'CLOSED'; revision: number; created_at: Date; closed_at: Date | null;
+  id: string; committee_id: string; name: string; phase_id: string; active_rule_package_version_id: string;
+  status: 'PENDING' | 'OPEN' | 'CLOSED'; revision: number; created_at: Date; closed_at: Date | null;
 }
 
 interface RollCallRow extends QueryResultRow {
@@ -322,7 +322,7 @@ function textPost(row: TextPostRow): CommitteeTextPost {
 }
 
 function meetingSession(row: MeetingSessionRow): MeetingSession {
-  return {id: row.id, committeeId: row.committee_id, phaseId: row.phase_id,
+  return {id: row.id, committeeId: row.committee_id, name: row.name, phaseId: row.phase_id,
     activeRulePackageVersionId: row.active_rule_package_version_id, status: row.status, revision: row.revision,
     createdAt: row.created_at.toISOString(), closedAt: row.closed_at?.toISOString() ?? null};
 }
@@ -694,11 +694,23 @@ export class Stage4Service {
         can_vote AS "canVote",has_veto AS "hasVeto",must_vote AS "mustVote",sort_order AS "sortOrder",active,revision,
         json_build_object('type',flag_type,'value',flag_value) AS flag FROM committee_seats
         WHERE committee_id=$1 AND active=true ORDER BY sort_order,stable_key,id`, [committeeId]);
-      const sessionResult = await client.query<MeetingSessionRow>(`SELECT * FROM meeting_sessions WHERE committee_id=$1
-        ORDER BY (status='OPEN') DESC,created_at DESC,id DESC LIMIT 1`, [committeeId]);
+      const [sessionResult, meetingSessionsResult, sessionCount] = await Promise.all([
+        client.query<MeetingSessionRow>(`SELECT * FROM meeting_sessions WHERE committee_id=$1
+          ORDER BY (status='OPEN') DESC,(status='PENDING') DESC,created_at DESC,id DESC LIMIT 1`, [committeeId]),
+        client.query<MeetingSessionRow>('SELECT * FROM meeting_sessions WHERE committee_id=$1 ORDER BY created_at DESC,id DESC', [committeeId]),
+        client.query<{count: string}>('SELECT count(*)::text AS count FROM meeting_sessions WHERE committee_id=$1', [committeeId])
+      ]);
       const currentSession = sessionResult.rows[0];
+      const nextMeetingSessionName = `第${Number(sessionCount.rows[0]?.count ?? 0) + 1}会期`;
       let currentRollCall: RollCall | undefined; let attendance: AttendanceState[] = [];
-      let points: Array<CommitteePoint | PublicCommitteePoint> = [];
+      const pointRows = await client.query<PointRow>('SELECT * FROM points WHERE committee_id=$1 ORDER BY created_at,id', [committeeId]);
+      const points: Array<CommitteePoint | PublicCommitteePoint> = viewer.audience === 'PUBLIC'
+        ? pointRows.rows.map(row => ({id: row.id, committeeId: row.committee_id, meetingSessionId: row.meeting_session_id,
+          pointTypeId: row.point_type_id, raisedBySeatId: row.raised_by_seat_id,
+          raisedBySeatDisplayName: row.raised_by_seat_display_name, interruptRequested: row.interrupt_requested,
+          status: row.status, rulePackageVersionId: row.rule_package_version_id, revision: row.revision,
+          createdAt: row.created_at.toISOString(), resolvedAt: row.resolved_at?.toISOString() ?? null}))
+        : pointRows.rows.map(point);
       if (currentSession) {
         if (viewer.audience !== 'PUBLIC') {
           const rollCallResult = await client.query<RollCallRow>(`SELECT * FROM roll_calls WHERE meeting_session_id=$1
@@ -709,12 +721,6 @@ export class Stage4Service {
           `SELECT seat_id,state,last_event_id,updated_at FROM current_attendance WHERE meeting_session_id=$1 ORDER BY seat_id`, [currentSession.id]);
         attendance = attendanceResult.rows.map(row => ({seatId: row.seat_id, state: row.state,
           lastEventId: row.last_event_id, updatedAt: row.updated_at.toISOString()}));
-        const pointRows = await client.query<PointRow>(`SELECT * FROM points WHERE meeting_session_id=$1 ORDER BY created_at,id`, [currentSession.id]);
-        points = viewer.audience === 'PUBLIC' ? pointRows.rows.map(row => ({id: row.id, committeeId: row.committee_id,
-          meetingSessionId: row.meeting_session_id, pointTypeId: row.point_type_id, raisedBySeatId: row.raised_by_seat_id,
-          raisedBySeatDisplayName: row.raised_by_seat_display_name, interruptRequested: row.interrupt_requested,
-          status: row.status, rulePackageVersionId: row.rule_package_version_id, revision: row.revision,
-          createdAt: row.created_at.toISOString(), resolvedAt: row.resolved_at?.toISOString() ?? null})) : pointRows.rows.map(point);
       }
       const summary = committeeSummary(committee); const {ownerUserId: _ownerUserId, ...publicCommittee} = summary;
       const ruleResult = await client.query<{definition: {
@@ -738,7 +744,8 @@ export class Stage4Service {
           delegateMotionVotingEnabled: committee.delegate_motion_voting_enabled},
         layoutSettings: {moveQueueUp: committee.move_queue_up,
           timersInSeparateColumns: committee.timers_in_separate_columns},
-        activeRules: {versionId: committee.active_rule_package_version_id, activePhaseId: currentSession?.phase_id ?? null,
+        activeRules: {versionId: committee.active_rule_package_version_id,
+          activePhaseId: currentSession?.status === 'OPEN' ? currentSession.phase_id : null,
           phases: rules.phases ?? [], attendanceResponses: rules.attendance?.responses ?? [],
           pointTypes: (rules.points ?? []).map(item => ({id: item.id, ...(item.names ? {names: item.names} : {}),
             interruptRequested: item.interruptRequested === true})),
@@ -752,6 +759,8 @@ export class Stage4Service {
           documents: {amendmentsPublicByDefault: rules.documents?.amendmentsPublicByDefault === true}},
         sync: {committeeEventSequence: Number(committee.next_event_sequence) - 1},
         ...(currentSession ? {meetingSession: meetingSession(currentSession)} : {}),
+        meetingSessions: meetingSessionsResult.rows.map(meetingSession),
+        nextMeetingSessionName: currentSession?.status === 'PENDING' ? currentSession.name : nextMeetingSessionName,
         ...(currentRollCall ? {rollCall: currentRollCall} : {})};
       const speakerRows = await client.query<SnapshotSpeakerListRow>(`SELECT * FROM speaker_lists
         WHERE committee_id=$1 ORDER BY created_at,id`, [committeeId]);
@@ -1301,11 +1310,17 @@ export class Stage4Service {
       if (phaseIds.length > 0 && !phaseIds.includes(phaseId)) {
         throw new AppError({code: 'VALIDATION_FAILED', message: 'Phase is not defined by the active rule package.'});
       }
-      const id = randomUUID();
-      const inserted = await client.query<MeetingSessionRow>(`INSERT INTO meeting_sessions
-        (id,committee_id,phase_id,active_rule_package_version_id,created_by_user_id)
-        VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-      [id, committeeId, phaseId, committee.active_rule_package_version_id, auth.user.id]);
+      const pending = await client.query<MeetingSessionRow>(`SELECT * FROM meeting_sessions
+        WHERE committee_id=$1 AND status='PENDING' FOR UPDATE`, [committeeId]);
+      if ((pending.rowCount ?? 0) > 1) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'More than one meeting session is pending.'});
+      const id = pending.rows[0]?.id ?? randomUUID();
+      const inserted = pending.rows[0]
+        ? await client.query<MeetingSessionRow>(`UPDATE meeting_sessions SET status='OPEN',phase_id=$2,revision=revision+1
+          WHERE id=$1 RETURNING *`, [id, phaseId])
+        : await client.query<MeetingSessionRow>(`INSERT INTO meeting_sessions
+          (id,committee_id,name,phase_id,active_rule_package_version_id,created_by_user_id)
+          SELECT $1,$2,'第' || (count(*) + 1)::text || '会期',$3,$4,$5 FROM meeting_sessions WHERE committee_id=$2
+          RETURNING *`, [id, committeeId, phaseId, committee.active_rule_package_version_id, auth.user.id]);
       const generalRule = definition.rows[0].definition.speakerLists?.find(item => item.id === 'general-speakers-list');
       const configuredDuration = generalRule?.defaultDurationSeconds;
       const defaultSpeechMs = typeof configuredDuration === 'number' && Number.isSafeInteger(configuredDuration)
@@ -1321,8 +1336,9 @@ export class Stage4Service {
         VALUES ($1,$2,$3,'GENERAL','General Speakers'' List','',$4,true,$5,$6,$7)`,
       [speakerListId, committeeId, id, defaultSpeechMs, committee.active_rule_package_version_id,
         speechTimerId, auth.user.id]);
+      const session = inserted.rows[0] as MeetingSessionRow;
       await appendEvent(client, committee, {type: 'meeting_session.started', resourceType: 'meeting_session',
-        resourceId: id, revision: 1, payload: {phaseId, rulePackageVersionId: committee.active_rule_package_version_id,
+        resourceId: id, revision: session.revision, payload: {name: session.name, phaseId, rulePackageVersionId: session.active_rule_package_version_id,
           generalSpeakerListId: speakerListId}});
       await appendEvent(client, committee, {type: 'speaker_list.created', resourceType: 'speaker_list',
         resourceId: speakerListId, revision: 1, payload: {kind: 'GENERAL', name: "General Speakers' List", topic: '',
@@ -1330,9 +1346,9 @@ export class Stage4Service {
           rulePackageVersionId: committee.active_rule_package_version_id}, audience: 'PUBLIC'});
       await audit(client, context, {committeeId, actorUserId: auth.user.id, capabilities: ['CHAIR'],
         action: 'proceedings.meeting_session_started', resourceType: 'meeting_session', resourceId: id,
-        after: {phaseId, rulePackageVersionId: committee.active_rule_package_version_id,
+        after: {name: session.name, phaseId, rulePackageVersionId: session.active_rule_package_version_id,
           generalSpeakerListId: speakerListId, generalSpeakerDefaultSpeechMs: defaultSpeechMs}});
-      return meetingSession(inserted.rows[0] as MeetingSessionRow);
+      return meetingSession(session);
     });
   }
 

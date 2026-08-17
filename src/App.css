@@ -669,12 +669,48 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   padding-top: 1rem;
 }
 
+.motions-empty-state {
+  display: flex;
+  justify-content: center;
+}
+
+.motions-empty-card.ui.card {
+  margin: 2rem 0 0;
+  width: min(100%, 20rem);
+}
+
+.motions-empty-card .description {
+  display: grid;
+  gap: 1rem;
+  justify-items: center;
+}
+
 .motion-proposal-form.ui.form {
   margin: 0 auto;
 }
 
 .motion-proposal-form .ui.button[type='submit'] {
   min-height: 2.75rem;
+}
+
+.history-session-divider.ui.horizontal.divider {
+  margin: 2rem 0 1rem;
+}
+
+.current-session-divider.ui.horizontal.divider {
+  margin-bottom: 0;
+}
+
+.current-session-empty {
+  align-items: center;
+  color: rgba(0, 0, 0, 0.45);
+  display: flex;
+  height: 4rem;
+  justify-content: center;
+}
+
+.current-session-empty + .history-session-divider.ui.horizontal.divider {
+  margin-top: 0;
 }
 
 .motion-queue.ui.cards {

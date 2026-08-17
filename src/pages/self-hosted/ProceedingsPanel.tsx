@@ -693,6 +693,7 @@ const motionTypePosition = (id: string): number => ({
 
 function Motions({snapshot, run, api, canChair}: CommonProps) {
   const session = snapshot.meetingSession?.status === 'OPEN' ? snapshot.meetingSession : undefined;
+  const [meetingJustEnded, setMeetingJustEnded] = React.useState(false);
   const types = [...snapshot.activeRules.motionTypes].sort((first, second) => {
     const firstPosition = motionTypePosition(first.id); const secondPosition = motionTypePosition(second.id);
     if (firstPosition !== secondPosition) return firstPosition - secondPosition;
@@ -718,7 +719,14 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
   const delegateMayPropose = delegateMode && snapshot.motionSettings.delegateMotionProposalsEnabled;
   const canPropose = snapshot.committee.status === 'ACTIVE' && (canChair
     || snapshot.viewer.audience === 'MEMBER' && delegateMayPropose);
-  if (!session) return <Message content={t('Start a meeting first.')} />;
+  if (!session) return <Container text className="motions-page motions-empty-state">
+    <Card className="motions-empty-card">
+      <Card.Content textAlign="center">
+        <Card.Description>{t(meetingJustEnded ? 'Current meeting session has ended.' : 'Open a meeting first.')}</Card.Description>
+        <Button as={Link} to={`/committees/${snapshot.committee.id}/roll-call`} primary>{t('Roll call ->')}</Button>
+      </Card.Content>
+    </Card>
+  </Container>;
 
   const selectedType = types.find(type => type.id === motionType);
   const needsSeconder = Boolean(selectedType && selectedType.requiredSecondCount > 0);
@@ -781,6 +789,16 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
   };
   const visibleMotions = [...(snapshot.motions ?? [])].filter(motion => motion.status !== 'WITHDRAWN')
     .sort((first, second) => Date.parse(second.createdAt) - Date.parse(first.createdAt));
+  const sessionNames = new Map((snapshot.meetingSessions ?? []).map(item => [item.id, item.name]));
+  if (snapshot.meetingSession) sessionNames.set(snapshot.meetingSession.id, snapshot.meetingSession.name);
+  const motionGroups = visibleMotions.reduce<Array<{meetingSessionId: string; motions: typeof visibleMotions}>>((groups, motion) => {
+    const group = groups.at(-1);
+    if (group?.meetingSessionId === motion.meetingSessionId) group.motions.push(motion);
+    else groups.push({meetingSessionId: motion.meetingSessionId, motions: [motion]});
+    return groups;
+  }, []);
+  const currentSessionHasMotions = Boolean(snapshot.meetingSession
+    && motionGroups.some(group => group.meetingSessionId === snapshot.meetingSession?.id));
   return <Container text className="motions-page">
     {canPropose && <Form className="motion-proposal-form"
       error={(!chairAdvisoryMode && !divisible) || identicalSeats} onSubmit={propose}>
@@ -859,7 +877,11 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
       onChange={(_, data) => void run(() => api.setMotionSettings(snapshot.committee.id, {
         ...snapshot.motionSettings, delegateMotionVotingEnabled: data.checked ?? false}, snapshot.committee.revision))} /></>}
     <Divider hidden />
-    <Card.Group itemsPerRow={1} className="motion-queue">{visibleMotions.map(motion => {
+    {snapshot.meetingSession && <Divider horizontal className="history-session-divider current-session-divider">{snapshot.meetingSession.name}</Divider>}
+    {snapshot.meetingSession && !currentSessionHasMotions && <div className="current-session-empty">{t('(No motions)')}</div>}
+    {motionGroups.map(group => <React.Fragment key={group.meetingSessionId}>
+      {group.meetingSessionId !== snapshot.meetingSession?.id && <Divider horizontal className="history-session-divider">{sessionNames.get(group.meetingSessionId) ?? t('Meeting session')}</Divider>}
+      <Card.Group itemsPerRow={1} className="motion-queue">{group.motions.map(motion => {
       const type = types.find(item => item.id === motion.motionTypeId);
       const proposer = snapshot.seats.find(seat => seat.id === motion.proposedBySeatId);
       const firstSecond = motion.seconds[0]; const seconder = snapshot.seats.find(seat => seat.id === firstSecond?.seatId);
@@ -961,14 +983,18 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
         <Button.Group fluid attached="bottom"><Button negative
           onClick={() => void run(() => api.decideMotion(motion.id, motion.revision, 'FAILED'))}>{t('Failed')}</Button>
           <Button positive disabled={!chairAdvisoryMode && !['SECONDED', 'VOTING'].includes(motion.status)}
-            onClick={() => void run(() => api.decideMotion(motion.id, motion.revision, 'PASSED'))}>{t('Passed')}</Button>
+            onClick={() => void run(async () => {
+              await api.decideMotion(motion.id, motion.revision, 'PASSED');
+              if (motion.motionTypeId === 'suspend-meeting') setMeetingJustEnded(true);
+            })}>{t('Passed')}</Button>
         </Button.Group>
       </>}
       {decided && motion.destinationPath && motionDestinationLabel(motion.motionTypeId) && <Button as={Link}
         to={motion.destinationPath} attached="bottom" fluid primary>{t(motionDestinationLabel(motion.motionTypeId))}
         <Icon name="arrow right" /></Button>}
       </Card>;
-    })}</Card.Group>
+      })}</Card.Group>
+    </React.Fragment>)}
   </Container>;
 }
 

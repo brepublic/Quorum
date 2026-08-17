@@ -44,6 +44,11 @@ interface SpeechRow extends QueryResultRow {
   interaction_target_seat_id: string | null; revision: number; started_at: Date | null; ended_at: Date | null;
 }
 
+interface MeetingSessionRow extends QueryResultRow {
+  id: string; committee_id: string; name: string; phase_id: string; active_rule_package_version_id: string;
+  status: 'PENDING' | 'OPEN' | 'CLOSED'; revision: number; created_at: Date; closed_at: Date | null;
+}
+
 interface MotionRow extends QueryResultRow {
   id: string; committee_id: string; meeting_session_id: string; motion_type_id: string; proposed_by_seat_id: string;
   proposed_by_seat_display_name: string; parameters: Record<string, unknown>; status: ProceedingMotion['status'];
@@ -1460,6 +1465,42 @@ export class Stage5Service {
   private async enactMotion(client: PoolClient, committee: Stage4CommitteeRow, motion: MotionRow,
     actorUserId: string, now: Date, context: Stage4Context): Promise<string | null> {
     const parameters = motion.parameters; const committeeId = committee.id;
+    if (motion.motion_type_id === 'suspend-meeting') {
+      const sessionResult = await client.query<MeetingSessionRow>(`SELECT * FROM meeting_sessions
+        WHERE id=$1 AND committee_id=$2 FOR UPDATE`, [motion.meeting_session_id, committeeId]);
+      const session = sessionResult.rows[0];
+      if (!session || session.status !== 'OPEN') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The meeting session is not open.'});
+      const activeRollCall = await client.query(`SELECT 1 FROM roll_calls
+        WHERE meeting_session_id=$1 AND status='IN_PROGRESS'`, [session.id]);
+      if (activeRollCall.rowCount) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Complete or reset the active roll call first.'});
+      const pending = await client.query<MeetingSessionRow>(`SELECT * FROM meeting_sessions
+        WHERE committee_id=$1 AND status='PENDING' FOR UPDATE`, [committeeId]);
+      if ((pending.rowCount ?? 0) > 0) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'A meeting session is already pending.'});
+      const closed = await client.query<MeetingSessionRow>(`UPDATE meeting_sessions SET status='CLOSED',revision=revision+1,
+        closed_at=$2 WHERE id=$1 RETURNING *`, [session.id, now]);
+      const nextId = randomUUID();
+      const next = await client.query<MeetingSessionRow>(`INSERT INTO meeting_sessions
+        (id,committee_id,name,phase_id,active_rule_package_version_id,status,created_by_user_id)
+        SELECT $1,$2,'第' || (count(*) + 1)::text || '会期',$3,$4,'PENDING',$5
+        FROM meeting_sessions WHERE committee_id=$2 RETURNING *`,
+      [nextId, committeeId, session.phase_id, session.active_rule_package_version_id, actorUserId]);
+      const nextSession = next.rows[0] as MeetingSessionRow;
+      await appendEvent(client, committee, {type: 'meeting_session.closed', resourceType: 'meeting_session',
+        resourceId: session.id, revision: closed.rows[0]!.revision, payload: {phaseId: session.phase_id, motionId: motion.id}});
+      await appendEvent(client, committee, {type: 'meeting_session.created', resourceType: 'meeting_session',
+        resourceId: nextSession.id, revision: nextSession.revision,
+        payload: {name: nextSession.name, phaseId: nextSession.phase_id, rulePackageVersionId: nextSession.active_rule_package_version_id,
+          status: 'PENDING', motionId: motion.id}});
+      await audit(client, context, {committeeId, actorUserId, capabilities: ['CHAIR'],
+        action: 'proceedings.meeting_session_closed', resourceType: 'meeting_session', resourceId: session.id,
+        before: {status: session.status, revision: session.revision},
+        after: {status: 'CLOSED', revision: closed.rows[0]!.revision, motionId: motion.id}});
+      await audit(client, context, {committeeId, actorUserId, capabilities: ['CHAIR'],
+        action: 'proceedings.meeting_session_created', resourceType: 'meeting_session', resourceId: nextSession.id,
+        after: {name: nextSession.name, status: 'PENDING', phaseId: nextSession.phase_id,
+          rulePackageVersionId: nextSession.active_rule_package_version_id, motionId: motion.id}});
+      return null;
+    }
     if (motion.motion_type_id === 'open-unmoderated-caucus'
       || motion.motion_type_id === 'introduce-working-paper') {
       const durationMs = motionDurationMs(parameters);
