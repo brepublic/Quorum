@@ -301,6 +301,19 @@ function PostsPanel({snapshot, run, api, userId, tab}: {snapshot: CommitteeWorks
 type WorkspaceCommand = (operation: () => Promise<unknown>) => Promise<void>;
 const ROLL_CALL_PAGE_SIZE = 18;
 
+function rollCallGridColumnCount(width = window.innerWidth) {
+  if (width <= 600) return 1;
+  return width <= 991 ? 2 : 3;
+}
+
+function columnFirstRollCallSeats<T>(seats: T[], columns: number) {
+  const rows = Math.ceil(seats.length / columns);
+  return Array.from({length: seats.length}, (_, index) => {
+    const row = Math.floor(index / columns);
+    const column = index % columns;
+    return seats[column * rows + row];
+  }).filter((seat): seat is T => seat !== undefined);
+}
 function rollCallResponseLabel(response: string) {
   return t(response === 'PRESENT_AND_VOTING' ? 'Present and voting'
     : response === 'PRESENT' ? 'Present' : response === 'ABSENT' ? 'Absent' : response);
@@ -518,17 +531,22 @@ function RollCallPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
   const [pending, setPending] = React.useState<string>();
   const [phaseId, setPhaseId] = React.useState(snapshot.activeRules.activePhaseId ?? snapshot.activeRules.phases[0]?.id ?? '');
   const [page, setPage] = React.useState(0); const [resetOpen, setResetOpen] = React.useState(false);
+  const [gridColumns, setGridColumns] = React.useState(() => rollCallGridColumnCount());
   const execute = async (key: string, operation: () => Promise<unknown>) => {
     setPending(key); try {await run(operation);} finally {setPending(undefined);}
   };
-  const seats = React.useMemo(() => [...snapshot.seats]
-    .sort((first, second) => first.displayName.localeCompare(second.displayName, 'en')), [snapshot.seats]);
+  const seats = snapshot.seats;
   const entryBySeat = React.useMemo(() => new Map(rollCall?.entries.map(entry => [entry.seatId, entry]) ?? []), [rollCall?.entries]);
   const currentSeat = snapshot.seats.find(seat => seat.id === rollCall?.currentSeatId);
   React.useEffect(() => {
     const index = seats.findIndex(seat => seat.id === rollCall?.currentSeatId);
     if (index >= 0) setPage(Math.floor(index / ROLL_CALL_PAGE_SIZE));
   }, [rollCall?.currentSeatId, seats]);
+  React.useEffect(() => {
+    const updateGridColumns = () => setGridColumns(rollCallGridColumnCount());
+    window.addEventListener('resize', updateGridColumns);
+    return () => window.removeEventListener('resize', updateGridColumns);
+  }, []);
   if (!rollCall) return <>{chair && !session && <Form onSubmit={() => execute('meeting', () => api.startMeetingSession(snapshot.committee.id, phaseId || undefined))}>
       <Form.Select label={t('Meeting phase')} value={phaseId} options={snapshot.activeRules.phases.map(phase => ({key: phase.id, value: phase.id,
         text: phase.names ? localizedDisplayName(phase.names, 'zh-CN') : phase.id}))} onChange={(_, data) => setPhaseId(String(data.value))} />
@@ -540,7 +558,8 @@ function RollCallPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
 
   const totalPages = Math.max(1, Math.ceil(seats.length / ROLL_CALL_PAGE_SIZE));
   const activePage = Math.min(page, totalPages - 1);
-  const visibleSeats = seats.slice(activePage * ROLL_CALL_PAGE_SIZE, (activePage + 1) * ROLL_CALL_PAGE_SIZE);
+  const visibleSeats = columnFirstRollCallSeats(
+    seats.slice(activePage * ROLL_CALL_PAGE_SIZE, (activePage + 1) * ROLL_CALL_PAGE_SIZE), gridColumns);
   const setSeat = (seatId: string) => {
     const existing = entryBySeat.get(seatId);
     const next = existing?.response === 'ABSENT' ? 'PRESENT' : existing ? 'ABSENT' : 'PRESENT';

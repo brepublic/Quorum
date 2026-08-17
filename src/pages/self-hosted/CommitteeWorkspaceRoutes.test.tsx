@@ -122,8 +122,8 @@ describe('committee workspace routes and roles', () => {
       allowedResponses: ['PRESENT', 'PRESENT_AND_VOTING', 'ABSENT'], entries: [], revision: 4,
       startedAt: '2026-08-14T00:00:00.000Z', completedAt: null}));
     const seats = Array.from({length: 20}, (_, index) => ({id: `seat-${index}`, stableKey: `seat-${index}`,
-      displayName: `Seat ${String(index + 1).padStart(2, '0')}`, rank: 'STANDARD' as const, canVote: true,
-      hasVeto: false, mustVote: false, sortOrder: 20 - index, active: true, revision: 1,
+      displayName: `Seat ${String(20 - index).padStart(2, '0')}`, rank: 'STANDARD' as const, canVote: true,
+      hasVeto: false, mustVote: false, sortOrder: index, active: true, revision: 1,
       flag: {type: 'EMOJI' as const, value: index === 0 ? '🏳️' : '🌐'}}));
     const page = await render('CHAIR', '/committees/committee/roll-call', user, value => ({...value, seats,
       meetingSession: {id: 'meeting', committeeId: 'committee', phaseId: 'formal-debate',
@@ -136,6 +136,8 @@ describe('committee workspace routes and roles', () => {
 
     expect(page.querySelectorAll('.roll-call-grid .roll-call-member')).toHaveLength(18);
     expect(page.querySelector<HTMLButtonElement>('.roll-call-grid .roll-call-member')?.dataset.rollCallSeat).toBe('seat-0');
+    expect(Array.from(page.querySelectorAll<HTMLButtonElement>('.roll-call-grid .roll-call-member'))
+      .slice(0, 6).map(seat => seat.dataset.rollCallSeat)).toEqual(['seat-0', 'seat-6', 'seat-12', 'seat-1', 'seat-7', 'seat-13']);
     expect(page.textContent).toContain('1 of 20 called');
     expect(page.textContent).toContain('Present and voting');
     const secondSeat = page.querySelector<HTMLButtonElement>('[data-roll-call-seat="seat-1"]');
