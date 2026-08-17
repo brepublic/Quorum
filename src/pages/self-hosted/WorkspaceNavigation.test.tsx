@@ -18,6 +18,21 @@ const snapshot = {committee: {id: 'committee', name: 'Security Council'}, active
 ], documents: [{id: 'resolution', kind: 'RESOLUTION', title: 'A/RES/1'}],
 strawpolls: [{id: 'poll', question: 'Suspend the meeting?'}]} as unknown as CommitteeWorkspaceSnapshot;
 
+const completedRollCall = {
+  ...snapshot,
+  meetingSession: {id: "meeting", name: "第1会期", status: "OPEN"},
+  rollCall: {id: "roll-call", meetingSessionId: "meeting", status: "COMPLETED"},
+  seats: [
+    {id: "one", canVote: true}, {id: "two", canVote: true}, {id: "three", canVote: true}, {id: "four", canVote: true},
+    {id: "five", canVote: true}, {id: "six", canVote: true}, {id: "seven", canVote: true}
+  ],
+  attendance: [
+    {seatId: "one", state: "PRESENT"}, {seatId: "two", state: "PRESENT"}, {seatId: "three", state: "PRESENT"},
+    {seatId: "four", state: "PRESENT"}, {seatId: "five", state: "PRESENT"}, {seatId: "six", state: "PRESENT"},
+    {seatId: "seven", state: "PRESENT"}
+  ]
+} as unknown as CommitteeWorkspaceSnapshot;
+
 let root: Root | undefined;
 let container: HTMLDivElement | undefined;
 
@@ -57,7 +72,23 @@ describe('self-hosted workspace navigation', () => {
     expect(page.querySelector('.account-menu a[href="/operations"]')).not.toBeNull();
   });
 
-  it('does not grant system administration entries to a regular account', () => {
+  it("shows roll-call attendance thresholds immediately left of the realtime status", () => {
+    const page = render(<CommitteeNavigation snapshot={completedRollCall} user={user} logout={() => undefined} />,
+      "/committees/committee/motions");
+    const summary = page.querySelector(".attendance-threshold-summary");
+    const realtime = page.querySelector(".realtime-status");
+    expect(summary?.textContent).toBe("7/5/4");
+    expect(summary?.getAttribute("title")).toBe("Attendance / two-thirds majority / simple majority");
+    expect(summary?.nextElementSibling).toBe(realtime);
+  });
+
+  it("hides attendance thresholds until the current session has a completed roll call", () => {
+    const page = render(<CommitteeNavigation snapshot={{...completedRollCall, rollCall: {...completedRollCall.rollCall!, status: "IN_PROGRESS"}}}
+      user={user} logout={() => undefined} />, "/committees/committee/motions");
+    expect(page.querySelector(".attendance-threshold-summary")).toBeNull();
+  });
+
+  it("does not grant system administration entries to a regular account", () => {
     const page = render(<AccountMenu user={user} logout={vi.fn()} />);
     expect(page.querySelector('a[href="/admin"]')).toBeNull();
     expect(page.querySelector('a[href="/storage"]')).toBeNull();

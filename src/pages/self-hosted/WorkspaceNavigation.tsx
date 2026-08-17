@@ -19,6 +19,25 @@ export function RealtimeStatusItem({status}: {status: RealtimeStatus}) {
   </Menu.Item>;
 }
 
+function AttendanceThresholdItem({snapshot}: {snapshot: CommitteeWorkspaceSnapshot}) {
+  const rollCall = snapshot.rollCall;
+  const validForCurrentSession = snapshot.meetingSession !== undefined
+    && rollCall?.meetingSessionId === snapshot.meetingSession.id
+    && rollCall.status === "COMPLETED";
+  if (!validForCurrentSession) return null;
+
+  const presentSeatIds = new Set(snapshot.attendance.filter(item => item.state === "PRESENT").map(item => item.seatId));
+  const presentDelegates = presentSeatIds.size;
+  const votingPresent = snapshot.seats.filter(seat => seat.canVote && presentSeatIds.has(seat.id)).length;
+  const twoThirdsMajority = Math.ceil(votingPresent * 2 / 3);
+  const simpleMajority = Math.floor(votingPresent / 2) + 1;
+  const description = t("Attendance / two-thirds majority / simple majority");
+
+  return <Menu.Item className="attendance-threshold-summary" title={description} aria-label={description}>
+    {[presentDelegates, twoThirdsMajority, simpleMajority].join("/")}
+  </Menu.Item>;
+}
+
 export function AccountMenu({user, logout}: {user: SelfHostedUser; logout(): void}) {
   const openThemes = () => {
     const launcher = document.querySelector<HTMLButtonElement>('#quorum-theme-portal [aria-label="Appearance themes"], #quorum-theme-portal [aria-label="外观主题"]');
@@ -103,7 +122,7 @@ export function CommitteeNavigation({snapshot, user, logout, realtimeStatus = 'C
     <nav className="committee-navigation-desktop" aria-label={t('Committee navigation')}>
       <Menu className="committee-primary-navigation" size="small" fluid>
         <PrimaryItems snapshot={snapshot} />
-        <Menu.Menu position="right"><RealtimeStatusItem status={realtimeStatus} />
+        <Menu.Menu position="right"><AttendanceThresholdItem snapshot={snapshot} /><RealtimeStatusItem status={realtimeStatus} />
           {user && <AccountMenu user={user} logout={logout} />}</Menu.Menu>
       </Menu>
     </nav>

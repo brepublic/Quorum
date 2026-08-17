@@ -603,6 +603,22 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   margin: 0;
 }
 
+.roll-call-heading-actions {
+  align-items: center;
+  display: flex;
+  gap: 0.75rem;
+}
+
+.roll-call-heading-actions .ui.button,
+.roll-call-heading-actions .ui.label {
+  align-items: center;
+  box-sizing: border-box;
+  display: inline-flex;
+  height: 36px;
+  justify-content: center;
+  margin: 0;
+}
+
 .ui.segment.roll-call-board {
   background: #f8fafc;
   border-top: 0.25rem solid #2185d0;
@@ -819,7 +835,18 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
 }
 
 .ui.segment.roll-call-current {
+  display: flex;
+  flex-direction: column;
+  min-height: 12rem;
   padding: clamp(1.25rem, 3vw, 2rem);
+}
+
+.roll-call-current-status {
+  align-items: center;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
 }
 
 .roll-call-current-label {
@@ -837,7 +864,7 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   flex-direction: column;
   gap: 0.75rem;
   justify-content: center;
-  margin: 0 0 1.25rem;
+  margin: 0;
   text-align: center;
 }
 
@@ -852,6 +879,7 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
 
 .roll-call-actions {
   display: flex;
+  margin-top: 1.5rem;
   flex-wrap: wrap;
   gap: 0.65rem;
   justify-content: center;
@@ -913,6 +941,10 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   background: #db2828;
 }
 
+.roll-call-summary-highlight.highlight-total-seats::before {
+  background: #767676;
+}
+
 .roll-call-summary-highlight strong {
   color: rgba(0, 0, 0, 0.87);
   font-size: clamp(2.75rem, 5vw, 4.5rem);
@@ -935,6 +967,10 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   .roll-call-heading {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .roll-call-heading-actions {
+    align-self: flex-end;
   }
 
   .roll-call-grid {

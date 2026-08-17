@@ -33,6 +33,10 @@ const en: Record<string, string> = {
 };
 
 const zhCN: Record<string, string> = {
+  'Total seats': '\u603b\u5e2d\u4f4d\u6570',
+  'Restart roll call': '\u91cd\u65b0\u70b9\u540d',
+  'Restart roll call?': '\u91cd\u65b0\u70b9\u540d\uff1f',
+  'This will start a new roll call for this meeting session.': '\u5c06\u4e3a\u672c\u4f1a\u671f\u91cd\u65b0\u5f00\u59cb\u70b9\u540d\u3002',
   'English': 'English',
   'Simplified Chinese': '简体中文',
   'Language': '语言',
@@ -545,6 +549,7 @@ const zhCN: Record<string, string> = {
   'Reset roll call?': '重置点名？',
   'This will clear every roll-call status and mark all delegations absent.': '这将清除全部点名状态，并把所有代表团设为缺席。',
   'Attendance and thresholds': '出席情况与门槛',
+  'Attendance / two-thirds majority / simple majority': '出席代表数/三分之二多数/简单多数',
   'Go to motions': '前往动议',
   'Motions': '动议',
   'Unmod': '自由磋商',

@@ -585,8 +585,11 @@ function RollCallPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
   const rollCallFailed = quorumNotMet && (rollCall.status === 'COMPLETED' || quorumImpossible);
   const rollCallCompletedWithQuorum = rollCall.status === 'COMPLETED' && !quorumNotMet;
   return <Container fluid className="roll-call-page">
-    <div className="roll-call-heading"><Header as="h1">{t('Roll call')}</Header><Label basic size="large">
-      {t('{called} of {total} called', {called: rollCall.entries.length, total: seats.length})}</Label></div>
+    <div className="roll-call-heading"><Header as="h1">{t('Roll call')}</Header><div className="roll-call-heading-actions">
+      {chair && rollCall.status === 'COMPLETED' && <Button basic color="orange" icon="refresh" content={t('Restart roll call')}
+        loading={pending === 'reset'} disabled={!!pending} onClick={() => setResetOpen(true)} />}
+      <Label basic size="large">{t('{called} of {total} called', {called: rollCall.entries.length, total: seats.length})}</Label>
+    </div></div>
     {seats.length === 0 ? <Message warning content={t('Add at least one committee member to proceed')} /> : <>
       <Segment className="roll-call-board">
         <div className="roll-call-legend" aria-label={t('Status legend')}>
@@ -608,11 +611,12 @@ function RollCallPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
           boundaryRange={1} siblingRange={1} ellipsisItem={null} onPageChange={(_, data) => setPage(Number(data.activePage) - 1)} />}
       </Segment>
       <Segment className="roll-call-current" textAlign="center">
+        <div className="roll-call-current-status">
         {rollCallFailed ? <Header as="h2" color="red">{t('Quorum not reached')}</Header>
           : currentSeat ? <><div className="roll-call-current-label">{t('Now calling')}</div><Header as="h2"><Flag seat={currentSeat} />
           <span className="roll-call-current-name">{currentSeat.displayName}</span></Header></>
           : rollCallCompletedWithQuorum ? <Header as="h2" color="green">{t('Roll call complete')}</Header>
-          : <Header as="h2">{t('Roll call')}</Header>}
+          : <Header as="h2">{t('Roll call')}</Header>}</div>
         {chair && <div className="roll-call-actions">
           {currentSeat && rollCall.allowedResponses.map(response => <Button key={response}
             positive={response !== 'ABSENT'} negative={response === 'ABSENT'}
@@ -631,17 +635,19 @@ function RollCallPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
         <div className="roll-call-summary-highlights">
           <div className="roll-call-summary-highlight highlight-present"><span className="roll-call-summary-label">{t('Present')}</span>
             <strong>{presentSeatIds.size}</strong></div>
-          {rollCallFailed ? <div className="roll-call-summary-highlight highlight-quorum"><span className="roll-call-summary-label">{t('Quorum')}</span>
-            <strong>{quorum}</strong></div> : <><div className="roll-call-summary-highlight highlight-two-thirds"><span className="roll-call-summary-label">{t('Two-thirds majority')}</span>
+          {rollCallFailed ? <><div className="roll-call-summary-highlight highlight-quorum"><span className="roll-call-summary-label">{t('Quorum')}</span>
+            <strong>{quorum}</strong></div>
+            <div className="roll-call-summary-highlight highlight-total-seats"><span className="roll-call-summary-label">{t('Total seats')}</span>
+              <strong>{votingSeats.length}</strong></div></> : <><div className="roll-call-summary-highlight highlight-two-thirds"><span className="roll-call-summary-label">{t('Two-thirds majority')}</span>
               <strong>{twoThirdsMajority}</strong></div>
             <div className="roll-call-summary-highlight highlight-simple-majority"><span className="roll-call-summary-label">{t('Simple majority')}</span>
               <strong>{simpleMajority}</strong></div></>}
         </div>{rollCallCompletedWithQuorum && <Button as={Link} to={`/committees/${snapshot.committee.id}/motions`} primary fluid size="large">
           {t('Go to motions')}<Icon name="arrow right" /></Button>}</Segment>}
     </>}
-    <Confirm open={resetOpen} header={t('Reset roll call?')}
-      content={t('This will clear every roll-call status and mark all delegations absent.')}
-      cancelButton={t('Cancel')} confirmButton={t('Reset')} onCancel={() => setResetOpen(false)}
+    <Confirm open={resetOpen} header={t(rollCall.status === 'COMPLETED' ? 'Restart roll call?' : 'Reset roll call?')}
+      content={t('This will start a new roll call for this meeting session.')}
+      cancelButton={t('Cancel')} confirmButton={t(rollCall.status === 'COMPLETED' ? 'Restart roll call' : 'Reset')} onCancel={() => setResetOpen(false)}
       onConfirm={() => {setResetOpen(false); void execute('reset', () => api.resetRollCall(rollCall.id, rollCall.revision));}} />
   </Container>;
 }
