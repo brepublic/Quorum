@@ -532,6 +532,8 @@ const zhCN: Record<string, string> = {
   'Not called': '未点名',
   'Now calling': '当前点名',
   'Roll call complete': '点名完成',
+  'Quorum not reached': '未达到法定人数',
+  'Quorum countries': '法定国家数',
   '{called} of {total} called': '已点名 {called}/{total}',
   'Status legend': '状态图例',
   'Undo': '撤销',

@@ -862,6 +862,10 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   background: #2185d0;
 }
 
+.roll-call-summary-highlight.highlight-quorum::before {
+  background: #db2828;
+}
+
 .roll-call-summary-highlight strong {
   color: rgba(0, 0, 0, 0.87);
   font-size: clamp(2.75rem, 5vw, 4.5rem);
