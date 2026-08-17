@@ -64,16 +64,21 @@ function clickSemanticCheckbox(element?: Element | null) {
 
 describe('committee workspace routes and roles', () => {
   it('lets each committee page own its layout inside a full-width workspace shell', async () => {
-    const page = await render('OWNER', '/committees/committee');
+    const page = await render('OWNER', '/committees/committee/roll-call');
     const workspace = page.querySelector('.committee-workspace-page');
 
     expect(workspace?.classList.contains('fluid')).toBe(true);
     expect(workspace?.querySelector(':scope > .ui.segment')).toBeNull();
-    expect(workspace?.textContent).toContain('Climate security');
+    expect(workspace?.textContent).toContain('Start meeting');
   });
 
-  it('keeps the overview focused on committee and meeting status', async () => {
-    const page = await render('OWNER', '/committees/committee');
+  it('opens a committee on roll call and keeps information in a centered card', async () => {
+    const defaultPage = await render('OWNER', '/committees/committee');
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(defaultPage.textContent).toContain('Start meeting');
+
+    const page = await render('OWNER', '/committees/committee/info');
+    expect(page.querySelector('.committee-overview-page > .committee-overview-card')).toBeTruthy();
     expect(page.textContent).toContain('Climate security');
     expect(page.textContent).toContain('Main Hall');
     expect(page.textContent).toContain('ACTIVE');

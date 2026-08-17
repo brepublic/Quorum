@@ -145,6 +145,17 @@
   width: 100% !important;
 }
 
+.committee-overview-page.ui.container {
+  margin: 0 auto !important;
+  max-width: min(100%, 44rem) !important;
+  padding: clamp(1rem, 3vw, 2.5rem) 0;
+  width: 100% !important;
+}
+
+.committee-overview-card.ui.card {
+  margin: 0;
+}
+
 .committee-primary-navigation > .item,
 .committee-primary-navigation > .menu > .item,
 .committee-mobile-sidebar > .item {

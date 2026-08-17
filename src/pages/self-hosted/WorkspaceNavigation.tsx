@@ -73,7 +73,7 @@ function PrimaryItems({snapshot, onNavigate}: {snapshot: CommitteeWorkspaceSnaps
     .map(poll => ({id: poll.id, label: localizeGeneratedName(poll.question)}));
 
   return <>
-    <Menu.Item header as={Link} to={base} active={location.pathname === base} onClick={onNavigate}>{snapshot.committee.name}</Menu.Item>
+    <Menu.Item header as={Link} to={base + '/info'} active={location.pathname === base + '/info'} onClick={onNavigate}>{snapshot.committee.name}</Menu.Item>
     {item('/setup', 'Setup')}
     {item('/roll-call', 'Roll call')}
     {item('/motions', 'Motions')}
@@ -119,7 +119,7 @@ export function CommitteeNavigation({snapshot, user, logout, realtimeStatus = 'C
             <Menu.Item aria-label={t('Open committee navigation')} onClick={() => setSidebarOpen(open => !open)}>
               <Icon name="sidebar" />
             </Menu.Item>
-            <Menu.Item header as={Link} to={`/committees/${snapshot.committee.id}`}>{snapshot.committee.name}</Menu.Item>
+            <Menu.Item header as={Link} to={'/committees/' + snapshot.committee.id + '/info'}>{snapshot.committee.name}</Menu.Item>
             <Menu.Menu position="right">{user && <AccountMenu user={user} logout={logout} />}</Menu.Menu>
           </Menu>
         </nav>

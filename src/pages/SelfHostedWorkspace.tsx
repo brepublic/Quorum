@@ -321,19 +321,23 @@ function rollCallResponseLabel(response: string) {
 
 function CommitteeOverviewPanel({snapshot}: {snapshot: CommitteeWorkspaceSnapshot}) {
   const share = async () => navigator.clipboard?.writeText(`${window.location.origin}/committees/${snapshot.committee.id}`);
-  return <>
-    <Header as="h1">{snapshot.committee.name}</Header>
-    <List relaxed>
-      <List.Item><List.Icon name="conversation" /><List.Content><List.Header>{t('Topic')}</List.Header>
-        <List.Description>{snapshot.committee.topic || '—'}</List.Description></List.Content></List.Item>
-      <List.Item><List.Icon name="building outline" /><List.Content><List.Header>{t('Conference')}</List.Header>
-        <List.Description>{snapshot.committee.conference || '—'}</List.Description></List.Content></List.Item>
-      <List.Item><List.Icon name="signal" /><List.Content><List.Header>{t('Meeting status')}</List.Header>
-        <List.Description>{t(snapshot.committee.status)}{snapshot.meetingSession ? ` · ${snapshot.meetingSession.name} · ${t(snapshot.meetingSession.status)}` : ''}</List.Description>
-      </List.Content></List.Item>
-    </List>
-    <Button icon="share alternate" content={t('Share committee')} onClick={() => void share()} />
-  </>;
+  return <Container className="committee-overview-page">
+    <Card fluid className="committee-overview-card">
+      <Card.Content>
+        <Card.Header as="h1">{snapshot.committee.name}</Card.Header>
+        <List relaxed>
+          <List.Item><List.Icon name="conversation" /><List.Content><List.Header>{t('Topic')}</List.Header>
+            <List.Description>{snapshot.committee.topic || '—'}</List.Description></List.Content></List.Item>
+          <List.Item><List.Icon name="building outline" /><List.Content><List.Header>{t('Conference')}</List.Header>
+            <List.Description>{snapshot.committee.conference || '—'}</List.Description></List.Content></List.Item>
+          <List.Item><List.Icon name="signal" /><List.Content><List.Header>{t('Meeting status')}</List.Header>
+            <List.Description>{t(snapshot.committee.status)}{snapshot.meetingSession ? ` · ${snapshot.meetingSession.name} · ${t(snapshot.meetingSession.status)}` : ''}</List.Description>
+          </List.Content></List.Item>
+        </List>
+      </Card.Content>
+      <Card.Content extra><Button icon="share alternate" content={t('Share committee')} onClick={() => void share()} /></Card.Content>
+    </Card>
+  </Container>;
 }
 
 function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspaceSnapshot; run: WorkspaceCommand;
@@ -836,7 +840,8 @@ function CommitteeWorkspaceContent({id, api, user, logout}: {
   return <CommitteeNavigation snapshot={snapshot} user={user} logout={logout} realtimeStatus={realtimeStatus}>
     <Container fluid className="committee-workspace-page">{error && <Message error content={error} />}
         <Switch>
-          <Route exact path={base}><CommitteeOverviewPanel snapshot={snapshot} /></Route>
+          <Route exact path={base}><Redirect to={base + '/roll-call'} /></Route>
+          <Route exact path={base + '/info'}><CommitteeOverviewPanel snapshot={snapshot} /></Route>
           <Route exact path={`${base}/setup`}><SetupPanel snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} /></Route>
           <Route exact path={`${base}/roll-call`}><RollCallPanel snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} /></Route>
           <Route exact path={`${base}/points`}><PointsPanel snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} /></Route>

@@ -38,6 +38,7 @@ describe('self-hosted workspace navigation', () => {
       '/committees/committee/caucuses/mod');
     const links = Array.from(page.querySelectorAll('a')).map(link => link.getAttribute('href'));
     expect(links).toContain('/committees/committee/setup');
+    expect(links).toContain('/committees/committee/info');
     expect(links).toContain('/committees/committee/roll-call');
     expect(links).toContain('/committees/committee/caucuses/gsl');
     expect(links).toContain('/committees/committee/caucuses/mod');
