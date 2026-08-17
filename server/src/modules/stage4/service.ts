@@ -125,10 +125,17 @@ function builtinCommitteeTemplate(definition: BuiltinCommitteeTemplateDefinition
   };
 }
 
-function committeeSummary(row: Stage4CommitteeRow): CommitteeSummary {
+type CommitteeListRow = Stage4CommitteeRow & {
+  owner_display_name?: string;
+  viewer_role?: CommitteeSummary['viewerRole'];
+};
+
+function committeeSummary(row: CommitteeListRow): CommitteeSummary {
   return {id: row.id, ownerUserId: row.owner_user_id, name: row.name, chairLabel: row.chair_label,
     topic: row.topic, conference: row.conference, visibility: row.visibility, operationMode: row.operation_mode,
-    status: row.status, activeRulePackageVersionId: row.active_rule_package_version_id, revision: row.revision};
+    status: row.status, activeRulePackageVersionId: row.active_rule_package_version_id, revision: row.revision,
+    ...(row.owner_display_name ? {ownerDisplayName: row.owner_display_name} : {}),
+    ...(row.viewer_role ? {viewerRole: row.viewer_role} : {})};
 }
 
 function flag(type: FlagSnapshot['type'], value: string): FlagSnapshot { return {type, value} as FlagSnapshot; }
@@ -249,10 +256,15 @@ interface SnapshotMotionRow extends QueryResultRow {
 
 interface SnapshotBallotRow extends QueryResultRow {
   id: string; committee_id: string; meeting_session_id: string; subject_type: FormalBallot['subjectType']; subject_id: string;
-  status: FormalBallot['status']; procedural: boolean; choices: BallotChoice[]; rule_package_version_id: string;
+  status: FormalBallot['status']; procedural: boolean; choices: BallotChoice[] | string; rule_package_version_id: string;
   rule_evaluation: FrozenRuleEvaluation; eligibility_snapshot: FormalBallot['eligibility'];
   threshold_definition: FormalBallot['threshold']; result: FormalBallot['result']; revision: number;
   opened_at: Date; closed_at: Date | null; published_at: Date | null;
+}
+
+function ballotChoices(value: BallotChoice[] | string): BallotChoice[] {
+  if (Array.isArray(value)) return value;
+  return value.slice(1, -1).split(",").filter(Boolean) as BallotChoice[];
 }
 
 interface SnapshotStrawpollRow extends QueryResultRow {
@@ -637,10 +649,16 @@ export class Stage4Service {
       return result.rows.map(committeeSummary);
     }
     requireBusinessIdentity(auth);
-    const result = await this.pool.query<Stage4CommitteeRow>(`SELECT DISTINCT c.* FROM committees c
-      LEFT JOIN committee_memberships m ON m.committee_id=c.id AND m.user_id=$1 AND m.status='ACTIVE'
-      LEFT JOIN committee_capabilities p ON p.committee_id=c.id AND p.user_id=$1 AND p.capability='CHAIR' AND p.revoked_at IS NULL
-      WHERE c.status<>'DELETING' AND (c.owner_user_id=$1 OR m.user_id IS NOT NULL OR p.user_id IS NOT NULL)
+    const result = await this.pool.query<CommitteeListRow>(`SELECT c.*,owner.display_name AS owner_display_name,
+      CASE WHEN c.owner_user_id=$1 THEN 'OWNER'
+        WHEN EXISTS (SELECT 1 FROM committee_capabilities p WHERE p.committee_id=c.id AND p.user_id=$1
+          AND p.capability='CHAIR' AND p.revoked_at IS NULL) THEN 'CHAIR'
+        ELSE 'MEMBER' END AS viewer_role
+      FROM committees c JOIN users owner ON owner.id=c.owner_user_id
+      WHERE c.status<>'DELETING' AND (c.owner_user_id=$1
+        OR EXISTS (SELECT 1 FROM committee_memberships m WHERE m.committee_id=c.id AND m.user_id=$1 AND m.status='ACTIVE')
+        OR EXISTS (SELECT 1 FROM committee_capabilities p WHERE p.committee_id=c.id AND p.user_id=$1
+          AND p.capability='CHAIR' AND p.revoked_at IS NULL))
       ORDER BY c.updated_at DESC,c.id`, [auth.user.id]);
     return result.rows.map(committeeSummary);
   }
@@ -797,7 +815,7 @@ export class Stage4Service {
           revision,cast_at FROM ballot_votes WHERE ballot_id=$1 AND retracted_at IS NULL ORDER BY seat_id`, [row.id]) : {rows: []};
         return {id: row.id, committeeId: row.committee_id, meetingSessionId: row.meeting_session_id,
           subjectType: row.subject_type, subjectId: row.subject_id, status: row.status, procedural: row.procedural,
-          choices: row.choices, rulePackageVersionId: row.rule_package_version_id, ruleEvaluation: row.rule_evaluation,
+          choices: ballotChoices(row.choices), rulePackageVersionId: row.rule_package_version_id, ruleEvaluation: row.rule_evaluation,
           eligibility: viewer.audience === 'PUBLIC' ? [] : row.eligibility_snapshot, threshold: row.threshold_definition,
           votes: votes.rows.map(vote => ({id: vote.id, seatId: vote.seat_id, seatDisplayName: vote.seat_display_name,
             choice: vote.current_choice, revision: vote.revision, castAt: vote.cast_at.toISOString()})),
@@ -1618,10 +1636,12 @@ export class Stage4Service {
     requireBusinessIdentity(auth); assertExactBody(input, ['meetingSessionId', 'pointTypeId', 'content', 'onBehalfOfSeatId']);
     const meetingSessionId = requiredText(input.meetingSessionId, 'Meeting session ID');
     const pointTypeId = requiredText(input.pointTypeId, 'Point type ID', 128);
-    const content = requiredText(input.content, 'Point content', 4000);
     return idempotentTransaction({pool: this.pool, auth, route: `POST /api/v1/committees/${committeeId}/points`,
       key: idempotencyKey, request: input, status: 201, work: async client => {
         const committee = await lockedCommittee(client, committeeId); requireProceedingsActive(committee);
+        const content = committee.operation_mode === 'CHAIR_OPERATED'
+          ? optionalText(input.content, 'Point content', 4000) ?? ''
+          : requiredText(input.content, 'Point content', 4000);
         const access = await committeeAccess(client, committee, auth.user.id); const chair = await isChair(client, committeeId, auth.user.id);
         const requestedSeatId = input.onBehalfOfSeatId === undefined ? null : requiredText(input.onBehalfOfSeatId, 'Seat ID');
         let seatId: string | null = null; let actedOnBehalf = false;

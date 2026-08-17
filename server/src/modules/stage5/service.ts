@@ -54,10 +54,15 @@ interface MotionRow extends QueryResultRow {
 
 interface BallotRow extends QueryResultRow {
   id: string; committee_id: string; meeting_session_id: string; subject_type: FormalBallot['subjectType']; subject_id: string;
-  status: FormalBallot['status']; procedural: boolean; choices: BallotChoice[]; rule_package_version_id: string;
+  status: FormalBallot['status']; procedural: boolean; choices: BallotChoice[] | string; rule_package_version_id: string;
   rule_evaluation: FrozenRuleEvaluation; eligibility_snapshot: FormalBallot['eligibility'];
   threshold_definition: FormalBallot['threshold']; threshold_value: number; result: FormalBallot['result'];
   revision: number; opened_at: Date; closed_at: Date | null; published_at: Date | null;
+}
+
+function ballotChoices(value: BallotChoice[] | string): BallotChoice[] {
+  if (Array.isArray(value)) return value;
+  return value.slice(1, -1).split(",").filter(Boolean) as BallotChoice[];
 }
 
 interface StrawpollRow extends QueryResultRow {
@@ -201,7 +206,7 @@ async function ballotState(client: PoolClient, row: BallotRow, includeVotes = tr
     revision,cast_at FROM ballot_votes WHERE ballot_id=$1 AND retracted_at IS NULL ORDER BY seat_id`, [row.id]) : {rows: []};
   return {id: row.id, committeeId: row.committee_id, meetingSessionId: row.meeting_session_id,
     subjectType: row.subject_type, subjectId: row.subject_id, status: row.status, procedural: row.procedural,
-    choices: row.choices, rulePackageVersionId: row.rule_package_version_id, ruleEvaluation: row.rule_evaluation,
+    choices: ballotChoices(row.choices), rulePackageVersionId: row.rule_package_version_id, ruleEvaluation: row.rule_evaluation,
     eligibility: row.eligibility_snapshot, threshold: row.threshold_definition,
     votes: votes.rows.map(vote => ({id: vote.id, seatId: vote.seat_id, seatDisplayName: vote.seat_display_name,
       choice: vote.current_choice, revision: vote.revision, castAt: vote.cast_at.toISOString()})), result: row.result,

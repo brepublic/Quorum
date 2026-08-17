@@ -33,11 +33,17 @@ afterEach(() => { if (root) act(() => root?.unmount()); container?.remove(); roo
 describe('self-hosted stage 4 workspace', () => {
   it('restores the legacy two-column committee creation workspace without dropping self-hosted templates', async () => {
     const logout = vi.fn();
+    const archiveCommittee = vi.fn(async () => ({id: 'committee', name: 'Security Council', status: 'ARCHIVED' as const, revision: 2}));
+    const requestCommitteeDeletion = vi.fn(async () => ({id: 'job'}));
     const api = {
-      listCommittees: vi.fn(async () => [{id: 'committee', name: 'Security Council', status: 'ACTIVE'}]),
+      listCommittees: vi.fn(async () => [{id: 'committee', ownerUserId: user.id, ownerDisplayName: 'User',
+        viewerRole: 'OWNER', name: 'Security Council', status: 'ACTIVE', revision: 1},
+      {id: 'managed', ownerUserId: 'owner', ownerDisplayName: 'Committee Owner', viewerRole: 'CHAIR',
+        name: 'Managed Committee', status: 'ACTIVE'}]),
       listCountryTemplates: vi.fn(async () => [{key: 'builtin:default', names: {en: 'Default countries'},
         defaultLanguage: 'en', builtin: true}]),
       listCommitteeTemplates: vi.fn(async () => []),
+      archiveCommittee, requestCommitteeDeletion,
     } as unknown as SelfHostedApi;
     container = document.createElement('div'); document.body.append(container); root = createRoot(container);
     await act(async () => { root?.render(<MemoryRouter initialEntries={['/committees']}>
@@ -47,6 +53,20 @@ describe('self-hosted stage 4 workspace', () => {
     expect(page?.querySelectorAll(':scope > .ui.grid > .column')).toHaveLength(2);
     expect(page?.textContent).toContain('User');
     expect(page?.textContent).toContain('Security Council');
+    expect(page?.textContent).toContain('My created committees');
+    expect(page?.textContent).toContain('My managed committees');
+    expect(page?.textContent).toContain('Owner: Committee Owner');
+    expect(page?.textContent).not.toContain('My participating committees');
+    const deleteButtons = page?.querySelectorAll('button[aria-label^="Delete committee"]');
+    expect(deleteButtons).toHaveLength(1);
+    expect(deleteButtons?.[0]?.getAttribute('aria-label')).not.toContain('Managed Committee');
+    await act(async () => { (deleteButtons?.[0] as HTMLButtonElement | undefined)?.click(); });
+    expect(document.body.textContent).toContain('This permanently deletes the committee and all of its records and uploaded files.');
+    const confirm = Array.from(document.body.querySelectorAll('button')).find(button => button.textContent === 'Delete committee');
+    await act(async () => { confirm?.click(); await Promise.resolve(); await Promise.resolve(); });
+    expect(archiveCommittee).toHaveBeenCalledWith('committee', 1);
+    expect(requestCommitteeDeletion).toHaveBeenCalledWith('committee', 2, 'Security Council');
+    expect(page?.textContent).not.toContain('Security Council');
     expect(page?.textContent).toContain('Create committee');
     expect(page?.textContent).toContain('Country template');
   });

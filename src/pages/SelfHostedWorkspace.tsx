@@ -11,7 +11,7 @@ import type {
   Stage4CommitteeSeat
 } from '@quorum/contracts';
 import {Link, Redirect, Route, Switch, useHistory, useLocation, useParams} from 'react-router-dom';
-import {Button, Card, Checkbox, Confirm, Container, Form, Grid, Header, Icon, Label, List, Menu, Message, Pagination, Popup, Segment, Table} from 'semantic-ui-react';
+import {Button, Card, Checkbox, Confirm, Container, Divider, Form, Grid, Header, Icon, Label, List, Menu, Message, Pagination, Popup, Segment, Table} from 'semantic-ui-react';
 import Loading from '../components/Loading';
 import {LanguageMenuItem, t} from '../i18n';
 import {selfHostedApi, type SelfHostedApi} from '../services/self-hosted-api';
@@ -48,6 +48,8 @@ function AppMenu({user, logout}: {user: SelfHostedUser; logout(): void}) {
 
 function CommitteeList({api, user, logout}: {api: SelfHostedApi; user: SelfHostedUser; logout(): void}) {
   const history = useHistory(); const [committees, setCommittees] = React.useState<Awaited<ReturnType<SelfHostedApi['listCommittees']>>>([]);
+  const [deleteTarget, setDeleteTarget] = React.useState<Awaited<ReturnType<SelfHostedApi['listCommittees']>>[number]>();
+  const [deleting, setDeleting] = React.useState(false);
   const [countryTemplates, setCountryTemplates] = React.useState<CountryTemplate[]>([]);
   const [committeeTemplates, setCommitteeTemplates] = React.useState<CommitteeTemplate[]>([]);
   const [name, setName] = React.useState(''); const [topic, setTopic] = React.useState(''); const [conference, setConference] = React.useState('');
@@ -72,22 +74,50 @@ function CommitteeList({api, user, logout}: {api: SelfHostedApi; user: SelfHoste
       history.push(`/committees/${committee.id}`);
     } catch (caught) { setError(errorText(caught)); } finally { setWorking(false); }
   };
-  const committeeList = loading ? <Loading /> : committees.length === 0
-    ? <Message content={t('No committees created')} />
-    : <Card.Group itemsPerRow={1}>{committees.map(committee => <Card fluid key={committee.id} as={Link}
-      to={`/committees/${committee.id}`}>
-      <Card.Content><Card.Header>{committee.name}</Card.Header><Card.Meta>{t(committee.status)}</Card.Meta></Card.Content>
-    </Card>)}</Card.Group>;
-  return <Container text className="committee-create-page">
+  const remove = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true); setError(undefined);
+    try {
+      const archived = deleteTarget.status === 'ARCHIVED' ? deleteTarget
+        : await api.archiveCommittee(deleteTarget.id, deleteTarget.revision);
+      await api.requestCommitteeDeletion(archived.id, archived.revision, archived.name);
+      setCommittees(current => current.filter(committee => committee.id !== deleteTarget.id));
+      setDeleteTarget(undefined);
+    } catch (caught) { setError(errorText(caught)); } finally { setDeleting(false); }
+  };
+  const groups = [
+    {role: 'OWNER', title: t('My created committees'), showOwner: false},
+    {role: 'CHAIR', title: t('My managed committees'), showOwner: true},
+    {role: 'MEMBER', title: t('My participating committees'), showOwner: true}
+  ] as const;
+  const committeeGroups = loading ? <Loading /> : groups.map(group => {
+    const items = committees.filter(committee => committee.viewerRole === group.role
+      || group.role === 'OWNER' && !committee.viewerRole && committee.ownerUserId === user.id);
+    if (items.length === 0) return null;
+    return <section key={group.role} className="committee-list-section">
+      <Header as="h4" dividing>{group.title}</Header>
+      <Card.Group itemsPerRow={1}>{items.map(committee => <Card fluid key={committee.id}
+        className={group.role === 'OWNER' ? 'owner-committee-card' : undefined}>
+        <Card.Content as={Link} to={`/committees/${committee.id}`}>
+          <Card.Header>{committee.name}</Card.Header><Card.Meta>{t(committee.status)}</Card.Meta>
+          {group.showOwner && <Card.Description>{t('Owner')}: {committee.ownerDisplayName}</Card.Description>}
+        </Card.Content>
+        {group.role === 'OWNER' && <button type="button" className="owner-committee-delete" data-theme-component="icon-action"
+          onClick={() => setDeleteTarget(committee)}
+          aria-label={t('Delete committee {name}').replace('{name}', committee.name)}>
+          <Icon name="trash" /></button>}
+      </Card>)}</Card.Group>
+    </section>;
+  });
+  return <Container className="committee-create-page">
     <Header as="h1" textAlign="center">Quorum</Header>{error && <Message error content={error} />}
-    <Grid columns="equal" stackable>
-      <Grid.Column><Segment>
+    <Grid stackable>
+      <Grid.Column width={6}><Segment>
         <Header as="h3">{user.displayName}</Header>
-        <Header as="h4" dividing>{t('My committees')}</Header>
-        {committeeList}
+        {committeeGroups}
         <Button basic negative fluid icon="sign-out" content={t('Logout')} onClick={logout} />
       </Segment></Grid.Column>
-      <Grid.Column><Segment><Form onSubmit={create} loading={working}>
+      <Grid.Column width={10}><Segment><Form onSubmit={create} loading={working}>
       <Form.Group unstackable className="template-picker-row">
         <Form.Dropdown className="template-picker-field" label={t('Template')} search clearable fluid selection
           placeholder={t('Template to skip manual member creation (optional)')} value={templateId}
@@ -115,6 +145,11 @@ function CommitteeList({api, user, logout}: {api: SelfHostedApi; user: SelfHoste
       <Button primary fluid disabled={!name.trim() || (!templateId && !countryKey)}>{t('Create committee')}<Icon name="arrow right" /></Button>
     </Form></Segment></Grid.Column>
     </Grid>
+    <Confirm open={Boolean(deleteTarget)} header={t('Delete committee?')}
+      content={t('This permanently deletes the committee and all of its records and uploaded files.')}
+      cancelButton={t('Cancel')} confirmButton={{content: t('Delete committee'), loading: deleting, disabled: deleting}}
+      onCancel={() => setDeleteTarget(undefined)}
+      onConfirm={() => void remove()} />
   </Container>;
 }
 
@@ -595,27 +630,66 @@ function PointResolutionForm({point, run, api}: {point: CommitteePoint; run(oper
 
 function PointsPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspaceSnapshot; run(operation: () => Promise<unknown>): Promise<void>;
   api: SelfHostedApi; canChair: boolean}) {
-  const pointTypes = snapshot.activeRules.pointTypes;
-  const [type, setType] = React.useState(pointTypes[0]?.id ?? ''); const [content, setContent] = React.useState('');
-  const [seatId, setSeatId] = React.useState(snapshot.viewer.seatId ?? ''); const chair = canChair;
+  const types = snapshot.activeRules.pointTypes;
+  const [type, setType] = React.useState(types[0]?.id ?? '');
+  const [content, setContent] = React.useState('');
+  const [seatId, setSeatId] = React.useState(snapshot.viewer.seatId ?? '');
+  const chairOperated = snapshot.committee.operationMode === 'CHAIR_OPERATED';
   const session = snapshot.meetingSession;
-  const create = async () => { if (!session) return; await run(() => api.createPoint(snapshot.committee.id,
-    {meetingSessionId: session.id, pointTypeId: type, content, ...(chair && seatId ? {onBehalfOfSeatId: seatId} : {})})); setContent(''); };
-  const canRaise = snapshot.viewer.audience !== 'PUBLIC'
-    && snapshot.committee.status !== 'ARCHIVED' && snapshot.committee.status !== 'DELETING';
-  return <>{canRaise && session?.status === 'OPEN' && <Form onSubmit={create}><Form.Select label={t('Point type')} value={type}
-    options={pointTypes.map(item => ({key: item.id, value: item.id,
-      text: item.names ? localizedDisplayName(item.names, 'zh-CN') : t(item.id)}))}
-    onChange={(_, data) => setType(String(data.value))} />
-    {chair && <Form.Select label={t('Represented seat')} value={seatId} options={snapshot.seats.map(seat => ({key: seat.id, value: seat.id, text: seat.displayName}))}
-      onChange={(_, data) => setSeatId(String(data.value))} />}
-    <Form.TextArea label={t('Point')} required value={content} onChange={(_, data) => setContent(String(data.value))} />
-    <Button primary disabled={!type || !content.trim() || (chair && !seatId)}>{t('Raise point')}</Button></Form>}
-    <List divided>{snapshot.points.map(item => { const full = 'content' in item ? item as CommitteePoint : undefined;
-      return <List.Item key={item.id}><List.Header>{item.raisedBySeatDisplayName} · {t(item.pointTypeId)}</List.Header>
-        <List.Description>{full?.content}<Label>{t(item.status)}</Label>{full?.chairResponse && <div>{full.chairResponse}</div>}</List.Description>
-        {chair && item.status === 'PENDING' && full && <PointResolutionForm point={full} run={run} api={api} />}</List.Item>;
-    })}</List></>;
+  const create = async () => {if (!session) return; await run(() => api.createPoint(snapshot.committee.id,
+    {meetingSessionId: session.id, pointTypeId: type, content: content.trim(),
+      ...(canChair && seatId ? {onBehalfOfSeatId: seatId} : {})})); setContent('');};
+  const resolve = (point: CommitteePoint, status: Exclude<PointStatus, 'PENDING'>) =>
+    void run(() => api.resolvePoint(point.id, {baseRevision: point.revision, status}));
+  const label = (point: CommitteePoint) => point.status === 'PENDING' ? t('PENDING')
+    : point.pointTypeId === 'point-of-order' ? t(point.status === 'UPHELD' ? 'Uphold point' : 'Overrule point')
+    : point.pointTypeId === 'point-of-information' ? t('Handled point')
+    : point.pointTypeId === 'point-of-personal-privilege' ? t(point.status === 'UPHELD' ? 'Approved point' : 'Denied point')
+    : t(point.status);
+  const actions = (point: CommitteePoint) => point.pointTypeId === 'point-of-order' ? <Button.Group fluid>
+    <Button negative onClick={() => resolve(point, 'OVERRULED')}>{t('Overrule point')}</Button>
+    <Button positive onClick={() => resolve(point, 'UPHELD')}>{t('Uphold point')}</Button></Button.Group>
+    : point.pointTypeId === 'point-of-information' ? <Button primary fluid
+      onClick={() => resolve(point, 'ANSWERED')}>{t('Handle point')}</Button>
+    : point.pointTypeId === 'point-of-personal-privilege' ? <Button.Group fluid>
+      <Button negative onClick={() => resolve(point, 'REJECTED')}>{t('Deny point')}</Button>
+      <Button positive onClick={() => resolve(point, 'UPHELD')}>{t('Approve point')}</Button></Button.Group>
+    : <PointResolutionForm point={point} run={run} api={api} />;
+  const points = [...snapshot.points].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+  const canRaise = snapshot.viewer.audience !== 'PUBLIC' && snapshot.committee.status === 'ACTIVE';
+  return <Container text className="points-page">
+    {canRaise && session?.status === 'OPEN' && <Form className="point-proposal-form" onSubmit={create}>
+      <Form.Select label={t('Point type')} placeholder={t('Select type')} search selection fluid icon="search"
+        value={type} options={types.map(item => ({key: item.id, value: item.id,
+          text: item.names ? localizedDisplayName(item.names, 'zh-CN') : t(item.id)}))}
+        onChange={(_, data) => setType(String(data.value))} />
+      {canChair && <Form.Select label={t('Point proposer')} placeholder={t('Select point proposer')} search selection
+        fluid icon="search" value={seatId || false} options={snapshot.seats.map(seat => ({key: seat.id,
+          value: seat.id, text: seat.displayName}))} onChange={(_, data) => setSeatId(String(data.value))} />}
+      <Form.TextArea label={chairOperated ? t('Reason (optional)') : t('Reason')} required={!chairOperated}
+        value={content} onChange={(_, data) => setContent(String(data.value))} />
+      <Button type="submit" icon="plus" basic primary fluid aria-label={t('Raise point')}
+        disabled={!type || canChair && !seatId || !chairOperated && !content.trim()} />
+    </Form>}<Divider hidden />
+    <Card.Group itemsPerRow={1} className="point-list">{points.map(item => {
+      const point = 'content' in item ? item as CommitteePoint : undefined;
+      const definition = types.find(candidate => candidate.id === item.pointTypeId);
+      return <Card className="point-card" key={item.id}><Card.Content>
+        <div className="motion-heading"><Card.Header>{definition?.names
+          ? localizedDisplayName(definition.names, 'zh-CN') : t(item.pointTypeId)}</Card.Header>
+          <Label>{point ? label(point) : t(item.status)}</Label></div>
+        <Card.Meta className="motion-metadata">
+          <div className="motion-metadata-row"><Label horizontal>{t('Point proposer')}</Label>
+            <span className="motion-metadata-value">{item.raisedBySeatDisplayName}</span></div>
+          {point?.content && <div className="motion-metadata-row"><Label horizontal>{t('Reason')}</Label>
+            <span className="motion-metadata-value">{point.content}</span></div>}
+        </Card.Meta>
+      </Card.Content>
+      {canChair && item.status === 'PENDING' && point && <Card.Content extra>
+        {chairOperated ? actions(point) : <PointResolutionForm point={point} run={run} api={api} />}
+      </Card.Content>}</Card>;
+    })}</Card.Group>
+  </Container>;
 }
 
 function StatisticsPanel({snapshot}: {snapshot: CommitteeWorkspaceSnapshot}) {

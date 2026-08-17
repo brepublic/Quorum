@@ -11,8 +11,10 @@
   width: 33%;
 }
 
-.committee-create-page {
+.committee-create-page.ui.container {
+  max-width: 70rem !important;
   padding: 1em 0;
+  width: calc(100% - 2rem) !important;
 }
 
 .committee-create-page > .ui.header {
@@ -21,6 +23,48 @@
 
 .committee-create-page .ui.cards {
   margin-bottom: 1rem;
+}
+
+.owner-committee-card.ui.card {
+  position: relative;
+}
+
+.owner-committee-card.ui.card > .content:first-child {
+  padding-right: 3.5rem;
+}
+
+.owner-committee-delete {
+  align-items: center;
+  background: transparent;
+  border: 1px solid #db2828;
+  border-radius: 50%;
+  color: #db2828;
+  cursor: pointer;
+  display: inline-flex;
+  height: 2.25rem;
+  justify-content: center;
+  margin: 0;
+  padding: 0;
+  position: absolute;
+  right: 0.75rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 2.25rem;
+  z-index: 1;
+}
+
+.owner-committee-delete > .icon {
+  margin: 0;
+}
+
+.owner-committee-card.ui.card > .owner-committee-delete:last-child {
+  border-radius: 50% !important;
+}
+
+.owner-committee-delete:hover,
+.owner-committee-delete:focus-visible {
+  background: rgba(219, 40, 40, 0.08);
+  outline: none;
 }
 
 .committee-setup-page {
@@ -152,9 +196,8 @@
 
 .template-picker-field .ui.selection.dropdown > .text {
   max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .template-picker-field .ui.dropdown .menu > .item {
@@ -291,8 +334,7 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
 }
 
 .country-table-scroll {
-  max-height: 65vh;
-  overflow: auto;
+  overflow: visible;
 }
 
 .ui.table.country-editor-table {
@@ -620,6 +662,35 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
 
 .motion-card .extra.content > .ui.button {
   margin-bottom: 0.35rem;
+}
+
+.motion-stop-voting.ui.button {
+  margin-top: 1rem;
+}
+
+.motion-metadata {
+  display: grid !important;
+  gap: 0.45rem 0.75rem;
+  grid-template-columns: max-content minmax(0, 1fr);
+  margin-top: 0.45rem;
+}
+
+.motion-metadata-row {
+  display: contents;
+}
+
+.motion-metadata-row > .ui.horizontal.label {
+  align-self: start;
+  margin-right: 0;
+}
+
+.motion-metadata-value {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .motion-seat-option {

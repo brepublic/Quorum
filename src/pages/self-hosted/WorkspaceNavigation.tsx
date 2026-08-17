@@ -77,6 +77,7 @@ function PrimaryItems({snapshot, onNavigate}: {snapshot: CommitteeWorkspaceSnaps
     {item('/setup', 'Setup')}
     {item('/roll-call', 'Roll call')}
     {item('/motions', 'Motions')}
+    {item('/points', 'Points')}
     {generalSpeakerList && <Menu.Item key="general-speakers-list" as={Link}
       to={`${base}/caucuses/${generalSpeakerList.id}`}
       active={routeActive(location.pathname, `${base}/caucuses/${generalSpeakerList.id}`)} onClick={onNavigate}>
@@ -85,7 +86,6 @@ function PrimaryItems({snapshot, onNavigate}: {snapshot: CommitteeWorkspaceSnaps
     {dynamic('caucuses', 'Caucuses', 'New caucus', caucuses)}
     {dynamic('resolutions', 'Resolutions', 'New resolution', resolutions)}
     {dynamic('strawpolls', 'Strawpolls', 'New strawpoll', strawpolls)}
-    {item('/points', 'Points')}
     {item('/notes', 'Notes')}
     {item('/posts', 'Files')}
     {item('/stats', 'Statistics')}

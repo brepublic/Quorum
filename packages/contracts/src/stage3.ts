@@ -44,6 +44,8 @@ export type ChairRuleOverrideRequest =
 export interface CommitteeSummary {
   id: string;
   ownerUserId?: string;
+  ownerDisplayName?: string;
+  viewerRole?: 'OWNER' | 'CHAIR' | 'MEMBER';
   name: string;
   chairLabel: string;
   topic: string;

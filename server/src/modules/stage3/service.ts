@@ -50,12 +50,17 @@ const legacyMotionDefinitions = [
   {id: 'suspend-draft-resolution-speakers-list', names: {'zh-CN': '暂停决议草案发言名单',
     en: 'Suspend draft resolution speakers list'}, effects: [{type: 'SET_DOCUMENT_STATUS'}]},
   {id: 'vote-on-resolution', names: {'zh-CN': '对决议草案投票', en: 'Vote on resolution'}, effects: [{type: 'START_BALLOT'}]},
-  {id: 'open-debate', names: {'zh-CN': '开始辩论', en: 'Open debate'}, procedural: true, effects: [{type: 'OPEN_DISCUSSION'}]},
+  {id: 'open-debate', names: {'zh-CN': '开启正式辩论', en: 'Open formal debate'}, procedural: true,
+    effects: [{type: 'OPEN_DISCUSSION'}]},
   {id: 'suspend-debate', names: {'zh-CN': '暂停辩论', en: 'Suspend debate'}, procedural: true,
     effects: [{type: 'OPEN_DISCUSSION'}]},
   {id: 'resume-debate', names: {'zh-CN': '恢复辩论', en: 'Resume debate'}, procedural: true,
     effects: [{type: 'OPEN_DISCUSSION'}]},
-  {id: 'close-debate', names: {'zh-CN': '结束辩论', en: 'Close debate'}, procedural: true,
+  {id: 'suspend-meeting', names: {'zh-CN': '暂停会议', en: 'Suspend the meeting'}, procedural: true,
+    effects: [{type: 'OPEN_DISCUSSION'}]},
+  {id: 'close-debate', names: {'zh-CN': '结束正式辩论', en: 'Close formal debate'}, procedural: true,
+    effects: [{type: 'OPEN_DISCUSSION'}]},
+  {id: 'adjourn-meeting', names: {'zh-CN': '休会', en: 'Adjourn the meeting'}, procedural: true,
     effects: [{type: 'OPEN_DISCUSSION'}]},
   {id: 'reorder-draft-resolutions', names: {'zh-CN': '调整决议草案顺序', en: 'Reorder draft resolutions'},
     effects: [{type: 'SET_DOCUMENT_STATUS'}]},
@@ -70,6 +75,17 @@ function builtInVersion2(definition: RulePackageDefinition): RulePackageDefiniti
   const phases = (definition.phases ?? []).map(phase => phase.id === 'open-debate'
     ? {...phase, id: 'formal-debate'} : phase);
   return {...structuredClone(definition), phases, motions: [...existing.values()]};
+}
+
+function builtInVersion3(definition: RulePackageDefinition): RulePackageDefinition {
+  const upgraded = builtInVersion2(definition);
+  const motions = [...(upgraded.motions ?? [])];
+  const moderatedIndex = motions.findIndex(motion => motion.id === 'open-moderated-caucus');
+  const unmoderatedIndex = motions.findIndex(motion => motion.id === 'open-unmoderated-caucus');
+  if (moderatedIndex > unmoderatedIndex && unmoderatedIndex >= 0) {
+    [motions[moderatedIndex], motions[unmoderatedIndex]] = [motions[unmoderatedIndex]!, motions[moderatedIndex]!];
+  }
+  return {...upgraded, motions};
 }
 
 function committee(row: CommitteeRow): CommitteeSummary {
@@ -274,7 +290,7 @@ export class Stage3Service {
         const inserted = await client.query<{id: string}>(`INSERT INTO rule_packages
           (id, scope, stable_key) VALUES ($1,'BUILTIN',$2)
           ON CONFLICT (scope, stable_key) DO UPDATE SET stable_key=EXCLUDED.stable_key RETURNING id`, [packageId, definition.key]);
-        for (const [index, versionDefinition] of [definition, builtInVersion2(definition)].entries()) {
+        for (const [index, versionDefinition] of [definition, builtInVersion2(definition), builtInVersion3(definition)].entries()) {
           const validated = validateRulePackage(versionDefinition);
           if (!validated.ok) throw new Error(`Invalid built-in rule package: ${definition.key} v${index + 1}: ${JSON.stringify(validated.issues)}`);
           await client.query(`INSERT INTO rule_package_versions
