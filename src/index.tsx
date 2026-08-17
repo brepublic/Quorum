@@ -7,6 +7,7 @@ import createHistory from 'history/createBrowserHistory';
 import * as ReactGA from 'react-ga';
 import * as Sentry from "@sentry/react";
 import 'semantic-ui-css/semantic.min.css';
+import 'flag-icons/css/flag-icons.min.css';
 import './index.css';
 import { LanguageProvider } from './i18n';
 import { ThemeProvider } from './theme/ThemeProvider';

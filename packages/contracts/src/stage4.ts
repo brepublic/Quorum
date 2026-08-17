@@ -303,6 +303,8 @@ export interface CommitteeRuleReadModel {
 }
 
 export interface CommitteeWorkspaceSnapshot {
+  /** The committee source country template is exposed only to Chairs and Owners for seat creation. */
+  countryTemplate?: CountryTemplate;
   schemaVersion: 2;
   committee: Omit<CommitteeSummary, 'ownerUserId'> & {ownerUserId?: string};
   seats: Stage4CommitteeSeat[];

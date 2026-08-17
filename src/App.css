@@ -77,6 +77,34 @@
   width: 100%;
 }
 
+.committee-setup-page .ui.members-table.ui.definition.table thead:not(.full-width) .add-seat-row > th:first-child {
+  pointer-events: auto;
+}
+
+.committee-setup-page .members-table .add-seat-row > th:first-child .ui.dropdown {
+  max-width: min(32rem, calc(100vw - 3rem));
+  min-width: 14rem;
+  width: fit-content;
+}
+
+.committee-setup-page .members-table .add-seat-row > th:first-child .ui.dropdown > .menu {
+  max-width: min(32rem, calc(100vw - 3rem));
+  min-width: 100%;
+  width: max-content;
+}
+
+.committee-setup-page .committee-seat-identity {
+  align-items: center;
+  display: flex;
+  gap: 0.5rem;
+}
+
+.committee-setup-page .committee-seat-identity .country-flag-display {
+  flex-basis: 1.5em;
+  font-size: 1.5em;
+  margin-right: 0;
+}
+
 .statistics-page {
   padding: 1em 0 1.5em;
 }

@@ -325,7 +325,7 @@ function CommitteeOverviewPanel({snapshot}: {snapshot: CommitteeWorkspaceSnapsho
 
 function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspaceSnapshot; run: WorkspaceCommand;
   api: SelfHostedApi; canChair: boolean}) {
-  const [seatName, setSeatName] = React.useState('');
+  const [selectedCountryStableKey, setSelectedCountryStableKey] = React.useState('');
   const [seatRank, setSeatRank] = React.useState<'STANDARD' | 'VETO' | 'NGO' | 'OBSERVER'>('STANDARD');
   const [seatCanVote, setSeatCanVote] = React.useState(true); const [seatMustVote, setSeatMustVote] = React.useState(false);
   const [chairEmail, setChairEmail] = React.useState(''); const [assignmentEmail, setAssignmentEmail] = React.useState('');
@@ -333,7 +333,6 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
   const [invitationSeatId, setInvitationSeatId] = React.useState(snapshot.seats[0]?.id ?? '');
   const [invitationExpiresAt, setInvitationExpiresAt] = React.useState(() => new Date(Date.now() + 86_400_000).toISOString().slice(0, 16));
   const [invitationCode, setInvitationCode] = React.useState<string>(); const [pending, setPending] = React.useState<string>();
-  const [seatNames, setSeatNames] = React.useState<Record<string, string>>(() => Object.fromEntries(snapshot.seats.map(seat => [seat.id, seat.displayName])));
   const owner = snapshot.viewer.audience === 'OWNER';
   const readOnly = snapshot.committee.status === 'ARCHIVED' || snapshot.committee.status === 'DELETING';
   const execute = async (key: string, operation: () => Promise<unknown>) => {
@@ -347,14 +346,28 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
   };
   const rankOptions = (['STANDARD', 'VETO', 'NGO', 'OBSERVER'] as const)
     .map(value => ({key: value, value, text: t(value)}));
+  const countryOptions = React.useMemo(() => {
+    const seated = new Set(snapshot.seats.map(seat => seat.stableKey));
+    return (snapshot.countryTemplate?.countries ?? []).filter(country => !seated.has(country.stableKey)).map(country => ({
+      key: country.stableKey, value: country.stableKey,
+      text: <><Flag seat={{displayName: localizedDisplayName(country.names, country.defaultLanguage), flag: country.flag}} />
+        {localizedDisplayName(country.names, country.defaultLanguage)}</>,
+      country
+    }));
+  }, [snapshot.countryTemplate, snapshot.seats]);
+  React.useEffect(() => {
+    setSelectedCountryStableKey(current => countryOptions.some(option => option.value === current)
+      ? current : String(countryOptions[0]?.value ?? ''));
+  }, [countryOptions]);
+  const selectedCountry = countryOptions.find(option => option.value === selectedCountryStableKey)?.country;
   return <Container className="committee-setup-page"><Grid columns={2} stackable><Grid.Row>
     <Grid.Column width={9}><Header as="h2">{t('Seats')}</Header>
     <Table className="members-table" compact celled definition stackable><Table.Header><Table.Row>
       <Table.HeaderCell>{t('Seat')}</Table.HeaderCell><Table.HeaderCell>{t('Rank')}</Table.HeaderCell>
       <Table.HeaderCell>{t('Voting')}</Table.HeaderCell><Table.HeaderCell>{t('Must Vote')}</Table.HeaderCell>
       {canChair && !readOnly && <Table.HeaderCell />}</Table.Row>
-      {canChair && !readOnly && <Table.Row><Table.HeaderCell><Form.Input aria-label={t('Seat name')} required
-        value={seatName} onChange={event => setSeatName(event.currentTarget.value)} /></Table.HeaderCell>
+      {canChair && !readOnly && <Table.Row className="add-seat-row"><Table.HeaderCell><Form.Select aria-label={t('Seat')} search selection
+        value={selectedCountryStableKey} options={countryOptions} onChange={(_, data) => setSelectedCountryStableKey(String(data.value ?? ''))} /></Table.HeaderCell>
         <Table.HeaderCell><Form.Select aria-label={t('Rank')} search selection fluid value={seatRank} options={rankOptions}
           onChange={(_, data) => {const rank = data.value as typeof seatRank; setSeatRank(rank);
             if (rank === 'VETO') setSeatCanVote(true);}} /></Table.HeaderCell>
@@ -364,19 +377,16 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
         <Table.HeaderCell collapsing><Form.Checkbox aria-label={t('Must Vote')} toggle checked={seatMustVote}
           disabled={!seatCanVote} onChange={(_, data) => setSeatMustVote(data.checked ?? false)} /></Table.HeaderCell>
         <Table.HeaderCell collapsing><Button icon="plus" primary basic aria-label={t('Create seat')}
-          loading={pending === 'create-seat'} disabled={!seatName.trim()} onClick={() => void (async () => {
+          loading={pending === 'create-seat'} disabled={!selectedCountry} onClick={() => void (async () => {
+            if (!selectedCountry) return;
             await execute('create-seat', () => api.createSeat(snapshot.committee.id, {
-              stableKey: seatName.trim().toLowerCase().replace(/\s+/g, '-'), displayName: seatName.trim(), rank: seatRank,
-              canVote: seatCanVote, hasVeto: seatRank === 'VETO', mustVote: seatMustVote, sortOrder: snapshot.seats.length}));
-            setSeatName(''); setSeatRank('STANDARD'); setSeatCanVote(true); setSeatMustVote(false);
+              stableKey: selectedCountry.stableKey, displayName: localizedDisplayName(selectedCountry.names, selectedCountry.defaultLanguage),
+              flag: selectedCountry.flag, rank: seatRank, canVote: seatCanVote, hasVeto: seatRank === 'VETO',
+              mustVote: seatMustVote, sortOrder: snapshot.seats.length}));
+            setSeatRank('STANDARD'); setSeatCanVote(true); setSeatMustVote(false);
           })()} /></Table.HeaderCell></Table.Row>}
-      </Table.Header><Table.Body>{snapshot.seats.map(seat => <Table.Row key={seat.id}><Table.Cell><Flag seat={seat} />
-        {canChair && !readOnly ? <Form.Input aria-label={`${t('Seat name')} · ${seat.displayName}`}
-          value={seatNames[seat.id] ?? seat.displayName}
-          onChange={event => setSeatNames(current => ({...current, [seat.id]: event.currentTarget.value}))}
-          onBlur={() => {const name = seatNames[seat.id]?.trim(); if (name && name !== seat.displayName)
-            void execute(`rename-${seat.id}`, () => api.updateSeat(snapshot.committee.id, seat.id, seat.revision,
-              {displayName: name}));}} /> : seat.displayName}</Table.Cell>
+      </Table.Header><Table.Body>{snapshot.seats.map(seat => <Table.Row key={seat.id}><Table.Cell>
+        <span className="committee-seat-identity"><Flag seat={seat} /><span>{seat.displayName}</span></span></Table.Cell>
         <Table.Cell>{canChair && !readOnly ? <Form.Select aria-label={`${t('Rank')} · ${seat.displayName}`}
           search selection fluid value={seat.rank} options={rankOptions} onChange={(_, data) => {
             const rank = data.value as typeof seatRank; void execute(`rank-${seat.id}`, () => api.updateSeat(snapshot.committee.id,

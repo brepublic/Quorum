@@ -684,6 +684,12 @@ export class Stage4Service {
       if (viewer.audience === 'PUBLIC' && committee.visibility === 'PRIVATE') {
         throw new AppError({code: 'NOT_FOUND', message: 'Committee not found.'});
       }
+      const setupCountryTemplate = viewer.audience === 'OWNER' || viewer.audience === 'CHAIR'
+        ? committee.country_template_key === 'builtin:default'
+          ? builtinCountryTemplate()
+          : await countryTemplate(client, await countryTemplateById(client, committee.owner_user_id,
+            committee.country_template_key.slice('custom:'.length)))
+        : undefined;
       const seats = await client.query<Stage4CommitteeSeat>(`SELECT id,stable_key AS "stableKey",display_name AS "displayName",rank,
         can_vote AS "canVote",has_veto AS "hasVeto",must_vote AS "mustVote",sort_order AS "sortOrder",active,revision,
         json_build_object('type',flag_type,'value',flag_value) AS flag FROM committee_seats
@@ -726,6 +732,7 @@ export class Stage4Service {
       if (!rules) throw new AppError({code: 'SERVICE_NOT_READY', message: 'Active rules are unavailable.'});
       const result: CommitteeWorkspaceSnapshot = {schemaVersion: 2,
         committee: viewer.audience === 'OWNER' || viewer.audience === 'CHAIR' ? summary : publicCommittee,
+        ...(setupCountryTemplate ? {countryTemplate: setupCountryTemplate} : {}),
         seats: seats.rows, viewer, attendance, points, notes: [], textPosts: [],
         motionSettings: {delegateMotionProposalsEnabled: committee.delegate_motion_proposals_enabled,
           delegateMotionVotingEnabled: committee.delegate_motion_voting_enabled},

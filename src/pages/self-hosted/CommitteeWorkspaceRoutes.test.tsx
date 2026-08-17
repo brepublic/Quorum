@@ -18,7 +18,11 @@ const user: SelfHostedUser = {id: 'user', email: 'user@example.com', displayName
   isSystemAdmin: false, sessionVersion: 1, mustChangePassword: false, createdAt: '2026-08-13T00:00:00.000Z', disabledAt: null};
 
 function snapshot(audience: CommitteeWorkspaceSnapshot['viewer']['audience']): CommitteeWorkspaceSnapshot {
-  return {schemaVersion: 2, committee: {id: 'committee', name: 'Security Council', chairLabel: 'Chair',
+  return {schemaVersion: 2, ...(audience === 'CHAIR' || audience === 'OWNER' ? {countryTemplate: {
+    id: 'builtin:default', key: 'builtin:default', builtin: true, names: {en: 'Default countries'}, defaultLanguage: 'en',
+    countryLanguages: ['en'], revision: 1, createdAt: null, updatedAt: null, countries: [{id: 'country-france',
+      stableKey: 'france', names: {en: 'France'}, defaultLanguage: 'en', continent: null, sortOrder: 1,
+      flag: {type: 'STANDARD', value: 'fr'}, revision: 1}]}} : {}), committee: {id: 'committee', name: 'Security Council', chairLabel: 'Chair',
     topic: 'Climate security', conference: 'Main Hall', visibility: 'PUBLIC', operationMode: 'DELEGATE_OPERATED',
     status: 'ACTIVE', activeRulePackageVersionId: 'rules', revision: 4}, seats: [{id: 'seat', stableKey: 'china',
     displayName: 'China', rank: 'VETO', canVote: true, hasVeto: true, mustVote: false, sortOrder: 0, active: true,
@@ -81,6 +85,8 @@ describe('committee workspace routes and roles', () => {
   it('lets Chairs manage seats, assignments, and one-time invitations from setup', async () => {
     const page = await render('CHAIR', '/committees/committee/setup');
     expect(page.querySelector('[aria-label="Create seat"]')).toBeTruthy();
+    expect(page.querySelector('[aria-label="Seat name"]')).toBeNull();
+    expect(page.textContent).toContain('France');
     expect(page.textContent).toContain('Must Vote');
     expect(page.querySelector('.committee-setup-page > .ui.grid')).toBeTruthy();
     expect(page.textContent).toContain('Assign seat');
