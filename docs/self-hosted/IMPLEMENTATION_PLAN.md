@@ -50,7 +50,7 @@ deploy/
 - 为本目录规格建立 schema 和示例 fixture；
 - 明确当前行为与 `Quorum Default`、北京规则包的差异；
 - 建立 API 错误码、事件名和审计动作注册表；
-- 保留现有 Vitest/Cypress 用例作为回归基线。
+- 用 `CURRENT_BEHAVIOR_BASELINE.md` 和 Vitest 冻结旧行为基线；阶段 9 在 API/integration 覆盖形成后删除旧浏览器套件。
 
 验收：所有现有一次性单元测试和生产构建通过，规则 fixture 能在无服务器环境校验。
 
@@ -115,6 +115,8 @@ deploy/
 
 ## 7. 阶段 4：低并发业务切片
 
+状态：代码与无服务器自动验收已完成；真实 PostgreSQL、TLS、Compose 和多浏览器验收按 `MANUAL_ACCEPTANCE.md` 延期。
+
 优先迁移：
 
 - 委员会资料和设置；
@@ -129,6 +131,8 @@ deploy/
 验收：前端对应页面不再导入 Firebase；刷新、跨浏览器同步和权限失败均由 API 契约覆盖。
 
 ## 8. 阶段 5：实时与高并发议事
+
+状态：5.1–5.8 代码、无数据库自动测试和生产构建已完成；真实 PostgreSQL、代理/TLS 与多浏览器回归按 `MANUAL_ACCEPTANCE.md` 延期。
 
 迁移顺序：
 
@@ -153,6 +157,8 @@ deploy/
 
 ## 9. 阶段 6：服务器卷和 S3 文件
 
+状态：6.1–6.8 的 PostgreSQL schema、共享契约、durable staging、流式上传、`SERVER_VOLUME`、`S3_COMPATIBLE`、文件审核/发布、授权下载、durable 物理删除任务、provider 切换、容量保护、后台清理和自托管文件 UI 已完成；真实 PostgreSQL、持久卷、S3 compatible 服务与浏览器验收因当前环境未提供相应服务而延期。阶段 6 已收尾。
+
 交付：
 
 - 持久上传暂存、流式大小限制和 SHA-256；
@@ -161,6 +167,7 @@ deploy/
 - 文件审核、发布、永久删除和墓碑；
 - 存储 provider 切换；
 - 磁盘阈值和后台清理任务。
+- 自托管文件、S3 配置和 provider migration 界面。
 
 关键测试：
 
@@ -171,6 +178,8 @@ deploy/
 - 永久删除后离线清单不能复活文件。
 
 ## 10. 阶段 7：Chair Local Agent
+
+状态：已完成。7.1–7.5 已实现配对、lease fencing、manifest/task、`CHAIR_AGENT` provider、桌面文件系统、恢复、主机管理和显式冲突裁决；7.6 已生成固定运行时、自包含、可复现的 Windows、macOS 与 Linux 发布包，并提供安装、升级、卸载、签名和公证入口。原生平台证据保留在人工验收清单。
 
 交付：
 
@@ -192,6 +201,8 @@ deploy/
 
 ## 11. 阶段 8：归档、删除与运维
 
+状态：已完成。8.1–8.5 已落地归档/导出、durable 永久删除、账号资源处置、Session/幂等结果/一次性秘密/注册申请与容器日志保留边界，以及管理员运行状态、数据库 dump、文件 manifest 和隔离恢复说明。真实 PostgreSQL、provider、Compose 和浏览器证据按 `MANUAL_ACCEPTANCE.md` 延期。
+
 交付：
 
 - 委员会只读归档；
@@ -205,7 +216,9 @@ deploy/
 
 ## 12. 阶段 9：移除 Firebase
 
-只有当所有功能纵向切片通过验收后才执行：
+状态：已完成当前仓库和 WSL 可执行验收。旧运行代码、Functions、Rules、emulator/Cypress、SDK/CLI 依赖和双运行时开关已删除；GitHub Actions 改用 PostgreSQL 16/API integration。TLS 浏览器生产网络证据按 `MANUAL_ACCEPTANCE.md` 的 SH-MAN-520 延期。
+
+已交付：
 
 - 删除 Firebase Auth、Realtime Database、Storage 和 Functions 运行时代码；
 - 删除 Rules、Functions 和 emulator 编排；
@@ -226,6 +239,6 @@ deploy/
 - 浏览器或 E2E 未运行时明确说明，不能用单元测试代替视觉或运行证据；
 - `PROJECT_ARCHITECTURE.md` 只描述已经落地的当前事实，目标设计继续维护在本目录。
 
-## 14. 首个实现里程碑
+## 14. 当前实现里程碑
 
-建议下一步只实施阶段 0 和阶段 1：建立共享契约、后端空骨架、PostgreSQL migration 和本地 Compose，并保持现有 Firebase 应用行为不变。第一个可演示结果应是同一域名下 SPA 正常打开、`/health/ready` 返回后端和数据库状态、空库 migration 可重建；此时还不切换登录或业务页面。
+自主托管实施计划阶段 0–9 已完成。下一步不是继续迁移代码，而是在目标 PostgreSQL、Compose、TLS、provider、浏览器和原生 Agent 环境按 `MANUAL_ACCEPTANCE.md` 补齐延期证据，并处理实机发现的问题。

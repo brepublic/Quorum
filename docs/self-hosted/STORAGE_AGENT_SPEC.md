@@ -18,7 +18,9 @@ S3_COMPATIBLE
 
 ### `S3_COMPATIBLE`
 
-系统管理员创建实例级存储配置，保存 endpoint、region、bucket、prefix 和加密凭据。Chair 只能选择获准配置，不能读取凭据。腾讯云 COS 通过其 S3 兼容接口接入；首版不实现 OneDrive、Google Drive 等 OAuth 网盘。
+系统管理员创建实例级存储配置，保存 endpoint、region、bucket、prefix 和加密凭据。Chair 或 Owner 只能选择获准配置，不能读取凭据。腾讯云 COS 通过其 S3 兼容接口接入；首版不实现 OneDrive、Google Drive 等 OAuth 网盘。
+
+当前阶段 6 使用显式实例 master key 对凭据执行带配置 ID 与 key version AAD 的 AES-256-GCM 加密。endpoint 只接受 HTTPS；DNS 解析后再次执行网络目标校验并固定连接地址。对象使用 SigV4，key 只由管理员 prefix 和服务器 blob UUID 派生；PUT 后必须 GET 重算大小和 SHA-256，不能只信任 ETag。已有 blob 的读取和删除继续使用其保存的 provider 配置，即使该配置后来停用。
 
 ### `CHAIR_AGENT`
 
@@ -46,15 +48,26 @@ file_uploads
 file_tombstones
   file_entry_id, last_content_revision, deleted_by_user_id, deleted_at
 
+file_blob_delete_jobs
+  file_entry_id, blob_id, status, attempts, next_attempt_at
+  claimed_at, completed_at, failure_code, failure_reason
+
 storage_bindings
   id, committee_id, provider_type, provider_config_id?, status, revision
 
 storage_hosts
-  id, committee_id, device_id, user_id
-  lease_generation, status, last_seen_at, paired_at, revoked_at
+  id, committee_id, device_id, paired_by_user_id
+  device_label, device_public_key, credential_hash
+  lease_generation, status, revision, last_seen_at, paired_at, revoked_at
+
+storage_pairing_codes
+  id, committee_id, code_hash, purpose, created_by_user_id
+  expires_at, used_at, revoked_at
 ```
 
 逻辑文件删除后立即不可见且内容进入物理删除任务。墓碑不含可恢复内容，只防止离线 Agent 把旧副本重新发布；它至少保留到委员会永久删除。
+
+阶段 6.5 的删除任务按 blob 唯一。provider 删除成功后，任务和 blob 状态在同一事务完成；失败保存摘要并退避，过期 claim 可重新领取。服务器卷和 S3 的“目标已不存在”都按幂等成功处理。阶段 6.7 已接入常驻 worker、维护审计、指标和暂存清理；provider 成功但数据库完成回滚时用独立稳定 failure code 重试。
 
 ## 3. 上传和发布
 
@@ -71,6 +84,8 @@ storage_hosts
 ```
 
 上传暂存区是唯一副本时属于 durable staging，不参与 LRU。只有目标提供者确认完整保存后才能删除。
+
+当前自托管浏览器按固定分块计算 SHA-256，再直接流式发送原始 `File`；显示真实上传字节并允许取消或重试。下载始终走服务端 attachment 路由，不在 DOM 中预览用户内容。Chair/Owner 可在委员会页面初始化 storage binding 和操作 provider migration；只有系统管理员页面可以提交 endpoint 或新凭据，保存的凭据不回显。
 
 Chair Agent 模式状态：
 
@@ -96,9 +111,21 @@ DELETED
 
 设备凭据只能访问其委员会的存储 Agent API，不能调用账号或议事管理接口。
 
+阶段 7.1 固定服务器格式；阶段 7.4 的 Agent 已实现以下本地边界：
+
+- 配对码来自 16 个随机字节，规范化后是 26 位 Crockford Base32，显示以 `QRM-` 分组；默认 10 分钟到期。
+- 设备公钥是 32 字节 Ed25519 公钥的无 padding base64url。阶段 7.1 保存身份，后续任务协议再使用签名能力。
+- 设备凭据是 `qsa1.<device UUID>.<32 随机字节 base64url>`，Agent 使用 `Authorization: QuorumAgent <credential>`。
+- PostgreSQL 只保存配对码和凭据的 SHA-256；明文各只返回一次，不进入事件、审计、日志或浏览器持久状态。
+- 浏览器 Session 与 Agent 凭据完全分离；配对请求只以一次性码授权，其他 Agent 请求只接受 `QuorumAgent` scheme。
+- 配对码由 0600 私有文件读取，不进入进程参数；设备凭据、服务器地址、选择的绝对根路径和 Ed25519 私钥只保存到 0600 Agent 配置。
+- 共享目录中的 `.quorum-storage.json` 只保存委员会、设备、manifest 游标、相对路径、哈希与 task recovery 状态，不保存凭据、私钥、服务器地址或绝对根路径。
+
 ## 5. 单主机与 fencing
 
 一个委员会同一时间只有一个有效 Chair storage host。每个同步请求携带 `lease_generation`。转移或撤销主机时数据库递增 generation；旧 Agent 即使稍后联网也会收到 `409 STALE_STORAGE_LEASE`，不能继续写入。
+
+阶段 7.1 以 `committees.storage_lease_generation` 保存单调 counter，并用部分唯一索引限制一个 `ACTIVE`/`DEGRADED` host。`INITIAL` 配对要求没有当前 host；`TRANSFER` 配对码不立即撤销旧 host，只有新设备消费配对码的事务才同时撤销旧 host、递增 generation 并激活新 host。单独撤销同样递增 generation。签发配对码的 Chair 在消费时已失去权限，则配对码按失效处理。
 
 主机转移：
 
@@ -133,6 +160,12 @@ POST /api/v1/storage-agent/blobs
 
 每个 task 和内容提交都带 task ID、lease generation、file revision、预期大小和 SHA-256。重复完成同一任务必须幂等。
 
+阶段 7.2 已实现其中的 manifest、tasks、claim、complete、fail 和 blobs 路由。阶段 7.3 已开放 `local-changes` 和生产 `STORE_BLOB`/`UPLOAD_BLOB` 编排。manifest 是按委员会严格递增的追加日志；文件版本和墓碑由数据库触发器在原事务内写入，墓碑事件不会携带内容。当前 host 同时得到固定 generation 的 `STORE_BLOB`/`DELETE_FILE` task，新 host 配对时按每个文件的最新事件补建完整任务集。
+
+task 领取使用 UUID request ID 和服务端 claim token；相同领取或 terminal request 精确重放，不同 terminal outcome 冲突。超过五分钟的旧 claim 可重新领取。所有状态提交再次检查 credential、委员会 generation、host generation、task generation、file revision 和 claim token。provider blob 在服务端复验后流式下载；Agent 上传内容流式写入服务器生成的 durable staging key并校验大小与 SHA-256。网络传输不占用委员会行锁，传输后用短事务重新 fencing。
+
+浏览器向 Chair provider 提交时，服务器先保留唯一 durable staging 并返回 `PENDING_HOST_COMMIT`。当前 Agent 完成固定 `STORE_BLOB` task 后，task、upload、blob、file entry/version、manifest、事件与审计才原子完成。本地新增或修改由 `local-changes` 创建 `UPLOAD_BLOB` task，只有完整内容复验后才发布版本；重命名和删除必须携带显式 revision。manifest、墓碑、revision、名称或 host transfer 冲突先持久化，再返回 `CHAIR_DECISION_REQUIRED`。
+
 ## 7. 本地目录监测
 
 Agent 使用操作系统文件监测作为快速提示，同时定期完整扫描作为最终依据：
@@ -146,6 +179,14 @@ Agent 使用操作系统文件监测作为快速提示，同时定期完整扫�
 
 路径必须规范化并拒绝越出根目录的 `..`、符号链接逃逸、设备文件和保留系统路径。服务器下发的文件先写临时文件，校验后原子重命名。
 
+阶段 7.4 的独立 Agent 程序已实现该循环。每轮心跳后从游标 0 分页获取 manifest，以最新 revision 的墓碑先于全部 task 落盘；未知事件、任务类型或不前进的分页游标统一 fail closed。本地 watcher 只唤醒同步循环，周期递归扫描继续校验普通单链接文件的大小、mtime 与 SHA-256。重命名优先于删除识别，每轮只提交一个 manifest-changing command，避免用旧 manifest 批量覆盖。
+
+下载先进入根目录内保留的 0600 临时目录，短写、长写、哈希错误、断流、符号链接、硬链接、设备文件和并发本地修改均不会成为完整目标。发布前再次检查目标与旧内容，原子重命名后重读校验；进程重启会清理普通临时残片，遇到非普通临时条目则拒绝启动。待上传内容、稳定 request ID、task ID 和 manifest sequence 在本地元数据中原子保存；服务器先完成而本地未保存时可重放恢复。冲突保留本地文件并由现有 `local-changes` 形成 durable conflict，不静默覆盖。`STALE_STORAGE_LEASE` 立即终止循环；其他暂时故障指数退避。
+
+阶段 7.5 把 conflict revision、当前 lease generation、当前 file revision 和裁决动作保存在服务端不可变记录中。Owner/Chair 可以保留服务端状态、采用本地变化或把本地内容另存为新文件；墓碑不能通过采用本地复活。浏览器只收到冲突文件名，Agent 相对目录只返回当前 Agent。Agent 持久保存裁决 request ID，在重启或响应丢失后精确重放；另存或名称冲突改名只移动经过大小/SHA-256 复验的 conflict 文件。保留服务端的 force apply 仅能替换 conflict 路径或已有 tracked 路径，其他本地目标仍返回冲突。磁盘或网络故障保持 task 可重试；裁决后再次出现的本地编辑不会被覆盖，而是形成新的 durable conflict。
+
+命令 `quorum-storage-agent status --config <path>` 只输出 lease generation、manifest sequence、tracked file 数、pending upload 数和 pending conflict 数。输出不含 committee/device ID、凭据、私钥、文件名、绝对路径、哈希或正文。
+
 ## 8. 离线与降级
 
 Agent 心跳超过宽限期后，存储状态变为 `STORAGE_DEGRADED`，但不自动暂停会议：
@@ -158,6 +199,8 @@ Agent 心跳超过宽限期后，存储状态变为 `STORAGE_DEGRADED`，但不�
 - 主席可以手动暂停、转移主机或切换提供者。
 
 Agent 重连后先拉取墓碑和服务端 manifest，再上报本地变化，防止删除文件复活。
+
+阶段 7.1 的常驻 monitor 默认以 45 秒为宽限期，只把 host 从 `ACTIVE` 改为 `DEGRADED` 并发送 `storage_host.status_changed`；不会修改委员会 `ACTIVE`/`PAUSED` 状态。持有当前 generation 的有效 heartbeat 会恢复 `ACTIVE`。阶段 7.3 会在恢复或转移时按完整最新 manifest 重排任务；浏览器待提交 upload 保持唯一 staging，新 host 未确认的既有文件标记 `OUT_OF_SYNC`，旧 host 独有的未上传本地内容转成显式冲突。阶段 7.4 Agent 重连后严格执行心跳、完整 manifest、墓碑、task、pending recovery、本地变化顺序。阶段 7.5 文件页显示当前 host、在线状态、最后在线时间和待 host 提交文件；Owner/Chair 可生成一次性配对/转移码、撤销主机并处理冲突。离线状态不改变委员会议事状态。
 
 ## 9. 存储切换
 
@@ -175,6 +218,10 @@ Agent 重连后先拉取墓碑和服务端 manifest，再上报本地变化，�
 
 复制期间旧 provider 继续提供服务。数据库中的文件记录只在整个切换成功后指向新 binding。
 
+阶段 6.6 已实现服务器卷与 S3 compatible provider 之间的切换。实际模型不改写追加保存的 `file_versions`：每个版本仍指向逻辑内容 blob，`file_blob_copies` 保存同一大小/SHA-256 在各 binding 上的已验证副本；下载按委员会活动 binding 解析副本。后台 worker 通过服务器生成的 durable staging key 流式复制，claim token 和 manifest revision 分别防止 stale worker 与复制期间内容变化。只有全部历史版本副本完成目标重读校验后，确认事务才切换 binding。
+
+S3 目标要求当前配置 revision 已由系统管理员完成连通性验证。复制失败或 manifest 变化保留旧 binding 并进入显式重试；取消只清理目标副本。成功后退休源副本暂时保留，避免切换确认与危险物理删除耦合；后续容量清理必须先证明目标仍是完整有效副本。
+
 ## 10. 配额和运行保护
 
 - 默认单文件限制 20 MiB，由系统管理员调高。
@@ -184,6 +231,14 @@ Agent 重连后先拉取墓碑和服务端 manifest，再上报本地变化，�
 - 下载响应必须使用安全 `Content-Disposition` 和内容类型，禁止把用户上传 HTML 以内联同源页面执行。
 - S3 和 Agent 凭据不得出现在日志、事件或审计 payload。
 
+阶段 6.7 的容量采样固定指向实际 `QUORUM_STORAGE_PATH`。80%/90% 是可配置默认阈值：warning 只告警，critical 阻止新的 upload 字节和 provider copy；两者都不停止下载、议事和清理。采样未知或必要目录不可读写才使 readiness 失败，临界容量通过 readiness 详情和 `/metrics` 明确暴露。
+
+maintenance worker 先处理 durable blob delete job，再处理 upload、provider migration 和 Agent 入站 task staging。所有 cleanup claim 都有 token、五分钟 stale 回收和指数退避；unlink 后进程中断可按“目标已不存在”收敛。upload 只清理 `COMMITTED`、`CANCELLED` 或过期 `FAILED`；migration staging 只清理 `COMPLETED` 或 `CANCELLED`；Agent task staging 只清理 `COMPLETED`、`FAILED` 或 `CANCELLED` task。任何 `STAGED` upload、非终态 Agent task、待重试 copy、活动 claim 和退休源副本都不参与压力清理。委员会永久删除会先把未完成工作转为可清理终态，并等待这些 fenced cleanup 全部完成。
+
 ## 11. Agent 发布目标
 
 v1 必须支持 Windows x86-64 与 macOS。Linux 使用相同协议并预留构建，但不作为首个发布阻断项。普通 Quorum Web 前端仍支持 Chromium、Firefox、Safari、iPad 和 Android；只有配置 Chair Computer 主存储的主席电脑需要安装 Agent。
+
+阶段 7.6 固定 Agent 0.1.0 和 Node.js 22.23.2，生成 Windows x86-64、macOS x86-64/arm64 与 Linux x86-64 自包含归档。发布包只含已编译 Agent、最小 Node 运行时、`pair`/`start`/`status` 入口、许可证和安装说明，不依赖目标机全局 Node、pnpm 或仓库。构建先校验官方运行时归档 SHA-256，再固定归档路径顺序、时间戳和权限；外部 `release-manifest.json` 与 `SHA256SUMS` 描述最终字节。
+
+Windows 正式包在原生 runner 上通过受保护证书存储和 certificate thumbprint 调用 SignTool；macOS 通过 Developer ID keychain identity 签名，并以只含 profile 名称的 `notarytool` 接口公证。构建、日志、命令行、产物和 manifest 不接受或保存证书私钥、公证密码、设备凭据、配对码、claim token、本地绝对路径或文件正文。未签名本地包不得被描述为已签名或已公证。

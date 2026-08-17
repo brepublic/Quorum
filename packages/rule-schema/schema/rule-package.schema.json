@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://quorum.local/schemas/rule-package-v1.json",
+  "title": "Quorum rule package v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "key",
+    "metadata",
+    "meeting",
+    "attendance",
+    "phases",
+    "speakerLists",
+    "points",
+    "motions",
+    "ballots",
+    "documents",
+    "terminology"
+  ],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "key": {"type": "string", "pattern": "^[a-z0-9][a-z0-9:._-]{2,127}$"},
+    "inherits": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["defaultLanguage", "names"],
+      "properties": {
+        "defaultLanguage": {"type": "string", "minLength": 2},
+        "names": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {"type": "string", "minLength": 1}
+        },
+        "description": {
+          "type": "object",
+          "additionalProperties": {"type": "string"}
+        }
+      }
+    },
+    "meeting": {"type": "object"},
+    "attendance": {"type": "object"},
+    "phases": {"$ref": "#/$defs/stableItems"},
+    "speakerLists": {"$ref": "#/$defs/stableItems"},
+    "points": {"$ref": "#/$defs/stableItems"},
+    "motions": {"$ref": "#/$defs/stableItems"},
+    "ballots": {"type": "object"},
+    "documents": {"type": "object"},
+    "terminology": {"type": "object"}
+  },
+  "$defs": {
+    "stableItems": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{1,127}$"}
+        }
+      }
+    }
+  }
+}

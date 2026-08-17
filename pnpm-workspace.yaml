@@ -1,12 +1,13 @@
 packages:
-  - functions
+  - packages/*
+  - server
 
 overrides:
   "@types/react": "18.3.3"
 
 onlyBuiltDependencies:
   - "@swc/core"
-  - cypress
+  - argon2
   - esbuild
   - protobufjs
   - re2

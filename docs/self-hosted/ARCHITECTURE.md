@@ -165,6 +165,14 @@ SSE 断开不等价于 API 离线；客户端分别探测两条通路。
 
 Chair Agent 下线只切换为 `STORAGE_DEGRADED` 并显示警告，不自动暂停会议。议事命令继续可用；暂存在服务器的上传等待 Agent 恢复同步。详细协议见 [`STORAGE_AGENT_SPEC.md`](./STORAGE_AGENT_SPEC.md)。
 
+委员会永久删除是分阶段状态机，不是同步级联删除。Owner 先把委员会归档并精确确认名称；接受后状态进入 `DELETING`，所有普通读取和写入停止，但 durable deletion job、文件墓碑、provider delete job、Agent task 和 staging 记录继续存在。只有服务器卷、S3、当前 Agent 与三类 staging 的清理全部完成后，worker 才以当前 job claim 限定的事务清除 PostgreSQL 委员会数据。物理清理或数据库清除失败均退避重试，不能先丢失追踪元数据。
+
+账号匿名化先禁用，再在一个 PostgreSQL 事务内把委员会、账号级模板和规则包转给指定活动账号。委员会转移递增 revision，并追加 Chair 事件与系统管理员审计；历史 actor、席位和审计外键不改写。资源全部转移后才删除凭据与 Session、清除邮箱和个人显示名。`DELETING` 委员会、无效接收账号、错误确认邮箱或幂等冲突会使整个事务回滚。
+
+保留 worker 只删除有明确期限且不再授权或承载业务真相的记录：过期/撤销 Session、到期幂等结果、终态一次性邀请/配对秘密和已决定注册申请。advisory transaction lock 限制多实例并发 sweep；一次 sweep 全部提交或回滚，并写不含用户内容的追加式结果。委员会事件、业务/身份审计、Agent task 和删除追踪记录默认保留到所属委员会按永久删除流程清除。
+
+运维状态由仅系统管理员可读的同源 API 聚合，字段固定为 schema compatibility、容量状态、账号/委员会状态计数、待处理队列计数和最近 retention 结果。它不返回用户或委员会标识、文件名、内部路径、provider key、endpoint 或凭据。首版不调度自动备份；运维人员显式运行标准 PostgreSQL custom dump，并同时导出文件元数据 manifest 与校验哈希。数据库与 provider 字节不是跨介质原子快照，恢复必须在隔离实例中逐对象核对，不提供自动覆盖生产数据的 restore 路径。
+
 ## 11. 部署与容量
 
 目标基线：Ubuntu Server x86-64、2 核、2 GiB 内存、40 GiB SSD、约 200 个账号、一个活动委员会、100 个席位、150 个并发浏览器、单文件 20 MiB、每委员会约 100 个文件。

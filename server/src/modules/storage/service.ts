@@ -1,0 +1,519 @@
+import {randomUUID} from 'node:crypto';
+import type {Pool, PoolClient, QueryResultRow} from 'pg';
+import type {FileEntry, FileEntryStatus, FileTombstone, StorageBinding} from '@quorum/contracts';
+import {AppError} from '../../http/errors.js';
+import type {AuthenticatedSession} from '../identity/store.js';
+import {
+  appendEvent,
+  audit,
+  idempotentTransaction,
+  isChair,
+  lockedCommittee,
+  requireBusinessIdentity,
+  requireEditable,
+  requireProceedingsActive,
+  transaction,
+  type Stage4CommitteeRow,
+  type Stage4Context
+} from '../stage4/database.js';
+import {assertExactBody} from '../stage4/validation.js';
+import {validateInternalStorageKey} from './paths.js';
+
+export {validateInternalStorageKey} from './paths.js';
+
+interface StorageBindingRow extends QueryResultRow {
+  id: string;
+  committee_id: string;
+  provider_type: StorageBinding['providerType'];
+  provider_config_id: string | null;
+  storage_host_id: string | null;
+  status: StorageBinding['status'];
+  revision: number;
+  created_at: Date;
+}
+
+interface FileEntryRow extends QueryResultRow {
+  id: string;
+  committee_id: string;
+  logical_name: string;
+  media_type: string;
+  status: FileEntryStatus;
+  sync_state: FileEntry['syncState'];
+  current_version_id: string | null;
+  created_by_user_id: string;
+  revision: number;
+  created_at: Date;
+  updated_at: Date;
+  deleted_at: Date | null;
+  submitted_at: Date | null;
+  published_at: Date | null;
+}
+
+interface FileVersionRow extends QueryResultRow {
+  id: string;
+  version_number: number;
+  original_name: string;
+  media_type: string;
+  size_bytes: string | number;
+  sha256_hex: string;
+  blob_id: string;
+  created_at: Date;
+}
+
+export interface ProviderCommitInput {
+  bindingId: string;
+  blobId?: string;
+  fileEntryId?: string;
+  targetFileEntryId?: string;
+  baseRevision?: number;
+  logicalName: string;
+  originalName: string;
+  mediaType: string;
+  sizeBytes: number;
+  sha256: string;
+  storageKey: string;
+}
+
+function positiveRevision(value: unknown): number {
+  if (!Number.isSafeInteger(value) || Number(value) < 1) {
+    throw new AppError({code: 'VALIDATION_FAILED', message: 'Revision is invalid.'});
+  }
+  return Number(value);
+}
+
+function boundedText(value: unknown, name: string, max: number): string {
+  if (typeof value !== 'string' || !value.trim() || value.length > max) {
+    throw new AppError({code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
+  }
+  return value.trim();
+}
+
+function uuid(value: unknown, name: string): string {
+  if (typeof value !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
+    throw new AppError({code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
+  }
+  return value;
+}
+
+export function normalizeSha256(value: unknown): string {
+  if (typeof value !== 'string' || !/^[a-f0-9]{64}$/i.test(value)) {
+    throw new AppError({code: 'VALIDATION_FAILED', message: 'SHA-256 is invalid.'});
+  }
+  return value.toLowerCase();
+}
+
+function sizeBytes(value: unknown): number {
+  if (!Number.isSafeInteger(value) || Number(value) < 0) {
+    throw new AppError({code: 'VALIDATION_FAILED', message: 'File size is invalid.'});
+  }
+  return Number(value);
+}
+
+function binding(row: StorageBindingRow): StorageBinding {
+  return {
+    id: row.id,
+    committeeId: row.committee_id,
+    providerType: row.provider_type,
+    providerConfigId: row.provider_config_id,
+    storageHostId: row.storage_host_id,
+    status: row.status,
+    revision: row.revision,
+    createdAt: row.created_at.toISOString()
+  };
+}
+
+async function fileState(client: PoolClient, row: FileEntryRow): Promise<FileEntry> {
+  if (row.status === 'DELETED' || !row.current_version_id) {
+    throw new AppError({code: 'NOT_FOUND', message: 'File not found.'});
+  }
+  const result = await client.query<FileVersionRow>(`SELECT id,version_number,original_name,media_type,size_bytes,
+    encode(sha256,'hex') AS sha256_hex,blob_id,created_at FROM file_versions
+    WHERE committee_id=$1 AND file_entry_id=$2 AND id=$3`, [row.committee_id, row.id, row.current_version_id]);
+  const version = result.rows[0];
+  if (!version) throw new AppError({code: 'INTERNAL_ERROR', message: 'File version is unavailable.'});
+  return {
+    id: row.id,
+    committeeId: row.committee_id,
+    logicalName: row.logical_name,
+    mediaType: row.media_type,
+    status: row.status,
+    syncState: row.sync_state,
+    createdByUserId: row.created_by_user_id,
+    currentVersion: {
+      id: version.id,
+      versionNumber: version.version_number,
+      originalName: version.original_name,
+      mediaType: version.media_type,
+      sizeBytes: Number(version.size_bytes),
+      sha256: version.sha256_hex,
+      blobId: version.blob_id,
+      createdAt: version.created_at.toISOString()
+    },
+    revision: row.revision,
+    submittedAt: row.submitted_at?.toISOString() ?? null,
+    publishedAt: row.published_at?.toISOString() ?? null,
+    createdAt: row.created_at.toISOString(),
+    updatedAt: row.updated_at.toISOString()
+  };
+}
+
+async function requireStorageManager(client: PoolClient, committee: Stage4CommitteeRow, userId: string): Promise<void> {
+  if (committee.owner_user_id !== userId && !(await isChair(client, committee.id, userId))) {
+    throw new AppError({code: 'FORBIDDEN', message: 'Chair or committee owner access is required.'});
+  }
+}
+
+async function canContribute(client: PoolClient, committee: Stage4CommitteeRow, userId: string): Promise<boolean> {
+  if (committee.owner_user_id === userId || await isChair(client, committee.id, userId)) return true;
+  const membership = await client.query(`SELECT 1 FROM committee_memberships
+    WHERE committee_id=$1 AND user_id=$2 AND status='ACTIVE'`, [committee.id, userId]);
+  return Boolean(membership.rowCount);
+}
+
+async function requireContributor(client: PoolClient, committee: Stage4CommitteeRow, userId: string): Promise<void> {
+  if (!(await canContribute(client, committee, userId))) {
+    throw new AppError({code: 'FORBIDDEN', message: 'Committee membership is required.'});
+  }
+}
+
+function requireCommitteeRevision(committee: Stage4CommitteeRow, value: unknown): void {
+  const supplied = positiveRevision(value);
+  if (committee.revision !== supplied) {
+    throw new AppError({code: 'REVISION_CONFLICT', message: 'This committee changed since it was loaded.',
+      details: {currentRevision: committee.revision}});
+  }
+}
+
+function requireFileRevision(row: FileEntryRow, value: unknown): void {
+  const supplied = positiveRevision(value);
+  if (row.revision !== supplied) {
+    throw new AppError({code: 'REVISION_CONFLICT', message: 'This file changed since it was loaded.',
+      details: {currentRevision: row.revision}});
+  }
+}
+
+export class Stage6StorageService {
+  constructor(private readonly pool: Pool) {}
+
+  async listBindings(auth: AuthenticatedSession, committeeId: string): Promise<StorageBinding[]> {
+    requireBusinessIdentity(auth);
+    return transaction(this.pool, async client => {
+      const found = await client.query<Stage4CommitteeRow>('SELECT * FROM committees WHERE id=$1',
+        [uuid(committeeId, 'Committee ID')]);
+      const committee = found.rows[0];
+      if (!committee || committee.status === 'DELETING') {
+        throw new AppError({code: 'NOT_FOUND', message: 'Committee not found.'});
+      }
+      await requireStorageManager(client, committee, auth.user.id);
+      const result = await client.query<StorageBindingRow>(`SELECT * FROM storage_bindings
+        WHERE committee_id=$1 ORDER BY created_at,id`, [committee.id]);
+      return result.rows.map(binding);
+    });
+  }
+
+  async createServerVolumeBinding(auth: AuthenticatedSession, committeeId: string, body: unknown,
+    idempotencyKey: string, context: Stage4Context): Promise<StorageBinding> {
+    requireBusinessIdentity(auth);
+    assertExactBody(body as Record<string, unknown>, ['baseRevision']);
+    const request = body as {baseRevision?: unknown};
+    return idempotentTransaction({
+      pool: this.pool,
+      auth,
+      route: `/api/v1/committees/${committeeId}/storage-bindings/server-volume`,
+      key: idempotencyKey,
+      request: body,
+      status: 201,
+      work: async client => {
+        const committee = await lockedCommittee(client, committeeId);
+        requireEditable(committee);
+        await requireStorageManager(client, committee, auth.user.id);
+        requireCommitteeRevision(committee, request.baseRevision);
+        if (await client.query('SELECT 1 FROM storage_bindings WHERE committee_id=$1 AND status=$2',
+          [committee.id, 'ACTIVE']).then(result => Boolean(result.rowCount))) {
+          throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The committee already has active storage.'});
+        }
+        const id = randomUUID();
+        const created = await client.query<StorageBindingRow>(`INSERT INTO storage_bindings
+          (id,committee_id,provider_type,status,created_by_user_id)
+          VALUES ($1,$2,'SERVER_VOLUME','ACTIVE',$3) RETURNING *`, [id, committee.id, auth.user.id]);
+        await client.query(`UPDATE committees SET active_storage_binding_id=$2,revision=revision+1,updated_at=now()
+          WHERE id=$1`, [committee.id, id]);
+        committee.revision += 1;
+        await appendEvent(client, committee, {type: 'committee.updated', resourceType: 'storage_binding',
+          resourceId: id, revision: committee.revision, audience: 'CHAIR',
+          payload: {storageBindingId: id, providerType: 'SERVER_VOLUME'}});
+        await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id,
+          capabilities: committee.owner_user_id === auth.user.id ? ['OWNER'] : ['CHAIR'],
+          action: 'storage.binding_changed', resourceType: 'storage_binding', resourceId: id,
+          after: {providerType: 'SERVER_VOLUME', status: 'ACTIVE', revision: 1}});
+        return binding(created.rows[0] as StorageBindingRow);
+      }
+    });
+  }
+
+  async createS3Binding(auth: AuthenticatedSession, committeeId: string, body: unknown,
+    idempotencyKey: string, context: Stage4Context): Promise<StorageBinding> {
+    requireBusinessIdentity(auth);
+    assertExactBody(body as Record<string, unknown>, ['baseRevision', 'providerConfigId']);
+    const request = body as {baseRevision?: unknown; providerConfigId?: unknown};
+    const providerConfigId = uuid(request.providerConfigId, 'Provider config ID');
+    return idempotentTransaction({
+      pool: this.pool,
+      auth,
+      route: `/api/v1/committees/${committeeId}/storage-bindings/s3`,
+      key: idempotencyKey,
+      request: body,
+      status: 201,
+      work: async client => {
+        const committee = await lockedCommittee(client, committeeId);
+        requireEditable(committee);
+        await requireStorageManager(client, committee, auth.user.id);
+        requireCommitteeRevision(committee, request.baseRevision);
+        const provider = await client.query(`SELECT 1 FROM storage_provider_configs
+          WHERE id=$1 AND provider_type='S3_COMPATIBLE' AND status='ACTIVE' FOR SHARE`, [providerConfigId]);
+        if (!provider.rowCount) {
+          throw new AppError({code: 'NOT_FOUND', message: 'S3 provider config not found.'});
+        }
+        if (await client.query('SELECT 1 FROM storage_bindings WHERE committee_id=$1 AND status=$2',
+          [committee.id, 'ACTIVE']).then(result => Boolean(result.rowCount))) {
+          throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The committee already has active storage.'});
+        }
+        const id = randomUUID();
+        const created = await client.query<StorageBindingRow>(`INSERT INTO storage_bindings
+          (id,committee_id,provider_type,provider_config_id,status,created_by_user_id)
+          VALUES ($1,$2,'S3_COMPATIBLE',$3,'ACTIVE',$4) RETURNING *`,
+        [id, committee.id, providerConfigId, auth.user.id]);
+        await client.query(`UPDATE committees SET active_storage_binding_id=$2,revision=revision+1,updated_at=now()
+          WHERE id=$1`, [committee.id, id]);
+        committee.revision += 1;
+        await appendEvent(client, committee, {type: 'committee.updated', resourceType: 'storage_binding',
+          resourceId: id, revision: committee.revision, audience: 'CHAIR',
+          payload: {storageBindingId: id, providerType: 'S3_COMPATIBLE', providerConfigId}});
+        await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id,
+          capabilities: committee.owner_user_id === auth.user.id ? ['OWNER'] : ['CHAIR'],
+          action: 'storage.binding_changed', resourceType: 'storage_binding', resourceId: id,
+          after: {providerType: 'S3_COMPATIBLE', providerConfigId, status: 'ACTIVE', revision: 1}});
+        return binding(created.rows[0] as StorageBindingRow);
+      }
+    });
+  }
+
+  async createChairAgentBinding(auth: AuthenticatedSession, committeeId: string, body: unknown,
+    idempotencyKey: string, context: Stage4Context): Promise<StorageBinding> {
+    requireBusinessIdentity(auth);
+    assertExactBody(body as Record<string, unknown>, ['baseRevision']);
+    const request = body as {baseRevision?: unknown};
+    return idempotentTransaction({pool: this.pool, auth,
+      route: `/api/v1/committees/${committeeId}/storage-bindings/chair-agent`, key: idempotencyKey,
+      request: body, status: 201, work: async client => {
+        const committee = await lockedCommittee(client, uuid(committeeId, 'Committee ID'));
+        requireEditable(committee);
+        await requireStorageManager(client, committee, auth.user.id);
+        requireCommitteeRevision(committee, request.baseRevision);
+        if (committee.active_storage_binding_id) {
+          throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The committee already has active storage.'});
+        }
+        const current = await client.query<{id: string; lease_generation: string | number}>(`SELECT id,lease_generation
+          FROM storage_hosts WHERE committee_id=$1 AND status IN ('ACTIVE','DEGRADED') FOR UPDATE`, [committee.id]);
+        const host = current.rows[0];
+        if (!host || Number(host.lease_generation) !== Number(committee.storage_lease_generation)) {
+          throw new AppError({code: 'SERVICE_NOT_READY', message: 'The committee has no current storage host.'});
+        }
+        const id = randomUUID();
+        const created = await client.query<StorageBindingRow>(`INSERT INTO storage_bindings
+          (id,committee_id,provider_type,storage_host_id,status,created_by_user_id)
+          VALUES ($1,$2,'CHAIR_AGENT',$3,'ACTIVE',$4) RETURNING *`, [id, committee.id, host.id, auth.user.id]);
+        await client.query(`UPDATE committees SET active_storage_binding_id=$2,revision=revision+1,updated_at=now()
+          WHERE id=$1`, [committee.id, id]);
+        committee.revision += 1;
+        await appendEvent(client, committee, {type: 'committee.updated', resourceType: 'storage_binding',
+          resourceId: id, revision: committee.revision, audience: 'CHAIR',
+          payload: {storageBindingId: id, providerType: 'CHAIR_AGENT'}});
+        await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id,
+          capabilities: committee.owner_user_id === auth.user.id ? ['OWNER'] : ['CHAIR'],
+          action: 'storage.binding_changed', resourceType: 'storage_binding', resourceId: id,
+          after: {providerType: 'CHAIR_AGENT', storageHostId: host.id, status: 'ACTIVE', revision: 1}});
+        return binding(created.rows[0] as StorageBindingRow);
+      }});
+  }
+
+  /**
+   * Internal persistence boundary. A provider may call this only after it has
+   * durably committed and independently verified the bytes described here.
+   */
+  async recordProviderCommit(auth: AuthenticatedSession, committeeId: string, input: ProviderCommitInput,
+    idempotencyKey: string, context: Stage4Context): Promise<FileEntry> {
+    requireBusinessIdentity(auth);
+    return idempotentTransaction({
+      pool: this.pool,
+      auth,
+      route: `/internal/storage/provider-commits/${committeeId}`,
+      key: idempotencyKey,
+      request: input,
+      status: 201,
+      work: client => this.recordProviderCommitInTransaction(client, auth, committeeId, input, context)
+    });
+  }
+
+  async recordProviderCommitInTransaction(client: PoolClient, auth: AuthenticatedSession, committeeId: string,
+    input: ProviderCommitInput, context: Stage4Context): Promise<FileEntry> {
+    requireBusinessIdentity(auth);
+    assertExactBody(input as unknown as Record<string, unknown>, ['bindingId', 'blobId', 'fileEntryId', 'targetFileEntryId', 'baseRevision',
+      'logicalName', 'originalName', 'mediaType', 'sizeBytes', 'sha256', 'storageKey']);
+    const bindingId = uuid(input.bindingId, 'Storage binding ID');
+    const requestedBlobId = input.blobId === undefined ? undefined : uuid(input.blobId, 'Blob ID');
+    const fileEntryId = input.fileEntryId === undefined ? undefined : uuid(input.fileEntryId, 'File ID');
+    const targetFileEntryId = input.targetFileEntryId === undefined
+      ? undefined : uuid(input.targetFileEntryId, 'Target file ID');
+    if (fileEntryId && targetFileEntryId) {
+      throw new AppError({code: 'VALIDATION_FAILED', message: 'Target file ID is only valid for a new file.'});
+    }
+    const logicalName = boundedText(input.logicalName, 'Logical name', 500);
+    const originalName = boundedText(input.originalName, 'Original name', 500);
+    const mediaType = boundedText(input.mediaType, 'Media type', 255).toLowerCase();
+    const verifiedSize = sizeBytes(input.sizeBytes);
+    const verifiedHash = normalizeSha256(input.sha256);
+    const storageKey = validateInternalStorageKey(input.storageKey);
+    const committee = await lockedCommittee(client, committeeId);
+    requireProceedingsActive(committee);
+    await requireContributor(client, committee, auth.user.id);
+    const activeBinding = await client.query<StorageBindingRow>(`SELECT * FROM storage_bindings
+      WHERE id=$1 AND committee_id=$2 AND status='ACTIVE' FOR UPDATE`, [bindingId, committee.id]);
+    if (!activeBinding.rows[0] || committee.active_storage_binding_id !== bindingId) {
+      throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The storage binding is not active.'});
+    }
+
+    let entry: FileEntryRow | undefined;
+    if (fileEntryId) {
+      entry = (await client.query<FileEntryRow>('SELECT * FROM file_entries WHERE id=$1 FOR UPDATE', [fileEntryId])).rows[0];
+      if (!entry || entry.committee_id !== committee.id || entry.status === 'DELETED') {
+        throw new AppError({code: 'NOT_FOUND', message: 'File not found.'});
+      }
+      requireFileRevision(entry, input.baseRevision);
+      if (entry.created_by_user_id !== auth.user.id && committee.owner_user_id !== auth.user.id
+        && !(await isChair(client, committee.id, auth.user.id))) {
+        throw new AppError({code: 'FORBIDDEN', message: 'Only the file owner or Chair may add a version.'});
+      }
+    } else if (input.baseRevision !== undefined) {
+      throw new AppError({code: 'VALIDATION_FAILED', message: 'Revision is only valid for an existing file.'});
+    }
+
+    const id = entry?.id ?? targetFileEntryId ?? randomUUID();
+    const versionId = randomUUID();
+    const blobId = requestedBlobId ?? randomUUID();
+    const versionNumber = entry
+      ? Number((await client.query<{next_version: number}>(`SELECT coalesce(max(version_number),0)+1 AS next_version
+          FROM file_versions WHERE file_entry_id=$1`, [entry.id])).rows[0]?.next_version ?? 1)
+      : 1;
+    await client.query(`INSERT INTO file_blobs
+      (id,committee_id,storage_binding_id,storage_key,size_bytes,sha256,durability_state)
+      VALUES ($1,$2,$3,$4,$5,decode($6,'hex'),'COMMITTED')`,
+    [blobId, committee.id, bindingId, storageKey, verifiedSize, verifiedHash]);
+    if (entry) {
+      const updated = await client.query<FileEntryRow>(`UPDATE file_entries SET logical_name=$2,media_type=$3,
+        status='UPLOAD_COMPLETE',current_version_id=$4,submitted_at=NULL,published_at=NULL,published_by_user_id=NULL,
+        revision=revision+1,updated_at=now()
+        WHERE id=$1 RETURNING *`, [entry.id, logicalName, mediaType, versionId]);
+      entry = updated.rows[0];
+    } else {
+      const created = await client.query<FileEntryRow>(`INSERT INTO file_entries
+        (id,committee_id,logical_name,media_type,status,current_version_id,created_by_user_id)
+        VALUES ($1,$2,$3,$4,'UPLOAD_COMPLETE',$5,$6) RETURNING *`,
+      [id, committee.id, logicalName, mediaType, versionId, auth.user.id]);
+      entry = created.rows[0];
+    }
+    await client.query(`INSERT INTO file_versions
+      (id,committee_id,file_entry_id,version_number,blob_id,original_name,media_type,size_bytes,sha256,created_by_user_id)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,decode($9,'hex'),$10)`,
+    [versionId, committee.id, id, versionNumber, blobId, originalName, mediaType, verifiedSize, verifiedHash, auth.user.id]);
+    await appendEvent(client, committee, {type: versionNumber === 1 ? 'file.created' : 'file.sync_state_changed',
+      resourceType: 'file_entry', resourceId: id, revision: entry?.revision ?? 1,
+      payload: {status: 'UPLOAD_COMPLETE', versionNumber, sizeBytes: verifiedSize}});
+    await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id,
+      capabilities: await isChair(client, committee.id, auth.user.id) ? ['CHAIR'] : ['MEMBER'],
+      action: 'storage.file_version_recorded', resourceType: 'file_entry', resourceId: id,
+      before: versionNumber === 1 ? null : {revision: (entry?.revision ?? 2) - 1},
+      after: {status: 'UPLOAD_COMPLETE', revision: entry?.revision ?? 1, versionNumber,
+        sizeBytes: verifiedSize, sha256: verifiedHash}});
+    await client.query('UPDATE committees SET file_manifest_revision=file_manifest_revision+1 WHERE id=$1',
+      [committee.id]);
+    const migrations = await client.query<{id: string; revision: number}>(`UPDATE storage_migrations
+      SET status='FAILED',ready_at=NULL,revision=revision+1,failure_code='MANIFEST_CHANGED',
+        failure_reason='The file manifest changed during copying.',updated_at=now()
+      WHERE committee_id=$1 AND status IN ('COPYING','READY_TO_CONFIRM') RETURNING id,revision`, [committee.id]);
+    for (const migration of migrations.rows) {
+      await appendEvent(client, committee, {type: 'storage.migration_failed', resourceType: 'storage_migration',
+        resourceId: migration.id, revision: migration.revision, audience: 'CHAIR',
+        payload: {status: 'FAILED', failureCode: 'MANIFEST_CHANGED'}});
+    }
+    return fileState(client, entry as FileEntryRow);
+  }
+
+  async deleteFile(auth: AuthenticatedSession, fileEntryId: string, body: unknown,
+    idempotencyKey: string, context: Stage4Context): Promise<FileTombstone> {
+    requireBusinessIdentity(auth);
+    assertExactBody(body as Record<string, unknown>, ['baseRevision']);
+    const request = body as {baseRevision?: unknown};
+    const id = uuid(fileEntryId, 'File ID');
+    return idempotentTransaction({pool: this.pool, auth, route: `/api/v1/files/${id}`, key: idempotencyKey,
+      request: body, status: 200, work: async client => {
+      const entry = (await client.query<FileEntryRow>('SELECT * FROM file_entries WHERE id=$1 FOR UPDATE',
+        [id])).rows[0];
+      if (!entry || entry.status === 'DELETED') throw new AppError({code: 'NOT_FOUND', message: 'File not found.'});
+      const committee = await lockedCommittee(client, entry.committee_id);
+      requireProceedingsActive(committee);
+      requireFileRevision(entry, request.baseRevision);
+      const chair = await isChair(client, committee.id, auth.user.id);
+      if (!chair && committee.owner_user_id !== auth.user.id && entry.created_by_user_id !== auth.user.id) {
+        throw new AppError({code: 'FORBIDDEN', message: 'Only the file owner or Chair may delete this file.'});
+      }
+      const tombstoneId = randomUUID();
+      const deleted = await client.query<{deleted_at: Date}>(`UPDATE file_entries SET status='DELETED',
+        current_version_id=NULL,revision=revision+1,updated_at=now(),deleted_at=now()
+        WHERE id=$1 RETURNING deleted_at`, [entry.id]);
+      await client.query(`INSERT INTO file_tombstones
+        (id,committee_id,file_entry_id,last_content_revision,deleted_by_user_id,deleted_at)
+        VALUES ($1,$2,$3,$4,$5,$6)`,
+      [tombstoneId, committee.id, entry.id, entry.revision, auth.user.id, deleted.rows[0]?.deleted_at]);
+      const contentBlobs = await client.query<{blob_id: string}>(
+        'SELECT blob_id FROM file_versions WHERE file_entry_id=$1', [entry.id]);
+      const contentIds = contentBlobs.rows.map(row => row.blob_id);
+      const deleteBlobs = await client.query<{blob_id: string}>(`SELECT blob_id FROM file_versions
+        WHERE file_entry_id=$1 UNION SELECT c.copy_blob_id FROM file_blob_copies c
+        WHERE c.content_blob_id=ANY($2::uuid[])`, [entry.id, contentIds]);
+      await client.query(`DELETE FROM file_blob_copies WHERE content_blob_id=ANY($1::uuid[])`, [contentIds]);
+      await client.query(`UPDATE file_blobs SET durability_state='DELETE_PENDING',updated_at=now()
+        WHERE id=ANY($1::uuid[]) AND durability_state='COMMITTED'`, [deleteBlobs.rows.map(row => row.blob_id)]);
+      await client.query(`UPDATE storage_migration_items item SET status='CANCELLED',claimed_at=NULL,claim_token=NULL,
+        completed_at=NULL,failure_code=NULL,failure_reason=NULL,updated_at=now()
+        FROM storage_migrations migration WHERE item.migration_id=migration.id
+          AND item.content_blob_id=ANY($1::uuid[]) AND item.status<>'CANCELLED'
+          AND migration.status IN ('COPYING','READY_TO_CONFIRM','FAILED')`, [contentIds]);
+      for (const blob of deleteBlobs.rows) {
+        await client.query(`INSERT INTO file_blob_delete_jobs (id,committee_id,file_entry_id,blob_id)
+          VALUES ($1,$2,$3,$4) ON CONFLICT (blob_id) DO NOTHING`,
+        [randomUUID(), committee.id, entry.id, blob.blob_id]);
+      }
+      await client.query('UPDATE committees SET file_manifest_revision=file_manifest_revision+1 WHERE id=$1',
+        [committee.id]);
+      const migrations = await client.query<{id: string; revision: number}>(`UPDATE storage_migrations
+        SET status='FAILED',ready_at=NULL,revision=revision+1,failure_code='MANIFEST_CHANGED',
+          failure_reason='The file manifest changed during copying.',updated_at=now()
+        WHERE committee_id=$1 AND status IN ('COPYING','READY_TO_CONFIRM') RETURNING id,revision`, [committee.id]);
+      for (const migration of migrations.rows) {
+        await appendEvent(client, committee, {type: 'storage.migration_failed', resourceType: 'storage_migration',
+          resourceId: migration.id, revision: migration.revision, audience: 'CHAIR',
+          payload: {status: 'FAILED', failureCode: 'MANIFEST_CHANGED'}});
+      }
+      await appendEvent(client, committee, {type: 'file.deleted', resourceType: 'file_entry', resourceId: entry.id,
+        revision: entry.revision + 1, payload: {status: 'DELETED'}});
+      await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id,
+        capabilities: chair ? ['CHAIR'] : committee.owner_user_id === auth.user.id ? ['OWNER'] : ['MEMBER'],
+        action: 'storage.file_deleted', resourceType: 'file_entry', resourceId: entry.id,
+        before: {status: entry.status, revision: entry.revision},
+        after: {status: 'DELETED', revision: entry.revision + 1, tombstoneId}});
+      return {id: tombstoneId, fileEntryId: entry.id, committeeId: committee.id,
+        lastContentRevision: entry.revision, deletedAt: (deleted.rows[0]?.deleted_at as Date).toISOString()};
+    }});
+  }
+}

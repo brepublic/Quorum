@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "key": "builtin:quorum-default",
+  "metadata": {
+    "defaultLanguage": "zh-CN",
+    "names": {
+      "zh-CN": "Quorum 默认规则",
+      "en": "Quorum Default"
+    },
+    "description": {
+      "zh-CN": "冻结当前 Quorum 已实现行为的阶段 0 基线。",
+      "en": "Phase 0 baseline of behavior implemented by current Quorum."
+    }
+  },
+  "meeting": {
+    "operationMode": {"defaultValue": "DELEGATE_OPERATED"}
+  },
+  "attendance": {
+    "responses": ["PRESENT", "ABSENT"],
+    "quorum": {"formula": {"op": "ceil", "value": {"op": "multiply", "left": {"fact": "attendance.allVotingSeatCount"}, "right": 0.25}}},
+    "simpleMajority": {"formula": {"op": "ceil", "value": {"op": "multiply", "left": {"fact": "attendance.presentVotingSeatCount"}, "right": 0.5}}},
+    "twoThirdsMajority": {"formula": {"op": "ceil", "value": {"op": "multiply", "left": {"fact": "attendance.presentVotingSeatCount"}, "right": 0.6666666667}}}
+  },
+  "phases": [
+    {"id": "open-debate", "names": {"zh-CN": "正式辩论", "en": "Formal debate"}}
+  ],
+  "speakerLists": [
+    {
+      "id": "general-speakers-list",
+      "defaultDurationSeconds": 60,
+      "allowDelegateRequests": true,
+      "yieldMinimumRemainingSecondsExclusive": 1,
+      "yieldTypes": ["CHAIR", "DELEGATE", "QUESTION", "COMMENT"],
+      "allowRepeatedYield": false
+    },
+    {
+      "id": "moderated-caucus",
+      "defaultTotalDurationSeconds": 600,
+      "defaultSpeakerDurationSeconds": 60,
+      "closeWhenFullSpeechNoLongerFits": true
+    }
+  ],
+  "points": [],
+  "motions": [
+    {"id": "open-unmoderated-caucus", "procedural": true, "effects": [{"type": "START_TIMER"}]},
+    {"id": "open-moderated-caucus", "procedural": true, "effects": [{"type": "CREATE_CAUCUS"}]},
+    {"id": "introduce-draft-resolution", "requiredSecondCount": 1, "effects": [{"type": "SET_DOCUMENT_STATUS"}]},
+    {"id": "discuss-resolution", "effects": [{"type": "OPEN_DISCUSSION"}]},
+    {"id": "postpone-resolution", "effects": [{"type": "SET_DOCUMENT_STATUS"}]},
+    {"id": "resume-resolution", "effects": [{"type": "SET_DOCUMENT_STATUS"}]},
+    {"id": "vote-on-resolution", "effects": [{"type": "START_BALLOT"}]},
+    {"id": "introduce-amendment", "effects": [{"type": "SET_DOCUMENT_STATUS"}]},
+    {"id": "discuss-amendment", "effects": [{"type": "OPEN_DISCUSSION"}]},
+    {"id": "postpone-amendment", "effects": [{"type": "SET_DOCUMENT_STATUS"}]},
+    {"id": "resume-amendment", "effects": [{"type": "SET_DOCUMENT_STATUS"}]},
+    {"id": "vote-on-amendment", "effects": [{"type": "START_BALLOT"}]}
+  ],
+  "ballots": {
+    "delegateMayChangeVote": false,
+    "chairMayCorrectVote": true,
+    "anonymousStrawpoll": false,
+    "mustCollectAllVotesWhenVetoSeatEligible": true
+  },
+  "documents": {
+    "amendmentsPublicByDefault": false
+  },
+  "terminology": {}
+}

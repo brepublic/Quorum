@@ -10,6 +10,199 @@
 .thirdwidth {
   width: 33%;
 }
+
+.committee-create-page.ui.container {
+  max-width: 70rem !important;
+  padding: 1em 0;
+  width: calc(100% - 2rem) !important;
+}
+
+.committee-create-page > .ui.header {
+  margin-bottom: 1rem;
+}
+
+.committee-create-page .ui.cards {
+  margin-bottom: 1rem;
+}
+
+.owner-committee-card.ui.card {
+  position: relative;
+}
+
+.owner-committee-card.ui.card > .content:first-child {
+  padding-right: 3.5rem;
+}
+
+.owner-committee-delete {
+  align-items: center;
+  background: transparent;
+  border: 1px solid #db2828;
+  border-radius: 50%;
+  color: #db2828;
+  cursor: pointer;
+  display: inline-flex;
+  height: 2.25rem;
+  justify-content: center;
+  margin: 0;
+  padding: 0;
+  position: absolute;
+  right: 0.75rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 2.25rem;
+  z-index: 1;
+}
+
+.owner-committee-delete > .icon {
+  margin: 0;
+}
+
+.owner-committee-card.ui.card > .owner-committee-delete:last-child {
+  border-radius: 50% !important;
+}
+
+.owner-committee-delete:hover,
+.owner-committee-delete:focus-visible {
+  background: rgba(219, 40, 40, 0.08);
+  outline: none;
+}
+
+.committee-setup-page {
+  padding: 1em 0 1.5em;
+}
+
+.committee-setup-page .members-table .ui.input,
+.committee-setup-page .members-table .ui.dropdown {
+  min-width: 0;
+  width: 100%;
+}
+
+.committee-setup-page .ui.members-table.ui.definition.table thead:not(.full-width) .add-seat-row > th:first-child {
+  pointer-events: auto;
+}
+
+.committee-setup-page .members-table .add-seat-row > th:first-child .ui.dropdown {
+  max-width: min(32rem, calc(100vw - 3rem));
+  min-width: 14rem;
+  width: fit-content;
+}
+
+.committee-setup-page .members-table .add-seat-row > th:first-child .ui.dropdown > .menu {
+  max-width: min(32rem, calc(100vw - 3rem));
+  min-width: 100%;
+  width: max-content;
+}
+
+.committee-setup-page .committee-seat-identity {
+  align-items: center;
+  display: flex;
+  gap: 0.5rem;
+}
+
+.committee-setup-page .committee-seat-identity .country-flag-display {
+  flex-basis: 1.5em;
+  font-size: 1.5em;
+  margin-right: 0;
+}
+
+.statistics-page {
+  padding: 1em 0 1.5em;
+}
+
+.help-page {
+  padding: 1em 0;
+}
+
+.committee-navigation-desktop {
+  display: flex !important;
+  margin-bottom: 0 !important;
+  overflow: visible;
+}
+
+.committee-primary-navigation {
+  min-width: max-content;
+}
+
+.committee-navigation-mobile,
+.committee-mobile-sidebar {
+  display: none !important;
+}
+
+.committee-navigation-pushable.ui.pushable {
+  min-height: calc(100vh - 41px);
+  overflow: visible;
+}
+
+.committee-navigation-pushable > .pusher {
+  min-height: inherit;
+}
+
+.ui.fluid.container.committee-workspace-page {
+  box-sizing: border-box;
+  margin: 0 !important;
+  max-width: none !important;
+  padding: 1rem;
+  width: 100% !important;
+}
+
+.committee-overview-page.ui.container {
+  margin: 0 auto !important;
+  max-width: min(100%, 44rem) !important;
+  padding: clamp(1rem, 3vw, 2.5rem) 0;
+  width: 100% !important;
+}
+
+.committee-overview-card.ui.card {
+  margin: 0;
+}
+
+.committee-primary-navigation > .item,
+.committee-primary-navigation > .menu > .item,
+.committee-mobile-sidebar > .item {
+  white-space: nowrap;
+}
+
+.realtime-status-live {
+  color: #18794e !important;
+}
+
+.realtime-status-degraded,
+.realtime-status-offline_readonly {
+  color: #9c2f2f !important;
+}
+
+.account-language {
+  cursor: default !important;
+}
+
+@media only screen and (max-width: 991px) {
+  .committee-navigation-desktop {
+    display: none !important;
+  }
+
+  .committee-navigation-mobile {
+    display: flex !important;
+    margin-bottom: 0 !important;
+  }
+
+  .committee-navigation-pushable.ui.pushable {
+    min-height: 100vh;
+    overflow: hidden;
+  }
+
+  .committee-navigation-mobile > .header.item {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .committee-mobile-sidebar {
+    display: flex !important;
+    max-height: 100vh;
+    overflow-y: auto;
+  }
+}
 .language-switcher {
   align-items: center;
   display: flex;
@@ -42,9 +235,8 @@
 
 .template-picker-field .ui.selection.dropdown > .text {
   max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .template-picker-field .ui.dropdown .menu > .item {
@@ -181,8 +373,7 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
 }
 
 .country-table-scroll {
-  max-height: 65vh;
-  overflow: auto;
+  overflow: visible;
 }
 
 .ui.table.country-editor-table {
@@ -218,6 +409,44 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
 
 .country-flag-editor input[type='file'] {
   max-width: 13rem;
+}
+
+.self-hosted-files .button,
+.self-hosted-storage-admin .button {
+  min-height: 44px;
+}
+
+.self-hosted-file-card .description,
+.self-hosted-storage-admin .description {
+  overflow-wrap: anywhere;
+}
+
+.self-hosted-file-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.self-hosted-file-actions .button {
+  margin: 0 !important;
+}
+
+.self-hosted-storage-panel,
+.self-hosted-migrations {
+  margin-top: 1.5rem !important;
+}
+
+@media (max-width: 767px) {
+  .self-hosted-files .ui.form .fields,
+  .self-hosted-storage-admin .ui.form .fields {
+    display: block;
+  }
+
+  .self-hosted-files .ui.form .fields > .field,
+  .self-hosted-storage-admin .ui.form .fields > .field {
+    width: 100% !important;
+    margin-bottom: 1rem;
+  }
 }
 
 .country-flag-display {
@@ -288,6 +517,66 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   }
 }
 
+.notes-editor {
+  display: grid;
+  grid-template-columns: minmax(12rem, 18rem) minmax(0, 1fr);
+  gap: 1rem;
+}
+
+.proceedings-timers {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.proceedings-timer time {
+  font-variant-numeric: tabular-nums;
+}
+
+.ui.container.legacy-speaker-workspace {
+  box-sizing: border-box;
+  max-width: 1127px !important;
+  padding-bottom: 2em;
+}
+
+.ui.text.container.legacy-unmod-page {
+  padding-bottom: 2em;
+}
+
+.legacy-speaker-workspace > .ui.grid > .row:first-child textarea {
+  border-radius: 0 0 0.28571429rem 0.28571429rem;
+  min-height: 2.9rem;
+  resize: vertical;
+  width: 100%;
+}
+
+.legacy-timer .legacy-timer-display time {
+  display: inline-block;
+  min-width: 4.4ch;
+}
+
+.legacy-speaker-workspace .speaker-drag-handle {
+  cursor: grab;
+  display: inline-block;
+  font-size: 1.25rem;
+  margin-left: 1rem;
+  padding: 0 0.5rem;
+  touch-action: none;
+}
+
+.legacy-speaker-workspace .speaker-drag-handle:active {
+  cursor: grabbing;
+}
+
+.legacy-speaker-workspace .absent-member {
+  opacity: 0.55;
+}
+
+@media only screen and (max-width: 767px) {
+  .notes-editor,
+  .proceedings-timers { grid-template-columns: minmax(0, 1fr); }
+}
+
 .committee-menu > .item,
 .committee-menu .menu > .item,
 .members-table th {
@@ -311,6 +600,22 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
 }
 
 .roll-call-heading .ui.header {
+  margin: 0;
+}
+
+.roll-call-heading-actions {
+  align-items: center;
+  display: flex;
+  gap: 0.75rem;
+}
+
+.roll-call-heading-actions .ui.button,
+.roll-call-heading-actions .ui.label {
+  align-items: center;
+  box-sizing: border-box;
+  display: inline-flex;
+  height: 36px;
+  justify-content: center;
   margin: 0;
 }
 
@@ -377,6 +682,114 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   text-align: left;
 }
 
+.roll-call-member:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.roll-call-member:disabled:hover .roll-call-member-name {
+  box-shadow: none;
+}
+
+.motions-page {
+  padding-bottom: 3rem;
+  padding-top: 1rem;
+}
+
+.motions-empty-state {
+  display: flex;
+  justify-content: center;
+}
+
+.motions-empty-card.ui.card {
+  margin: 2rem 0 0;
+  width: min(100%, 20rem);
+}
+
+.motions-empty-card .description {
+  display: grid;
+  gap: 1rem;
+  justify-items: center;
+}
+
+.motion-proposal-form.ui.form {
+  margin: 0 auto;
+}
+
+.motion-proposal-form .ui.button[type='submit'] {
+  min-height: 2.75rem;
+}
+
+.history-session-divider.ui.horizontal.divider {
+  margin: 2rem 0 1rem;
+}
+
+.current-session-divider.ui.horizontal.divider {
+  margin-bottom: 0;
+}
+
+.current-session-empty {
+  align-items: center;
+  color: rgba(0, 0, 0, 0.45);
+  display: flex;
+  height: 4rem;
+  justify-content: center;
+}
+
+.current-session-empty + .history-session-divider.ui.horizontal.divider {
+  margin-top: 0;
+}
+
+.motion-queue.ui.cards {
+  margin-left: 0;
+  margin-right: 0;
+}
+
+.motion-queue.ui.cards > .motion-card.card {
+  margin-left: 0;
+  margin-right: 0;
+  width: 100%;
+}
+
+.motion-card .extra.content > .ui.button {
+  margin-bottom: 0.35rem;
+}
+
+.motion-stop-voting.ui.button {
+  margin-top: 1rem;
+}
+
+.motion-metadata {
+  display: grid !important;
+  gap: 0.45rem 0.75rem;
+  grid-template-columns: max-content minmax(0, 1fr);
+  margin-top: 0.45rem;
+}
+
+.motion-metadata-row {
+  display: contents;
+}
+
+.motion-metadata-row > .ui.horizontal.label {
+  align-self: start;
+  margin-right: 0;
+}
+
+.motion-metadata-value {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.motion-seat-option {
+  align-items: center;
+  display: inline-flex;
+  min-width: 0;
+}
+
 .roll-call-status-light {
   border: 1px solid rgba(34, 36, 38, 0.18);
   border-radius: 0.2rem 0 0 0.2rem;
@@ -422,7 +835,18 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
 }
 
 .ui.segment.roll-call-current {
+  display: flex;
+  flex-direction: column;
+  min-height: 12rem;
   padding: clamp(1.25rem, 3vw, 2rem);
+}
+
+.roll-call-current-status {
+  align-items: center;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
 }
 
 .roll-call-current-label {
@@ -440,7 +864,7 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   flex-direction: column;
   gap: 0.75rem;
   justify-content: center;
-  margin: 0 0 1.25rem;
+  margin: 0;
   text-align: center;
 }
 
@@ -455,6 +879,7 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
 
 .roll-call-actions {
   display: flex;
+  margin-top: 1.5rem;
   flex-wrap: wrap;
   gap: 0.65rem;
   justify-content: center;
@@ -512,6 +937,14 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   background: #2185d0;
 }
 
+.roll-call-summary-highlight.highlight-quorum::before {
+  background: #db2828;
+}
+
+.roll-call-summary-highlight.highlight-total-seats::before {
+  background: #767676;
+}
+
 .roll-call-summary-highlight strong {
   color: rgba(0, 0, 0, 0.87);
   font-size: clamp(2.75rem, 5vw, 4.5rem);
@@ -534,6 +967,10 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   .roll-call-heading {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .roll-call-heading-actions {
+    align-self: flex-end;
   }
 
   .roll-call-grid {

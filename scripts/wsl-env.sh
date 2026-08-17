@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Source this file from the repository root before running pnpm/Firebase tools:
+# Source this file from the repository root before running project tools:
 #   source scripts/wsl-env.sh
 # It prefers the repository-local WSL toolchain when installed, while allowing
 # a normal system-wide Node/Java installation as a fallback.

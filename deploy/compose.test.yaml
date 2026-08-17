@@ -1,0 +1,26 @@
+name: quorum-test-db
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "5m"
+    max-file: "2"
+
+services:
+  postgres-test:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: quorum_test
+      POSTGRES_PASSWORD: quorum_test
+      POSTGRES_DB: postgres
+    ports:
+      - "127.0.0.1:55432:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U quorum_test -d postgres"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+    mem_limit: 384m
+    logging: *default-logging

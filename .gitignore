@@ -1,20 +1,22 @@
+nul
 # dependencies
 /node_modules
+/packages/*/node_modules
 /.tools
 /.pnp
 .pnp.js
 
 # testing
 /coverage
-/cypress/videos
-/cypress/screenshots
-/cypress/downloads
 
 # production
 /build
+/release
+/packages/*/dist
+/server/dist
+/server/node_modules
 
-# local tool and emulator caches
-/.firebase
+# local tool caches
 /.cache
 *.tsbuildinfo
 *-debug.log
@@ -25,16 +27,16 @@
 .env.development.local
 .env.test.local
 .env.production.local
+/deploy/.env
+/server/.env
+/server/.local
 
-# Firebase / Google Cloud service account keys
-*-firebase-adminsdk-*.json
+# service account keys
 service-account*.json
 
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
-firebase-debug.log*
-database-debug.log*
-storage-debug.log*
-ui-debug.log*
+
+*.pdf
