@@ -161,29 +161,23 @@ function currentSpeech(list: SpeakerList): SpeechRecord | undefined {
   return list.speeches?.find(speech => ['READY', 'RUNNING', 'PAUSED'].includes(speech.status));
 }
 
-const stanceLabel = (stance: SpeakerStance) => stance === 'FOR' ? 'For' : stance === 'AGAINST' ? 'Against' : 'Neutral';
-const stanceIcon = (stance: SpeakerStance) => stance === 'FOR' ? 'thumbs up outline'
-  : stance === 'AGAINST' ? 'thumbs down outline' : 'hand point right outline';
-
 function SpeakerFeedEntry({entry, snapshot, canChair, onRemove, onYield, dragHandleProps}: {entry?: SpeakerQueueEntry;
   snapshot: CommitteeWorkspaceSnapshot; canChair: boolean; onRemove?: () => void; onYield?: () => void;
   dragHandleProps?: Record<string, unknown>}) {
   if (!entry) return <Feed.Event><Feed.Content><Feed.Summary>—</Feed.Summary></Feed.Content></Feed.Event>;
   const seat = snapshot.seats.find(item => item.id === entry.seatId);
   const present = snapshot.attendance?.some(item => item.seatId === entry.seatId && item.state === 'PRESENT');
-  return <Feed.Event className={present ? undefined : 'absent-member'}>
-    <Feed.Content><Feed.Summary><Feed.User>{seat ? seatOptionContent(seat) : entry.seatDisplayName}
-      {!present && <Label size="mini">{t('Absent')}</Label>}</Feed.User>
-      <Feed.Date>{Math.ceil(entry.speechDurationMs / 1000)} {t('seconds')}</Feed.Date></Feed.Summary>
-      <Feed.Meta><Feed.Like><Icon name={stanceIcon(entry.stance)} />{t(stanceLabel(entry.stance))}</Feed.Like>
-        {canChair && onRemove && <Label size="mini" as="button" onClick={onRemove}>{t('Remove')}</Label>}
-        {canChair && onYield && <Label size="mini" as="button" onClick={onYield}>{t('Yield')}</Label>}
+  return <Feed.Event className={present ? undefined : "absent-member"}>
+    <Feed.Content><Feed.Summary className="speaker-feed-row"><Feed.User>{seat ? seatOptionContent(seat) : entry.seatDisplayName}
+      {!present && <Label size="mini">{t("Absent")}</Label>}</Feed.User>
+      {(canChair && (onRemove || onYield) || dragHandleProps) && <span className="speaker-feed-actions">
+        {canChair && onRemove && <Label size="mini" as="button" onClick={onRemove}>{t("Remove")}</Label>}
+        {canChair && onYield && <Label size="mini" as="button" onClick={onYield}>{t("Yield")}</Label>}
         {dragHandleProps && <span className="speaker-drag-handle" {...dragHandleProps}>⠿</span>}
-      </Feed.Meta>
-    </Feed.Content>
+      </span>}
+    </Feed.Summary></Feed.Content>
   </Feed.Event>;
 }
-
 function KeyboardShortcut({enabled, shortcut, onTrigger}: {enabled: boolean; shortcut: string; onTrigger: () => void}) {
   React.useEffect(() => {
     if (!enabled) return;
@@ -225,15 +219,6 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
   const displayedListName = list ? localizeGeneratedName(list.name) : '';
   const [nameDraft, setNameDraft] = React.useState(displayedListName);
   const [topicDraft, setTopicDraft] = React.useState(list?.topic ?? '');
-  const [queueDuration, setQueueDuration] = React.useState('60');
-  const [queueUnit, setQueueUnit] = React.useState<'sec' | 'min'>('sec');
-  React.useEffect(() => {setNameDraft(list ? localizeGeneratedName(list.name) : ''); setTopicDraft(list?.topic ?? '');},
-    [list?.id, list?.name, list?.topic]);
-  React.useEffect(() => {
-    if (!list) return; const seconds = Math.max(1, Math.ceil(list.defaultSpeechMs / 1000));
-    if (seconds % 60 === 0) {setQueueUnit('min'); setQueueDuration(String(seconds / 60));}
-    else {setQueueUnit('sec'); setQueueDuration(String(seconds));}
-  }, [list?.id, list?.defaultSpeechMs]);
   const canParticipate = snapshot.viewer.audience !== 'PUBLIC' && snapshot.committee.status === 'ACTIVE';
   if (resourceId === 'new') return <><Header as="h1">{t('New caucus')}</Header>{canChair && session
     ? <Form onSubmit={async () => {let created: Awaited<ReturnType<SelfHostedApi['createSpeakerList']>> | undefined;
@@ -259,7 +244,6 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
   const configuredYields = snapshot.activeRules.speakerLists.find(item => item.id === list.kind.toLowerCase().replace('_', '-'))?.yieldTypes;
   const allowedYields = configuredYields ? mapRuleYieldTypes(configuredYields) : ['CHAIR', 'SEAT', 'QUESTIONS', 'COMMENTS'];
   const presentSeats = snapshot.seats.filter(seat => snapshot.attendance?.some(item => item.seatId === seat.id && item.state === 'PRESENT'));
-  const queueMilliseconds = Number(queueDuration) * (queueUnit === 'min' ? 60_000 : 1_000);
   const operationAllowsDelegates = snapshot.committee.operationMode === 'DELEGATE_OPERATED';
   const delegatesCanQueue = operationAllowsDelegates && list.delegatesCanQueue;
   const persistHeader = (change: {name?: string; topic?: string}) => {
@@ -269,25 +253,13 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
       || cleaned.topic === list.topic) return;
     void run(() => api.updateSpeakerList(list.id, list.revision, cleaned));
   };
-  const joinQueue = (stance: SpeakerStance) => {
-    if (!Number.isFinite(queueMilliseconds) || queueMilliseconds <= 0) return;
-    void run(async () => {
-      if (canChair && queueMilliseconds !== list.defaultSpeechMs) {
-        await api.updateSpeakerList(list.id, list.revision, {defaultSpeechMs: queueMilliseconds});
-      }
-      await api.joinSpeakerQueue(list.id, canChair ? seatId : undefined, stance);
-    });
-  };
+  const joinQueue = () => void run(() => api.joinSpeakerQueue(list.id, canChair ? seatId : undefined));
   const removeEntry = (entryId: string) => void run(() => api.removeSpeakerQueueEntry(list.id, entryId, list.revision));
   const reorder = (entryIds: string[]) => void run(() => api.reorderSpeakerQueue(list.id, list.revision, entryIds));
   const onDragEnd = (result: DropResult) => {
     if (!result.destination || result.destination.index === result.source.index) return;
     const entries = [...queued]; const [moved] = entries.splice(result.source.index, 1);
     if (!moved) return; entries.splice(result.destination.index, 0, moved); reorder(entries.map(entry => entry.id));
-  };
-  const interlace = () => {
-    const ordered = legacyInterlacedQueue(queued, new Set(presentSeats.map(seat => seat.id)));
-    reorder(ordered.map(entry => entry.id));
   };
   const toggleSpeech = () => run(() => api.commandSpeech(list.id,
     speech ? speech.status === 'RUNNING' ? 'pause' : 'resume' : 'start', speech?.revision ?? list.revision));
@@ -389,8 +361,7 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
       : <SpeakerFeedEntry entry={current} snapshot={snapshot} canChair={canChair} onRemove={current ? () => removeEntry(current.id) : undefined} />}
   </Feed></Segment>;
   const nextSpeaking = <Segment textAlign="center"><Label attached="top left" size="large">{t('Next speaking')}</Label>
-    {nextControl}<Popup trigger={<Button icon basic color="purple" disabled={queued.length < 2 || !canChair} onClick={interlace}><Icon name="random" /></Button>}
-      content={t("Orders the list so that speakers are 'For', then 'Against', then 'Neutral', then 'For', etc.")} />
+    {nextControl}
     <DragDropContext onDragEnd={onDragEnd}><Droppable droppableId={`speaker-queue-${list.id}`}>
       {provided => <div ref={provided.innerRef} {...provided.droppableProps}><Feed size="large">{queued.map((entry, index) =>
         <Draggable key={entry.id} draggableId={entry.id} index={index} isDragDisabled={!canChair}>{drag =>
@@ -404,21 +375,13 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
   const queuePanel = <Segment textAlign="center"><Label attached="top left" size="large">{t('Queue')}</Label><Form>
     {canChair && <Form.Dropdown icon="search" search selection value={seatId} error={!seatId} options={presentSeats.map(seat => ({key: seat.id,
       value: seat.id, text: seat.displayName, content: seatOptionContent(seat)}))} onChange={(_, data) => setSeatId(String(data.value))} />}
-    <Form.Input value={queueDuration} placeholder={t('Speaking time')} error={!Number.isFinite(queueMilliseconds) || queueMilliseconds <= 0}
-      readOnly={!canChair}
-      onChange={event => setQueueDuration(event.currentTarget.value)} action fluid>
-      <input /><Select compact button value={queueUnit} options={[{key: 'sec', value: 'sec', text: t('sec')},
-        {key: 'min', value: 'min', text: t('min')}]} disabled={!canChair}
-        onChange={(_, data) => setQueueUnit(data.value as 'sec' | 'min')} />
-    </Form.Input>
-    {canChair && <Form.Checkbox label={t('Delegates can queue')} toggle checked={delegatesCanQueue}
-      disabled={!operationAllowsDelegates} onChange={(_, data) => void run(() => api.updateSpeakerList(list.id, list.revision,
-        {delegatesCanQueue: Boolean(data.checked)}))} />}
-    <Button.Group size="large" fluid><Button content={t('For')} disabled={!canParticipate || (canChair ? !seatId : !delegatesCanQueue)}
-      onClick={() => joinQueue('FOR')} /><Button.Or text={t('or')} /><Button content={t('Neutral')}
-      disabled={!canParticipate || (canChair ? !seatId : !delegatesCanQueue)} onClick={() => joinQueue('NEUTRAL')} />
-      <Button.Or text={t('or')} /><Button content={t('Against')} disabled={!canParticipate || (canChair ? !seatId : !delegatesCanQueue)}
-        onClick={() => joinQueue('AGAINST')} /></Button.Group>
+    {canChair && operationAllowsDelegates && <div className="speaker-queue-delegate-toggle"><Form.Checkbox
+      label={t("Delegates can queue")} toggle checked={delegatesCanQueue}
+      onChange={(_, data) => void run(() => api.updateSpeakerList(list.id, list.revision,
+        {delegatesCanQueue: Boolean(data.checked)}))} /></div>}
+    <Button fluid disabled={!canParticipate || (canChair ? !seatId : !delegatesCanQueue)} onClick={joinQueue}>
+      <Icon name="arrow up" />{t("Join queue")}
+    </Button>
   </Form></Segment>;
   const contributionForm = speech?.kind === 'INHERITED' && ['QUESTIONS', 'COMMENTS'].includes(speech.yieldType ?? '') && canParticipate
     ? <Form onSubmit={async () => {await run(() => api.recordSpeechContribution(speech.id,

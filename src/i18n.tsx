@@ -599,6 +599,7 @@ const zhCN: Record<string, string> = {
   '{name} accepted the yield and inherited the remaining time.': '{name} 代表已接受让渡并继承剩余时间。',
   '{name} rejected the yield. The chair reclaimed the remaining time.': '{name} 代表拒绝让渡，剩余时间已由主席收回。',
   'Queue': '发言队列',
+  'Join queue': '加入队列',
   'Speaking time': '发言时间',
   'Delegates can queue': '代表可自行加入发言队列',
   'For': '赞成',

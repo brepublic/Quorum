@@ -661,7 +661,7 @@ describe('committee workspace routes and roles', () => {
     expect(decideSpeechYield).toHaveBeenCalledWith('speech', 5, 'ACCEPT');
   });
 
-  it('masks the stored delegate queue switch in Chair-operated mode and restores it when delegate-operated', async () => {
+  it('shows the delegate queue switch only in delegate-operated mode', async () => {
     const withList = (value: CommitteeWorkspaceSnapshot, operationMode: 'CHAIR_OPERATED' | 'DELEGATE_OPERATED') => ({
       ...value, committee: {...value.committee, operationMode},
       meetingSession: {id: 'meeting', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate',
@@ -680,11 +680,16 @@ describe('committee workspace routes and roles', () => {
 
     let page = await render('CHAIR', '/committees/committee/caucuses/list', user,
       value => withList(value, 'CHAIR_OPERATED'));
-    expect(checkbox(page)).toMatchObject({checked: false, disabled: true});
+    expect(checkbox(page)).toBeUndefined();
     act(() => root?.unmount()); root = undefined; container?.remove(); container = undefined;
     page = await render('CHAIR', '/committees/committee/caucuses/list', user,
       value => withList(value, 'DELEGATE_OPERATED'));
     expect(checkbox(page)).toMatchObject({checked: true, disabled: false});
+    expect(page.querySelector(".speaker-queue-delegate-toggle")).toBeTruthy();
+    expect([...page.querySelectorAll("button")].find(button => button.textContent?.trim() === "Join queue")).toBeTruthy();
+    expect(page.textContent).not.toContain("For");
+    expect(page.textContent).not.toContain("Neutral");
+    expect(page.textContent).not.toContain("Against");
   });
 
   it('persists both legacy workspace layout switches as one revisioned setting command', async () => {

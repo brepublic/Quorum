@@ -120,7 +120,7 @@ export function CommitteeNavigation({snapshot, user, logout, realtimeStatus = 'C
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
   return <>
     <nav className="committee-navigation-desktop" aria-label={t('Committee navigation')}>
-      <Menu className="committee-primary-navigation" size="small" fluid>
+      <Menu className="committee-primary-navigation" size="large" fluid>
         <PrimaryItems snapshot={snapshot} />
         <Menu.Menu position="right"><AttendanceThresholdItem snapshot={snapshot} /><RealtimeStatusItem status={realtimeStatus} />
           {user && <AccountMenu user={user} logout={logout} />}</Menu.Menu>

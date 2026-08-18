@@ -129,7 +129,7 @@
 }
 
 .committee-navigation-pushable.ui.pushable {
-  min-height: calc(100vh - 41px);
+  min-height: calc(100vh - 51px);
   overflow: visible;
 }
 
@@ -555,11 +555,37 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   min-width: 4.4ch;
 }
 
+.legacy-speaker-workspace .speaker-queue-delegate-toggle {
+  text-align: center;
+}
+
+.legacy-speaker-workspace .speaker-feed-row {
+  align-items: center;
+  display: flex;
+  gap: 0.5rem;
+}
+
+.legacy-speaker-workspace .speaker-feed-actions {
+  align-items: center;
+  display: inline-flex;
+  gap: 0.4rem;
+  height: 3em;
+  margin-left: auto;
+}
+
+.legacy-speaker-workspace .speaker-feed-actions > .ui.label,
+.legacy-speaker-workspace .speaker-drag-handle {
+  align-items: center;
+  display: inline-flex;
+  height: 100%;
+  justify-content: center;
+  margin: 0;
+}
+
 .legacy-speaker-workspace .speaker-drag-handle {
   cursor: grab;
-  display: inline-block;
   font-size: 1.25rem;
-  margin-left: 1rem;
+  min-width: 1.5rem;
   padding: 0 0.5rem;
   touch-action: none;
 }
