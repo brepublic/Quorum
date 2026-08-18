@@ -12,6 +12,7 @@ import type {
 import {
   Button, Checkbox, Confirm, Container, Dropdown, Form, Grid, Header, Icon, List, Message, Segment, Table
 } from 'semantic-ui-react';
+import {CountryFlagDisplay} from '../../components/CountryFlagDisplay';
 import {getLanguage, LANGUAGE_OPTIONS, type Language, SUPPORTED_LANGUAGES, t} from '../../i18n';
 import {SelfHostedApiError, type SelfHostedApi} from '../../services/self-hosted-api';
 
@@ -37,9 +38,7 @@ function errorText(error: unknown): string {
 }
 
 function FlagDisplay({flag}: {flag: FlagSnapshot}) {
-  if (flag.type === 'IMAGE') return <span className="country-flag-display"><img className="country-flag-display-image" src={flag.value} alt="" /></span>;
-  if (flag.type === 'STANDARD') return <span className="country-flag-display"><span className={`fi fi-${flag.value}`} aria-hidden="true" /></span>;
-  return <span className="country-flag-display country-flag-display-emoji" aria-hidden="true">{flag.value}</span>;
+  return <CountryFlagDisplay flag={flag} />;
 }
 
 function resizeFlagImage(file: File): Promise<string> {

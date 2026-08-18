@@ -401,7 +401,7 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
 }
 
 .country-flag-editor .country-flag-display {
-  border: 1px solid rgba(34, 36, 38, 0.18);
+  border: 0.1mm solid #a6a6a6;
   border-radius: 0.2rem;
   font-size: 6rem;
   grid-row: span 2;
@@ -451,6 +451,8 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
 
 .country-flag-display {
   align-items: center;
+  border: 0.1mm solid #a6a6a6;
+  box-sizing: border-box;
   display: inline-flex;
   flex: 0 0 1em;
   font-size: 3em;
@@ -461,6 +463,18 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   vertical-align: middle;
   width: 1em;
 }
+
+.country-flag-display.fi {
+  flex-basis: 1.333333em;
+  width: 1.333333em;
+}
+
+.country-flag-display:has(> .country-flag-display-image) {
+  flex-basis: 1.333333em;
+  line-height: 0;
+  width: 1.333333em;
+}
+
 
 .country-flag-display-image {
   display: block;
@@ -573,18 +587,26 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   margin-left: auto;
 }
 
-.legacy-speaker-workspace .speaker-feed-actions > .ui.label,
-.legacy-speaker-workspace .speaker-drag-handle {
+.legacy-speaker-workspace .speaker-feed-actions > .ui.label {
   align-items: center;
+  align-self: center;
   display: inline-flex;
-  height: 100%;
+  font-size: 1em;
+  height: auto;
   justify-content: center;
   margin: 0;
+  min-width: 4em;
+  padding: 0.55em 0.7em;
 }
 
 .legacy-speaker-workspace .speaker-drag-handle {
+  align-items: center;
   cursor: grab;
+  display: inline-flex;
   font-size: 1.25rem;
+  height: 100%;
+  justify-content: center;
+  margin: 0;
   min-width: 1.5rem;
   padding: 0 0.5rem;
   touch-action: none;
@@ -817,7 +839,7 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
 }
 
 .roll-call-status-light {
-  border: 1px solid rgba(34, 36, 38, 0.18);
+  border: 0.1mm solid #a6a6a6;
   border-radius: 0.2rem 0 0 0.2rem;
   box-sizing: border-box;
   height: 3.25rem;
@@ -828,7 +850,7 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
 .roll-call-member-name {
   align-items: center;
   background: #fff;
-  border: 1px solid rgba(34, 36, 38, 0.18);
+  border: 0.1mm solid #a6a6a6;
   border-left: 0;
   border-radius: 0 0.2rem 0.2rem 0;
   display: flex;
@@ -1195,7 +1217,7 @@ html[lang='zh-CN'] .ui {
 
 .resolution-voting-status-light {
   background: #d7dadd;
-  border: 1px solid rgba(34, 36, 38, 0.18);
+  border: 0.1mm solid #a6a6a6;
   border-radius: 0.2rem 0 0 0.2rem;
   box-sizing: border-box;
   height: 3.25rem;
@@ -1217,7 +1239,7 @@ html[lang='zh-CN'] .ui {
 .resolution-voting-member-name {
   align-items: center;
   background: #fff;
-  border: 1px solid rgba(34, 36, 38, 0.18);
+  border: 0.1mm solid #a6a6a6;
   border-left: 0;
   border-radius: 0 0.2rem 0.2rem 0;
   display: flex;

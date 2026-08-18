@@ -13,6 +13,7 @@ import {DragDropContext, Draggable, Droppable, type DropResult} from 'react-beau
 import {Button, Card, Checkbox, Container, Divider, Dropdown, Feed, Form, Grid, Header, Icon, Input, Label, List,
   Menu, Message, Pagination, Popup, Progress, Segment, Select, Statistic, TextArea} from 'semantic-ui-react';
 import {Link, useHistory} from 'react-router-dom';
+import {CountryFlagDisplay} from '../../components/CountryFlagDisplay';
 import Loading from '../../components/Loading';
 import {localizeGeneratedName, t} from '../../i18n';
 import {newIdempotencyKey, type SelfHostedApi} from '../../services/self-hosted-api';
@@ -38,11 +39,7 @@ const statusLabels: Record<string, string> = {
 function statusLabel(value: string): string { return t(statusLabels[value] ?? value); }
 
 function seatOptionContent(seat: CommitteeWorkspaceSnapshot['seats'][number]) {
-  const flag = seat.flag.type === 'IMAGE'
-    ? <span className="country-flag-display" aria-hidden="true"><img className="country-flag-display-image" src={seat.flag.value} alt="" /></span>
-    : seat.flag.type === 'STANDARD'
-      ? <span className={`country-flag-display fi fi-${seat.flag.value}`} aria-hidden="true" />
-      : <span className="country-flag-display country-flag-display-emoji" aria-hidden="true">{seat.flag.value}</span>;
+  const flag = <CountryFlagDisplay flag={seat.flag} />;
   return <span className="motion-seat-option">{flag}<span>{seat.displayName}</span></span>;
 }
 

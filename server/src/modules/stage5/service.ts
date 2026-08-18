@@ -582,6 +582,18 @@ export class Stage5Service {
       const updated = await client.query<SpeakerListRow>(`UPDATE speaker_lists SET name=$2,topic=$3,default_speech_ms=$4,
         delegates_can_queue=$5,revision=revision+1 WHERE id=$1 RETURNING *`,
       [listId, name, topic, defaultSpeechMs, delegatesCanQueue]);
+      if (defaultSpeechMs !== Number(list.default_speech_ms)) {
+        await client.query(`UPDATE speaker_queue_entries SET speech_duration_ms=$2 WHERE speaker_list_id=$1
+          AND status='QUEUED'`, [listId, defaultSpeechMs]);
+        const timer = await client.query<TimerRow>('SELECT * FROM timer_states WHERE id=$1 FOR UPDATE', [list.speech_timer_id]);
+        if (timer.rows[0] && !timer.rows[0].running) {
+          await client.query(`UPDATE timer_states SET remaining_at_start_ms=$2,running=false,started_at=NULL,expired_at=NULL,
+            revision=revision+1,updated_at=$3 WHERE id=$1`, [list.speech_timer_id, defaultSpeechMs, this.now()]);
+          await appendEvent(client, committee, {type: 'timer.changed', resourceType: 'timer', resourceId: list.speech_timer_id,
+            revision: timer.rows[0].revision + 1, payload: {command: 'RESET_FOR_DURATION_CHANGE', running: false,
+              remainingMs: defaultSpeechMs}});
+        }
+      }
       if (list.kind === 'MODERATED_CAUCUS' && topic !== list.topic) {
         await client.query('UPDATE caucuses SET topic=$2,revision=revision+1 WHERE speaker_list_id=$1', [listId, topic]);
       }

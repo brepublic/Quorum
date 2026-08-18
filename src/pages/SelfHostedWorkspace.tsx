@@ -13,6 +13,7 @@ import type {
 import {Link, Redirect, Route, Switch, useHistory, useLocation, useParams} from 'react-router-dom';
 import {Button, Card, Checkbox, Confirm, Container, Divider, Form, Grid, Header, Icon, Label, List, Menu, Message, Pagination, Popup, Segment, Table} from 'semantic-ui-react';
 import Loading from '../components/Loading';
+import {CountryFlagDisplay} from '../components/CountryFlagDisplay';
 import {LanguageMenuItem, t} from '../i18n';
 import {selfHostedApi, type SelfHostedApi} from '../services/self-hosted-api';
 import type {SelfHostedUser} from '../services/self-hosted-identity';
@@ -32,11 +33,7 @@ import {
 function errorText(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 
 function Flag({seat}: {seat: Pick<Stage4CommitteeSeat, 'flag' | 'displayName'>}) {
-  if (seat.flag.type === 'IMAGE') return <span className="country-flag-display" aria-hidden="true">
-    <img className="country-flag-display-image" src={seat.flag.value} alt="" />
-  </span>;
-  if (seat.flag.type === 'STANDARD') return <span className={`country-flag-display fi fi-${seat.flag.value}`} aria-hidden="true" />;
-  return <span className="country-flag-display country-flag-display-emoji" aria-hidden="true">{seat.flag.value}</span>;
+  return <CountryFlagDisplay flag={seat.flag} />;
 }
 
 function AppMenu({user, logout}: {user: SelfHostedUser; logout(): void}) {
@@ -477,6 +474,8 @@ function SettingsPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
   const [rulePackages, setRulePackages] = React.useState<Awaited<ReturnType<SelfHostedApi['listRulePackages']>>>([]);
   const [ruleVersionId, setRuleVersionId] = React.useState(snapshot.committee.activeRulePackageVersionId);
   const [deleteName, setDeleteName] = React.useState('');
+  const generalSpeakerList = (snapshot.speakerLists ?? []).find(list => list.kind === 'GENERAL');
+  const [generalSpeakerSeconds, setGeneralSpeakerSeconds] = React.useState((generalSpeakerList?.defaultSpeechMs ?? 60_000) / 1000);
   const owner = snapshot.viewer.audience === 'OWNER';
   const readOnly = snapshot.committee.status === 'ARCHIVED' || snapshot.committee.status === 'DELETING';
   const execute = async (key: string, operation: () => Promise<unknown>) => {setPending(key); try {await run(operation);} finally {setPending(undefined);}};
@@ -492,6 +491,12 @@ function SettingsPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
     <Checkbox slider checked={snapshot.layoutSettings.timersInSeparateColumns} disabled={readOnly}
       onChange={(_, data) => void setLayoutSetting({timersInSeparateColumns: Boolean(data.checked)})}
       label={t("Alternate arrangement with 'Speaker timer' and 'Caucus timer' in separate columns")} />
+    {generalSpeakerList && <Form onSubmit={() => execute('general-speaker-duration', () => api.updateSpeakerList(
+      generalSpeakerList.id, generalSpeakerList.revision, {defaultSpeechMs: generalSpeakerSeconds * 1000}))}>
+      <Form.Input type="number" min={1} label={t('Speaker time in seconds')} value={generalSpeakerSeconds} disabled={readOnly}
+        onChange={event => setGeneralSpeakerSeconds(Number(event.currentTarget.value))} />
+      <Button primary loading={pending === 'general-speaker-duration'} disabled={readOnly || generalSpeakerSeconds < 1}>{t('Save changes')}</Button>
+    </Form>}
   </Segment></>}
     <Header as="h2">{t('Committee profile')}</Header>{owner && !readOnly ? <Form onSubmit={() => execute('profile',
     () => api.updateCommittee(snapshot.committee.id, snapshot.committee.revision, {name, topic, conference, visibility}))}>
