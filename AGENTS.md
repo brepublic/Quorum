@@ -64,3 +64,36 @@ Prefer:
 control alone > short label > short helper text > paragraph.
 
 Before finishing any UI task, audit all user-facing strings and remove copy that does not change user behavior or understanding.
+
+## Editing WSL Files from PowerShell
+
+When Codex runs on Windows, editing WSL files through `wsl.exe -d Debian` is
+fragile. Three shell layers (PowerShell, bash, scripting language) compete over
+metacharacters.
+
+**What breaks:**
+
+- PowerShell double-quoted heredocs expand `$variable`, corrupting template
+  literals.
+- Inline `bash -c "..."` breaks on embedded single quotes, backticks, and `$`.
+- Bash heredocs are intercepted by PowerShell before reaching bash.
+- Base64 round-trips corrupt when the encoder runs inside broken quoting.
+
+**What works:**
+
+Write a Python script to `\\wsl$\Debian\tmp\` using a PowerShell
+single-quoted heredoc (@'...'@), then execute it:
+
+```powershell
+$script = @'
+# Python code here -- $variables, backticks, and quotes are literal
+'@
+$script | Out-File -Path "\\wsl$\Debian\tmp\fix.py" -Encoding utf8
+wsl.exe -d Debian -- python3 /tmp/fix.py
+```
+
+Single-quoted heredocs prevent PowerShell from interpreting content. The UNC
+path lets PowerShell write directly to WSL without `wsl.exe` for the write step.
+
+For reading or simple commands without special characters,
+`wsl.exe -d Debian -- bash -c 'command'` still works.

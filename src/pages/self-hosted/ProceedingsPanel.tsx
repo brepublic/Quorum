@@ -213,6 +213,7 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
   const [totalMinutes, setTotalMinutes] = React.useState(Math.ceil((defaults?.defaultTotalDurationSeconds ?? 600) / 60));
   const [yieldType, setYieldType] = React.useState<YieldType>('CHAIR'); const [yieldSeat, setYieldSeat] = React.useState('');
   const [contribution, setContribution] = React.useState('');
+  const [localQueueOrder, setLocalQueueOrder] = React.useState<string[] | null>(null);
   const displayedListName = list ? localizeGeneratedName(list.name) : '';
   const [nameDraft, setNameDraft] = React.useState(displayedListName);
   const [topicDraft, setTopicDraft] = React.useState(list?.topic ?? '');
@@ -220,6 +221,10 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
     setNameDraft(list ? localizeGeneratedName(list.name) : '');
     setTopicDraft(list?.topic ?? '');
   }, [resourceId]);
+  const serverQueuedForCheck = (list?.queue ?? []).filter(entry => entry.status === 'QUEUED');
+  const serverOrderStr = serverQueuedForCheck.map(e => e.id).join(',');
+  const serverCaughtUp = localQueueOrder !== null && serverOrderStr === localQueueOrder.join(',');
+  React.useEffect(() => { if (serverCaughtUp) setLocalQueueOrder(null); }, [serverCaughtUp]);
   const canParticipate = snapshot.viewer.audience !== 'PUBLIC' && snapshot.committee.status === 'ACTIVE';
   if (resourceId === 'new') return <><Header as="h1">{t('New caucus')}</Header>{canChair && session
     ? <Form onSubmit={async () => {let created: Awaited<ReturnType<SelfHostedApi['createSpeakerList']>> | undefined;
@@ -237,7 +242,10 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
     </Form> : <Message content={session ? t('Chair capability is required.') : t('Start a meeting first.')} />}</>;
   if (!list) return <Message error content={t('Speaker list not found.')} />;
   const current = list.queue.find(entry => entry.id === list.currentEntryId);
-  const queued = list.queue.filter(entry => entry.status === 'QUEUED');
+  const serverQueued = list.queue.filter(entry => entry.status === 'QUEUED');
+  const queued = localQueueOrder
+    ? localQueueOrder.map(id => serverQueued.find(e => e.id === id)).filter((e): e is typeof serverQueued[number] => Boolean(e))
+    : serverQueued;
   const next = queued[0];
   const speech = currentSpeech(list);
   const speechTimer = (snapshot.timers ?? []).find(timer => timer.id === list.speechTimerId);
@@ -260,7 +268,10 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
   const onDragEnd = (result: DropResult) => {
     if (!result.destination || result.destination.index === result.source.index) return;
     const entries = [...queued]; const [moved] = entries.splice(result.source.index, 1);
-    if (!moved) return; entries.splice(result.destination.index, 0, moved); reorder(entries.map(entry => entry.id));
+    if (!moved) return; entries.splice(result.destination.index, 0, moved);
+    const newOrder = entries.map(entry => entry.id);
+    setLocalQueueOrder(newOrder);
+    reorder(newOrder);
   };
   const toggleSpeech = () => run(() => api.commandSpeech(list.id,
     speech ? speech.status === 'RUNNING' ? 'pause' : 'resume' : 'start', speech?.revision ?? list.revision));
@@ -319,7 +330,7 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
     || seat.id === speech?.yieldTargetSeatId)?.displayName;
   const yieldAvailable = list.kind === 'GENERAL' && canChair && speech?.kind === 'ORIGINAL'
     && speech.status === 'PAUSED' && speech.canYield && !pendingYield && (speechTimer?.remainingMs ?? 0) > 1_000;
-  const yieldCard = list.kind === 'GENERAL' && (yieldAvailable || pendingYield || yieldType !== 'CHAIR') ? <Segment raised textAlign="center">
+  const yieldCard = list.kind === 'GENERAL' && (yieldAvailable || pendingYield || yieldType !== 'CHAIR') ? <Segment raised textAlign="center" className="yield-card">
     <Label attached="top left" size="large">{t('Yield')}</Label>
     {yieldType === 'CHAIR' && !pendingYield ? <Button.Group vertical fluid>
       {allowedYields.includes('CHAIR') && <Button onClick={() => chooseYield('CHAIR')}>{t('Yield to the chair')}</Button>}
@@ -365,8 +376,8 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
     {nextControl}
     <DragDropContext onDragEnd={onDragEnd}><Droppable droppableId={`speaker-queue-${list.id}`}>
       {provided => <div ref={provided.innerRef} {...provided.droppableProps}><Feed size="large">{queued.map((entry, index) =>
-        <Draggable key={entry.id} draggableId={entry.id} index={index} isDragDisabled={!canChair}>{drag =>
-          <div ref={drag.innerRef} {...drag.draggableProps}><SpeakerFeedEntry entry={entry} snapshot={snapshot} canChair={canChair}
+        <Draggable key={entry.id} draggableId={entry.id} index={index} isDragDisabled={!canChair}>{(drag, snap) =>
+          <div ref={drag.innerRef} {...drag.draggableProps} className={snap.isDragging ? 'speaker-feed-dragging' : undefined}><SpeakerFeedEntry entry={entry} snapshot={snapshot} canChair={canChair}
             onRemove={() => removeEntry(entry.id)} onYield={list.kind === 'MODERATED_CAUCUS' && speech
               && speech.kind === 'ORIGINAL' && speech.canYield ? () => legacyYieldTo(entry.seatId) : undefined}
             dragHandleProps={drag.dragHandleProps as unknown as Record<string, unknown>} /></div>}

@@ -591,7 +591,7 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   align-items: center;
   align-self: center;
   display: inline-flex;
-  font-size: 1em;
+  font-size: 0.85em;
   height: auto;
   justify-content: center;
   margin: 0;
@@ -618,6 +618,28 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
 
 .legacy-speaker-workspace .absent-member {
   opacity: 0.55;
+}
+
+/* Drag: item being dragged gets rounded gray background */
+.legacy-speaker-workspace .speaker-feed-dragging {
+  background: #e8e8e8;
+  border-radius: 0.5rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+
+/* Drag: placeholder shows gray drop-indicator line */
+.legacy-speaker-workspace .ui.feed > div[data-rbd-placeholder-context-id] {
+  border-top: 2px solid #b0b0b0;
+  min-height: 0;
+  margin: 0.25rem 0;
+}
+
+/* GSL page: title input and yield options not bold */
+.legacy-speaker-workspace .ui.massive.input > input {
+  font-weight: normal;
+}
+.legacy-speaker-workspace .yield-card .ui.button {
+  font-weight: normal;
 }
 
 @media only screen and (max-width: 767px) {
