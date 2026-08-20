@@ -71,10 +71,11 @@ function PrimaryItems({snapshot, onNavigate}: {snapshot: CommitteeWorkspaceSnaps
   const item = (path: string, label: string) => <Menu.Item key={path} as={Link} to={`${base}${path}`}
     active={routeActive(location.pathname, `${base}${path}`)} onClick={onNavigate}>{t(label)}</Menu.Item>;
   const dynamic = (kind: 'caucuses' | 'resolutions' | 'strawpolls', label: string, createLabel: string,
-    resources: Array<{id: string; label: string}>) => {
+    resources: Array<{id: string; label: string}>, activeOverride?: boolean) => {
     const destination = `${base}/${kind}`;
+    const isActive = activeOverride !== undefined ? activeOverride : routeActive(location.pathname, destination, true);
     return <Dropdown key={kind} item text={t(label)}
-      className={routeActive(location.pathname, destination, true) ? 'active' : undefined}>
+      className={isActive ? 'active' : undefined}>
       <Dropdown.Menu>
         <Dropdown.Item as={Link} to={`${destination}/new`} icon="add" text={t(createLabel)} onClick={onNavigate} />
         {resources.map(resource => <Dropdown.Item key={resource.id} as={Link} to={`${destination}/${resource.id}`}
@@ -84,6 +85,8 @@ function PrimaryItems({snapshot, onNavigate}: {snapshot: CommitteeWorkspaceSnaps
     </Dropdown>;
   };
   const generalSpeakerList = (snapshot.speakerLists ?? []).find(list => list.kind === 'GENERAL');
+  const gslPath = generalSpeakerList ? `${base}/caucuses/${generalSpeakerList.id}` : undefined;
+  const gslPathActive = gslPath !== undefined && routeActive(location.pathname, gslPath, true);
   const caucuses = (snapshot.speakerLists ?? []).filter(list => list.kind === 'MODERATED_CAUCUS').map(list => ({id: list.id,
     label: localizeGeneratedName(list.name || list.topic || 'untitled caucus')}));
   const resolutions = (snapshot.documents ?? []).filter(document => document.kind === 'RESOLUTION')
@@ -102,7 +105,7 @@ function PrimaryItems({snapshot, onNavigate}: {snapshot: CommitteeWorkspaceSnaps
       active={routeActive(location.pathname, `${base}/caucuses/${generalSpeakerList.id}`)} onClick={onNavigate}>
       {t("General Speakers' List")}</Menu.Item>}
     {item('/unmod', 'Unmod')}
-    {dynamic('caucuses', 'Caucuses', 'New caucus', caucuses)}
+    {dynamic('caucuses', 'Caucuses', 'New caucus', caucuses, gslPathActive ? false : undefined)}
     {dynamic('resolutions', 'Resolutions', 'New resolution', resolutions)}
     {dynamic('strawpolls', 'Strawpolls', 'New strawpoll', strawpolls)}
     {item('/notes', 'Notes')}
