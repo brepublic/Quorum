@@ -216,6 +216,10 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
   const displayedListName = list ? localizeGeneratedName(list.name) : '';
   const [nameDraft, setNameDraft] = React.useState(displayedListName);
   const [topicDraft, setTopicDraft] = React.useState(list?.topic ?? '');
+  React.useEffect(() => {
+    setNameDraft(list ? localizeGeneratedName(list.name) : '');
+    setTopicDraft(list?.topic ?? '');
+  }, [resourceId]);
   const canParticipate = snapshot.viewer.audience !== 'PUBLIC' && snapshot.committee.status === 'ACTIVE';
   if (resourceId === 'new') return <><Header as="h1">{t('New caucus')}</Header>{canChair && session
     ? <Form onSubmit={async () => {let created: Awaited<ReturnType<SelfHostedApi['createSpeakerList']>> | undefined;
