@@ -274,9 +274,9 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
   const nextControl = !current
     ? <Button basic icon primary disabled={!queued.length || !canChair} onClick={() => void advance()}><Icon name="arrow up" />{t('Stage')}</Button>
     : list.kind === 'GENERAL' && speech
-      ? <Button.Group><Button basic icon color={timerRunning ? 'orange' : 'green'} disabled={!canChair || pendingYield}
+      ? <><Button basic icon color={timerRunning ? 'orange' : 'green'} disabled={!canChair || pendingYield}
           onClick={() => void toggleSpeech()}><Icon name={timerRunning ? 'pause' : 'play'} />{t(timerRunning ? 'Pause' : 'Continue')}</Button>
-          <Button basic icon primary disabled={!canAdvance} onClick={() => void advance()}><Icon name="arrow up" />{t('Next')}</Button></Button.Group>
+          <Button style={{marginLeft: '0.5em'}} basic icon primary disabled={!canAdvance} onClick={() => void advance()}><Icon name="arrow up" />{t('Next')}</Button></>
       : !speech
         ? <Button basic icon positive disabled={!canChair} onClick={() => void toggleSpeech()}><Icon name="hourglass start" />{t('Start')}</Button>
         : speech.status === 'PAUSED' || speech.status === 'READY'
