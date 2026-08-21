@@ -1,4 +1,5 @@
 import * as React from 'react';
+import {createPortal} from 'react-dom';
 import type {
   AuthoritativeTimer,
   CommitteeWorkspaceSnapshot,
@@ -22,6 +23,93 @@ import {localizedDisplayName} from './TemplateManagers';
 
 type Run = (operation: () => Promise<unknown>) => Promise<void>;
 type View = 'motions' | 'unmod' | 'caucus' | 'strawpoll' | 'resolution';
+
+type SpeakerSeatOption = {key: React.Key; value: string; text: string; content?: React.ReactNode};
+
+function SpeakerSeatDropdown({value, options, disabled = false, error = false, placeholder, onChange}: {
+  value: string;
+  options: SpeakerSeatOption[];
+  disabled?: boolean;
+  error?: boolean;
+  placeholder?: string;
+  onChange: (value: string) => void;
+}) {
+  const anchorRef = React.useRef<HTMLDivElement>(null);
+  const inputRef = React.useRef<HTMLInputElement>(null);
+  const [open, setOpen] = React.useState(false);
+  const [query, setQuery] = React.useState('');
+  const [activeIndex, setActiveIndex] = React.useState(0);
+  const [menuStyle, setMenuStyle] = React.useState<React.CSSProperties>({});
+  const selected = options.find(option => option.value === value);
+  const filtered = options.filter(option => option.text.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
+
+  const placeMenu = React.useCallback(() => {
+    const anchor = anchorRef.current;
+    if (!anchor) return;
+    const rect = anchor.getBoundingClientRect();
+    setMenuStyle({left: rect.left, top: rect.bottom - 1, width: rect.width,
+      maxHeight: Math.max(96, window.innerHeight - rect.bottom - 8)});
+  }, []);
+
+  React.useLayoutEffect(() => {
+    if (!open) return;
+    placeMenu();
+    window.addEventListener('resize', placeMenu);
+    window.addEventListener('scroll', placeMenu, true);
+    return () => {
+      window.removeEventListener('resize', placeMenu);
+      window.removeEventListener('scroll', placeMenu, true);
+    };
+  }, [open, placeMenu]);
+
+  React.useEffect(() => {
+    if (!open) return;
+    const closeOutside = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (!anchorRef.current?.contains(target)
+        && !(target instanceof Element && target.closest('.speaker-seat-dropdown-portal'))) {setOpen(false); setQuery('');}
+    };
+    document.addEventListener('mousedown', closeOutside);
+    return () => document.removeEventListener('mousedown', closeOutside);
+  }, [open]);
+
+  const openMenu = () => {
+    if (disabled) return;
+    setOpen(true);
+    setActiveIndex(0);
+    requestAnimationFrame(() => inputRef.current?.focus());
+  };
+  const select = (option: SpeakerSeatOption) => {
+    onChange(option.value);
+    setQuery('');
+    setOpen(false);
+  };
+
+  return <Form.Field className="speaker-seat-dropdown" error={error}>
+    <div ref={anchorRef} className={`ui fluid search selection dropdown${open ? ' active visible' : ''}${disabled ? ' disabled' : ''}`}
+      role="combobox" aria-expanded={open} aria-haspopup="listbox" onClick={openMenu}>
+      <input ref={inputRef} className="search" autoComplete="off" tabIndex={disabled ? -1 : 0} value={query}
+        onFocus={openMenu} onChange={event => {setQuery(event.currentTarget.value); setActiveIndex(0);}}
+        onKeyDown={event => {
+          if (event.key === 'Escape') {setOpen(false); setQuery(''); return;}
+          if (event.key === 'ArrowDown') {event.preventDefault(); setActiveIndex(index => Math.min(index + 1, filtered.length - 1)); return;}
+          if (event.key === 'ArrowUp') {event.preventDefault(); setActiveIndex(index => Math.max(index - 1, 0)); return;}
+          if (event.key === 'Enter' && open && filtered[activeIndex]) {event.preventDefault(); select(filtered[activeIndex]);}
+        }} />
+      <div className={`${selected ? '' : 'default '}text`}>{query ? '' : selected?.text ?? placeholder ?? ''}</div>
+      <Icon name="search" />
+    </div>
+    {open && createPortal(<div className="ui active visible search selection dropdown speaker-seat-dropdown-portal" style={menuStyle}>
+      <div className="visible menu transition" role="listbox">
+        {filtered.map((option, index) => <div key={option.key} role="option" aria-selected={option.value === value}
+          className={`${option.value === value ? 'selected ' : ''}${index === activeIndex ? 'active ' : ''}item`}
+          onMouseDown={event => event.preventDefault()} onMouseEnter={() => setActiveIndex(index)} onClick={() => select(option)}>
+          {option.content ?? option.text}
+        </div>)}
+      </div>
+    </div>, document.body)}
+  </Form.Field>;
+}
 
 export function mapRuleYieldTypes(values: string[]): YieldType[] {
   const yieldMap: Record<string, YieldType> = {CHAIR: 'CHAIR', DELEGATE: 'SEAT', SEAT: 'SEAT',
@@ -338,9 +426,9 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
       {allowedYields.includes('QUESTIONS') && <Button onClick={() => chooseYield('QUESTIONS')}>{t('Yield to questions')}</Button>}
       {allowedYields.includes('COMMENTS') && <Button onClick={() => chooseYield('COMMENTS')}>{t('Yield to comments')}</Button>}
     </Button.Group> : <Form><Header size="small">{t(yieldType === 'QUESTIONS' ? 'Ask a question' : yieldType === 'COMMENTS' ? 'Comment' : 'Yield')}</Header>
-      <Form.Dropdown icon="search" search selection value={pendingYield ? speech?.yieldTargetSeatId ?? '' : yieldSeat}
+      <SpeakerSeatDropdown value={pendingYield ? speech?.yieldTargetSeatId ?? '' : yieldSeat}
         placeholder={t('Select a delegation')} options={targetOptions} disabled={pendingYield}
-        onChange={(_, data) => chooseYieldTarget(String(data.value))} />
+        onChange={chooseYieldTarget} />
       {(yieldType === 'SEAT' || pendingYield) && (yieldSeat || pendingYield) && <Button.Group fluid>
         <Button positive onClick={() => offerAndDecide('ACCEPT')}>{t('Accept')}</Button>
         <Button negative onClick={() => offerAndDecide('REJECT')}>{t('Reject')}</Button>
@@ -385,8 +473,8 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
     </Droppable></DragDropContext>
   </Segment>;
   const queuePanel = <Segment textAlign="center"><Label attached="top left" size="large">{t('Queue')}</Label><Form>
-    {canChair && <Form.Dropdown icon="search" search selection value={seatId} error={!seatId} options={presentSeats.map(seat => ({key: seat.id,
-      value: seat.id, text: seat.displayName, content: seatOptionContent(seat)}))} onChange={(_, data) => setSeatId(String(data.value))} />}
+    {canChair && <SpeakerSeatDropdown value={seatId} error={!seatId} options={presentSeats.map(seat => ({key: seat.id,
+      value: seat.id, text: seat.displayName, content: seatOptionContent(seat)}))} onChange={setSeatId} />}
     {canChair && operationAllowsDelegates && <div className="speaker-queue-delegate-toggle"><Form.Checkbox
       label={t("Delegates can queue")} toggle checked={delegatesCanQueue}
       onChange={(_, data) => void run(() => api.updateSpeakerList(list.id, list.revision,
