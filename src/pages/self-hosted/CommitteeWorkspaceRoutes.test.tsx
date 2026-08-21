@@ -598,6 +598,23 @@ describe('committee workspace routes and roles', () => {
     expect(page.textContent).toContain('France');
     expect(page.textContent).not.toContain('Motion type');
     expect((page.textContent ?? '').indexOf('Next speaking')).toBeLessThan((page.textContent ?? '').indexOf('Queue'));
+    const nextPanel = [...page.querySelectorAll<HTMLElement>('.ui.segment')]
+      .find(segment => segment.querySelector('.top.left.attached.label')?.textContent === 'Next speaking');
+    const queuePanel = [...page.querySelectorAll<HTMLElement>('.ui.segment')]
+      .find(segment => segment.querySelector('.top.left.attached.label')?.textContent === 'Queue');
+    expect(nextPanel?.textContent).toContain('France');
+    expect(nextPanel?.querySelectorAll('.event')).toHaveLength(1);
+    expect(nextPanel?.querySelector('.speaker-feed-actions')).toBeNull();
+    expect(queuePanel?.textContent).toContain('France');
+    expect(queuePanel?.querySelector('.speaker-feed-actions')).not.toBeNull();
+    const queueFeed = queuePanel?.querySelector('.feed');
+    const queueDropdown = queuePanel?.querySelector('.ui.dropdown');
+    expect(queueFeed).not.toBeNull();
+    expect(queueDropdown).not.toBeNull();
+    expect(queueFeed!.compareDocumentPosition(queueDropdown!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const speakerTimer = [...page.querySelectorAll<HTMLElement>('.proceedings-timer')]
+      .find(timer => timer.querySelector('.top.left.attached.label')?.textContent === 'Speaker timer');
+    expect(speakerTimer?.querySelector('.speaker-timer-actions')?.textContent).toContain('Start');
   });
 
   it('closes the question form only after the contribution is saved and reports the result', async () => {
@@ -736,6 +753,15 @@ describe('committee workspace routes and roles', () => {
     expect(page.querySelector('.speaker-timer-column')?.textContent).toContain('Now speaking');
     expect(page.querySelector('.caucus-timer-column')?.textContent).toContain('Caucus timer');
     expect(page.querySelector('.caucus-timer-column')?.textContent).toContain('Queue');
+    const nextPanel = [...page.querySelectorAll<HTMLElement>('.ui.segment')]
+      .find(segment => segment.querySelector('.top.left.attached.label')?.textContent === 'Next speaking');
+    const queuePanel = [...page.querySelectorAll<HTMLElement>('.ui.segment')]
+      .find(segment => segment.querySelector('.top.left.attached.label')?.textContent === 'Queue');
+    expect(nextPanel?.querySelectorAll('.event')).toHaveLength(1);
+    expect(nextPanel?.querySelector('.speaker-feed-actions')).toBeNull();
+    expect(queuePanel?.textContent).toContain('France');
+    expect(queuePanel?.querySelector('.speaker-feed-actions')).not.toBeNull();
+    expect(page.querySelector('.speaker-timer-column .speaker-timer-actions')?.textContent).toContain('Next');
     const caucusTimerButton = page.querySelector<HTMLButtonElement>('.caucus-timer-column .legacy-timer-display');
     await act(async () => {caucusTimerButton?.click(); await Promise.resolve();});
     expect(commandTimer).toHaveBeenCalledWith('total-timer', 'pause', 2, undefined);

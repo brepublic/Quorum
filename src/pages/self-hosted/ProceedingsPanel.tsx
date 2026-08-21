@@ -164,13 +164,13 @@ function playTimerSound(): void {
 }
 
 type TimerControlsProps = {name: string; timer?: AuthoritativeTimer; run: Run; api: SelfHostedApi; canChair: boolean;
-  onToggle?: () => Promise<void>; toggleKey?: string};
+  onToggle?: () => Promise<void>; toggleKey?: string; children?: React.ReactNode};
 
 function TimerControls(props: TimerControlsProps) {
   return props.timer ? <ReadyTimerControls {...props} timer={props.timer} /> : <Message content={t('No timer')} />;
 }
 
-function ReadyTimerControls({name, timer, run, api, canChair, onToggle, toggleKey}: Omit<TimerControlsProps, 'timer'>
+function ReadyTimerControls({name, timer, run, api, canChair, onToggle, toggleKey, children}: Omit<TimerControlsProps, 'timer'>
   & {timer: AuthoritativeTimer}) {
   const [pending, setPending] = React.useState<string>();
   const [muted, setMuted] = React.useState(true);
@@ -226,6 +226,7 @@ function ReadyTimerControls({name, timer, run, api, canChair, onToggle, toggleKe
       <Button loading={pending === 'reset'} disabled={!Number.isFinite(Number(duration)) || Number(duration) <= 0}
         onClick={() => void command('reset')}>{t('Set')}</Button>
     </Form.Input></Form>}
+    {children && <div className="speaker-timer-actions">{children}</div>}
   </Segment>;
 }
 
@@ -478,9 +479,7 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
     {speech?.kind === 'INHERITED' ? <Feed.Event><Feed.Content><Feed.Summary><Feed.User>{speech.seatDisplayName}</Feed.User></Feed.Summary></Feed.Content></Feed.Event>
       : <SpeakerFeedEntry entry={current} snapshot={snapshot} canChair={canChair} onRemove={current ? () => removeEntry(current.id) : undefined} />}
   </Feed></Segment>;
-  const nextSpeaking = <Segment textAlign="center"><Label attached="top left" size="large">{t('Next speaking')}</Label>
-    {nextControl}
-    <DragDropContext onDragEnd={onDragEnd}><Droppable droppableId={`speaker-queue-${list.id}`}>
+  const waitingSpeakers = <DragDropContext onDragEnd={onDragEnd}><Droppable droppableId={`speaker-queue-${list.id}`}>
       {provided => <div ref={provided.innerRef} {...provided.droppableProps}><Feed size="large">{queued.map((entry, index) =>
         <Draggable key={entry.id} draggableId={entry.id} index={index} isDragDisabled={!canChair}>{(drag, snap) =>
           <div ref={drag.innerRef} {...drag.draggableProps} className={snap.isDragging ? 'speaker-feed-dragging' : undefined}><SpeakerFeedEntry entry={entry} snapshot={snapshot} canChair={canChair}
@@ -488,9 +487,12 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
               && speech.kind === 'ORIGINAL' && speech.canYield ? () => legacyYieldTo(entry.seatId) : undefined}
             dragHandleProps={drag.dragHandleProps as unknown as Record<string, unknown>} /></div>}
         </Draggable>)}{provided.placeholder}</Feed></div>}
-    </Droppable></DragDropContext>
+    </Droppable></DragDropContext>;
+  const nextSpeaking = <Segment textAlign="center"><Label attached="top left" size="large">{t('Next speaking')}</Label>
+    <Feed size="large"><SpeakerFeedEntry entry={next} snapshot={snapshot} canChair={false} /></Feed>
   </Segment>;
   const queuePanel = <Segment textAlign="center"><Label attached="top left" size="large">{t('Queue')}</Label><Form>
+    {waitingSpeakers}
     {canChair && <SpeakerSeatDropdown value={seatId} error={!seatId} options={presentSeats.map(seat => ({key: seat.id,
       value: seat.id, text: seat.displayName, content: seatOptionContent(seat)}))} onChange={setSeatId} />}
     {canChair && operationAllowsDelegates && <div className="speaker-queue-delegate-toggle"><Form.Checkbox
@@ -537,13 +539,13 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
   return <Container className="legacy-speaker-workspace"><KeyboardShortcut enabled={canAdvance} shortcut="n"
     onTrigger={() => void advance()} /><Grid columns="equal" stackable>{header}{separateTimers ? <Grid.Row>
     <Grid.Column className="speaker-timer-column"><TimerControls name="Speaker timer" timer={speechTimer} run={run} api={api} canChair={canChair}
-      onToggle={toggleSpeech} toggleKey="s" />{nowSpeaking}{nextSpeaking}</Grid.Column>
+      onToggle={toggleSpeech} toggleKey="s">{nextControl}</TimerControls>{nowSpeaking}{nextSpeaking}</Grid.Column>
     <Grid.Column className="caucus-timer-column"><TimerControls name="Caucus timer" timer={totalTimer} run={run} api={api}
       canChair={canChair} toggleKey="c" />{queuePanel}</Grid.Column>
   </Grid.Row> : <Grid.Row>
     <Grid.Column>{orderedQueuePanels}</Grid.Column>
     <Grid.Column><TimerControls name="Speaker timer" timer={speechTimer} run={run} api={api} canChair={canChair}
-      onToggle={toggleSpeech} toggleKey="s" />
+      onToggle={toggleSpeech} toggleKey="s">{nextControl}</TimerControls>
       {list.kind === 'MODERATED_CAUCUS' && <TimerControls name="Caucus timer" timer={totalTimer} run={run} api={api}
         canChair={canChair} toggleKey="c" />}
       {list.kind === 'GENERAL' && yieldCard}{yieldNotice && !contributionRecorded && <Message info content={yieldNotice} />}
