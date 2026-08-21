@@ -8,7 +8,7 @@ import type {CommitteePoint, CommitteeWorkspaceSnapshot, CreatedStrawpoll, Proce
 import type {SelfHostedApi} from '../../services/self-hosted-api';
 import type {SelfHostedUser} from '../../services/self-hosted-identity';
 import SelfHostedWorkspace from '../SelfHostedWorkspace';
-import {legacyInterlacedQueue} from './ProceedingsPanel';
+import {generalQueueHasDividerBefore, legacyInterlacedQueue} from './ProceedingsPanel';
 
 vi.mock('../../services/sha256', () => ({sha256File: vi.fn(async () => 'a'.repeat(64))}));
 
@@ -147,6 +147,19 @@ describe('committee workspace routes and roles', () => {
     const secondSeat = page.querySelector<HTMLButtonElement>('[data-roll-call-seat="seat-1"]');
     await act(async () => {secondSeat?.click(); await Promise.resolve();});
     expect(setRollCallResponse).toHaveBeenCalledWith('roll-call', 3, 'seat-1', 'ABSENT');
+  });
+
+  it('keeps general-list dividers anchored to three-person slots as speakers advance and the queue reorders', () => {
+    const dividerIndexes = (precedingCount: number, length: number) => Array.from({length}, (_, index) => index)
+      .filter(index => generalQueueHasDividerBefore(index, precedingCount));
+    expect(dividerIndexes(0, 9)).toEqual([3, 6]);
+    expect(dividerIndexes(1, 8)).toEqual([2, 5]);
+    expect(dividerIndexes(2, 7)).toEqual([1, 4]);
+    expect(dividerIndexes(3, 6)).toEqual([0, 3]);
+    const reordered = ['B', 'H', 'D', 'E', 'F', 'G', 'C', 'I'];
+    const boundaries = dividerIndexes(1, reordered.length);
+    expect([reordered.slice(0, boundaries[0]), reordered.slice(boundaries[0], boundaries[1]),
+      reordered.slice(boundaries[1])]).toEqual([['B', 'H'], ['D', 'E', 'F'], ['G', 'C', 'I']]);
   });
 
   it('keeps legacy interlacing order and drops absent queued seats', () => {
@@ -585,7 +598,12 @@ describe('committee workspace routes and roles', () => {
       speakerLists: [{id: 'list', committeeId: 'committee', meetingSessionId: 'meeting', kind: 'GENERAL', status: 'OPEN',
         name: "General Speakers' List", topic: '', defaultSpeechMs: 60_000, delegatesCanQueue: false,
         rulePackageVersionId: 'rules', currentEntryId: 'current', speechTimerId: 'speech-timer',
-        totalTimerId: null, linkedResolutionId: null, revision: 2, queue: [{id: 'current', seatId: 'seat', seatDisplayName: 'China', position: 1,
+        totalTimerId: null, linkedResolutionId: null, revision: 2, queue: [
+        {id: 'completed-1', seatId: 'seat', seatDisplayName: 'China', position: 1, status: 'COMPLETED', stance: 'NEUTRAL',
+          speechDurationMs: 60_000, createdAt: '2026-08-14T00:00:00.000Z'},
+        {id: 'completed-2', seatId: 'france', seatDisplayName: 'France', position: 2, status: 'COMPLETED', stance: 'FOR',
+          speechDurationMs: 60_000, createdAt: '2026-08-14T00:00:00.000Z'},
+        {id: 'current', seatId: 'seat', seatDisplayName: 'China', position: 1,
           status: 'CURRENT', stance: 'NEUTRAL', speechDurationMs: 60_000, createdAt: '2026-08-14T00:00:00.000Z'},
         {id: 'next', seatId: 'france', seatDisplayName: 'France', position: 2, status: 'QUEUED', stance: 'FOR',
           speechDurationMs: 60_000, createdAt: '2026-08-14T00:00:00.000Z'}], createdAt: '2026-08-14T00:00:00.000Z', closedAt: null}],
@@ -615,6 +633,11 @@ describe('committee workspace routes and roles', () => {
     const speakerTimer = [...page.querySelectorAll<HTMLElement>('.proceedings-timer')]
       .find(timer => timer.querySelector('.top.left.attached.label')?.textContent === 'Speaker timer');
     expect(speakerTimer?.querySelector('.speaker-timer-actions')?.textContent).toContain('Start');
+    const dividerNavigation = queuePanel?.querySelector('.speaker-queue-divider-navigation');
+    expect(dividerNavigation?.querySelectorAll('a')).toHaveLength(2);
+    expect(dividerNavigation?.textContent).toContain('Motions');
+    expect(dividerNavigation?.textContent).toContain('Question');
+    expect(dividerNavigation?.nextElementSibling?.classList.contains('speaker-queue-divider')).toBe(true);
   });
 
   it('closes the question form only after the contribution is saved and reports the result', async () => {

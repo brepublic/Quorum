@@ -573,6 +573,14 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   text-align: center;
 }
 
+.legacy-speaker-workspace .speaker-queue-divider.ui.divider {
+  margin: 0.9rem 0;
+}
+
+.legacy-speaker-workspace .speaker-queue-divider-navigation.ui.buttons {
+  margin-bottom: 0.9rem;
+}
+
 .legacy-speaker-workspace .speaker-feed-row {
   align-items: center;
   display: flex;

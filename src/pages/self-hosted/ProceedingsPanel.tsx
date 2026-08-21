@@ -278,6 +278,10 @@ function KeyboardShortcut({enabled, shortcut, onTrigger}: {enabled: boolean; sho
   return null;
 }
 
+export function generalQueueHasDividerBefore(index: number, precedingCount: number): boolean {
+  return precedingCount + index > 0 && (precedingCount + index) % 3 === 0;
+}
+
 export function legacyInterlacedQueue(entries: SpeakerQueueEntry[], presentSeatIds: Set<string>): SpeakerQueueEntry[] {
   const present = entries.filter(entry => presentSeatIds.has(entry.seatId));
   const groups = {
@@ -479,14 +483,23 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
     {speech?.kind === 'INHERITED' ? <Feed.Event><Feed.Content><Feed.Summary><Feed.User>{speech.seatDisplayName}</Feed.User></Feed.Summary></Feed.Content></Feed.Event>
       : <SpeakerFeedEntry entry={current} snapshot={snapshot} canChair={canChair} onRemove={current ? () => removeEntry(current.id) : undefined} />}
   </Feed></Segment>;
+  const precedingQueueCount = list.queue.filter(entry => entry.status !== 'QUEUED').length;
+  const queueDividerNavigation = <><Button.Group fluid className="speaker-queue-divider-navigation">
+    <Button primary as={Link} to={`/committees/${snapshot.committee.id}/motions`}>{t('Motions')}<Icon name="arrow right" /></Button>
+    <Button primary as={Link} to={`/committees/${snapshot.committee.id}/questions`}>{t('Question')}<Icon name="arrow right" /></Button>
+  </Button.Group><Divider className="speaker-queue-divider" /></>;
   const waitingSpeakers = <DragDropContext onDragEnd={onDragEnd}><Droppable droppableId={`speaker-queue-${list.id}`}>
       {provided => <div ref={provided.innerRef} {...provided.droppableProps}><Feed size="large">{queued.map((entry, index) =>
-        <Draggable key={entry.id} draggableId={entry.id} index={index} isDragDisabled={!canChair}>{(drag, snap) =>
-          <div ref={drag.innerRef} {...drag.draggableProps} className={snap.isDragging ? 'speaker-feed-dragging' : undefined}><SpeakerFeedEntry entry={entry} snapshot={snapshot} canChair={canChair}
-            onRemove={() => removeEntry(entry.id)} onYield={list.kind === 'MODERATED_CAUCUS' && speech
-              && speech.kind === 'ORIGINAL' && speech.canYield ? () => legacyYieldTo(entry.seatId) : undefined}
-            dragHandleProps={drag.dragHandleProps as unknown as Record<string, unknown>} /></div>}
-        </Draggable>)}{provided.placeholder}</Feed></div>}
+        <React.Fragment key={entry.id}>
+          {list.kind === 'GENERAL' && generalQueueHasDividerBefore(index, precedingQueueCount)
+            && (index === 0 ? queueDividerNavigation : <Divider className="speaker-queue-divider" />)}
+          <Draggable draggableId={entry.id} index={index} isDragDisabled={!canChair}>{(drag, snap) =>
+            <div ref={drag.innerRef} {...drag.draggableProps} className={snap.isDragging ? 'speaker-feed-dragging' : undefined}><SpeakerFeedEntry entry={entry} snapshot={snapshot} canChair={canChair}
+              onRemove={() => removeEntry(entry.id)} onYield={list.kind === 'MODERATED_CAUCUS' && speech
+                && speech.kind === 'ORIGINAL' && speech.canYield ? () => legacyYieldTo(entry.seatId) : undefined}
+              dragHandleProps={drag.dragHandleProps as unknown as Record<string, unknown>} /></div>}
+          </Draggable>
+        </React.Fragment>)}{provided.placeholder}</Feed></div>}
     </Droppable></DragDropContext>;
   const nextSpeaking = <Segment textAlign="center"><Label attached="top left" size="large">{t('Next speaking')}</Label>
     <Feed size="large"><SpeakerFeedEntry entry={next} snapshot={snapshot} canChair={false} /></Feed>
