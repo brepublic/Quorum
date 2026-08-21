@@ -517,6 +517,7 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
   </Segment>;
   const queuePanel = <Segment textAlign="center"><Label attached="top left" size="large">{t('Queue')}</Label><Form>
     {waitingSpeakers}
+    {queued.length > 0 ? <Divider className="speaker-queue-divider speaker-queue-bottom-divider" /> : null}
     {queued.length === 0 && dividerNavigationReady ? <><Divider className="speaker-queue-divider" />{queueDividerNavigation}</> : null}
     {canChair && <SpeakerSeatDropdown value={seatId} error={!seatId} options={presentSeats.map(seat => ({key: seat.id,
       value: seat.id, text: seat.displayName, content: seatOptionContent(seat)}))} onChange={setSeatId} />}

@@ -581,6 +581,11 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   margin: 0.81rem 0;
 }
 
+.legacy-speaker-workspace .speaker-queue-bottom-divider.ui.divider {
+  border-top-color: #a6a6a6;
+  margin: 1rem 0 0.65rem;
+}
+
 .legacy-speaker-workspace .speaker-queue-divider-navigation.ui.buttons {
   margin-bottom: 0.81rem;
 }
