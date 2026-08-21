@@ -61,7 +61,7 @@ function cookie(name: string): string | undefined {
 type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
 async function request<T>(path: string, options: {
-  method?: Method; body?: object; idempotencyKey?: string;
+  method?: Method; body?: object; idempotencyKey?: string; signal?: AbortSignal;
 } = {}): Promise<T> {
   const method = options.method ?? 'GET'; const headers: Record<string, string> = {};
   if (options.body) headers['content-type'] = 'application/json';
@@ -69,7 +69,7 @@ async function request<T>(path: string, options: {
     const csrf = cookie('__Host-quorum_csrf'); if (csrf) headers['x-csrf-token'] = csrf;
   }
   if (options.idempotencyKey) headers['idempotency-key'] = options.idempotencyKey;
-  const response = await fetch(path, {method, credentials: 'same-origin', headers,
+  const response = await fetch(path, {method, credentials: 'same-origin', headers, signal: options.signal,
     ...(options.body ? {body: JSON.stringify(options.body)} : {})});
   const payload = await response.json() as ApiSuccess<T> | ApiFailure;
   if (!response.ok || 'error' in payload) {
@@ -276,8 +276,9 @@ export const selfHostedApi = {
     return request<SpeakerList>(`/api/v1/speeches/${id}/yield-decision`, {method: 'POST',
       body: {baseRevision, decision}});
   },
-  recordSpeechContribution(id: string, type: 'QUESTION' | 'COMMENT', content: string, seatId?: string) {
-    return request<SpeechRecord>(`/api/v1/speeches/${id}/contributions`, {method: 'POST',
+  recordSpeechContribution(id: string, type: 'QUESTION' | 'COMMENT', content: string, seatId?: string,
+    signal?: AbortSignal) {
+    return request<SpeechRecord>(`/api/v1/speeches/${id}/contributions`, {method: 'POST', signal,
       body: {type, content, ...(seatId ? {seatId} : {})}});
   },
   proposeMotion(committeeId: string, input: {meetingSessionId: string; motionTypeId: string;

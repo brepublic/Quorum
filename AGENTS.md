@@ -67,33 +67,43 @@ Before finishing any UI task, audit all user-facing strings and remove copy that
 
 ## Editing WSL Files from PowerShell
 
-When Codex runs on Windows, editing WSL files through `wsl.exe -d Debian` is
-fragile. Three shell layers (PowerShell, bash, scripting language) compete over
-metacharacters.
+When Codex runs on Windows, host-side access to this checkout through the
+`\\wsl$\Debian\...` UNC path is unreliable. Even when the workspace is declared
+writable, direct `apply_patch`, `Get-Content`, `Out-File`, or similar operations
+may fail with `Access is denied` / `Wsl/Service/E_ACCESSDENIED`. Repeating the
+same UNC operation or changing repository permissions does not address this
+boundary.
 
-**What breaks:**
+Use `wsl.exe -d Debian -- ...` for repository reads and commands. For edits,
+create a small, exact transformation script in a Windows path that Codex can
+write, then execute it inside Debian against `/home/makoto/code/Quorum`. The
+Windows file is available in WSL under `/mnt/c/...`.
 
-- PowerShell double-quoted heredocs expand `$variable`, corrupting template
-  literals.
-- Inline `bash -c "..."` breaks on embedded single quotes, backticks, and `$`.
-- Bash heredocs are intercepted by PowerShell before reaching bash.
-- Base64 round-trips corrupt when the encoder runs inside broken quoting.
-
-**What works:**
-
-Write a Python script to `\\wsl$\Debian\tmp\` using a PowerShell
-single-quoted heredoc (@'...'@), then execute it:
+Example workflow:
 
 ```powershell
 $script = @'
-# Python code here -- $variables, backticks, and quotes are literal
+from pathlib import Path
+
+path = Path('/home/makoto/code/Quorum/src/example.ts')
+text = path.read_text(encoding='utf-8')
+old = 'exact text to replace'
+new = 'replacement text'
+if text.count(old) != 1:
+    raise SystemExit(f'expected one target, found {text.count(old)}')
+path.write_text(text.replace(old, new), encoding='utf-8')
 '@
-$script | Out-File -Path "\\wsl$\Debian\tmp\fix.py" -Encoding utf8
-wsl.exe -d Debian -- python3 /tmp/fix.py
+$script | Out-File -LiteralPath 'C:\path\Codex-can-write\fix.py' -Encoding utf8
+wsl.exe -d Debian -- python3 /mnt/c/path/Codex-can-write/fix.py
 ```
 
-Single-quoted heredocs prevent PowerShell from interpreting content. The UNC
-path lets PowerShell write directly to WSL without `wsl.exe` for the write step.
+Keep transformations guarded and deterministic: require the expected target
+count, preserve UTF-8, inspect the diff afterward, and remove the temporary
+script. Use a PowerShell single-quoted heredoc (`@'... '@`) so PowerShell does
+not expand `$variables`, backticks, or quotes before Python sees them.
 
-For reading or simple commands without special characters,
-`wsl.exe -d Debian -- bash -c 'command'` still works.
+For simple reads without shell metacharacters, prefer direct argument passing,
+for example `wsl.exe -d Debian -- rg -n pattern /home/makoto/code/Quorum`.
+When a pipeline, redirection, or compound command is necessary, put the whole
+command inside one WSL `bash -lc` invocation; do not let PowerShell parse its
+metacharacters first.

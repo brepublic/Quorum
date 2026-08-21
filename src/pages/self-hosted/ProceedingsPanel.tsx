@@ -23,6 +23,9 @@ import {localizedDisplayName} from './TemplateManagers';
 
 type Run = (operation: () => Promise<unknown>) => Promise<void>;
 type View = 'motions' | 'unmod' | 'caucus' | 'strawpoll' | 'resolution';
+export const questionContributionTemplate = 'Q:\n\nA:';
+const contributionSaveTimeoutMs = 10_000;
+const contributionSuccessDurationMs = 5_000;
 
 type SpeakerSeatOption = {key: React.Key; value: string; text: string; content?: React.ReactNode};
 
@@ -301,6 +304,9 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
   const [totalMinutes, setTotalMinutes] = React.useState(Math.ceil((defaults?.defaultTotalDurationSeconds ?? 600) / 60));
   const [yieldType, setYieldType] = React.useState<YieldType>('CHAIR'); const [yieldSeat, setYieldSeat] = React.useState('');
   const [contribution, setContribution] = React.useState('');
+  const [recordedContributionSpeechId, setRecordedContributionSpeechId] = React.useState<string>();
+  const [showContributionSuccess, setShowContributionSuccess] = React.useState(false);
+  const [savingContribution, setSavingContribution] = React.useState(false);
   const [localQueueOrder, setLocalQueueOrder] = React.useState<string[] | null>(null);
   const displayedListName = list ? localizeGeneratedName(list.name) : '';
   const [nameDraft, setNameDraft] = React.useState(displayedListName);
@@ -336,6 +342,18 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
     : serverQueued;
   const next = queued[0];
   const speech = currentSpeech(list);
+  React.useEffect(() => {
+    setContribution(speech?.kind === 'INHERITED' && speech.yieldType === 'QUESTIONS'
+      ? questionContributionTemplate : '');
+    setRecordedContributionSpeechId(undefined);
+    setShowContributionSuccess(false);
+    setSavingContribution(false);
+  }, [speech?.id, speech?.kind, speech?.yieldType]);
+  React.useEffect(() => {
+    if (!showContributionSuccess) return;
+    const timeout = window.setTimeout(() => setShowContributionSuccess(false), contributionSuccessDurationMs);
+    return () => window.clearTimeout(timeout);
+  }, [showContributionSuccess]);
   const speechTimer = (snapshot.timers ?? []).find(timer => timer.id === list.speechTimerId);
   const totalTimer = (snapshot.timers ?? []).find(timer => timer.id === list.totalTimerId);
   const configuredYields = snapshot.activeRules.speakerLists.find(item => item.id === list.kind.toLowerCase().replace('_', '-'))?.yieldTypes;
@@ -483,12 +501,36 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
       <Icon name="arrow up" />{t("Join queue")}
     </Button>
   </Form></Segment>;
-  const contributionForm = speech?.kind === 'INHERITED' && ['QUESTIONS', 'COMMENTS'].includes(speech.yieldType ?? '') && canParticipate
-    ? <Form onSubmit={async () => {await run(() => api.recordSpeechContribution(speech.id,
-      speech.yieldType === 'QUESTIONS' ? 'QUESTION' : 'COMMENT', contribution,
-      canChair ? speech.interactionTargetSeatId ?? seatId : undefined)); setContribution('');}}>
-      <Form.TextArea label={t('Content')} value={contribution} onChange={(_, data) => setContribution(String(data.value))} />
-      <Button primary disabled={!contribution.trim()}>{t('Record contribution')}</Button></Form> : null;
+  const contributionJustRecorded = recordedContributionSpeechId === speech?.id;
+  const contributionRecorded = contributionJustRecorded || Boolean(speech?.contributions.some(item =>
+    item.type === (speech.yieldType === 'QUESTIONS' ? 'QUESTION' : 'COMMENT')));
+  const contributionForm = speech?.kind === 'INHERITED' && ['QUESTIONS', 'COMMENTS'].includes(speech.yieldType ?? '')
+    && canParticipate && !contributionRecorded
+    ? <Form className="speech-contribution-form" onSubmit={() => {
+      if (savingContribution) return;
+      setSavingContribution(true);
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), contributionSaveTimeoutMs);
+      void run(async () => {
+        try {
+          await api.recordSpeechContribution(speech.id, speech.yieldType === 'QUESTIONS' ? 'QUESTION' : 'COMMENT', contribution,
+            canChair ? speech.interactionTargetSeatId ?? seatId : undefined, controller.signal);
+          setRecordedContributionSpeechId(speech.id);
+          setShowContributionSuccess(true);
+        } catch (caught) {
+          if (controller.signal.aborted) throw new Error(t('Saving timed out. Try again.'));
+          throw caught;
+        } finally {
+          window.clearTimeout(timeout);
+          setSavingContribution(false);
+        }
+      });
+    }}>
+      <Form.TextArea label={t('Content')} value={contribution} disabled={savingContribution}
+        onChange={(_, data) => setContribution(String(data.value))} />
+      <Button primary disabled={savingContribution || !contribution.trim()} aria-busy={savingContribution}>
+        {savingContribution && <Icon loading name="spinner" />}{t(savingContribution ? 'Saving…' : 'Record')}
+      </Button></Form> : null;
   const orderedQueuePanels = snapshot.layoutSettings.moveQueueUp
     ? <>{nowSpeaking}{queuePanel}{nextSpeaking}</> : <>{nowSpeaking}{nextSpeaking}{queuePanel}</>;
   const separateTimers = list.kind === 'MODERATED_CAUCUS' && snapshot.layoutSettings.timersInSeparateColumns;
@@ -504,7 +546,9 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
       onToggle={toggleSpeech} toggleKey="s" />
       {list.kind === 'MODERATED_CAUCUS' && <TimerControls name="Caucus timer" timer={totalTimer} run={run} api={api}
         canChair={canChair} toggleKey="c" />}
-      {list.kind === 'GENERAL' && yieldCard}{yieldNotice && <Message info content={yieldNotice} />}{contributionForm}
+      {list.kind === 'GENERAL' && yieldCard}{yieldNotice && !contributionRecorded && <Message info content={yieldNotice} />}
+      {contributionJustRecorded && showContributionSuccess
+        && <Message positive content={t('Interaction recorded.')} />}{contributionForm}
     </Grid.Column></Grid.Row>}</Grid></Container>;
 }
 

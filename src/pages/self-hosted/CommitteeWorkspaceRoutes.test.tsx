@@ -600,6 +600,95 @@ describe('committee workspace routes and roles', () => {
     expect((page.textContent ?? '').indexOf('Next speaking')).toBeLessThan((page.textContent ?? '').indexOf('Queue'));
   });
 
+  it('closes the question form only after the contribution is saved and reports the result', async () => {
+    const questionSpeech = {id: 'question-speech', speakerListId: 'list', queueEntryId: 'current', seatId: 'france',
+      seatDisplayName: 'France', kind: 'INHERITED' as const, status: 'PAUSED' as const, inheritedFromSpeechId: 'original',
+      inheritedTimeMs: 30_000, canYield: false, yieldType: 'QUESTIONS' as const, yieldTargetSeatId: null,
+      yieldDecisionStatus: null, interactionTargetSeatId: 'france', revision: 1,
+      startedAt: '2026-08-14T00:00:00.000Z', endedAt: null, actions: [], contributions: []};
+    const withQuestion = (value: CommitteeWorkspaceSnapshot): CommitteeWorkspaceSnapshot => ({...value,
+      seats: [...value.seats, {id: 'france', stableKey: 'france', displayName: 'France', rank: 'STANDARD', canVote: true,
+        hasVeto: false, mustVote: false, sortOrder: 1, active: true, revision: 1, flag: {type: 'STANDARD', value: 'fr'}}],
+      meetingSession: {id: 'meeting', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate',
+        activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1,
+        createdAt: '2026-08-14T00:00:00.000Z', closedAt: null},
+      speakerLists: [{id: 'list', committeeId: 'committee', meetingSessionId: 'meeting', kind: 'GENERAL', status: 'OPEN',
+        name: "General Speakers' List", topic: '', defaultSpeechMs: 60_000, delegatesCanQueue: false,
+        rulePackageVersionId: 'rules', currentEntryId: 'current', speechTimerId: 'speech-timer', totalTimerId: null,
+        linkedResolutionId: null, revision: 2, queue: [{id: 'current', seatId: 'seat', seatDisplayName: 'China', position: 1,
+          status: 'CURRENT', stance: 'NEUTRAL', speechDurationMs: 60_000, createdAt: '2026-08-14T00:00:00.000Z'}],
+        speeches: [questionSpeech], createdAt: '2026-08-14T00:00:00.000Z', closedAt: null}],
+      timers: [{id: 'speech-timer', committeeId: 'committee', ownerType: 'SPEAKER_LIST', ownerId: 'list', running: false,
+        startedAt: null, remainingAtStartMs: 30_000, remainingMs: 30_000, revision: 1, expiredAt: null,
+        serverTime: '2026-08-14T00:00:00.000Z'}]});
+    vi.useFakeTimers();
+    let finishRecord: (value: typeof questionSpeech) => void = () => undefined;
+    const recordSpeechContribution = vi.fn(() => new Promise<typeof questionSpeech>(resolve => {finishRecord = resolve;}));
+    let page = await render('CHAIR', '/committees/committee/caucuses/list', user, withQuestion, {recordSpeechContribution});
+    const textarea = page.querySelector<HTMLTextAreaElement>('.speech-contribution-form textarea');
+    expect(textarea?.value).toBe('Q:\n\nA:');
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set?.call(textarea, 'Q: Why?\n\nA: Because.');
+      textarea?.dispatchEvent(new Event('input', {bubbles: true}));
+      page.querySelector<HTMLButtonElement>('.speech-contribution-form button')?.click();
+      await Promise.resolve();
+    });
+    const savingButton = page.querySelector<HTMLButtonElement>('.speech-contribution-form button');
+    expect(savingButton).toMatchObject({disabled: true});
+    expect(savingButton?.getAttribute('aria-busy')).toBe('true');
+    expect(savingButton?.textContent).toContain('Saving…');
+    expect(savingButton?.querySelector('.loading.spinner.icon')).not.toBeNull();
+    expect(recordSpeechContribution).toHaveBeenCalledWith('question-speech', 'QUESTION', 'Q: Why?\n\nA: Because.',
+      'france', expect.any(AbortSignal));
+    await act(async () => {finishRecord(questionSpeech); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();});
+    expect(page.querySelector('.speech-contribution-form')).toBeNull();
+    expect(page.textContent).not.toContain('may ask a question');
+    expect(page.textContent).toContain('Interaction recorded.');
+    await act(async () => {await vi.advanceTimersByTimeAsync(4_999);});
+    expect(page.textContent).toContain('Interaction recorded.');
+    await act(async () => {await vi.advanceTimersByTimeAsync(1);});
+    expect(page.textContent).not.toContain('Interaction recorded.');
+    vi.useRealTimers();
+
+    act(() => root?.unmount()); root = undefined; container?.remove(); container = undefined;
+    const failedRecord = vi.fn(async () => {throw new Error('Save failed');});
+    page = await render('CHAIR', '/committees/committee/caucuses/list', user, withQuestion,
+      {recordSpeechContribution: failedRecord});
+    const failedTextarea = page.querySelector<HTMLTextAreaElement>('.speech-contribution-form textarea');
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set?.call(failedTextarea, 'Q: Keep this text\n\nA:');
+      failedTextarea?.dispatchEvent(new Event('input', {bubbles: true}));
+      page.querySelector<HTMLButtonElement>('.speech-contribution-form button')?.click();
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    });
+    expect(page.querySelector<HTMLTextAreaElement>('.speech-contribution-form textarea')?.value).toBe('Q: Keep this text\n\nA:');
+    expect(page.textContent).toContain('Save failed');
+    expect(page.textContent).not.toContain('Interaction recorded.');
+
+    act(() => root?.unmount()); page.remove(); root = undefined; container = undefined;
+    vi.useFakeTimers();
+    try {
+      const timedOutRecord = vi.fn((_id: string, _type: 'QUESTION' | 'COMMENT', _content: string,
+        _seatId?: string, signal?: AbortSignal) => new Promise<typeof questionSpeech>((_resolve, reject) => {
+        signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), {once: true});
+      }));
+      page = await render('CHAIR', '/committees/committee/caucuses/list', user, withQuestion,
+        {recordSpeechContribution: timedOutRecord});
+      const timedOutTextarea = page.querySelector<HTMLTextAreaElement>('.speech-contribution-form textarea');
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set?.call(timedOutTextarea, 'Q: Timeout text\n\nA:');
+        timedOutTextarea?.dispatchEvent(new Event('input', {bubbles: true}));
+        page.querySelector<HTMLButtonElement>('.speech-contribution-form button')?.click();
+        await vi.advanceTimersByTimeAsync(10_000); await Promise.resolve(); await Promise.resolve();
+      });
+      expect(page.querySelector<HTMLButtonElement>('.speech-contribution-form button')).toMatchObject({disabled: false});
+      expect(page.querySelector<HTMLTextAreaElement>('.speech-contribution-form textarea')?.value).toBe('Q: Timeout text\n\nA:');
+      expect(page.textContent).toContain('Saving timed out. Try again.');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('keeps the legacy one-click moderated-caucus yield while recording the backend decision chain', async () => {
     const pausedSpeech = {id: 'speech', speakerListId: 'list', queueEntryId: 'current', seatId: 'seat',
       seatDisplayName: 'China', kind: 'ORIGINAL' as const, status: 'PAUSED' as const, inheritedFromSpeechId: null,
