@@ -347,6 +347,9 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
     : serverQueued;
   const next = queued[0];
   const speech = currentSpeech(list);
+  const precedingQueueCount = list.queue.filter(entry => entry.status !== 'QUEUED').length;
+  const dividerNavigationReady = list.kind === 'GENERAL' && precedingQueueCount > 0 && precedingQueueCount % 3 === 0
+    && speech?.status === 'PAUSED';
   React.useEffect(() => {
     setContribution(speech?.kind === 'INHERITED' && speech.yieldType === 'QUESTIONS'
       ? questionContributionTemplate : '');
@@ -387,7 +390,9 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
   const toggleSpeech = () => run(() => api.commandSpeech(list.id,
     speech ? speech.status === 'RUNNING' ? 'pause' : 'resume' : 'start', speech?.revision ?? list.revision));
   const advance = () => run(async () => {
-    if (speech) await api.commandSpeech(list.id, 'complete', speech.revision);
+    if (speech) {
+      await api.commandSpeech(list.id, 'complete', speech.revision);
+    }
     await api.advanceSpeakerQueue(list.id, list.revision);
   });
   const timerRunning = speechTimer?.running === true;
@@ -480,21 +485,24 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
       <Button primary size="large" as={Link} to={`/committees/${snapshot.committee.id}/motions`}>{t('Go to motions')}<Icon name="arrow right" /></Button>
     </Segment></Grid.Column></Grid.Row></Grid></Container>;
   const nowSpeaking = <Segment><Label attached="top left" size="large">{t('Now speaking')}</Label><Feed size="large">
-    {speech?.kind === 'INHERITED' ? <Feed.Event><Feed.Content><Feed.Summary><Feed.User>{speech.seatDisplayName}</Feed.User></Feed.Summary></Feed.Content></Feed.Event>
+    {speech?.kind === 'INHERITED' ? <Feed.Event><Feed.Content><Feed.Summary><Feed.User>{(() => {
+      const speakingSeat = snapshot.seats.find(seat => seat.id === speech.seatId);
+      return speakingSeat ? seatOptionContent(speakingSeat) : speech.seatDisplayName;
+    })()}</Feed.User></Feed.Summary></Feed.Content></Feed.Event>
       : <SpeakerFeedEntry entry={current} snapshot={snapshot} canChair={canChair} onRemove={current ? () => removeEntry(current.id) : undefined} />}
   </Feed></Segment>;
-  const precedingQueueCount = list.queue.filter(entry => entry.status !== 'QUEUED').length;
   const queueDividerNavigation = <><Button.Group fluid className="speaker-queue-divider-navigation">
     <Button primary as={Link} to={`/committees/${snapshot.committee.id}/motions`}>{t('Motions')}<Icon name="arrow right" /></Button>
-    <Button primary as={Link} to={`/committees/${snapshot.committee.id}/questions`}>{t('Question')}<Icon name="arrow right" /></Button>
+    <Button primary as={Link} to={`/committees/${snapshot.committee.id}/points`}>{t('Question')}<Icon name="arrow right" /></Button>
   </Button.Group><Divider className="speaker-queue-divider" /></>;
   const waitingSpeakers = <DragDropContext onDragEnd={onDragEnd}><Droppable droppableId={`speaker-queue-${list.id}`}>
-      {provided => <div ref={provided.innerRef} {...provided.droppableProps}><Feed size="large">{queued.map((entry, index) =>
+      {provided => <div ref={provided.innerRef} {...provided.droppableProps}><Feed size="large" className="speaker-queue-feed">{queued.map((entry, index) =>
         <React.Fragment key={entry.id}>
           {list.kind === 'GENERAL' && generalQueueHasDividerBefore(index, precedingQueueCount)
-            && (index === 0 ? queueDividerNavigation : <Divider className="speaker-queue-divider" />)}
+            && (index === 0 ? (dividerNavigationReady ? queueDividerNavigation : <Divider className="speaker-queue-divider" />)
+              : <Divider className="speaker-queue-divider" />)}
           <Draggable draggableId={entry.id} index={index} isDragDisabled={!canChair}>{(drag, snap) =>
-            <div ref={drag.innerRef} {...drag.draggableProps} className={snap.isDragging ? 'speaker-feed-dragging' : undefined}><SpeakerFeedEntry entry={entry} snapshot={snapshot} canChair={canChair}
+            <div ref={drag.innerRef} {...drag.draggableProps} className={`speaker-queue-entry${snap.isDragging ? ' speaker-feed-dragging' : ''}`}><SpeakerFeedEntry entry={entry} snapshot={snapshot} canChair={canChair}
               onRemove={() => removeEntry(entry.id)} onYield={list.kind === 'MODERATED_CAUCUS' && speech
                 && speech.kind === 'ORIGINAL' && speech.canYield ? () => legacyYieldTo(entry.seatId) : undefined}
               dragHandleProps={drag.dragHandleProps as unknown as Record<string, unknown>} /></div>}

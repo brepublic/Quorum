@@ -569,16 +569,24 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   min-width: 4.4ch;
 }
 
+.legacy-speaker-workspace .speaker-timer-actions {
+  margin-top: 1rem;
+}
+
 .legacy-speaker-workspace .speaker-queue-delegate-toggle {
   text-align: center;
 }
 
 .legacy-speaker-workspace .speaker-queue-divider.ui.divider {
-  margin: 0.9rem 0;
+  margin: 0.81rem 0;
 }
 
 .legacy-speaker-workspace .speaker-queue-divider-navigation.ui.buttons {
-  margin-bottom: 0.9rem;
+  margin-bottom: 0.81rem;
+}
+
+.legacy-speaker-workspace .speaker-queue-feed > .speaker-queue-entry + .speaker-queue-entry {
+  margin-top: 1.1em;
 }
 
 .legacy-speaker-workspace .speaker-feed-row {
