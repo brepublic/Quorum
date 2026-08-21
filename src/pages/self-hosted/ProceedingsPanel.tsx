@@ -16,7 +16,7 @@ import {Button, Card, Checkbox, Container, Divider, Dropdown, Feed, Form, Grid, 
 import {Link, useHistory} from 'react-router-dom';
 import {CountryFlagDisplay} from '../../components/CountryFlagDisplay';
 import Loading from '../../components/Loading';
-import {localizeGeneratedName, t} from '../../i18n';
+import {getLanguage, localizeGeneratedName, t} from "../../i18n";
 import {newIdempotencyKey, type SelfHostedApi} from '../../services/self-hosted-api';
 import {sha256File} from '../../services/sha256';
 import {localizedDisplayName} from './TemplateManagers';
@@ -253,7 +253,8 @@ function currentSpeech(list: SpeakerList): SpeechRecord | undefined {
 function SpeakerFeedEntry({entry, snapshot, canChair, onRemove, onYield, dragHandleProps}: {entry?: SpeakerQueueEntry;
   snapshot: CommitteeWorkspaceSnapshot; canChair: boolean; onRemove?: () => void; onYield?: () => void;
   dragHandleProps?: Record<string, unknown>}) {
-  if (!entry) return <Feed.Event><Feed.Content><Feed.Summary>—</Feed.Summary></Feed.Content></Feed.Event>;
+  const noCurrentSeat = getLanguage() === "zh-CN" ? "(无)" : "(None)";
+  if (!entry) return <Feed.Event><Feed.Content><Feed.Summary><Feed.User><span className="speaker-current-speaker speaker-empty-seat">{noCurrentSeat}</span></Feed.User></Feed.Summary></Feed.Content></Feed.Event>;
   const seat = snapshot.seats.find(item => item.id === entry.seatId);
   const present = snapshot.attendance?.some(item => item.seatId === entry.seatId && item.state === 'PRESENT');
   return <Feed.Event className={present ? undefined : "absent-member"}>
@@ -348,8 +349,8 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
   const next = queued[0];
   const speech = currentSpeech(list);
   const precedingQueueCount = list.queue.filter(entry => entry.status !== 'QUEUED').length;
-  const dividerNavigationReady = list.kind === 'GENERAL' && precedingQueueCount > 0 && precedingQueueCount % 3 === 0
-    && speech?.status === 'PAUSED';
+  const dividerNavigationReady = list.kind === 'GENERAL' && speech?.status === 'PAUSED'
+    && (queued.length === 0 || (precedingQueueCount > 0 && precedingQueueCount % 3 === 0));
   React.useEffect(() => {
     setContribution(speech?.kind === 'INHERITED' && speech.yieldType === 'QUESTIONS'
       ? questionContributionTemplate : '');
@@ -484,12 +485,12 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
       {t(list.kind === 'GENERAL' ? 'Speakers list complete' : 'Moderated caucus complete')}</Header>
       <Button primary size="large" as={Link} to={`/committees/${snapshot.committee.id}/motions`}>{t('Go to motions')}<Icon name="arrow right" /></Button>
     </Segment></Grid.Column></Grid.Row></Grid></Container>;
-  const nowSpeaking = <Segment><Label attached="top left" size="large">{t('Now speaking')}</Label><Feed size="large">
-    {speech?.kind === 'INHERITED' ? <Feed.Event><Feed.Content><Feed.Summary><Feed.User>{(() => {
+  const nowSpeaking = <Segment><Label attached="top left" size="large">{t('Now speaking')}</Label><Feed size="large" className="speaker-current-speaker-feed">
+    {speech?.kind === 'INHERITED' ? <Feed.Event><Feed.Content><Feed.Summary><Feed.User><span className="speaker-current-speaker">{(() => {
       const speakingSeat = snapshot.seats.find(seat => seat.id === speech.seatId);
       return speakingSeat ? seatOptionContent(speakingSeat) : speech.seatDisplayName;
-    })()}</Feed.User></Feed.Summary></Feed.Content></Feed.Event>
-      : <SpeakerFeedEntry entry={current} snapshot={snapshot} canChair={canChair} onRemove={current ? () => removeEntry(current.id) : undefined} />}
+    })()}</span></Feed.User></Feed.Summary></Feed.Content></Feed.Event>
+      : <SpeakerFeedEntry entry={current} snapshot={snapshot} canChair={false} />}
   </Feed></Segment>;
   const queueDividerNavigation = <><Button.Group fluid className="speaker-queue-divider-navigation">
     <Button primary as={Link} to={`/committees/${snapshot.committee.id}/motions`}>{t('Motions')}<Icon name="arrow right" /></Button>
@@ -499,7 +500,9 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
       {provided => <div ref={provided.innerRef} {...provided.droppableProps}><Feed size="large" className="speaker-queue-feed">{queued.map((entry, index) =>
         <React.Fragment key={entry.id}>
           {list.kind === 'GENERAL' && generalQueueHasDividerBefore(index, precedingQueueCount)
-            && (index === 0 ? (dividerNavigationReady ? queueDividerNavigation : <Divider className="speaker-queue-divider" />)
+            && (index === 0 ? (dividerNavigationReady
+              ? <><Divider className="speaker-queue-divider" />{queueDividerNavigation}</>
+              : <Divider className="speaker-queue-divider" />)
               : <Divider className="speaker-queue-divider" />)}
           <Draggable draggableId={entry.id} index={index} isDragDisabled={!canChair}>{(drag, snap) =>
             <div ref={drag.innerRef} {...drag.draggableProps} className={`speaker-queue-entry${snap.isDragging ? ' speaker-feed-dragging' : ''}`}><SpeakerFeedEntry entry={entry} snapshot={snapshot} canChair={canChair}
@@ -510,10 +513,11 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
         </React.Fragment>)}{provided.placeholder}</Feed></div>}
     </Droppable></DragDropContext>;
   const nextSpeaking = <Segment textAlign="center"><Label attached="top left" size="large">{t('Next speaking')}</Label>
-    <Feed size="large"><SpeakerFeedEntry entry={next} snapshot={snapshot} canChair={false} /></Feed>
+    <Feed size="large" className="speaker-current-speaker-feed"><SpeakerFeedEntry entry={next} snapshot={snapshot} canChair={false} /></Feed>
   </Segment>;
   const queuePanel = <Segment textAlign="center"><Label attached="top left" size="large">{t('Queue')}</Label><Form>
     {waitingSpeakers}
+    {queued.length === 0 && dividerNavigationReady ? <><Divider className="speaker-queue-divider" />{queueDividerNavigation}</> : null}
     {canChair && <SpeakerSeatDropdown value={seatId} error={!seatId} options={presentSeats.map(seat => ({key: seat.id,
       value: seat.id, text: seat.displayName, content: seatOptionContent(seat)}))} onChange={setSeatId} />}
     {canChair && operationAllowsDelegates && <div className="speaker-queue-delegate-toggle"><Form.Checkbox
