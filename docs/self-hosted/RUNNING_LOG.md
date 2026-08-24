@@ -456,9 +456,24 @@
 - 浏览器控制通道在建立连接时因桌面运行环境的工作区 URI 元数据错误而失败，未打开或操作页面。旧版视觉、拖放、移动侧栏动画、全流程点击与 HAR 零旧服务请求仍待真实浏览器验收。
 - 完整回滚副本：`/home/makoto/code/Quorum-checkpoints/22-postgres-integration-green`（Compose 启动前）及待保存的节点 23。未提交、推送、删除卷或改写既有 migration 记录。
 
+### 2026-08-24：GitHub Actions 测试清单与执行顺序修复
+
+- 更新 `.github/workflows/integration-tests.yml`：保留 Node 22、pnpm action、PostgreSQL 16 和既有 major 版本，加入顶层 `contents: read`、同一 PR/分支并发取消及 PostgreSQL job 的 30 分钟超时；执行顺序固定为安装、`pnpm build:self-host`、`pnpm test:self-host`、`pnpm test:self-host:integration`、`pnpm verify:no-legacy-runtime`。
+- `package.json` 的 `test:self-host` 改为自动发现并排除 `**/*.integration.test.ts`；静态枚举确认当前 77 个测试文件中有 69 个非 PostgreSQL 文件和 8 个显式 integration 文件。integration 脚本仍保留 8 个文件的显式清单。
+- 删除 `SelfHostedWorkspace` focus revalidation 用例中过期的默认路由 `Share committee` 断言，并删除 registry 中 `meeting_session_created` 后的重复 `proceedings.meeting_session_closed`；未修改后一个注册项或服务端审计 action。
+- 实际执行了 `source scripts/wsl-env.sh`、`pnpm install --frozen-lockfile`、`pnpm build:self-host`、`pnpm test:self-host`、`pnpm verify:no-legacy-runtime` 和 `git diff --check`。本地 fallback pnpm 为 11.19.0，依赖安装因当前环境无法访问 npm registry（`EAI_AGAIN`）未完成，故本次未取得构建或 Vitest 数字结果；未将其记为通过。既有 Semantic UI React 弃用警告和 Vite 大分块警告也未能在本次运行中重新观察。PostgreSQL integration 仍需 GitHub Actions PostgreSQL 16 service（或本地隔离 PostgreSQL）完成真实验证。
+
 ### 2026-08-15：Windows 浏览器验收交接
 
 - 当前 WSL 无法正常连接浏览器技能或 Computer Use；真实浏览器验收转移到 Windows 环境，不把命令行 HTTPS、jsdom 或静态测试替代为浏览器证据。
 - 新增 `WINDOWS_UI_ACCEPTANCE_HANDOFF.md`，记录当前 Compose/schema 39/自动化证据、旧版参照与节点 22–23、Windows 接手命令、测试角色与数据、桌面和窄屏矩阵、逐页旧版交互、动画、正式 ballot 与新增功能回归、HAR/SSE/PostgreSQL 证据、停止决策条件和完整完成标准。
 - 交接清单固化已确认产品语义：任意席位点名和改答、动议直投历史与观察国默认纳入、简单多数超过 50%、通过后先执行再显示目标按钮、唯一主发言名单、文本/文件二选一和审核发布、修正案删除边界、匿名提交后锁定、旧版移动 `uncover` 动画及两个运作模式开关的临时遮蔽/恢复。
 - 文档明确禁止修改已应用 migration、删除 Compose 卷、恢复 Firebase、合并旧直投与正式 ballot，或在旧版交互与新后端冲突时自行决定产品取舍。
+
+### 2026-08-24：CI 修复后的本地验证
+
+- 使用仓库指定的 pnpm 10.33.4 完成 `source scripts/wsl-env.sh`、`pnpm install --frozen-lockfile`；lockfile supply-chain 校验通过，`pnpm-lock.yaml` 和 `pnpm-workspace.yaml` 未改写。依赖安装运行了既有的 SWC、argon2 和 esbuild 原生构建脚本。
+- `pnpm build:self-host` 通过：前端构建转换 996 个模块，rule-schema、server 和 storage-agent 构建均通过；保留既有 Vite 大分块警告，未出现构建错误。
+- `pnpm test:self-host` 通过：69 个文件、457 项通过、0 失败、0 跳过；自动发现了 i18n/theme 测试，输出未包含 `*.integration.test.ts`。
+- `pnpm test:self-host:integration` 已按专用入口执行：8 个文件、86 项因本地 Docker daemon 不存在而明确 skip；`pnpm self-host:test-db:up` 同样因 `/var/run/docker.sock` 不存在无法启动 PostgreSQL 16。未将 skip 记为通过，真实数据库结果仍由 GitHub Actions PostgreSQL 16 service 完成。
+- `pnpm verify:no-legacy-runtime`、`git diff --check` 及 lockfile/workspace 未改写检查通过。

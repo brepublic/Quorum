@@ -81,7 +81,6 @@ describe('self-hosted stage 4 workspace', () => {
       <SelfHostedWorkspace user={user} logout={() => undefined} api={api} />
     </MemoryRouter>); await Promise.resolve(); await Promise.resolve(); });
     expect(container.textContent).toContain('Security Council');
-    expect(container.textContent).toContain('Share committee');
     expect(api.snapshot).toHaveBeenCalledTimes(1);
     expect(api.openCommitteeEvents).toHaveBeenCalledWith('committee', 7, expect.any(Object));
     act(() => callbacks?.onState('OFFLINE_READONLY'));

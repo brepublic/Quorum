@@ -174,7 +174,6 @@ export const AUDIT_ACTION_DEFINITIONS = [
   'proceedings.text_post_updated',
   'proceedings.text_post_deleted',
   'proceedings.meeting_session_created',
-  'proceedings.meeting_session_closed',
   'proceedings.meeting_session_started',
   'proceedings.meeting_session_closed',
   'proceedings.roll_call_started',

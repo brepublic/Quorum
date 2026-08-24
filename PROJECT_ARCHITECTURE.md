@@ -131,7 +131,7 @@ source scripts/wsl-env.sh
 ```sh
 pnpm start                         # 自托管浏览器开发服务器
 pnpm exec vitest run               # 全仓单元、契约与 HTTP 测试
-pnpm test:self-host                # 自托管有限测试集
+pnpm test:self-host                # 自动发现的非 PostgreSQL 测试集
 pnpm test:self-host:integration    # 真实 PostgreSQL 临时数据库测试
 pnpm build:self-host               # 浏览器、契约、规则、后端与 Agent 构建
 pnpm verify:no-legacy-runtime      # 检查生产源码、依赖、配置与构建产物
@@ -141,6 +141,6 @@ pnpm self-host:test-db:down
 
 前端日常开发无需重建镜像：`pnpm start` 的 Vite dev server 通过 `server.proxy` 把 `/api/v1` 代理到 Compose 部署的 Caddy（默认 `https://localhost`，可用环境变量 `QUORUM_DEV_API_ORIGIN` 覆盖），并将请求 `Origin` 重写为目标源以通过服务端 `QUORUM_ALLOWED_ORIGINS` 校验；`src/` 修改即时热更新。后端或契约变更仍需重建 app 镜像（`up -d --build app`）。
 
-集成测试必须使用 `TEST_DATABASE_ADMIN_URL` 创建随机临时数据库；未配置时明确 skip，不使用内存数据库替代。GitHub Actions 提供 PostgreSQL 16 service 并执行自托管测试、真实 integration 与生产构建。
+集成测试必须使用 `TEST_DATABASE_ADMIN_URL` 创建随机临时数据库；未配置时明确 skip，不使用内存数据库替代。GitHub Actions 先构建 workspace 产物，再执行自动发现的非 PostgreSQL 测试和一次显式 PostgreSQL integration 测试，最后进行生产运行时检查。GitHub Actions 提供 PostgreSQL 16 service。真实 PostgreSQL、浏览器、TLS、S3 和原生平台证据仍不能由普通测试替代。
 
 当前 WSL 已完成类型、Vitest、构建、锁文件和静态零运行依赖验证。真实 PostgreSQL/Compose、Caddy TLS、多浏览器、真实 S3/持久卷、Chair 原生平台、签名公证、备份恢复和生产网络 HAR 仍按 `docs/self-hosted/MANUAL_ACCEPTANCE.md` 逐项取证；自动测试或 mock 不能替代这些证据。
