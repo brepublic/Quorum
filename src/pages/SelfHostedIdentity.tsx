@@ -234,7 +234,7 @@ function AccountManager({client, currentUser, onLogout}: {
         <Table.Body>{users.map(account => <Table.Row key={account.id} disabled={account.status !== 'ACTIVE'}>
           <Table.Cell>{account.email || t('Anonymous account')}</Table.Cell>
           <Table.Cell>{account.displayName}</Table.Cell>
-          <Table.Cell><code>{account.id}</code><Button basic size="mini" type="button"
+          <Table.Cell><code>{account.id}</code><Button basic size="mini" type="button" style={{marginLeft: '0.5em'}}
             aria-label={`${t('Copy')} ${t('Account ID')} · ${account.email || account.displayName}`}
             onClick={() => void navigator.clipboard?.writeText(account.id)}>{t('Copy')}</Button></Table.Cell>
           <Table.Cell>{t(account.status)}</Table.Cell>
