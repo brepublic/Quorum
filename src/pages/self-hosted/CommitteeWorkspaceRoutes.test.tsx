@@ -171,10 +171,10 @@ describe('committee workspace routes and roles', () => {
           onBehalfOfSeatId: 'seat-1', rulePackageVersionId: 'rules', recordedAt: '2026-08-14T00:00:00.000Z', revision: 1}],
         revision: 3, startedAt: '2026-08-14T00:00:00.000Z', completedAt: null}}), {setRollCallResponse});
 
-    expect(page.querySelectorAll('.roll-call-grid .roll-call-member')).toHaveLength(18);
+    expect(page.querySelectorAll('.roll-call-grid .roll-call-member')).toHaveLength(9);
     expect(page.querySelector<HTMLButtonElement>('.roll-call-grid .roll-call-member')?.dataset.rollCallSeat).toBe('seat-0');
     expect(Array.from(page.querySelectorAll<HTMLButtonElement>('.roll-call-grid .roll-call-member'))
-      .slice(0, 6).map(seat => seat.dataset.rollCallSeat)).toEqual(['seat-0', 'seat-6', 'seat-12', 'seat-1', 'seat-7', 'seat-13']);
+      .map(seat => seat.dataset.rollCallSeat)).toEqual(Array.from({length: 9}, (_, index) => `seat-${index}`));
     expect(page.textContent).toContain('1 of 20 called');
     expect(page.textContent).toContain('Present and voting');
     const secondSeat = page.querySelector<HTMLButtonElement>('[data-roll-call-seat="seat-1"]');

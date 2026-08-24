@@ -296,21 +296,7 @@ function PostsPanel({snapshot, run, api, userId, tab}: {snapshot: CommitteeWorks
 }
 
 type WorkspaceCommand = (operation: () => Promise<unknown>) => Promise<void>;
-const ROLL_CALL_PAGE_SIZE = 18;
-
-function rollCallGridColumnCount(width = window.innerWidth) {
-  if (width <= 600) return 1;
-  return width <= 991 ? 2 : 3;
-}
-
-function columnFirstRollCallSeats<T>(seats: T[], columns: number) {
-  const rows = Math.ceil(seats.length / columns);
-  return Array.from({length: seats.length}, (_, index) => {
-    const row = Math.floor(index / columns);
-    const column = index % columns;
-    return seats[column * rows + row];
-  }).filter((seat): seat is T => seat !== undefined);
-}
+const ROLL_CALL_PAGE_SIZE = 9;
 function rollCallResponseLabel(response: string) {
   return t(response === 'PRESENT_AND_VOTING' ? 'Present and voting'
     : response === 'PRESENT' ? 'Present' : response === 'ABSENT' ? 'Absent' : response);
@@ -540,7 +526,6 @@ function RollCallPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
   const sessionName = session?.status === 'PENDING' ? session.name : snapshot.nextMeetingSessionName;
   const [pending, setPending] = React.useState<string>();
   const [page, setPage] = React.useState(0); const [resetOpen, setResetOpen] = React.useState(false);
-  const [gridColumns, setGridColumns] = React.useState(() => rollCallGridColumnCount());
   const autoStartedSessionId = React.useRef<string>();
   const execute = React.useCallback(async (key: string, operation: () => Promise<unknown>) => {
     setPending(key); try {await run(operation);} finally {setPending(undefined);}
@@ -552,11 +537,6 @@ function RollCallPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
     const index = seats.findIndex(seat => seat.id === rollCall?.currentSeatId);
     if (index >= 0) setPage(Math.floor(index / ROLL_CALL_PAGE_SIZE));
   }, [rollCall?.currentSeatId, seats]);
-  React.useEffect(() => {
-    const updateGridColumns = () => setGridColumns(rollCallGridColumnCount());
-    window.addEventListener('resize', updateGridColumns);
-    return () => window.removeEventListener('resize', updateGridColumns);
-  }, []);
   React.useEffect(() => {
     if (!chair || rollCall || session?.status !== 'OPEN' || autoStartedSessionId.current === session.id) return;
     autoStartedSessionId.current = session.id;
@@ -576,8 +556,7 @@ function RollCallPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
 
   const totalPages = Math.max(1, Math.ceil(seats.length / ROLL_CALL_PAGE_SIZE));
   const activePage = Math.min(page, totalPages - 1);
-  const visibleSeats = columnFirstRollCallSeats(
-    seats.slice(activePage * ROLL_CALL_PAGE_SIZE, (activePage + 1) * ROLL_CALL_PAGE_SIZE), gridColumns);
+  const visibleSeats = seats.slice(activePage * ROLL_CALL_PAGE_SIZE, (activePage + 1) * ROLL_CALL_PAGE_SIZE);
   const setSeat = (seatId: string) => {
     const existing = entryBySeat.get(seatId);
     const next = existing?.response === 'ABSENT' ? 'PRESENT' : existing ? 'ABSENT' : 'PRESENT';
@@ -628,8 +607,10 @@ function RollCallPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
       <Segment className="roll-call-current" textAlign="center">
         <div className="roll-call-current-status">
         {rollCallFailed ? <Header as="h2" color="red">{t('Quorum not reached')}</Header>
-          : currentSeat ? <><div className="roll-call-current-label">{t('Now calling')}</div><Header as="h2"><Flag seat={currentSeat} />
-          <span className="roll-call-current-name">{currentSeat.displayName}</span></Header></>
+          : currentSeat ? <div className="roll-call-current-seat"><div className="roll-call-current-label">{t('Now calling')}</div>
+            <div className="roll-call-flag-stage"><Flag seat={currentSeat} /></div>
+            <Header as="h2" className="roll-call-current-name"><span>{currentSeat.displayName}</span></Header>
+          </div>
           : rollCallCompletedWithQuorum ? <Header as="h2" color="green">{t('Roll call complete')}</Header>
           : <Header as="h2">{t('Roll call')}</Header>}</div>
         {chair && <div className="roll-call-actions">

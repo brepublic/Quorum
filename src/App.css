@@ -814,7 +814,9 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
 .roll-call-grid {
   display: grid;
   gap: 0.75rem 1rem;
+  grid-auto-flow: column;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-rows: repeat(3, 3.25rem);
 }
 
 .roll-call-member {
@@ -875,6 +877,11 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
 
 .current-session-divider.ui.horizontal.divider {
   margin-bottom: 0;
+}
+
+.current-session-divider.ui.horizontal.divider + .motion-queue.ui.cards,
+.current-session-divider.ui.horizontal.divider + .point-list.ui.cards {
+  margin-top: 0;
 }
 
 .current-session-empty {
@@ -1007,6 +1014,52 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   text-transform: uppercase;
 }
 
+.roll-call-current-seat {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+.roll-call-flag-stage {
+  align-items: center;
+  background: #eef1f4;
+  border: 1px solid rgba(34, 36, 38, 0.18);
+  border-radius: 0.4rem;
+  box-sizing: border-box;
+  display: flex;
+  flex: 0 0 auto;
+  height: 10.125rem;
+  justify-content: center;
+  padding: 0.75rem;
+  width: min(15rem, 100%);
+}
+
+.roll-call-flag-stage .country-flag-display,
+.roll-call-flag-stage .country-flag-display:has(> .country-flag-display-image) {
+  align-items: center;
+  border-color: transparent;
+  box-sizing: border-box;
+  display: flex;
+  flex: 0 0 auto;
+  height: calc(7.875rem - 3px);
+  justify-content: center;
+  margin-right: 0;
+  max-height: 100%;
+  max-width: 100%;
+  min-height: 0;
+  min-width: 0;
+  width: calc(12.75rem - 3px);
+}
+
+.roll-call-flag-stage .country-flag-display-image {
+  height: 100%;
+  max-height: 100%;
+  max-width: 100%;
+  object-fit: contain;
+  width: 100%;
+}
+
 .roll-call-current .ui.header {
   align-items: center;
   display: flex;
@@ -1018,12 +1071,25 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
 }
 
 .roll-call-current .country-flag-display {
+  flex-basis: auto;
   font-size: 4rem;
   margin-right: 0;
 }
 
-.roll-call-current-name {
-  font-size: calc(1em + 10px);
+.roll-call-current .ui.header.roll-call-current-name {
+  flex: 0 0 6.25rem;
+  font-size: 36px;
+  line-height: 1;
+  margin: 0.75rem 0 0;
+  width: 100%;
+}
+
+.roll-call-current-name > span {
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  display: -webkit-box;
+  overflow: hidden;
+  overflow-wrap: anywhere;
 }
 
 .roll-call-actions {
@@ -1106,12 +1172,6 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   font-weight: 700;
 }
 
-@media only screen and (max-width: 991px) {
-  .roll-call-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
 @media only screen and (max-width: 600px) {
   .roll-call-heading {
     align-items: flex-start;
@@ -1120,10 +1180,6 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
 
   .roll-call-heading-actions {
     align-self: flex-end;
-  }
-
-  .roll-call-grid {
-    grid-template-columns: minmax(0, 1fr);
   }
 
   .roll-call-legend {
@@ -1135,8 +1191,17 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
     min-width: 0;
   }
 
-  .roll-call-current .country-flag-display {
+  .roll-call-flag-stage {
+    height: 9rem;
+    padding: 0.625rem;
+    width: min(13.125rem, 100%);
+  }
+
+  .roll-call-flag-stage .country-flag-display,
+  .roll-call-flag-stage .country-flag-display:has(> .country-flag-display-image) {
     font-size: 3rem;
+    height: calc(7.125rem - 3px);
+    width: calc(11.25rem - 3px);
   }
 
   .roll-call-summary-highlights {
