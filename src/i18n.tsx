@@ -255,6 +255,7 @@ const zhCN: Record<string, string> = {
   'Delete committee template?': '删除此委员会模板？',
   'Non-voting': '无表决权',
   'Start meeting': '开始会期',
+  'Set meeting session': '设置会期',
   'Meeting session': '会期',
   'Start roll call': '开始点名',
   'Undo last response': '撤销上一项回答',

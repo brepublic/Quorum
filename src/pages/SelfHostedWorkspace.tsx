@@ -541,9 +541,10 @@ function RollCallPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
   const [pending, setPending] = React.useState<string>();
   const [page, setPage] = React.useState(0); const [resetOpen, setResetOpen] = React.useState(false);
   const [gridColumns, setGridColumns] = React.useState(() => rollCallGridColumnCount());
-  const execute = async (key: string, operation: () => Promise<unknown>) => {
+  const autoStartedSessionId = React.useRef<string>();
+  const execute = React.useCallback(async (key: string, operation: () => Promise<unknown>) => {
     setPending(key); try {await run(operation);} finally {setPending(undefined);}
-  };
+  }, [run]);
   const seats = snapshot.seats;
   const entryBySeat = React.useMemo(() => new Map(rollCall?.entries.map(entry => [entry.seatId, entry]) ?? []), [rollCall?.entries]);
   const currentSeat = snapshot.seats.find(seat => seat.id === rollCall?.currentSeatId);
@@ -556,12 +557,21 @@ function RollCallPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
     window.addEventListener('resize', updateGridColumns);
     return () => window.removeEventListener('resize', updateGridColumns);
   }, []);
-  if (!rollCall) return <>{chair && (!session || session.status === 'PENDING') && <Form onSubmit={() => execute('meeting', () => api.startMeetingSession(snapshot.committee.id))}>
-      <Form.Input label={t('Meeting session')} value={sessionName ?? ''} readOnly />
-      <Button primary loading={pending === 'meeting'}>{t('Start meeting')}</Button>
-    </Form>}
-    {chair && session?.status === 'OPEN' && !rollCall && <Button primary loading={pending === 'roll-call'}
-      onClick={() => void execute('roll-call', () => api.startRollCall(snapshot.committee.id, session.id))}>{t('Start roll call')}</Button>}
+  React.useEffect(() => {
+    if (!chair || rollCall || session?.status !== 'OPEN' || autoStartedSessionId.current === session.id) return;
+    autoStartedSessionId.current = session.id;
+    void execute('roll-call', () => api.startRollCall(snapshot.committee.id, session.id));
+  }, [api, chair, execute, rollCall, session?.id, session?.status, snapshot.committee.id]);
+  if (!rollCall) return <>{chair && (!session || session.status === 'PENDING') && <Segment className="roll-call-start-card">
+      <Label attached="top left" size="large">{t('Set meeting session')}</Label>
+      <Form onSubmit={() => execute('meeting', async () => {
+        const meeting = await api.startMeetingSession(snapshot.committee.id);
+        await api.startRollCall(snapshot.committee.id, meeting.id);
+      })}>
+        <Form.Input value={sessionName ?? ''} readOnly fluid />
+        <Button primary fluid loading={pending === 'meeting'}>{t('Start meeting')}</Button>
+      </Form>
+    </Segment>}
   </>;
 
   const totalPages = Math.max(1, Math.ceil(seats.length / ROLL_CALL_PAGE_SIZE));

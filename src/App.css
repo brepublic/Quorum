@@ -724,6 +724,22 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   width: 100% !important;
 }
 
+.roll-call-start-card.ui.segment {
+  margin: 2rem auto 0;
+  padding: 1.5rem;
+  width: min(100%, 46rem);
+}
+
+.roll-call-start-card .ui.form {
+  display: grid;
+  gap: 1rem;
+}
+
+.roll-call-start-card .ui.form .field,
+.roll-call-start-card .ui.form .button {
+  margin: 0;
+}
+
 .roll-call-heading {
   align-items: center;
   display: flex;

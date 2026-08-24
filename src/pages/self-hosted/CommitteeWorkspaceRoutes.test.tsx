@@ -68,7 +68,7 @@ describe('committee workspace routes and roles', () => {
     const workspace = page.querySelector('.committee-workspace-page');
 
     expect(workspace?.classList.contains('fluid')).toBe(true);
-    expect(workspace?.querySelector(':scope > .ui.segment')).toBeNull();
+    expect(workspace?.querySelector(':scope > .roll-call-start-card')).toBeTruthy();
     expect(workspace?.textContent).toContain('Start meeting');
   });
 
@@ -118,6 +118,39 @@ describe('committee workspace routes and roles', () => {
     const page = await render('CHAIR', '/committees/committee/roll-call');
     expect(page.textContent).not.toContain('Formal debate');
     expect(page.textContent).toContain('Start meeting');
+  });
+
+  it('starts roll call when the Chair starts the meeting session', async () => {
+    const startMeetingSession = vi.fn(async () => ({id: 'meeting', committeeId: 'committee', name: '第1会期',
+      phaseId: 'formal-debate', activeRulePackageVersionId: 'rules', status: 'OPEN' as const, revision: 1,
+      createdAt: '2026-08-14T00:00:00.000Z', closedAt: null}));
+    const startRollCall = vi.fn(async (): Promise<RollCall> => ({id: 'roll-call', committeeId: 'committee',
+      meetingSessionId: 'meeting', status: 'IN_PROGRESS', currentSeatId: 'seat', rulePackageVersionId: 'rules',
+      allowedResponses: ['PRESENT', 'ABSENT'], entries: [], revision: 1, startedAt: '2026-08-14T00:00:00.000Z',
+      completedAt: null}));
+    const page = await render('CHAIR', '/committees/committee/roll-call', user, value => value,
+      {startMeetingSession, startRollCall});
+
+    await act(async () => {page.querySelector<HTMLButtonElement>('button')?.click(); await Promise.resolve(); await Promise.resolve();});
+
+    expect(startMeetingSession).toHaveBeenCalledWith('committee');
+    expect(startRollCall).toHaveBeenCalledWith('committee', 'meeting');
+    expect(startRollCall.mock.invocationCallOrder[0]).toBeGreaterThan(startMeetingSession.mock.invocationCallOrder[0]);
+  });
+
+  it('automatically starts roll call for an already-open meeting session', async () => {
+    const startRollCall = vi.fn(async (): Promise<RollCall> => ({id: 'roll-call', committeeId: 'committee',
+      meetingSessionId: 'meeting', status: 'IN_PROGRESS', currentSeatId: 'seat', rulePackageVersionId: 'rules',
+      allowedResponses: ['PRESENT', 'ABSENT'], entries: [], revision: 1, startedAt: '2026-08-14T00:00:00.000Z',
+      completedAt: null}));
+    const page = await render('CHAIR', '/committees/committee/roll-call', user, value => ({...value,
+      meetingSession: {id: 'meeting', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate',
+        activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1, createdAt: '2026-08-14T00:00:00.000Z', closedAt: null}}),
+      {startRollCall});
+    await act(async () => {await Promise.resolve(); await Promise.resolve();});
+
+    expect(startRollCall).toHaveBeenCalledWith('committee', 'meeting');
+    expect(page.textContent).not.toContain('Start roll call');
   });
 
   it('restores the paged roll-call board and lets a Chair directly change any frozen seat', async () => {
