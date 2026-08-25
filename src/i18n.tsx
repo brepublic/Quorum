@@ -355,6 +355,7 @@ const zhCN: Record<string, string> = {
   'Contribution type': '互动类型',
   'Record contribution': '记录互动',
   'Interaction recorded.': '互动已记录。',
+  '(Empty)': '（空）',
   'Saving…': '保存中…',
   'Saving timed out. Try again.': '保存超时，请重试。',
   'Speaker queue': '发言队列',

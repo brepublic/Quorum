@@ -541,8 +541,10 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
       const timeout = window.setTimeout(() => controller.abort(), contributionSaveTimeoutMs);
       void run(async () => {
         try {
+          const normalizedContribution = speech.yieldType === 'COMMENTS' && !contribution.trim()
+            ? t('(Empty)') : contribution;
           const recordedSpeech = await api.recordSpeechContribution(speech.id,
-            speech.yieldType === 'QUESTIONS' ? 'QUESTION' : 'COMMENT', contribution,
+            speech.yieldType === 'QUESTIONS' ? 'QUESTION' : 'COMMENT', normalizedContribution,
             canChair ? speech.interactionTargetSeatId ?? seatId : undefined, controller.signal);
           setRecordedContributionSpeechId(speech.id);
           setShowContributionSuccess(true);
@@ -561,7 +563,7 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
     }}>
       <Form.TextArea label={t('Content')} value={contribution} disabled={savingContribution}
         onChange={(_, data) => setContribution(String(data.value))} />
-      <Button primary disabled={savingContribution || !contribution.trim()} aria-busy={savingContribution}>
+      <Button primary disabled={savingContribution || speech.yieldType !== 'COMMENTS' && !contribution.trim()} aria-busy={savingContribution}>
         {savingContribution && <Icon loading name="spinner" />}{t(savingContribution ? 'Saving…' : 'Record')}
       </Button></Form> : null;
   const orderedQueuePanels = snapshot.layoutSettings.moveQueueUp
