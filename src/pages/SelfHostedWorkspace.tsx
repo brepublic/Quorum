@@ -869,6 +869,14 @@ function ModeratedCaucusCreateModal({open, snapshot, run, api, canChair, onClose
   const durationMultiple = unitDurationMs !== undefined && totalDurationMs !== undefined
     && totalDurationMs % unitDurationMs === 0;
   const valid = Boolean(topic.trim()) && durationMultiple;
+  const topicInvalid = topicTouched && !topic.trim();
+  const unitDurationInvalid = unitDurationTouched && unitDurationMs === undefined;
+  const totalDurationInvalid = totalDurationTouched && (totalDurationMs === undefined || !durationMultiple);
+  const validationMessages = [
+    topicInvalid ? '议题不能为空。' : null,
+    unitDurationInvalid ? '每次发言时长必须是大于 0 的数字。' : null,
+    totalDurationInvalid ? '总时长必须是正整数，且可被单位时长整除。' : null,
+  ].filter(Boolean) as string[];
   const submit = async () => {
     if (!canChair || !session || !valid || submitting || unitDurationMs === undefined || totalDurationMs === undefined) return;
     setSubmitting(true);
@@ -882,9 +890,6 @@ function ModeratedCaucusCreateModal({open, snapshot, run, api, canChair, onClose
     }
     if (created) onCreated(created.id);
   };
-  const topicInvalid = topicTouched && !topic.trim();
-  const unitDurationInvalid = unitDurationTouched && unitDurationMs === undefined;
-  const totalDurationInvalid = totalDurationTouched && (totalDurationMs === undefined || !durationMultiple);
   return <Modal className="moderated-caucus-create-modal" closeOnDimmerClick={false}
     dimmer={{onClick: (event: React.MouseEvent<HTMLElement>) => {
       if (event.target === event.currentTarget) setCloseHint(true);
@@ -895,7 +900,7 @@ function ModeratedCaucusCreateModal({open, snapshot, run, api, canChair, onClose
       </Button>
     </Modal.Header>
     <Modal.Content>
-      {canChair && session ? <Form onSubmit={() => void submit()}>
+      {canChair && session ? <Form error={validationMessages.length > 0} onSubmit={() => void submit()}>
         <Form.Input required error={topicInvalid} label={t('Topic')} value={topic}
           onBlur={() => setTopicTouched(true)} onChange={event => {setTopic(event.currentTarget.value); setCloseHint(false);}} />
         <Form.Group className="moderated-caucus-duration-row"><Form.Input className="moderated-caucus-duration-value"
@@ -912,6 +917,7 @@ function ModeratedCaucusCreateModal({open, snapshot, run, api, canChair, onClose
           onBlur={() => setTotalDurationTouched(true)} error={totalDurationInvalid}
           onChange={event => {setTotalDuration(event.currentTarget.value); setCloseHint(false);}} />
         <Form.Field className="moderated-caucus-duration-unit"><div className="moderated-caucus-duration-unit-text">{t('sec')}</div></Form.Field></Form.Group>
+        {validationMessages.length > 0 && <Message error content={validationMessages.join('，')} />}
         {closeHint && <Message info content={t('To close the dialog, click "X".')} />}
         <Button primary fluid loading={submitting} disabled={!valid || submitting}>
           {t('Moderated caucus')}<Icon name="arrow right" />
