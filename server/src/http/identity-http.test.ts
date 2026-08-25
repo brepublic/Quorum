@@ -55,6 +55,8 @@ function fakeIdentity(overrides: Record<string, unknown> = {}): IdentityService 
     changePassword: vi.fn(async () => ({user, sessionToken: 'changed-session', csrfToken: 'changed-csrf'})),
     elevateSession: vi.fn(async () => ({user, sessionToken: 'elevated-session', csrfToken: 'elevated-csrf'})),
     listUsers: vi.fn(async () => [user]),
+    getDefaultCommitteeBehavior: vi.fn(async () => ({creatorIsChair: true, operationMode: 'CHAIR_OPERATED', revision: 1})),
+    updateDefaultCommitteeBehavior: vi.fn(async (_auth, input) => ({...input, revision: 2})),
     createUser: vi.fn(async () => ({user, temporaryPassword: 'temporary-password'})),
     resetPassword: vi.fn(async () => ({user, temporaryPassword: 'temporary-password'})),
     disableUser: vi.fn(async () => undefined),
@@ -171,6 +173,24 @@ describe('identity HTTP security boundary', () => {
     expect(rejected.status).toBe(403);
     expect(accepted.status).toBe(201);
     expect(identity.createUser).toHaveBeenCalledTimes(1);
+  });
+
+  it('protects default committee behavior with administrator auth, CSRF, and revision input', async () => {
+    const getDefaultCommitteeBehavior = vi.fn(async () => ({creatorIsChair: true, operationMode: 'CHAIR_OPERATED', revision: 1}));
+    const updateDefaultCommitteeBehavior = vi.fn(async () => ({creatorIsChair: false, operationMode: 'DELEGATE_OPERATED', revision: 2}));
+    const identity = fakeIdentity({getDefaultCommitteeBehavior, updateDefaultCommitteeBehavior});
+    const read = await request(identity, {path: '/api/v1/admin/default-committee-behavior', headers: {cookie: '__Host-quorum_session=session'}});
+    const denied = await request(identity, {path: '/api/v1/admin/default-committee-behavior', method: 'PUT',
+      headers: {origin: 'https://quorum.example.com', cookie: '__Host-quorum_session=session; __Host-quorum_csrf=expected'},
+      body: {creatorIsChair: false, operationMode: 'DELEGATE_OPERATED', baseRevision: 1}});
+    const updated = await request(identity, {path: '/api/v1/admin/default-committee-behavior', method: 'PUT', headers: {
+      origin: 'https://quorum.example.com', cookie: '__Host-quorum_session=session; __Host-quorum_csrf=expected', 'x-csrf-token': 'expected'
+    }, body: {creatorIsChair: false, operationMode: 'DELEGATE_OPERATED', baseRevision: 1}});
+    expect(read.status).toBe(200);
+    expect(denied.status).toBe(403);
+    expect(updated.status).toBe(200);
+    expect(updateDefaultCommitteeBehavior).toHaveBeenCalledWith(expect.objectContaining({user}),
+      {creatorIsChair: false, operationMode: 'DELEGATE_OPERATED', baseRevision: 1}, expect.anything());
   });
 
   it('routes account anonymization with CSRF, server actor and an idempotency key', async () => {

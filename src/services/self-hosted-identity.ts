@@ -18,6 +18,12 @@ export interface AccountAnonymizationResult {
   transferred: {committees: number; countryTemplates: number; committeeTemplates: number; rulePackages: number};
 }
 
+export interface DefaultCommitteeBehavior {
+  creatorIsChair: boolean;
+  operationMode: 'DELEGATE_OPERATED' | 'CHAIR_OPERATED';
+  revision: number;
+}
+
 interface ApiSuccess<T> {
   data: T;
   meta: {requestId: string};
@@ -43,6 +49,8 @@ export interface SelfHostedIdentityClient {
   changePassword(newPassword: string, currentPassword?: string): Promise<SelfHostedUser>;
   elevate(password: string): Promise<SelfHostedUser>;
   listUsers(): Promise<SelfHostedUser[]>;
+  getDefaultCommitteeBehavior(): Promise<DefaultCommitteeBehavior>;
+  updateDefaultCommitteeBehavior(input: DefaultCommitteeBehavior): Promise<DefaultCommitteeBehavior>;
   createUser(email: string, displayName: string): Promise<{user: SelfHostedUser; temporaryPassword: string}>;
   resetPassword(userId: string): Promise<{user: SelfHostedUser; temporaryPassword: string}>;
   disableUser(userId: string): Promise<void>;
@@ -57,7 +65,7 @@ function cookie(name: string): string | undefined {
 }
 
 async function request<T>(path: string, options: {
-  method?: 'POST'; body?: Record<string, unknown>; csrf?: boolean; idempotencyKey?: string;
+  method?: 'POST' | 'PUT'; body?: Record<string, unknown>; csrf?: boolean; idempotencyKey?: string;
 } = {}): Promise<T> {
   const headers: Record<string, string> = {};
   if (options.body) headers['content-type'] = 'application/json';
@@ -108,6 +116,15 @@ export const selfHostedIdentityClient: SelfHostedIdentityClient = {
   },
   async listUsers() {
     return (await request<{users: SelfHostedUser[]}>('/api/v1/admin/users')).users;
+  },
+  getDefaultCommitteeBehavior() {
+    return request<DefaultCommitteeBehavior>('/api/v1/admin/default-committee-behavior');
+  },
+  updateDefaultCommitteeBehavior(input) {
+    return request<DefaultCommitteeBehavior>('/api/v1/admin/default-committee-behavior', {
+      method: 'PUT', csrf: true,
+      body: {creatorIsChair: input.creatorIsChair, operationMode: input.operationMode, baseRevision: input.revision}
+    });
   },
   createUser(email, displayName) {
     return request('/api/v1/admin/users', {method: 'POST', csrf: true, body: {email, displayName}});

@@ -5,6 +5,7 @@ import {createOpaqueToken, hashOpaqueToken} from './tokens.js';
 import type {
   AuditContext,
   AuthenticatedSession,
+  DefaultCommitteeBehavior,
   IdentityStore,
   IdentityUser,
   LoginRecord,
@@ -268,6 +269,33 @@ export class PostgresIdentityStore implements IdentityStore {
   async listUsers(): Promise<IdentityUser[]> {
     const result = await this.pool.query<UserRow>('SELECT * FROM users ORDER BY created_at, id');
     return result.rows.map(userFromRow);
+  }
+
+  async getDefaultCommitteeBehavior(): Promise<DefaultCommitteeBehavior> {
+    const result = await this.pool.query<{
+      default_committee_creator_is_chair: boolean; default_committee_operation_mode: DefaultCommitteeBehavior['operationMode']; revision: number;
+    }>(`SELECT default_committee_creator_is_chair, default_committee_operation_mode, default_committee_behavior_revision AS revision
+        FROM system_settings WHERE singleton=true`);
+    const row = result.rows[0];
+    if (!row) throw new Error('system_settings singleton is missing');
+    return {creatorIsChair: row.default_committee_creator_is_chair, operationMode: row.default_committee_operation_mode, revision: row.revision};
+  }
+
+  async updateDefaultCommitteeBehavior(input: Parameters<IdentityStore['updateDefaultCommitteeBehavior']>[0]):
+    Promise<DefaultCommitteeBehavior | 'revision_conflict'> {
+    return this.transaction(async client => {
+      const result = await client.query<{
+        default_committee_creator_is_chair: boolean; default_committee_operation_mode: DefaultCommitteeBehavior['operationMode']; revision: number;
+      }>(`UPDATE system_settings SET default_committee_creator_is_chair=$1, default_committee_operation_mode=$2,
+            default_committee_behavior_revision=default_committee_behavior_revision+1, default_committee_behavior_updated_at=now()
+          WHERE singleton=true AND default_committee_behavior_revision=$3
+          RETURNING default_committee_creator_is_chair, default_committee_operation_mode, default_committee_behavior_revision AS revision`,
+      [input.creatorIsChair, input.operationMode, input.baseRevision]);
+      const row = result.rows[0];
+      if (!row) return 'revision_conflict';
+      await audit(client, input.audit, {actorUserId: input.actor.user.id, action: 'admin.default_committee_behavior_updated'});
+      return {creatorIsChair: row.default_committee_creator_is_chair, operationMode: row.default_committee_operation_mode, revision: row.revision};
+    });
   }
 
   async createUser(input: Parameters<IdentityStore['createUser']>[0]): Promise<IdentityUser> {

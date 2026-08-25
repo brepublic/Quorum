@@ -114,7 +114,7 @@ function CommitteeList({api, user, logout}: {api: SelfHostedApi; user: SelfHoste
         {committeeGroups}
         <Button basic negative fluid icon="sign-out" content={t('Logout')} onClick={logout} />
       </Segment></Grid.Column>
-      <Grid.Column width={10}><Segment><Form onSubmit={create} loading={working}>
+      {!user.isSystemAdmin && <Grid.Column width={10}><Segment><Form onSubmit={create} loading={working}>
       <Form.Group unstackable className="template-picker-row">
         <Form.Dropdown className="template-picker-field" label={t('Template')} search clearable fluid selection
           placeholder={t('Template to skip manual member creation (optional)')} value={templateId}
@@ -140,7 +140,7 @@ function CommitteeList({api, user, logout}: {api: SelfHostedApi; user: SelfHoste
         {key: 'private', value: 'PRIVATE', text: t('Private')}, {key: 'public', value: 'PUBLIC', text: t('Public')}
       ]} onChange={(_, data) => setVisibility(data.value as 'PUBLIC' | 'PRIVATE')} />
       <Button primary fluid disabled={!name.trim() || (!templateId && !countryKey)}>{t('Create committee')}<Icon name="arrow right" /></Button>
-    </Form></Segment></Grid.Column>
+    </Form></Segment></Grid.Column>}
     </Grid>
     <Confirm open={Boolean(deleteTarget)} header={t('Delete committee?')}
       content={t('This permanently deletes the committee and all of its records and uploaded files.')}

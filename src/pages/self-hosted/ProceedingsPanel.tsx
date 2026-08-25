@@ -454,7 +454,7 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
       {allowedYields.includes('SEAT') && <Button onClick={() => chooseYield('SEAT')}>{t('Yield to another delegate')}</Button>}
       {allowedYields.includes('QUESTIONS') && <Button onClick={() => chooseYield('QUESTIONS')}>{t('Yield to questions')}</Button>}
       {allowedYields.includes('COMMENTS') && <Button onClick={() => chooseYield('COMMENTS')}>{t('Yield to comments')}</Button>}
-    </Button.Group> : <Form><Header size="small">{t(yieldType === 'QUESTIONS' ? 'Ask a question' : yieldType === 'COMMENTS' ? 'Comment' : 'Yield')}</Header>
+    </Button.Group> : <Form><Header size="small">{t(yieldType === 'QUESTIONS' ? 'Yield to questions' : yieldType === 'COMMENTS' ? 'Yield to comments' : yieldType === 'SEAT' ? 'Yield to another delegate' : 'Yield')}</Header>
       <SpeakerSeatDropdown value={pendingYield ? speech?.yieldTargetSeatId ?? '' : yieldSeat}
         placeholder={t('Select a delegation')} options={targetOptions} disabled={pendingYield}
         onChange={chooseYieldTarget} />
@@ -541,10 +541,15 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
       const timeout = window.setTimeout(() => controller.abort(), contributionSaveTimeoutMs);
       void run(async () => {
         try {
-          await api.recordSpeechContribution(speech.id, speech.yieldType === 'QUESTIONS' ? 'QUESTION' : 'COMMENT', contribution,
+          const recordedSpeech = await api.recordSpeechContribution(speech.id,
+            speech.yieldType === 'QUESTIONS' ? 'QUESTION' : 'COMMENT', contribution,
             canChair ? speech.interactionTargetSeatId ?? seatId : undefined, controller.signal);
           setRecordedContributionSpeechId(speech.id);
           setShowContributionSuccess(true);
+          if (canChair && speech.yieldType === 'QUESTIONS') {
+            await api.commandSpeech(list.id, 'complete', recordedSpeech.revision);
+            await api.advanceSpeakerQueue(list.id, list.revision);
+          }
         } catch (caught) {
           if (controller.signal.aborted) throw new Error(t('Saving timed out. Try again.'));
           throw caught;

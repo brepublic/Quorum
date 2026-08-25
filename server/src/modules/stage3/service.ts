@@ -306,6 +306,7 @@ export class Stage3Service {
     name: unknown; visibility: unknown; operationMode?: unknown; activeRulePackageVersionId?: unknown;
   }, context: Context): Promise<CommitteeSummary> {
     requireBusinessIdentity(auth);
+    if (auth.user.isSystemAdmin) throw new AppError({code: 'FORBIDDEN', message: 'System administrators cannot create committees.'});
     if (!['PUBLIC', 'PRIVATE'].includes(input.visibility as string)) {
       throw new AppError({code: 'VALIDATION_FAILED', message: 'Committee visibility is invalid.'});
     }

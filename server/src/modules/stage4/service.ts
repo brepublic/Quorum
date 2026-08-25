@@ -994,13 +994,13 @@ export class Stage4Service {
   async createCommittee(auth: AuthenticatedSession, input: Record<string, unknown>, idempotencyKey: string,
     context: Stage4Context): Promise<CommitteeSummary> {
     requireBusinessIdentity(auth);
+    if (auth.user.isSystemAdmin) throw new AppError({code: 'FORBIDDEN', message: 'System administrators cannot create committees.'});
     assertExactBody(input, ['name', 'topic', 'conference', 'visibility', 'operationMode', 'activeRulePackageVersionId', 'committeeTemplateId', 'countryTemplateKey']);
     const name = requiredText(input.name, 'Committee name');
     const topic = optionalText(input.topic, 'Committee topic', 500);
     const conference = optionalText(input.conference, 'Conference name', 200);
     if (!['PUBLIC', 'PRIVATE'].includes(input.visibility as string)) throw new AppError({code: 'VALIDATION_FAILED', message: 'Committee visibility is invalid.'});
-    const operationMode = input.operationMode ?? 'DELEGATE_OPERATED';
-    if (!['DELEGATE_OPERATED', 'CHAIR_OPERATED'].includes(operationMode as string)) {
+    if (input.operationMode !== undefined && !['DELEGATE_OPERATED', 'CHAIR_OPERATED'].includes(input.operationMode as string)) {
       throw new AppError({code: 'VALIDATION_FAILED', message: 'Committee operation mode is invalid.'});
     }
     const committeeTemplateId = input.committeeTemplateId == null ? null : requiredText(input.committeeTemplateId, 'Committee template ID');
@@ -1010,6 +1010,12 @@ export class Stage4Service {
     }
     return idempotentTransaction({pool: this.pool, auth, route: 'POST /api/v1/committees', key: idempotencyKey,
       request: input, status: 201, work: async client => {
+        const defaults = await client.query<{creator_is_chair: boolean; operation_mode: 'DELEGATE_OPERATED' | 'CHAIR_OPERATED'}>(
+          `SELECT default_committee_creator_is_chair AS creator_is_chair,
+            default_committee_operation_mode AS operation_mode FROM system_settings WHERE singleton=true`);
+        const defaultBehavior = defaults.rows[0];
+        if (!defaultBehavior) throw new Error('system_settings singleton is missing');
+        const operationMode = (input.operationMode ?? defaultBehavior.operation_mode) as 'DELEGATE_OPERATED' | 'CHAIR_OPERATED';
         let versionId = typeof input.activeRulePackageVersionId === 'string' ? input.activeRulePackageVersionId : null;
         if (!versionId) {
           const builtin = await client.query<{id: string}>(`SELECT v.id FROM rule_package_versions v JOIN rule_packages p ON p.id=v.package_id
@@ -1040,10 +1046,15 @@ export class Stage4Service {
         await client.query(`INSERT INTO committee_rule_bindings
           (id,committee_id,package_version_id,effective_from_event_sequence,activated_by_user_id)
           VALUES ($1,$2,$3,1,$4)`, [randomUUID(), id, versionId, auth.user.id]);
+        if (defaultBehavior.creator_is_chair) {
+          await client.query(`INSERT INTO committee_capabilities
+            (committee_id,user_id,capability,granted_by_user_id) VALUES ($1,$2,'CHAIR',$2)`, [id, auth.user.id]);
+        }
         await client.query(`INSERT INTO committee_events
           (committee_id,sequence,event_type,resource_type,resource_id,resource_revision,payload,audience)
           VALUES ($1,1,'committee.created','committee',$1,1,$2,'MEMBER')`,
-        [id, {sourceCommitteeTemplateId: committeeTemplateId, countryTemplateKey}]);
+        [id, {sourceCommitteeTemplateId: committeeTemplateId, countryTemplateKey, operationMode,
+          creatorIsChair: defaultBehavior.creator_is_chair}]);
         if (template) {
           for (const member of template.members) {
             await client.query(`INSERT INTO committee_seats
@@ -1055,7 +1066,8 @@ export class Stage4Service {
         }
         await audit(client, context, {committeeId: id, actorUserId: auth.user.id, capabilities: ['COMMITTEE_OWNER'],
           action: 'committee.created', resourceType: 'committee', resourceId: id,
-          after: {name, sourceCommitteeTemplateId: committeeTemplateId, countryTemplateKey, seatCount: template?.members.length ?? 0}});
+          after: {name, sourceCommitteeTemplateId: committeeTemplateId, countryTemplateKey, seatCount: template?.members.length ?? 0,
+            operationMode, creatorIsChair: defaultBehavior.creator_is_chair}});
         return committeeSummary(row);
       }});
   }

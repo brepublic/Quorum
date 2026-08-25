@@ -1132,6 +1132,19 @@ async function handleIdentityRequest(options: {
     return true;
   }
 
+  if (method === 'GET' && pathname === '/api/v1/admin/default-committee-behavior') {
+    const auth = await identity.authenticate(cookies.get(SESSION_COOKIE_NAME));
+    sendJson(response, 200, success(await identity.getDefaultCommitteeBehavior(auth), requestId));
+    return true;
+  }
+
+  if (method === 'PUT' && pathname === '/api/v1/admin/default-committee-behavior') {
+    requireOrigin(request, allowedOrigins);
+    const auth = await authenticatedWrite(request, identity);
+    sendJson(response, 200, success(await identity.updateDefaultCommitteeBehavior(auth, await readJson(request), context), requestId));
+    return true;
+  }
+
   if (method === 'GET' && pathname === '/api/v1/admin/operations/status' && operationsStatus) {
     const auth = await identity.authenticate(cookies.get(SESSION_COOKIE_NAME));
     sendJson(response, 200, success(await operationsStatus.status(auth), requestId));

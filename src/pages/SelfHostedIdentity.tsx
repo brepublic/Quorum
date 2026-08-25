@@ -1,11 +1,12 @@
 import * as React from 'react';
-import {Button, Container, Form, Header, Icon, Menu, Message, Segment, Table} from 'semantic-ui-react';
+import {Button, Checkbox, Container, Form, Header, Icon, Menu, Message, Segment, Table} from 'semantic-ui-react';
 import {Link, useHistory, useLocation} from 'react-router-dom';
 import Loading from '../components/Loading';
 import {LanguageMenuItem, t} from '../i18n';
 import {
   IdentityApiError,
   selfHostedIdentityClient,
+  type DefaultCommitteeBehavior,
   type SelfHostedIdentityClient,
   type SelfHostedUser
 } from '../services/self-hosted-identity';
@@ -20,6 +21,36 @@ function message(error: unknown): string {
 interface IdentityFormProps {
   client: SelfHostedIdentityClient;
   onAuthenticated(user: SelfHostedUser): void;
+}
+
+function DefaultCommitteeBehaviorPanel({client}: {client: SelfHostedIdentityClient}) {
+  const [settings, setSettings] = React.useState<DefaultCommitteeBehavior>();
+  const [error, setError] = React.useState<string>();
+  const [saving, setSaving] = React.useState(false);
+  const load = React.useCallback(async () => {
+    try { setSettings(await client.getDefaultCommitteeBehavior()); } catch (caught) { setError(message(caught)); }
+  }, [client]);
+  React.useEffect(() => { void load(); }, [load]);
+  const save = async () => {
+    if (!settings) return;
+    setSaving(true); setError(undefined);
+    try { setSettings(await client.updateDefaultCommitteeBehavior(settings)); } catch (caught) { setError(message(caught)); }
+    finally { setSaving(false); }
+  };
+  return <Segment loading={!settings || saving}>
+    <Header as="h2">{t('Default behavior')}</Header>
+    {error && <Message error content={error} />}
+    {settings && <Form onSubmit={save}>
+      <Form.Field><Checkbox label={t('Committee creator is automatically Chair')} checked={settings.creatorIsChair}
+        onChange={(_, data) => setSettings(current => current && {...current, creatorIsChair: Boolean(data.checked)})} /></Form.Field>
+      <Form.Select label={t('Default committee operation mode')} value={settings.operationMode} options={[
+        {key: 'chair', value: 'CHAIR_OPERATED', text: t('Chair operated')},
+        {key: 'delegate', value: 'DELEGATE_OPERATED', text: t('Delegate operated')}
+      ]} onChange={(_, data) => setSettings(current => current && {...current,
+        operationMode: data.value as DefaultCommitteeBehavior['operationMode']})} />
+      <Button primary disabled={saving}>{t('Save changes')}</Button>
+    </Form>}
+  </Segment>;
 }
 
 function LoginForm({client, onAuthenticated}: IdentityFormProps) {
@@ -209,6 +240,7 @@ function AccountManager({client, currentUser, onLogout}: {
     {temporary && <Message positive onDismiss={() => setTemporary(undefined)}
       header={t('Temporary password for {email}', {email: temporary.email})}
       content={<code>{temporary.password}</code>} />}
+    <DefaultCommitteeBehaviorPanel client={client} />
     <Segment>
       <Header as="h2">{t('Create account')}</Header>
       <Form onSubmit={create} loading={working}>

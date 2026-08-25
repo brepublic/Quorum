@@ -54,7 +54,7 @@ flowchart LR
 
 ## 3. 服务端模块与数据边界
 
-`server/` 是单进程模块化单体。启动时使用 PostgreSQL advisory lock 执行带 SHA-256 校验和的顺序 migration；当前 schema compatibility 为 40。数据库版本、连接、存储目录可写性或容量采样不满足要求时 readiness 失败。
+`server/` 是单进程模块化单体。启动时使用 PostgreSQL advisory lock 执行带 SHA-256 校验和的顺序 migration；当前 schema compatibility 为 43。实例级 `system_settings` 保存新委员会的默认运作模式与创建者是否自动获得 Chair；它们只在创建事务中读取，不追溯既有委员会。系统管理员不能创建委员会。数据库版本、连接、存储目录可写性或容量采样不满足要求时 readiness 失败。
 
 | 模块 | 责任 |
 | --- | --- |
@@ -67,7 +67,7 @@ flowchart LR
 
 `packages/contracts/` 保存浏览器、后端与 Agent 共用的错误码、事件、审计动作、响应类型和不可变规则快照。`packages/rule-schema/` 保存规则包 v1 的 schema、安全表达式求值和内置 `Quorum Default`/北京学术标准 fixture。`packages/storage-agent/` 保存独立 Chair Agent 客户端、安全目录、扫描、恢复循环和发布入口。
 
-所有业务写入使用表达意图的命令。服务端从 Session 或独立 Agent 凭据推导 actor，在一个 PostgreSQL 事务中完成授权、行锁/revision 检查、状态变化、事件、审计和 durable 幂等结果。系统管理员、Committee Owner、Chair 与代表席位是独立能力；系统管理员和 Owner 不自动获得 Chair 学术权限。
+所有业务写入使用表达意图的命令。服务端从 Session 或独立 Agent 凭据推导 actor，在一个 PostgreSQL 事务中完成授权、行锁/revision 检查、状态变化、事件、审计和 durable 幂等结果。系统管理员、Committee Owner、Chair 与代表席位是独立能力；系统管理员不能创建委员会或获得 Chair 学术权限，普通创建者是否自动获得 Chair 由实例级默认设置决定。
 
 公开委员会只向匿名读者返回公开字段和已发布文件。私有委员会对未授权身份统一隐藏。正式 ballot 冻结席位资格、must-vote、门槛、否决席位和规则版本；一席一票由数据库唯一约束保证，更正票追加历史。匿名意向性投票分离回执与选项，不保存投票人与选项关联。
 

@@ -2,7 +2,7 @@ import {createHash, randomUUID} from 'node:crypto';
 import {AppError} from '../../http/errors.js';
 import {createTemporaryPassword, hashPassword, verifyPassword} from './password.js';
 import {LoginRateLimiter} from './rate-limit.js';
-import type {AuditContext, AuthenticatedSession, IdentityStore, IdentityUser, NewSession} from './store.js';
+import type {AuditContext, AuthenticatedSession, DefaultCommitteeBehavior, IdentityStore, IdentityUser, NewSession} from './store.js';
 import {createOpaqueToken, hashOpaqueToken, hashSource} from './tokens.js';
 
 export interface RequestIdentityContext {
@@ -186,6 +186,26 @@ export class IdentityService {
   async listUsers(auth: AuthenticatedSession): Promise<IdentityUser[]> {
     this.requireAdministrator(auth);
     return this.store.listUsers();
+  }
+
+  async getDefaultCommitteeBehavior(auth: AuthenticatedSession): Promise<DefaultCommitteeBehavior> {
+    this.requireAdministrator(auth);
+    return this.store.getDefaultCommitteeBehavior();
+  }
+
+  async updateDefaultCommitteeBehavior(auth: AuthenticatedSession, input: Record<string, unknown>,
+    context: RequestIdentityContext): Promise<DefaultCommitteeBehavior> {
+    this.requireAdministrator(auth);
+    if (Object.keys(input).length !== 3 || typeof input.creatorIsChair !== 'boolean'
+      || !['DELEGATE_OPERATED', 'CHAIR_OPERATED'].includes(input.operationMode as string)
+      || !Number.isInteger(input.baseRevision) || (input.baseRevision as number) < 1) {
+      throw new AppError({code: 'VALIDATION_FAILED', message: 'Default committee behavior is invalid.'});
+    }
+    const result = await this.store.updateDefaultCommitteeBehavior({actor: auth, creatorIsChair: input.creatorIsChair,
+      operationMode: input.operationMode as DefaultCommitteeBehavior['operationMode'], baseRevision: input.baseRevision as number,
+      audit: this.audit(context)});
+    if (result === 'revision_conflict') throw new AppError({code: 'REVISION_CONFLICT', message: 'The settings were changed by another administrator.'});
+    return result;
   }
 
   async createUser(auth: AuthenticatedSession, input: {email: string; displayName: string},

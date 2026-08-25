@@ -67,6 +67,32 @@ const committeeTemplate = (countryTemplateKey: string) => ({names: {en: 'Council
     canVote: true, hasVeto: true, mustVote: false, sortOrder: 1, flag: {type: 'STANDARD' as const, value: 'cn'}}]});
 
 integration('PostgreSQL stage 4 templates and seat snapshots', () => {
+  it('applies only current administrator defaults when creating a committee', async () => {
+    const owner = await user('defaultbehavior');
+    const initial = await identity.getDefaultCommitteeBehavior(administrator);
+    const chairDefault = await identity.updateDefaultCommitteeBehavior(administrator,
+      {creatorIsChair: true, operationMode: 'CHAIR_OPERATED', baseRevision: initial.revision}, context('defaults-chair'));
+    const chaired = await stage4.createCommittee(owner, {name: 'Chaired by default', visibility: 'PRIVATE', countryTemplateKey: 'builtin:default'},
+      'default-chaired', context('default-chaired'));
+    expect((await pool?.query(`SELECT operation_mode FROM committees WHERE id=$1`, [chaired.id]))?.rows).toEqual([{operation_mode: 'CHAIR_OPERATED'}]);
+    expect((await pool?.query(`SELECT capability FROM committee_capabilities WHERE committee_id=$1 AND user_id=$2 AND revoked_at IS NULL`,
+      [chaired.id, owner.user.id]))?.rows).toEqual([{capability: 'CHAIR'}]);
+    expect((await stage4.snapshot(chaired.id, owner)).viewer.audience).toBe('CHAIR');
+
+    await identity.updateDefaultCommitteeBehavior(administrator,
+      {creatorIsChair: false, operationMode: 'DELEGATE_OPERATED', baseRevision: chairDefault.revision}, context('defaults-delegate'));
+    const delegated = await stage4.createCommittee(owner, {name: 'Delegate by default', visibility: 'PRIVATE', countryTemplateKey: 'builtin:default'},
+      'default-delegate', context('default-delegate'));
+    const overridden = await stage4.createCommittee(owner, {name: 'Explicit mode', visibility: 'PRIVATE', operationMode: 'CHAIR_OPERATED',
+      countryTemplateKey: 'builtin:default'}, 'default-override', context('default-override'));
+    expect((await pool?.query(`SELECT operation_mode FROM committees WHERE id=$1`, [delegated.id]))?.rows).toEqual([{operation_mode: 'DELEGATE_OPERATED'}]);
+    expect((await pool?.query(`SELECT count(*)::int AS count FROM committee_capabilities WHERE committee_id=$1 AND revoked_at IS NULL`,
+      [delegated.id]))?.rows).toEqual([{count: 0}]);
+    expect((await pool?.query(`SELECT operation_mode FROM committees WHERE id=$1`, [overridden.id]))?.rows).toEqual([{operation_mode: 'CHAIR_OPERATED'}]);
+    await expect(stage4.createCommittee(administrator, {name: 'Denied', visibility: 'PRIVATE', countryTemplateKey: 'builtin:default'},
+      'admin-denied', context('admin-denied'))).rejects.toMatchObject({code: 'FORBIDDEN'});
+  });
+
   it('clones the built-in countries and creates committees from the restored built-in templates', async () => {
     const owner = await user('builtinowner');
     const clonedCountries = await stage4.cloneCountryTemplate(owner, 'builtin:default', {}, 'clone-default-countries',
