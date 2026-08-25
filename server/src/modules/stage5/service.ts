@@ -46,7 +46,7 @@ interface SpeechRow extends QueryResultRow {
 
 interface MeetingSessionRow extends QueryResultRow {
   id: string; committee_id: string; name: string; phase_id: string; active_rule_package_version_id: string;
-  status: 'PENDING' | 'OPEN' | 'CLOSED'; revision: number; created_at: Date; closed_at: Date | null;
+  status: 'PENDING' | 'OPEN' | 'CLOSED'; formal_debate_open: boolean; revision: number; created_at: Date; closed_at: Date | null;
 }
 
 interface MotionRow extends QueryResultRow {
@@ -626,7 +626,7 @@ export class Stage5Service {
       const list = found.rows[0] as SpeakerListRow;
       if (list.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT',
         message: 'This speaker list changed since it was loaded.', details: {currentRevision: list.revision}});
-      if (list.status === status) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The speaker list already has that status.'});
+      if (list.status === status) return speakerListState(client, list);
       const now = this.now();
       if (status === 'CLOSED') {
         const timers = await client.query<TimerRow>('SELECT * FROM timer_states WHERE id=ANY($1::uuid[]) FOR UPDATE',
@@ -1492,10 +1492,10 @@ export class Stage5Service {
         closed_at=$2 WHERE id=$1 RETURNING *`, [session.id, now]);
       const nextId = randomUUID();
       const next = await client.query<MeetingSessionRow>(`INSERT INTO meeting_sessions
-        (id,committee_id,name,phase_id,active_rule_package_version_id,status,created_by_user_id)
-        SELECT $1,$2,'第' || (count(*) + 1)::text || '会期',$3,$4,'PENDING',$5
+        (id,committee_id,name,phase_id,active_rule_package_version_id,status,formal_debate_open,created_by_user_id)
+        SELECT $1,$2,'第' || (count(*) + 1)::text || '会期',$3,$4,'PENDING',$5,$6
         FROM meeting_sessions WHERE committee_id=$2 RETURNING *`,
-      [nextId, committeeId, session.phase_id, session.active_rule_package_version_id, actorUserId]);
+      [nextId, committeeId, session.phase_id, session.active_rule_package_version_id, session.formal_debate_open, actorUserId]);
       const nextSession = next.rows[0] as MeetingSessionRow;
       await appendEvent(client, committee, {type: 'meeting_session.closed', resourceType: 'meeting_session',
         resourceId: session.id, revision: closed.rows[0]!.revision, payload: {phaseId: session.phase_id, motionId: motion.id}});
@@ -1512,6 +1512,54 @@ export class Stage5Service {
         after: {name: nextSession.name, status: 'PENDING', phaseId: nextSession.phase_id,
           rulePackageVersionId: nextSession.active_rule_package_version_id, motionId: motion.id}});
       return null;
+    }
+    if (motion.motion_type_id === 'open-debate' || motion.motion_type_id === 'close-debate') {
+      const formalDebateOpen = motion.motion_type_id === 'open-debate';
+      const sessionResult = await client.query<MeetingSessionRow>(`SELECT * FROM meeting_sessions
+        WHERE id=$1 AND committee_id=$2 FOR UPDATE`, [motion.meeting_session_id, committeeId]);
+      const session = sessionResult.rows[0];
+      if (!session || session.status !== 'OPEN') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The meeting session is not open.'});
+      const lists = await client.query<SpeakerListRow>(`SELECT * FROM speaker_lists
+        WHERE meeting_session_id=$1 AND kind='GENERAL' FOR UPDATE`, [session.id]);
+      const list = lists.rows[0];
+      if (!list) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The general speakers list is missing.'});
+      if (session.formal_debate_open !== formalDebateOpen) await client.query(`UPDATE meeting_sessions
+        SET formal_debate_open=$2 WHERE id=$1`, [session.id, formalDebateOpen]);
+      if (list.status !== (formalDebateOpen ? 'OPEN' : 'CLOSED')) {
+        if (!formalDebateOpen) {
+          const timers = await client.query<TimerRow>('SELECT * FROM timer_states WHERE id=ANY($1::uuid[]) FOR UPDATE',
+            [[list.speech_timer_id, list.total_timer_id].filter(Boolean)]);
+          for (const timer of timers.rows) {
+            const remaining = remainingTimerMs(timer, now);
+            await client.query(`UPDATE timer_states SET running=false,started_at=NULL,remaining_at_start_ms=$2,
+              revision=revision+1,updated_at=$3 WHERE id=$1`, [timer.id, remaining, now]);
+            await appendEvent(client, committee, {type: 'timer.changed', resourceType: 'timer', resourceId: timer.id,
+              revision: timer.revision + 1, payload: {command: 'PAUSED_BY_LIST_CLOSE', running: false, remainingMs: remaining}});
+          }
+          const active = await client.query<SpeechRow>(`SELECT * FROM speeches WHERE speaker_list_id=$1
+            AND status IN ('READY','RUNNING','PAUSED') FOR UPDATE`, [list.id]);
+          const speech = active.rows[0];
+          if (speech) {
+            const speechTimer = timers.rows.find(timer => timer.id === list.speech_timer_id);
+            const remainingMs = speechTimer ? remainingTimerMs(speechTimer, now) : 0;
+            await client.query(`UPDATE speeches SET status='COMPLETED',ended_at=$2,revision=revision+1,
+              yield_decision_status=CASE WHEN yield_decision_status='PENDING' THEN 'REJECTED'::speech_yield_decision_status
+                ELSE yield_decision_status END WHERE id=$1`, [speech.id, now]);
+            await appendEvent(client, committee, {type: 'speech.changed', resourceType: 'speech', resourceId: speech.id,
+              revision: speech.revision + 1, payload: {command: 'COMPLETED_BY_LIST_CLOSE', speakerListId: list.id, remainingMs}});
+          }
+        }
+        await client.query(`UPDATE speaker_lists SET status=$2,closed_at=$3,revision=revision+1 WHERE id=$1`,
+          [list.id, formalDebateOpen ? 'OPEN' : 'CLOSED', formalDebateOpen ? null : now]);
+        await appendEvent(client, committee, {type: 'speaker_list.changed', resourceType: 'speaker_list', resourceId: list.id,
+          revision: list.revision + 1, payload: {command: formalDebateOpen ? 'OPENED_BY_MOTION' : 'CLOSED_BY_MOTION',
+            status: formalDebateOpen ? 'OPEN' : 'CLOSED', motionId: motion.id}, audience: 'PUBLIC'});
+        await audit(client, context, {committeeId, actorUserId, capabilities: ['CHAIR'],
+          action: 'proceedings.speaker_list_status_changed', resourceType: 'speaker_list', resourceId: list.id,
+          before: {status: list.status, revision: list.revision},
+          after: {status: formalDebateOpen ? 'OPEN' : 'CLOSED', revision: list.revision + 1, motionId: motion.id}});
+      }
+      return `/committees/${committeeId}/caucuses/${list.id}`;
     }
     if (motion.motion_type_id === 'open-unmoderated-caucus'
       || motion.motion_type_id === 'introduce-working-paper') {

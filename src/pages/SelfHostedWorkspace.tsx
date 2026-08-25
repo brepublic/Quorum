@@ -15,7 +15,7 @@ import {Button, Card, Checkbox, Confirm, Container, Divider, Form, Grid, Header,
 import Loading from '../components/Loading';
 import {CountryFlagDisplay} from '../components/CountryFlagDisplay';
 import {LanguageMenuItem, t} from '../i18n';
-import {selfHostedApi, type SelfHostedApi} from '../services/self-hosted-api';
+import {selfHostedApi, SelfHostedApiError, type SelfHostedApi} from '../services/self-hosted-api';
 import type {SelfHostedUser} from '../services/self-hosted-identity';
 import ProceedingsPanel from './self-hosted/ProceedingsPanel';
 import FilesPanel from './self-hosted/FilesPanel';
@@ -525,6 +525,7 @@ function RollCallPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
   const chair = canChair; const session = snapshot.meetingSession; const rollCall = snapshot.rollCall;
   const sessionName = session?.status === 'PENDING' ? session.name : snapshot.nextMeetingSessionName;
   const [pending, setPending] = React.useState<string>();
+  const [missingGeneralListConfirm, setMissingGeneralListConfirm] = React.useState(false);
   const [page, setPage] = React.useState(0); const [resetOpen, setResetOpen] = React.useState(false);
   const autoStartedSessionId = React.useRef<string>();
   const execute = React.useCallback(async (key: string, operation: () => Promise<unknown>) => {
@@ -542,16 +543,32 @@ function RollCallPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
     autoStartedSessionId.current = session.id;
     void execute('roll-call', () => api.startRollCall(snapshot.committee.id, session.id));
   }, [api, chair, execute, rollCall, session?.id, session?.status, snapshot.committee.id]);
+  const startMeeting = (replacement = false) => execute('meeting', async () => {
+    try {
+      const meeting = replacement
+        ? await api.startMeetingSession(snapshot.committee.id, undefined, 'CREATE_REPLACEMENT')
+        : await api.startMeetingSession(snapshot.committee.id);
+      await api.startRollCall(snapshot.committee.id, meeting.id);
+    } catch (caught) {
+      if (!replacement && caught instanceof SelfHostedApiError && caught.code === 'RESOURCE_CONFLICT'
+        && (caught.details as {reason?: unknown} | undefined)?.reason === 'GENERAL_SPEAKER_LIST_MISSING') {
+        setMissingGeneralListConfirm(true);
+        return;
+      }
+      throw caught;
+    }
+  });
   if (!rollCall) return <>{chair && (!session || session.status === 'PENDING') && <Segment className="roll-call-start-card">
       <Label attached="top left" size="large">{t('Set meeting session')}</Label>
-      <Form onSubmit={() => execute('meeting', async () => {
-        const meeting = await api.startMeetingSession(snapshot.committee.id);
-        await api.startRollCall(snapshot.committee.id, meeting.id);
-      })}>
+      <Form onSubmit={() => startMeeting()}>
         <Form.Input value={sessionName ?? ''} readOnly fluid />
         <Button primary fluid loading={pending === 'meeting'}>{t('Start meeting')}</Button>
       </Form>
-    </Segment>}
+    </Segment>}<Confirm open={missingGeneralListConfirm} header={t('General speakers list missing')}
+      content={t('The previous session’s general speakers list could not be restored. Create a new list and continue?')}
+      cancelButton={t('Cancel')} confirmButton={t('Create and continue')}
+      onCancel={() => setMissingGeneralListConfirm(false)}
+      onConfirm={() => {setMissingGeneralListConfirm(false); void startMeeting(true);}} />
   </>;
 
   const totalPages = Math.max(1, Math.ceil(seats.length / ROLL_CALL_PAGE_SIZE));

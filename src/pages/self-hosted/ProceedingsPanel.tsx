@@ -482,7 +482,7 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
   </Grid.Column></Grid.Row>;
   if (list.status === 'CLOSED') return <Container className="legacy-speaker-workspace"><Grid columns="equal" stackable>{header}
     <Grid.Row><Grid.Column><Segment placeholder textAlign="center"><Header icon><Icon name="check circle outline" />
-      {t(list.kind === 'GENERAL' ? 'Speakers list complete' : 'Moderated caucus complete')}</Header>
+      {t(list.kind === 'GENERAL' ? 'Speakers list closed' : 'Moderated caucus complete')}</Header>
       <Button primary size="large" as={Link} to={`/committees/${snapshot.committee.id}/motions`}>{t('Go to motions')}<Icon name="arrow right" /></Button>
     </Segment></Grid.Column></Grid.Row></Grid></Container>;
   const nowSpeaking = <Segment><Label attached="top left" size="large">{t('Now speaking')}</Label><Feed size="large" className="speaker-current-speaker-feed">
@@ -863,9 +863,9 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
     || snapshot.viewer.audience === 'MEMBER' && delegateMayPropose);
   if (!session) return <Container text className="motions-page motions-empty-state">
     <Card className="motions-empty-card">
-      <Card.Content textAlign="center">
+      <Card.Content textAlign="center" className="motions-empty-card-content">
         <Card.Description>{t(meetingJustEnded ? 'Current meeting session has ended.' : 'Open a meeting first.')}</Card.Description>
-        <Button as={Link} to={`/committees/${snapshot.committee.id}/roll-call`} primary>{t('Roll call ->')}</Button>
+        <Button as={Link} to={`/committees/${snapshot.committee.id}/roll-call`} primary>{t('Roll call')}<Icon name="arrow right" /></Button>
       </Card.Content>
     </Card>
   </Container>;

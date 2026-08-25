@@ -854,13 +854,26 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
 
 .motions-empty-card.ui.card {
   margin: 2rem 0 0;
-  width: min(100%, 20rem);
+  width: min(100%, 42rem);
 }
 
-.motions-empty-card .description {
-  display: grid;
-  gap: 1rem;
-  justify-items: center;
+.motions-empty-card-content {
+  align-items: center;
+  display: flex !important;
+  flex-direction: column;
+  gap: 1.5rem;
+  justify-content: center;
+  min-height: 14rem;
+  padding: 3rem !important;
+}
+
+.motions-empty-card-content .description,
+.motions-empty-card-content .button {
+  margin: 0;
+}
+
+.motions-empty-card-content .description {
+  font-size: 1.25rem;
 }
 
 .motion-proposal-form.ui.form {

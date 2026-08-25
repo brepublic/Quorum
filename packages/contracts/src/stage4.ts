@@ -183,7 +183,10 @@ export interface MeetingSession {
   closedAt: string | null;
 }
 
-export interface StartMeetingSessionRequest {phaseId?: string}
+export interface StartMeetingSessionRequest {
+  phaseId?: string;
+  missingGeneralListAction?: 'CREATE_REPLACEMENT';
+}
 export interface CloseMeetingSessionRequest {baseRevision: number}
 
 export type RollCallStatus = 'IN_PROGRESS' | 'COMPLETED' | 'ABANDONED';

@@ -274,7 +274,8 @@ describe('committee workspace routes and roles', () => {
 
     expect(page.textContent).toContain('Open a meeting first.');
     expect(page.querySelector('.motions-empty-card')).not.toBeNull();
-    expect(page.querySelector('.motions-empty-card a[href="/committees/committee/roll-call"]')?.textContent).toContain('Roll call ->');
+    expect(page.querySelector('.motions-empty-card-content')).not.toBeNull();
+    expect(page.querySelector('.motions-empty-card a[href="/committees/committee/roll-call"]')?.textContent).toContain('Roll call');
   });
 
   it('shows the ended-session state immediately after passing a suspension motion', async () => {
@@ -303,7 +304,7 @@ describe('committee workspace routes and roles', () => {
     await act(async () => {passed?.click(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();});
     expect(decideMotion).toHaveBeenCalledWith('suspend', 1, 'PASSED');
     expect(page.textContent).toContain('Current meeting session has ended.');
-    expect(page.querySelector('.motions-empty-card a[href="/committees/committee/roll-call"]')?.textContent).toContain('Roll call ->');
+    expect(page.querySelector('.motions-empty-card a[href="/committees/committee/roll-call"]')?.textContent).toContain('Roll call');
   });
 
   it('separates motion history at meeting-session boundaries', async () => {
