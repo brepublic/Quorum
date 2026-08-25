@@ -976,6 +976,19 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   margin-right: 0;
 }
 
+.motion-metadata-row-proposer > .ui.horizontal.label,
+.motion-metadata-row-topic > .ui.horizontal.label {
+  font-size: 1em;
+  padding: 0.338rem 0.825rem;
+  margin-top: 0.02em;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700 !important;
+  align-self: center;
+  line-height: 1.15;
+}
+
 .motion-metadata-value {
   align-items: center;
   display: flex;
@@ -983,6 +996,52 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   gap: 0.3rem;
   min-width: 0;
   overflow-wrap: anywhere;
+  align-self: center;
+}
+
+.motion-metadata-row-proposer .motion-seat-option {
+  align-self: center;
+}
+
+.motion-metadata-table.ui.table {
+  color: inherit;
+  margin-top: 0.45rem;
+}
+
+.motion-metadata-table.ui.table td.motion-metadata-key {
+  background: #e8e8e8;
+  color: rgba(0, 0, 0, 0.6);
+  font-weight: 700;
+  white-space: nowrap;
+  width: 1%;
+}
+
+.motion-proposer-field > label,
+.motion-topic-field > label {
+  font-size: 1em;
+}
+
+.motion-proposer-field .ui.selection.dropdown,
+.motion-topic-field .ui.input,
+.motion-topic-field textarea,
+.motion-topic-field input {
+  font-size: 1em;
+  min-height: 2.3rem;
+}
+
+.motion-proposer-field .ui.selection.dropdown {
+  min-width: 100%;
+  border-width: 1px;
+  min-height: 2.3rem;
+}
+
+.motion-topic-field .ui.input,
+.motion-topic-field input,
+.motion-topic-field textarea {
+  border-width: 1px;
+  border-radius: 0.3rem;
+  padding-top: 0.36rem;
+  padding-bottom: 0.36rem;
 }
 
 .motion-seat-option {

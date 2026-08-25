@@ -12,7 +12,7 @@ import type {
 } from '@quorum/contracts';
 import {DragDropContext, Draggable, Droppable, type DropResult} from 'react-beautiful-dnd';
 import {Button, Card, Checkbox, Container, Divider, Dropdown, Feed, Form, Grid, Header, Icon, Input, Label, List,
-  Menu, Message, Pagination, Popup, Progress, Segment, Select, Statistic, TextArea} from 'semantic-ui-react';
+  Menu, Message, Pagination, Popup, Progress, Segment, Select, Statistic, Table, TextArea} from 'semantic-ui-react';
 import {Link, useHistory} from 'react-router-dom';
 import {CountryFlagDisplay} from '../../components/CountryFlagDisplay';
 import Loading from '../../components/Loading';
@@ -958,12 +958,18 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
           }
         }} />
       {hasMotionDetail(motionType) && <Form.Group widths="equal">{hasMotionTextArea(motionType)
-        ? <Form.TextArea required rows={2} label={t(motionDetailLabel(motionType))} placeholder={t(motionDetailLabel(motionType))}
+        ? <Form.TextArea required rows={2}
+          className={motionDetailLabel(motionType) === 'Topic' ? 'motion-topic-field' : undefined}
+          label={t(motionDetailLabel(motionType))} placeholder={t(motionDetailLabel(motionType))}
           value={proposal} onChange={(_, data) => setProposal(String(data.value))} />
-        : <Form.Input required fluid label={t(motionDetailLabel(motionType))} placeholder={t(motionDetailLabel(motionType))}
+        : <Form.Input required fluid
+          className={motionDetailLabel(motionType) === 'Topic' ? 'motion-topic-field' : undefined}
+          label={t(motionDetailLabel(motionType))} placeholder={t(motionDetailLabel(motionType))}
           value={proposal} onChange={event => setProposal(event.currentTarget.value)} />}</Form.Group>}
       <Form.Group widths="equal">
-        <Form.Select key="proposer" icon="search" search selection fluid label={t('Proposer')}
+        <Form.Select key="proposer" icon="search" search selection fluid
+          className="motion-proposer-field"
+          label={t('Proposer')}
           value={proposerId || false} error={!proposerId || !presentSeatIds.has(proposerId) || identicalSeats}
           options={seatOptions} disabled={!canChair}
           onChange={(_, data) => setProposerId(String(data.value))} />
@@ -1032,6 +1038,7 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
       const durationUnit = String(motion.parameters.caucusUnit ?? 'min');
       const speech = Number(motion.parameters.speakerDuration ?? 0);
       const speechUnit = String(motion.parameters.speakerUnit ?? 'sec');
+      const detailLabel = hasMotionDetail(motion.motionTypeId) ? motionDetailLabel(motion.motionTypeId) : undefined;
       const time = hasMotionDuration(motion.motionTypeId)
         ? hasMotionSpeakers(motion.motionTypeId) ? `${duration} ${t(durationUnit)} / ${speech} ${t(speechUnit)}`
           : `${duration} ${t(durationUnit)}` : '';
@@ -1053,34 +1060,39 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
               aria-label={t('Delete')} basic circular compact icon="trash" negative
               onClick={() => void run(() => api.withdrawMotion(motion.id, motion.revision))} />} />}
         </div>
-        <Card.Meta className="motion-metadata">
-          <div className="motion-metadata-row"><Label horizontal>{t('Proposer')}</Label><span className="motion-metadata-value">
-            {proposer && seatOptionContent(proposer)}
-            {!presentSeatIds.has(motion.proposedBySeatId) && <Label basic size="mini">{t('Absent')}</Label>}
-          </span></div>
-          {motion.requiredSecondCount > 0 && <div className="motion-metadata-row"><Label horizontal>{t('Seconder')}</Label>
-            <span className="motion-metadata-value">{seconder ? seatOptionContent(seconder) : <span>—</span>}
-              {seconder && !presentSeatIds.has(seconder.id) && <Label basic size="mini">{t('Absent')}</Label>}
-            </span></div>}
-          {hasCaucusTarget(motion.motionTypeId) && <div className="motion-metadata-row"><Label horizontal>
-            {t('Target caucus')}</Label><span className="motion-metadata-value">
-              {openCaucuses.find(list => list.id === motion.parameters.caucusTarget)?.topic
-                ?? String(motion.parameters.caucusTarget ?? '')}
-            </span></div>}
-          {(hasResolutionTarget(motion.motionTypeId) || Boolean(motion.parameters.resolutionTarget))
-            && <div className="motion-metadata-row"><Label horizontal>{t('Target resolution')}</Label>
-              <span className="motion-metadata-value">{resolutions.find(document => document.id
-                === motion.parameters.resolutionTarget)?.title ?? String(motion.parameters.resolutionTarget ?? '')}</span>
-            </div>}
-          {Boolean(motion.parameters.amendmentTarget) && <div className="motion-metadata-row"><Label horizontal>
-            {t('Target amendment')}</Label><span className="motion-metadata-value">
-              {amendments.find(document => document.id === motion.parameters.amendmentTarget)?.title
-                ?? String(motion.parameters.amendmentTarget ?? '')}
-            </span></div>}
-          {hasMotionDetail(motion.motionTypeId) && <div className="motion-metadata-row"><Label horizontal>
-            {t(motionDetailLabel(motion.motionTypeId))}</Label><span className="motion-metadata-value">
-              {String(motion.parameters.proposal ?? '')}
-            </span></div>}
+        <Card.Meta>
+          <Table className="motion-metadata-table" compact celled><Table.Body>
+            <Table.Row><Table.Cell className="motion-metadata-key">{t('Proposer')}</Table.Cell><Table.Cell>
+              <span className="motion-metadata-value">
+                {proposer && seatOptionContent(proposer)}
+                {!presentSeatIds.has(motion.proposedBySeatId) && <Label basic size="mini">{t('Absent')}</Label>}
+              </span>
+            </Table.Cell></Table.Row>
+            {motion.requiredSecondCount > 0 && <Table.Row><Table.Cell className="motion-metadata-key">
+              {t('Seconder')}</Table.Cell><Table.Cell><span className="motion-metadata-value">
+                {seconder ? seatOptionContent(seconder) : <span>—</span>}
+                {seconder && !presentSeatIds.has(seconder.id) && <Label basic size="mini">{t('Absent')}</Label>}
+              </span></Table.Cell></Table.Row>}
+            {hasCaucusTarget(motion.motionTypeId) && <Table.Row><Table.Cell className="motion-metadata-key">
+              {t('Target caucus')}</Table.Cell><Table.Cell><span className="motion-metadata-value">
+                {openCaucuses.find(list => list.id === motion.parameters.caucusTarget)?.topic
+                  ?? String(motion.parameters.caucusTarget ?? '')}
+              </span></Table.Cell></Table.Row>}
+            {(hasResolutionTarget(motion.motionTypeId) || Boolean(motion.parameters.resolutionTarget))
+              && <Table.Row><Table.Cell className="motion-metadata-key">{t('Target resolution')}</Table.Cell>
+                <Table.Cell><span className="motion-metadata-value">{resolutions.find(document => document.id
+                  === motion.parameters.resolutionTarget)?.title
+                    ?? String(motion.parameters.resolutionTarget ?? '')}</span></Table.Cell>
+              </Table.Row>}
+            {Boolean(motion.parameters.amendmentTarget) && <Table.Row><Table.Cell className="motion-metadata-key">
+              {t('Target amendment')}</Table.Cell><Table.Cell><span className="motion-metadata-value">
+                {amendments.find(document => document.id === motion.parameters.amendmentTarget)?.title
+                  ?? String(motion.parameters.amendmentTarget ?? '')}
+              </span></Table.Cell></Table.Row>}
+            {detailLabel && <Table.Row><Table.Cell className="motion-metadata-key">{t(detailLabel)}</Table.Cell>
+              <Table.Cell><span className="motion-metadata-value">{String(motion.parameters.proposal ?? '')}</span>
+              </Table.Cell></Table.Row>}
+          </Table.Body></Table>
         </Card.Meta>
       </Card.Content>
       {canChair && motion.status === 'PENDING' && motion.seconds.length < motion.requiredSecondCount && <Card.Content>
