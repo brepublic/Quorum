@@ -870,6 +870,41 @@ describe('committee workspace routes and roles', () => {
     expect(page.textContent).not.toContain("Against");
   });
 
+  it('keeps absent countries visible but disabled in general and moderated speaker queues', async () => {
+    const withList = (value: CommitteeWorkspaceSnapshot, kind: 'GENERAL' | 'MODERATED_CAUCUS'): CommitteeWorkspaceSnapshot => ({...value,
+      seats: [...value.seats, {id: 'france', stableKey: 'france', displayName: 'France', rank: 'STANDARD', canVote: true,
+        hasVeto: false, mustVote: false, sortOrder: 1, active: true, revision: 1, flag: {type: 'STANDARD', value: 'fr'}}],
+      meetingSession: {id: 'meeting', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate',
+        activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1, createdAt: '2026-08-14T00:00:00.000Z', closedAt: null},
+      attendance: [{seatId: 'seat', state: 'PRESENT', lastEventId: 'present', updatedAt: '2026-08-14T00:00:00.000Z'},
+        {seatId: 'france', state: 'ABSENT', lastEventId: 'absent', updatedAt: '2026-08-14T00:00:00.000Z'}],
+      speakerLists: [{id: 'list', committeeId: 'committee', meetingSessionId: 'meeting', kind, status: 'OPEN',
+        name: kind === 'GENERAL' ? "General Speakers' List" : 'Climate finance', topic: '', defaultSpeechMs: 60_000,
+        delegatesCanQueue: false, rulePackageVersionId: 'rules', currentEntryId: null, speechTimerId: 'speech-timer',
+        totalTimerId: kind === 'MODERATED_CAUCUS' ? 'total-timer' : null, linkedResolutionId: null, revision: 2,
+        queue: [], speeches: [], createdAt: '2026-08-14T00:00:00.000Z', closedAt: null}],
+      timers: [{id: 'speech-timer', committeeId: 'committee', ownerType: 'SPEAKER_LIST', ownerId: 'list', running: false,
+        startedAt: null, remainingAtStartMs: 60_000, remainingMs: 60_000, revision: 1, expiredAt: null,
+        serverTime: '2026-08-14T00:00:00.000Z'}, ...(kind === 'MODERATED_CAUCUS' ? [{id: 'total-timer', committeeId: 'committee',
+        ownerType: 'CAUCUS' as const, ownerId: 'list', running: false, startedAt: null, remainingAtStartMs: 600_000,
+        remainingMs: 600_000, revision: 1, expiredAt: null, serverTime: '2026-08-14T00:00:00.000Z'}] : [])]
+    });
+
+    for (const kind of ['GENERAL', 'MODERATED_CAUCUS'] as const) {
+      const page = await render('CHAIR', '/committees/committee/caucuses/list', user, value => withList(value, kind));
+      const dropdown = page.querySelector<HTMLElement>('.speaker-seat-dropdown .ui.dropdown');
+      await act(async () => {dropdown?.click(); await Promise.resolve();});
+      const absent = document.body.querySelector<HTMLElement>('.speaker-seat-dropdown-portal [role="option"]:nth-child(2)');
+      expect(absent?.textContent).toContain('France');
+      expect(absent?.textContent).toContain('Absent');
+      expect(absent).toMatchObject({className: expect.stringContaining('disabled')});
+      expect(absent?.getAttribute('aria-disabled')).toBe('true');
+      await act(async () => {absent?.click(); await Promise.resolve();});
+      expect(dropdown?.getAttribute('aria-expanded')).toBe('true');
+      act(() => root?.unmount()); root = undefined; container?.remove(); container = undefined;
+    }
+  });
+
   it('persists both legacy workspace layout switches as one revisioned setting command', async () => {
     const setLayoutSettings = vi.fn(async () => ({moveQueueUp: true, timersInSeparateColumns: true, revision: 5}));
     const page = await render('CHAIR', '/committees/committee/settings', user, value => ({...value,

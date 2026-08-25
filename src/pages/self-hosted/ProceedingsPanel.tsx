@@ -27,7 +27,8 @@ export const questionContributionTemplate = 'Q:\n\nA:';
 const contributionSaveTimeoutMs = 10_000;
 const contributionSuccessDurationMs = 5_000;
 
-type SpeakerSeatOption = {key: React.Key; value: string; text: string; content?: React.ReactNode};
+type SpeakerSeatOption = {key: React.Key; value: string; text: string; content?: React.ReactNode; description?: React.ReactNode;
+  disabled?: boolean};
 
 function SpeakerSeatDropdown({value, options, disabled = false, error = false, placeholder, onChange}: {
   value: string;
@@ -45,6 +46,13 @@ function SpeakerSeatDropdown({value, options, disabled = false, error = false, p
   const [menuStyle, setMenuStyle] = React.useState<React.CSSProperties>({});
   const selected = options.find(option => option.value === value);
   const filtered = options.filter(option => option.text.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
+  const firstEnabledIndex = () => filtered.findIndex(option => !option.disabled);
+  const moveActiveIndex = (direction: 1 | -1) => setActiveIndex(current => {
+    for (let index = current + direction; index >= 0 && index < filtered.length; index += direction) {
+      if (!filtered[index]?.disabled) return index;
+    }
+    return current;
+  });
 
   const placeMenu = React.useCallback(() => {
     const anchor = anchorRef.current;
@@ -79,25 +87,28 @@ function SpeakerSeatDropdown({value, options, disabled = false, error = false, p
   const openMenu = () => {
     if (disabled) return;
     setOpen(true);
-    setActiveIndex(0);
+    setActiveIndex(firstEnabledIndex());
     requestAnimationFrame(() => inputRef.current?.focus());
   };
   const select = (option: SpeakerSeatOption) => {
+    if (option.disabled) return;
     onChange(option.value);
     setQuery('');
     setOpen(false);
   };
 
-  return <Form.Field className="speaker-seat-dropdown" error={error}>
+  return <Form.Field className="speaker-seat-dropdown" error={error}><>
     <div ref={anchorRef} className={`ui fluid search selection dropdown${open ? ' active visible' : ''}${disabled ? ' disabled' : ''}`}
       role="combobox" aria-expanded={open} aria-haspopup="listbox" onClick={openMenu}>
       <input ref={inputRef} className="search" autoComplete="off" tabIndex={disabled ? -1 : 0} value={query}
         onFocus={openMenu} onChange={event => {setQuery(event.currentTarget.value); setActiveIndex(0);}}
         onKeyDown={event => {
           if (event.key === 'Escape') {setOpen(false); setQuery(''); return;}
-          if (event.key === 'ArrowDown') {event.preventDefault(); setActiveIndex(index => Math.min(index + 1, filtered.length - 1)); return;}
-          if (event.key === 'ArrowUp') {event.preventDefault(); setActiveIndex(index => Math.max(index - 1, 0)); return;}
-          if (event.key === 'Enter' && open && filtered[activeIndex]) {event.preventDefault(); select(filtered[activeIndex]);}
+          if (event.key === 'ArrowDown') {event.preventDefault(); moveActiveIndex(1); return;}
+          if (event.key === 'ArrowUp') {event.preventDefault(); moveActiveIndex(-1); return;}
+          if (event.key === 'Enter' && open && filtered[activeIndex] && !filtered[activeIndex].disabled) {
+            event.preventDefault(); select(filtered[activeIndex]);
+          }
         }} />
       <div className={`${selected ? '' : 'default '}text`}>{query ? '' : selected?.text ?? placeholder ?? ''}</div>
       <Icon name="search" />
@@ -105,12 +116,12 @@ function SpeakerSeatDropdown({value, options, disabled = false, error = false, p
     {open && createPortal(<div className="ui active visible search selection dropdown speaker-seat-dropdown-portal" style={menuStyle}>
       <div className="visible menu transition" role="listbox">
         {filtered.map((option, index) => <div key={option.key} role="option" aria-selected={option.value === value}
-          className={`${option.value === value ? 'selected ' : ''}${index === activeIndex ? 'active ' : ''}item`}
-          onMouseDown={event => event.preventDefault()} onMouseEnter={() => setActiveIndex(index)} onClick={() => select(option)}>
-          {option.content ?? option.text}
+          aria-disabled={option.disabled || undefined} className={`${option.value === value ? 'selected ' : ''}${index === activeIndex ? 'active ' : ''}${option.disabled ? 'disabled ' : ''}item`}
+          onMouseDown={event => event.preventDefault()} onMouseEnter={() => !option.disabled && setActiveIndex(index)} onClick={() => select(option)}>
+          {option.content ?? option.text}{option.description && <span className="description">{option.description}</span>}
         </div>)}
       </div>
-    </div>, document.body)}
+    </div>, document.body)}</>
   </Form.Field>;
 }
 
@@ -132,6 +143,11 @@ function statusLabel(value: string): string { return t(statusLabels[value] ?? va
 function seatOptionContent(seat: CommitteeWorkspaceSnapshot['seats'][number]) {
   const flag = <CountryFlagDisplay flag={seat.flag} />;
   return <span className="motion-seat-option">{flag}<span>{seat.displayName}</span></span>;
+}
+
+function attendanceSeatOptions(snapshot: CommitteeWorkspaceSnapshot, presentSeatIds: Set<string>): SpeakerSeatOption[] {
+  return snapshot.seats.map(seat => ({key: seat.id, value: seat.id, text: seat.displayName, content: seatOptionContent(seat),
+    disabled: !presentSeatIds.has(seat.id), description: presentSeatIds.has(seat.id) ? undefined : t('Absent')}));
 }
 
 function useTimerRemainingMs(timer: AuthoritativeTimer): number {
@@ -367,7 +383,9 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
   const totalTimer = (snapshot.timers ?? []).find(timer => timer.id === list.totalTimerId);
   const configuredYields = snapshot.activeRules.speakerLists.find(item => item.id === list.kind.toLowerCase().replace('_', '-'))?.yieldTypes;
   const allowedYields = configuredYields ? mapRuleYieldTypes(configuredYields) : ['CHAIR', 'SEAT', 'QUESTIONS', 'COMMENTS'];
-  const presentSeats = snapshot.seats.filter(seat => snapshot.attendance?.some(item => item.seatId === seat.id && item.state === 'PRESENT'));
+  const presentSeatIds = new Set(snapshot.attendance.filter(item => item.state === 'PRESENT').map(item => item.seatId));
+  const presentSeats = snapshot.seats.filter(seat => presentSeatIds.has(seat.id));
+  const queueSeatOptions = attendanceSeatOptions(snapshot, presentSeatIds);
   const operationAllowsDelegates = snapshot.committee.operationMode === 'DELEGATE_OPERATED';
   const delegatesCanQueue = operationAllowsDelegates && list.delegatesCanQueue;
   const persistHeader = (change: {name?: string; topic?: string}) => {
@@ -519,8 +537,7 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
     {waitingSpeakers}
     {queued.length > 0 ? <Divider className="speaker-queue-divider speaker-queue-bottom-divider" /> : null}
     {queued.length === 0 && dividerNavigationReady ? <><Divider className="speaker-queue-divider" />{queueDividerNavigation}</> : null}
-    {canChair && <SpeakerSeatDropdown value={seatId} error={!seatId} options={presentSeats.map(seat => ({key: seat.id,
-      value: seat.id, text: seat.displayName, content: seatOptionContent(seat)}))} onChange={setSeatId} />}
+    {canChair && <SpeakerSeatDropdown value={seatId} error={!seatId} options={queueSeatOptions} onChange={setSeatId} />}
     {canChair && operationAllowsDelegates && <div className="speaker-queue-delegate-toggle"><Form.Checkbox
       label={t("Delegates can queue")} toggle checked={delegatesCanQueue}
       onChange={(_, data) => void run(() => api.updateSpeakerList(list.id, list.revision,
@@ -874,9 +891,7 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
   const needsSeconder = Boolean(selectedType && selectedType.requiredSecondCount > 0);
   const presentSeatIds = new Set(snapshot.attendance.filter(item => item.state === 'PRESENT').map(item => item.seatId));
   const presentSeats = snapshot.seats.filter(seat => presentSeatIds.has(seat.id));
-  const seatOptions = snapshot.seats.map(seat => ({key: seat.id, value: seat.id, text: seat.displayName,
-    content: seatOptionContent(seat), disabled: !presentSeatIds.has(seat.id),
-    description: presentSeatIds.has(seat.id) ? undefined : t('Absent')}));
+  const seatOptions = attendanceSeatOptions(snapshot, presentSeatIds);
   const openCaucuses = (snapshot.speakerLists ?? []).filter(list => list.kind === 'MODERATED_CAUCUS' && list.status === 'OPEN');
   const resolutions = (snapshot.documents ?? []).filter(document => document.kind === 'RESOLUTION');
   const amendments = (snapshot.documents ?? []).filter(document => document.kind === 'AMENDMENT');
