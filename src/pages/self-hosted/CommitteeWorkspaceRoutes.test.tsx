@@ -307,6 +307,29 @@ describe('committee workspace routes and roles', () => {
     expect(page.querySelector('.motions-empty-card a[href="/committees/committee/roll-call"]')?.textContent).toContain('Roll call');
   });
 
+  it('links a passed formal-debate motion to the general speakers list', async () => {
+    const motion: ProceedingMotion = {id: 'open-debate', committeeId: 'committee', meetingSessionId: 'meeting',
+      motionTypeId: 'open-debate', proposedBySeatId: 'seat', proposedBySeatDisplayName: 'China', parameters: {},
+      status: 'PASSED', rulePackageVersionId: 'rules', ruleEvaluation: {schemaVersion: 1, packageVersionId: 'rules',
+        definition: {}, facts: {}, resolvedValues: {}, frozenAt: '2026-08-14T00:00:00.000Z'}, requiredSecondCount: 0,
+      seconds: [], revision: 1, directVote: {includeNonVotingSeats: false, startedAt: null, settingsRevision: 1,
+        eligibility: [], choices: ['FOR', 'AGAINST'], threshold: 1, automaticResult: null, votes: []},
+      createdAt: '2026-08-14T00:00:00.000Z', decidedAt: null,
+      destinationPath: '/committees/committee/caucuses/general'};
+    const page = await render('CHAIR', '/committees/committee/motions', user, value => ({...value,
+      meetingSession: {id: 'meeting', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate',
+        activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1,
+        createdAt: '2026-08-14T00:00:00.000Z', closedAt: null}, motions: [motion],
+      activeRules: {...value.activeRules, motionTypes: [{id: 'open-debate', names: {en: 'Open formal debate'},
+        procedural: true, requiredSecondCount: 0}]}}));
+
+    const link = page.querySelector<HTMLAnchorElement>('.motion-queue a[href="/committees/committee/caucuses/general"]');
+    expect(link?.textContent).toContain('General speakers list');
+    expect(link?.classList.contains('primary')).toBe(true);
+    expect(link?.classList.contains('fluid')).toBe(true);
+    expect(link?.classList.contains('bottom')).toBe(true);
+  });
+
   it('separates motion history at meeting-session boundaries', async () => {
     const sessions: NonNullable<CommitteeWorkspaceSnapshot['meetingSessions']> = [
       {id: 'session-2', committeeId: 'committee', name: '第2会期', phaseId: 'formal-debate',

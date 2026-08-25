@@ -804,6 +804,7 @@ const motionDetailLabel = (id: string) => ({'open-moderated-caucus': 'Topic', 'i
   'introduce-amendment': 'Text', 'propose-strawpoll': 'Question', 'introduce-working-paper': 'Task'}[id] ?? '');
 const motionDestinationLabel = (id: string) => ({'open-moderated-caucus': 'Caucuses',
   'extend-moderated-caucus': 'Caucuses', 'close-moderated-caucus': 'Caucuses',
+  'open-debate': 'General speakers list',
   'open-unmoderated-caucus': 'Unmod', 'extend-unmoderated-caucus': 'Unmod',
   'introduce-working-paper': 'Unmod', 'introduce-draft-resolution': 'Draft resolution',
   'introduce-amendment': 'Amendments', 'vote-on-amendment': 'Amendments', 'vote-on-resolution': 'Voting',
