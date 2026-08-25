@@ -62,6 +62,17 @@ describe('self-hosted workspace navigation', () => {
     expect(active?.getAttribute('href')).toBe('/committees/committee/caucuses/mod');
   });
 
+  it('opens caucus creation without navigating to the legacy new route', () => {
+    const onCreateCaucus = vi.fn();
+    const page = render(<CommitteeNavigation snapshot={snapshot} user={user} logout={() => undefined}
+      onCreateCaucus={onCreateCaucus} />, '/committees/committee/caucuses/gsl');
+    const item = [...page.querySelectorAll<HTMLElement>('.committee-primary-navigation .dropdown .item')]
+      .find(candidate => candidate.textContent?.includes('New caucus'));
+    expect(item?.getAttribute('href')).toBeNull();
+    act(() => item?.click());
+    expect(onCreateCaucus).toHaveBeenCalledOnce();
+  });
+
   it('keeps templates and operations in the account menu', () => {
     const admin = {...user, isSystemAdmin: true};
     const page = render(<CommitteeNavigation snapshot={snapshot} user={admin} logout={() => undefined} />,

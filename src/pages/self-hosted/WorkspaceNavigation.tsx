@@ -65,7 +65,9 @@ function routeActive(pathname: string, destination: string, prefix = false) {
   return prefix ? pathname === destination || pathname.startsWith(`${destination}/`) : pathname === destination;
 }
 
-function PrimaryItems({snapshot, onNavigate}: {snapshot: CommitteeWorkspaceSnapshot; onNavigate?(): void}) {
+function PrimaryItems({snapshot, onNavigate, onCreateCaucus}: {
+  snapshot: CommitteeWorkspaceSnapshot; onNavigate?(): void; onCreateCaucus?(): void;
+}) {
   const location = useLocation();
   const base = `/committees/${snapshot.committee.id}`;
   const item = (path: string, label: string) => <Menu.Item key={path} as={Link} to={`${base}${path}`}
@@ -77,7 +79,9 @@ function PrimaryItems({snapshot, onNavigate}: {snapshot: CommitteeWorkspaceSnaps
     return <Dropdown key={kind} item text={t(label)}
       className={isActive ? 'active' : undefined}>
       <Dropdown.Menu>
-        <Dropdown.Item as={Link} to={`${destination}/new`} icon="add" text={t(createLabel)} onClick={onNavigate} />
+        {kind === 'caucuses' && onCreateCaucus
+          ? <Dropdown.Item icon="add" text={t(createLabel)} onClick={() => {onNavigate?.(); onCreateCaucus();}} />
+          : <Dropdown.Item as={Link} to={`${destination}/new`} icon="add" text={t(createLabel)} onClick={onNavigate} />}
         {resources.map(resource => <Dropdown.Item key={resource.id} as={Link} to={`${destination}/${resource.id}`}
           active={location.pathname === `${destination}/${resource.id}` || location.pathname.startsWith(`${destination}/${resource.id}/`)}
           text={resource.label} onClick={onNavigate} />)}
@@ -116,15 +120,15 @@ function PrimaryItems({snapshot, onNavigate}: {snapshot: CommitteeWorkspaceSnaps
   </>;
 }
 
-export function CommitteeNavigation({snapshot, user, logout, realtimeStatus = 'CONNECTING', children}: {
+export function CommitteeNavigation({snapshot, user, logout, realtimeStatus = 'CONNECTING', onCreateCaucus, children}: {
   snapshot: CommitteeWorkspaceSnapshot; user?: SelfHostedUser; logout(): void; realtimeStatus?: RealtimeStatus;
-  children?: React.ReactNode;
+  onCreateCaucus?(): void; children?: React.ReactNode;
 }) {
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
   return <>
     <nav className="committee-navigation-desktop" aria-label={t('Committee navigation')}>
       <Menu className="committee-primary-navigation" size="large" fluid>
-        <PrimaryItems snapshot={snapshot} />
+        <PrimaryItems snapshot={snapshot} onCreateCaucus={onCreateCaucus} />
         <Menu.Menu position="right"><AttendanceThresholdItem snapshot={snapshot} /><RealtimeStatusItem status={realtimeStatus} />
           {user && <AccountMenu user={user} logout={logout} />}</Menu.Menu>
       </Menu>
@@ -133,7 +137,7 @@ export function CommitteeNavigation({snapshot, user, logout, realtimeStatus = 'C
       <Sidebar className="committee-mobile-sidebar" as={Menu} animation="uncover" vertical visible={sidebarOpen}
         onHide={() => setSidebarOpen(false)}>
         <RealtimeStatusItem status={realtimeStatus} />
-        <PrimaryItems snapshot={snapshot} onNavigate={() => setSidebarOpen(false)} />
+        <PrimaryItems snapshot={snapshot} onNavigate={() => setSidebarOpen(false)} onCreateCaucus={onCreateCaucus} />
       </Sidebar>
       <Sidebar.Pusher dimmed={sidebarOpen} onClick={() => sidebarOpen && setSidebarOpen(false)}>
         <nav aria-label={t('Committee navigation')}>

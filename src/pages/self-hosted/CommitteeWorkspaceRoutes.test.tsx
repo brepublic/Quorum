@@ -648,6 +648,110 @@ describe('committee workspace routes and roles', () => {
       .map(button => button.textContent?.trim())).toEqual(['Failed', 'Passed']);
   });
 
+  it('redirects the legacy caucus route into the moderated-caucus modal and creates from second defaults', async () => {
+    const createSpeakerList = vi.fn(async () => ({id: 'created'} as SpeakerList));
+    await render('CHAIR', '/committees/committee/caucuses/new', user, value => ({...value,
+      meetingSession: {id: 'meeting', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate',
+        activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1,
+        createdAt: '2026-08-14T00:00:00.000Z', closedAt: null}}), {createSpeakerList});
+    await act(async () => {await Promise.resolve(); await Promise.resolve();});
+    const modal = document.querySelector('.moderated-caucus-create-modal');
+    const topic = modal?.querySelector<HTMLInputElement>('input:not([inputmode="decimal"])');
+    const durations = modal?.querySelectorAll<HTMLInputElement>('input[inputmode="decimal"]');
+    const submit = modal?.querySelector<HTMLButtonElement>('button.primary');
+    expect(topic?.closest('.field')?.textContent).toContain('Topic');
+    expect(Array.from(durations ?? []).map(input => input.value)).toEqual(['60', '600']);
+    expect(submit?.disabled).toBe(true);
+
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(topic, 'Climate finance');
+      topic?.dispatchEvent(new Event('input', {bubbles: true}));
+      await Promise.resolve();
+    });
+    expect(submit?.disabled).toBe(false);
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(durations?.[1], '601');
+      durations?.[1]?.dispatchEvent(new Event('input', {bubbles: true}));
+      await Promise.resolve();
+    });
+    expect(durations?.[1]?.closest('.field')?.classList.contains('error')).toBe(true);
+    expect(submit?.disabled).toBe(true);
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(durations?.[1], '600');
+      durations?.[1]?.dispatchEvent(new Event('input', {bubbles: true}));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      modal?.querySelector<HTMLFormElement>('form')?.dispatchEvent(new Event('submit', {bubbles: true, cancelable: true}));
+      await Promise.resolve(); await Promise.resolve();
+    });
+
+    expect(createSpeakerList).toHaveBeenCalledWith('committee', {meetingSessionId: 'meeting', kind: 'MODERATED_CAUCUS',
+      name: 'Climate finance', topic: 'Climate finance', defaultSpeechMs: 60_000, totalDurationMs: 600_000});
+  });
+
+  it('shows static second units and rejects duration precision beyond two decimal places', async () => {
+    await render('CHAIR', '/committees/committee/caucuses/new', user, value => ({...value,
+      meetingSession: {id: 'meeting', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate',
+        activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1,
+        createdAt: '2026-08-14T00:00:00.000Z', closedAt: null}}));
+    await act(async () => {await Promise.resolve(); await Promise.resolve();});
+    const modal = document.querySelector('.moderated-caucus-create-modal');
+    const input = modal?.querySelector<HTMLInputElement>('input[inputmode="decimal"]');
+    expect(modal?.querySelector('.ui.dropdown')).toBeNull();
+    expect(Array.from(modal?.querySelectorAll('.moderated-caucus-duration-unit-text') ?? [])
+      .map(unit => unit.textContent)).toEqual(['sec', 'sec']);
+
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(input, '0.333');
+      input?.dispatchEvent(new Event('input', {bubbles: true})); await Promise.resolve();
+    });
+    expect(input?.closest('.field')?.classList.contains('error')).toBe(true);
+  });
+
+  it('keeps the moderated-caucus modal open after a dimmer click and explains how to close it', async () => {
+    const page = await render('CHAIR', '/committees/committee/motions', user, value => ({...value,
+      meetingSession: {id: 'meeting', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate',
+        activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1,
+        createdAt: '2026-08-14T00:00:00.000Z', closedAt: null}}));
+    const createItem = [...page.querySelectorAll<HTMLElement>('.committee-primary-navigation .dropdown .item')]
+      .find(item => item.textContent?.includes('New caucus'));
+    await act(async () => {createItem?.click(); await Promise.resolve();});
+    const dimmer = document.querySelector<HTMLElement>('.moderated-caucus-create-modal')?.parentElement;
+    act(() => dimmer?.dispatchEvent(new MouseEvent('click', {bubbles: true})));
+    expect(document.querySelector('.moderated-caucus-create-modal')?.textContent)
+      .toContain('To close the dialog, click "X".');
+    expect(document.querySelector('.moderated-caucus-create-header .moderated-caucus-create-close')).not.toBeNull();
+  });
+
+  it('shows an agenda field only on the general speakers list', async () => {
+    const withList = (value: CommitteeWorkspaceSnapshot, kind: 'GENERAL' | 'MODERATED_CAUCUS') => ({...value,
+      speakerLists: [{id: 'list', committeeId: 'committee', meetingSessionId: 'meeting', kind, status: 'OPEN' as const,
+        name: kind === 'GENERAL' ? "General Speakers' List" : 'Climate finance', topic: 'Climate finance',
+        defaultSpeechMs: 60_000, delegatesCanQueue: false, rulePackageVersionId: 'rules', currentEntryId: null,
+        speechTimerId: 'speech-timer', totalTimerId: kind === 'MODERATED_CAUCUS' ? 'total-timer' : null,
+        linkedResolutionId: null, revision: 1, queue: [], speeches: [],
+        createdAt: '2026-08-14T00:00:00.000Z', closedAt: null}]});
+    const general = await render('CHAIR', '/committees/committee/caucuses/list', user,
+      value => withList(value, 'GENERAL'));
+    expect(general.querySelector<HTMLTextAreaElement>('textarea')?.placeholder).toBe('Set agenda');
+
+    act(() => root?.unmount()); root = undefined; container?.remove(); container = undefined;
+    const updateSpeakerList = vi.fn(async () => ({id: 'list'} as SpeakerList));
+    const moderated = await render('CHAIR', '/committees/committee/caucuses/list', user,
+      value => withList(value, 'MODERATED_CAUCUS'), {updateSpeakerList});
+    expect(moderated.querySelector('textarea')).toBeNull();
+    const name = moderated.querySelector<HTMLInputElement>('input[placeholder="Set caucus name"]');
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(name, 'International finance');
+      name?.dispatchEvent(new Event('input', {bubbles: true}));
+      name?.dispatchEvent(new FocusEvent('focusout', {bubbles: true}));
+      await Promise.resolve(); await Promise.resolve();
+    });
+    expect(updateSpeakerList).toHaveBeenCalledWith('list', 1,
+      {name: 'International finance', topic: 'International finance'});
+  });
+
   it('shows current, next, timers, and queue only for the selected speaker list route', async () => {
     const page = await render('CHAIR', '/committees/committee/caucuses/list', user, value => ({...value,
       meetingSession: {id: 'meeting', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate',

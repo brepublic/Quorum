@@ -317,13 +317,8 @@ export function legacyInterlacedQueue(entries: SpeakerQueueEntry[], presentSeatI
 }
 
 function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProps & {resourceId?: string}) {
-  const history = useHistory();
   const list = (snapshot.speakerLists ?? []).find(item => item.id === resourceId);
-  const session = snapshot.meetingSession?.status === 'OPEN' ? snapshot.meetingSession : undefined;
   const [seatId, setSeatId] = React.useState(snapshot.viewer.seatId ?? snapshot.seats[0]?.id ?? '');
-  const defaults = snapshot.activeRules.speakerLists.find(item => item.id === 'moderated-caucus');
-  const [topic, setTopic] = React.useState(''); const [speechSeconds, setSpeechSeconds] = React.useState(defaults?.defaultDurationSeconds ?? 60);
-  const [totalMinutes, setTotalMinutes] = React.useState(Math.ceil((defaults?.defaultTotalDurationSeconds ?? 600) / 60));
   const [yieldType, setYieldType] = React.useState<YieldType>('CHAIR'); const [yieldSeat, setYieldSeat] = React.useState('');
   const [contribution, setContribution] = React.useState('');
   const [recordedContributionSpeechId, setRecordedContributionSpeechId] = React.useState<string>();
@@ -342,20 +337,6 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
   const serverCaughtUp = localQueueOrder !== null && serverOrderStr === localQueueOrder.join(',');
   React.useEffect(() => { if (serverCaughtUp) setLocalQueueOrder(null); }, [serverCaughtUp]);
   const canParticipate = snapshot.viewer.audience !== 'PUBLIC' && snapshot.committee.status === 'ACTIVE';
-  if (resourceId === 'new') return <><Header as="h1">{t('New caucus')}</Header>{canChair && session
-    ? <Form onSubmit={async () => {let created: Awaited<ReturnType<SelfHostedApi['createSpeakerList']>> | undefined;
-      await run(async () => {created = await api.createSpeakerList(snapshot.committee.id, {meetingSessionId: session.id,
-        kind: 'MODERATED_CAUCUS', topic: topic.trim(), defaultSpeechMs: speechSeconds * 1000,
-        totalDurationMs: totalMinutes * 60_000});});
-      if (created) history.replace(`/committees/${snapshot.committee.id}/caucuses/${created.id}`);}}>
-      <Form.Input required error={!topic.trim()} label={t('Topic')} value={topic}
-        onChange={event => setTopic(event.currentTarget.value)} />
-      <Form.Input type="number" min={1} label={t('Speaker time in seconds')} value={speechSeconds}
-        onChange={event => setSpeechSeconds(Number(event.currentTarget.value))} />
-      <Form.Input type="number" min={1} label={t('Total time in minutes')} value={totalMinutes}
-        onChange={event => setTotalMinutes(Number(event.currentTarget.value))} />
-      <Button primary disabled={!topic.trim() || speechSeconds < 1 || totalMinutes < 1}>{t('New caucus')}</Button>
-    </Form> : <Message content={session ? t('Chair capability is required.') : t('Start a meeting first.')} />}</>;
   if (!list) return <Message error content={t('Speaker list not found.')} />;
   const current = list.queue.find(entry => entry.id === list.currentEntryId);
   const serverQueued = list.queue.filter(entry => entry.status === 'QUEUED');
@@ -391,8 +372,10 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
   const persistHeader = (change: {name?: string; topic?: string}) => {
     if (!canChair) return;
     const cleaned = {...change, ...(change.name !== undefined ? {name: change.name.trim()} : {})};
-    if (cleaned.name === '' || cleaned.name === list.name || cleaned.name === localizeGeneratedName(list.name)
-      || cleaned.topic === list.topic) return;
+    const nameUnchanged = cleaned.name === undefined || cleaned.name === list.name
+      || cleaned.name === localizeGeneratedName(list.name);
+    const topicUnchanged = cleaned.topic === undefined || cleaned.topic === list.topic;
+    if (cleaned.name === '' || (nameUnchanged && topicUnchanged)) return;
     void run(() => api.updateSpeakerList(list.id, list.revision, cleaned));
   };
   const joinQueue = () => void run(() => api.joinSpeakerQueue(list.id, canChair ? seatId : undefined));
@@ -493,10 +476,12 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
       list.revision, data.value as 'OPEN' | 'CLOSED'))} /> : <span>{t(list.status === 'OPEN' ? 'Open' : 'Closed')}</span>;
   const header = <Grid.Row><Grid.Column><Input label={statusControl} labelPosition="right" value={nameDraft} fluid size="massive"
     readOnly={!canChair} placeholder={t(list.kind === 'GENERAL' ? 'Set speakers list name' : 'Set caucus name')}
-    onChange={event => setNameDraft(event.currentTarget.value)} onBlur={() => persistHeader({name: nameDraft})} />
-    <Form><TextArea value={topicDraft} rows={1} readOnly={!canChair}
-      placeholder={t(list.kind === 'GENERAL' ? 'Set speakers list details' : 'Set caucus details')}
+    onChange={event => setNameDraft(event.currentTarget.value)}
+    onBlur={() => persistHeader(list.kind === 'GENERAL' ? {name: nameDraft} : {name: nameDraft, topic: nameDraft})} />
+    {list.kind === 'GENERAL' && <Form><TextArea value={topicDraft} rows={1} readOnly={!canChair}
+      placeholder={t('Set agenda')}
       onChange={event => setTopicDraft(event.currentTarget.value)} onBlur={() => persistHeader({topic: topicDraft})} /></Form>
+    }
   </Grid.Column></Grid.Row>;
   if (list.status === 'CLOSED') return <Container className="legacy-speaker-workspace"><Grid columns="equal" stackable>{header}
     <Grid.Row><Grid.Column><Segment placeholder textAlign="center"><Header icon><Icon name="check circle outline" />

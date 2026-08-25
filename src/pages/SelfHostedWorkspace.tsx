@@ -11,7 +11,7 @@ import type {
   Stage4CommitteeSeat
 } from '@quorum/contracts';
 import {Link, Redirect, Route, Switch, useHistory, useLocation, useParams} from 'react-router-dom';
-import {Button, Card, Checkbox, Confirm, Container, Divider, Form, Grid, Header, Icon, Label, List, Menu, Message, Pagination, Popup, Segment, Table} from 'semantic-ui-react';
+import {Button, Card, Checkbox, Confirm, Container, Divider, Form, Grid, Header, Icon, Label, List, Menu, Message, Modal, Pagination, Popup, Segment, Table} from 'semantic-ui-react';
 import Loading from '../components/Loading';
 import {CountryFlagDisplay} from '../components/CountryFlagDisplay';
 import {LanguageMenuItem, t} from '../i18n';
@@ -836,6 +836,91 @@ function HelpPanel({snapshot}: {snapshot: CommitteeWorkspaceSnapshot}) {
   </Container>;
 }
 
+function ModeratedCaucusCreateModal({open, snapshot, run, api, canChair, onClose, onCreated}: {
+  open: boolean; snapshot: CommitteeWorkspaceSnapshot; run: WorkspaceCommand; api: SelfHostedApi; canChair: boolean;
+  onClose(): void; onCreated(id: string): void;
+}) {
+  const fixedHundredths = (value: string) => {
+    const match = /^(\d+)(?:\.(\d{1,2}))?$/.exec(value.trim());
+    if (!match) return undefined;
+    return Number(match[1]) * 100 + Number((match[2] ?? '').padEnd(2, '0'));
+  };
+  const durationMs = (value: string) => {
+    const hundredths = fixedHundredths(value);
+    if (hundredths === undefined || hundredths <= 0) return undefined;
+    return hundredths * 10;
+  };
+  const session = snapshot.meetingSession?.status === 'OPEN' ? snapshot.meetingSession : undefined;
+  const [topic, setTopic] = React.useState('');
+  const [unitDuration, setUnitDuration] = React.useState('60');
+  const [totalDuration, setTotalDuration] = React.useState('600');
+  const [submitting, setSubmitting] = React.useState(false);
+  const [closeHint, setCloseHint] = React.useState(false);
+  const [topicTouched, setTopicTouched] = React.useState(false);
+  const [unitDurationTouched, setUnitDurationTouched] = React.useState(false);
+  const [totalDurationTouched, setTotalDurationTouched] = React.useState(false);
+  React.useEffect(() => {
+    if (!open) return;
+    setTopic(''); setUnitDuration('60'); setTotalDuration('600'); setSubmitting(false); setCloseHint(false);
+    setTopicTouched(false); setUnitDurationTouched(false); setTotalDurationTouched(false);
+  }, [open]);
+  const unitDurationMs = durationMs(unitDuration);
+  const totalDurationMs = durationMs(totalDuration);
+  const durationMultiple = unitDurationMs !== undefined && totalDurationMs !== undefined
+    && totalDurationMs % unitDurationMs === 0;
+  const valid = Boolean(topic.trim()) && durationMultiple;
+  const submit = async () => {
+    if (!canChair || !session || !valid || submitting || unitDurationMs === undefined || totalDurationMs === undefined) return;
+    setSubmitting(true);
+    let created: Awaited<ReturnType<SelfHostedApi['createSpeakerList']>> | undefined;
+    try {
+      await run(async () => {created = await api.createSpeakerList(snapshot.committee.id, {meetingSessionId: session.id,
+        kind: 'MODERATED_CAUCUS', name: topic.trim(), topic: topic.trim(), defaultSpeechMs: unitDurationMs,
+        totalDurationMs});});
+    } finally {
+      setSubmitting(false);
+    }
+    if (created) onCreated(created.id);
+  };
+  const topicInvalid = topicTouched && !topic.trim();
+  const unitDurationInvalid = unitDurationTouched && unitDurationMs === undefined;
+  const totalDurationInvalid = totalDurationTouched && (totalDurationMs === undefined || !durationMultiple);
+  return <Modal className="moderated-caucus-create-modal" closeOnDimmerClick={false}
+    dimmer={{onClick: (event: React.MouseEvent<HTMLElement>) => {
+      if (event.target === event.currentTarget) setCloseHint(true);
+    }}} mountNode={document.body} onClose={onClose} open={open} size="small">
+    <Modal.Header className="moderated-caucus-create-header">{t('New caucus')}
+      <Button className="moderated-caucus-create-close" basic circular icon aria-label={t('Close')} onClick={onClose}>
+        <Icon name="close" />
+      </Button>
+    </Modal.Header>
+    <Modal.Content>
+      {canChair && session ? <Form onSubmit={() => void submit()}>
+        <Form.Input required error={topicInvalid} label={t('Topic')} value={topic}
+          onBlur={() => setTopicTouched(true)} onChange={event => {setTopic(event.currentTarget.value); setCloseHint(false);}} />
+        <Form.Group className="moderated-caucus-duration-row"><Form.Input className="moderated-caucus-duration-value"
+          required type="text" inputMode="decimal" pattern="\d+(\.\d{1,2})?"
+          id="moderated-caucus-unit-duration"
+          label={t('Unit duration')} value={unitDuration}
+          onBlur={() => setUnitDurationTouched(true)} error={unitDurationInvalid}
+          onChange={event => {setUnitDuration(event.currentTarget.value); setCloseHint(false);}} />
+        <Form.Field className="moderated-caucus-duration-unit"><div className="moderated-caucus-duration-unit-text">{t('sec')}</div></Form.Field></Form.Group>
+        <Form.Group className="moderated-caucus-duration-row"><Form.Input className="moderated-caucus-duration-value"
+          required type="text" inputMode="decimal" pattern="\d+(\.\d{1,2})?"
+          id="moderated-caucus-total-duration"
+          label={t('Total duration')} value={totalDuration}
+          onBlur={() => setTotalDurationTouched(true)} error={totalDurationInvalid}
+          onChange={event => {setTotalDuration(event.currentTarget.value); setCloseHint(false);}} />
+        <Form.Field className="moderated-caucus-duration-unit"><div className="moderated-caucus-duration-unit-text">{t('sec')}</div></Form.Field></Form.Group>
+        {closeHint && <Message info content={t('To close the dialog, click "X".')} />}
+        <Button primary fluid loading={submitting} disabled={!valid || submitting}>
+          {t('Moderated caucus')}<Icon name="arrow right" />
+        </Button>
+      </Form> : <Message content={session ? t('Chair capability is required.') : t('Start a meeting first.')} />}
+    </Modal.Content>
+  </Modal>;
+}
+
 export function SelfHostedCommitteeWorkspace({api = selfHostedApi, user, logout = () => undefined}: {
   api?: SelfHostedApi; user?: SelfHostedUser; logout?(): void;
 }) {
@@ -849,6 +934,10 @@ function CommitteeWorkspaceContent({id, api, user, logout}: {
   id: string; api: SelfHostedApi; user?: SelfHostedUser; logout(): void;
 }) {
   const {snapshot, error, realtimeStatus, refresh, run} = useCommitteeWorkspace();
+  const location = useLocation(); const history = useHistory();
+  const newCaucusPath = `/committees/${id}/caucuses/new`;
+  const [createCaucusOpen, setCreateCaucusOpen] = React.useState(location.pathname === newCaucusPath);
+  React.useEffect(() => {if (location.pathname === newCaucusPath) setCreateCaucusOpen(true);}, [location.pathname, newCaucusPath]);
   if (!snapshot && !error) return <Loading />;
   if (!snapshot) return <Container text><Message error content={error} /><Button onClick={() => void refresh()}>{t('Retry')}</Button></Container>;
   const interactionSnapshot: CommitteeWorkspaceSnapshot = realtimeStatus === 'OFFLINE_READONLY'
@@ -856,7 +945,8 @@ function CommitteeWorkspaceContent({id, api, user, logout}: {
   const canChair = (interactionSnapshot.viewer.audience === 'CHAIR' || interactionSnapshot.viewer.audience === 'OWNER')
     && snapshot.committee.status !== 'ARCHIVED' && snapshot.committee.status !== 'DELETING';
   const base = `/committees/${id}`;
-  return <CommitteeNavigation snapshot={snapshot} user={user} logout={logout} realtimeStatus={realtimeStatus}>
+  return <CommitteeNavigation snapshot={snapshot} user={user} logout={logout} realtimeStatus={realtimeStatus}
+    onCreateCaucus={() => setCreateCaucusOpen(true)}>
     <Container fluid className="committee-workspace-page">{error && <Message error content={error} />}
         <Switch>
           <Route exact path={base}><Redirect to={base + '/roll-call'} /></Route>
@@ -870,6 +960,7 @@ function CommitteeWorkspaceContent({id, api, user, logout}: {
           <Route exact path={`${base}/files`}><Redirect to={`${base}/posts/attachments`} /></Route>
           <Route path={`${base}/motions`}><ProceedingsPanel view="motions" snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} /></Route>
           <Route path={`${base}/unmod`}><ProceedingsPanel view="unmod" snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} /></Route>
+          <Route exact path={newCaucusPath}><Redirect to={`${base}/motions`} /></Route>
           <Route path={`${base}/caucuses/:listId`} render={({match}) => <ProceedingsPanel view="caucus" resourceId={match.params.listId}
             snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} />} />
           <Route path={`${base}/resolutions/:documentId/:tab?`} render={({match}) => <ProceedingsPanel view="resolution"
@@ -882,6 +973,10 @@ function CommitteeWorkspaceContent({id, api, user, logout}: {
           <Redirect to={base} />
         </Switch>
     </Container>
+    <ModeratedCaucusCreateModal open={createCaucusOpen} snapshot={interactionSnapshot} run={run} api={api}
+      canChair={canChair} onClose={() => setCreateCaucusOpen(false)} onCreated={listId => {
+        setCreateCaucusOpen(false); history.push(`${base}/caucuses/${listId}`);
+      }} />
   </CommitteeNavigation>;
 }
 

@@ -145,6 +145,38 @@
   width: 100% !important;
 }
 
+.ui.modal.moderated-caucus-create-modal > .moderated-caucus-create-header {
+  padding-right: 4rem;
+  position: relative;
+}
+
+.ui.modal.moderated-caucus-create-modal .moderated-caucus-create-close.button {
+  position: absolute;
+  right: 0.75rem;
+  top: 0.55rem;
+}
+
+.ui.form .fields.moderated-caucus-duration-row {
+  align-items: flex-end;
+}
+
+.ui.form .fields.moderated-caucus-duration-row > .moderated-caucus-duration-value.field {
+  flex: 1 1 auto;
+  width: auto;
+}
+
+.ui.form .fields.moderated-caucus-duration-row > .moderated-caucus-duration-unit.field {
+  flex: 0 0 4.5rem;
+  width: 4.5rem;
+}
+
+.moderated-caucus-duration-unit-text {
+  align-items: center;
+  display: flex;
+  height: 38px;
+  justify-content: center;
+}
+
 .committee-overview-page.ui.container {
   margin: 0 auto !important;
   max-width: min(100%, 44rem) !important;
