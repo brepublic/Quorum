@@ -1003,9 +1003,16 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   align-self: center;
 }
 
-.motion-metadata-table.ui.table {
+.motion-card .motion-metadata-table.ui.table {
   color: inherit;
-  margin-top: 0.45rem;
+  margin-top: 1em;
+}
+
+.motion-metadata-table.ui.table td:not(.motion-metadata-key),
+.motion-metadata-table .motion-metadata-value,
+.motion-metadata-table .motion-seat-option > span:last-child {
+  font-size: 1em;
+  line-height: 1.5;
 }
 
 .motion-metadata-table.ui.table td.motion-metadata-key {
@@ -1014,6 +1021,34 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   font-weight: 700;
   white-space: nowrap;
   width: 1%;
+}
+
+.motion-metadata-table .motion-seat-option {
+  align-items: center;
+}
+
+.motion-metadata-table .motion-seat-option .country-flag-display,
+.motion-metadata-table .motion-seat-option .country-flag-display:has(> .country-flag-display-image) {
+  border-color: transparent;
+  flex: 0 0 2.5rem;
+  font-size: 1.5rem;
+  height: 1.5rem;
+  margin-right: 0.5rem;
+  width: 2.5rem;
+}
+
+.motion-metadata-table .motion-seat-option .country-flag-display-image {
+  height: 100%;
+  max-height: 100%;
+  max-width: 100%;
+  object-fit: contain;
+  width: 100%;
+}
+
+.motion-metadata-table .motion-metadata-value > .ui.mini.label {
+  font-size: 0.875em;
+  line-height: 1;
+  padding: 0.1875em 0.5em;
 }
 
 .motion-proposer-field > label,
