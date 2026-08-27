@@ -67,7 +67,7 @@ export class StorageAgentRuntime {
     await this.applyConflictResolutions(await this.client.conflicts(this.leaseGeneration));
     const tasks = await this.loadTasks();
     tasks.sort((left, right) => {
-      const order = {DELETE_FILE: 0, STORE_BLOB: 1, UPLOAD_BLOB: 2};
+      const order = {DELETE_FILE: 0, STORE_BLOB: 1, HOST_COMMIT_BLOB: 2, UPLOAD_BLOB: 3};
       return order[left.type] - order[right.type] || left.sequence - right.sequence;
     });
     for (const task of tasks.filter(item => due(item))) await this.processTask(task);
@@ -110,7 +110,7 @@ export class StorageAgentRuntime {
     const tasks: StorageAgentTask[] = []; let after = 0;
     while (true) {
       const page = await this.client.tasks(this.leaseGeneration, after, 100);
-      if (page.tasks.some(task => !['STORE_BLOB', 'UPLOAD_BLOB', 'DELETE_FILE'].includes(task.type)
+      if (page.tasks.some(task => !['STORE_BLOB', 'HOST_COMMIT_BLOB', 'UPLOAD_BLOB', 'DELETE_FILE'].includes(task.type)
         || !['PENDING', 'IN_PROGRESS', 'RETRY', 'COMPLETED', 'FAILED', 'CANCELLED'].includes(task.status))
         || (page.hasMore && page.nextSequence <= after)) {
         throw new AgentApiError(502, 'UNKNOWN_PROTOCOL_STATE', 'Storage task response is invalid.');
@@ -157,6 +157,15 @@ export class StorageAgentRuntime {
         if (pending && pending.relativePath !== event.logicalName) {
           await this.files.discardConflict(pending.relativePath, expected);
         }
+      } else if (claimed.type === 'HOST_COMMIT_BLOB') {
+        if (!claimed.logicalName || !claimed.blobId || claimed.expectedSizeBytes === null || !claimed.expectedSha256) {
+          throw new AgentFileSystemError('LOCAL_CONTENT_INVALID', 'Host commit task lacks file metadata.');
+        }
+        await this.files.applyUpsert({sequence: this.state.snapshot().manifestSequence, kind: 'UPSERT',
+          fileEntryId: claimed.fileEntryId, fileRevision: claimed.fileRevision, versionId: claimed.id,
+          blobId: claimed.blobId, logicalName: claimed.logicalName, originalName: claimed.logicalName,
+          mediaType: 'application/octet-stream', sizeBytes: claimed.expectedSizeBytes, sha256: claimed.expectedSha256,
+          createdAt: claimed.createdAt}, await this.client.download(claimed, token));
       } else {
         const pending = this.state.snapshot().pendingUploads[claimed.id];
         if (!pending || pending.fileRevision !== claimed.fileRevision || pending.sha256 !== claimed.expectedSha256) {

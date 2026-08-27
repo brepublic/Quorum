@@ -31,7 +31,7 @@ function taskRow(content: string) {
   const now = new Date('2026-08-13T00:00:00.000Z');
   return {id: taskId, committee_id: committeeId, host_id: hostId, lease_generation: '2', sequence: '1',
     task_type: 'UPLOAD_BLOB', file_entry_id: entryId, file_revision: 3, blob_id: blobId,
-    expected_size_bytes: String(Buffer.byteLength(content)), expected_sha256_hex: digest(content),
+    expected_size_bytes: String(Buffer.byteLength(content)), expected_sha256_hex: digest(content), source_upload_logical_name: null,
     content_staging_key: 'agent-uploads/30/30000000000040008000000000000001', content_state: 'NONE',
     source_upload_id: null as string | null,
     received_size_bytes: null, actual_sha256_hex: null, status: 'IN_PROGRESS', revision: 2, attempts: 1,

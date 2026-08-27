@@ -35,7 +35,7 @@ export interface StorageAgentIdentity {
   leaseGeneration: number;
 }
 
-export const STORAGE_AGENT_TASK_TYPES = ['STORE_BLOB', 'UPLOAD_BLOB', 'DELETE_FILE'] as const;
+export const STORAGE_AGENT_TASK_TYPES = ['STORE_BLOB', 'HOST_COMMIT_BLOB', 'UPLOAD_BLOB', 'DELETE_FILE'] as const;
 export type StorageAgentTaskType = typeof STORAGE_AGENT_TASK_TYPES[number];
 
 export const STORAGE_AGENT_TASK_STATUSES = [
@@ -53,6 +53,7 @@ export interface StorageAgentTask {
   blobId: string | null;
   expectedSizeBytes: number | null;
   expectedSha256: string | null;
+  logicalName: string | null;
   contentState: 'NONE' | 'RECEIVING' | 'STAGED';
   receivedSizeBytes: number | null;
   actualSha256: string | null;

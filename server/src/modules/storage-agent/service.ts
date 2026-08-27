@@ -277,7 +277,7 @@ export class Stage7StorageAgentService {
           WHERE committee_id=$1 AND status<>'DELETED'`, [committee.id, now]);
       }
       const pendingUploads = await client.query<{
-        upload_id: string; task_id: string; task_type: 'STORE_BLOB' | 'UPLOAD_BLOB'; host_id: string; file_entry_id: string;
+        upload_id: string; task_id: string; task_type: 'HOST_COMMIT_BLOB' | 'UPLOAD_BLOB'; host_id: string; file_entry_id: string;
         file_revision: number; blob_id: string; expected_size_bytes: string | number; expected_sha256: Buffer;
       }>(`SELECT upload.id AS upload_id,task.id AS task_id,task.task_type,task.host_id,task.file_entry_id,task.file_revision,
         task.blob_id,task.expected_size_bytes,task.expected_sha256 FROM file_uploads upload
@@ -319,7 +319,7 @@ export class Stage7StorageAgentService {
         await client.query(`INSERT INTO storage_agent_tasks
           (id,committee_id,host_id,lease_generation,sequence,task_type,file_entry_id,file_revision,blob_id,
            expected_size_bytes,expected_sha256,source_upload_id)
-          VALUES ($1,$2,$3,$4,$5,'STORE_BLOB',$6,$7,$8,$9,$10,$11)`,
+          VALUES ($1,$2,$3,$4,$5,'HOST_COMMIT_BLOB',$6,$7,$8,$9,$10,$11)`,
         [replacementId, committee.id, hostId, leaseGeneration, allocated.rows[0]?.sequence,
           pending.file_entry_id, pending.file_revision, pending.blob_id, pending.expected_size_bytes,
           pending.expected_sha256, pending.upload_id]);

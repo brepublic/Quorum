@@ -263,7 +263,7 @@
 - 7.2 基线复跑：33 项针对性测试通过；9 项 PostgreSQL 用例因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip。`pnpm build:self-host` 通过。
 - migration 22 增加 host-bound `CHAIR_AGENT` binding、文件同步状态、upload 的 host commit 目标、Agent 本地变化和不可静默覆盖的冲突记录；schema compatibility 为 22。
 - Owner/Chair 可把当前 generation 的已配对 host 设为初始 provider；普通 member 与仅有 `SYSTEM_ADMIN` 的账号没有隐式权限，暂停/归档和陈旧 revision 继续拒绝。
-- 浏览器完整暂存提交返回 `202 PENDING_HOST_COMMIT` 并创建固定 generation 的 `STORE_BLOB` task。Agent 完成后，task、upload、blob、file entry/version、manifest、事件与审计在同一事务收敛；完成前不产生可下载文件记录。
+- 浏览器完整暂存提交返回 `202 PENDING_HOST_COMMIT` 并创建固定 generation 的 `HOST_COMMIT_BLOB` task。Agent 从 staging 原子写入本地后完成，task、upload、blob、file entry/version、manifest、事件与审计在同一事务收敛；`STORE_BLOB` 只表示已有 manifest 内容同步，完成前不产生可下载文件记录。
 - 受权限约束的 pending 查询让页面刷新或重新登录后仍显示“等待主席电脑保存”。普通 contributor 只见自己的 pending upload，Owner/Chair 可见委员会全部。
 - `local-changes` 复核当前 lease、最新 manifest、墓碑和 file revision；本地新增/修改创建服务器路径的 `UPLOAD_BLOB` task，重命名和删除使用显式 revision。冲突先持久化，再返回 `CHAIR_DECISION_REQUIRED`。
 - 主机转移取消旧 generation task，重排浏览器 pending upload 和每个文件最新 manifest；旧 host 独有的未上传内容转为 `HOST_TRANSFERRED` 冲突。既有文件保持 `OUT_OF_SYNC` 到新 host 完成相同 revision task。

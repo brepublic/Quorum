@@ -2911,9 +2911,14 @@ export class Stage5Service {
         : await representedDocumentSeat(client, committee, auth, input.onBehalfOfSeatId, meetingSessionId);
       let title = suppliedTitle;
       if (kind === 'RESOLUTION' && !title) {
-        const sequence = await client.query<{next_number: number}>(`SELECT count(*)::int+1 AS next_number
-          FROM documents WHERE committee_id=$1 AND kind='RESOLUTION'`, [committeeId]);
-        title = `New draft resolution ${sequence.rows[0]?.next_number ?? 1}`;
+        const sequence = await client.query<{session_number: number; resolution_number: number}>(`SELECT
+          (SELECT count(*)::int FROM meeting_sessions prior
+            WHERE prior.committee_id=$1
+              AND (prior.created_at,prior.id) <= (current.created_at,current.id)) AS session_number,
+          (SELECT count(*)::int+1 FROM documents
+            WHERE committee_id=$1 AND meeting_session_id=$2 AND kind='RESOLUTION') AS resolution_number
+          FROM meeting_sessions current WHERE current.id=$2`, [committeeId, meetingSessionId]);
+        title = `Draft resolution ${sequence.rows[0]?.session_number ?? 1}.${sequence.rows[0]?.resolution_number ?? 1}`;
       }
       if (kind === 'AMENDMENT' && !title) {
         const sequence = await client.query<{next_number: number}>(`SELECT count(*)::int+1 AS next_number

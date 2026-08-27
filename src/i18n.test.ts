@@ -39,7 +39,7 @@ describe('i18n', () => {
     expect(t('Absent')).toBe('缺席');
     expect(t('Voting delegation')).toBe('投票代表团');
     expect(t('Now voting')).toBe('当前表决国家');
-    expect(localizeGeneratedName('New draft resolution 12')).toBe('新决议草案12');
+    expect(localizeGeneratedName('Draft resolution 2.12')).toBe('决议草案 2.12');
     expect(localizeGeneratedName('New strawpoll 2')).toBe('新意向性投票2');
   });
 

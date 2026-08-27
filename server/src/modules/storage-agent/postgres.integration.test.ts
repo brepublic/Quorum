@@ -98,7 +98,7 @@ async function fixture() {
   const member = await user(`member${randomUUID().slice(0, 6)}`);
   let committee = await stage4.createCommittee(owner, {name: 'Agent Council', visibility: 'PRIVATE',
     countryTemplateKey: 'builtin:default'}, randomUUID(), context('committee'));
-  committee = await stage3.setChair(owner, committee.id, chair.user.id, true, committee.revision, context('chair'));
+  committee = await stage3.setChair(owner, committee.id, chair.user.email, true, committee.revision, context('chair'));
   return {owner, chair, member, committee};
 }
 
@@ -217,7 +217,7 @@ integration('PostgreSQL stage 7 storage Agent identity', () => {
     const value = await fixture();
     const chairCode = await agent.createPairing(value.chair, value.committee.id,
       {baseRevision: value.committee.revision, purpose: 'INITIAL'}, context('chair-code'));
-    await stage3.setChair(value.owner, value.committee.id, value.chair.user.id, false,
+    await stage3.setChair(value.owner, value.committee.id, value.chair.user.email, false,
       await committeeRevision(value.committee.id), context('remove-chair'));
     await expect(agent.pair({pairingCode: chairCode.code, deviceLabel: 'Former Chair', devicePublicKey: publicKey()},
       context('former-chair-pair'))).rejects.toMatchObject({code: 'LINK_EXPIRED'});
@@ -330,10 +330,14 @@ integration('PostgreSQL stage 7 storage Agent identity', () => {
       context('queue-host-commit'));
     expect(pending).toMatchObject({kind: 'PENDING_HOST_COMMIT', upload: {
       status: 'STAGED', agentCommitState: 'PENDING_HOST_COMMIT'}});
+    const queued = await tasks.tasks(chair.paired.credential, pending.leaseGeneration, 0, 100);
+    expect(queued.tasks).toEqual([expect.objectContaining({id: pending.taskId, type: 'HOST_COMMIT_BLOB',
+      logicalName: source.staged.logicalName})]);
     await expect(uploads.listPendingHostCommits(value.owner, value.committee.id))
       .resolves.toEqual([expect.objectContaining({id: source.staged.id})]);
     const claimed = await tasks.claim(chair.paired.credential, pending.taskId, {
       leaseGeneration: pending.leaseGeneration, fileRevision: 1, requestId: randomUUID()});
+    expect(claimed).toMatchObject({type: 'HOST_COMMIT_BLOB', logicalName: source.staged.logicalName});
     const chunks: Buffer[] = [];
     await tasks.streamBlob(chair.paired.credential, {taskId: pending.taskId, blobId: claimed.blobId as string,
       leaseGeneration: pending.leaseGeneration, fileRevision: 1, claimToken: claimed.claimToken as string}, {
@@ -341,16 +345,25 @@ integration('PostgreSQL stage 7 storage Agent identity', () => {
       write: chunk => {chunks.push(Buffer.from(chunk)); return Promise.resolve();}
     });
     expect(Buffer.concat(chunks)).toEqual(source.content);
+    const completionRequestId = randomUUID();
     await tasks.complete(chair.paired.credential, pending.taskId, {leaseGeneration: pending.leaseGeneration,
-      fileRevision: 1, claimToken: claimed.claimToken, requestId: randomUUID()}, context('host-complete'));
+      fileRevision: 1, claimToken: claimed.claimToken, requestId: completionRequestId}, context('host-complete'));
+    await tasks.complete(chair.paired.credential, pending.taskId, {leaseGeneration: pending.leaseGeneration,
+      fileRevision: 1, claimToken: claimed.claimToken, requestId: completionRequestId}, context('host-complete-repeat'));
     await expect(uploads.listPendingHostCommits(value.owner, value.committee.id)).resolves.toEqual([]);
     const state = await pool?.query(`SELECT
       (SELECT status::text FROM file_uploads WHERE id=$1) AS upload_status,
       (SELECT agent_commit_state::text FROM file_uploads WHERE id=$1) AS agent_state,
       (SELECT count(*)::int FROM file_entries WHERE committee_id=$2) AS files,
       (SELECT count(*)::int FROM file_versions version JOIN file_entries entry ON entry.id=version.file_entry_id
-        WHERE entry.committee_id=$2) AS versions`, [source.staged.id, value.committee.id]);
-    expect(state?.rows[0]).toEqual({upload_status: 'COMMITTED', agent_state: 'HOST_COMMITTED', files: 1, versions: 1});
+        WHERE entry.committee_id=$2) AS versions,
+      (SELECT count(*)::int FROM storage_manifest_events WHERE committee_id=$2) AS manifest_events,
+      (SELECT count(*)::int FROM storage_agent_tasks WHERE id=$3 AND task_type='HOST_COMMIT_BLOB') AS host_commit_tasks,
+      (SELECT count(*)::int FROM committee_events WHERE committee_id=$2 AND event_type='file.upload_committed') AS events,
+      (SELECT count(*)::int FROM audit_log WHERE committee_id=$2 AND action='storage.upload_host_committed') AS audits`,
+      [source.staged.id, value.committee.id, pending.taskId]);
+    expect(state?.rows[0]).toEqual({upload_status: 'COMMITTED', agent_state: 'HOST_COMMITTED', files: 1, versions: 1,
+      manifest_events: 1, host_commit_tasks: 1, events: 1, audits: 1});
   });
 
   it('rolls back file metadata and upload completion when the terminal Agent audit fails', async () => {

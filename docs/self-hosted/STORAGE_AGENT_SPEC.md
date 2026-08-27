@@ -160,11 +160,11 @@ POST /api/v1/storage-agent/blobs
 
 每个 task 和内容提交都带 task ID、lease generation、file revision、预期大小和 SHA-256。重复完成同一任务必须幂等。
 
-阶段 7.2 已实现其中的 manifest、tasks、claim、complete、fail 和 blobs 路由。阶段 7.3 已开放 `local-changes` 和生产 `STORE_BLOB`/`UPLOAD_BLOB` 编排。manifest 是按委员会严格递增的追加日志；文件版本和墓碑由数据库触发器在原事务内写入，墓碑事件不会携带内容。当前 host 同时得到固定 generation 的 `STORE_BLOB`/`DELETE_FILE` task，新 host 配对时按每个文件的最新事件补建完整任务集。
+阶段 7.2 已实现其中的 manifest、tasks、claim、complete、fail 和 blobs 路由。阶段 7.3 已开放 `local-changes`、`HOST_COMMIT_BLOB` 和生产 `STORE_BLOB`/`UPLOAD_BLOB` 编排。manifest 是按委员会严格递增的追加日志；文件版本和墓碑由数据库触发器在原事务内写入，墓碑事件不会携带内容。当前 host 同时得到固定 generation 的 `STORE_BLOB`/`DELETE_FILE` task，新 host 配对时按每个文件的最新事件补建完整任务集。
 
 task 领取使用 UUID request ID 和服务端 claim token；相同领取或 terminal request 精确重放，不同 terminal outcome 冲突。超过五分钟的旧 claim 可重新领取。所有状态提交再次检查 credential、委员会 generation、host generation、task generation、file revision 和 claim token。provider blob 在服务端复验后流式下载；Agent 上传内容流式写入服务器生成的 durable staging key并校验大小与 SHA-256。网络传输不占用委员会行锁，传输后用短事务重新 fencing。
 
-浏览器向 Chair provider 提交时，服务器先保留唯一 durable staging 并返回 `PENDING_HOST_COMMIT`。当前 Agent 完成固定 `STORE_BLOB` task 后，task、upload、blob、file entry/version、manifest、事件与审计才原子完成。本地新增或修改由 `local-changes` 创建 `UPLOAD_BLOB` task，只有完整内容复验后才发布版本；重命名和删除必须携带显式 revision。manifest、墓碑、revision、名称或 host transfer 冲突先持久化，再返回 `CHAIR_DECISION_REQUIRED`。
+浏览器向 Chair provider 提交时，服务器先保留唯一 durable staging 并返回 `PENDING_HOST_COMMIT`。Agent 通过固定 `HOST_COMMIT_BLOB` task 从 staging 原子写入本地后，task、upload、blob、file entry/version、manifest、事件与审计才原子完成；`STORE_BLOB` 仅匹配已有 manifest。本地新增或修改由 `local-changes` 创建 `UPLOAD_BLOB` task，只有完整内容复验后才发布版本；重命名和删除必须携带显式 revision。manifest、墓碑、revision、名称或 host transfer 冲突先持久化，再返回 `CHAIR_DECISION_REQUIRED`。
 
 ## 7. 本地目录监测
 

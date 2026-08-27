@@ -17,7 +17,7 @@
 
 - 用新 migration 增加 `CHAIR_AGENT` storage binding、文件同步状态、服务器 upload 到 host 的 `PENDING_HOST_COMMIT` 状态和本地变化/冲突所需的 durable 元数据；不改写既有 file version。
 - Chair/Owner 可以选择当前已配对 host 作为委员会 provider；`SYSTEM_ADMIN` 不自动获得 Chair 权限。暂停委员会时拒绝会改变文件状态的命令。
-- 浏览器 upload 在服务器 durable staging 完整校验后创建固定 generation 的 `STORE_BLOB` task；Agent 完成并回报内容校验后，单一 PostgreSQL 事务发布 blob、file entry/version、manifest、事件、审计和幂等响应。
+- 浏览器 upload 在服务器 durable staging 完整校验后创建固定 generation 的 `HOST_COMMIT_BLOB` task；Agent 从 staging 写入本地后完成，单一 PostgreSQL 事务发布 blob、file entry/version、manifest、事件、审计和幂等响应。`STORE_BLOB` 仅用于已有 manifest 内容同步。
 - Agent 离线时保持 `PENDING_HOST_COMMIT`，不删除唯一 staging 副本，不暂停议事；恢复后继续相同 task/blob/staging key。
 - 实现 `POST /api/v1/storage-agent/local-changes`：先读取完整最新 manifest/墓碑，再接受新增、修改、删除或重命名意图。每项必须携带 lease generation、file revision、大小和 SHA-256；墓碑和较新 revision 优先，不能复活删除文件。
 - 本地新增/修改先创建服务器生成路径的 `UPLOAD_BLOB` task，经阶段 7.2 流式内容边界完整校验后才可发布新版本。重命名和删除必须使用显式 revision 命令；冲突保存 durable 记录并返回 `CHAIR_DECISION_REQUIRED`，不得静默覆盖任一副本。

@@ -578,7 +578,7 @@ const zhCN: Record<string, string> = {
   'Create and continue': '创建并继续',
   'Resolutions': '决议草案',
   'New resolution': '新建决议草案',
-  'New draft resolution {count}': '新决议草案{count}',
+  'Draft resolution {session}.{count}': '决议草案 {session}.{count}',
   'New amendment {count}': '新修正案{count}',
   'Target amendment': '目标修正案',
   'Amendment file': '修正案文件',
@@ -986,8 +986,10 @@ const GENERATED_NAME_KEYS = new Set([
 ]);
 
 export function localizeGeneratedName(value: string): string {
-  const draftResolution = /^New draft resolution (\d+)$/.exec(value);
-  if (draftResolution) return t('New draft resolution {count}', {count: Number(draftResolution[1])});
+  const draftResolution = /^Draft resolution (\d+)\.(\d+)$/.exec(value);
+  if (draftResolution) return t('Draft resolution {session}.{count}', {
+    session: Number(draftResolution[1]), count: Number(draftResolution[2])
+  });
   const amendment = /^New amendment (\d+)$/.exec(value);
   if (amendment) return t('New amendment {count}', {count: Number(amendment[1])});
   const strawpoll = /^New strawpoll (\d+)$/.exec(value);

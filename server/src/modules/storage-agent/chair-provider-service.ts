@@ -121,7 +121,7 @@ export class Stage7ChairAgentProviderService implements StorageAgentTaskCompleti
         await client.query(`INSERT INTO storage_agent_tasks
           (id,committee_id,host_id,lease_generation,sequence,task_type,file_entry_id,file_revision,blob_id,
            expected_size_bytes,expected_sha256,source_upload_id)
-          VALUES ($1,$2,$3,$4,$5,'STORE_BLOB',$6,1,$7,$8,decode($9,'hex'),$10)`,
+          VALUES ($1,$2,$3,$4,$5,'HOST_COMMIT_BLOB',$6,1,$7,$8,decode($9,'hex'),$10)`,
         [taskId, committee.id, active.id, active.lease_generation, allocated.rows[0]?.sequence, fileEntryId,
           blobId, current.expected_size_bytes, current.expected_sha256_hex, current.id]);
         const row = updated.rows[0] as AgentUploadRow;
@@ -160,7 +160,7 @@ export class Stage7ChairAgentProviderService implements StorageAgentTaskCompleti
         WHERE blob_id=ANY($1::uuid[]) AND status<>'COMPLETED'`, [blobs.rows.map(row => row.id)]);
       return;
     }
-    if (task.type === 'STORE_BLOB' && !task.sourceUploadId) {
+    if (task.type === 'STORE_BLOB') {
       const binding = await client.query<{id: string}>(`SELECT id FROM storage_bindings WHERE committee_id=$1
         AND storage_host_id=$2 AND provider_type='CHAIR_AGENT' AND status='ACTIVE' FOR UPDATE`,
       [committee.id, task.hostId]);

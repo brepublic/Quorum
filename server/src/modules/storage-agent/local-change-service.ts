@@ -73,7 +73,7 @@ function task(row: QueryResultRow): StorageAgentTask {
   return {id: row.id, committeeId: row.committee_id, sequence: Number(row.sequence), type: row.task_type,
     fileEntryId: row.file_entry_id, fileRevision: row.file_revision, blobId: row.blob_id,
     expectedSizeBytes: row.expected_size_bytes === null ? null : Number(row.expected_size_bytes),
-    expectedSha256: row.expected_sha256_hex, contentState: row.content_state,
+    expectedSha256: row.expected_sha256_hex, logicalName: null, contentState: row.content_state,
     receivedSizeBytes: row.received_size_bytes === null ? null : Number(row.received_size_bytes),
     actualSha256: row.actual_sha256_hex, leaseGeneration: Number(row.lease_generation), status: row.status,
     revision: row.revision, attempts: row.attempts, claimToken: row.claim_token, failureCode: row.failure_code,

@@ -29,6 +29,24 @@ describe('migration discovery', () => {
     expect(migrations[0]?.checksum).toMatch(/^[a-f0-9]{64}$/);
   });
 
+  it('defaults new resolution direct votes to a two-thirds majority', async () => {
+    const migrations = await loadMigrations(resolve('server/migrations'));
+    const resolutionDefault = migrations.find(migration => migration.version === 45);
+    expect(resolutionDefault?.name).toBe('resolution_direct_vote_default');
+    expect(resolutionDefault?.sql).toContain("ALTER COLUMN direct_vote_majority SET DEFAULT 'TWO_THIRDS'");
+  });
+
+  it('separates browser host commits from manifest STORE_BLOB tasks', async () => {
+    const migrations = await loadMigrations(resolve('server/migrations'));
+    const type = migrations.find(migration => migration.version === 46);
+    const constraints = migrations.find(migration => migration.version === 47);
+    expect(type?.name).toBe('host_commit_blob_task');
+    expect(type?.sql).toContain("ADD VALUE IF NOT EXISTS 'HOST_COMMIT_BLOB'");
+    expect(constraints?.name).toBe('host_commit_blob_constraints');
+    expect(constraints?.sql).toContain('storage_agent_tasks_host_commit_source_check');
+    expect(constraints?.sql).toContain('schema_compatibility=47');
+  });
+
   it('includes the stage 4 low-concurrency schema as migration 4', async () => {
     const migrations = await loadMigrations(resolve('server/migrations'));
     const stage4 = migrations.find(migration => migration.version === 4);

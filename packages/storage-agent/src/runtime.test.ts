@@ -26,7 +26,7 @@ afterEach(async () => { vi.restoreAllMocks();
 function task(type: StorageAgentTask['type'], overrides: Partial<StorageAgentTask> = {}): StorageAgentTask {
   return {id: randomUUID(), committeeId, sequence: 1, type, fileEntryId, fileRevision: 1,
     blobId: type === 'DELETE_FILE' ? null : blobId, expectedSizeBytes: type === 'DELETE_FILE' ? null : 3,
-    expectedSha256: type === 'DELETE_FILE' ? null : digest('new'), contentState: 'NONE', receivedSizeBytes: null,
+    expectedSha256: type === 'DELETE_FILE' ? null : digest('new'), logicalName: null, contentState: 'NONE', receivedSizeBytes: null,
     actualSha256: null, leaseGeneration: 1, status: 'PENDING', revision: 1, attempts: 0, claimToken: null,
     failureCode: null, resolutionConflictId: null, nextAttemptAt: '2026-08-13T00:00:00.000Z',
     createdAt: '2026-08-13T00:00:00.000Z',
@@ -72,6 +72,20 @@ describe('Chair Agent recovery loop', () => {
     await expect(readFile(join(value.root, 'old.txt'))).rejects.toMatchObject({code: 'ENOENT'});
     expect(await readFile(join(value.root, 'new.txt'), 'utf8')).toBe('new');
     expect(value.client.complete).toHaveBeenCalledOnce();
+  });
+
+  it('writes a browser host-commit task without requiring a manifest entry', async () => {
+    const value = await fixture();
+    const hostCommit = task('HOST_COMMIT_BLOB', {logicalName: 'browser/upload.txt', expectedSizeBytes: 7,
+      expectedSha256: digest('browser')});
+    vi.mocked(value.client.tasks).mockResolvedValue({tasks: [hostCommit], nextSequence: 1, hasMore: false});
+    vi.mocked(value.client.download).mockResolvedValue((async function* () {yield Buffer.from('browser');})());
+    await value.runtime.synchronizeOnce();
+    expect(await readFile(join(value.root, 'browser/upload.txt'), 'utf8')).toBe('browser');
+    expect(value.state.snapshot().files[fileEntryId]).toMatchObject({sizeBytes: 7, sha256: digest('browser')});
+    expect(value.client.complete).toHaveBeenCalledWith(expect.objectContaining({type: 'HOST_COMMIT_BLOB'}),
+      expect.any(String), expect.any(String));
+    expect(value.client.fail).not.toHaveBeenCalled();
   });
 
   it('persists, uploads, completes, and recovers a local content task without a duplicate change', async () => {
