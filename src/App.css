@@ -177,6 +177,32 @@
   justify-content: center;
 }
 
+.motion-proposal-form .fields.motion-time-inputs {
+  display: flex;
+  gap: 0;
+}
+
+.motion-proposal-form .fields.motion-time-inputs > .motion-time-value.field {
+  flex: 0 1 18.375rem;
+  min-width: 0;
+  width: 18.375rem;
+}
+
+.motion-proposal-form .fields.motion-time-inputs > .motion-time-unit.field {
+  flex: 0 0 5rem;
+  min-width: 5rem;
+  width: 5rem;
+}
+
+.motion-proposal-form .fields.motion-time-inputs > .motion-time-unit.field > .ui.dropdown {
+  min-width: 5rem;
+  width: 5rem;
+}
+
+.motion-proposal-form .fields.motion-time-fields {
+  gap: 1.5rem;
+}
+
 .committee-overview-page.ui.container {
   margin: 0 auto !important;
   max-width: min(100%, 44rem) !important;
@@ -632,6 +658,19 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   gap: 0.5rem;
 }
 
+.legacy-speaker-workspace .speaker-feed-seat {
+  align-items: center;
+  display: inline-flex;
+  gap: 0.3rem;
+}
+
+.legacy-speaker-workspace .speaker-feed-seat > .ui.mini.basic.label {
+  font-size: 0.875em;
+  line-height: 1;
+  margin: 0;
+  padding: 0.1875em 0.5em;
+}
+
 .legacy-speaker-workspace .speaker-current-speaker-feed {
   display: flex;
   justify-content: center;
@@ -645,11 +684,19 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
 
 .legacy-speaker-workspace .speaker-current-speaker-feed .speaker-feed-row {
   justify-content: center;
+  position: relative;
 }
 
 .legacy-speaker-workspace .speaker-current-speaker-feed .user {
   display: block;
   width: 100%;
+}
+
+.legacy-speaker-workspace .speaker-current-speaker-feed .speaker-feed-actions {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
 }
 
 
@@ -711,8 +758,32 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   cursor: grabbing;
 }
 
+.legacy-speaker-workspace .speaker-absent-action-blocker {
+  display: inline-flex;
+}
+
+.legacy-speaker-workspace .speaker-absent-action-blocker > .ui.button {
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.legacy-speaker-workspace .speaker-drag-handle-disabled {
+  cursor: not-allowed;
+}
+
+.legacy-speaker-workspace .speaker-message-fade {
+  opacity: 0;
+  transition: opacity 180ms ease;
+}
+
 .legacy-speaker-workspace .absent-member {
-  opacity: 0.55;
+  filter: none;
+  opacity: 1;
+}
+
+.legacy-speaker-workspace .absent-member .speaker-feed-seat {
+  filter: grayscale(0.75);
+  opacity: 0.5;
 }
 
 /* Drag: item being dragged gets rounded gray background */

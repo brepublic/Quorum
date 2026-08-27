@@ -25,7 +25,8 @@ type Run = (operation: () => Promise<unknown>) => Promise<void>;
 type View = 'motions' | 'unmod' | 'caucus' | 'strawpoll' | 'resolution';
 export const questionContributionTemplate = 'Q:\n\nA:';
 const contributionSaveTimeoutMs = 10_000;
-const contributionSuccessDurationMs = 5_000;
+const messageFadeDelayMs = 10_000;
+const messageFadeDurationMs = 180;
 
 type SpeakerSeatOption = {key: React.Key; value: string; text: string; content?: React.ReactNode; description?: React.ReactNode;
   disabled?: boolean};
@@ -266,20 +267,51 @@ function currentSpeech(list: SpeakerList): SpeechRecord | undefined {
   return list.speeches?.find(speech => ['READY', 'RUNNING', 'PAUSED'].includes(speech.status));
 }
 
-function SpeakerFeedEntry({entry, snapshot, canChair, onRemove, onYield, dragHandleProps}: {entry?: SpeakerQueueEntry;
+function TimedMessage({content, warning = false, positive = false, onDismiss}: {content: string; warning?: boolean;
+  positive?: boolean; onDismiss: () => void}) {
+  const [fading, setFading] = React.useState(false);
+  const dismissRef = React.useRef(onDismiss);
+  dismissRef.current = onDismiss;
+  React.useEffect(() => {
+    setFading(false);
+    const fade = window.setTimeout(() => setFading(true), messageFadeDelayMs);
+    const dismiss = window.setTimeout(() => dismissRef.current(), messageFadeDelayMs + messageFadeDurationMs);
+    return () => {window.clearTimeout(fade); window.clearTimeout(dismiss);};
+  }, [content]);
+  return <Message warning={warning} positive={positive} className={fading ? 'speaker-message-fade' : undefined} content={content} />;
+}
+
+function LingeringMessage({content}: {content?: string}) {
+  const [visibleContent, setVisibleContent] = React.useState<string>();
+  const [fading, setFading] = React.useState(false);
+  React.useEffect(() => {
+    if (content) {setVisibleContent(content); setFading(false); return;}
+    if (!visibleContent) return;
+    const fade = window.setTimeout(() => setFading(true), messageFadeDelayMs);
+    const dismiss = window.setTimeout(() => setVisibleContent(undefined), messageFadeDelayMs + messageFadeDurationMs);
+    return () => {window.clearTimeout(fade); window.clearTimeout(dismiss);};
+  }, [content, visibleContent]);
+  return visibleContent ? <Message info className={fading ? 'speaker-message-fade' : undefined} content={visibleContent} /> : null;
+}
+
+function SpeakerFeedEntry({entry, snapshot, canChair, onRemove, onYield, dragHandleProps, onUnavailableDrag}: {entry?: SpeakerQueueEntry;
   snapshot: CommitteeWorkspaceSnapshot; canChair: boolean; onRemove?: () => void; onYield?: () => void;
-  dragHandleProps?: Record<string, unknown>}) {
+  dragHandleProps?: Record<string, unknown>; onUnavailableDrag?: () => void}) {
   const noCurrentSeat = getLanguage() === "zh-CN" ? "(无)" : "(None)";
   if (!entry) return <Feed.Event><Feed.Content><Feed.Summary><Feed.User><span className="speaker-current-speaker speaker-empty-seat">{noCurrentSeat}</span></Feed.User></Feed.Summary></Feed.Content></Feed.Event>;
   const seat = snapshot.seats.find(item => item.id === entry.seatId);
   const present = snapshot.attendance?.some(item => item.seatId === entry.seatId && item.state === 'PRESENT');
   return <Feed.Event className={present ? undefined : "absent-member"}>
-    <Feed.Content><Feed.Summary className="speaker-feed-row"><Feed.User>{seat ? seatOptionContent(seat) : entry.seatDisplayName}
-      {!present && <Label size="mini">{t("Absent")}</Label>}</Feed.User>
-      {(canChair && (onRemove || onYield) || dragHandleProps) && <span className="speaker-feed-actions">
+    <Feed.Content><Feed.Summary className="speaker-feed-row"><Feed.User><span className="speaker-feed-seat">{seat ? seatOptionContent(seat) : entry.seatDisplayName}
+      {!present && <Label basic size="mini">{t("Absent")}</Label>}</span></Feed.User>
+      {(canChair && (onRemove || onYield) || dragHandleProps || onUnavailableDrag) && <span className="speaker-feed-actions">
         {canChair && onRemove && <Label size="mini" as="button" onClick={onRemove}>{t("Remove")}</Label>}
         {canChair && onYield && <Label size="mini" as="button" onClick={onYield}>{t("Yield")}</Label>}
         {dragHandleProps && <span className="speaker-drag-handle" {...dragHandleProps}>⠿</span>}
+        {onUnavailableDrag && <span className="speaker-drag-handle speaker-drag-handle-disabled" role="button" tabIndex={0}
+          aria-disabled="true" onClick={onUnavailableDrag} onKeyDown={event => {
+            if (event.key === 'Enter' || event.key === ' ') {event.preventDefault(); onUnavailableDrag();}
+          }}>⠿</span>}
       </span>}
     </Feed.Summary></Feed.Content>
   </Feed.Event>;
@@ -325,6 +357,7 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
   const [showContributionSuccess, setShowContributionSuccess] = React.useState(false);
   const [savingContribution, setSavingContribution] = React.useState(false);
   const [localQueueOrder, setLocalQueueOrder] = React.useState<string[] | null>(null);
+  const [absentActionBlocked, setAbsentActionBlocked] = React.useState(false);
   const displayedListName = list ? localizeGeneratedName(list.name) : '';
   const [nameDraft, setNameDraft] = React.useState(displayedListName);
   const [topicDraft, setTopicDraft] = React.useState(list?.topic ?? '');
@@ -355,17 +388,14 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
     setShowContributionSuccess(false);
     setSavingContribution(false);
   }, [speech?.id, speech?.kind, speech?.yieldType]);
-  React.useEffect(() => {
-    if (!showContributionSuccess) return;
-    const timeout = window.setTimeout(() => setShowContributionSuccess(false), contributionSuccessDurationMs);
-    return () => window.clearTimeout(timeout);
-  }, [showContributionSuccess]);
   const speechTimer = (snapshot.timers ?? []).find(timer => timer.id === list.speechTimerId);
   const totalTimer = (snapshot.timers ?? []).find(timer => timer.id === list.totalTimerId);
   const configuredYields = snapshot.activeRules.speakerLists.find(item => item.id === list.kind.toLowerCase().replace('_', '-'))?.yieldTypes;
   const allowedYields = configuredYields ? mapRuleYieldTypes(configuredYields) : ['CHAIR', 'SEAT', 'QUESTIONS', 'COMMENTS'];
   const presentSeatIds = new Set(snapshot.attendance.filter(item => item.state === 'PRESENT').map(item => item.seatId));
   const presentSeats = snapshot.seats.filter(seat => presentSeatIds.has(seat.id));
+  const currentAbsent = Boolean(current && !presentSeatIds.has(current.seatId));
+  const nextAbsent = Boolean(next && !presentSeatIds.has(next.seatId));
   const queueSeatOptions = attendanceSeatOptions(snapshot, presentSeatIds);
   const operationAllowsDelegates = snapshot.committee.operationMode === 'DELEGATE_OPERATED';
   const delegatesCanQueue = operationAllowsDelegates && list.delegatesCanQueue;
@@ -384,7 +414,9 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
   const onDragEnd = (result: DropResult) => {
     if (!result.destination || result.destination.index === result.source.index) return;
     const entries = [...queued]; const [moved] = entries.splice(result.source.index, 1);
-    if (!moved) return; entries.splice(result.destination.index, 0, moved);
+    if (!moved) return;
+    if (!presentSeatIds.has(moved.seatId)) {setAbsentActionBlocked(true); return;}
+    entries.splice(result.destination.index, 0, moved);
     const newOrder = entries.map(entry => entry.id);
     setLocalQueueOrder(newOrder);
     reorder(newOrder);
@@ -399,17 +431,25 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
   });
   const timerRunning = speechTimer?.running === true;
   const pendingYield = speech?.yieldDecisionStatus === 'PENDING';
-  const canAdvance = canChair && !pendingYield && (list.kind !== 'GENERAL' || !timerRunning);
+  const canAdvance = canChair && !pendingYield && !currentAbsent && !nextAbsent && (list.kind !== 'GENERAL' || !timerRunning);
+  const unavailableAbsentAction = (control: React.ReactNode) => <span className="speaker-absent-action-blocker" role="button"
+    tabIndex={0} aria-disabled="true" onClick={() => setAbsentActionBlocked(true)} onKeyDown={event => {
+      if (event.key === 'Enter' || event.key === ' ') {event.preventDefault(); setAbsentActionBlocked(true);}
+    }}>{control}</span>;
   const nextControl = !current
-    ? <Button basic icon primary disabled={!queued.length || !canChair} onClick={() => void advance()}><Icon name="arrow up" />{t('Stage')}</Button>
+    ? nextAbsent ? unavailableAbsentAction(<Button basic icon primary className="disabled" aria-disabled="true"><Icon name="arrow up" />{t('Stage')}</Button>)
+      : <Button basic icon primary disabled={!queued.length || !canChair} onClick={() => void advance()}><Icon name="arrow up" />{t('Stage')}</Button>
     : list.kind === 'GENERAL' && speech
-      ? <><Button basic icon color={timerRunning ? 'orange' : 'green'} disabled={!canChair || pendingYield}
-          onClick={() => void toggleSpeech()}><Icon name={timerRunning ? 'pause' : 'play'} />{t(timerRunning ? 'Pause' : 'Continue')}</Button>
+      ? <>{currentAbsent ? unavailableAbsentAction(<Button basic icon color={timerRunning ? 'orange' : 'green'} className="disabled" aria-disabled="true">
+          <Icon name={timerRunning ? 'pause' : 'play'} />{t(timerRunning ? 'Pause' : 'Continue')}</Button>) : <Button basic icon color={timerRunning ? 'orange' : 'green'} disabled={!canChair || pendingYield}
+          onClick={() => void toggleSpeech()}><Icon name={timerRunning ? 'pause' : 'play'} />{t(timerRunning ? 'Pause' : 'Continue')}</Button>}
           <Button style={{marginLeft: '0.5em'}} basic icon primary disabled={!canAdvance} onClick={() => void advance()}><Icon name="arrow up" />{t('Next')}</Button></>
       : !speech
-        ? <Button basic icon positive disabled={!canChair} onClick={() => void toggleSpeech()}><Icon name="hourglass start" />{t('Start')}</Button>
+        ? currentAbsent ? unavailableAbsentAction(<Button basic icon positive className="disabled" aria-disabled="true"><Icon name="hourglass start" />{t('Start')}</Button>)
+          : <Button basic icon positive disabled={!canChair} onClick={() => void toggleSpeech()}><Icon name="hourglass start" />{t('Start')}</Button>
         : speech.status === 'PAUSED' || speech.status === 'READY'
-          ? <Button basic icon positive disabled={!canChair} onClick={() => void toggleSpeech()}><Icon name="play" />{t('Continue')}</Button>
+          ? currentAbsent ? unavailableAbsentAction(<Button basic icon positive className="disabled" aria-disabled="true"><Icon name="play" />{t('Continue')}</Button>)
+            : <Button basic icon positive disabled={!canChair} onClick={() => void toggleSpeech()}><Icon name="play" />{t('Continue')}</Button>
           : <Button basic icon primary disabled={!canAdvance} onClick={() => void advance()}><Icon name="arrow up" />{queued.length ? t('Next') : t('Stop')}</Button>;
   const targetOptions = presentSeats.filter(seat => seat.id !== speech?.seatId)
     .map(seat => ({key: seat.id, value: seat.id, text: seat.displayName, content: seatOptionContent(seat)}));
@@ -493,7 +533,8 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
       const speakingSeat = snapshot.seats.find(seat => seat.id === speech.seatId);
       return speakingSeat ? seatOptionContent(speakingSeat) : speech.seatDisplayName;
     })()}</span></Feed.User></Feed.Summary></Feed.Content></Feed.Event>
-      : <SpeakerFeedEntry entry={current} snapshot={snapshot} canChair={false} />}
+      : <SpeakerFeedEntry entry={current} snapshot={snapshot} canChair={currentAbsent && canChair}
+        onRemove={currentAbsent && current ? () => removeEntry(current.id) : undefined} />}
   </Feed></Segment>;
   const queueDividerNavigation = <><Button.Group fluid className="speaker-queue-divider-navigation">
     <Button primary as={Link} to={`/committees/${snapshot.committee.id}/motions`}>{t('Motions')}<Icon name="arrow right" /></Button>
@@ -507,11 +548,12 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
               ? <><Divider className="speaker-queue-divider" />{queueDividerNavigation}</>
               : <Divider className="speaker-queue-divider" />)
               : <Divider className="speaker-queue-divider" />)}
-          <Draggable draggableId={entry.id} index={index} isDragDisabled={!canChair}>{(drag, snap) =>
+          <Draggable draggableId={entry.id} index={index} isDragDisabled={!canChair || !presentSeatIds.has(entry.seatId)}>{(drag, snap) =>
             <div ref={drag.innerRef} {...drag.draggableProps} className={`speaker-queue-entry${snap.isDragging ? ' speaker-feed-dragging' : ''}`}><SpeakerFeedEntry entry={entry} snapshot={snapshot} canChair={canChair}
               onRemove={() => removeEntry(entry.id)} onYield={list.kind === 'MODERATED_CAUCUS' && speech
                 && speech.kind === 'ORIGINAL' && speech.canYield ? () => legacyYieldTo(entry.seatId) : undefined}
-              dragHandleProps={drag.dragHandleProps as unknown as Record<string, unknown>} /></div>}
+              dragHandleProps={drag.dragHandleProps as unknown as Record<string, unknown>}
+              onUnavailableDrag={!presentSeatIds.has(entry.seatId) ? () => setAbsentActionBlocked(true) : undefined} /></div>}
           </Draggable>
         </React.Fragment>)}{provided.placeholder}</Feed></div>}
     </Droppable></DragDropContext>;
@@ -568,24 +610,24 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
       <Button primary disabled={savingContribution || speech.yieldType !== 'COMMENTS' && !contribution.trim()} aria-busy={savingContribution}>
         {savingContribution && <Icon loading name="spinner" />}{t(savingContribution ? 'Saving…' : 'Record')}
       </Button></Form> : null;
-  const orderedQueuePanels = snapshot.layoutSettings.moveQueueUp
-    ? <>{nowSpeaking}{queuePanel}{nextSpeaking}</> : <>{nowSpeaking}{nextSpeaking}{queuePanel}</>;
+  const orderedQueuePanels = <>{nowSpeaking}{queuePanel}{nextSpeaking}</>;
   const separateTimers = list.kind === 'MODERATED_CAUCUS' && snapshot.layoutSettings.timersInSeparateColumns;
-  return <Container className="legacy-speaker-workspace"><KeyboardShortcut enabled={canAdvance} shortcut="n"
+  return <Container className="legacy-speaker-workspace">{absentActionBlocked
+    && <TimedMessage warning content={t('Remove the absent delegation before continuing.')} onDismiss={() => setAbsentActionBlocked(false)} />}<KeyboardShortcut enabled={canAdvance} shortcut="n"
     onTrigger={() => void advance()} /><Grid columns="equal" stackable>{header}{separateTimers ? <Grid.Row>
     <Grid.Column className="speaker-timer-column"><TimerControls name="Speaker timer" timer={speechTimer} run={run} api={api} canChair={canChair}
-      onToggle={toggleSpeech} toggleKey="s">{nextControl}</TimerControls>{nowSpeaking}{nextSpeaking}</Grid.Column>
+      onToggle={toggleSpeech} toggleKey="s">{nextControl}</TimerControls>{nowSpeaking}</Grid.Column>
     <Grid.Column className="caucus-timer-column"><TimerControls name="Caucus timer" timer={totalTimer} run={run} api={api}
-      canChair={canChair} toggleKey="c" />{queuePanel}</Grid.Column>
+      canChair={canChair} toggleKey="c" />{queuePanel}{nextSpeaking}</Grid.Column>
   </Grid.Row> : <Grid.Row>
     <Grid.Column>{orderedQueuePanels}</Grid.Column>
     <Grid.Column><TimerControls name="Speaker timer" timer={speechTimer} run={run} api={api} canChair={canChair}
       onToggle={toggleSpeech} toggleKey="s">{nextControl}</TimerControls>
       {list.kind === 'MODERATED_CAUCUS' && <TimerControls name="Caucus timer" timer={totalTimer} run={run} api={api}
         canChair={canChair} toggleKey="c" />}
-      {list.kind === 'GENERAL' && yieldCard}{yieldNotice && !contributionRecorded && <Message info content={yieldNotice} />}
-      {contributionJustRecorded && showContributionSuccess
-        && <Message positive content={t('Interaction recorded.')} />}{contributionForm}
+      {list.kind === 'GENERAL' && yieldCard}<LingeringMessage content={!contributionRecorded ? yieldNotice : undefined} />
+      {contributionJustRecorded && showContributionSuccess && <TimedMessage positive content={t('Interaction recorded.')}
+        onDismiss={() => setShowContributionSuccess(false)} />}{contributionForm}
     </Grid.Column></Grid.Row>}</Grid></Container>;
 }
 
@@ -795,6 +837,12 @@ const motionDestinationLabel = (id: string) => ({'open-moderated-caucus': 'Caucu
   'introduce-amendment': 'Amendments', 'vote-on-amendment': 'Amendments', 'vote-on-resolution': 'Voting',
   'propose-strawpoll': 'Strawpolls'}[id] ?? '');
 const motionSeconds = (value: number, unit: MotionTimeUnit) => unit === 'min' ? value * 60 : value;
+const motionDurationValue = (value: string, unit: MotionTimeUnit): number | undefined => {
+  if (!value.trim()) return undefined;
+  const duration = Number(value);
+  if (!Number.isFinite(duration) || duration <= 0 || !Number.isSafeInteger(motionSeconds(duration, unit) * 1_000)) return undefined;
+  return duration;
+};
 const linkedResolutionMotionValue = (resolutionId: string) => `open-moderated-caucus::resolution::${resolutionId}`;
 const linkedResolutionMotionPrefix = 'open-moderated-caucus::resolution::';
 const motionTypeFallbackLabels: Record<string, string> = {
@@ -849,9 +897,9 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
   const [proposal, setProposal] = React.useState('');
   const [proposerId, setProposerId] = React.useState(snapshot.viewer.seatId ?? '');
   const [seconderId, setSeconderId] = React.useState('');
-  const [caucusDuration, setCaucusDuration] = React.useState(10);
-  const [caucusUnit, setCaucusUnit] = React.useState<MotionTimeUnit>('min');
-  const [speakerDuration, setSpeakerDuration] = React.useState(60);
+  const [caucusDuration, setCaucusDuration] = React.useState('600');
+  const [caucusUnit, setCaucusUnit] = React.useState<MotionTimeUnit>('sec');
+  const [speakerDuration, setSpeakerDuration] = React.useState('60');
   const [speakerUnit, setSpeakerUnit] = React.useState<MotionTimeUnit>('sec');
   const [caucusTarget, setCaucusTarget] = React.useState('');
   const [resolutionTarget, setResolutionTarget] = React.useState('');
@@ -897,11 +945,16 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
   const targetAmendments = amendments.filter(document => motionType === 'introduce-amendment'
     ? document.status === 'DRAFT' : motionType === 'vote-on-amendment' ? document.status === 'PUBLISHED' : true);
   const identicalSeats = Boolean(proposerId && seconderId && proposerId === seconderId);
+  const caucusDurationValue = motionDurationValue(caucusDuration, caucusUnit);
+  const speakerDurationValue = motionDurationValue(speakerDuration, speakerUnit);
+  const durationsValid = (!hasMotionDuration(motionType) || caucusDurationValue !== undefined)
+    && (!hasMotionSpeakers(motionType) || speakerDurationValue !== undefined);
   const divisible = !hasMotionSpeakers(motionType)
-    || motionSeconds(caucusDuration, caucusUnit) % motionSeconds(speakerDuration, speakerUnit) === 0;
+    || caucusDurationValue !== undefined && speakerDurationValue !== undefined
+      && motionSeconds(caucusDurationValue, caucusUnit) % motionSeconds(speakerDurationValue, speakerUnit) === 0;
   const formValid = Boolean(selectedType && proposerId && presentSeatIds.has(proposerId)
     && (chairAdvisoryMode || !needsSeconder || seconderId && presentSeatIds.has(seconderId)) && !identicalSeats
-    && (chairAdvisoryMode || divisible)
+    && durationsValid && (chairAdvisoryMode || divisible)
     && (!hasMotionDetail(motionType) || proposal.trim())
     && (!hasCaucusTarget(motionType) || caucusTarget)
     && (!hasResolutionTarget(motionType) || resolutionTarget)
@@ -909,8 +962,8 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
   const propose = async () => {
     const parameters: Record<string, unknown> = {};
     if (hasMotionDetail(motionType)) parameters.proposal = proposal;
-    if (hasMotionDuration(motionType)) Object.assign(parameters, {caucusDuration, caucusUnit});
-    if (hasMotionSpeakers(motionType)) Object.assign(parameters, {speakerDuration, speakerUnit});
+    if (hasMotionDuration(motionType) && caucusDurationValue !== undefined) Object.assign(parameters, {caucusDuration: caucusDurationValue, caucusUnit});
+    if (hasMotionSpeakers(motionType) && speakerDurationValue !== undefined) Object.assign(parameters, {speakerDuration: speakerDurationValue, speakerUnit});
     if (hasCaucusTarget(motionType)) parameters.caucusTarget = caucusTarget;
     if (hasAmendmentTarget(motionType)) parameters.amendmentTarget = amendmentTarget;
     if (hasResolutionTarget(motionType) || motionChoice.startsWith(linkedResolutionMotionPrefix)) {
@@ -927,7 +980,6 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
       }
       setAmendmentTarget('');
       if (canChair) setProposerId('');
-      if (caucusUnit === 'min') setCaucusDuration(current => current + 1);
     }
   };
   const visibleMotions = [...(snapshot.motions ?? [])].filter(motion => motion.status !== 'WITHDRAWN')
@@ -979,7 +1031,8 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
           onChange={(_, data) => setSeconderId(String(data.value))} />}
       </Form.Group>
       {(hasMotionSpeakers(motionType) || hasMotionDuration(motionType) || hasCaucusTarget(motionType)
-        || hasResolutionTarget(motionType) || hasAmendmentTarget(motionType)) && <Form.Group widths="equal">
+        || hasResolutionTarget(motionType) || hasAmendmentTarget(motionType)) && <Form.Group widths="equal"
+          className={hasMotionDuration(motionType) && hasMotionSpeakers(motionType) ? 'motion-time-fields' : undefined}>
         {hasCaucusTarget(motionType) && <Form.Select required key="caucusTarget" search selection fluid error={!caucusTarget}
           icon="search" label={t('Target caucus')} value={caucusTarget}
           options={openCaucuses.map(list => ({key: list.id, value: list.id, text: list.topic || t('Moderated caucus')}))}
@@ -996,16 +1049,16 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
           onChange={(_, data) => {const id = String(data.value); const target = targetAmendments.find(item => item.id === id);
             setAmendmentTarget(id); setProposal(target?.currentVersion.content.trim()
               || target?.currentVersion.contentFile?.logicalName || target?.title || '');}} />}
-        {hasMotionDuration(motionType) && <Form.Field error={!divisible}>
-          <label>{t('Duration')}</label><Form.Group widths="equal"><Form.Input type="number" min={1} value={caucusDuration}
-            onChange={event => setCaucusDuration(Number(event.currentTarget.value))} />
-          <Form.Select value={caucusUnit} options={[{key: 'sec', value: 'sec', text: t('sec')},
+        {hasMotionDuration(motionType) && <Form.Field className="motion-time-field" error={!durationsValid || !divisible}>
+          <label>{t(hasMotionSpeakers(motionType) ? 'Total duration' : 'Duration')}</label><Form.Group className="motion-time-inputs"><Form.Input className="motion-time-value"
+            type="number" min={1} value={caucusDuration} onChange={event => setCaucusDuration(event.currentTarget.value)} />
+          <Form.Select className="motion-time-unit" value={caucusUnit} options={[{key: 'sec', value: 'sec', text: t('sec')},
             {key: 'min', value: 'min', text: t('min')}]} onChange={(_, data) => setCaucusUnit(data.value as MotionTimeUnit)} /></Form.Group>
         </Form.Field>}
-        {hasMotionSpeakers(motionType) && <Form.Field error={!divisible}>
-          <label>{t('Speaking time')}</label><Form.Group widths="equal"><Form.Input type="number" min={1} value={speakerDuration}
-            onChange={event => setSpeakerDuration(Number(event.currentTarget.value))} />
-          <Form.Select value={speakerUnit} options={[{key: 'sec', value: 'sec', text: t('sec')},
+        {hasMotionSpeakers(motionType) && <Form.Field className="motion-time-field" error={!durationsValid || !divisible}>
+          <label>{t('Unit duration')}</label><Form.Group className="motion-time-inputs"><Form.Input className="motion-time-value"
+            type="number" min={1} value={speakerDuration} onChange={event => setSpeakerDuration(event.currentTarget.value)} />
+          <Form.Select className="motion-time-unit" value={speakerUnit} options={[{key: 'sec', value: 'sec', text: t('sec')},
             {key: 'min', value: 'min', text: t('min')}]} onChange={(_, data) => setSpeakerUnit(data.value as MotionTimeUnit)} /></Form.Group>
         </Form.Field>}
       </Form.Group>}

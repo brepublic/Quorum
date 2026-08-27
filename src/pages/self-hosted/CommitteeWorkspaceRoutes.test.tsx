@@ -532,6 +532,27 @@ describe('committee workspace routes and roles', () => {
     expect(withdrawMotion).toHaveBeenCalledWith('motion', 1);
   });
 
+  it('uses compact second-based time controls and permits clearing a motion duration', async () => {
+    const page = await render('CHAIR', '/committees/committee/motions', user, value => ({...value,
+      meetingSession: {id: 'meeting', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate',
+        activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1,
+        createdAt: '2026-08-14T00:00:00.000Z', closedAt: null},
+      attendance: [{seatId: 'seat', state: 'PRESENT', lastEventId: 'attendance', updatedAt: '2026-08-14T00:00:00.000Z'}],
+      activeRules: {...value.activeRules, motionTypes: [{id: 'open-moderated-caucus',
+        names: {en: 'Open a moderated caucus', 'zh-CN': '开启有主持核心磋商'}, procedural: true,
+        requiredSecondCount: 0}]}}));
+
+    expect([...page.querySelectorAll('.motion-proposal-form label')].map(label => label.textContent)).toEqual(
+      expect.arrayContaining(['Topic', 'Proposer', 'Total duration', 'Unit duration']));
+    expect([...page.querySelectorAll<HTMLInputElement>('.motion-time-value input')].map(input => input.value)).toEqual(['600', '60']);
+    expect([...page.querySelectorAll<HTMLElement>('.motion-time-unit > .ui.dropdown > .text')].map(item => item.textContent)).toEqual(['sec', 'sec']);
+    const duration = page.querySelector<HTMLInputElement>('.motion-time-value input');
+    await act(async () => {Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(duration, '');
+      duration?.dispatchEvent(new Event('input', {bubbles: true})); await Promise.resolve();});
+    expect(duration?.value).toBe('');
+    expect(page.querySelector<HTMLButtonElement>('button[aria-label="Propose motion"]')?.disabled).toBe(true);
+  });
+
   it('shows read-only counts and the non-voting-seat setting in delegate-operated motion cards', async () => {
     const motion: ProceedingMotion = {id: 'motion', committeeId: 'committee', meetingSessionId: 'meeting',
       motionTypeId: 'open-unmoderated-caucus', proposedBySeatId: 'seat', proposedBySeatDisplayName: 'China',
@@ -780,7 +801,7 @@ describe('committee workspace routes and roles', () => {
     expect(page.textContent).toContain('China');
     expect(page.textContent).toContain('France');
     expect(page.textContent).not.toContain('Motion type');
-    expect((page.textContent ?? '').indexOf('Next speaking')).toBeLessThan((page.textContent ?? '').indexOf('Queue'));
+    expect((page.textContent ?? '').indexOf('Queue')).toBeLessThan((page.textContent ?? '').indexOf('Next speaking'));
     const nextPanel = [...page.querySelectorAll<HTMLElement>('.ui.segment')]
       .find(segment => segment.querySelector('.top.left.attached.label')?.textContent === 'Next speaking');
     const queuePanel = [...page.querySelectorAll<HTMLElement>('.ui.segment')]
@@ -849,12 +870,15 @@ describe('committee workspace routes and roles', () => {
       'france', expect.any(AbortSignal));
     await act(async () => {finishRecord(questionSpeech); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();});
     expect(page.querySelector('.speech-contribution-form')).toBeNull();
-    expect(page.textContent).not.toContain('may ask a question');
+    expect(page.textContent).toContain('may ask a question');
     expect(page.textContent).toContain('Interaction recorded.');
-    await act(async () => {await vi.advanceTimersByTimeAsync(4_999);});
+    await act(async () => {await vi.advanceTimersByTimeAsync(9_999);});
     expect(page.textContent).toContain('Interaction recorded.');
     await act(async () => {await vi.advanceTimersByTimeAsync(1);});
+    expect(page.querySelectorAll('.speaker-message-fade')).toHaveLength(2);
+    await act(async () => {await vi.advanceTimersByTimeAsync(180);});
     expect(page.textContent).not.toContain('Interaction recorded.');
+    expect(page.textContent).not.toContain('may ask a question');
     vi.useRealTimers();
 
     act(() => root?.unmount()); root = undefined; container?.remove(); container = undefined;
@@ -1009,7 +1033,9 @@ describe('committee workspace routes and roles', () => {
         name: kind === 'GENERAL' ? "General Speakers' List" : 'Climate finance', topic: '', defaultSpeechMs: 60_000,
         delegatesCanQueue: false, rulePackageVersionId: 'rules', currentEntryId: null, speechTimerId: 'speech-timer',
         totalTimerId: kind === 'MODERATED_CAUCUS' ? 'total-timer' : null, linkedResolutionId: null, revision: 2,
-        queue: [], speeches: [], createdAt: '2026-08-14T00:00:00.000Z', closedAt: null}],
+        queue: [{id: 'france-entry', seatId: 'france', seatDisplayName: 'France', position: 1, status: 'QUEUED' as const,
+          stance: 'NEUTRAL' as const, speechDurationMs: 60_000, createdAt: '2026-08-14T00:00:00.000Z'}], speeches: [],
+        createdAt: '2026-08-14T00:00:00.000Z', closedAt: null}],
       timers: [{id: 'speech-timer', committeeId: 'committee', ownerType: 'SPEAKER_LIST', ownerId: 'list', running: false,
         startedAt: null, remainingAtStartMs: 60_000, remainingMs: 60_000, revision: 1, expiredAt: null,
         serverTime: '2026-08-14T00:00:00.000Z'}, ...(kind === 'MODERATED_CAUCUS' ? [{id: 'total-timer', committeeId: 'committee',
@@ -1018,7 +1044,9 @@ describe('committee workspace routes and roles', () => {
     });
 
     for (const kind of ['GENERAL', 'MODERATED_CAUCUS'] as const) {
-      const page = await render('CHAIR', '/committees/committee/caucuses/list', user, value => withList(value, kind));
+      const removeSpeakerQueueEntry = vi.fn(async () => ({id: 'list'} as SpeakerList));
+      const page = await render('CHAIR', '/committees/committee/caucuses/list', user, value => withList(value, kind),
+        {removeSpeakerQueueEntry});
       const dropdown = page.querySelector<HTMLElement>('.speaker-seat-dropdown .ui.dropdown');
       await act(async () => {dropdown?.click(); await Promise.resolve();});
       const absent = document.body.querySelector<HTMLElement>('.speaker-seat-dropdown-portal [role="option"]:nth-child(2)');
@@ -1028,6 +1056,17 @@ describe('committee workspace routes and roles', () => {
       expect(absent?.getAttribute('aria-disabled')).toBe('true');
       await act(async () => {absent?.click(); await Promise.resolve();});
       expect(dropdown?.getAttribute('aria-expanded')).toBe('true');
+      const stage = page.querySelector<HTMLElement>('.speaker-absent-action-blocker');
+      expect(stage?.textContent).toContain('Stage');
+      await act(async () => {stage?.click(); await Promise.resolve();});
+      expect(page.textContent).toContain('Remove the absent delegation before continuing.');
+      const unavailableDrag = page.querySelector<HTMLElement>('.speaker-drag-handle-disabled');
+      expect(unavailableDrag).not.toBeNull();
+      await act(async () => {unavailableDrag?.click(); await Promise.resolve();});
+      const remove = [...page.querySelectorAll<HTMLButtonElement>('.speaker-queue-feed button')]
+        .find(button => button.textContent === 'Remove');
+      await act(async () => {remove?.click(); await Promise.resolve();});
+      expect(removeSpeakerQueueEntry).toHaveBeenCalledWith('list', 'france-entry', 2);
       act(() => root?.unmount()); root = undefined; container?.remove(); container = undefined;
     }
   });

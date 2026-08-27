@@ -545,6 +545,7 @@ const zhCN: Record<string, string> = {
   'Present': '出席',
   'Present and voting': '出席并参与表决',
   'Absent': '缺席',
+  'Remove the absent delegation before continuing.': '请先移除该缺席国家。',
   'Must Vote': '必须投票',
   'Add at least one committee member to proceed': '请至少添加一名委员会成员后再继续',
   "General Speakers' List": '主发言名单',
