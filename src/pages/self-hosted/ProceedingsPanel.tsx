@@ -843,6 +843,8 @@ const motionDurationValue = (value: string, unit: MotionTimeUnit): number | unde
   if (!Number.isFinite(duration) || duration <= 0 || !Number.isSafeInteger(motionSeconds(duration, unit) * 1_000)) return undefined;
   return duration;
 };
+const motionMinutesLabel = (seconds: number) => `${Number((seconds / 60).toFixed(2))} ${t('min')}`;
+const motionSecondsLabel = (minutes: number) => `${minutes * 60} ${t('sec')}`;
 const linkedResolutionMotionValue = (resolutionId: string) => `open-moderated-caucus::resolution::${resolutionId}`;
 const linkedResolutionMotionPrefix = 'open-moderated-caucus::resolution::';
 const motionTypeFallbackLabels: Record<string, string> = {
@@ -1054,12 +1056,16 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
             type="number" min={1} value={caucusDuration} onChange={event => setCaucusDuration(event.currentTarget.value)} />
           <Form.Select className="motion-time-unit" value={caucusUnit} options={[{key: 'sec', value: 'sec', text: t('sec')},
             {key: 'min', value: 'min', text: t('min')}]} onChange={(_, data) => setCaucusUnit(data.value as MotionTimeUnit)} /></Form.Group>
+          {caucusDurationValue !== undefined && <div className="motion-time-conversion">{caucusUnit === 'sec'
+            ? motionMinutesLabel(caucusDurationValue) : motionSecondsLabel(caucusDurationValue)}</div>}
         </Form.Field>}
         {hasMotionSpeakers(motionType) && <Form.Field className="motion-time-field" error={!durationsValid || !divisible}>
           <label>{t('Unit duration')}</label><Form.Group className="motion-time-inputs"><Form.Input className="motion-time-value"
             type="number" min={1} value={speakerDuration} onChange={event => setSpeakerDuration(event.currentTarget.value)} />
           <Form.Select className="motion-time-unit" value={speakerUnit} options={[{key: 'sec', value: 'sec', text: t('sec')},
             {key: 'min', value: 'min', text: t('min')}]} onChange={(_, data) => setSpeakerUnit(data.value as MotionTimeUnit)} /></Form.Group>
+          {speakerDurationValue !== undefined && <div className="motion-time-conversion">{speakerUnit === 'sec'
+            ? motionMinutesLabel(speakerDurationValue) : motionSecondsLabel(speakerDurationValue)}</div>}
         </Form.Field>}
       </Form.Group>}
       {!divisible && <Message error={!chairAdvisoryMode} warning={chairAdvisoryMode}

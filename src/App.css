@@ -183,24 +183,30 @@
 }
 
 .motion-proposal-form .fields.motion-time-inputs > .motion-time-value.field {
-  flex: 0 1 18.375rem;
+  flex: 0 1 17.8rem;
   min-width: 0;
-  width: 18.375rem;
+  width: 17.8rem;
 }
 
 .motion-proposal-form .fields.motion-time-inputs > .motion-time-unit.field {
-  flex: 0 0 5rem;
-  min-width: 5rem;
-  width: 5rem;
+  flex: 0 0 5.5rem;
+  min-width: 5.5rem;
+  width: 5.5rem;
 }
 
 .motion-proposal-form .fields.motion-time-inputs > .motion-time-unit.field > .ui.dropdown {
-  min-width: 5rem;
-  width: 5rem;
+  min-width: 5.5rem;
+  width: 5.5rem;
 }
 
 .motion-proposal-form .fields.motion-time-fields {
   gap: 1.5rem;
+}
+
+.motion-time-conversion {
+  color: rgba(0, 0, 0, 0.45);
+  font-size: 0.85em;
+  margin-top: -0.35rem;
 }
 
 .committee-overview-page.ui.container {

@@ -546,6 +546,7 @@ describe('committee workspace routes and roles', () => {
       expect.arrayContaining(['Topic', 'Proposer', 'Total duration', 'Unit duration']));
     expect([...page.querySelectorAll<HTMLInputElement>('.motion-time-value input')].map(input => input.value)).toEqual(['600', '60']);
     expect([...page.querySelectorAll<HTMLElement>('.motion-time-unit > .ui.dropdown > .text')].map(item => item.textContent)).toEqual(['sec', 'sec']);
+    expect([...page.querySelectorAll<HTMLElement>('.motion-time-conversion')].map(item => item.textContent)).toEqual(['10 min', '1 min']);
     const duration = page.querySelector<HTMLInputElement>('.motion-time-value input');
     await act(async () => {Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(duration, '');
       duration?.dispatchEvent(new Event('input', {bubbles: true})); await Promise.resolve();});
