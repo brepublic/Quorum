@@ -44,3 +44,18 @@ export interface StorageCacheFileSummary {
   cachedAt: string | null;
   lastAccessedAt: string | null;
 }
+
+export interface StorageCacheStatus {
+  config: EffectiveStorageCacheConfig;
+  capacity: {totalBytes: number; availableBytes: number; quorumBytes: number; pendingReviewBytes: number;
+    publishedCacheBytes: number; otherStagingBytes: number};
+  runtime: {hits: number; misses: number; refills: number; fetching: number;
+    lastEvictedAt: string | null; lastEvictedBytes: number};
+}
+
+export interface StorageCacheFilePage {
+  files: StorageCacheFileSummary[];
+  page: number;
+  pageSize: number;
+  total: number;
+}

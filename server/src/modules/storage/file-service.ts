@@ -155,7 +155,8 @@ export class Stage6FileService {
   constructor(private readonly pool: Pool, private readonly serverVolume: ServerVolumeStore,
     private readonly s3Configs: Stage6S3ConfigService, private readonly s3Factory: FileS3StoreFactory,
     private readonly staging?: DurableStagingStore, private readonly cache?: DurableStagingStore,
-    private readonly refill?: StorageCacheRefillService) {}
+    private readonly refill?: StorageCacheRefillService,
+    private readonly cacheStats?: {hits: number; misses: number}) {}
 
   async list(auth: AuthenticatedSession | undefined, committeeId: string): Promise<FileEntry[]> {
     return transaction(this.pool, async client => {
@@ -184,12 +185,14 @@ export class Stage6FileService {
         await this.cache.verify(cached.rows[0].storage_key, Number(row.size_bytes), row.sha256_hex);
         await this.pool.query(`UPDATE storage_cache_entries SET last_accessed_at=now(),updated_at=now()
           WHERE blob_id=$1 AND (last_accessed_at IS NULL OR last_accessed_at<now()-interval '5 minutes')`, [row.blob_id]);
+        if (this.cacheStats) this.cacheStats.hits += 1;
         return {file, headers: safeDownloadHeaders(file),
           content: this.cache.read(cached.rows[0].storage_key, Number(row.size_bytes), row.sha256_hex)};
       }
       if (cached.rows[0]) await this.pool.query(`UPDATE storage_cache_entries SET state='MISSING',storage_key=NULL,
         cached_at=NULL,state_changed_at=now(),updated_at=now() WHERE blob_id=$1`, [row.blob_id]);
       if (!this.staging || !row.agent_staging_key || !await this.staging.exists(row.agent_staging_key)) {
+        if (this.cacheStats) this.cacheStats.misses += 1;
         if (this.refill) throw new DownloadPreparingError(await this.prepareRow(row));
         throw new AppError({code: 'SERVICE_NOT_READY', message: 'The file is currently available only on the Chair computer.'});
       }

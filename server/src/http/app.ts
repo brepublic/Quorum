@@ -26,6 +26,7 @@ import type {Stage7ConflictService} from '../modules/storage-agent/conflict-serv
 import type {Stage8ArchiveService} from '../modules/operations/archive-service.js';
 import type {Stage8DeletionService} from '../modules/operations/deletion-service.js';
 import type {Stage8OperationsStatusService} from '../modules/operations/status-service.js';
+import type {StorageCacheOperationsService} from '../modules/operations/storage-cache-service.js';
 import type {DelegateFileService} from '../modules/delegate-files/service.js';
 import {AppError, normalizeError} from './errors.js';
 import {
@@ -70,6 +71,7 @@ export interface AppDependencies {
   archives?: Stage8ArchiveService;
   committeeDeletions?: Stage8DeletionService;
   operationsStatus?: Stage8OperationsStatusService;
+  storageCacheOperations?: StorageCacheOperationsService;
   delegateFiles?: DelegateFileService;
   allowedOrigins?: string[];
 }
@@ -1202,9 +1204,10 @@ async function handleIdentityRequest(options: {
   requestId: string;
   identity: IdentityService;
   operationsStatus?: Stage8OperationsStatusService;
+  storageCacheOperations?: StorageCacheOperationsService;
   allowedOrigins: readonly string[];
 }): Promise<boolean> {
-  const {request, response, pathname, requestId, identity, operationsStatus, allowedOrigins} = options;
+  const {request, response, pathname, requestId, identity, operationsStatus, storageCacheOperations, allowedOrigins} = options;
   const method = request.method ?? 'GET';
   const context = identityContext(request, requestId);
   const cookies = identityCookies(request);
@@ -1303,6 +1306,23 @@ async function handleIdentityRequest(options: {
     sendJson(response, 200, success(await operationsStatus.status(auth), requestId));
     return true;
   }
+  if (method === 'GET' && pathname === '/api/v1/admin/storage-cache' && storageCacheOperations) {
+    const auth = await identity.authenticate(cookies.get(SESSION_COOKIE_NAME));
+    sendJson(response, 200, success(await storageCacheOperations.status(auth), requestId)); return true;
+  }
+  if (method === 'PUT' && pathname === '/api/v1/admin/storage-cache/config' && storageCacheOperations) {
+    requireOrigin(request, allowedOrigins); const auth = await authenticatedWrite(request, identity);
+    sendJson(response, 200, success(await storageCacheOperations.update(auth, await readJson(request), context), requestId));
+    return true;
+  }
+  if (method === 'GET' && pathname === '/api/v1/admin/storage-cache/files' && storageCacheOperations) {
+    const auth = await identity.authenticate(cookies.get(SESSION_COOKIE_NAME));
+    const url = new URL(request.url || '/', 'http://quorum.local');
+    const state = url.searchParams.get('state') === 'pending' ? 'pending' : 'published';
+    sendJson(response, 200, success(await storageCacheOperations.files(auth, state,
+      Number(url.searchParams.get('page') || 1), Number(url.searchParams.get('pageSize') || 25)), requestId));
+    return true;
+  }
 
   if (method === 'POST' && pathname === '/api/v1/admin/users') {
     requireOrigin(request, allowedOrigins);
@@ -1386,6 +1406,7 @@ export function createRequestHandler(dependencies: AppDependencies): RequestList
           requestId,
           identity: dependencies.identity,
           operationsStatus: dependencies.operationsStatus,
+          storageCacheOperations: dependencies.storageCacheOperations,
           allowedOrigins: dependencies.allowedOrigins ?? []
         })) return;
 

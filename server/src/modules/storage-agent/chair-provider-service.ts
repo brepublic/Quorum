@@ -67,7 +67,7 @@ async function uploadForUpdate(client: PoolClient, id: string): Promise<AgentUpl
 
 export class Stage7ChairAgentProviderService implements StorageAgentTaskCompletionFinalizer {
   constructor(private readonly pool: Pool, private readonly metadata: Stage6StorageService,
-    private readonly cache?: StorageCacheService) {}
+    private readonly cache?: StorageCacheService, private readonly cacheStats?: {refills: number}) {}
 
   async queueUpload(auth: AuthenticatedSession, uploadId: string, body: unknown,
     idempotencyKey: string, context: Stage4Context): Promise<PendingHostCommit> {
@@ -154,6 +154,7 @@ export class Stage7ChairAgentProviderService implements StorageAgentTaskCompleti
       await this.cache.retain(client, {committeeId: committee.id, fileEntryId: task.fileEntryId,
         fileVersionId: version.id, blobId: task.blobId, sourceKey: task.contentStagingKey,
         sizeBytes: task.expectedSizeBytes, sha256: task.expectedSha256, reviewPinned: false});
+      if (this.cacheStats) this.cacheStats.refills += 1;
       return;
     }
     if (task.type === 'DELETE_FILE') {

@@ -25,6 +25,8 @@ import {DelegateFileService} from '../delegate-files/service';
 import {Stage6ProviderCommitService} from '../storage/provider-commit-service';
 import {cacheStorageKey, StorageCacheService} from '../storage/cache-service';
 import {StorageCacheRefillService} from '../storage/cache-refill-service';
+import {StorageCacheOperationsService, StorageCacheRuntimeStats} from '../operations/storage-cache-service';
+import {createLogger} from '../../logger';
 
 const {Client, Pool} = pg;
 const adminUrl = process.env.TEST_DATABASE_ADMIN_URL;
@@ -473,6 +475,32 @@ integration('PostgreSQL stage 7 storage Agent identity', () => {
     await expect(refill.readiness(file.blob_id)).resolves.toEqual({status: 'READY'});
     await expect(staging.verify(cacheStorageKey(file.blob_id), source.content.length, source.sha256)).resolves.toBeDefined();
   });
+
+  it('lists safe cache metadata in LRU order and evicts the first READY entry', async () => {
+    const value = await fixture(); const chair = await chairStorage(value.owner, value.committee.id);
+    const source = await stagedUpload(value.owner, value.committee.id, 'lru-first.txt');
+    const pending = await chairProvider.queueUpload(value.owner, source.staged.id, {}, randomUUID(), context('lru-queue'));
+    const claimed = await tasks.claim(chair.paired.credential, pending.taskId, {leaseGeneration: pending.leaseGeneration,
+      fileRevision: 1, requestId: randomUUID()});
+    await tasks.complete(chair.paired.credential, pending.taskId, {leaseGeneration: pending.leaseGeneration,
+      fileRevision: 1, claimToken: claimed.claimToken, requestId: randomUUID()}, context('lru-complete'));
+    const policy = {hardLimits: {publishedCacheMaxBytes: 0, pendingReviewMaxBytes: 1024,
+      pendingReviewCommitteeMaxBytes: 1024, storageMinFreeBytes: 0, storageMinFreePercent: 0},
+    effective: async () => ({publishedCacheMaxBytes: 0, pendingReviewMaxBytes: 1024,
+      pendingReviewCommitteeMaxBytes: 1024, storageMinFreeBytes: 0, storageMinFreePercent: 0, revision: 1,
+      hardLimits: {publishedCacheMaxBytes: 0, pendingReviewMaxBytes: 1024,
+        pendingReviewCommitteeMaxBytes: 1024, storageMinFreeBytes: 0, storageMinFreePercent: 0}})};
+    const operations = new StorageCacheOperationsService(pool as pg.Pool, staging, policy as never,
+      new StorageCacheRuntimeStats(), createLogger(() => undefined));
+    const listed = await operations.files(administrator, 'published', 1, 25);
+    expect(listed.files[0]).toMatchObject({fileName: 'lru-first.txt', committeeName: value.committee.name,
+      state: 'READY', sizeBytes: source.content.length});
+    expect(JSON.stringify(listed)).not.toMatch(/storage_key|sha256|credential|path/i);
+    await expect(operations.evictOne()).resolves.toBe(true);
+    const state = await pool?.query<{state: string; storage_key: string | null}>(`SELECT state::text,storage_key
+      FROM storage_cache_entries WHERE file_entry_id=$1`, [listed.files[0]?.fileEntryId]);
+    expect(state?.rows).toEqual([{state: 'MISSING', storage_key: null}]);
+  }, 15_000);
 
   it('rolls back file metadata and upload completion when the terminal Agent audit fails', async () => {
     const value = await fixture(); const chair = await chairStorage(value.owner, value.committee.id);

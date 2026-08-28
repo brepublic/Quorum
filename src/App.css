@@ -670,6 +670,14 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   }
 }
 
+.storage-cache-table-wrap {
+  overflow-x: auto;
+}
+
+.storage-cache-table-wrap .ui.table {
+  min-width: 48rem;
+}
+
 .notes-editor {
   display: grid;
   grid-template-columns: minmax(12rem, 18rem) minmax(0, 1fr);

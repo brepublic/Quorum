@@ -45,7 +45,10 @@ import type {
   DelegatePortalBootstrap,
   DelegatePublishedFile,
   DelegateReviewFile,
-  DownloadReadiness
+  DownloadReadiness,
+  StorageCacheConfig,
+  StorageCacheFilePage,
+  StorageCacheStatus
 } from '@quorum/contracts';
 import {COMMITTEE_EVENT_DEFINITIONS, type RealtimeSyncState} from '@quorum/contracts';
 
@@ -270,6 +273,17 @@ export const selfHostedApi = {
       committees: Record<'active' | 'paused' | 'archived' | 'deleting', number>;
       queues: {blobDelete: number; uploadStaging: number; migration: number; agentTasks: number; committeeDeletion: number};
       retention: {lastStatus: string | null; lastCompletedAt: string | null}}>('/api/v1/admin/operations/status');
+  },
+  storageCacheStatus() {
+    return request<StorageCacheStatus>('/api/v1/admin/storage-cache');
+  },
+  updateStorageCacheConfig(config: StorageCacheConfig) {
+    return request<StorageCacheStatus['config']>('/api/v1/admin/storage-cache/config', {
+      method: 'PUT', body: config as unknown as Record<string, unknown>
+    });
+  },
+  storageCacheFiles(state: 'published' | 'pending', page = 1, pageSize = 25) {
+    return request<StorageCacheFilePage>(`/api/v1/admin/storage-cache/files?state=${state}&page=${page}&pageSize=${pageSize}`);
   },
   async listCommittees(): Promise<CommitteeSummary[]> {
     return (await request<{committees: CommitteeSummary[]}>('/api/v1/committees')).committees;
