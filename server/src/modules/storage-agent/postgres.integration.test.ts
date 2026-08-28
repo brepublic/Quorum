@@ -25,6 +25,7 @@ import {DelegateFileService} from '../delegate-files/service';
 import {Stage6ProviderCommitService} from '../storage/provider-commit-service';
 import {cacheStorageKey, StorageCacheService} from '../storage/cache-service';
 import {StorageCacheRefillService} from '../storage/cache-refill-service';
+import {StorageCachePolicyService} from '../storage/cache-policy-service';
 import {StorageCacheOperationsService, StorageCacheRuntimeStats} from '../operations/storage-cache-service';
 import {createLogger} from '../../logger';
 
@@ -474,6 +475,44 @@ integration('PostgreSQL stage 7 storage Agent identity', () => {
     context('refill-complete'));
     await expect(refill.readiness(file.blob_id)).resolves.toEqual({status: 'READY'});
     await expect(staging.verify(cacheStorageKey(file.blob_id), source.content.length, source.sha256)).resolves.toBeDefined();
+  });
+
+  it('changes the Agent SSE cursor for durable work and fences a stale generation', async () => {
+    const value = await fixture(); const chair = await chairStorage(value.owner, value.committee.id);
+    const generation = chair.paired.host.leaseGeneration;
+    const before = await agent.eventCursor(chair.paired.credential, generation);
+    const source = await stagedUpload(value.owner, value.committee.id, 'sse-wake.txt');
+    await chairProvider.queueUpload(value.owner, source.staged.id, {}, randomUUID(), context('sse-wake-queue'));
+    const after = await agent.eventCursor(chair.paired.credential, generation);
+    expect(after).not.toBe(before);
+    await expect(agent.eventCursor(chair.paired.credential, generation + 1))
+      .rejects.toMatchObject({code: 'STALE_STORAGE_LEASE'});
+  });
+
+  it('revision-updates cache settings within deployment boundaries', async () => {
+    const policy = new StorageCachePolicyService(pool as pg.Pool, {
+      publishedCacheHardMaxBytes: 2_000, pendingReviewHardMaxBytes: 1_000,
+      pendingReviewCommitteeHardMaxBytes: 500, storageHardMinFreeBytes: 100,
+      storageHardMinFreePercent: 20
+    } as never);
+    const operations = new StorageCacheOperationsService(pool as pg.Pool, staging, policy,
+      new StorageCacheRuntimeStats(), createLogger(() => undefined));
+    const configured = await operations.update(administrator, {publishedCacheMaxBytes: 1_500,
+      pendingReviewMaxBytes: 900, pendingReviewCommitteeMaxBytes: 400,
+      storageMinFreeBytes: 200, storageMinFreePercent: 25, revision: 1}, context('cache-config'));
+    expect(configured).toMatchObject({publishedCacheMaxBytes: 1_500, pendingReviewMaxBytes: 900,
+      pendingReviewCommitteeMaxBytes: 400, storageMinFreeBytes: 200, storageMinFreePercent: 25, revision: 2});
+    await expect(operations.update(administrator, {publishedCacheMaxBytes: 1_500,
+      pendingReviewMaxBytes: 900, pendingReviewCommitteeMaxBytes: 400,
+      storageMinFreeBytes: 200, storageMinFreePercent: 25, revision: 1}, context('cache-config-stale')))
+      .rejects.toMatchObject({code: 'REVISION_CONFLICT'});
+    await expect(operations.update(administrator, {publishedCacheMaxBytes: 2_001,
+      pendingReviewMaxBytes: 900, pendingReviewCommitteeMaxBytes: 400,
+      storageMinFreeBytes: 200, storageMinFreePercent: 25, revision: 2}, context('cache-config-over-limit')))
+      .rejects.toMatchObject({code: 'VALIDATION_FAILED'});
+    const audit = await pool?.query<{count: number}>(`SELECT count(*)::int AS count FROM audit_log
+      WHERE action='storage.cache_config_updated'`);
+    expect(audit?.rows).toEqual([{count: 1}]);
   });
 
   it('lists safe cache metadata in LRU order and evicts the first READY entry', async () => {

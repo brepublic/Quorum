@@ -488,3 +488,12 @@
 - migration 48 新增分享、浏览器会话、上传来源和发布元数据，并保留 migration 39 的文件状态约束。空库完整迁移和重复执行通过；真实 PostgreSQL 定向用例验证了席位资格、凭据只存哈希、模式变化撤销、代表上传经 Chair Agent 落库后进入待审核，以及文件事件 revision 与文件 revision 一致。
 - `pnpm build:self-host` 通过。代表门户、HTTP、Cookie、migration 和身份路由的聚焦 Vitest 共 55 项通过，`git diff --check` 通过。全量有限测试另有两项未涉及本次文件代码的有主持核心磋商失焦校验断言失败：产品按既定行为仅在 `blur` 后显示错误样式，而旧测试只派发 `input`；该问题未混入本功能修改。
 - 浏览器已确认当前前端构建接管 `/delegate-files` 深层路由，但当时没有运行完整应用 API，只得到后端错误态。真实 TLS、有效分享数据、二维码扫码、多浏览器 Cookie/SSE、Chair Agent 断线恢复和三档宽度视觉证据仍按 `MANUAL_ACCEPTANCE.md` 的 SH-MAN-522 待执行，未以 jsdom 或数据库用例替代。
+
+### 2026-08-28：主席文件缓存、自动取回与 Agent SSE
+
+- migration 49/50 增加服务器非权威缓存状态、管理员额度 revision、Agent protocol/capability 和唯一 active `FETCH_BLOB_TO_CACHE`。主席电脑仍是 `CHAIR_AGENT` 的权威持久副本；待审核使用 `REVIEW_PINNED`，发布缓存按固定 LRU 顺序淘汰，cache miss 复用 durable fetch task。
+- 管理员运行状态增加硬边界内配置、容量与启动期 hit/miss/refill、发布缓存和待审核明细。明细只含委员会名、文件名、大小、状态和时间，不提供下载、预览、路径、哈希或导出；inventory GET 不写审计。
+- Agent protocol v2 使用不含业务内容的 SSE `wake` 近实时触发同一个单飞 processor；heartbeat 独立，SSE 以 1–60 秒退避，30 秒 reconciliation 保留。服务端每秒检查 durable 游标，每 15 秒发送 heartbeat；Caddy 继续使用既有 `flush_interval -1`。
+- 定向验证通过：TypeScript；23 项缓存页面/SSE/Agent 测试；Storage Agent build；真实 PostgreSQL 的 cache refill、LRU、安全明细、配置 revision/硬边界和 SSE 游标场景。完整 `pnpm test:self-host` 为 489 通过、3 失败，其中两项为既有 moderated-caucus blur 断言，一项 release 打包在全量负载下超过 5 秒；该 release 用例单独以 20 秒上限复跑 731 ms 通过。完整 PostgreSQL 入口为 31 通过、63 失败，失败集中在既有无效邮箱 fixture、5 秒并行超时、旧 Owner/Chair 断言和主机转移断言；新增 cache/refill/SSE/config 用例均通过。
+- `pnpm exec tsc --noEmit`、`pnpm build:self-host`、`pnpm verify:no-legacy-runtime` 和 `git diff --check` 通过。隔离 `quorum-cache-acceptance` Compose 使用临时 PostgreSQL、独立文件卷和 `127.0.0.1:18080`；schema 50/50、readiness 200，管理员配置真实 HTTP 更新到 revision 2，陈旧 revision 返回 409，匿名明细返回 401。现有 `quorum-dev` 未重建或复用。
+- 浏览器确认隔离生产构建和中文初始化页面可用；因尚未在浏览器登录临时管理员，三档管理员缓存页面及真实 Linux Agent 连续端到端流程未标记通过。完整人工范围记录在 SH-MAN-523。

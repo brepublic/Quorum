@@ -486,3 +486,12 @@
 - 自动化覆盖情况：migration 静态与真实空库迁移测试覆盖 schema 48 和可重复执行；HTTP/Cookie 测试覆盖免登录 bootstrap、凭据不进入 JSON、独立 CSRF；前端测试覆盖二次确认、精确 SSE 文案和点击对应下载后消失；真实 PostgreSQL 定向测试覆盖席位资格、凭据哈希、运作模式变化撤销，以及代表上传经 Chair Agent 进入 `PENDING_REVIEW`。生产构建通过。上述证据不替代真实二维码扫码、浏览器 Cookie 持久性、TLS、Agent 真实目录、跨浏览器 SSE、下载字节和视觉布局。
 - 当前状态：待执行。当前仅在浏览器中确认前端接管 `/delegate-files` 路由；当时没有完整应用 API 和有效分享数据，未完成端到端页面、二维码、下载、断线恢复或多浏览器取证。
 - 需要保存的证据：主席端分享与审核页及 1440px、768px、390px 代表门户截图；二维码解码所得 origin/path 与链接一致性；浏览器 Network 中 fragment 未发送、Cookie 属性和 CSRF 失败结果；三个席位资格列表；身份固定与清除站点数据后的对照；上传进度、Agent task/manifest、待审核、批准/驳回和下载 SHA-256 时间线；SSE 横幅原始文本、60 秒消失、对应下载消失、断线/恢复和游标记录；分享终止及各失效条件后的 API 状态；脱敏 PostgreSQL 事件、审计和 revision 对照。不得保存 capability、代表/登录 Cookie、CSRF token、配对码、设备凭据、绝对本地路径、文件正文或真实代表信息。
+
+### SH-MAN-523 主席文件缓存、自动取回与 Agent SSE
+
+- 前置条件：使用独立 Compose project、临时 PostgreSQL、独立文件卷、临时 Linux Agent 目录和无个人信息测试文件；不得连接生产数据库、复用生产卷或改变 `quorum-dev`。Caddy 必须对 `/api/v1/*` 使用 `flush_interval -1`。准备系统管理员、Owner/Chair、普通成员和代表门户身份。
+- 操作步骤：代表上传并记录任务创建到 Agent 领取的时间；Agent 完成后核对 `REVIEW_PINNED`、文件大小和 SHA-256。管理员分别在 1440px、768px、390px 查看容量、配置、发布缓存与待审核列表，确认发布列表按最近访问升序且第一行标为“最先淘汰”。主席批准并下载；访问另一文件后核对 LRU 队尾变化。降低额度触发清理，再请求被淘汰文件；并发发出 10 个准备请求，检查只有一个 `FETCH_BLOB_TO_CACHE`。分别测试 Agent 离线/恢复、SSE 强制断开、旧 capability、源文件改变、委员会/全局待审核额度和最低空间边界。
+- 通过条件：SSE 正常时任务在 5 秒内发现，断线后 35 秒内由 30 秒 reconciliation 发现；重复、丢失或乱序 wake 不产生并发 processor、重复版本或重复 active fetch。待审核文件在压力下不被 LRU 删除；批准只转为 READY，驳回删除服务器缓存。cache miss 在 capable Agent 在线时自动回填，离线、旧 Agent、源缺失和容量不足返回稳定状态。下载前重新鉴权且字节、文件名和 MIME 正确。系统管理员只能查看委员会名、文件名、大小和缓存状态，没有下载、预览、路径、哈希或导出能力；inventory GET 不新增审计。
+- 自动化覆盖情况：migration 49/50、配置安全合并、缓存原子写入与故障、待审核保留、并发 refill、LRU 顺序、touch、管理员权限/安全明细、HTTP 下载准备、SSE 空 wake、Agent 单飞与 30 秒兜底均有定向测试。PostgreSQL 用例直接验证并发 miss 只建一个 task、回填 SHA-256、LRU 淘汰、配置 revision/硬边界和 durable 游标变化；未配置 `TEST_DATABASE_ADMIN_URL` 时必须明确 skip。
+- 当前状态：2026-08-28 隔离 `quorum-cache-acceptance` Compose 的 PostgreSQL/app/Caddy 已健康运行，schema 50/50，readiness 200，Caddy 已加载 `flush_interval -1`。管理员缓存状态、空明细、配置 revision 更新、陈旧 revision 409 和匿名明细 401 已经真实 HTTP 验证。定向 PostgreSQL、SSE/Agent 和页面安全明细测试通过。完整仓库入口仍有与本功能无关的既有 fixture/超时失败，因此本条尚不能标记整体通过；真实业务账号、Linux Agent 目录、三档管理员页面、上传/批准/LRU/回填/断线的连续浏览器流程仍待完成。
+- 需要保存的证据：脱敏 API 状态、task sequence、wake/claim 时间线、列表排序、缓存前后字节数、测试文件 SHA-256、下载响应头、三档截图、权限状态码、配置审计计数和无敏感 label 的指标。不得保存路径、正文、哈希明文清单、Cookie、CSRF、设备凭据、pairing code 或 claim token。
