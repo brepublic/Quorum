@@ -92,7 +92,7 @@ SERVER_VOLUME 使用 0600 临时文件、fsync 和无覆盖原子发布。S3 end
 
 逻辑删除立即隐藏文件并写不可恢复墓碑，再由 durable job 幂等清理每个物理副本。provider migration 复制全部历史 blob 并复验后才原子切换 binding；失败时旧 provider 继续服务。maintenance worker 只清理明确终态且可删除的 staging，唯一暂存副本、待重试 copy 和退休源副本不因期限、LRU 或容量压力删除。
 
-Chair Agent 使用独立 `QuorumAgent` authorization scheme。一次性配对码和设备凭据只保存哈希；一个委员会最多一个活动 host。单调 lease generation fence 使转移或撤销后的旧设备不能 heartbeat、claim、上传或完成任务。Agent 对本地路径做规范化并拒绝链接、硬链接、非普通文件和目录逃逸；服务端下发内容先完整校验再原子替换。本地并发编辑、墓碑冲突和主机转移不会静默覆盖，均形成 durable 冲突供 Chair 显式裁决。
+Chair Agent 使用独立 `QuorumAgent` authorization scheme。一次性配对码和设备凭据只保存哈希；一个委员会最多一个活动 host。单调 lease generation fence 使转移或撤销后的旧设备不能 heartbeat、claim、上传或完成任务。Agent 对本地路径做规范化并拒绝链接、硬链接、非普通文件和目录逃逸；服务端下发内容先完整校验再原子替换。本地并发编辑、墓碑冲突和主机转移不会静默覆盖，均形成 durable 冲突供 Chair 显式裁决。Agent 以独立 heartbeat 维持 lease，以不含任务内容的 SSE `wake` 近实时触发同一个单飞同步循环，并保留 30 秒 durable reconciliation；SSE 断线不改变 PostgreSQL task 的权威性。
 
 代表文件分享只在主席代办、活动委员会和活动 Chair Agent binding 同时成立时可启动。链接 capability 放在 URL fragment 中，服务端保存它以便主席重新显示；代表选定当前开放会期中出席或暂离的席位后，服务端发放 30 天 HttpOnly 浏览器凭据，分享结束或运行条件失效即撤销。该凭据只允许读取本委员会已发布文件、上传到主席电脑和接收代表文件发布事件；文件创建者仍使用分享发起主席作为现有存储链的技术保管人，代表团来源另存为审核与展示元数据。代表上传经 Chair Agent 完成内容提交后进入待审核，主席决定展示名和文件类型；批准与公开事件同事务提交，驳回沿用逻辑删除和 Agent 清理。
 

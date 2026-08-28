@@ -42,7 +42,10 @@ async function fixture(clientOverrides: Record<string, unknown> = {}) {
     claim: vi.fn(async (value: StorageAgentTask) => ({...value, status: 'IN_PROGRESS',
       claimToken: '50000000-0000-4000-8000-000000000001'})), complete: vi.fn(async (value: StorageAgentTask) => value),
     fail: vi.fn(async (value: StorageAgentTask) => value), download: vi.fn(), upload: vi.fn(), localChange: vi.fn(),
-    conflicts: vi.fn(async () => []),
+    conflicts: vi.fn(async () => []), events: vi.fn(async (_generation: number, signal: AbortSignal) => {
+      if (signal.aborted) return;
+      await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), {once: true}));
+    }),
     ...clientOverrides} as unknown as StorageAgentHttpClient;
   return {root, state, files, scanner, client,
     runtime: new StorageAgentRuntime(client, 1, state, files, scanner)};
@@ -251,6 +254,32 @@ describe('Chair Agent recovery loop', () => {
     await Promise.race([submitted, new Promise((_, reject) => setTimeout(() => reject(new Error('watch timeout')), 2_000))]);
     await running;
     expect(value.client.localChange).toHaveBeenCalledOnce();
+  });
+
+  it('coalesces repeated SSE wakes into one task processor', async () => {
+    const controller = new AbortController(); let active = 0; let maximum = 0;
+    const value = await fixture({
+      tasks: vi.fn(async () => {
+        active += 1; maximum = Math.max(maximum, active);
+        await new Promise(resolve => setTimeout(resolve, 20)); active -= 1;
+        return {tasks: [], nextSequence: 0, hasMore: false};
+      }),
+      events: vi.fn(async (_generation: number, signal: AbortSignal, wake: () => void) => {
+        wake(); wake(); wake();
+        await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), {once: true}));
+      })
+    });
+    const running = value.runtime.run(controller.signal, {scanIntervalMs: 10_000});
+    await new Promise(resolve => setTimeout(resolve, 80)); controller.abort(); await running;
+    expect(maximum).toBe(1);
+    expect(value.client.tasks).toHaveBeenCalledOnce();
+  });
+
+  it('keeps periodic durable reconciliation when the SSE connection is quiet', async () => {
+    const controller = new AbortController(); const value = await fixture();
+    const running = value.runtime.run(controller.signal, {scanIntervalMs: 20});
+    await new Promise(resolve => setTimeout(resolve, 75)); controller.abort(); await running;
+    expect(vi.mocked(value.client.tasks).mock.calls.length).toBeGreaterThanOrEqual(3);
   });
 
   it('fails closed on an unknown protocol state before applying partial local changes', async () => {

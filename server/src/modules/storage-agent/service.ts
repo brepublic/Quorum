@@ -447,6 +447,24 @@ export class Stage7StorageAgentService {
     });
   }
 
+  async eventCursor(credential: string, requestedGeneration: number): Promise<string> {
+    const lease = await this.authenticate(credential);
+    if (lease.leaseGeneration !== requestedGeneration) {
+      throw new AppError({code: 'STALE_STORAGE_LEASE', message: 'Storage host lease is no longer current.'});
+    }
+    const result = await this.pool.query<{cursor: string}>(`SELECT concat_ws(':',
+          $2::text,
+          COALESCE((SELECT max(sequence)::text FROM storage_agent_tasks
+            WHERE host_id=$1 AND lease_generation=$2::bigint), '0'),
+          COALESCE((SELECT max(updated_at)::text FROM storage_agent_tasks
+            WHERE host_id=$1 AND lease_generation=$2::bigint), ''),
+          COALESCE((SELECT max(sequence)::text FROM storage_manifest_events WHERE committee_id=$3), '0'),
+          COALESCE((SELECT max(created_at)::text FROM storage_agent_conflicts WHERE host_id=$1), ''),
+          COALESCE((SELECT max(resolved_at)::text FROM storage_agent_conflicts WHERE host_id=$1), '')
+        ) AS cursor`, [lease.hostId, lease.leaseGeneration, lease.committeeId]);
+    return result.rows[0]?.cursor ?? String(lease.leaseGeneration);
+  }
+
   async heartbeat(credential: string, body: unknown): Promise<StorageHost> {
     assertExactBody(body as Record<string, unknown>, ['leaseGeneration', 'agentProtocolVersion', 'capabilities']);
     const heartbeat = body as {leaseGeneration?: unknown; agentProtocolVersion?: unknown; capabilities?: unknown};

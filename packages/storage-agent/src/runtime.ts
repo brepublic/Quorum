@@ -48,6 +48,8 @@ export class StorageAgentRuntime {
   private manifest = new Map<string, StorageManifestEvent>();
   private watcher?: FSWatcher;
   private wake?: () => void;
+  private pendingWake = false;
+  private fatalError?: unknown;
 
   constructor(private readonly client: StorageAgentHttpClient, private readonly leaseGeneration: number,
     private readonly state: AgentStateStore, private readonly files: AgentFileStore,
@@ -55,6 +57,10 @@ export class StorageAgentRuntime {
 
   async synchronizeOnce(): Promise<void> {
     await this.client.heartbeat(this.leaseGeneration);
+    await this.synchronizeWorkOnce();
+  }
+
+  private async synchronizeWorkOnce(): Promise<void> {
     const events = await this.loadManifest(); this.manifest = latest(events);
     const tombstones = [...this.manifest.values()].filter((event): event is Extract<StorageManifestEvent,
       {kind: 'DELETE'}> => event.kind === 'DELETE').sort((left, right) => left.sequence - right.sequence);
@@ -79,18 +85,64 @@ export class StorageAgentRuntime {
   async run(signal: AbortSignal, options: {scanIntervalMs?: number; retryMaximumMs?: number} = {}): Promise<void> {
     const interval = options.scanIntervalMs ?? 30_000; const maximum = options.retryMaximumMs ?? 60_000;
     await this.files.cleanupTemporaryFiles(); this.startWatcher(); let delay = 1_000;
+    this.pendingWake = true; this.fatalError = undefined;
+    const runtimeAbort = new AbortController();
+    const abort = () => { runtimeAbort.abort(); this.signalWake(); };
+    signal.addEventListener('abort', abort, {once: true});
+    if (signal.aborted) abort();
+    const heartbeat = this.heartbeatLoop(runtimeAbort.signal);
+    const events = this.eventLoop(runtimeAbort.signal);
     try {
-      while (!signal.aborted) {
+      while (!runtimeAbort.signal.aborted) {
+        if (!this.pendingWake) await this.wait(interval, runtimeAbort.signal);
+        if (this.fatalError) throw this.fatalError;
+        if (runtimeAbort.signal.aborted) break;
+        this.pendingWake = false;
         try {
-          await this.synchronizeOnce(); delay = 1_000;
-          await this.wait(interval, signal);
+          await this.synchronizeWorkOnce(); delay = 1_000;
         } catch (error) {
           this.logger.error('storage_agent.cycle_failed', {code: safeReason(error)});
           if (error instanceof AgentApiError && error.code === 'STALE_STORAGE_LEASE') throw error;
-          await this.wait(delay, signal); delay = Math.min(maximum, delay * 2);
+          await this.wait(delay, runtimeAbort.signal); delay = Math.min(maximum, delay * 2);
         }
       }
-    } finally { this.watcher?.close(); this.watcher = undefined; }
+    } finally {
+      runtimeAbort.abort(); this.signalWake(); signal.removeEventListener('abort', abort);
+      this.watcher?.close(); this.watcher = undefined;
+      await Promise.allSettled([heartbeat, events]);
+    }
+  }
+
+  private async heartbeatLoop(signal: AbortSignal): Promise<void> {
+    while (!signal.aborted) {
+      try {
+        await this.client.heartbeat(this.leaseGeneration);
+      } catch (error) {
+        this.logger.error('storage_agent.heartbeat_failed', {code: safeReason(error)});
+        if (error instanceof AgentApiError && error.code === 'STALE_STORAGE_LEASE') {
+          this.fatalError = error; this.signalWake(); return;
+        }
+      }
+      await this.delay(15_000, signal);
+    }
+  }
+
+  private async eventLoop(signal: AbortSignal): Promise<void> {
+    let delay = 1_000;
+    while (!signal.aborted) {
+      try {
+        await this.client.events(this.leaseGeneration, signal, () => this.signalWake());
+        delay = 1_000;
+      } catch (error) {
+        if (signal.aborted) return;
+        this.logger.error('storage_agent.events_disconnected', {code: safeReason(error)});
+        if (error instanceof AgentApiError && error.code === 'STALE_STORAGE_LEASE') {
+          this.fatalError = error; this.signalWake(); return;
+        }
+      }
+      await this.delay(delay, signal);
+      delay = Math.min(60_000, delay * 2);
+    }
   }
 
   private async loadManifest(): Promise<StorageManifestEvent[]> {
@@ -259,7 +311,7 @@ export class StorageAgentRuntime {
   private startWatcher(): void {
     const changed = () => {
       this.logger.info('storage_agent.filesystem_changed');
-      this.wake?.();
+      this.signalWake();
     };
     try {
       this.watcher = watch(this.state.rootPath, {recursive: true}, changed);
@@ -270,6 +322,20 @@ export class StorageAgentRuntime {
         this.watcher.on('error', () => { this.watcher?.close(); this.watcher = undefined; });
       } catch { this.watcher = undefined; }
     }
+  }
+
+  private signalWake(): void {
+    this.pendingWake = true;
+    this.wake?.();
+  }
+
+  private delay(milliseconds: number, signal: AbortSignal): Promise<void> {
+    if (signal.aborted) return Promise.resolve();
+    return new Promise(resolve => {
+      const timer = setTimeout(done, milliseconds);
+      function done() { clearTimeout(timer); signal.removeEventListener('abort', done); resolve(); }
+      signal.addEventListener('abort', done, {once: true});
+    });
   }
 
   private wait(milliseconds: number, signal: AbortSignal): Promise<void> {

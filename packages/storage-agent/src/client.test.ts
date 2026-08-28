@@ -29,6 +29,24 @@ describe('Chair Agent HTTP client', () => {
       'x-storage-lease-generation': '7'});
   });
 
+  it('parses only wake events from the credentialed SSE stream', async () => {
+    const stream = new ReadableStream<Uint8Array>({start(controller) {
+      controller.enqueue(new TextEncoder().encode(': heartbeat\n\nevent: wake\ndata: {}\n'));
+      controller.enqueue(new TextEncoder().encode('\nevent: ignored\ndata: {}\n\n'));
+      controller.close();
+    }});
+    const fetcher = vi.fn(async () => new Response(stream, {status: 200,
+      headers: {'content-type': 'text/event-stream'}}));
+    const client = new StorageAgentHttpClient('https://quorum.example.com', credential, fetcher as typeof fetch);
+    const wake = vi.fn();
+    await client.events(7, new AbortController().signal, wake);
+    expect(wake).toHaveBeenCalledOnce();
+    const [url, options] = fetcher.mock.calls[0] as unknown as [URL, RequestInit];
+    expect(url.toString()).toBe('https://quorum.example.com/api/v1/storage-agent/events');
+    expect(options.headers).toMatchObject({authorization: `QuorumAgent ${credential}`,
+      'x-storage-lease-generation': '7', accept: 'text/event-stream'});
+  });
+
   it('turns a durable Chair conflict response back into its typed result', async () => {
     const details = {status: 'CONFLICT', changeRequestId: 'change', conflictId: 'conflict',
       reasonCode: 'REVISION_CONFLICT'};

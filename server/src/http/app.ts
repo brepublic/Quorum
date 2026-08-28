@@ -43,6 +43,7 @@ import {
 } from './cookies.js';
 import {streamCommitteeEvents} from './sse.js';
 import {streamDelegateFileEvents} from './delegate-file-sse.js';
+import {streamStorageAgentEvents} from './storage-agent-sse.js';
 
 const REQUEST_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 
@@ -260,6 +261,11 @@ async function handleStage7AgentRequest(options: {
   if (method === 'POST' && pathname === '/api/v1/storage-agent/heartbeat') {
     const body = await readJson(request);
     sendJson(response, 200, success(await storageAgent.heartbeat(storageAgentCredential(request), body), requestId));
+    return true;
+  }
+  if (method === 'GET' && pathname === '/api/v1/storage-agent/events') {
+    await streamStorageAgentEvents({request, response, credential: storageAgentCredential(request),
+      leaseGeneration: positiveHeader(request, 'x-storage-lease-generation'), service: storageAgent});
     return true;
   }
   if (storageTasks && method === 'GET' && pathname === '/api/v1/storage-agent/manifest') {

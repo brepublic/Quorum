@@ -969,6 +969,14 @@ Agent 只以当前 `QuorumAgent` 凭据和 generation 拉取已裁决 conflict�
 
 `CHAIR_AGENT` blob 不交给服务器 provider delete worker；当前 Agent 完成 `DELETE_FILE` 后才把对应 blob/delete job 标为完成。下载只在服务器仍保存并复验关联 upload staging 时可用；否则返回稳定 `SERVICE_NOT_READY`，浏览器从不直连 Agent。桌面文件系统 watcher、周期扫描和路径落盘已由 Agent 实现；Windows/macOS 发布包留到阶段 7.6。
 
+Agent protocol v2 声明 `SSE_WAKE` 与 `CACHE_REFILL` capability，并增加：
+
+```text
+GET /api/v1/storage-agent/events
+```
+
+该路由继续使用 Agent credential 与 `X-Storage-Lease-Generation` fencing。服务端每秒比较当前 host 的 task、manifest、conflict 和 lease 游标，仅在游标变化时发送不含业务内容的 `wake`，每 15 秒发送 SSE heartbeat。任务 payload、文件名、路径、哈希和 claim token 仍只能通过 durable API 读取。Agent 的 heartbeat、SSE listener 和 task processor 独立运行；启动、本地 watcher、SSE 与 30 秒 timer 合并到同一个单飞同步入口。SSE 以 1–60 秒退避重连，断线期间 timer reconciliation 保持有效，stale lease 立即停止旧 Agent。
+
 ### 11.16 阶段 8.1 委员会归档与一致性导出
 
 ```text

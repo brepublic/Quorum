@@ -148,6 +148,7 @@ DELETED
 ```text
 POST /api/v1/storage-agent/pair
 POST /api/v1/storage-agent/heartbeat
+GET  /api/v1/storage-agent/events
 GET  /api/v1/storage-agent/manifest
 GET  /api/v1/storage-agent/tasks?after=:sequence
 POST /api/v1/storage-agent/tasks/:id/claim

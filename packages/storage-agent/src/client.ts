@@ -49,6 +49,27 @@ export class StorageAgentHttpClient {
     }});
   }
 
+  async events(leaseGeneration: number, signal: AbortSignal, wake: () => void): Promise<void> {
+    const response = await this.fetcher(new URL('/api/v1/storage-agent/events', this.base), {
+      method: 'GET', signal, headers: this.headers({accept: 'text/event-stream',
+        'x-storage-lease-generation': String(leaseGeneration)})
+    });
+    if (!response.ok) throw await error(response);
+    if (!response.body) throw new AgentApiError(502, 'INCOMPLETE_RESPONSE', 'Storage Agent event response is empty.');
+    const decoder = new TextDecoder();
+    let buffer = '';
+    for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
+      buffer += decoder.decode(chunk, {stream: true}).replace(/\r\n/g, '\n');
+      let boundary = buffer.indexOf('\n\n');
+      while (boundary >= 0) {
+        const event = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary + 2);
+        if (event.split('\n').some(line => line === 'event: wake')) wake();
+        boundary = buffer.indexOf('\n\n');
+      }
+    }
+  }
+
   manifest(leaseGeneration: number, after = 0, limit = 100): Promise<StorageManifestPage> {
     return this.json(`/api/v1/storage-agent/manifest?after=${after}&limit=${limit}`, {method: 'GET',
       headers: {'x-storage-lease-generation': String(leaseGeneration)}});
