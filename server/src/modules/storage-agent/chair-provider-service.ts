@@ -219,6 +219,22 @@ export class Stage7ChairAgentProviderService implements StorageAgentTaskCompleti
     const refreshed = await client.query<{next_event_sequence: string | number}>(
       'SELECT next_event_sequence FROM committees WHERE id=$1', [committee.id]);
     committee.next_event_sequence = Number(refreshed.rows[0]?.next_event_sequence ?? committee.next_event_sequence);
+    const delegateContext = (await client.query<{delegate_session_id: string; seat_id: string;
+      seat_display_name: string; file_type: string; submitted_at: Date}>(`SELECT * FROM delegate_file_upload_contexts
+      WHERE upload_id=$1`, [current.id])).rows[0];
+    if (delegateContext) {
+      await client.query(`INSERT INTO delegate_file_metadata
+        (file_entry_id,submission_source,submitted_by_seat_id,submitter_display_name,file_type,submitted_at)
+        VALUES ($1,'DELEGATE_PORTAL',$2,$3,$4,$5)`, [file.id, delegateContext.seat_id,
+        delegateContext.seat_display_name, delegateContext.file_type, delegateContext.submitted_at]);
+      await client.query(`UPDATE file_entries SET status='PENDING_REVIEW',submitted_at=$2,
+        revision=revision+1,updated_at=now() WHERE id=$1`, [file.id, delegateContext.submitted_at]);
+      file.status = 'PENDING_REVIEW'; file.submittedAt = delegateContext.submitted_at.toISOString(); file.revision += 1;
+      await appendEvent(client, committee, {type: 'file.review_requested', resourceType: 'file_entry',
+        resourceId: file.id, revision: file.revision,
+        payload: {status: 'PENDING_REVIEW', submissionSource: 'DELEGATE_PORTAL',
+          submitterDisplayName: delegateContext.seat_display_name}});
+    }
     const committed = await client.query<{revision: number}>(`UPDATE file_uploads SET status='COMMITTED',
       agent_commit_state='HOST_COMMITTED',committed_at=now(),committed_blob_id=$2,
       committed_file_entry_id=$3,committed_file_version_id=$4,revision=revision+1,updated_at=now()

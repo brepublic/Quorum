@@ -25,17 +25,22 @@ import type {Stage7ConflictService} from '../modules/storage-agent/conflict-serv
 import type {Stage8ArchiveService} from '../modules/operations/archive-service.js';
 import type {Stage8DeletionService} from '../modules/operations/deletion-service.js';
 import type {Stage8OperationsStatusService} from '../modules/operations/status-service.js';
+import type {DelegateFileService} from '../modules/delegate-files/service.js';
 import {AppError, normalizeError} from './errors.js';
 import {
   clearIdentityCookies,
   CSRF_COOKIE_NAME,
   csrfCookie,
+  DELEGATE_FILE_COOKIE_NAME,
+  DELEGATE_FILE_CSRF_COOKIE_NAME,
+  delegateFileCookies,
   parseCookies,
   SESSION_COOKIE_NAME,
   sessionCookie,
   verifyCsrf
 } from './cookies.js';
 import {streamCommitteeEvents} from './sse.js';
+import {streamDelegateFileEvents} from './delegate-file-sse.js';
 
 const REQUEST_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 
@@ -64,10 +69,12 @@ export interface AppDependencies {
   archives?: Stage8ArchiveService;
   committeeDeletions?: Stage8DeletionService;
   operationsStatus?: Stage8OperationsStatusService;
+  delegateFiles?: DelegateFileService;
   allowedOrigins?: string[];
 }
 
 const SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
+const DELEGATE_FILE_MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
 const MAX_JSON_BODY_BYTES = 8 * 1024 * 1024;
 
 function requestIdFor(request: IncomingMessage): string {
@@ -136,6 +143,16 @@ function requireOrigin(request: IncomingMessage, allowedOrigins: readonly string
   if (!origin || !allowedOrigins.includes(origin)) {
     throw new AppError({code: 'FORBIDDEN', message: 'Request origin is not allowed.'});
   }
+}
+
+function publicOrigin(request: IncomingMessage, allowedOrigins: readonly string[]): string {
+  const origin = singleHeader(request.headers.origin);
+  if (origin && allowedOrigins.includes(origin)) return origin;
+  const proto = singleHeader(request.headers['x-forwarded-proto']);
+  const host = singleHeader(request.headers['x-forwarded-host']) ?? singleHeader(request.headers.host);
+  const forwarded = proto && host ? `${proto}://${host}` : undefined;
+  if (forwarded && allowedOrigins.includes(forwarded)) return forwarded;
+  return allowedOrigins[0] ?? '';
 }
 
 function identityContext(request: IncomingMessage, requestId: string): RequestIdentityContext {
@@ -680,6 +697,105 @@ async function handleStage6UploadRequest(options: {
     sendJson(response, 'kind' in result && result.kind === 'PENDING_HOST_COMMIT' ? 202 : 201,
       success(result, requestId));
     return true;
+  }
+  return false;
+}
+
+async function handleDelegateFileRequest(options: {
+  request: IncomingMessage; response: ServerResponse; pathname: string; requestId: string; url: URL;
+  identity: IdentityService; service: DelegateFileService; allowedOrigins: readonly string[];
+}): Promise<boolean> {
+  const {request, response, pathname, requestId, url, identity, service, allowedOrigins} = options;
+  const method = request.method ?? 'GET'; const context = identityContext(request, requestId);
+  const cookies = identityCookies(request);
+  const credential = cookies.get(DELEGATE_FILE_COOKIE_NAME);
+  const delegateWrite = () => {
+    requireOrigin(request, allowedOrigins);
+    verifyCsrf(cookies.get(DELEGATE_FILE_CSRF_COOKIE_NAME), singleHeader(request.headers['x-csrf-token']));
+  };
+
+  if (method === 'POST' && pathname === '/api/v1/delegate-files/bootstrap') {
+    requireOrigin(request, allowedOrigins); const body = await readJson(request);
+    sendJson(response, 200, success(await service.bootstrap(stringField(body, 'capability') as string, credential), requestId));
+    return true;
+  }
+  if (method === 'POST' && pathname === '/api/v1/delegate-files/claim') {
+    requireOrigin(request, allowedOrigins); const body = await readJson(request);
+    const existing = await service.bootstrap(stringField(body, 'capability') as string, credential);
+    if (existing.claimedSeat) throw new AppError({code: 'RESOURCE_CONFLICT',
+      message: 'This browser has already selected a delegation.'});
+    const result = await service.claim(stringField(body, 'capability') as string, body.seatId, context);
+    const {sessionToken, csrfToken, ...portal} = result;
+    response.setHeader('set-cookie', delegateFileCookies(sessionToken, csrfToken, DELEGATE_FILE_MAX_AGE_SECONDS));
+    sendJson(response, 200, success(portal, requestId)); return true;
+  }
+  if (method === 'GET' && pathname === '/api/v1/delegate-files/portal') {
+    sendJson(response, 200, success(await service.published(credential), requestId)); return true;
+  }
+  if (method === 'GET' && pathname === '/api/v1/delegate-files/events') {
+    await streamDelegateFileEvents({request, response, url, service}); return true;
+  }
+  if (method === 'POST' && pathname === '/api/v1/delegate-files/uploads') {
+    delegateWrite(); const body = await readJson(request);
+    sendJson(response, 201, success(await service.createUpload(credential, body, idempotencyKey(request), context), requestId));
+    return true;
+  }
+  const uploadContent = /^\/api\/v1\/delegate-files\/uploads\/([0-9a-f-]{36})\/content$/.exec(pathname);
+  if (method === 'PUT' && uploadContent) {
+    delegateWrite();
+    try {
+      sendJson(response, 200, success(await service.receiveContent(credential, uploadContent[1] as string, request,
+        idempotencyKey(request), requestContentLength(request), context), requestId));
+    } finally { request.resume(); }
+    return true;
+  }
+  const uploadCommit = /^\/api\/v1\/delegate-files\/uploads\/([0-9a-f-]{36})\/commit$/.exec(pathname);
+  if (method === 'POST' && uploadCommit) {
+    delegateWrite(); await readJson(request);
+    const result = await service.commitUpload(credential, uploadCommit[1] as string, idempotencyKey(request), context);
+    sendJson(response, 'kind' in result && result.kind === 'PENDING_HOST_COMMIT' ? 202 : 201,
+      success(result, requestId)); return true;
+  }
+  const portalDownload = /^\/api\/v1\/delegate-files\/files\/([0-9a-f-]{36})\/download$/.exec(pathname);
+  if (method === 'GET' && portalDownload) {
+    const result = await service.download(credential, portalDownload[1] as string);
+    response.statusCode = 200;
+    for (const [name, value] of Object.entries(result.headers)) response.setHeader(name, value);
+    for await (const chunk of result.content) {
+      if (!response.write(chunk)) await new Promise<void>(resolve => response.once('drain', resolve));
+    }
+    response.end(); return true;
+  }
+
+  const share = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/delegate-file-share$/.exec(pathname);
+  if (share && method === 'GET') {
+    const auth = await authenticatedRead(request, identity);
+    sendJson(response, 200, success(await service.getShare(auth, share[1] as string,
+      publicOrigin(request, allowedOrigins)), requestId)); return true;
+  }
+  if (share && method === 'POST') {
+    requireOrigin(request, allowedOrigins); const auth = await authenticatedWrite(request, identity); const body = await readJson(request);
+    sendJson(response, 201, success(await service.startShare(auth, share[1] as string, body.baseRevision,
+      publicOrigin(request, allowedOrigins), context), requestId)); return true;
+  }
+  const endShare = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/delegate-file-share\/end$/.exec(pathname);
+  if (endShare && method === 'POST') {
+    requireOrigin(request, allowedOrigins); const auth = await authenticatedWrite(request, identity); const body = await readJson(request);
+    sendJson(response, 200, success(await service.endShare(auth, endShare[1] as string, body.shareRevision, context), requestId));
+    return true;
+  }
+  const review = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/delegate-file-review$/.exec(pathname);
+  if (review && method === 'GET') {
+    sendJson(response, 200, success(await service.listReview(await authenticatedRead(request, identity),
+      review[1] as string), requestId)); return true;
+  }
+  const decision = /^\/api\/v1\/files\/([0-9a-f-]{36})\/delegate-(approve|reject)$/.exec(pathname);
+  if (decision && method === 'POST') {
+    requireOrigin(request, allowedOrigins); const auth = await authenticatedWrite(request, identity); const body = await readJson(request);
+    const result = decision[2] === 'approve'
+      ? await service.approve(auth, decision[1] as string, body, context)
+      : await service.reject(auth, decision[1] as string, body.baseRevision, idempotencyKey(request), context);
+    sendJson(response, 200, success(result, requestId)); return true;
   }
   return false;
 }
@@ -1234,6 +1350,11 @@ export function createRequestHandler(dependencies: AppDependencies): RequestList
           identity: dependencies.identity,
           operationsStatus: dependencies.operationsStatus,
           allowedOrigins: dependencies.allowedOrigins ?? []
+        })) return;
+
+        if (dependencies.identity && dependencies.delegateFiles && await handleDelegateFileRequest({
+          request, response, pathname, requestId, url: requestUrl, identity: dependencies.identity,
+          service: dependencies.delegateFiles, allowedOrigins: dependencies.allowedOrigins ?? []
         })) return;
 
         const events = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/events$/.exec(pathname);

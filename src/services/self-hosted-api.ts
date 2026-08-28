@@ -39,7 +39,12 @@ import type {
   UpdateCommitteeRequest,
   CommitteeOperationMode,
   CommitteeStatus,
-  RulePackageSummary
+  RulePackageSummary,
+  DelegateFileShare,
+  DelegateFileType,
+  DelegatePortalBootstrap,
+  DelegatePublishedFile,
+  DelegateReviewFile
 } from '@quorum/contracts';
 import {COMMITTEE_EVENT_DEFINITIONS, type RealtimeSyncState} from '@quorum/contracts';
 
@@ -117,6 +122,52 @@ function uploadContentRequest(uploadId: string, file: File, idempotencyKey: stri
     options.signal?.addEventListener('abort', abort, {once: true});
     options.onProgress?.(0, file.size);
     xhr.send(file);
+  });
+}
+
+async function delegateRequest<T>(path: string, options: {
+  method?: Method; body?: object; idempotencyKey?: string;
+} = {}): Promise<T> {
+  const method = options.method ?? 'GET'; const headers: Record<string, string> = {};
+  if (options.body) headers['content-type'] = 'application/json';
+  if (method !== 'GET') {
+    const csrf = cookie('__Host-quorum_delegate_files_csrf'); if (csrf) headers['x-csrf-token'] = csrf;
+  }
+  if (options.idempotencyKey) headers['idempotency-key'] = options.idempotencyKey;
+  const response = await fetch(path, {method, credentials: 'same-origin', headers,
+    ...(options.body ? {body: JSON.stringify(options.body)} : {})});
+  const payload = await response.json() as ApiSuccess<T> | ApiFailure;
+  if (!response.ok || 'error' in payload) {
+    const error = 'error' in payload ? payload.error
+      : {code: 'INTERNAL_ERROR', message: 'Request failed.', requestId: undefined, details: undefined};
+    throw new SelfHostedApiError(response.status, error.code, error.message, error.requestId, error.details);
+  }
+  return payload.data;
+}
+
+function delegateUploadContentRequest(uploadId: string, file: File, idempotencyKey: string,
+  onProgress: (sentBytes: number, totalBytes: number) => void): Promise<FileUpload> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', `/api/v1/delegate-files/uploads/${encodeURIComponent(uploadId)}/content`);
+    xhr.withCredentials = true;
+    const csrf = cookie('__Host-quorum_delegate_files_csrf');
+    if (csrf) xhr.setRequestHeader('x-csrf-token', csrf);
+    xhr.setRequestHeader('idempotency-key', idempotencyKey);
+    xhr.upload.onprogress = event => onProgress(event.loaded, event.lengthComputable ? event.total : file.size);
+    xhr.onload = () => {
+      let payload: ApiSuccess<FileUpload> | ApiFailure;
+      try { payload = JSON.parse(xhr.responseText) as ApiSuccess<FileUpload> | ApiFailure; }
+      catch { reject(new SelfHostedApiError(xhr.status, 'INTERNAL_ERROR', 'Upload response was invalid.')); return; }
+      if (xhr.status < 200 || xhr.status >= 300 || 'error' in payload) {
+        const error = 'error' in payload ? payload.error
+          : {code: 'INTERNAL_ERROR', message: 'Upload failed.', requestId: undefined, details: undefined};
+        reject(new SelfHostedApiError(xhr.status, error.code, error.message, error.requestId, error.details)); return;
+      }
+      resolve(payload.data);
+    };
+    xhr.onerror = () => reject(new SelfHostedApiError(0, 'INTERNAL_ERROR', 'Upload connection was interrupted.'));
+    onProgress(0, file.size); xhr.send(file);
   });
 }
 
@@ -649,6 +700,54 @@ export const selfHostedApi = {
   cancelStorageMigration(id: string, baseRevision: number, idempotencyKey = key()) {
     return request<StorageMigration>(`/api/v1/storage-migrations/${id}/cancel`, {method: 'POST',
       body: {baseRevision}, idempotencyKey});
+  },
+  getDelegateFileShare(committeeId: string) {
+    return request<DelegateFileShare | null>(`/api/v1/committees/${committeeId}/delegate-file-share`);
+  },
+  startDelegateFileShare(committeeId: string, baseRevision: number) {
+    return request<DelegateFileShare>(`/api/v1/committees/${committeeId}/delegate-file-share`,
+      {method: 'POST', body: {baseRevision}});
+  },
+  endDelegateFileShare(committeeId: string, shareRevision: number) {
+    return request<DelegateFileShare>(`/api/v1/committees/${committeeId}/delegate-file-share/end`,
+      {method: 'POST', body: {shareRevision}});
+  },
+  listDelegateReviewFiles(committeeId: string) {
+    return request<DelegateReviewFile[]>(`/api/v1/committees/${committeeId}/delegate-file-review`);
+  },
+  approveDelegateFile(fileId: string, baseRevision: number, logicalName: string, fileType: DelegateFileType) {
+    return request<DelegateReviewFile>(`/api/v1/files/${fileId}/delegate-approve`,
+      {method: 'POST', body: {baseRevision, logicalName, fileType}});
+  },
+  rejectDelegateFile(fileId: string, baseRevision: number) {
+    return request<{id: string; fileEntryId: string}>(`/api/v1/files/${fileId}/delegate-reject`,
+      {method: 'POST', body: {baseRevision}, idempotencyKey: key()});
+  },
+  bootstrapDelegatePortal(capability: string) {
+    return delegateRequest<DelegatePortalBootstrap>('/api/v1/delegate-files/bootstrap',
+      {method: 'POST', body: {capability}});
+  },
+  claimDelegatePortal(capability: string, seatId: string) {
+    return delegateRequest<DelegatePortalBootstrap>('/api/v1/delegate-files/claim',
+      {method: 'POST', body: {capability, seatId}});
+  },
+  listDelegatePublishedFiles() {
+    return delegateRequest<DelegatePublishedFile[]>('/api/v1/delegate-files/portal');
+  },
+  createDelegateFileUpload(input: {logicalName: string; originalName: string; mediaType: string;
+    expectedSizeBytes: number; sha256: string; fileType: DelegateFileType}) {
+    return delegateRequest<FileUpload>('/api/v1/delegate-files/uploads', {method: 'POST', body: input,
+      idempotencyKey: key()});
+  },
+  uploadDelegateFileContent(uploadId: string, file: File, onProgress: (sentBytes: number, totalBytes: number) => void) {
+    return delegateUploadContentRequest(uploadId, file, key(), onProgress);
+  },
+  commitDelegateFileUpload(uploadId: string) {
+    return delegateRequest<FileEntry | PendingHostCommit>(`/api/v1/delegate-files/uploads/${uploadId}/commit`,
+      {method: 'POST', body: {}, idempotencyKey: key()});
+  },
+  delegateFileDownloadUrl(fileId: string) {
+    return `/api/v1/delegate-files/files/${encodeURIComponent(fileId)}/download`;
   }
 };
 

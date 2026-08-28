@@ -37,7 +37,8 @@ flowchart LR
 
 - `/committees`：公开/私有委员会列表与创建；
 - `/countries`、`/templates`：沿用迁移前的表格编辑交互管理账号级国家模板和委员会模板；国家模板先按名称创建空模板再编辑国家，内置国家模板可查看和克隆，委员会创建器提供内置委员会模板；
-- `/committees/:id`：默认跳转点名页；委员会名称入口打开居中的卡片化委员会信息页。会场设置、动议、自由磋商、发言名单、决议草案、意向性投票、问题、笔记、资料、统计、设置和帮助保持各自路由；动态发言名单、决议草案与意向性投票使用资源 ID 子路由，资料页分为文本、附件和存储；
+- `/committees/:id`：默认跳转点名页；委员会名称入口打开居中的卡片化委员会信息页。会场设置、动议、自由磋商、发言名单、决议草案、意向性投票、问题、笔记、资料、统计、设置和帮助保持各自路由；动态发言名单、决议草案与意向性投票使用资源 ID 子路由，资料页分为文本、附件和存储；主席代办且使用活动 Chair Agent 时另提供文件分享与代表文件审核；
+- `/delegate-files`：能力链接进入的免登录代表文件入口；浏览器以 HttpOnly 凭据绑定一次代表团选择，并使用独立 CSRF cookie、文件 API 与 SSE，不获得委员会普通成员权限；
 - `/storage`：仅系统管理员使用的 S3 配置；
 - `/operations`：仅系统管理员使用的容量、队列与 retention 聚合状态；
 - `/admin`：账号创建、重置、禁用、Session 撤销和不可逆匿名化。
@@ -54,7 +55,7 @@ flowchart LR
 
 ## 3. 服务端模块与数据边界
 
-`server/` 是单进程模块化单体。启动时使用 PostgreSQL advisory lock 执行带 SHA-256 校验和的顺序 migration；当前 schema compatibility 为 47。实例级 `system_settings` 保存新委员会的默认运作模式与创建者是否自动获得 Chair；它们只在创建事务中读取，不追溯既有委员会。系统管理员不能创建委员会。数据库版本、连接、存储目录可写性或容量采样不满足要求时 readiness 失败。
+`server/` 是单进程模块化单体。启动时使用 PostgreSQL advisory lock 执行带 SHA-256 校验和的顺序 migration；当前 schema compatibility 为 48。实例级 `system_settings` 保存新委员会的默认运作模式与创建者是否自动获得 Chair；它们只在创建事务中读取，不追溯既有委员会。系统管理员不能创建委员会。数据库版本、连接、存储目录可写性或容量采样不满足要求时 readiness 失败。
 
 | 模块 | 责任 |
 | --- | --- |
@@ -63,6 +64,7 @@ flowchart LR
 | Stage 5 | SSE、权威计时器、发言/让渡、动议、ballot、Strawpoll、决议与修正案 |
 | Storage | durable staging、provider、文件版本、审核发布、下载、删除和迁移 |
 | Storage Agent | 配对、lease fencing、manifest/task、内容传输、本地变化与冲突 |
+| Delegate Files | 主席控制的能力链接、代表团浏览器绑定、代表上传/审核、已发布文件与独立 SSE |
 | Operations | 归档导出、委员会删除、账号处置、retention、状态、健康和指标 |
 
 `packages/contracts/` 保存浏览器、后端与 Agent 共用的错误码、事件、审计动作、响应类型和不可变规则快照。`packages/rule-schema/` 保存规则包 v1 的 schema、安全表达式求值和内置 `Quorum Default`/北京学术标准 fixture。`packages/storage-agent/` 保存独立 Chair Agent 客户端、安全目录、扫描、恢复循环和发布入口。
@@ -91,6 +93,8 @@ SERVER_VOLUME 使用 0600 临时文件、fsync 和无覆盖原子发布。S3 end
 逻辑删除立即隐藏文件并写不可恢复墓碑，再由 durable job 幂等清理每个物理副本。provider migration 复制全部历史 blob 并复验后才原子切换 binding；失败时旧 provider 继续服务。maintenance worker 只清理明确终态且可删除的 staging，唯一暂存副本、待重试 copy 和退休源副本不因期限、LRU 或容量压力删除。
 
 Chair Agent 使用独立 `QuorumAgent` authorization scheme。一次性配对码和设备凭据只保存哈希；一个委员会最多一个活动 host。单调 lease generation fence 使转移或撤销后的旧设备不能 heartbeat、claim、上传或完成任务。Agent 对本地路径做规范化并拒绝链接、硬链接、非普通文件和目录逃逸；服务端下发内容先完整校验再原子替换。本地并发编辑、墓碑冲突和主机转移不会静默覆盖，均形成 durable 冲突供 Chair 显式裁决。
+
+代表文件分享只在主席代办、活动委员会和活动 Chair Agent binding 同时成立时可启动。链接 capability 放在 URL fragment 中，服务端保存它以便主席重新显示；代表选定当前开放会期中出席或暂离的席位后，服务端发放 30 天 HttpOnly 浏览器凭据，分享结束或运行条件失效即撤销。该凭据只允许读取本委员会已发布文件、上传到主席电脑和接收代表文件发布事件；文件创建者仍使用分享发起主席作为现有存储链的技术保管人，代表团来源另存为审核与展示元数据。代表上传经 Chair Agent 完成内容提交后进入待审核，主席决定展示名和文件类型；批准与公开事件同事务提交，驳回沿用逻辑删除和 Agent 清理。
 
 ## 6. 归档、删除与运维
 

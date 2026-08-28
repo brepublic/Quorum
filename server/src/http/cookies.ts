@@ -3,6 +3,8 @@ import {AppError} from './errors.js';
 
 export const SESSION_COOKIE_NAME = '__Host-quorum_session';
 export const CSRF_COOKIE_NAME = '__Host-quorum_csrf';
+export const DELEGATE_FILE_COOKIE_NAME = '__Host-quorum_delegate_files';
+export const DELEGATE_FILE_CSRF_COOKIE_NAME = '__Host-quorum_delegate_files_csrf';
 
 export function parseCookies(header: string | undefined): Map<string, string> {
   const cookies = new Map<string, string>();
@@ -26,6 +28,13 @@ export function clearIdentityCookies(): string[] {
   return [
     `${SESSION_COOKIE_NAME}=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=Lax`,
     `${CSRF_COOKIE_NAME}=; Path=/; Max-Age=0; Secure; SameSite=Lax`
+  ];
+}
+
+export function delegateFileCookies(token: string, csrf: string, maxAgeSeconds: number): string[] {
+  return [
+    `${DELEGATE_FILE_COOKIE_NAME}=${token}; Path=/; Max-Age=${maxAgeSeconds}; Secure; HttpOnly; SameSite=Lax`,
+    `${DELEGATE_FILE_CSRF_COOKIE_NAME}=${csrf}; Path=/; Max-Age=${maxAgeSeconds}; Secure; SameSite=Lax`
   ];
 }
 

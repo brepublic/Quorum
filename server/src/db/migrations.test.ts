@@ -47,6 +47,15 @@ describe('migration discovery', () => {
     expect(constraints?.sql).toContain('schema_compatibility=47');
   });
 
+  it('adds the chair-hosted delegate file portal', async () => {
+    const migration = (await loadMigrations(resolve('server/migrations'))).find(item => item.version === 48);
+    expect(migration?.name).toBe('delegate_file_portal');
+    expect(migration?.sql).toContain('CREATE TABLE delegate_file_shares');
+    expect(migration?.sql).toContain('CREATE TABLE delegate_file_sessions');
+    expect(migration?.sql).toContain("OLD.status = 'UPLOAD_COMPLETE' AND NEW.status IN ('PENDING_REVIEW', 'PUBLISHED', 'DELETED')");
+    expect(migration?.sql).toContain('schema_compatibility=48');
+  });
+
   it('includes the stage 4 low-concurrency schema as migration 4', async () => {
     const migrations = await loadMigrations(resolve('server/migrations'));
     const stage4 = migrations.find(migration => migration.version === 4);

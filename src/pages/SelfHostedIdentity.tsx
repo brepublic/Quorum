@@ -11,6 +11,7 @@ import {
   type SelfHostedUser
 } from '../services/self-hosted-identity';
 import SelfHostedWorkspace, {SelfHostedCommitteeWorkspace, SelfHostedPublicCommittees} from './SelfHostedWorkspace';
+import DelegateFilePortal from './self-hosted/DelegateFilePortal';
 
 type Screen = 'loading' | 'bootstrap' | 'login' | 'change-password' | 'home';
 
@@ -340,6 +341,8 @@ export default function SelfHostedIdentity({client = selfHostedIdentityClient}: 
       history.replace('/');
     }
   };
+
+  if (location.pathname === '/delegate-files') return <DelegateFilePortal />;
 
   if (error) return <IdentityShell title={t('Authentication error')} icon="warning sign"><Message error content={error} /></IdentityShell>;
   if (screen === 'loading') return <Loading />;

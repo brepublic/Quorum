@@ -477,3 +477,14 @@
 - `pnpm test:self-host` 通过：69 个文件、457 项通过、0 失败、0 跳过；自动发现了 i18n/theme 测试，输出未包含 `*.integration.test.ts`。
 - `pnpm test:self-host:integration` 已按专用入口执行：8 个文件、86 项因本地 Docker daemon 不存在而明确 skip；`pnpm self-host:test-db:up` 同样因 `/var/run/docker.sock` 不存在无法启动 PostgreSQL 16。未将 skip 记为通过，真实数据库结果仍由 GitHub Actions PostgreSQL 16 service 完成。
 - `pnpm verify:no-legacy-runtime`、`git diff --check` 及 lockfile/workspace 未改写检查通过。
+
+### 2026-08-28：主席电脑文件分享与免登录代表门户
+
+- 在主席代办且委员会活动存储为有效 `CHAIR_AGENT` binding 时，主席端“文件”页面新增“分享”子页，可显式开始或结束分享并显示能力链接及二维码。分享要求当前存在开放会期；运作模式、委员会状态或活动存储不再满足条件时，数据库触发器结束分享并撤销代表浏览器凭据。
+- 新增同源 `/delegate-files` 免登录门户。能力值只放在 URL fragment 中；代表只能选择当前开放会期中 `PRESENT` 或 `TEMPORARILY_LEFT` 的活动席位。确认弹窗明确身份不可更改，服务端随后发放最长 30 天的独立 HttpOnly 凭据和独立 CSRF cookie；已有有效身份的浏览器不能再次选择代表团。清除浏览器数据仍可移除客户端凭据，因此该边界用于防止正常操作中的误改，不构成设备级身份认证。
+- 代表门户顶部固定显示委员会名称、“已发布文件”“上传文件”和实时状态，不显示账户入口。每个已发布文件使用居中表格卡片展示主席确定的文件名、提交国、文件类型、提交时间与公布时间，并提供下载按钮。文件类型限工作文件、指令草案和决议草案。
+- 代表上传沿用现有 durable staging、Chair Agent host commit 和文件版本链；分享发起主席是技术保管人，代表席位来源另存为审核元数据。主席电脑完成内容提交后，文件进入 `PENDING_REVIEW`；主席端附件页以卡片审核，可修改公布名称和文件类型并批准或驳回。批准与公开事件在同一事务中提交，驳回沿用逻辑删除和 Agent 清理。
+- 代表门户以独立 SSE 接收由代表门户提交的 `file.published` 事件。所有活跃门户会显示精确格式“`国家名 代表 提交的 文件名 现已可用。`”；横幅在 60 秒后、手动关闭或点击对应文件下载按钮后消失。状态显示为“实时”“离线”或“主席端故障”。
+- migration 48 新增分享、浏览器会话、上传来源和发布元数据，并保留 migration 39 的文件状态约束。空库完整迁移和重复执行通过；真实 PostgreSQL 定向用例验证了席位资格、凭据只存哈希、模式变化撤销、代表上传经 Chair Agent 落库后进入待审核，以及文件事件 revision 与文件 revision 一致。
+- `pnpm build:self-host` 通过。代表门户、HTTP、Cookie、migration 和身份路由的聚焦 Vitest 共 55 项通过，`git diff --check` 通过。全量有限测试另有两项未涉及本次文件代码的有主持核心磋商失焦校验断言失败：产品按既定行为仅在 `blur` 后显示错误样式，而旧测试只派发 `input`；该问题未混入本功能修改。
+- 浏览器已确认当前前端构建接管 `/delegate-files` 深层路由，但当时没有运行完整应用 API，只得到后端错误态。真实 TLS、有效分享数据、二维码扫码、多浏览器 Cookie/SSE、Chair Agent 断线恢复和三档宽度视觉证据仍按 `MANUAL_ACCEPTANCE.md` 的 SH-MAN-522 待执行，未以 jsdom 或数据库用例替代。

@@ -21,6 +21,7 @@ import ProceedingsPanel from './self-hosted/ProceedingsPanel';
 import FilesPanel from './self-hosted/FilesPanel';
 import StorageAdminPanel from './self-hosted/StorageAdminPanel';
 import OperationsPanel from './self-hosted/OperationsPanel';
+import {DelegateFileReviewPanel, DelegateFileSharePanel} from './self-hosted/DelegateFileChairPanels';
 import {AccountMenu, CommitteeNavigation} from './self-hosted/WorkspaceNavigation';
 import {CommitteeWorkspaceProvider, useCommitteeWorkspace} from './self-hosted/CommitteeWorkspaceContext';
 import {
@@ -280,17 +281,32 @@ function LinkResources({snapshot, run, api}: {snapshot: CommitteeWorkspaceSnapsh
 function PostsPanel({snapshot, run, api, userId, tab}: {snapshot: CommitteeWorkspaceSnapshot; run: WorkspaceCommand;
   api: SelfHostedApi; userId?: string; tab?: string}) {
   const canManageStorage = snapshot.viewer.audience === 'CHAIR' || snapshot.viewer.audience === 'OWNER';
-  const active = tab === 'links' || tab === 'attachments' || tab === 'storage' ? tab : 'text';
+  const [delegateFilesEnabled, setDelegateFilesEnabled] = React.useState(false);
+  React.useEffect(() => {
+    let active = true;
+    if (!canManageStorage || snapshot.committee.operationMode !== 'CHAIR_OPERATED') {setDelegateFilesEnabled(false); return;}
+    void api.listStorageBindings(snapshot.committee.id).then(bindings => {
+      if (active) setDelegateFilesEnabled(bindings.some(binding => binding.status === 'ACTIVE' && binding.providerType === 'CHAIR_AGENT'));
+    }).catch(() => {if (active) setDelegateFilesEnabled(false);});
+    return () => {active = false;};
+  }, [api, canManageStorage, snapshot.committee.id, snapshot.committee.operationMode,
+    snapshot.sync.committeeEventSequence]);
+  const active = tab === 'links' || tab === 'attachments' || tab === 'storage' || (tab === 'share' && delegateFilesEnabled)
+    ? tab : 'text';
   const base = `/committees/${snapshot.committee.id}/posts`;
   return <><Menu pointing secondary aria-label={t('Resource sections')}>
     <Menu.Item as={Link} to={base} active={active === 'text'}>{t('Text resources')}</Menu.Item>
     <Menu.Item as={Link} to={`${base}/links`} active={active === 'links'}>{t('Link resources')}</Menu.Item>
     <Menu.Item as={Link} to={`${base}/attachments`} active={active === 'attachments'}>{t('Attachments')}</Menu.Item>
+    {delegateFilesEnabled && <Menu.Item as={Link} to={`${base}/share`} active={active === 'share'}>分享</Menu.Item>}
     {canManageStorage && <Menu.Item as={Link} to={`${base}/storage`} active={active === 'storage'}>{t('Storage')}</Menu.Item>}
   </Menu>
     {active === 'text' && <TextResources kind="posts" snapshot={snapshot} run={run} api={api} />}
     {active === 'links' && <LinkResources snapshot={snapshot} run={run} api={api} />}
-    {active === 'attachments' && <FilesPanel section="attachments" snapshot={snapshot} api={api} currentUserId={userId} />}
+    {active === 'attachments' && (delegateFilesEnabled
+      ? <DelegateFileReviewPanel snapshot={snapshot} api={api} />
+      : <FilesPanel section="attachments" snapshot={snapshot} api={api} currentUserId={userId} />)}
+    {active === 'share' && delegateFilesEnabled && <DelegateFileSharePanel snapshot={snapshot} api={api} />}
     {active === 'storage' && canManageStorage && <FilesPanel section="storage" snapshot={snapshot} api={api} currentUserId={userId} />}
   </>;
 }

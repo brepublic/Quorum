@@ -35,6 +35,7 @@ import {Stage8ArchiveService} from './modules/operations/archive-service.js';
 import {Stage8DeletionService, startCommitteeDeletionWorker} from './modules/operations/deletion-service.js';
 import {Stage8RetentionService, startRetentionWorker} from './modules/operations/retention-service.js';
 import {Stage8OperationsStatusService} from './modules/operations/status-service.js';
+import {DelegateFileService} from './modules/delegate-files/service.js';
 
 const {Pool} = pg;
 const logger = createLogger();
@@ -85,6 +86,7 @@ async function main(): Promise<void> {
       staging);
     const chairAgentProvider = new Stage7ChairAgentProviderService(pool, metadata);
     const providerCommits = new Stage6ProviderCommitService(pool, serverVolume, s3, chairAgentProvider);
+    const delegateFiles = new DelegateFileService(pool, uploads, providerCommits, files, metadata);
     const storageMigrations = new Stage6MigrationService(pool, staging, serverVolumeStore, s3Configs,
       providerConfig => new S3CompatibleStore(providerConfig, new NodeS3Transport(providerConfig), config.maxFileBytes),
       capacity);
@@ -131,6 +133,7 @@ async function main(): Promise<void> {
       archives,
       committeeDeletions,
       operationsStatus,
+      delegateFiles,
       allowedOrigins: config.allowedOrigins
     });
     const stopStorageMigrationWorker = startStorageMigrationWorker(storageMigrations, logger);

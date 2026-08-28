@@ -480,6 +480,81 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   min-height: 44px;
 }
 
+.delegate-file-portal,
+.delegate-file-claim-page {
+  min-height: 100vh;
+}
+
+.delegate-file-menu .delegate-file-committee-name {
+  font-weight: 700 !important;
+  cursor: default;
+}
+
+.delegate-file-claim-page,
+.delegate-file-claim-page.ui.container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.delegate-file-claim-card,
+.delegate-file-upload-card,
+.delegate-file-chair-upload,
+.delegate-file-card-list,
+.delegate-file-share-panel {
+  width: min(100%, 760px) !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+
+.delegate-file-card-list {
+  padding: 1.5rem 0 3rem;
+}
+
+.delegate-file-card-list > .delegate-file-card {
+  margin: 0 auto 1.5rem !important;
+}
+
+.delegate-file-metadata.ui.table td:first-child {
+  width: 8rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.delegate-file-metadata .ui.dropdown {
+  width: 100%;
+}
+
+.delegate-file-review-actions {
+  display: flex;
+  justify-content: center;
+  gap: .75rem;
+}
+
+.delegate-file-upload-card {
+  margin-top: 1.5rem !important;
+}
+
+.delegate-file-upload-success {
+  color: #16833b;
+  text-align: center;
+  font-weight: 700;
+  padding: .75rem;
+}
+
+.delegate-file-qr {
+  margin-top: 1rem;
+  margin-bottom: 1rem;
+  width: 260px;
+  height: 260px;
+}
+
+@media (max-width: 767px) {
+  .delegate-file-menu.ui.menu { flex-wrap: wrap; }
+  .delegate-file-menu.ui.menu .right.menu { margin-left: auto !important; }
+  .delegate-file-portal > .ui.container { width: auto !important; margin: 0 1rem !important; }
+}
+
 .self-hosted-file-card .description,
 .self-hosted-storage-admin .description {
   overflow-wrap: anywhere;

@@ -21,6 +21,8 @@ import {Stage7StorageTaskService} from './task-service';
 import {Stage7ChairAgentProviderService} from './chair-provider-service';
 import {Stage7LocalChangeService} from './local-change-service';
 import {Stage7ConflictService} from './conflict-service';
+import {DelegateFileService} from '../delegate-files/service';
+import {Stage6ProviderCommitService} from '../storage/provider-commit-service';
 
 const {Client, Pool} = pg;
 const adminUrl = process.env.TEST_DATABASE_ADMIN_URL;
@@ -141,6 +143,58 @@ async function stagedUpload(owner: AuthenticatedSession, committeeId: string, na
 }
 
 integration('PostgreSQL stage 7 storage Agent identity', () => {
+  it('binds one eligible delegation to an opaque browser credential and revokes it when the mode changes', async () => {
+    const value = await fixture(); const chairStorageResult = await chairStorage(value.owner, value.committee.id);
+    const seat = await stage4.createSeat(value.chair, value.committee.id,
+      {stableKey: 'delegate-file-seat', displayName: '中国', sortOrder: 1}, randomUUID(), context('delegate-file-seat'));
+    const meeting = await stage4.startMeetingSession(value.chair, value.committee.id, {}, context('delegate-file-meeting'));
+    await stage4.createAttendanceEvent(value.chair, value.committee.id,
+      {meetingSessionId: meeting.id, seatId: seat.id, type: 'PRESENT'}, context('delegate-file-present'));
+    const providerCommits = new Stage6ProviderCommitService(pool as pg.Pool, {} as never, {} as never, chairProvider);
+    const service = new DelegateFileService(pool as pg.Pool, uploads, providerCommits,
+      {list: async () => []} as unknown as Stage6FileService, storage);
+    const share = await service.startShare(value.chair, value.committee.id, await committeeRevision(value.committee.id),
+      'https://quorum.example.com', context('delegate-file-share'));
+    expect(share.url).toMatch(/^https:\/\/quorum\.example\.com\/delegate-files#[A-Za-z0-9_-]{43}$/);
+    const capability = share.url.split('#')[1] as string;
+    const claimed = await service.claim(capability, seat.id, context('delegate-file-claim'));
+    expect(claimed.claimedSeat).toEqual({id: seat.id, displayName: '中国'});
+    expect((await service.bootstrap(capability, claimed.sessionToken)).claimedSeat).toEqual(claimed.claimedSeat);
+    const stored = await pool?.query<{credential_hash: Buffer}>('SELECT credential_hash FROM delegate_file_sessions');
+    expect(stored?.rows[0]?.credential_hash).toHaveLength(32);
+    expect(stored?.rows[0]?.credential_hash.toString('utf8')).not.toContain(claimed.sessionToken);
+
+    const content = Buffer.from('delegate working paper');
+    const sha256 = createHash('sha256').update(content).digest('hex');
+    const upload = await service.createUpload(claimed.sessionToken, {logicalName: '原始文件名', originalName: 'wp.txt',
+      mediaType: 'text/plain', expectedSizeBytes: content.length, sha256, fileType: 'WORKING_PAPER'}, randomUUID(),
+    context('delegate-file-upload'));
+    await service.receiveContent(claimed.sessionToken, upload.id, (async function* () {yield content;})(), randomUUID(),
+      content.length, context('delegate-file-content'));
+    const pending = await service.commitUpload(claimed.sessionToken, upload.id, randomUUID(),
+      context('delegate-file-commit'));
+    expect(pending).toMatchObject({kind: 'PENDING_HOST_COMMIT'});
+    if (!('kind' in pending) || pending.kind !== 'PENDING_HOST_COMMIT') throw new Error('Expected pending host commit.');
+    const task = await tasks.claim(chairStorageResult.paired.credential, pending.taskId, {
+      leaseGeneration: pending.leaseGeneration, fileRevision: 1, requestId: randomUUID()});
+    await tasks.complete(chairStorageResult.paired.credential, pending.taskId, {leaseGeneration: pending.leaseGeneration,
+      fileRevision: 1, claimToken: task.claimToken, requestId: randomUUID()}, context('delegate-file-host-complete'));
+    const submitted = await pool?.query<{status: string; revision: number; event_revision: number;
+      submission_source: string; submitter_display_name: string; file_type: string}>(`SELECT e.status::text,e.revision,
+      (SELECT resource_revision FROM committee_events WHERE resource_id=e.id AND event_type='file.review_requested') AS event_revision,
+      m.submission_source::text,m.submitter_display_name,m.file_type::text
+      FROM file_entries e JOIN delegate_file_metadata m ON m.file_entry_id=e.id
+      JOIN file_uploads u ON u.committed_file_entry_id=e.id WHERE u.id=$1`, [upload.id]);
+    expect(submitted?.rows[0]).toEqual({status: 'PENDING_REVIEW', revision: 2, event_revision: 2,
+      submission_source: 'DELEGATE_PORTAL', submitter_display_name: '中国', file_type: 'WORKING_PAPER'});
+
+    await stage3.setOperationMode(value.owner, value.committee.id, 'DELEGATE_OPERATED',
+      await committeeRevision(value.committee.id), context('delegate-file-mode-change'));
+    await expect(service.bootstrap(capability, claimed.sessionToken)).rejects.toMatchObject({code: 'LINK_EXPIRED'});
+    expect((await pool?.query<{revoked: boolean}>(`SELECT revoked_at IS NOT NULL AS revoked
+      FROM delegate_file_sessions`))?.rows).toEqual([{revoked: true}]);
+  });
+
   it('keeps secrets hashed and management scoped to explicit Owner or Chair authority', async () => {
     const value = await fixture();
     await expect(agent.createPairing(value.member, value.committee.id,
