@@ -56,6 +56,15 @@ describe('migration discovery', () => {
     expect(migration?.sql).toContain('schema_compatibility=48');
   });
 
+  it('adds bounded cache metadata and capable Agent tasks', async () => {
+    const migration = (await loadMigrations(resolve('server/migrations'))).find(item => item.version === 49);
+    expect(migration?.name).toBe('storage_cache_policy');
+    expect(migration?.sql).toContain('CREATE TABLE storage_cache_entries');
+    expect(migration?.sql).toContain("ADD VALUE IF NOT EXISTS 'FETCH_BLOB_TO_CACHE'");
+    expect(migration?.sql).toContain('storage_agent_tasks_one_active_cache_fetch');
+    expect(migration?.sql).toContain('schema_compatibility=49');
+  });
+
   it('includes the stage 4 low-concurrency schema as migration 4', async () => {
     const migrations = await loadMigrations(resolve('server/migrations'));
     const stage4 = migrations.find(migration => migration.version === 4);

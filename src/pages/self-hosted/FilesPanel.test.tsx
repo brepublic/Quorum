@@ -2,7 +2,7 @@ import * as React from 'react';
 import {act} from 'react';
 import {createRoot, type Root} from 'react-dom/client';
 import {afterEach, describe, expect, it, vi} from 'vitest';
-import type {CommitteeWorkspaceSnapshot, FileEntry, StorageMigration} from '@quorum/contracts';
+import type {CommitteeWorkspaceSnapshot, FileEntry, StorageHost, StorageMigration} from '@quorum/contracts';
 import type {SelfHostedApi} from '../../services/self-hosted-api';
 import {SelfHostedApiError} from '../../services/self-hosted-api';
 import FilesPanel, {storageErrorText} from './FilesPanel';
@@ -160,7 +160,8 @@ describe('self-hosted stage 6 file panel', () => {
       createdAt: '2026-08-13T00:00:00.000Z'}));
     const client = api({listFiles: vi.fn(async () => []), listStorageHosts: vi.fn(async () => [{id: 'host', committeeId,
       deviceId: 'device', deviceLabel: '主席电脑', leaseGeneration: 1, status: 'ACTIVE', revision: 1,
-      lastSeenAt: '2026-08-13T00:00:00.000Z', pairedAt: '2026-08-13T00:00:00.000Z', revokedAt: null}]),
+      lastSeenAt: '2026-08-13T00:00:00.000Z', pairedAt: '2026-08-13T00:00:00.000Z', revokedAt: null,
+      agentProtocolVersion: null, capabilities: []}]),
       createChairAgentBinding} as unknown as Partial<SelfHostedApi>);
     const view = await render('OWNER', client, 'owner');
     expect(view.textContent).toContain('主席电脑');
@@ -189,7 +190,7 @@ describe('self-hosted stage 6 file panel', () => {
   it('uses the loaded committee revision when transferring or revoking the active host', async () => {
     const host = {id: 'host', committeeId, deviceId: 'device', deviceLabel: '主席电脑', leaseGeneration: 1,
       status: 'DEGRADED' as const, revision: 2, lastSeenAt: '2026-08-13T00:00:00.000Z',
-      pairedAt: '2026-08-12T00:00:00.000Z', revokedAt: null};
+      pairedAt: '2026-08-12T00:00:00.000Z', revokedAt: null, agentProtocolVersion: null, capabilities: []};
     const createStoragePairingCode = vi.fn(async () => ({code: 'QRM-TRANSFER', purpose: 'TRANSFER' as const,
       expiresAt: '2026-08-13T01:00:00.000Z'}));
     const revokeStorageHost = vi.fn(async () => ({...host, status: 'REVOKED' as const}));
@@ -208,7 +209,8 @@ describe('self-hosted stage 6 file panel', () => {
   it('shows durable conflicts and sends the loaded conflict, lease, and file revisions', async () => {
     const host = {id: 'host', committeeId, deviceId: 'device', deviceLabel: '主席电脑', leaseGeneration: 7,
       status: 'ACTIVE' as const, revision: 1, lastSeenAt: '2026-08-13T00:00:00.000Z',
-      pairedAt: '2026-08-13T00:00:00.000Z', revokedAt: null};
+      pairedAt: '2026-08-13T00:00:00.000Z', revokedAt: null, agentProtocolVersion: 2,
+      capabilities: ['SSE_WAKE', 'CACHE_REFILL'] as StorageHost['capabilities']};
     const conflict = {id: 'conflict', committeeId, hostId: 'host', fileEntryId: file.id, serverRevision: 3,
       localBaseRevision: 2, reasonCode: 'REVISION_CONFLICT' as const, status: 'PENDING' as const, revision: 1,
       change: {kind: 'UPSERT' as const, fileEntryId: file.id, baseRevision: 2, logicalName: '工作文件一',
@@ -230,7 +232,8 @@ describe('self-hosted stage 6 file panel', () => {
   it('sends an explicit replacement name when accepting a local name conflict', async () => {
     const host = {id: 'host', committeeId, deviceId: 'device', deviceLabel: '主席电脑', leaseGeneration: 7,
       status: 'ACTIVE' as const, revision: 1, lastSeenAt: null,
-      pairedAt: '2026-08-13T00:00:00.000Z', revokedAt: null};
+      pairedAt: '2026-08-13T00:00:00.000Z', revokedAt: null, agentProtocolVersion: 2,
+      capabilities: ['SSE_WAKE', 'CACHE_REFILL'] as StorageHost['capabilities']};
     const conflict = {id: 'name-conflict', committeeId, hostId: 'host', fileEntryId: file.id, serverRevision: 3,
       localBaseRevision: 2, reasonCode: 'NAME_CONFLICT' as const, status: 'PENDING' as const, revision: 1,
       change: {kind: 'RENAME' as const, fileEntryId: file.id, baseRevision: 2, logicalName: '重名文件.txt'},

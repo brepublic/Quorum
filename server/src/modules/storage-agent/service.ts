@@ -56,6 +56,8 @@ interface HostRow extends QueryResultRow {
   last_seen_at: Date | null;
   paired_at: Date;
   revoked_at: Date | null;
+  agent_protocol_version: number | null;
+  capabilities: string[];
 }
 
 export interface Stage7AgentOptions {
@@ -127,6 +129,8 @@ function host(row: HostRow): StorageHost {
     lastSeenAt: row.last_seen_at?.toISOString() ?? null,
     pairedAt: row.paired_at.toISOString(),
     revokedAt: row.revoked_at?.toISOString() ?? null
+    ,agentProtocolVersion: row.agent_protocol_version,
+    capabilities: row.capabilities as StorageHost['capabilities']
   };
 }
 
@@ -444,8 +448,16 @@ export class Stage7StorageAgentService {
   }
 
   async heartbeat(credential: string, body: unknown): Promise<StorageHost> {
-    assertExactBody(body as Record<string, unknown>, ['leaseGeneration']);
-    const requestedGeneration = generation((body as {leaseGeneration?: unknown}).leaseGeneration);
+    assertExactBody(body as Record<string, unknown>, ['leaseGeneration', 'agentProtocolVersion', 'capabilities']);
+    const heartbeat = body as {leaseGeneration?: unknown; agentProtocolVersion?: unknown; capabilities?: unknown};
+    const requestedGeneration = generation(heartbeat.leaseGeneration);
+    const protocolVersion = heartbeat.agentProtocolVersion === undefined ? null : revision(heartbeat.agentProtocolVersion);
+    if (heartbeat.capabilities !== undefined && (!Array.isArray(heartbeat.capabilities)
+      || heartbeat.capabilities.some(value => value !== 'SSE_WAKE' && value !== 'CACHE_REFILL')
+      || new Set(heartbeat.capabilities).size !== heartbeat.capabilities.length)) {
+      throw new AppError({code: 'VALIDATION_FAILED', message: 'Agent capabilities are invalid.'});
+    }
+    const capabilities = (heartbeat.capabilities ?? []) as string[];
     const parsed = parseDeviceCredential(credential);
     if (!parsed) throw new AppError({code: 'AUTHENTICATION_REQUIRED', message: 'Agent authentication is required.'});
     const now = this.now();
@@ -467,8 +479,12 @@ export class Stage7StorageAgentService {
         throw new AppError({code: 'STALE_STORAGE_LEASE', message: 'Storage host lease is no longer current.'});
       }
       const recovered = row.status === 'DEGRADED';
+      const capabilityChanged = row.agent_protocol_version !== protocolVersion
+        || row.capabilities.length !== capabilities.length
+        || row.capabilities.some(value => !capabilities.includes(value));
       const updated = await client.query<HostRow>(`UPDATE storage_hosts SET status='ACTIVE',last_seen_at=$2,
-        revision=revision+$3,updated_at=$2 WHERE id=$1 RETURNING *`, [row.id, now, recovered ? 1 : 0]);
+        agent_protocol_version=$4,capabilities=$5,revision=revision+$3,updated_at=$2 WHERE id=$1 RETURNING *`,
+      [row.id, now, recovered || capabilityChanged ? 1 : 0, protocolVersion, capabilities]);
       if (recovered) {
         await appendEvent(client, committee, {type: 'storage_host.status_changed', resourceType: 'storage_host',
           resourceId: row.id, revision: row.revision + 1, audience: 'CHAIR',

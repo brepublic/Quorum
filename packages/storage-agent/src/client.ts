@@ -44,7 +44,9 @@ export class StorageAgentHttpClient {
   }
 
   heartbeat(leaseGeneration: number): Promise<unknown> {
-    return this.json('/api/v1/storage-agent/heartbeat', {method: 'POST', body: {leaseGeneration}});
+    return this.json('/api/v1/storage-agent/heartbeat', {method: 'POST', body: {
+      leaseGeneration, agentProtocolVersion: 2, capabilities: ['SSE_WAKE', 'CACHE_REFILL']
+    }});
   }
 
   manifest(leaseGeneration: number, after = 0, limit = 100): Promise<StorageManifestPage> {

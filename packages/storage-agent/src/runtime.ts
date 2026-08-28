@@ -67,7 +67,7 @@ export class StorageAgentRuntime {
     await this.applyConflictResolutions(await this.client.conflicts(this.leaseGeneration));
     const tasks = await this.loadTasks();
     tasks.sort((left, right) => {
-      const order = {DELETE_FILE: 0, STORE_BLOB: 1, HOST_COMMIT_BLOB: 2, UPLOAD_BLOB: 3};
+      const order = {DELETE_FILE: 0, STORE_BLOB: 1, HOST_COMMIT_BLOB: 2, UPLOAD_BLOB: 3, FETCH_BLOB_TO_CACHE: 4};
       return order[left.type] - order[right.type] || left.sequence - right.sequence;
     });
     for (const task of tasks.filter(item => due(item))) await this.processTask(task);

@@ -55,7 +55,7 @@ flowchart LR
 
 ## 3. 服务端模块与数据边界
 
-`server/` 是单进程模块化单体。启动时使用 PostgreSQL advisory lock 执行带 SHA-256 校验和的顺序 migration；当前 schema compatibility 为 48。实例级 `system_settings` 保存新委员会的默认运作模式与创建者是否自动获得 Chair；它们只在创建事务中读取，不追溯既有委员会。系统管理员不能创建委员会。数据库版本、连接、存储目录可写性或容量采样不满足要求时 readiness 失败。
+`server/` 是单进程模块化单体。启动时使用 PostgreSQL advisory lock 执行带 SHA-256 校验和的顺序 migration；当前 schema compatibility 为 49。实例级 `system_settings` 保存新委员会的默认运作模式与创建者是否自动获得 Chair；它们只在创建事务中读取，不追溯既有委员会。系统管理员不能创建委员会。数据库版本、连接、存储目录可写性或容量采样不满足要求时 readiness 失败。
 
 | 模块 | 责任 |
 | --- | --- |
@@ -95,6 +95,8 @@ SERVER_VOLUME 使用 0600 临时文件、fsync 和无覆盖原子发布。S3 end
 Chair Agent 使用独立 `QuorumAgent` authorization scheme。一次性配对码和设备凭据只保存哈希；一个委员会最多一个活动 host。单调 lease generation fence 使转移或撤销后的旧设备不能 heartbeat、claim、上传或完成任务。Agent 对本地路径做规范化并拒绝链接、硬链接、非普通文件和目录逃逸；服务端下发内容先完整校验再原子替换。本地并发编辑、墓碑冲突和主机转移不会静默覆盖，均形成 durable 冲突供 Chair 显式裁决。
 
 代表文件分享只在主席代办、活动委员会和活动 Chair Agent binding 同时成立时可启动。链接 capability 放在 URL fragment 中，服务端保存它以便主席重新显示；代表选定当前开放会期中出席或暂离的席位后，服务端发放 30 天 HttpOnly 浏览器凭据，分享结束或运行条件失效即撤销。该凭据只允许读取本委员会已发布文件、上传到主席电脑和接收代表文件发布事件；文件创建者仍使用分享发起主席作为现有存储链的技术保管人，代表团来源另存为审核与展示元数据。代表上传经 Chair Agent 完成内容提交后进入待审核，主席决定展示名和文件类型；批准与公开事件同事务提交，驳回沿用逻辑删除和 Agent 清理。
+
+CHAIR_AGENT 字节的权威持久副本仍在主席电脑。服务器使用同一持久卷中的独立 cache 命名空间保存非权威副本，并用 `REVIEW_PINNED` / `READY` / `MISSING` / `FETCHING` / `EVICTING` / `FAILED` 记录状态。管理员配置保存在 PostgreSQL，生效容量上限取数据库值与部署硬边界的较小值，最低剩余空间取较大值。待审核副本不参与 LRU。
 
 ## 6. 归档、删除与运维
 

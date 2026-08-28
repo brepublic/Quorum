@@ -15,6 +15,8 @@ export interface StorageHost {
   lastSeenAt: string | null;
   pairedAt: string;
   revokedAt: string | null;
+  agentProtocolVersion: number | null;
+  capabilities: import('./storage-cache.js').StorageAgentCapability[];
 }
 
 export interface StoragePairingCode {
@@ -35,7 +37,9 @@ export interface StorageAgentIdentity {
   leaseGeneration: number;
 }
 
-export const STORAGE_AGENT_TASK_TYPES = ['STORE_BLOB', 'HOST_COMMIT_BLOB', 'UPLOAD_BLOB', 'DELETE_FILE'] as const;
+export const STORAGE_AGENT_TASK_TYPES = [
+  'STORE_BLOB', 'HOST_COMMIT_BLOB', 'UPLOAD_BLOB', 'DELETE_FILE', 'FETCH_BLOB_TO_CACHE'
+] as const;
 export type StorageAgentTaskType = typeof STORAGE_AGENT_TASK_TYPES[number];
 
 export const STORAGE_AGENT_TASK_STATUSES = [

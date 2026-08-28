@@ -82,11 +82,11 @@ integration('PostgreSQL migrations', () => {
       );
       const applied = await pool.query('SELECT version FROM quorum_meta.schema_migrations');
 
-      expect(first).toEqual(expect.objectContaining({ready: true, latestAppliedVersion: 48}));
+      expect(first).toEqual(expect.objectContaining({ready: true, latestAppliedVersion: 49}));
       expect(second).toEqual(expect.objectContaining({ready: true, pendingVersions: []}));
       expect(status.ready).toBe(true);
-      expect(runtime.rows[0]?.schema_compatibility).toBe(48);
-      expect(applied.rowCount).toBe(48);
+      expect(runtime.rows[0]?.schema_compatibility).toBe(49);
+      expect(applied.rowCount).toBe(49);
       const stage3Tables = await pool.query<{name: string}>(`SELECT table_name AS name FROM information_schema.tables
         WHERE table_schema='public' AND table_name IN ('committees','committee_memberships','committee_capabilities',
         'committee_seats','seat_assignments','seat_invitations','rule_packages','rule_package_versions',
@@ -112,6 +112,11 @@ integration('PostgreSQL migrations', () => {
         WHERE table_schema='public' AND table_name IN
           ('committee_deletion_jobs','committee_deletion_agent_tasks')`);
       expect(stage8Tables.rowCount).toBe(2);
+      const cacheTables = await pool.query<{name: string}>(`SELECT table_name AS name FROM information_schema.tables
+        WHERE table_schema='public' AND table_name='storage_cache_entries'`);
+      expect(cacheTables.rowCount).toBe(1);
+      await expect(pool.query(`UPDATE system_settings SET pending_review_committee_max_bytes=6000000000
+        WHERE singleton=true`)).rejects.toMatchObject({code: '23514'});
     } finally {
       await pool.end();
     }

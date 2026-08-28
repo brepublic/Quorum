@@ -24,7 +24,9 @@ describe('stage 7 Agent contracts', () => {
   });
 
   it('freezes durable task types and explicit retry states', () => {
-    expect(STORAGE_AGENT_TASK_TYPES).toEqual(['STORE_BLOB', 'HOST_COMMIT_BLOB', 'UPLOAD_BLOB', 'DELETE_FILE']);
+    expect(STORAGE_AGENT_TASK_TYPES).toEqual([
+      'STORE_BLOB', 'HOST_COMMIT_BLOB', 'UPLOAD_BLOB', 'DELETE_FILE', 'FETCH_BLOB_TO_CACHE'
+    ]);
     expect(STORAGE_AGENT_TASK_STATUSES).toEqual([
       'PENDING', 'IN_PROGRESS', 'RETRY', 'COMPLETED', 'FAILED', 'CANCELLED'
     ]);
