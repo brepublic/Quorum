@@ -23,6 +23,7 @@ import {Stage7LocalChangeService} from './local-change-service';
 import {Stage7ConflictService} from './conflict-service';
 import {DelegateFileService} from '../delegate-files/service';
 import {Stage6ProviderCommitService} from '../storage/provider-commit-service';
+import {StorageCacheService} from '../storage/cache-service';
 
 const {Client, Pool} = pg;
 const adminUrl = process.env.TEST_DATABASE_ADMIN_URL;
@@ -63,7 +64,13 @@ beforeEach(async () => {
   stagingRoot = await mkdtemp(join(tmpdir(), 'quorum-stage7-integration-'));
   staging = new DurableStagingStore(stagingRoot, 1024 * 1024, 1024 * 1024); await staging.initialize();
   uploads = new Stage6UploadService(pool, staging);
-  chairProvider = new Stage7ChairAgentProviderService(pool, storage);
+  const cache = new StorageCacheService(pool, staging, staging, {effective: async () => ({
+    publishedCacheMaxBytes: 1024 * 1024, pendingReviewMaxBytes: 1024 * 1024,
+    pendingReviewCommitteeMaxBytes: 1024 * 1024, storageMinFreeBytes: 0, storageMinFreePercent: 0, revision: 1,
+    hardLimits: {publishedCacheMaxBytes: 1024 * 1024, pendingReviewMaxBytes: 1024 * 1024,
+      pendingReviewCommitteeMaxBytes: 1024 * 1024, storageMinFreeBytes: 0, storageMinFreePercent: 0}
+  })} as never);
+  chairProvider = new Stage7ChairAgentProviderService(pool, storage, cache);
   tasks = new Stage7StorageTaskService(agent, staging, {} as Stage6FileService, undefined, chairProvider);
   localChanges = new Stage7LocalChangeService(agent);
   conflicts = new Stage7ConflictService(pool, agent);
@@ -180,13 +187,15 @@ integration('PostgreSQL stage 7 storage Agent identity', () => {
     await tasks.complete(chairStorageResult.paired.credential, pending.taskId, {leaseGeneration: pending.leaseGeneration,
       fileRevision: 1, claimToken: task.claimToken, requestId: randomUUID()}, context('delegate-file-host-complete'));
     const submitted = await pool?.query<{status: string; revision: number; event_revision: number;
-      submission_source: string; submitter_display_name: string; file_type: string}>(`SELECT e.status::text,e.revision,
+      submission_source: string; submitter_display_name: string; file_type: string; cache_state: string}>(`SELECT e.status::text,e.revision,
       (SELECT resource_revision FROM committee_events WHERE resource_id=e.id AND event_type='file.review_requested') AS event_revision,
-      m.submission_source::text,m.submitter_display_name,m.file_type::text
+      m.submission_source::text,m.submitter_display_name,m.file_type::text,
+      (SELECT state::text FROM storage_cache_entries WHERE file_entry_id=e.id) AS cache_state
       FROM file_entries e JOIN delegate_file_metadata m ON m.file_entry_id=e.id
       JOIN file_uploads u ON u.committed_file_entry_id=e.id WHERE u.id=$1`, [upload.id]);
     expect(submitted?.rows[0]).toEqual({status: 'PENDING_REVIEW', revision: 2, event_revision: 2,
-      submission_source: 'DELEGATE_PORTAL', submitter_display_name: '中国', file_type: 'WORKING_PAPER'});
+      submission_source: 'DELEGATE_PORTAL', submitter_display_name: '中国', file_type: 'WORKING_PAPER',
+      cache_state: 'REVIEW_PINNED'});
 
     await stage3.setOperationMode(value.owner, value.committee.id, 'DELEGATE_OPERATED',
       await committeeRevision(value.committee.id), context('delegate-file-mode-change'));
@@ -413,11 +422,13 @@ integration('PostgreSQL stage 7 storage Agent identity', () => {
         WHERE entry.committee_id=$2) AS versions,
       (SELECT count(*)::int FROM storage_manifest_events WHERE committee_id=$2) AS manifest_events,
       (SELECT count(*)::int FROM storage_agent_tasks WHERE id=$3 AND task_type='HOST_COMMIT_BLOB') AS host_commit_tasks,
+      (SELECT state::text FROM storage_cache_entries WHERE file_entry_id=(SELECT committed_file_entry_id
+        FROM file_uploads WHERE id=$1)) AS cache_state,
       (SELECT count(*)::int FROM committee_events WHERE committee_id=$2 AND event_type='file.upload_committed') AS events,
       (SELECT count(*)::int FROM audit_log WHERE committee_id=$2 AND action='storage.upload_host_committed') AS audits`,
       [source.staged.id, value.committee.id, pending.taskId]);
     expect(state?.rows[0]).toEqual({upload_status: 'COMMITTED', agent_state: 'HOST_COMMITTED', files: 1, versions: 1,
-      manifest_events: 1, host_commit_tasks: 1, events: 1, audits: 1});
+      manifest_events: 1, host_commit_tasks: 1, cache_state: 'READY', events: 1, audits: 1});
   });
 
   it('rolls back file metadata and upload completion when the terminal Agent audit fails', async () => {

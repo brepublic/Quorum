@@ -7,6 +7,7 @@ import {appendEvent, audit, idempotentTransaction, isChair, lockedCommittee, req
   requireProceedingsActive, type Stage4CommitteeRow, type Stage4Context} from '../stage4/database.js';
 import {assertExactBody} from '../stage4/validation.js';
 import type {Stage6StorageService} from '../storage/service.js';
+import type {StorageCacheService} from '../storage/cache-service.js';
 import type {StorageAgentTaskCompletionFinalizer} from './task-service.js';
 
 interface AgentUploadRow extends QueryResultRow {
@@ -65,7 +66,8 @@ async function uploadForUpdate(client: PoolClient, id: string): Promise<AgentUpl
 }
 
 export class Stage7ChairAgentProviderService implements StorageAgentTaskCompletionFinalizer {
-  constructor(private readonly pool: Pool, private readonly metadata: Stage6StorageService) {}
+  constructor(private readonly pool: Pool, private readonly metadata: Stage6StorageService,
+    private readonly cache?: StorageCacheService) {}
 
   async queueUpload(auth: AuthenticatedSession, uploadId: string, body: unknown,
     idempotencyKey: string, context: Stage4Context): Promise<PendingHostCommit> {
@@ -235,6 +237,9 @@ export class Stage7ChairAgentProviderService implements StorageAgentTaskCompleti
         payload: {status: 'PENDING_REVIEW', submissionSource: 'DELEGATE_PORTAL',
           submitterDisplayName: delegateContext.seat_display_name}});
     }
+    if (this.cache) await this.cache.retain(client, {committeeId: committee.id, fileEntryId: file.id,
+      fileVersionId: file.currentVersion.id, blobId: task.blobId, sourceKey: current.staging_key,
+      sizeBytes: task.expectedSizeBytes, sha256: task.expectedSha256, reviewPinned: Boolean(delegateContext)});
     const committed = await client.query<{revision: number}>(`UPDATE file_uploads SET status='COMMITTED',
       agent_commit_state='HOST_COMMITTED',committed_at=now(),committed_blob_id=$2,
       committed_file_entry_id=$3,committed_file_version_id=$4,revision=revision+1,updated_at=now()

@@ -20,6 +20,7 @@ import type {Stage6UploadService} from '../storage/upload-service.js';
 import type {Stage6ProviderCommitService} from '../storage/provider-commit-service.js';
 import type {Stage6FileService} from '../storage/file-service.js';
 import type {Stage6StorageService} from '../storage/service.js';
+import type {StorageCacheService} from '../storage/cache-service.js';
 
 const FILE_TYPES = new Set<DelegateFileType>(['WORKING_PAPER', 'DIRECTIVE_DRAFT', 'RESOLUTION_DRAFT']);
 const DELEGATE_SESSION_MS = 30 * 24 * 60 * 60 * 1000;
@@ -74,7 +75,7 @@ function userAuth(row: QueryResultRow): AuthenticatedSession {
 export class DelegateFileService {
   constructor(private readonly pool: Pool, private readonly uploads: Stage6UploadService,
     private readonly commits: Stage6ProviderCommitService, private readonly files: Stage6FileService,
-    private readonly storage: Stage6StorageService) {}
+    private readonly storage: Stage6StorageService, private readonly cache?: StorageCacheService) {}
 
   async getShare(auth: AuthenticatedSession, committeeId: string, origin: string): Promise<DelegateFileShare | null> {
     requireBusinessIdentity(auth);
@@ -173,6 +174,7 @@ export class DelegateFileService {
     context: Stage4Context): Promise<FileUpload> {
     const session = await this.authenticate(credential);
     await this.assertMayUpload(session);
+    await this.cache?.assertPendingCapacity(session.committee_id, Number(body.expectedSizeBytes));
     const type = fileType(body.fileType); const uploadBody = {...body}; delete uploadBody.fileType;
     const auth = await this.custodian(session.created_by_user_id);
     const scopedKey = `${session.id}.${key}`;
@@ -244,6 +246,8 @@ export class DelegateFileService {
       await client.query(`UPDATE file_entries SET logical_name=$2,status='PUBLISHED',submitted_at=COALESCE(submitted_at,$3),
         published_at=$3,published_by_user_id=$4,revision=revision+1,updated_at=$3 WHERE id=$1`,
       [fileId, logicalName, now, auth.user.id]);
+      await client.query(`UPDATE storage_cache_entries SET state='READY',state_changed_at=now(),updated_at=now()
+        WHERE file_entry_id=$1 AND state='REVIEW_PINNED'`, [fileId]);
       await appendEvent(client, committee, {type: 'file.published', resourceType: 'file_entry', resourceId: fileId,
         revision: entry.revision + 1, audience: 'PUBLIC', payload: {status: 'PUBLISHED', logicalName,
           fileType: type, submissionSource: source, submitterDisplayName: submitter, publishedAt: now.toISOString()}});
@@ -260,7 +264,9 @@ export class DelegateFileService {
     context: Stage4Context): Promise<{id: string; fileEntryId: string}> {
     const file = await this.files.get(auth, uuid(fileId, 'File ID'));
     await transaction(this.pool, client => this.requireManager(client, file.committeeId, auth.user.id, true));
-    return this.storage.deleteFile(auth, file.id, {baseRevision: positiveRevision(baseRevision)}, key, context);
+    const deleted = await this.storage.deleteFile(auth, file.id, {baseRevision: positiveRevision(baseRevision)}, key, context);
+    await this.cache?.removeByFile(file.id);
+    return deleted;
   }
 
   async published(credential: string | undefined): Promise<DelegatePublishedFile[]> {

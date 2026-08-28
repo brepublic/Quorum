@@ -148,7 +148,7 @@ export function safeDownloadHeaders(file: FileEntry): Record<string, string> {
 export class Stage6FileService {
   constructor(private readonly pool: Pool, private readonly serverVolume: ServerVolumeStore,
     private readonly s3Configs: Stage6S3ConfigService, private readonly s3Factory: FileS3StoreFactory,
-    private readonly staging?: DurableStagingStore) {}
+    private readonly staging?: DurableStagingStore, private readonly cache?: DurableStagingStore) {}
 
   async list(auth: AuthenticatedSession | undefined, committeeId: string): Promise<FileEntry[]> {
     return transaction(this.pool, async client => {
@@ -171,6 +171,13 @@ export class Stage6FileService {
     const row = await this.visibleRow(auth, uuid(fileId, 'File ID'));
     const file = mapFile(row);
     if (row.provider_type === 'CHAIR_AGENT') {
+      const cached = await this.pool.query<{storage_key: string; state: string}>(`SELECT storage_key,state
+        FROM storage_cache_entries WHERE blob_id=$1 AND state IN ('REVIEW_PINNED','READY')`, [row.blob_id]);
+      if (this.cache && cached.rows[0]?.storage_key && await this.cache.exists(cached.rows[0].storage_key)) {
+        await this.cache.verify(cached.rows[0].storage_key, Number(row.size_bytes), row.sha256_hex);
+        return {file, headers: safeDownloadHeaders(file),
+          content: this.cache.read(cached.rows[0].storage_key, Number(row.size_bytes), row.sha256_hex)};
+      }
       if (!this.staging || !row.agent_staging_key || !await this.staging.exists(row.agent_staging_key)) {
         throw new AppError({code: 'SERVICE_NOT_READY', message: 'The file is currently available only on the Chair computer.'});
       }
@@ -198,6 +205,13 @@ export class Stage6FileService {
     const row = result.rows[0];
     if (!row) throw new AppError({code: 'NOT_FOUND', message: 'Blob not found.'});
     if (row.provider_type === 'CHAIR_AGENT') {
+      const cached = await this.pool.query<{storage_key: string}>(`SELECT storage_key FROM storage_cache_entries
+        WHERE blob_id=$1 AND state IN ('REVIEW_PINNED','READY')`, [uuid(blobId, 'Blob ID')]);
+      if (this.cache && cached.rows[0]?.storage_key && await this.cache.exists(cached.rows[0].storage_key)) {
+        await this.cache.verify(cached.rows[0].storage_key, Number(row.size_bytes), row.sha256_hex);
+        return {sizeBytes: Number(row.size_bytes), sha256: row.sha256_hex,
+          content: this.cache.read(cached.rows[0].storage_key, Number(row.size_bytes), row.sha256_hex)};
+      }
       if (!this.staging || !row.agent_staging_key || !await this.staging.exists(row.agent_staging_key)) {
         throw new AppError({code: 'SERVICE_NOT_READY', message: 'The blob is currently available only on the Chair computer.'});
       }
