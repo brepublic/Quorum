@@ -16,6 +16,7 @@ import type {Stage6ProviderCommitService} from '../modules/storage/provider-comm
 import type {Stage6S3ConfigService} from '../modules/storage/s3-config-service.js';
 import type {Stage6StorageService} from '../modules/storage/service.js';
 import type {Stage6FileService} from '../modules/storage/file-service.js';
+import {DownloadPreparingError} from '../modules/storage/file-service.js';
 import type {Stage6MigrationService} from '../modules/storage/migration-service.js';
 import type {StorageMetricsProvider} from '../modules/storage/maintenance-service.js';
 import type {Stage7StorageAgentService} from '../modules/storage-agent/service.js';
@@ -586,13 +587,31 @@ async function handleStage6UploadRequest(options: {
   }
   const download = /^\/api\/v1\/files\/([0-9a-f-]{36})\/download$/.exec(pathname);
   if (method === 'GET' && download && files) {
-    const result = await files.download(await optionalAuthentication(request, identity), download[1] as string);
+    let result;
+    try { result = await files.download(await optionalAuthentication(request, identity), download[1] as string); }
+    catch (error) {
+      if (error instanceof DownloadPreparingError) {
+        sendJson(response, 202, success(error.readiness, requestId)); return true;
+      }
+      throw error;
+    }
     response.statusCode = 200;
     for (const [name, value] of Object.entries(result.headers)) response.setHeader(name, value);
     for await (const chunk of result.content) {
       if (!response.write(chunk)) await new Promise<void>(resolve => response.once('drain', resolve));
     }
     response.end(); return true;
+  }
+  const downloadPreparation = /^\/api\/v1\/files\/([0-9a-f-]{36})\/download-preparation$/.exec(pathname);
+  if (method === 'POST' && downloadPreparation && files) {
+    requireOrigin(request, allowedOrigins); await readJson(request);
+    sendJson(response, 202, success(await files.prepareDownload(await optionalAuthentication(request, identity),
+      downloadPreparation[1] as string), requestId)); return true;
+  }
+  const downloadReadiness = /^\/api\/v1\/files\/([0-9a-f-]{36})\/download-readiness$/.exec(pathname);
+  if (method === 'GET' && downloadReadiness && files) {
+    sendJson(response, 200, success(await files.downloadReadiness(await optionalAuthentication(request, identity),
+      downloadReadiness[1] as string), requestId)); return true;
   }
   const file = /^\/api\/v1\/files\/([0-9a-f-]{36})$/.exec(pathname);
   if (method === 'GET' && file && files) {
@@ -758,13 +777,31 @@ async function handleDelegateFileRequest(options: {
   }
   const portalDownload = /^\/api\/v1\/delegate-files\/files\/([0-9a-f-]{36})\/download$/.exec(pathname);
   if (method === 'GET' && portalDownload) {
-    const result = await service.download(credential, portalDownload[1] as string);
+    let result;
+    try { result = await service.download(credential, portalDownload[1] as string); }
+    catch (error) {
+      if (error instanceof DownloadPreparingError) {
+        sendJson(response, 202, success(error.readiness, requestId)); return true;
+      }
+      throw error;
+    }
     response.statusCode = 200;
     for (const [name, value] of Object.entries(result.headers)) response.setHeader(name, value);
     for await (const chunk of result.content) {
       if (!response.write(chunk)) await new Promise<void>(resolve => response.once('drain', resolve));
     }
     response.end(); return true;
+  }
+  const portalPreparation = /^\/api\/v1\/delegate-files\/files\/([0-9a-f-]{36})\/download-preparation$/.exec(pathname);
+  if (method === 'POST' && portalPreparation) {
+    delegateWrite(); await readJson(request);
+    sendJson(response, 202, success(await service.prepareDownload(credential, portalPreparation[1] as string), requestId));
+    return true;
+  }
+  const portalReadiness = /^\/api\/v1\/delegate-files\/files\/([0-9a-f-]{36})\/download-readiness$/.exec(pathname);
+  if (method === 'GET' && portalReadiness) {
+    sendJson(response, 200, success(await service.downloadReadiness(credential, portalReadiness[1] as string), requestId));
+    return true;
   }
 
   const share = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/delegate-file-share$/.exec(pathname);

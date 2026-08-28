@@ -10,6 +10,12 @@ import type {Stage6S3ConfigService} from './s3-config-service.js';
 import type {S3CompatibleStore, S3ProviderConfig} from './s3-store.js';
 import type {ServerVolumeStore} from './server-volume.js';
 import type {DurableStagingStore} from './staging.js';
+import type {StorageCacheRefillService} from './cache-refill-service.js';
+import type {DownloadReadiness} from '@quorum/contracts';
+
+export class DownloadPreparingError extends Error {
+  constructor(readonly readiness: DownloadReadiness) { super('Download is being prepared.'); }
+}
 
 interface FileRow extends QueryResultRow {
   id: string;
@@ -148,7 +154,8 @@ export function safeDownloadHeaders(file: FileEntry): Record<string, string> {
 export class Stage6FileService {
   constructor(private readonly pool: Pool, private readonly serverVolume: ServerVolumeStore,
     private readonly s3Configs: Stage6S3ConfigService, private readonly s3Factory: FileS3StoreFactory,
-    private readonly staging?: DurableStagingStore, private readonly cache?: DurableStagingStore) {}
+    private readonly staging?: DurableStagingStore, private readonly cache?: DurableStagingStore,
+    private readonly refill?: StorageCacheRefillService) {}
 
   async list(auth: AuthenticatedSession | undefined, committeeId: string): Promise<FileEntry[]> {
     return transaction(this.pool, async client => {
@@ -175,10 +182,15 @@ export class Stage6FileService {
         FROM storage_cache_entries WHERE blob_id=$1 AND state IN ('REVIEW_PINNED','READY')`, [row.blob_id]);
       if (this.cache && cached.rows[0]?.storage_key && await this.cache.exists(cached.rows[0].storage_key)) {
         await this.cache.verify(cached.rows[0].storage_key, Number(row.size_bytes), row.sha256_hex);
+        await this.pool.query(`UPDATE storage_cache_entries SET last_accessed_at=now(),updated_at=now()
+          WHERE blob_id=$1 AND (last_accessed_at IS NULL OR last_accessed_at<now()-interval '5 minutes')`, [row.blob_id]);
         return {file, headers: safeDownloadHeaders(file),
           content: this.cache.read(cached.rows[0].storage_key, Number(row.size_bytes), row.sha256_hex)};
       }
+      if (cached.rows[0]) await this.pool.query(`UPDATE storage_cache_entries SET state='MISSING',storage_key=NULL,
+        cached_at=NULL,state_changed_at=now(),updated_at=now() WHERE blob_id=$1`, [row.blob_id]);
       if (!this.staging || !row.agent_staging_key || !await this.staging.exists(row.agent_staging_key)) {
+        if (this.refill) throw new DownloadPreparingError(await this.prepareRow(row));
         throw new AppError({code: 'SERVICE_NOT_READY', message: 'The file is currently available only on the Chair computer.'});
       }
       await this.staging.verify(row.agent_staging_key, Number(row.size_bytes), row.sha256_hex);
@@ -189,6 +201,23 @@ export class Stage6FileService {
     await store.verify(row.storage_key, Number(row.size_bytes), row.sha256_hex);
     const content = store.readVerified(row.storage_key);
     return {file, headers: safeDownloadHeaders(file), content};
+  }
+
+  async prepareDownload(auth: AuthenticatedSession | undefined, fileId: string): Promise<DownloadReadiness> {
+    return this.prepareRow(await this.visibleRow(auth, uuid(fileId, 'File ID')));
+  }
+
+  async downloadReadiness(auth: AuthenticatedSession | undefined, fileId: string): Promise<DownloadReadiness> {
+    const row = await this.visibleRow(auth, uuid(fileId, 'File ID'));
+    if (row.provider_type !== 'CHAIR_AGENT' || !this.refill) return {status: 'READY'};
+    return this.refill.readiness(row.blob_id);
+  }
+
+  private async prepareRow(row: FileRow): Promise<DownloadReadiness> {
+    if (!this.refill) return {status: 'UNAVAILABLE', code: 'STORAGE_AGENT_OFFLINE'};
+    return this.refill.prepare({committeeId: row.committee_id, fileEntryId: row.id, fileRevision: row.revision,
+      fileVersionId: row.version_id, blobId: row.blob_id, sizeBytes: Number(row.size_bytes),
+      sha256: row.sha256_hex, providerType: row.provider_type});
   }
 
   async readStoredBlob(committeeId: string, blobId: string): Promise<{

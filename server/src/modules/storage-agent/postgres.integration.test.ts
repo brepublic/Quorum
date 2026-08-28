@@ -23,7 +23,8 @@ import {Stage7LocalChangeService} from './local-change-service';
 import {Stage7ConflictService} from './conflict-service';
 import {DelegateFileService} from '../delegate-files/service';
 import {Stage6ProviderCommitService} from '../storage/provider-commit-service';
-import {StorageCacheService} from '../storage/cache-service';
+import {cacheStorageKey, StorageCacheService} from '../storage/cache-service';
+import {StorageCacheRefillService} from '../storage/cache-refill-service';
 
 const {Client, Pool} = pg;
 const adminUrl = process.env.TEST_DATABASE_ADMIN_URL;
@@ -41,6 +42,7 @@ let chairProvider: Stage7ChairAgentProviderService;
 let localChanges: Stage7LocalChangeService;
 let conflicts: Stage7ConflictService;
 let staging: DurableStagingStore;
+let cache: StorageCacheService;
 let stagingRoot = '';
 let administrator: AuthenticatedSession;
 let clock = new Date('2026-08-13T08:00:00.000Z');
@@ -64,7 +66,7 @@ beforeEach(async () => {
   stagingRoot = await mkdtemp(join(tmpdir(), 'quorum-stage7-integration-'));
   staging = new DurableStagingStore(stagingRoot, 1024 * 1024, 1024 * 1024); await staging.initialize();
   uploads = new Stage6UploadService(pool, staging);
-  const cache = new StorageCacheService(pool, staging, staging, {effective: async () => ({
+  cache = new StorageCacheService(pool, staging, staging, {effective: async () => ({
     publishedCacheMaxBytes: 1024 * 1024, pendingReviewMaxBytes: 1024 * 1024,
     pendingReviewCommitteeMaxBytes: 1024 * 1024, storageMinFreeBytes: 0, storageMinFreePercent: 0, revision: 1,
     hardLimits: {publishedCacheMaxBytes: 1024 * 1024, pendingReviewMaxBytes: 1024 * 1024,
@@ -429,6 +431,47 @@ integration('PostgreSQL stage 7 storage Agent identity', () => {
       [source.staged.id, value.committee.id, pending.taskId]);
     expect(state?.rows[0]).toEqual({upload_status: 'COMMITTED', agent_state: 'HOST_COMMITTED', files: 1, versions: 1,
       manifest_events: 1, host_commit_tasks: 1, cache_state: 'READY', events: 1, audits: 1});
+  });
+
+  it('coalesces cache misses and restores verified bytes from a capable Chair Agent', async () => {
+    const value = await fixture(); const chair = await chairStorage(value.owner, value.committee.id);
+    const source = await stagedUpload(value.owner, value.committee.id, 'refill.txt');
+    const pending = await chairProvider.queueUpload(value.owner, source.staged.id, {}, randomUUID(),
+      context('refill-host-commit'));
+    const initial = await tasks.claim(chair.paired.credential, pending.taskId, {
+      leaseGeneration: pending.leaseGeneration, fileRevision: 1, requestId: randomUUID()});
+    await tasks.complete(chair.paired.credential, pending.taskId, {leaseGeneration: pending.leaseGeneration,
+      fileRevision: 1, claimToken: initial.claimToken, requestId: randomUUID()}, context('refill-initial-complete'));
+    const file = (await pool?.query<{file_entry_id: string; file_version_id: string; blob_id: string; revision: number}>(`SELECT
+      u.committed_file_entry_id AS file_entry_id,u.committed_file_version_id AS file_version_id,
+      u.committed_blob_id AS blob_id,e.revision FROM file_uploads u JOIN file_entries e ON e.id=u.committed_file_entry_id
+      WHERE u.id=$1`, [source.staged.id]))?.rows[0];
+    if (!file) throw new Error('Committed file missing.');
+    await staging.remove(cacheStorageKey(file.blob_id));
+    await pool?.query(`UPDATE storage_cache_entries SET state='MISSING',storage_key=NULL,cached_at=NULL,
+      last_accessed_at=NULL,state_changed_at=now(),updated_at=now() WHERE blob_id=$1`, [file.blob_id]);
+    await agent.heartbeat(chair.paired.credential, {leaseGeneration: pending.leaseGeneration,
+      agentProtocolVersion: 2, capabilities: ['SSE_WAKE', 'CACHE_REFILL']});
+    const refill = new StorageCacheRefillService(pool as pg.Pool, cache);
+    const request = {committeeId: value.committee.id, fileEntryId: file.file_entry_id, fileRevision: file.revision,
+      fileVersionId: file.file_version_id, blobId: file.blob_id, sizeBytes: source.content.length,
+      sha256: source.sha256, providerType: 'CHAIR_AGENT'};
+    await expect(Promise.all([refill.prepare(request), refill.prepare(request)])).resolves.toEqual([
+      expect.objectContaining({status: 'PREPARING'}), expect.objectContaining({status: 'PREPARING'})]);
+    const queued = (await tasks.tasks(chair.paired.credential, pending.leaseGeneration)).tasks
+      .filter(item => item.type === 'FETCH_BLOB_TO_CACHE');
+    expect(queued).toHaveLength(1);
+    const claimed = await tasks.claim(chair.paired.credential, queued[0]!.id, {
+      leaseGeneration: pending.leaseGeneration, fileRevision: queued[0]!.fileRevision, requestId: randomUUID()});
+    await tasks.receiveContent(chair.paired.credential, {taskId: claimed.id,
+      leaseGeneration: pending.leaseGeneration, fileRevision: claimed.fileRevision,
+      claimToken: claimed.claimToken as string, expectedSha256: source.sha256, contentLength: source.content.length,
+      source: (async function* () {yield source.content;})(), context: context('refill-content')});
+    await tasks.complete(chair.paired.credential, claimed.id, {leaseGeneration: pending.leaseGeneration,
+      fileRevision: claimed.fileRevision, claimToken: claimed.claimToken, requestId: randomUUID()},
+    context('refill-complete'));
+    await expect(refill.readiness(file.blob_id)).resolves.toEqual({status: 'READY'});
+    await expect(staging.verify(cacheStorageKey(file.blob_id), source.content.length, source.sha256)).resolves.toBeDefined();
   });
 
   it('rolls back file metadata and upload completion when the terminal Agent audit fails', async () => {

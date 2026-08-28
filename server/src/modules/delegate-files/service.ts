@@ -281,6 +281,20 @@ export class DelegateFileService {
     return this.files.download(await this.custodian(session.created_by_user_id), found.id);
   }
 
+  async prepareDownload(credential: string | undefined, fileId: string) {
+    const session = await this.authenticate(credential);
+    const found = (await this.publishedForSession(session)).find(item => item.id === uuid(fileId, 'File ID'));
+    if (!found) throw new AppError({code: 'NOT_FOUND', message: 'File not found.'});
+    return this.files.prepareDownload(await this.custodian(session.created_by_user_id), found.id);
+  }
+
+  async downloadReadiness(credential: string | undefined, fileId: string) {
+    const session = await this.authenticate(credential);
+    const found = (await this.publishedForSession(session)).find(item => item.id === uuid(fileId, 'File ID'));
+    if (!found) throw new AppError({code: 'NOT_FOUND', message: 'File not found.'});
+    return this.files.downloadReadiness(await this.custodian(session.created_by_user_id), found.id);
+  }
+
   async events(credential: string | undefined, after: number): Promise<{cursor: number; rows: Array<{
     id: number; fileId: string; logicalName: string; submitterDisplayName: string; publishedAt: string;
   }>}> {

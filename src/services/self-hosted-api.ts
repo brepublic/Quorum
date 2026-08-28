@@ -44,7 +44,8 @@ import type {
   DelegateFileType,
   DelegatePortalBootstrap,
   DelegatePublishedFile,
-  DelegateReviewFile
+  DelegateReviewFile,
+  DownloadReadiness
 } from '@quorum/contracts';
 import {COMMITTEE_EVENT_DEFINITIONS, type RealtimeSyncState} from '@quorum/contracts';
 
@@ -623,6 +624,13 @@ export const selfHostedApi = {
   fileDownloadUrl(fileId: string) {
     return `/api/v1/files/${encodeURIComponent(fileId)}/download`;
   },
+  prepareFileDownload(fileId: string) {
+    return request<DownloadReadiness>(`/api/v1/files/${encodeURIComponent(fileId)}/download-preparation`,
+      {method: 'POST', body: {}});
+  },
+  fileDownloadReadiness(fileId: string) {
+    return request<DownloadReadiness>(`/api/v1/files/${encodeURIComponent(fileId)}/download-readiness`);
+  },
   listStorageBindings(committeeId: string) {
     return request<StorageBinding[]>(`/api/v1/committees/${committeeId}/storage-bindings`);
   },
@@ -748,6 +756,14 @@ export const selfHostedApi = {
   },
   delegateFileDownloadUrl(fileId: string) {
     return `/api/v1/delegate-files/files/${encodeURIComponent(fileId)}/download`;
+  },
+  prepareDelegateFileDownload(fileId: string) {
+    return delegateRequest<DownloadReadiness>(
+      `/api/v1/delegate-files/files/${encodeURIComponent(fileId)}/download-preparation`, {method: 'POST', body: {}});
+  },
+  delegateFileDownloadReadiness(fileId: string) {
+    return delegateRequest<DownloadReadiness>(
+      `/api/v1/delegate-files/files/${encodeURIComponent(fileId)}/download-readiness`);
   }
 };
 

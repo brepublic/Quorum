@@ -49,6 +49,16 @@ export class StorageCacheService {
     await this.assertDiskReserve(sizeBytes, config);
   }
 
+  async assertRefillCapacity(sizeBytes: number): Promise<void> {
+    const config = await this.policy.effective();
+    const usage = await this.pool.query<{used: string | number}>(`SELECT COALESCE(sum(size_bytes),0) AS used
+      FROM storage_cache_entries WHERE state='READY'`);
+    if (Number(usage.rows[0]?.used ?? 0) + sizeBytes > config.publishedCacheMaxBytes) {
+      throw new AppError({code: 'SERVICE_NOT_READY', message: 'Published cache is full.'});
+    }
+    await this.assertDiskReserve(sizeBytes, config);
+  }
+
   private async assertPendingCapacityWith(executor: Pick<PoolClient, 'query'>, committeeId: string,
     sizeBytes: number, config: Awaited<ReturnType<StorageCachePolicyService['effective']>>): Promise<void> {
     const usage = await executor.query<{global_bytes: string | number; committee_bytes: string | number}>(`SELECT

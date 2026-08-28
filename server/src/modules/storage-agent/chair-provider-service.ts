@@ -143,6 +143,19 @@ export class Stage7ChairAgentProviderService implements StorageAgentTaskCompleti
   async finalize(client: PoolClient, task: Parameters<StorageAgentTaskCompletionFinalizer['finalize']>[1],
     committee: Stage4CommitteeRow, context: Stage4Context): Promise<void> {
     if (task.resolutionConflictId) return;
+    if (task.type === 'FETCH_BLOB_TO_CACHE') {
+      if (!this.cache || !task.blobId || !task.contentStagingKey || task.expectedSizeBytes === null
+        || !task.expectedSha256) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Cache refill is incomplete.'});
+      const version = (await client.query<{id: string}>(`SELECT v.id FROM file_entries e JOIN file_versions v
+        ON v.id=e.current_version_id WHERE e.id=$1 AND e.committee_id=$2
+          AND v.blob_id=$3 AND e.status<>'DELETED' FOR UPDATE OF e`,
+      [task.fileEntryId, committee.id, task.blobId])).rows[0];
+      if (!version) throw new AppError({code: 'REVISION_CONFLICT', message: 'The file changed during cache refill.'});
+      await this.cache.retain(client, {committeeId: committee.id, fileEntryId: task.fileEntryId,
+        fileVersionId: version.id, blobId: task.blobId, sourceKey: task.contentStagingKey,
+        sizeBytes: task.expectedSizeBytes, sha256: task.expectedSha256, reviewPinned: false});
+      return;
+    }
     if (task.type === 'DELETE_FILE') {
       const binding = await client.query<{id: string}>(`SELECT id FROM storage_bindings WHERE committee_id=$1
         AND storage_host_id=$2 AND provider_type='CHAIR_AGENT' AND status='ACTIVE' FOR UPDATE`,

@@ -73,7 +73,22 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
   const [error, setError] = React.useState<string>();
   const [working, setWorking] = React.useState(false);
   const [progress, setProgress] = React.useState<UploadProgress>();
+  const [preparingDownloads, setPreparingDownloads] = React.useState<Set<string>>(() => new Set());
   const uploadController = React.useRef<AbortController>();
+
+  const downloadFile = async (fileId: string) => {
+    setPreparingDownloads(current => new Set(current).add(fileId)); setError(undefined);
+    try {
+      let readiness = await api.prepareFileDownload(fileId);
+      while (readiness.status === 'PREPARING') {
+        await new Promise(resolve => window.setTimeout(resolve, (readiness.retryAfterSeconds ?? 2) * 1000));
+        readiness = await api.fileDownloadReadiness(fileId);
+      }
+      if (readiness.status !== 'READY') throw new Error(readiness.code ?? 'File is unavailable.');
+      window.location.assign(api.fileDownloadUrl(fileId));
+    } catch (caught) { setError(storageErrorText(caught)); }
+    finally { setPreparingDownloads(current => { const next = new Set(current); next.delete(fileId); return next; }); }
+  };
 
   const refresh = React.useCallback(async (clearError = true) => {
     try {
@@ -230,7 +245,10 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
           </Card.Meta>
           <Card.Description>{file.currentVersion.originalName}</Card.Description>
         </Card.Content><Card.Content extra className="self-hosted-file-actions">
-          <Button as="a" size="small" href={api.fileDownloadUrl(file.id)} download>下载文件</Button>
+          <Button as="a" size="small" href={api.fileDownloadUrl(file.id)} download
+            loading={preparingDownloads.has(file.id)} disabled={preparingDownloads.has(file.id)}
+            onClick={(event: React.MouseEvent) => {event.preventDefault(); void downloadFile(file.id);}}>
+            {preparingDownloads.has(file.id) ? '正在从主席电脑准备文件' : '下载文件'}</Button>
           {canChange && file.status === 'UPLOAD_COMPLETE' && <Button size="small"
             onClick={() => void run(() => api.submitFileForReview(file.id, file.revision))}>提交审核</Button>}
           {canManage && file.status === 'PENDING_REVIEW' && <Button primary size="small"

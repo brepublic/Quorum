@@ -110,7 +110,7 @@ export class StorageAgentRuntime {
     const tasks: StorageAgentTask[] = []; let after = 0;
     while (true) {
       const page = await this.client.tasks(this.leaseGeneration, after, 100);
-      if (page.tasks.some(task => !['STORE_BLOB', 'HOST_COMMIT_BLOB', 'UPLOAD_BLOB', 'DELETE_FILE'].includes(task.type)
+      if (page.tasks.some(task => !['STORE_BLOB', 'HOST_COMMIT_BLOB', 'UPLOAD_BLOB', 'DELETE_FILE', 'FETCH_BLOB_TO_CACHE'].includes(task.type)
         || !['PENDING', 'IN_PROGRESS', 'RETRY', 'COMPLETED', 'FAILED', 'CANCELLED'].includes(task.status))
         || (page.hasMore && page.nextSequence <= after)) {
         throw new AgentApiError(502, 'UNKNOWN_PROTOCOL_STATE', 'Storage task response is invalid.');
@@ -166,7 +166,7 @@ export class StorageAgentRuntime {
           blobId: claimed.blobId, logicalName: claimed.logicalName, originalName: claimed.logicalName,
           mediaType: 'application/octet-stream', sizeBytes: claimed.expectedSizeBytes, sha256: claimed.expectedSha256,
           createdAt: claimed.createdAt}, await this.client.download(claimed, token));
-      } else {
+      } else if (claimed.type === 'UPLOAD_BLOB') {
         const pending = this.state.snapshot().pendingUploads[claimed.id];
         if (!pending || pending.fileRevision !== claimed.fileRevision || pending.sha256 !== claimed.expectedSha256) {
           throw new AgentFileSystemError('LOCAL_CONTENT_CONFLICT', 'Local upload task has no matching local content.');
@@ -175,6 +175,19 @@ export class StorageAgentRuntime {
         const inspected = await this.files.inspect(pending.relativePath);
         if (inspected.sizeBytes !== pending.sizeBytes || inspected.sha256 !== pending.sha256) {
           throw new AgentFileSystemError('LOCAL_CONTENT_CONFLICT', 'Local upload changed after it was queued.');
+        }
+        await this.client.upload(claimed, token, target.absolutePath);
+      } else {
+        const event = this.manifest.get(claimed.fileEntryId);
+        if (!event || event.kind !== 'UPSERT' || event.fileRevision !== claimed.fileRevision
+          || event.blobId !== claimed.blobId || event.sizeBytes !== claimed.expectedSizeBytes
+          || event.sha256 !== claimed.expectedSha256) {
+          throw new AgentFileSystemError('LOCAL_CONTENT_INVALID', 'Cache refill does not match the local manifest.');
+        }
+        const target = await secureAgentTarget(this.state.rootPath, event.logicalName);
+        const inspected = await this.files.inspect(event.logicalName);
+        if (inspected.sizeBytes !== event.sizeBytes || inspected.sha256 !== event.sha256) {
+          throw new AgentFileSystemError('LOCAL_CONTENT_INVALID', 'Local cache refill source changed.');
         }
         await this.client.upload(claimed, token, target.absolutePath);
       }

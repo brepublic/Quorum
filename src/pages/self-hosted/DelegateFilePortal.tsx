@@ -21,7 +21,9 @@ function portalError(error: unknown): string {
     VALIDATION_FAILED: '文件信息无效。'} as Record<string, string>)[error.code] ?? error.message;
 }
 
-function PublishedCard({file, onDownload}: {file: DelegatePublishedFile; onDownload(id: string): void}) {
+function PublishedCard({file, preparing, onDownload}: {
+  file: DelegatePublishedFile; preparing: boolean; onDownload(id: string): void;
+}) {
   return <Card fluid className="delegate-file-card"><Card.Content><Card.Header>{file.logicalName}</Card.Header>
     <Table compact celled className="delegate-file-metadata"><Table.Body>
       <Table.Row><Table.Cell>提交国</Table.Cell><Table.Cell>{file.submitterDisplayName ?? '—'}</Table.Cell></Table.Row>
@@ -31,7 +33,10 @@ function PublishedCard({file, onDownload}: {file: DelegatePublishedFile; onDownl
     </Table.Body></Table>
   </Card.Content><Card.Content extra><Button as="a" primary fluid download
     href={`/api/v1/delegate-files/files/${encodeURIComponent(file.id)}/download`}
-    onClick={() => onDownload(file.id)}>下载 <Icon name="arrow down" /></Button></Card.Content></Card>;
+    loading={preparing} disabled={preparing}
+    onClick={(event: React.MouseEvent) => {event.preventDefault(); onDownload(file.id);}}>
+    {preparing ? '正在从主席电脑准备文件' : <>下载 <Icon name="arrow down" /></>}
+  </Button></Card.Content></Card>;
 }
 
 export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHostedApi}) {
@@ -44,6 +49,7 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
   const [notices, setNotices] = React.useState<Array<DelegateFileAvailableEvent & {expiresAt: number}>>([]);
   const [file, setFile] = React.useState<File>(); const [fileType, setFileType] = React.useState<DelegateFileType>('WORKING_PAPER');
   const [progress, setProgress] = React.useState<number>(); const [submitted, setSubmitted] = React.useState(false);
+  const [preparingDownload, setPreparingDownload] = React.useState<string>();
 
   const load = React.useCallback(async () => {
     if (!capability) { setError('分享链接无效。'); return; }
@@ -97,7 +103,19 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
     } catch (caught) { setProgress(undefined); setError(portalError(caught)); }
     finally { setWorking(false); }
   };
-  const dismissForDownload = (id: string) => setNotices(current => current.filter(item => item.fileId !== id));
+  const download = async (id: string) => {
+    setPreparingDownload(id); setNotices(current => current.filter(item => item.fileId !== id)); setError(undefined);
+    try {
+      let readiness = await api.prepareDelegateFileDownload(id);
+      while (readiness.status === 'PREPARING') {
+        await new Promise(resolve => window.setTimeout(resolve, (readiness.retryAfterSeconds ?? 2) * 1000));
+        readiness = await api.delegateFileDownloadReadiness(id);
+      }
+      if (readiness.status !== 'READY') throw new Error(readiness.code ?? 'File is unavailable.');
+      window.location.assign(api.delegateFileDownloadUrl(id));
+    } catch (caught) { setError(portalError(caught)); }
+    finally { setPreparingDownload(undefined); }
+  };
 
   if (!portal) return <Container className="delegate-file-portal">{error
     ? <Message error content={error} /> : <Message content="正在载入…" />}</Container>;
@@ -122,11 +140,13 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
       <Menu.Menu position="right"><Menu.Item>{status}</Menu.Item></Menu.Menu>
     </Menu>
     <Container>
-      {notices.map(item => <Message info key={item.fileId} onDismiss={() => dismissForDownload(item.fileId)}
+      {notices.map(item => <Message info key={item.fileId} onDismiss={() => setNotices(current =>
+        current.filter(candidate => candidate.fileId !== item.fileId))}
         content={`${item.submitterDisplayName} 代表 提交的 ${item.logicalName} 现已可用。`} />)}
       {error && <Message error content={error} />}
       {active === 'files' && <div className="delegate-file-card-list">{portal.files.length
-        ? portal.files.map(item => <PublishedCard key={item.id} file={item} onDownload={dismissForDownload} />)
+        ? portal.files.map(item => <PublishedCard key={item.id} file={item} preparing={preparingDownload === item.id}
+          onDownload={id => void download(id)} />)
         : <Message content="暂无已发布文件" />}</div>}
       {active === 'upload' && <Card centered fluid className="delegate-file-upload-card"><Card.Content>
         <Form onSubmit={() => void upload()}><Form.Input type="file" label="选择文件" input={{

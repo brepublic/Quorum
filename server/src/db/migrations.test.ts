@@ -65,6 +65,14 @@ describe('migration discovery', () => {
     expect(migration?.sql).toContain('schema_compatibility=49');
   });
 
+  it('allows verified Agent uploads to refill the server cache', async () => {
+    const migration = (await loadMigrations(resolve('server/migrations'))).find(item => item.version === 50);
+    expect(migration?.name).toBe('cache_refill_tasks');
+    expect(migration?.sql).toContain("'FETCH_BLOB_TO_CACHE'");
+    expect(migration?.sql).toContain('storage_agent_tasks_content_state_shape');
+    expect(migration?.sql).toContain('schema_compatibility=50');
+  });
+
   it('includes the stage 4 low-concurrency schema as migration 4', async () => {
     const migrations = await loadMigrations(resolve('server/migrations'));
     const stage4 = migrations.find(migration => migration.version === 4);

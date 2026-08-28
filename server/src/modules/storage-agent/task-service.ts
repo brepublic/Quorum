@@ -274,7 +274,7 @@ export class Stage7StorageTaskService {
     const claimed = await this.agent.withCurrentLease(credential, generation, async (client, lease) => {
       const row = requireOwnedTask((await client.query<TaskRow>(`${TASK_SELECT} WHERE task.id=$1 FOR UPDATE OF task`, [id])).rows[0], lease);
       requireClaim(row, claimToken);
-      if (row.task_type !== 'UPLOAD_BLOB' || !row.content_staging_key || row.file_revision !== fileRevision
+      if (!['UPLOAD_BLOB', 'FETCH_BLOB_TO_CACHE'].includes(row.task_type) || !row.content_staging_key || row.file_revision !== fileRevision
         || row.expected_sha256_hex !== expectedHash) {
         throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Storage Agent content does not match its task.'});
       }
@@ -406,11 +406,16 @@ export class Stage7StorageTaskService {
       if (row.file_revision !== fileRevision) {
         throw new AppError({code: 'REVISION_CONFLICT', message: 'Storage Agent task revision is stale.'});
       }
-      if (outcome === 'COMPLETED' && row.task_type === 'UPLOAD_BLOB' && row.content_state !== 'STAGED') {
+      if (outcome === 'COMPLETED' && ['UPLOAD_BLOB', 'FETCH_BLOB_TO_CACHE'].includes(row.task_type)
+        && row.content_state !== 'STAGED') {
         throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Storage Agent content is not staged.'});
       }
       if (outcome === 'FAILED' && row.content_state === 'STAGED') {
         throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Verified staged content cannot be failed.'});
+      }
+      if (outcome === 'FAILED' && row.task_type === 'FETCH_BLOB_TO_CACHE') {
+        await client.query(`UPDATE storage_cache_entries SET state='FAILED',storage_key=NULL,cached_at=NULL,
+          failure_code=$2,state_changed_at=now(),updated_at=now() WHERE blob_id=$1`, [row.blob_id, code]);
       }
       if (outcome === 'COMPLETED' && this.finalizer) {
         await this.finalizer.finalize(client, {id: row.id, committeeId: row.committee_id, hostId: row.host_id,

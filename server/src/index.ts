@@ -15,6 +15,7 @@ import {Stage5Service} from './modules/stage5/service.js';
 import {DurableStagingStore} from './modules/storage/staging.js';
 import {StorageCachePolicyService} from './modules/storage/cache-policy-service.js';
 import {StorageCacheService} from './modules/storage/cache-service.js';
+import {StorageCacheRefillService} from './modules/storage/cache-refill-service.js';
 import {Stage6UploadService} from './modules/storage/upload-service.js';
 import {Stage6StorageService} from './modules/storage/service.js';
 import {ServerVolumeStore} from './modules/storage/server-volume.js';
@@ -78,6 +79,7 @@ async function main(): Promise<void> {
     await cacheStore.initialize();
     const cachePolicy = new StorageCachePolicyService(pool, config);
     const cache = new StorageCacheService(pool, staging, cacheStore, cachePolicy);
+    const cacheRefill = new StorageCacheRefillService(pool, cache);
     const uploads = new Stage6UploadService(pool, staging, config.uploadTtlSeconds * 1000, undefined, capacity);
     const metadata = new Stage6StorageService(pool);
     const serverVolumeStore = new ServerVolumeStore(join(config.storagePath, 'server-volume'), config.maxFileBytes);
@@ -89,7 +91,7 @@ async function main(): Promise<void> {
       providerConfig => new S3CompatibleStore(providerConfig, new NodeS3Transport(providerConfig), config.maxFileBytes));
     const files = new Stage6FileService(pool, serverVolumeStore, s3Configs,
       providerConfig => new S3CompatibleStore(providerConfig, new NodeS3Transport(providerConfig), config.maxFileBytes),
-      staging, cacheStore);
+      staging, cacheStore, cacheRefill);
     const chairAgentProvider = new Stage7ChairAgentProviderService(pool, metadata, cache);
     const providerCommits = new Stage6ProviderCommitService(pool, serverVolume, s3, chairAgentProvider);
     const delegateFiles = new DelegateFileService(pool, uploads, providerCommits, files, metadata, cache);
