@@ -267,6 +267,13 @@ function currentSpeech(list: SpeakerList): SpeechRecord | undefined {
   return list.speeches?.find(speech => ['READY', 'RUNNING', 'PAUSED'].includes(speech.status));
 }
 
+function generalSpeakerListIsUnopened(list: SpeakerList, snapshot: CommitteeWorkspaceSnapshot): boolean {
+  if (list.kind !== 'GENERAL' || list.status !== 'CLOSED') return false;
+  if (list.closedAt && list.closedAt !== list.createdAt) return false;
+  return !(snapshot.motions ?? []).some(motion => motion.meetingSessionId === list.meetingSessionId
+    && motion.status === 'PASSED' && ['open-debate', 'close-debate'].includes(motion.motionTypeId));
+}
+
 function TimedMessage({content, warning = false, positive = false, onDismiss}: {content: string; warning?: boolean;
   positive?: boolean; onDismiss: () => void}) {
   const [fading, setFading] = React.useState(false);
@@ -511,9 +518,10 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
       ? t('{name} will use the remaining time to comment.', {name: speech.seatDisplayName})
       : speech?.kind === 'INHERITED' && speech.yieldType === 'SEAT'
         ? t('{name} accepted the yield and inherited the remaining time.', {name: speech.seatDisplayName}) : undefined;
+  const statusLabel = t(list.status === 'OPEN' ? 'Open' : 'Close speaker list');
   const statusControl = canChair ? <Dropdown value={list.status} options={['OPEN', 'CLOSED'].map(value => ({key: value,
-    value, text: t(value === 'OPEN' ? 'Open' : 'Closed')}))} onChange={(_, data) => void run(() => api.setSpeakerListStatus(list.id,
-      list.revision, data.value as 'OPEN' | 'CLOSED'))} /> : <span>{t(list.status === 'OPEN' ? 'Open' : 'Closed')}</span>;
+    value, text: t(value === 'OPEN' ? 'Open' : 'Close speaker list')}))} onChange={(_, data) => void run(() => api.setSpeakerListStatus(list.id,
+      list.revision, data.value as 'OPEN' | 'CLOSED'))} /> : <span>{statusLabel}</span>;
   const header = <Grid.Row><Grid.Column><Input label={statusControl} labelPosition="right" value={nameDraft} fluid size="massive"
     readOnly={!canChair} placeholder={t(list.kind === 'GENERAL' ? 'Set speakers list name' : 'Set caucus name')}
     onChange={event => setNameDraft(event.currentTarget.value)}
@@ -524,8 +532,9 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
     }
   </Grid.Column></Grid.Row>;
   if (list.status === 'CLOSED') return <Container className="legacy-speaker-workspace"><Grid columns="equal" stackable>{header}
-    <Grid.Row><Grid.Column><Segment placeholder textAlign="center"><Header icon><Icon name="check circle outline" />
-      {t(list.kind === 'GENERAL' ? 'Speakers list closed' : 'Moderated caucus complete')}</Header>
+    <Grid.Row><Grid.Column><Segment placeholder textAlign="center"><Header icon><Icon name="times circle outline" />
+      {t(generalSpeakerListIsUnopened(list, snapshot) ? 'General speakers list not open'
+        : list.kind === 'GENERAL' ? 'Speakers list closed' : 'Moderated caucus complete')}</Header>
       <Button primary size="large" as={Link} to={`/committees/${snapshot.committee.id}/motions`}>{t('Go to motions')}<Icon name="arrow right" /></Button>
     </Segment></Grid.Column></Grid.Row></Grid></Container>;
   const nowSpeaking = <Segment><Label attached="top left" size="large">{t('Now speaking')}</Label><Feed size="large" className="speaker-current-speaker-feed">
@@ -1076,7 +1085,7 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
         loading={proposing} disabled={!formValid || proposing} />
     </Form>}
     <Divider hidden />
-    {canChair && <><Checkbox style={{paddingRight: 50}} label={t('Delegates can propose motions')} toggle
+    {canChair && delegateMode && <><Checkbox style={{paddingRight: 50}} label={t('Delegates can propose motions')} toggle
       disabled={!delegateMode} checked={delegateMode && snapshot.motionSettings.delegateMotionProposalsEnabled}
       onChange={(_, data) => void run(() => api.setMotionSettings(snapshot.committee.id, {
         ...snapshot.motionSettings, delegateMotionProposalsEnabled: data.checked ?? false}, snapshot.committee.revision))} />
@@ -1194,13 +1203,10 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
         <Ballots snapshot={snapshot} run={run} api={api} canChair={canChair} subjectId={motion.id} embedded stopAction />
       </Card.Content>}
       {!decided && chairAdvisoryMode && <>
-        <Button.Group fluid attached="bottom"><Button negative
-          onClick={() => void run(() => api.decideMotion(motion.id, motion.revision, 'FAILED'))}>{t('Failed')}</Button>
-          <Button positive disabled={!chairAdvisoryMode && !['SECONDED', 'VOTING'].includes(motion.status)}
-            onClick={() => void run(async () => {
-              await api.decideMotion(motion.id, motion.revision, 'PASSED');
-              if (motion.motionTypeId === 'suspend-meeting') setMeetingJustEnded(true);
-            })}>{t('Passed')}</Button>
+        <Button.Group fluid attached="bottom"><Button positive
+          onClick={() => void run(() => api.decideMotion(motion.id, motion.revision, 'PASSED'))}>{t('Passed')}</Button>
+          <Button negative
+            onClick={() => void run(() => api.decideMotion(motion.id, motion.revision, 'FAILED'))}>{t('Failed')}</Button>
         </Button.Group>
       </>}
       {decided && motion.destinationPath && motionDestinationLabel(motion.motionTypeId) && <Button as={Link}

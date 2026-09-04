@@ -619,7 +619,7 @@ describe('committee workspace routes and roles', () => {
     expect([...chairOperatedPage.querySelectorAll<HTMLButtonElement>('button')]
       .some(button => button.textContent?.trim() === 'Open substantive ballot')).toBe(false);
     expect([...chairOperatedPage.querySelectorAll<HTMLButtonElement>('.motion > .buttons button')]
-      .map(button => button.textContent?.trim())).toEqual(['Failed', 'Passed']);
+      .map(button => button.textContent?.trim())).toEqual(['Passed', 'Failed']);
   });
 
   it('expands an open motion ballot and lets the Chair stop voting', async () => {
@@ -667,7 +667,7 @@ describe('committee workspace routes and roles', () => {
     expect(chairOperatedPage.querySelector('.motion-ballot-panel')).toBeNull();
     expect(chairOperatedPage.querySelector('.motion-stop-voting')).toBeNull();
     expect([...chairOperatedPage.querySelectorAll<HTMLButtonElement>('.motion > .buttons button')]
-      .map(button => button.textContent?.trim())).toEqual(['Failed', 'Passed']);
+      .map(button => button.textContent?.trim())).toEqual(['Passed', 'Failed']);
   });
 
   it('redirects the legacy caucus route into the moderated-caucus modal and creates from second defaults', async () => {
@@ -772,6 +772,29 @@ describe('committee workspace routes and roles', () => {
     });
     expect(updateSpeakerList).toHaveBeenCalledWith('list', 1,
       {name: 'International finance', topic: 'International finance'});
+  });
+
+  it('distinguishes an unopened general speakers list from one that was closed', async () => {
+    const closedGeneralList = (value: CommitteeWorkspaceSnapshot) => ({...value, speakerLists: [{id: 'list',
+      committeeId: 'committee', meetingSessionId: 'meeting', kind: 'GENERAL' as const, status: 'CLOSED' as const,
+      name: "General Speakers' List", topic: '', defaultSpeechMs: 60_000, delegatesCanQueue: true,
+      rulePackageVersionId: 'rules', currentEntryId: null, speechTimerId: 'speech-timer', totalTimerId: null,
+      linkedResolutionId: null, revision: 1, queue: [], speeches: [], createdAt: '2026-08-14T00:00:00.000Z',
+      closedAt: '2026-08-14T00:00:00.000Z'}]});
+    const unopened = await render('CHAIR', '/committees/committee/caucuses/list', user, closedGeneralList);
+    expect(unopened.textContent).toContain('General speakers list not open');
+    expect(unopened.querySelector('.legacy-speaker-workspace .ui.dropdown')?.textContent).toContain('Close');
+
+    act(() => root?.unmount()); root = undefined; container?.remove(); container = undefined;
+    const closed = await render('CHAIR', '/committees/committee/caucuses/list', user, value => ({...closedGeneralList(value),
+      motions: [{id: 'close-debate', committeeId: 'committee', meetingSessionId: 'meeting', motionTypeId: 'close-debate',
+        proposedBySeatId: 'seat', proposedBySeatDisplayName: 'China', parameters: {}, status: 'PASSED' as const,
+        rulePackageVersionId: 'rules', ruleEvaluation: {schemaVersion: 1, packageVersionId: 'rules', definition: {}, facts: {},
+          resolvedValues: {}, frozenAt: '2026-08-14T00:01:00.000Z'}, requiredSecondCount: 0, seconds: [], revision: 1,
+        directVote: {includeNonVotingSeats: false, startedAt: null, settingsRevision: 1, eligibility: [], choices: ['FOR', 'AGAINST'],
+          threshold: 1, automaticResult: null, votes: []}, createdAt: '2026-08-14T00:01:00.000Z',
+        decidedAt: '2026-08-14T00:01:00.000Z', destinationPath: null}]}));
+    expect(closed.textContent).toContain('Speakers list closed');
   });
 
   it('shows current, next, timers, and queue only for the selected speaker list route', async () => {

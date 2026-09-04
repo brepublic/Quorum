@@ -724,13 +724,13 @@ function PointsPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspa
     : point.pointTypeId === 'point-of-personal-privilege' ? t(point.status === 'UPHELD' ? 'Approved point' : 'Denied point')
     : t(point.status);
   const actions = (point: CommitteePoint) => point.pointTypeId === 'point-of-order' ? <Button.Group fluid>
-    <Button negative onClick={() => resolve(point, 'OVERRULED')}>{t('Overrule point')}</Button>
-    <Button positive onClick={() => resolve(point, 'UPHELD')}>{t('Uphold point')}</Button></Button.Group>
+    <Button positive onClick={() => resolve(point, 'UPHELD')}>{t('Uphold point')}</Button>
+    <Button negative onClick={() => resolve(point, 'OVERRULED')}>{t('Overrule point')}</Button></Button.Group>
     : point.pointTypeId === 'point-of-information' ? <Button primary fluid
       onClick={() => resolve(point, 'ANSWERED')}>{t('Handle point')}</Button>
     : point.pointTypeId === 'point-of-personal-privilege' ? <Button.Group fluid>
-      <Button negative onClick={() => resolve(point, 'REJECTED')}>{t('Deny point')}</Button>
-      <Button positive onClick={() => resolve(point, 'UPHELD')}>{t('Approve point')}</Button></Button.Group>
+      <Button positive onClick={() => resolve(point, 'UPHELD')}>{t('Approve point')}</Button>
+      <Button negative onClick={() => resolve(point, 'REJECTED')}>{t('Deny point')}</Button></Button.Group>
     : <PointResolutionForm point={point} run={run} api={api} />;
   const points = [...snapshot.points].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
   const sessionNames = new Map((snapshot.meetingSessions ?? []).map(item => [item.id, item.name]));
