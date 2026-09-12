@@ -17,6 +17,7 @@ const config = {publishedCacheMaxBytes: 1000, pendingReviewMaxBytes: 500, pendin
   storageMinFreeBytes: 100, storageMinFreePercent: 20, revision: 2,
   hardLimits: {publishedCacheMaxBytes: 2000, pendingReviewMaxBytes: 1000, pendingReviewCommitteeMaxBytes: 500,
     storageMinFreeBytes: 100, storageMinFreePercent: 20}};
+const mbToBytes = (value: number) => Math.round(value * 1024 * 1024);
 const operations = {database: {schemaCompatibility: 52}, storage: {state: 'normal', usageRatio: 0.4},
   accounts: {active: 2}, committees: {active: 1}, queues: {agentTasks: 3},
   retention: {lastStatus: 'FAILED', lastCompletedAt: '2026-09-12T00:00:00Z'}};
@@ -86,12 +87,12 @@ describe('system settings navigation and extracted settings', () => {
     await submit();
     expect(host.textContent).toContain('保存失败');
     expect((host.querySelector('#cache-publishedCacheMaxBytes') as HTMLInputElement).value).toBe('900');
-    expect(api.updateStorageCacheConfig).toHaveBeenLastCalledWith({...config, publishedCacheMaxBytes: 900});
+    expect(api.updateStorageCacheConfig).toHaveBeenLastCalledWith({...config, publishedCacheMaxBytes: mbToBytes(900)});
     await submit();
     expect(host.textContent).toContain('已保存');
     await fill('#cache-publishedCacheMaxBytes', '800');
     await submit();
-    expect(api.updateStorageCacheConfig).toHaveBeenLastCalledWith({...config, publishedCacheMaxBytes: 800, revision: 3});
+    expect(api.updateStorageCacheConfig).toHaveBeenLastCalledWith({...config, publishedCacheMaxBytes: mbToBytes(800), revision: 3});
   });
   it.each(['/system-settings/operations', '/system-settings/defaults', '/system-settings/cache', '/system-settings/storage'])
   ('does not load administrator settings for a regular account at %s', async path => {
