@@ -97,9 +97,13 @@ describe('self-hosted identity screens', () => {
   });
 
   it('shows account administration only to the system administrator', async () => {
-    const text = await renderClient(client({}));
+    const identityClient = client({});
+    const text = await renderClient(identityClient);
 
     expect(text).toContain('Account administration');
+    expect(text).not.toContain('Default behavior');
+    expect(text).not.toContain('默认驳回类型');
+    expect(identityClient.getDefaultCommitteeBehavior).not.toHaveBeenCalled();
     expect(text).toContain('Disable account');
     expect(text).toContain('Revoke sessions');
   });

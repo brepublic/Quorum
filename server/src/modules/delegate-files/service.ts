@@ -3,6 +3,7 @@ import type {Pool, PoolClient, QueryResultRow} from 'pg';
 import type {
   DelegateFileShare,
   DelegateFileType,
+  FlagSnapshot,
   DelegatePortalBootstrap,
   DelegatePortalClaimResult,
   DelegatePublishedFile,
@@ -11,10 +12,12 @@ import type {
   FileUpload,
   PendingHostCommit
 } from '@quorum/contracts';
+import {isAllowedDelegateFile, type DelegateFileSettings, type DefaultFileRejectionSettings} from '@quorum/contracts';
+import {rejectionTypes, allowedExtensions} from './settings.js';
 import {AppError} from '../../http/errors.js';
 import type {AuthenticatedSession, IdentityUser} from '../identity/store.js';
 import {createOpaqueToken, hashOpaqueToken} from '../identity/tokens.js';
-import {appendEvent, audit, isChair, lockedCommittee, requireBusinessIdentity, transaction,
+import {appendEvent, audit, idempotentTransaction, isChair, lockedCommittee, requireBusinessIdentity, transaction,
   type Stage4Context} from '../stage4/database.js';
 import type {Stage6UploadService} from '../storage/upload-service.js';
 import type {Stage6ProviderCommitService} from '../storage/provider-commit-service.js';
@@ -37,6 +40,7 @@ interface MetadataRow extends QueryResultRow {
   file_entry_id: string; submission_source: DelegateReviewFile['submissionSource'];
   submitted_by_seat_id: string | null; submitter_display_name: string | null;
   file_type: DelegateFileType | null; submitted_at: Date | null;
+  rejection_reason: string | null; rejected_at: Date | null;
 }
 
 function uuid(value: unknown, name: string): string {
@@ -76,6 +80,58 @@ export class DelegateFileService {
   constructor(private readonly pool: Pool, private readonly uploads: Stage6UploadService,
     private readonly commits: Stage6ProviderCommitService, private readonly files: Stage6FileService,
     private readonly storage: Stage6StorageService, private readonly cache?: StorageCacheService) {}
+
+  async getSettings(auth: AuthenticatedSession, committeeId?: string): Promise<DelegateFileSettings | DefaultFileRejectionSettings> {
+    return transaction(this.pool, async client => {
+      await this.authorizeSettings(client, auth, committeeId);
+      return this.readSettings(client, committeeId);
+    });
+  }
+
+  async updateSettings(auth: AuthenticatedSession, committeeId: string | undefined, body: Record<string, unknown>,
+    context: Stage4Context): Promise<DelegateFileSettings | DefaultFileRejectionSettings> {
+    return transaction(this.pool, async client => {
+      await this.authorizeSettings(client, auth, committeeId, true);
+      const before = await this.readSettings(client, committeeId, true);
+      if (before.revision !== positiveRevision(body.baseRevision)) throw new AppError({code: 'REVISION_CONFLICT',
+        message: '设置已被其他人修改，请重新载入后再保存。'});
+      const types = rejectionTypes(body.rejectionTypes);
+      if (committeeId) {
+        const extensions = allowedExtensions(body.allowedExtensions);
+        await client.query(`UPDATE committees SET delegate_file_settings=$2,delegate_file_settings_revision=delegate_file_settings_revision+1
+          WHERE id=$1`, [committeeId, {rejectionTypes: types, allowedExtensions: extensions}]);
+      } else {
+        await client.query(`UPDATE system_settings SET default_file_rejection_types=$1,file_rejection_revision=file_rejection_revision+1
+          WHERE singleton=true`, [JSON.stringify(types)]);
+      }
+      const after = await this.readSettings(client, committeeId);
+      await audit(client, context, {committeeId, actorUserId: auth.user.id,
+        capabilities: committeeId ? ['CHAIR'] : ['SYSTEM_ADMIN'], action: 'storage.delegate_file_settings_updated',
+        resourceType: committeeId ? 'committee' : 'system_settings', resourceId: committeeId, before, after});
+      return after;
+    });
+  }
+
+  private async authorizeSettings(client: PoolClient, auth: AuthenticatedSession, committeeId?: string, write = false) {
+    if (!committeeId) {
+      if (!auth.user.isSystemAdmin) throw new AppError({code: 'FORBIDDEN', message: 'System administrator access is required.'});
+      return;
+    }
+    requireBusinessIdentity(auth);
+    const committee = await this.requireManager(client, uuid(committeeId, 'Committee ID'), auth.user.id, false);
+    if (write && !['ACTIVE', 'PAUSED'].includes(committee.status)) throw new AppError({code: 'RESOURCE_CONFLICT',
+      message: '当前委员会状态不允许修改设置。'});
+  }
+
+  private async readSettings(client: PoolClient, committeeId?: string, lock = false): Promise<DelegateFileSettings | DefaultFileRejectionSettings> {
+    if (committeeId) {
+      const row = (await client.query(`SELECT delegate_file_settings,delegate_file_settings_revision FROM committees WHERE id=$1${lock ? ' FOR UPDATE' : ''}`,
+        [committeeId])).rows[0];
+      return {...row.delegate_file_settings, revision: row.delegate_file_settings_revision};
+    }
+    const row = (await client.query(`SELECT default_file_rejection_types,file_rejection_revision FROM system_settings WHERE singleton=true${lock ? ' FOR UPDATE' : ''}`)).rows[0];
+    return {rejectionTypes: row.default_file_rejection_types, revision: row.file_rejection_revision};
+  }
 
   async getShare(auth: AuthenticatedSession, committeeId: string, origin: string): Promise<DelegateFileShare | null> {
     requireBusinessIdentity(auth);
@@ -176,6 +232,12 @@ export class DelegateFileService {
     await this.assertMayUpload(session);
     await this.cache?.assertPendingCapacity(session.committee_id, Number(body.expectedSizeBytes));
     const type = fileType(body.fileType); const uploadBody = {...body}; delete uploadBody.fileType;
+    const settings = (await this.pool.query('SELECT delegate_file_settings FROM committees WHERE id=$1', [session.committee_id])).rows[0].delegate_file_settings as DelegateFileSettings;
+    const extensions = settings.allowedExtensions[type];
+    if (typeof body.originalName !== 'string' || !isAllowedDelegateFile(body.originalName, extensions)) {
+      throw new AppError({code: 'VALIDATION_FAILED', message: `允许的文件格式：${extensions.map(ext => '.' + ext).join('、')}`,
+        details: {allowedExtensions: extensions}});
+    }
     const auth = await this.custodian(session.created_by_user_id);
     const scopedKey = `${session.id}.${key}`;
     const upload = await this.uploads.createUpload(auth, session.committee_id, uploadBody, scopedKey, context);
@@ -207,7 +269,10 @@ export class DelegateFileService {
     await transaction(this.pool, client => this.requireManager(client, uuid(committeeId, 'Committee ID'), auth.user.id, false));
     const entries = await this.files.list(auth, committeeId);
     const metadata = await this.metadata(entries.map(item => item.id));
-    return entries.map(file => this.reviewFile(file, metadata.get(file.id)));
+    const reviewed = await Promise.all(entries.map(async file => ({...this.reviewFile(file, metadata.get(file.id)),
+      suggestedNames: await this.suggestedNames(committeeId, metadata.get(file.id)?.submitted_at ?? new Date(file.submittedAt ?? file.createdAt))})));
+    const deleted = await this.history(committeeId, undefined, true);
+    return [...reviewed, ...deleted];
   }
 
   async approve(auth: AuthenticatedSession, fileIdValue: string, body: Record<string, unknown>,
@@ -260,13 +325,43 @@ export class DelegateFileService {
     return (await this.listReview(auth, (await this.files.get(auth, fileId)).committeeId)).find(item => item.id === fileId) as DelegateReviewFile;
   }
 
-  async reject(auth: AuthenticatedSession, fileId: string, baseRevision: unknown, key: string,
+  async reject(auth: AuthenticatedSession, fileIdValue: string, body: Record<string, unknown>, key: string,
     context: Stage4Context): Promise<{id: string; fileEntryId: string}> {
-    const file = await this.files.get(auth, uuid(fileId, 'File ID'));
-    await transaction(this.pool, client => this.requireManager(client, file.committeeId, auth.user.id, true));
-    const deleted = await this.storage.deleteFile(auth, file.id, {baseRevision: positiveRevision(baseRevision)}, key, context);
-    await this.cache?.removeByFile(file.id);
-    return deleted;
+    requireBusinessIdentity(auth);
+    const fileId = uuid(fileIdValue, 'File ID'); const revision = positiveRevision(body.baseRevision);
+
+    const logicalName = bounded(body.logicalName, 'File name', 500); const type = fileType(body.fileType);
+    return idempotentTransaction({pool: this.pool, auth, route: `/api/v1/files/${fileId}/delegate-reject`,
+      key, request: body, status: 200, work: async client => {
+        const entry = (await client.query<{committee_id: string; status: string; revision: number; created_at: Date}>(
+          'SELECT * FROM file_entries WHERE id=$1 FOR UPDATE', [fileId])).rows[0];
+        if (!entry) throw new AppError({code: 'NOT_FOUND', message: 'File not found.'});
+        const committee = await this.requireManager(client, entry.committee_id, auth.user.id, true);
+        if (entry.revision !== revision) throw new AppError({code: 'REVISION_CONFLICT', message: 'This file changed since it was loaded.'});
+        if (!['UPLOAD_COMPLETE', 'PENDING_REVIEW'].includes(entry.status)) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'File status does not allow rejection.'});
+        const settings = await this.readSettings(client, committee.id);
+        const rejection = settings.rejectionTypes.find(item => item.id === body.rejectionTypeId);
+        if (!rejection) throw new AppError({code: 'VALIDATION_FAILED', message: '请选择有效的驳回类型。'});
+        const reason = rejection.custom ? bounded(body.reason, 'Rejection reason', 2000) : rejection.message;
+        const now = new Date();
+        await client.query(`INSERT INTO delegate_file_metadata
+          (file_entry_id,submission_source,submitter_display_name,file_type,submitted_at,rejection_reason,rejected_at)
+          VALUES ($1,'LEGACY',NULL,$2,$3,$4,$5) ON CONFLICT (file_entry_id) DO UPDATE
+          SET file_type=$2,rejection_reason=$4,rejected_at=$5`, [fileId,type,entry.created_at,reason,now]);
+        await client.query(`UPDATE file_entries SET status='REJECTED',logical_name=$2,revision=revision+1,updated_at=$3 WHERE id=$1`, [fileId,logicalName,now]);
+        await client.query(`UPDATE storage_cache_entries SET state='READY',state_changed_at=now(),updated_at=now()
+          WHERE file_entry_id=$1 AND state='REVIEW_PINNED'`, [fileId]);
+        const metadata = (await client.query<MetadataRow>('SELECT * FROM delegate_file_metadata WHERE file_entry_id=$1',[fileId])).rows[0];
+        await appendEvent(client,committee,{type:'file.rejected',resourceType:'file_entry',resourceId:fileId,
+          revision:revision+1,audience:'CHAIR',payload:{logicalName,fileType:type,rejectionReason:reason,
+            submittedBySeatId:metadata?.submitted_by_seat_id,submitterDisplayName:metadata?.submitter_display_name,
+            submissionSource:metadata?.submission_source}});
+        await audit(client,context,{committeeId:committee.id,actorUserId:auth.user.id,
+          capabilities:committee.owner_user_id === auth.user.id ? ['OWNER'] : ['CHAIR'],action:'storage.file_rejected',
+          resourceType:'file_entry',resourceId:fileId,before:{status:entry.status,revision},
+          after:{status:'REJECTED',revision:revision+1,logicalName,fileType:type,rejectionReason:reason}});
+        return {id:fileId,fileEntryId:fileId};
+      }});
   }
 
   async published(credential: string | undefined): Promise<DelegatePublishedFile[]> {
@@ -297,6 +392,7 @@ export class DelegateFileService {
 
   async events(credential: string | undefined, after: number): Promise<{cursor: number; rows: Array<{
     id: number; fileId: string; logicalName: string; submitterDisplayName: string; publishedAt: string;
+    kind: 'available' | 'rejected'; rejectionReason: string | null;
   }>}> {
     const session = await this.authenticate(credential);
     const result = await this.pool.query<{sequence: string | number; event_type: string; resource_id: string;
@@ -304,10 +400,13 @@ export class DelegateFileService {
       WHERE committee_id=$1 AND sequence>$2 ORDER BY sequence LIMIT 250`,
     [session.committee_id, after]);
     const cursor = result.rows.length ? Number(result.rows[result.rows.length - 1]?.sequence) : after;
-    return {cursor, rows: result.rows.filter(row => row.event_type === 'file.published'
+    return {cursor, rows: result.rows.filter(row => (row.event_type === 'file.published' || (row.event_type === 'file.rejected'
+        && row.payload.submittedBySeatId === session.seat_id))
       && row.payload.submissionSource === 'DELEGATE_PORTAL'
       && typeof row.payload.logicalName === 'string' && typeof row.payload.submitterDisplayName === 'string')
       .map(row => ({id: Number(row.sequence), fileId: row.resource_id,
+        kind: row.event_type === 'file.rejected' ? 'rejected' as const : 'available' as const,
+        rejectionReason: typeof row.payload.rejectionReason === 'string' ? row.payload.rejectionReason : null,
         logicalName: String(row.payload.logicalName), submitterDisplayName: String(row.payload.submitterDisplayName),
         publishedAt: typeof row.payload.publishedAt === 'string' ? row.payload.publishedAt : row.created_at.toISOString()}))};
   }
@@ -382,12 +481,12 @@ export class DelegateFileService {
     return row;
   }
 
-  private async eligibleSeats(client: PoolClient, committeeId: string): Promise<Array<{id: string; displayName: string}>> {
-    const result = await client.query<{id: string; display_name: string}>(`SELECT s.id,s.display_name FROM meeting_sessions ms
+  private async eligibleSeats(client: PoolClient, committeeId: string): Promise<Array<{id: string; displayName: string; flag: FlagSnapshot}>> {
+    const result = await client.query<{id: string; display_name: string; flag_type: FlagSnapshot['type']; flag_value: string}>(`SELECT s.id,s.display_name,s.flag_type,s.flag_value FROM meeting_sessions ms
       JOIN current_attendance a ON a.meeting_session_id=ms.id AND a.state IN ('PRESENT','TEMPORARILY_LEFT')
       JOIN committee_seats s ON s.id=a.seat_id AND s.active=true
       WHERE ms.committee_id=$1 AND ms.status='OPEN' ORDER BY s.sort_order,s.stable_key,s.id`, [committeeId]);
-    return result.rows.map(row => ({id: row.id, displayName: row.display_name}));
+    return result.rows.map(row => ({id: row.id, displayName: row.display_name, flag: {type: row.flag_type, value: row.flag_value}}));
   }
 
   private async portalSnapshot(client: PoolClient, share: ShareRow, session?: DelegateSessionRow): Promise<DelegatePortalBootstrap> {
@@ -395,13 +494,20 @@ export class DelegateFileService {
       'SELECT name,next_event_sequence FROM committees WHERE id=$1', [share.committee_id])).rows[0];
     if (!committee) throw new AppError({code: 'NOT_FOUND', message: 'Committee not found.'});
     const eligible = await this.eligibleSeats(client, share.committee_id);
+    const settings = await this.readSettings(client, share.committee_id) as DelegateFileSettings;
+    const seat = session ? (await client.query('SELECT flag_type,flag_value FROM committee_seats WHERE id=$1 AND committee_id=$2',
+      [session.seat_id, share.committee_id])).rows[0] : undefined;
     return {committeeId: share.committee_id, committeeName: committee.name, shareId: share.id,
-      claimedSeat: session ? {id: session.seat_id, displayName: session.seat_display_name} : null,
+      claimedSeat: session ? {id: session.seat_id, displayName: session.seat_display_name,
+        flag: seat ? {type: seat.flag_type, value: seat.flag_value} : undefined} : null,
+      allowedExtensions: settings.allowedExtensions,
       eligibleSeats: session ? [] : eligible,
       mayUpload: Boolean(session && eligible.some(item => item.id === session.seat_id)),
       chairHostHealthy: await this.hostHealthy(share.committee_id, client),
       eventSequence: Number(committee.next_event_sequence) - 1,
-      files: session ? await this.publishedForSession(session) : []};
+      files: session ? await this.publishedForSession(session) : [],
+      maxUploadSizeBytes: this.uploads.staging.maxFileBytes,
+      submissions: session ? await this.history(share.committee_id, session.seat_id) : []};
   }
 
   private async hostHealthy(committeeId: string, client?: PoolClient): Promise<boolean> {
@@ -444,7 +550,36 @@ export class DelegateFileService {
       fileType: metadata?.file_type ?? null, submittedAt: metadata?.submitted_at?.toISOString() ?? file.submittedAt,
       publishedAt: file.publishedAt ?? '', revision: file.revision,
       status: file.status as DelegateReviewFile['status'], submissionSource: metadata?.submission_source ?? 'LEGACY',
-      originalName: file.currentVersion.originalName, sizeBytes: file.currentVersion.sizeBytes};
+      originalName: file.currentVersion.originalName, sizeBytes: file.currentVersion.sizeBytes,
+      rejectionReason: metadata?.rejection_reason ?? null, reviewedAt: metadata?.rejected_at?.toISOString() ?? file.publishedAt};
+  }
+
+  private async suggestedNames(committeeId: string, submittedAt: Date): Promise<Record<DelegateFileType, string>> {
+    const sessions = await this.pool.query<{id: string; ordinal: string; created_at: Date}>(`SELECT id,created_at,
+      row_number() OVER (ORDER BY created_at,id)::text AS ordinal FROM meeting_sessions WHERE committee_id=$1 ORDER BY created_at,id`, [committeeId]);
+    const session = sessions.rows.filter(row => row.created_at <= submittedAt).at(-1) ?? sessions.rows[0];
+    const next = session ? sessions.rows[sessions.rows.indexOf(session)+1] : undefined;
+    const counts = await this.pool.query<{file_type: DelegateFileType; count: string}>(`SELECT m.file_type,count(*)::text FROM delegate_file_metadata m
+      JOIN file_entries e ON e.id=m.file_entry_id WHERE e.committee_id=$1 AND e.published_at IS NOT NULL
+      AND m.submitted_at >= $2 AND ($3::timestamptz IS NULL OR m.submitted_at < $3) GROUP BY m.file_type`,
+      [committeeId, session?.created_at ?? new Date(0),next?.created_at ?? null]);
+    const labels = {WORKING_PAPER:'工作文件',DIRECTIVE_DRAFT:'指令草案',RESOLUTION_DRAFT:'决议草案'};
+    return Object.fromEntries(Object.entries(labels).map(([type,label]) => [type,
+      `${label} ${session?.ordinal ?? 1}.${Number(counts.rows.find(row => row.file_type === type)?.count ?? 0)+1}`])) as Record<DelegateFileType,string>;
+  }
+
+  private async history(committeeId: string, seatId?: string, deletedOnly = false): Promise<DelegateReviewFile[]> {
+    const result = await this.pool.query(`SELECT e.id,e.logical_name,e.status,e.revision,e.published_at,m.*,
+      v.original_name,v.size_bytes FROM file_entries e JOIN delegate_file_metadata m ON m.file_entry_id=e.id
+      JOIN LATERAL (SELECT original_name,size_bytes FROM file_versions WHERE file_entry_id=e.id ORDER BY version_number DESC LIMIT 1) v ON true WHERE e.committee_id=$1
+      AND ($2::uuid IS NULL OR (m.submission_source='DELEGATE_PORTAL' AND m.submitted_by_seat_id=$2))
+      AND ($3::boolean=false OR (e.status='DELETED' AND m.rejected_at IS NOT NULL)) ORDER BY m.submitted_at DESC,e.id`,
+      [committeeId,seatId ?? null,deletedOnly]);
+    return result.rows.map(row => ({id:row.id,logicalName:row.logical_name,status:row.rejected_at ? 'REJECTED' : row.status,
+      revision:row.revision,submitterDisplayName:row.submitter_display_name,fileType:row.file_type,
+      submittedAt:row.submitted_at?.toISOString() ?? null,publishedAt:row.published_at?.toISOString() ?? '',
+      submissionSource:row.submission_source,originalName:row.original_name,sizeBytes:Number(row.size_bytes),
+      rejectionReason:row.rejection_reason,reviewedAt:(row.rejected_at ?? row.published_at)?.toISOString() ?? null,deleted:row.status==='DELETED'}));
   }
 
   private async publishedForSession(session: DelegateSessionRow): Promise<DelegatePublishedFile[]> {

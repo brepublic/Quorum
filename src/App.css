@@ -507,18 +507,39 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   margin-right: auto !important;
 }
 
+.delegate-file-claim-card .header {
+  margin-bottom: 0.75rem !important;
+}
+
 .delegate-file-card-list {
-  padding: 1.5rem 0 3rem;
+  padding: 1.5rem 0 0.5rem;
+}
+
+.delegate-file-review-divider + .delegate-file-card-list {
+  padding-bottom: 3rem;
 }
 
 .delegate-file-card-list > .delegate-file-card {
   margin: 0 auto 1.5rem !important;
 }
 
-.delegate-file-metadata.ui.table td:first-child {
-  width: 8rem;
-  font-weight: 600;
-  white-space: nowrap;
+.delegate-file-review-divider.ui.divider {
+  margin: 0.5rem auto 0;
+  width: min(100%, 760px);
+}
+
+.delegate-file-card .delegate-file-heading {
+  margin-top: 0.125rem;
+}
+
+.delegate-file-card .delegate-file-heading > .header,
+.delegate-file-card .delegate-file-heading .ui.input > input {
+  font-weight: 700;
+}
+
+.delegate-file-card .motion-metadata-table.ui.table,
+.delegate-file-card .motion-metadata-table.ui.table td {
+  color: #000;
 }
 
 .delegate-file-metadata .ui.dropdown {
@@ -533,6 +554,12 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
 
 .delegate-file-upload-card {
   margin-top: 1.5rem !important;
+}
+
+.delegate-file-upload-limit-note {
+  margin-top: 0.5rem;
+  margin-bottom: 0.5rem;
+  display: block;
 }
 
 .delegate-file-upload-success {
@@ -568,6 +595,20 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
 
 .self-hosted-file-actions .button {
   margin: 0 !important;
+}
+
+.self-hosted-pairing-code-actions,
+.self-hosted-pairing-code-meta {
+  display: inline-flex;
+  align-items: center;
+}
+
+.self-hosted-pairing-code-meta {
+  margin-left: 0.5rem;
+}
+
+.self-hosted-pairing-code-actions {
+  margin-left: 0.75rem;
 }
 
 .self-hosted-storage-panel,
@@ -676,6 +717,200 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
 
 .storage-cache-table-wrap .ui.table {
   min-width: 48rem;
+}
+
+.self-hosted-admin-page .ui.segment {
+  padding: 1.5rem;
+}
+
+.self-hosted-system-settings .ui.segment.delegate-file-settings {
+  max-width: none;
+  margin-left: 0;
+  margin-right: 0;
+}
+
+.self-hosted-admin-page .ui.segment > :last-child {
+  margin-bottom: 0;
+}
+
+.self-hosted-admin-page .ui.form .fields:last-child {
+  margin-bottom: 0;
+}
+
+.self-hosted-admin-page .ui.cards.storage-config-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+  gap: 1rem;
+  margin: 0;
+}
+
+.self-hosted-admin-page .ui.cards.storage-config-cards > .card {
+  width: auto;
+  margin: 0;
+  min-width: 0;
+}
+
+.self-hosted-admin-page .admin-actions,
+.self-hosted-admin-page .delegate-file-settings-actions,
+.account-admin-id {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.self-hosted-admin-page .admin-actions .ui.button,
+.self-hosted-admin-page .delegate-file-settings-actions .ui.button,
+.account-admin-id .ui.button,
+.account-admin-actions .ui.button {
+  margin: 0;
+}
+
+.account-admin-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.account-admin-actions .ui.button {
+  min-height: 40px;
+}
+
+.account-admin-table.ui.table {
+  table-layout: fixed;
+}
+
+.account-admin-table.ui.table th:nth-child(1) { width: 21%; }
+.account-admin-table.ui.table th:nth-child(2) { width: 10%; }
+.account-admin-table.ui.table th:nth-child(3) { width: 29%; }
+.account-admin-table.ui.table th:nth-child(4) { width: 8%; }
+.account-admin-table.ui.table th:nth-child(5) { width: 32%; }
+
+.account-admin-table.ui.table td {
+  overflow-wrap: anywhere;
+}
+
+.system-settings-navigation.ui.menu {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.system-settings-navigation.ui.secondary.pointing.menu .item {
+  flex-shrink: 0;
+  margin-bottom: 0;
+  min-height: 44px;
+}
+
+.system-settings-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 1.5rem 0 1rem;
+}
+
+.system-settings-section-heading .ui.header {
+  margin: 0;
+}
+
+.operations-metrics,
+.operations-cache-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.operations-metrics > .ui.segment,
+.operations-task-cards > .ui.segment {
+  margin: 0;
+  min-width: 0;
+}
+
+.operations-metrics .ui.statistic,
+.operations-cache-metrics .ui.statistic {
+  display: flex;
+  margin: 0;
+  min-width: 0;
+}
+
+.operations-task-cards {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.operations-retention-time dt {
+  font-weight: 700;
+  margin-bottom: 0.5rem;
+}
+
+.operations-retention-time dd {
+  margin: 0;
+}
+
+.storage-cache-inventory > summary {
+  cursor: pointer;
+  font-size: 1.15rem;
+  font-weight: 700;
+  padding: 0.4rem 0;
+}
+
+.storage-cache-inventory > summary .ui.label {
+  margin-left: 0.75rem;
+}
+
+.storage-cache-empty {
+  margin-top: 1rem;
+}
+
+@media (max-width: 767px) {
+  .self-hosted-admin-page .ui.segment {
+    padding: 1rem;
+  }
+
+  .self-hosted-account-admin .account-admin-table.ui.table td {
+    padding: 0.75rem !important;
+    text-align: left;
+  }
+
+  .account-admin-table td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    font-weight: 700;
+    margin-bottom: 0.5rem;
+  }
+
+  .system-settings-navigation.ui.menu {
+    flex-wrap: wrap;
+  }
+
+  .system-settings-navigation.ui.menu .item {
+    justify-content: center;
+    width: 50%;
+  }
+
+  .operations-metrics,
+  .operations-cache-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .operations-task-cards {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .self-hosted-admin-page .ui.form .fields {
+    display: block;
+  }
+
+  .self-hosted-admin-page .ui.form .fields > .field {
+    width: 100% !important;
+    margin-bottom: 1rem;
+  }
+
+  .self-hosted-admin-page .ui.form .fields > .field:last-child {
+    margin-bottom: 0;
+  }
 }
 
 .notes-editor {
@@ -1179,6 +1414,7 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   background: #e8e8e8;
   color: rgba(0, 0, 0, 0.6);
   font-weight: 700;
+  font-size: 0.875em;
   white-space: nowrap;
   width: 1%;
 }
@@ -1926,3 +2162,14 @@ html[lang='zh-CN'] .ui.grid > .column {
     flex: 1 1 auto;
   }
 }
+
+.delegate-file-menu.ui.menu .delegate-file-seat { gap: .55em; }
+.delegate-file-menu .delegate-file-seat .country-flag-display,
+.delegate-file-menu .delegate-file-seat .country-flag-display:has(> .country-flag-display-image) {
+  font-size: 1em; line-height: 1; width: 1.6em; height: 1.15em; min-width: 1.6em; margin: 0; flex: 0 0 1.6em;
+}
+.delegate-file-menu .delegate-file-seat .country-flag-display-image { width: 100%; height: 100%; object-fit: contain; }
+.delegate-file-settings-actions { margin-top: 1.5em; }
+.delegate-file-allowed-formats { overflow-wrap: anywhere; font-size: .9em; }
+
+.ui.segment.delegate-file-settings { max-width: 960px; margin-left: auto; margin-right: auto; }

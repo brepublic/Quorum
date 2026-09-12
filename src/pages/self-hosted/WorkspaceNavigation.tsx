@@ -50,8 +50,7 @@ export function AccountMenu({user, logout}: {user: SelfHostedUser; logout(): voi
       <Dropdown.Item as={Link} to="/countries" icon="flag outline" text={t('Country templates')} />
       {user.isSystemAdmin && <Dropdown.Divider />}
       {user.isSystemAdmin && <Dropdown.Item as={Link} to="/admin" icon="user secret" text={t('Account administration')} />}
-      {user.isSystemAdmin && <Dropdown.Item as={Link} to="/storage" icon="database" text={t('Storage configuration')} />}
-      {user.isSystemAdmin && <Dropdown.Item as={Link} to="/operations" icon="heartbeat" text={t('Operations status')} />}
+      {user.isSystemAdmin && <Dropdown.Item as={Link} to="/system-settings" icon="settings" text={t('System settings')} />}
       <Dropdown.Divider />
       <Dropdown.Item className="account-language"><LanguageSwitcher /></Dropdown.Item>
       <Dropdown.Item icon="paint brush" text={t('Appearance themes')} onClick={openThemes} />

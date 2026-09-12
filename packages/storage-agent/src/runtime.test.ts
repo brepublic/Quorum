@@ -11,7 +11,8 @@ import {AgentApiError} from './errors';
 import {AgentFileStore} from './files';
 import {StorageAgentRuntime} from './runtime';
 import {AgentDirectoryScanner} from './scanner';
-import {AgentStateStore} from './state';
+import {AGENT_TEMP_DIRECTORY, AgentStateStore} from './state';
+import {AGENT_LOCK_FILE} from './runtime-lock';
 
 const roots: string[] = [];
 const committeeId = '10000000-0000-4000-8000-000000000001';
@@ -75,6 +76,19 @@ describe('Chair Agent recovery loop', () => {
     await expect(readFile(join(value.root, 'old.txt'))).rejects.toMatchObject({code: 'ENOENT'});
     expect(await readFile(join(value.root, 'new.txt'), 'utf8')).toBe('new');
     expect(value.client.complete).toHaveBeenCalledOnce();
+  });
+
+  it('reports real download chunks, verification, then completion in order', async () => {
+    const value = await fixture();
+    const store = task('HOST_COMMIT_BLOB', {logicalName:'progress.txt',expectedSizeBytes:3,expectedSha256:digest('new')});
+    vi.mocked(value.client.tasks).mockResolvedValue({tasks:[store],nextSequence:1,hasMore:false});
+    vi.mocked(value.client.download).mockResolvedValue((async function*(){yield Buffer.from('n');yield Buffer.from('ew');})());
+    const activity = vi.fn();
+    const runtime = new StorageAgentRuntime(value.client,1,value.state,value.files,value.scanner,undefined,{activity,connected:()=>undefined});
+    await runtime.synchronizeOnce();
+    expect(activity.mock.calls.map(([v])=>[v.phase,v.bytes])).toEqual([
+      ['transfer',0],['transfer',1],['transfer',3],['verify',3],['complete',3]]);
+    expect(await readFile(join(value.root,'progress.txt'),'utf8')).toBe('new');
   });
 
   it('writes a browser host-commit task without requiring a manifest entry', async () => {
@@ -254,6 +268,29 @@ describe('Chair Agent recovery loop', () => {
     await Promise.race([submitted, new Promise((_, reject) => setTimeout(() => reject(new Error('watch timeout')), 2_000))]);
     await running;
     expect(value.client.localChange).toHaveBeenCalledOnce();
+  });
+
+  it('stays idle after historical deletion and internal writes, but wakes for a user file', async () => {
+    const value = await fixture(); const controller = new AbortController();
+    const tombstone: Extract<StorageManifestEvent, {kind: 'DELETE'}> = {sequence: 2, kind: 'DELETE',
+      fileEntryId, fileRevision: 2, deletedAt: '2026-08-13T00:00:00.000Z', createdAt: '2026-08-13T00:00:00.000Z'};
+    vi.mocked(value.client.manifest).mockResolvedValue({events: [tombstone], nextSequence: 2, hasMore: false});
+    vi.mocked(value.client.localChange).mockResolvedValue({status: 'CONFLICT', changeRequestId: randomUUID(),
+      conflictId: randomUUID(), reasonCode: 'MANIFEST_STALE'});
+    const scan = vi.spyOn(value.scanner, 'detectOne');
+    const running = value.runtime.run(controller.signal, {scanIntervalMs: 10_000});
+    try {
+      await vi.waitFor(() => expect(scan).toHaveBeenCalled());
+      await scan.mock.results[0].value;
+      await value.state.update(state => { state.manifestSequence = 3; });
+      await writeFile(join(value.root, AGENT_TEMP_DIRECTORY, 'probe.tmp'), 'internal');
+      await writeFile(join(value.root, AGENT_LOCK_FILE), '');
+      await new Promise(resolve => setTimeout(resolve, 200));
+      expect(value.client.manifest).toHaveBeenCalledOnce();
+      expect(scan).toHaveBeenCalledOnce();
+      await writeFile(join(value.root, 'user.txt'), 'changed');
+      await vi.waitFor(() => expect(value.client.localChange).toHaveBeenCalledOnce());
+    } finally {controller.abort(); await running;}
   });
 
   it('coalesces repeated SSE wakes into one task processor', async () => {

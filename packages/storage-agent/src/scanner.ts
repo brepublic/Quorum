@@ -1,3 +1,4 @@
+import {AGENT_LOCK_FILE} from './runtime-lock.js';
 import {basename, join, relative, sep} from 'node:path';
 import {lstat, readdir} from 'node:fs/promises';
 import type {StorageAgentLocalChange, StorageAgentLocalChangeResult} from '@quorum/contracts';
@@ -28,7 +29,7 @@ async function scanDirectory(root: string, directory: string, files: AgentFileSt
   const entries = await readdir(directory, {withFileTypes: true});
   entries.sort((left, right) => left.name.localeCompare(right.name));
   for (const entry of entries) {
-    if (directory === root && [AGENT_METADATA_FILE, AGENT_TEMP_DIRECTORY].includes(entry.name)) continue;
+    if (directory === root && [AGENT_METADATA_FILE, AGENT_TEMP_DIRECTORY, AGENT_LOCK_FILE].includes(entry.name)) continue;
     const path = join(directory, entry.name); const relativePath = toRelative(root, path);
     const stats = await lstat(path);
     if (stats.isSymbolicLink() || (!stats.isDirectory() && !stats.isFile()) || (stats.isFile() && stats.nlink !== 1)) {

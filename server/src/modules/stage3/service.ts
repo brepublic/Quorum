@@ -88,6 +88,10 @@ function builtInVersion3(definition: RulePackageDefinition): RulePackageDefiniti
   return {...upgraded, motions};
 }
 
+function builtInVersion4(definition: RulePackageDefinition): RulePackageDefinition {
+  return builtInVersion3(definition);
+}
+
 function committee(row: CommitteeRow): CommitteeSummary {
   return {id: row.id, ownerUserId: row.owner_user_id, name: row.name, chairLabel: row.chair_label,
     topic: row.topic, conference: row.conference, visibility: row.visibility, operationMode: row.operation_mode,
@@ -290,7 +294,8 @@ export class Stage3Service {
         const inserted = await client.query<{id: string}>(`INSERT INTO rule_packages
           (id, scope, stable_key) VALUES ($1,'BUILTIN',$2)
           ON CONFLICT (scope, stable_key) DO UPDATE SET stable_key=EXCLUDED.stable_key RETURNING id`, [packageId, definition.key]);
-        for (const [index, versionDefinition] of [definition, builtInVersion2(definition), builtInVersion3(definition)].entries()) {
+        for (const [index, versionDefinition] of [definition, builtInVersion2(definition), builtInVersion3(definition),
+          builtInVersion4(definition)].entries()) {
           const validated = validateRulePackage(versionDefinition);
           if (!validated.ok) throw new Error(`Invalid built-in rule package: ${definition.key} v${index + 1}: ${JSON.stringify(validated.issues)}`);
           await client.query(`INSERT INTO rule_package_versions
@@ -332,6 +337,8 @@ export class Stage3Service {
         VALUES ($1,$2,$3,$4,$5,$6,2) RETURNING *`,
       [id, auth.user.id, requiredString(input.name, 'Committee name'), input.visibility, operationMode, versionId]);
       const row = inserted.rows[0] as CommitteeRow;
+      await client.query(`UPDATE committees SET delegate_file_settings=jsonb_set(delegate_file_settings,
+        '{rejectionTypes}', (SELECT default_file_rejection_types FROM system_settings WHERE singleton=true)) WHERE id=$1`, [id]);
       await client.query(`INSERT INTO committee_rule_bindings
         (id, committee_id, package_version_id, effective_from_event_sequence, activated_by_user_id)
         VALUES ($1,$2,$3,1,$4)`, [randomUUID(), id, versionId, auth.user.id]);

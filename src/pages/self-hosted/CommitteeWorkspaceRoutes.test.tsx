@@ -1401,7 +1401,8 @@ describe('committee workspace routes and roles', () => {
 
   it('keeps storage inside the account-authorized resource tabs', async () => {
     const memberPage = await render('MEMBER', '/committees/committee/posts');
-    expect(memberPage.textContent).toContain('Text resources');
+    expect(memberPage.textContent).not.toContain('Text resources');
+    expect(memberPage.textContent).not.toContain('Link resources');
     expect(memberPage.textContent).toContain('Attachments');
     expect(memberPage.querySelector('.committee-workspace-page')?.textContent).not.toContain('Storage');
     act(() => root?.unmount()); root = undefined; container?.remove(); container = undefined;
@@ -1437,6 +1438,6 @@ describe('committee workspace routes and roles', () => {
     expect(stats).toContain('Document discussion entries');
     expect(stats).toContain('China');
   });
-  it('restores a dedicated link-resource route with its publisher', async () => { const page = await render('CHAIR', '/committees/committee/posts/links', user, value => ({...value, textPosts: [{id: 'link', title: 'Research', content: 'link:https://example.test/research', sortOrder: 0, revision: 1, authorSeatId: 'seat', authorDisplayName: 'China', actorUserId: 'chair', createdAt: '2026-08-16T00:00:00.000Z', updatedAt: '2026-08-16T00:00:00.000Z', deletedAt: null}]})); expect(page.textContent).toContain('Link resources'); expect(page.textContent).toContain('Publisher: China'); expect(page.querySelector('a[href="https://example.test/research"]')).not.toBeNull(); });
+  it('redirects hidden resource routes to attachments', async () => { const page = await render('CHAIR', '/committees/committee/posts/links', user, value => ({...value, textPosts: [{id: 'link', title: 'Research', content: 'link:https://example.test/research', sortOrder: 0, revision: 1, authorSeatId: 'seat', authorDisplayName: 'China', actorUserId: 'chair', createdAt: '2026-08-16T00:00:00.000Z', updatedAt: '2026-08-16T00:00:00.000Z', deletedAt: null}]})); expect(page.textContent).toContain('Attachments'); expect(page.textContent).not.toContain('Link resources'); expect(page.textContent).not.toContain('Publisher: China'); expect(page.querySelector('a[href="https://example.test/research"]')).toBeNull(); });
   it('keeps the strawpoll page mounted while typing a newly added option', async () => { const page = await render('CHAIR', '/committees/committee/strawpolls/poll', user, value => ({...value, strawpolls: [{id: 'poll', committeeId: 'committee', meetingSessionId: 'meeting', question: 'Choice?', votingMode: 'SEAT_AUTHENTICATED', multipleChoice: true, status: 'OPEN', stage: 'PREPARING', medium: 'LINK', optionsArePublic: false, seriesId: 'poll', roundNumber: 1, supersededById: null, options: [], seatVotes: [], revision: 1, createdAt: '2026-08-16T00:00:00.000Z', closedAt: null}]})); const add = [...page.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.includes('Add option')); await act(async () => {add?.click(); await Promise.resolve();}); const option = page.querySelectorAll<HTMLInputElement>('.strawpoll-page input')[1]; await act(async () => {Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(option, 'Option A'); option?.dispatchEvent(new Event('input', {bubbles: true})); await Promise.resolve();}); expect(page.querySelector('.strawpoll-page')).not.toBeNull(); expect(page.textContent).toContain('Create manual poll'); });
 });

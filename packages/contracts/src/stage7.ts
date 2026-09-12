@@ -168,3 +168,20 @@ export type StorageAgentLocalChangeResult = {
   conflictId: string;
   reasonCode: StorageAgentConflictReason;
 };
+
+/** Read-only desktop view, scoped to the authenticated current storage host. */
+export interface StorageAgentFileStatus {
+  fileEntryId: string;
+  logicalName: string;
+  fileRevision: number;
+  blobId: string | null;
+  sizeBytes: number;
+  status: 'UPLOAD_COMPLETE' | 'PENDING_REVIEW' | 'PUBLISHED' | 'REJECTED' | 'DELETED';
+  cacheState: import('./storage-cache.js').StorageCacheState | null;
+  updatedAt: string;
+}
+export interface StorageAgentFileStatusPage {
+  files: StorageAgentFileStatus[];
+  nextId: string | null;
+  observedAt: string;
+}

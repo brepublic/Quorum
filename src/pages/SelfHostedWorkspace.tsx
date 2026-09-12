@@ -16,11 +16,11 @@ import Loading from '../components/Loading';
 import {CountryFlagDisplay} from '../components/CountryFlagDisplay';
 import {LanguageMenuItem, t} from '../i18n';
 import {selfHostedApi, SelfHostedApiError, type SelfHostedApi} from '../services/self-hosted-api';
-import type {SelfHostedUser} from '../services/self-hosted-identity';
+import {selfHostedIdentityClient, type SelfHostedIdentityClient, type SelfHostedUser} from '../services/self-hosted-identity';
 import ProceedingsPanel from './self-hosted/ProceedingsPanel';
 import FilesPanel from './self-hosted/FilesPanel';
-import StorageAdminPanel from './self-hosted/StorageAdminPanel';
-import OperationsPanel from './self-hosted/OperationsPanel';
+import SystemSettings from './self-hosted/SystemSettings';
+import {DelegateFileSettingsPanel} from './self-hosted/DelegateFileSettingsPanel';
 import {DelegateFileReviewPanel, DelegateFileSharePanel} from './self-hosted/DelegateFileChairPanels';
 import {AccountMenu, CommitteeNavigation} from './self-hosted/WorkspaceNavigation';
 import {CommitteeWorkspaceProvider, useCommitteeWorkspace} from './self-hosted/CommitteeWorkspaceContext';
@@ -278,7 +278,7 @@ function NotesPanel({snapshot, run, api}: {snapshot: CommitteeWorkspaceSnapshot;
 }
 
 function LinkResources({snapshot, run, api}: {snapshot: CommitteeWorkspaceSnapshot; run: WorkspaceCommand; api: SelfHostedApi}) { const [title, setTitle] = React.useState(''); const [url, setUrl] = React.useState(''); const canWrite = snapshot.viewer.audience !== 'PUBLIC' && snapshot.committee.status === 'ACTIVE'; const links = snapshot.textPosts.filter(post => post.content.startsWith('link:')).map(post => ({post, url: post.content.slice(5)})).filter(({url}) => {try {return ['http:', 'https:'].includes(new URL(url).protocol);} catch {return false;}}); const create = async () => {if (url.trim()) {await run(() => api.createTextPost(snapshot.committee.id, {title, content: `link:${url.trim()}`})); setTitle(''); setUrl('');}}; return <><Form onSubmit={create}>{canWrite && <><Form.Input label={t('Title')} value={title} onChange={event => setTitle(event.currentTarget.value)} /><Form.Input label={t('URL')} type="url" required value={url} onChange={event => setUrl(event.currentTarget.value)} /><Button primary disabled={!url.trim()}>{t('Publish link')}</Button></>}</Form><List divided relaxed>{links.map(({post, url}) => <List.Item key={post.id}>{canWrite && <List.Content floated="right"><Button size="mini" negative onClick={() => void run(() => api.deleteTextPost(post.id, post.revision))}>{t('Delete')}</Button></List.Content>}<List.Header>{post.title || t('Untitled')}</List.Header><List.Description><a href={url} target="_blank" rel="noreferrer">{url}</a></List.Description><List.Description>{t('Publisher')}: {post.authorDisplayName}</List.Description></List.Item>)}</List></>; }
-function PostsPanel({snapshot, run, api, userId, tab}: {snapshot: CommitteeWorkspaceSnapshot; run: WorkspaceCommand;
+function PostsPanel({snapshot, api, userId, tab}: {snapshot: CommitteeWorkspaceSnapshot;
   api: SelfHostedApi; userId?: string; tab?: string}) {
   const canManageStorage = snapshot.viewer.audience === 'CHAIR' || snapshot.viewer.audience === 'OWNER';
   const [delegateFilesEnabled, setDelegateFilesEnabled] = React.useState(false);
@@ -291,18 +291,18 @@ function PostsPanel({snapshot, run, api, userId, tab}: {snapshot: CommitteeWorks
     return () => {active = false;};
   }, [api, canManageStorage, snapshot.committee.id, snapshot.committee.operationMode,
     snapshot.sync.committeeEventSequence]);
-  const active = tab === 'links' || tab === 'attachments' || tab === 'storage' || (tab === 'share' && delegateFilesEnabled)
-    ? tab : 'text';
   const base = `/committees/${snapshot.committee.id}/posts`;
+  if (tab === undefined || tab === 'text' || tab === 'links') return <Redirect to={`${base}/attachments`} />;
+  const active = tab === 'attachments' || tab === 'storage' || (tab === 'file-settings' && canManageStorage) || (tab === 'share' && delegateFilesEnabled)
+    ? tab : 'attachments';
   return <><Menu pointing secondary aria-label={t('Resource sections')}>
-    <Menu.Item as={Link} to={base} active={active === 'text'}>{t('Text resources')}</Menu.Item>
-    <Menu.Item as={Link} to={`${base}/links`} active={active === 'links'}>{t('Link resources')}</Menu.Item>
     <Menu.Item as={Link} to={`${base}/attachments`} active={active === 'attachments'}>{t('Attachments')}</Menu.Item>
     {delegateFilesEnabled && <Menu.Item as={Link} to={`${base}/share`} active={active === 'share'}>分享</Menu.Item>}
     {canManageStorage && <Menu.Item as={Link} to={`${base}/storage`} active={active === 'storage'}>{t('Storage')}</Menu.Item>}
+    {canManageStorage && <Menu.Item as={Link} to={`${base}/file-settings`} active={active === 'file-settings'}>文件设置</Menu.Item>}
   </Menu>
-    {active === 'text' && <TextResources kind="posts" snapshot={snapshot} run={run} api={api} />}
-    {active === 'links' && <LinkResources snapshot={snapshot} run={run} api={api} />}
+    {active === 'file-settings' && canManageStorage && <DelegateFileSettingsPanel key={snapshot.committee.id} committeeId={snapshot.committee.id} api={api}
+      readOnly={!['ACTIVE', 'PAUSED'].includes(snapshot.committee.status)} />}
     {active === 'attachments' && (delegateFilesEnabled
       ? <DelegateFileReviewPanel snapshot={snapshot} api={api} />
       : <FilesPanel section="attachments" snapshot={snapshot} api={api} currentUserId={userId} />)}
@@ -477,7 +477,7 @@ function SettingsPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
   const [ruleVersionId, setRuleVersionId] = React.useState(snapshot.committee.activeRulePackageVersionId);
   const [deleteName, setDeleteName] = React.useState('');
   const generalSpeakerList = (snapshot.speakerLists ?? []).find(list => list.kind === 'GENERAL');
-  const [generalSpeakerSeconds, setGeneralSpeakerSeconds] = React.useState((generalSpeakerList?.defaultSpeechMs ?? 60_000) / 1000);
+  const [generalSpeakerSeconds, setGeneralSpeakerSeconds] = React.useState((generalSpeakerList?.defaultSpeechMs ?? 120_000) / 1000);
   const owner = snapshot.viewer.audience === 'OWNER';
   const readOnly = snapshot.committee.status === 'ARCHIVED' || snapshot.committee.status === 'DELETING';
   const execute = async (key: string, operation: () => Promise<unknown>) => {setPending(key); try {await run(operation);} finally {setPending(undefined);}};
@@ -977,7 +977,7 @@ function CommitteeWorkspaceContent({id, api, user, logout}: {
           <Route exact path={`${base}/roll-call`}><RollCallPanel snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} /></Route>
           <Route exact path={`${base}/points`}><PointsPanel snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} /></Route>
           <Route exact path={`${base}/notes`}><NotesPanel snapshot={interactionSnapshot} run={run} api={api} /></Route>
-          <Route path={`${base}/posts/:tab?`} render={({match}) => <PostsPanel snapshot={interactionSnapshot} run={run} api={api}
+          <Route path={`${base}/posts/:tab?`} render={({match}) => <PostsPanel snapshot={interactionSnapshot} api={api}
             userId={user?.id} tab={match.params.tab} />} />
           <Route exact path={`${base}/files`}><Redirect to={`${base}/posts/attachments`} /></Route>
           <Route path={`${base}/motions`}><ProceedingsPanel view="motions" snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} /></Route>
@@ -1002,8 +1002,8 @@ function CommitteeWorkspaceContent({id, api, user, logout}: {
   </CommitteeNavigation>;
 }
 
-export default function SelfHostedWorkspace({user, logout, accountManager, api = selfHostedApi}: {
-  user: SelfHostedUser; logout(): void; accountManager?: React.ReactNode; api?: SelfHostedApi;
+export default function SelfHostedWorkspace({user, logout, accountManager, api = selfHostedApi, identityClient = selfHostedIdentityClient}: {
+  user: SelfHostedUser; logout(): void; accountManager?: React.ReactNode; api?: SelfHostedApi; identityClient?: SelfHostedIdentityClient;
 }) {
   const location = useLocation();
   const committeeRoute = /^\/committees\/[^/]+/.test(location.pathname);
@@ -1011,8 +1011,9 @@ export default function SelfHostedWorkspace({user, logout, accountManager, api =
     <Route exact path="/committees"><CommitteeList api={api} user={user} logout={logout} /></Route>
     <Route exact path="/countries"><CountryTemplateManager api={api} /></Route>
     <Route exact path="/templates"><CommitteeTemplateManager api={api} /></Route>
-    {user.isSystemAdmin && <Route exact path="/storage"><Container style={{padding: '1em'}}><StorageAdminPanel api={api} /></Container></Route>}
-    {user.isSystemAdmin && <Route exact path="/operations"><Container style={{padding: '1em'}}><OperationsPanel api={api} /></Container></Route>}
+    {user.isSystemAdmin && <Route exact path="/storage"><Redirect to="/system-settings/storage" /></Route>}
+    {user.isSystemAdmin && <Route exact path="/operations"><Redirect to="/system-settings/operations" /></Route>}
+    {user.isSystemAdmin && <Route path="/system-settings"><SystemSettings api={api} client={identityClient} /></Route>}
     <Route path="/committees/:id"><SelfHostedCommitteeWorkspace api={api} user={user} logout={logout} /></Route>
     {user.isSystemAdmin && <Route exact path="/admin">{accountManager}</Route>}
     <Route exact path="/"><Redirect to={user.isSystemAdmin ? '/admin' : '/committees'} /></Route>

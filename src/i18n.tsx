@@ -29,7 +29,8 @@ const en: Record<string, string> = {
   'Motion action: Reorder': 'Reorder',
   'Motion action: Create': 'Create',
   'Motion action: Vote': 'Vote',
-  'Motion action: Enact': 'Enact'
+  'Motion action: Enact': 'Enact',
+  'Close speaker list': 'Close'
 };
 
 const zhCN: Record<string, string> = {
@@ -209,6 +210,9 @@ const zhCN: Record<string, string> = {
   'Create strawpoll': '新建意向性投票',
   'Files': '文件',
   'Statistics': '统计',
+  'System settings': '系统设置',
+  'Committee defaults': '委员会默认设置',
+  'Cache settings': '缓存设置',
   'Storage configuration': '存储配置',
   'Operations status': '运行状态',
   'Connecting': '正在连接',
@@ -572,7 +576,8 @@ const zhCN: Record<string, string> = {
   'New caucus': '新建有主持核心磋商',
   'Moderated caucus complete': '有主持核心磋商已结束',
   'Speakers list complete': '主发言名单已结束',
-  'Speakers list closed': '发言名单已关闭',
+  'Speakers list closed': '主发言名单已关闭',
+  'General speakers list not open': '主发言名单未开启',
   'General speakers list missing': '主发言名单缺失',
   'The previous session’s general speakers list could not be restored. Create a new list and continue?': '无法恢复上一会期的主发言名单。创建新名单并继续？',
   'Create and continue': '创建并继续',
@@ -592,6 +597,7 @@ const zhCN: Record<string, string> = {
   'Help': '帮助',
   'Open': '开放',
   'Closed': '已关闭',
+  'Close speaker list': '关闭',
   'Stage': '就位',
   'Start': '开始',
   'Pause': '暂停',

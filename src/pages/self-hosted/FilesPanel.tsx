@@ -6,7 +6,7 @@ import {SelfHostedApiError, newIdempotencyKey, type SelfHostedApi} from '../../s
 import {sha256File} from '../../services/sha256';
 
 const FILE_STATUS: Record<FileEntry['status'], string> = {
-  UPLOAD_COMPLETE: '上传完成', PENDING_REVIEW: '待审核', PUBLISHED: '已发布', DELETED: '已删除'
+  UPLOAD_COMPLETE: '上传完成', PENDING_REVIEW: '待审核', PUBLISHED: '已发布', REJECTED: '已驳回', DELETED: '已删除'
 };
 const MIGRATION_STATUS: Record<StorageMigration['status'], string> = {
   COPYING: '正在复制', READY_TO_CONFIRM: '等待确认', FAILED: '迁移失败', COMPLETED: '迁移完成', CANCELLED: '已取消'
@@ -270,10 +270,14 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
         : <p>未配对</p>}
       {pairing && <Message info><Message.Header>配对码</Message.Header>
         <code className="self-hosted-pairing-code">{pairing.code}</code>
-        <span> · 有效至 {new Date(pairing.expiresAt).toLocaleTimeString('zh-CN')}</span>
-        <Button type="button" size="small" onClick={() => void navigator.clipboard?.writeText(pairing.code)}>
-          复制配对码
-        </Button>
+        <span className="self-hosted-pairing-code-meta">
+          · 有效至 {new Date(pairing.expiresAt).toLocaleTimeString('zh-CN')}
+        </span>
+        <span className="self-hosted-pairing-code-actions">
+          <Button type="button" size="small" onClick={() => void navigator.clipboard?.writeText(pairing.code)}>
+            复制配对码
+          </Button>
+        </span>
       </Message>}
       {!pairing && <Button type="button" size="small" disabled={working}
         onClick={() => void createPairing(activeHost ? 'TRANSFER' : 'INITIAL')}>

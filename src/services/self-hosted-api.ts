@@ -1,4 +1,5 @@
 import type {
+  DelegateFileSettings, DefaultFileRejectionSettings,
   CommitteeEventEnvelope,
   AuthoritativeTimer,
   SpeakerList,
@@ -723,6 +724,20 @@ export const selfHostedApi = {
     return request<StorageMigration>(`/api/v1/storage-migrations/${id}/cancel`, {method: 'POST',
       body: {baseRevision}, idempotencyKey});
   },
+  getDelegateFileSettings(committeeId: string) {
+    return request<DelegateFileSettings>(`/api/v1/committees/${committeeId}/delegate-file-settings`);
+  },
+  updateDelegateFileSettings(committeeId: string, settings: DelegateFileSettings) {
+    return request<DelegateFileSettings>(`/api/v1/committees/${committeeId}/delegate-file-settings`,
+      {method: 'PUT', body: {...settings, baseRevision: settings.revision}});
+  },
+  getDefaultFileRejectionTypes() {
+    return request<DefaultFileRejectionSettings>('/api/v1/admin/default-file-rejection-types');
+  },
+  updateDefaultFileRejectionTypes(settings: DefaultFileRejectionSettings) {
+    return request<DefaultFileRejectionSettings>('/api/v1/admin/default-file-rejection-types',
+      {method: 'PUT', body: {...settings, baseRevision: settings.revision}});
+  },
   getDelegateFileShare(committeeId: string) {
     return request<DelegateFileShare | null>(`/api/v1/committees/${committeeId}/delegate-file-share`);
   },
@@ -741,9 +756,9 @@ export const selfHostedApi = {
     return request<DelegateReviewFile>(`/api/v1/files/${fileId}/delegate-approve`,
       {method: 'POST', body: {baseRevision, logicalName, fileType}});
   },
-  rejectDelegateFile(fileId: string, baseRevision: number) {
+  rejectDelegateFile(fileId: string, baseRevision: number, logicalName: string, fileType: DelegateFileType, reason?: string, rejectionTypeId?: string) {
     return request<{id: string; fileEntryId: string}>(`/api/v1/files/${fileId}/delegate-reject`,
-      {method: 'POST', body: {baseRevision}, idempotencyKey: key()});
+      {method: 'POST', body: {baseRevision, logicalName, fileType, reason, rejectionTypeId}, idempotencyKey: key()});
   },
   bootstrapDelegatePortal(capability: string) {
     return delegateRequest<DelegatePortalBootstrap>('/api/v1/delegate-files/bootstrap',

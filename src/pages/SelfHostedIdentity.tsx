@@ -1,12 +1,11 @@
 import * as React from 'react';
-import {Button, Checkbox, Container, Form, Header, Icon, Menu, Message, Segment, Table} from 'semantic-ui-react';
+import {Button, Container, Form, Header, Icon, Menu, Message, Segment, Table} from 'semantic-ui-react';
 import {Link, useHistory, useLocation} from 'react-router-dom';
 import Loading from '../components/Loading';
 import {LanguageMenuItem, t} from '../i18n';
 import {
   IdentityApiError,
   selfHostedIdentityClient,
-  type DefaultCommitteeBehavior,
   type SelfHostedIdentityClient,
   type SelfHostedUser
 } from '../services/self-hosted-identity';
@@ -22,36 +21,6 @@ function message(error: unknown): string {
 interface IdentityFormProps {
   client: SelfHostedIdentityClient;
   onAuthenticated(user: SelfHostedUser): void;
-}
-
-function DefaultCommitteeBehaviorPanel({client}: {client: SelfHostedIdentityClient}) {
-  const [settings, setSettings] = React.useState<DefaultCommitteeBehavior>();
-  const [error, setError] = React.useState<string>();
-  const [saving, setSaving] = React.useState(false);
-  const load = React.useCallback(async () => {
-    try { setSettings(await client.getDefaultCommitteeBehavior()); } catch (caught) { setError(message(caught)); }
-  }, [client]);
-  React.useEffect(() => { void load(); }, [load]);
-  const save = async () => {
-    if (!settings) return;
-    setSaving(true); setError(undefined);
-    try { setSettings(await client.updateDefaultCommitteeBehavior(settings)); } catch (caught) { setError(message(caught)); }
-    finally { setSaving(false); }
-  };
-  return <Segment loading={!settings || saving}>
-    <Header as="h2">{t('Default behavior')}</Header>
-    {error && <Message error content={error} />}
-    {settings && <Form onSubmit={save}>
-      <Form.Field><Checkbox label={t('Committee creator is automatically Chair')} checked={settings.creatorIsChair}
-        onChange={(_, data) => setSettings(current => current && {...current, creatorIsChair: Boolean(data.checked)})} /></Form.Field>
-      <Form.Select label={t('Default committee operation mode')} value={settings.operationMode} options={[
-        {key: 'chair', value: 'CHAIR_OPERATED', text: t('Chair operated')},
-        {key: 'delegate', value: 'DELEGATE_OPERATED', text: t('Delegate operated')}
-      ]} onChange={(_, data) => setSettings(current => current && {...current,
-        operationMode: data.value as DefaultCommitteeBehavior['operationMode']})} />
-      <Button primary disabled={saving}>{t('Save changes')}</Button>
-    </Form>}
-  </Segment>;
 }
 
 function LoginForm({client, onAuthenticated}: IdentityFormProps) {
@@ -235,13 +204,12 @@ function AccountManager({client, currentUser, onLogout}: {
     await refresh();
   });
 
-  return <Container style={{padding: '2em 1em'}}>
+  return <Container className="self-hosted-admin-page self-hosted-account-admin" style={{padding: '2em 1em'}}>
     <Header as="h1"><Icon name="users" />{t('Account administration')}</Header>
     {error && <Message error content={error} onDismiss={() => setError(undefined)} />}
     {temporary && <Message positive onDismiss={() => setTemporary(undefined)}
       header={t('Temporary password for {email}', {email: temporary.email})}
       content={<code>{temporary.password}</code>} />}
-    <DefaultCommitteeBehaviorPanel client={client} />
     <Segment>
       <Header as="h2">{t('Create account')}</Header>
       <Form onSubmit={create} loading={working}>
@@ -256,7 +224,7 @@ function AccountManager({client, currentUser, onLogout}: {
     </Segment>
     <Segment loading={working}>
       <Header as="h2">{t('Accounts')}</Header>
-      <Table celled stackable>
+      <Table celled stackable className="account-admin-table">
         <Table.Header><Table.Row>
           <Table.HeaderCell>{t('Email')}</Table.HeaderCell>
           <Table.HeaderCell>{t('Display name')}</Table.HeaderCell>
@@ -265,13 +233,13 @@ function AccountManager({client, currentUser, onLogout}: {
           <Table.HeaderCell>{t('Actions')}</Table.HeaderCell>
         </Table.Row></Table.Header>
         <Table.Body>{users.map(account => <Table.Row key={account.id} disabled={account.status !== 'ACTIVE'}>
-          <Table.Cell>{account.email || t('Anonymous account')}</Table.Cell>
-          <Table.Cell>{account.displayName}</Table.Cell>
-          <Table.Cell><code>{account.id}</code><Button basic size="mini" type="button" style={{marginLeft: '0.5em'}}
+          <Table.Cell data-label={t('Email')}>{account.email || t('Anonymous account')}</Table.Cell>
+          <Table.Cell data-label={t('Display name')}>{account.displayName}</Table.Cell>
+          <Table.Cell data-label={t('Account ID')}><div className="account-admin-id"><code>{account.id}</code><Button basic size="mini" type="button"
             aria-label={`${t('Copy')} ${t('Account ID')} · ${account.email || account.displayName}`}
-            onClick={() => void navigator.clipboard?.writeText(account.id)}>{t('Copy')}</Button></Table.Cell>
-          <Table.Cell>{t(account.status)}</Table.Cell>
-          <Table.Cell>
+            onClick={() => void navigator.clipboard?.writeText(account.id)}>{t('Copy')}</Button></div></Table.Cell>
+          <Table.Cell data-label={t('Status')}>{t(account.status)}</Table.Cell>
+          <Table.Cell data-label={t('Actions')}><div className="account-admin-actions">
             <Button size="small" disabled={account.status !== 'ACTIVE'}
               onClick={() => reset(account)}>{t('Reset password')}</Button>
             <Button size="small" disabled={account.status === 'ANONYMIZED'} onClick={() => run(async () => {
@@ -289,7 +257,7 @@ function AccountManager({client, currentUser, onLogout}: {
             <Button size="small" negative disabled={account.isSystemAdmin || account.status !== 'DISABLED'
               || !users.some(candidate => candidate.id !== account.id && candidate.status === 'ACTIVE')}
               onClick={() => anonymize(account)}>{t('Anonymize account')}</Button>
-          </Table.Cell>
+          </div></Table.Cell>
         </Table.Row>)}</Table.Body>
       </Table>
     </Segment>
@@ -355,6 +323,6 @@ export default function SelfHostedIdentity({client = selfHostedIdentityClient}: 
   if (screen === 'login') return <LoginForm client={client} onAuthenticated={authenticated} />;
   if (screen === 'change-password') return <ChangePasswordForm client={client} onAuthenticated={authenticated} />;
   if (!user) return <Loading />;
-  return <SelfHostedWorkspace user={user} logout={logout}
+  return <SelfHostedWorkspace user={user} logout={logout} identityClient={client}
     accountManager={user.isSystemAdmin ? <AccountManager client={client} currentUser={user} onLogout={logout} /> : undefined} />;
 }

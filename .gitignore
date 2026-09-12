@@ -40,3 +40,6 @@ yarn-error.log*
 pnpm-debug.log*
 
 *.pdf
+
+# Native Chair Agent desktop build
+/packages/storage-agent-desktop/target/

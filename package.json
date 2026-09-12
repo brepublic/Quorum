@@ -66,7 +66,9 @@
     "self-host:test-db:reset": "node server/scripts/test-db.mjs reset",
     "release:storage-agent": "pnpm --filter @quorum/storage-agent build && node scripts/build-storage-agent-release.mjs",
     "release:storage-agent:verify": "node scripts/verify-storage-agent-release.mjs",
-    "verify:no-legacy-runtime": "node scripts/verify-no-legacy-runtime.mjs"
+    "verify:no-legacy-runtime": "node scripts/verify-no-legacy-runtime.mjs",
+    "start:storage-agent:desktop": "bash scripts/storage-agent-desktop.sh",
+    "release:storage-agent:desktop": "bash scripts/package-storage-agent-desktop.sh"
   },
   "eslintConfig": {
     "extends": "react-app"

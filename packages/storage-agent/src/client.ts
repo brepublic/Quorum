@@ -1,6 +1,6 @@
 import {createReadStream} from 'node:fs';
 import type {StorageAgentConflict, StorageAgentLocalChange, StorageAgentLocalChangeResult, StorageAgentPairingResult,
-  StorageAgentTask, StorageAgentTaskPage, StorageManifestPage} from '@quorum/contracts';
+  StorageAgentTask, StorageAgentTaskPage, StorageAgentFileStatusPage, StorageManifestPage} from '@quorum/contracts';
 import {AgentApiError} from './errors.js';
 
 interface SuccessEnvelope<T> {data: T; meta: {requestId: string}}
@@ -26,8 +26,12 @@ async function error(response: Response): Promise<AgentApiError> {
 
 export class StorageAgentHttpClient {
   private readonly base: URL;
+  private readonly fetcher: Fetch;
 
-  constructor(baseUrl: string, private readonly credential: string, private readonly fetcher: Fetch = fetch) {
+  constructor(baseUrl: string, private readonly credential: string, fetcher: Fetch = fetch,
+    signal?: AbortSignal) {
+    this.fetcher = (input, init) => fetcher(input, {...init, redirect: 'error',
+      signal: init?.signal ?? signal});
     this.base = serverUrl(baseUrl);
     if (!/^qsa1\.[0-9a-f-]{36}\.[A-Za-z0-9_-]{43}$/.test(credential)) {
       throw new Error('Storage Agent credential is invalid.');
@@ -38,6 +42,7 @@ export class StorageAgentHttpClient {
     fetcher: Fetch = fetch): Promise<StorageAgentPairingResult> {
     const base = serverUrl(baseUrl);
     const response = await fetcher(new URL('/api/v1/storage-agent/pair', base), {method: 'POST',
+      redirect: 'error', signal: AbortSignal.timeout(30000),
       headers: {'content-type': 'application/json'}, body: JSON.stringify(body)});
     if (!response.ok) throw await error(response);
     return (await response.json() as SuccessEnvelope<StorageAgentPairingResult>).data;
@@ -68,6 +73,11 @@ export class StorageAgentHttpClient {
         boundary = buffer.indexOf('\n\n');
       }
     }
+  }
+
+  fileStatus(leaseGeneration: number, after = ''): Promise<StorageAgentFileStatusPage> {
+    return this.json(`/api/v1/storage-agent/file-status?after=${encodeURIComponent(after)}`, {method: 'GET',
+      headers: {'x-storage-lease-generation': String(leaseGeneration)}});
   }
 
   manifest(leaseGeneration: number, after = 0, limit = 100): Promise<StorageManifestPage> {
@@ -127,14 +137,17 @@ export class StorageAgentHttpClient {
     return response.body as unknown as AsyncIterable<Uint8Array>;
   }
 
-  async upload(task: StorageAgentTask, claimToken: string, path: string): Promise<StorageAgentTask> {
+  async upload(task: StorageAgentTask, claimToken: string, path: string,
+    progress?: (bytes: number) => void): Promise<StorageAgentTask> {
     if (task.expectedSizeBytes === null || !task.expectedSha256) throw new Error('Storage task has no content metadata.');
     const response = await this.fetcher(new URL('/api/v1/storage-agent/blobs', this.base), {
       method: 'POST', headers: this.headers({'content-type': 'application/octet-stream',
         'content-length': String(task.expectedSizeBytes), 'x-content-sha256': task.expectedSha256,
         'x-storage-task-id': task.id, 'x-storage-lease-generation': String(task.leaseGeneration),
         'x-storage-file-revision': String(task.fileRevision), 'x-storage-task-claim': claimToken}),
-      body: createReadStream(path) as unknown as BodyInit, duplex: 'half'
+      body: (async function* () {let sent = 0; for await (const chunk of createReadStream(path)) {
+        sent += chunk.length; progress?.(sent); yield chunk;
+      }})() as unknown as BodyInit, duplex: 'half'
     } as RequestInit & {duplex: 'half'});
     if (!response.ok) throw await error(response);
     return (await response.json() as SuccessEnvelope<StorageAgentTask>).data;

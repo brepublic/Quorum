@@ -1043,6 +1043,8 @@ export class Stage4Service {
         [id, auth.user.id, name, topic, conference, input.visibility, operationMode, versionId,
           template?.builtin ? null : committeeTemplateId, countryTemplateKey, !template]);
         const row = inserted.rows[0] as Stage4CommitteeRow;
+      await client.query(`UPDATE committees SET delegate_file_settings=jsonb_set(delegate_file_settings,
+        '{rejectionTypes}', (SELECT default_file_rejection_types FROM system_settings WHERE singleton=true)) WHERE id=$1`, [id]);
         await client.query(`INSERT INTO committee_rule_bindings
           (id,committee_id,package_version_id,effective_from_event_sequence,activated_by_user_id)
           VALUES ($1,$2,$3,1,$4)`, [randomUUID(), id, versionId, auth.user.id]);
@@ -1340,7 +1342,7 @@ export class Stage4Service {
       const generalRule = definition.rows[0].definition.speakerLists?.find(item => item.id === 'general-speakers-list');
       const configuredDuration = generalRule?.defaultDurationSeconds;
       const defaultSpeechMs = typeof configuredDuration === 'number' && Number.isSafeInteger(configuredDuration)
-        && configuredDuration > 0 ? configuredDuration * 1000 : 60_000;
+        && configuredDuration > 0 ? configuredDuration * 1000 : 120_000;
       let speakerListId: string; let createdReplacement = false;
       if (pendingSession) {
         const alreadyLinked = await client.query<{id: string}>(`SELECT id FROM speaker_lists

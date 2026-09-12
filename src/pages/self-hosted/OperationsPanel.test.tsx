@@ -51,6 +51,12 @@ describe('operations status panel', () => {
     expect(container.textContent).toContain('待审核.docx');
     expect(container.textContent).toContain('测试委员会');
     expect(container.querySelectorAll('button')).toHaveLength(1);
+    expect(container.querySelector('form')).toBeNull();
+    expect(container.querySelectorAll('details:not([open])')).toHaveLength(2);
+    expect(api.updateStorageCacheConfig).not.toHaveBeenCalled();
+    await act(async () => {container!.querySelector('button')!.click();});
+    expect(api.operationsStatus).toHaveBeenCalledTimes(2);
+    expect(api.storageCacheStatus).toHaveBeenCalledTimes(2);
     expect(container.textContent).not.toMatch(/下载|storage_key|sha256|credential|\/var\/lib/i);
   });
 });

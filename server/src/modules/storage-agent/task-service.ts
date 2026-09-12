@@ -1,6 +1,7 @@
 import {randomUUID} from 'node:crypto';
 import type {PoolClient, QueryResultRow} from 'pg';
 import type {
+  StorageAgentFileStatusPage,
   StorageAgentTask,
   StorageAgentTaskPage,
   StorageManifestEvent,
@@ -200,6 +201,27 @@ export class Stage7StorageTaskService {
     private readonly capacity?: StorageCapacityGuard,
     private readonly finalizer?: StorageAgentTaskCompletionFinalizer
   ) {}
+
+  async fileStatus(credential: string, leaseGeneration: number, after = ''): Promise<StorageAgentFileStatusPage> {
+    const generation = positiveInteger(leaseGeneration, 'Lease generation');
+    if (after) uuid(after, 'After ID');
+    return this.agent.withCurrentLease(credential, generation, async (client, lease) => {
+      const result = await client.query(`SELECT e.id,e.logical_name,e.revision,e.status::text,e.updated_at,
+        v.blob_id,v.size_bytes,c.state::text AS cache_state
+        FROM file_entries e
+        LEFT JOIN LATERAL (SELECT blob_id,size_bytes FROM file_versions
+          WHERE file_entry_id=e.id AND (id=e.current_version_id OR e.status='DELETED') ORDER BY version_number DESC LIMIT 1) v ON true
+        LEFT JOIN storage_cache_entries c ON c.blob_id=v.blob_id AND c.committee_id=e.committee_id
+        WHERE e.committee_id=$1 AND ($2::uuid IS NULL OR e.id>$2::uuid)
+        ORDER BY e.id LIMIT 201`, [lease.committeeId, after || null]);
+      const rows = result.rows.slice(0, 200);
+      return {files: rows.map(row => ({fileEntryId: row.id, logicalName: row.logical_name,
+        fileRevision: row.revision, blobId: row.blob_id ?? null, sizeBytes: Number(row.size_bytes ?? 0),
+        status: row.status, cacheState: row.status === 'DELETED' ? null : row.cache_state ?? null,
+        updatedAt: row.updated_at.toISOString()})),
+        nextId: result.rows.length > 200 ? rows.at(-1)?.id ?? null : null, observedAt: new Date().toISOString()};
+    });
+  }
 
   async manifest(credential: string, leaseGeneration: number, after = 0, limit = 100): Promise<StorageManifestPage> {
     const requestedGeneration = positiveInteger(leaseGeneration, 'Lease generation');

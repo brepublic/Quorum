@@ -8,6 +8,19 @@ const success = (data: unknown) => new Response(JSON.stringify({data, meta: {req
   status: 200, headers: {'content-type': 'application/json'}});
 
 describe('Chair Agent HTTP client', () => {
+  it('passes lifetime cancellation to ordinary requests and rejects credential redirects', async () => {
+    const controller = new AbortController();
+    const fetcher = vi.fn(async (_input: unknown, init?: RequestInit) => {
+      expect(init?.redirect).toBe('error');
+      expect(init?.signal).toBe(controller.signal);
+      return success({files:[],nextId:null,observedAt:'now'});
+    });
+    const client = new StorageAgentHttpClient('https://quorum.example.com',credential,fetcher as typeof fetch,controller.signal);
+    await client.fileStatus(7);
+    controller.abort();
+    expect((fetcher.mock.calls[0]?.[1]?.signal as AbortSignal).aborted).toBe(true);
+  });
+
   it('keeps device authorization on every fenced request without putting it in the URL', async () => {
     const fetcher = vi.fn(async () => success({events: [], nextSequence: 0, hasMore: false}));
     const client = new StorageAgentHttpClient('https://quorum.example.com', credential, fetcher as typeof fetch);

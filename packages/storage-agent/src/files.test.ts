@@ -161,8 +161,19 @@ describe('Chair Agent verified atomic apply', () => {
     await value.files.applyUpsert(event, (async function* () {yield 'deleted content';})());
     const tombstone: Extract<StorageManifestEvent, {kind: 'DELETE'}> = {sequence: 2, kind: 'DELETE',
       fileEntryId, fileRevision: 2, deletedAt: '2026-08-13T00:00:00.000Z', createdAt: '2026-08-13T00:00:00.000Z'};
-    await value.files.applyDelete(tombstone); await value.files.applyDelete(tombstone);
+    await value.files.applyDelete(tombstone);
+    const metadata = await lstat(join(value.root, AGENT_METADATA_FILE));
+    await value.files.applyDelete(tombstone);
+    expect((await lstat(join(value.root, AGENT_METADATA_FILE))).ino).toBe(metadata.ino);
     await expect(readFile(join(value.root, '文件', '工作文件.txt'))).rejects.toMatchObject({code: 'ENOENT'});
     expect(value.state.snapshot()).toMatchObject({manifestSequence: 2, files: {}});
+  });
+
+  it('persists a new tombstone even when the file was never tracked', async () => {
+    const value = await fixture();
+    await value.files.applyDelete({sequence: 3, kind: 'DELETE', fileEntryId, fileRevision: 3,
+      deletedAt: '2026-08-13T00:00:00.000Z', createdAt: '2026-08-13T00:00:00.000Z'});
+    const saved = JSON.parse(await readFile(join(value.root, AGENT_METADATA_FILE), 'utf8'));
+    expect(saved.manifestSequence).toBe(3);
   });
 });

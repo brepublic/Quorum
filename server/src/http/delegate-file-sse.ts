@@ -28,7 +28,7 @@ export async function streamDelegateFileEvents(input: {
     try {
     const available = await service.events(credential, cursor); cursor = available.cursor;
     for (const event of available.rows) {
-      response.write(`id: ${event.id}\nevent: file.available\ndata: ${JSON.stringify(event)}\n\n`);
+      response.write(`id: ${event.id}\nevent: ${event.kind === 'rejected' ? 'file.rejected' : 'file.available'}\ndata: ${JSON.stringify(event)}\n\n`);
     }
     } finally {polling = false;}
   };

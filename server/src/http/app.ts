@@ -258,6 +258,12 @@ async function handleStage7AgentRequest(options: {
     sendJson(response, 201, success(await storageAgent.pair(body, context), requestId));
     return true;
   }
+  if (method === 'POST' && pathname === '/api/v1/storage-agent/revoke') {
+    const body = await readJson(request);
+    sendJson(response, 200, success(await storageAgent.revokeSelf(storageAgentCredential(request),
+      positiveHeader(request, 'x-storage-lease-generation'), body, context), requestId));
+    return true;
+  }
   if (method === 'POST' && pathname === '/api/v1/storage-agent/heartbeat') {
     const body = await readJson(request);
     sendJson(response, 200, success(await storageAgent.heartbeat(storageAgentCredential(request), body), requestId));
@@ -266,6 +272,13 @@ async function handleStage7AgentRequest(options: {
   if (method === 'GET' && pathname === '/api/v1/storage-agent/events') {
     await streamStorageAgentEvents({request, response, credential: storageAgentCredential(request),
       leaseGeneration: positiveHeader(request, 'x-storage-lease-generation'), service: storageAgent});
+    return true;
+  }
+  if (storageTasks && method === 'GET' && pathname === '/api/v1/storage-agent/file-status') {
+    const query = new URL(request.url ?? pathname, 'http://quorum.invalid').searchParams;
+    response.setHeader('cache-control', 'no-store');
+    sendJson(response, 200, success(await storageTasks.fileStatus(storageAgentCredential(request),
+      positiveHeader(request, 'x-storage-lease-generation'), query.get('after') ?? ''), requestId));
     return true;
   }
   if (storageTasks && method === 'GET' && pathname === '/api/v1/storage-agent/manifest') {
@@ -812,6 +825,16 @@ async function handleDelegateFileRequest(options: {
     return true;
   }
 
+  const settingsRoute = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/delegate-file-settings$/.exec(pathname);
+  if ((settingsRoute || pathname === '/api/v1/admin/default-file-rejection-types') && (method === 'GET' || method === 'PUT')) {
+    if (method === 'PUT') requireOrigin(request, allowedOrigins);
+    const auth = method === 'PUT' ? await authenticatedWrite(request, identity) : await authenticatedRead(request, identity);
+    const result = method === 'PUT'
+      ? await service.updateSettings(auth, settingsRoute?.[1], await readJson(request), context)
+      : await service.getSettings(auth, settingsRoute?.[1]);
+    sendJson(response, 200, success(result, requestId)); return true;
+  }
+
   const share = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/delegate-file-share$/.exec(pathname);
   if (share && method === 'GET') {
     const auth = await authenticatedRead(request, identity);
@@ -839,7 +862,7 @@ async function handleDelegateFileRequest(options: {
     requireOrigin(request, allowedOrigins); const auth = await authenticatedWrite(request, identity); const body = await readJson(request);
     const result = decision[2] === 'approve'
       ? await service.approve(auth, decision[1] as string, body, context)
-      : await service.reject(auth, decision[1] as string, body.baseRevision, idempotencyKey(request), context);
+      : await service.reject(auth, decision[1] as string, body, idempotencyKey(request), context);
     sendJson(response, 200, success(result, requestId)); return true;
   }
   return false;

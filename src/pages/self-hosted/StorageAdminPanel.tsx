@@ -49,9 +49,10 @@ export default function StorageAdminPanel({api}: {api: SelfHostedApi}) {
   const valid = form.displayName.trim() && form.endpoint.trim() && form.region.trim() && form.bucket.trim() && validCredentials;
 
   return <div className="self-hosted-storage-admin">
-    <Header as="h1">存储配置</Header>
     {error && <Message error role="alert" content={error} />}
-    <Segment loading={working}><Form onSubmit={() => void save()}>
+    <Segment loading={working}>
+      <Header as="h2">{editing ? '编辑存储配置' : '新增存储配置'}</Header>
+      <Form onSubmit={() => void save()}>
       <Form.Group widths="equal">
         <Form.Input label="配置名称" required value={form.displayName}
           onChange={event => setForm({...form, displayName: event.currentTarget.value})} />
@@ -85,13 +86,17 @@ export default function StorageAdminPanel({api}: {api: SelfHostedApi}) {
       <Button primary disabled={!valid}>{editing ? '保存配置' : '创建配置'}</Button>
       {editing && <Button type="button" onClick={() => {setEditing(undefined); setForm(EMPTY_FORM);}}>取消编辑</Button>}
     </Form></Segment>
-    <Card.Group stackable>{configs.map(config => <Card key={config.id}><Card.Content>
+    <Segment>
+      <Header as="h2">已配置的存储</Header>
+      {!configs.length && <p>暂无存储配置</p>}
+      {configs.length > 0 && <Card.Group stackable className="storage-config-cards">{configs.map(config => <Card key={config.id}><Card.Content>
       <Card.Header>{config.displayName}</Card.Header><Card.Meta>{config.status === 'ACTIVE' ? '启用' : '停用'} · {
         config.verifiedAt ? '验证通过' : '未验证'}</Card.Meta>
       <Card.Description>{config.endpoint}<br />{config.bucket}{config.prefix ? `/${config.prefix}` : ''}</Card.Description>
-    </Card.Content><Card.Content extra>
+    </Card.Content><Card.Content extra className="admin-actions">
       <Button size="small" onClick={() => edit(config)}>编辑配置</Button>
       <Button size="small" onClick={() => void run(() => api.verifyS3ProviderConfig(config.id))}>验证配置</Button>
-    </Card.Content></Card>)}</Card.Group>
+    </Card.Content></Card>)}</Card.Group>}
+    </Segment>
   </div>;
 }

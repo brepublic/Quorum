@@ -405,6 +405,42 @@ export class Stage7StorageAgentService {
     });
   }
 
+  async revokeSelf(credential: string, generation: number, body: unknown,
+    context: Stage4Context): Promise<{revoked: true}> {
+    assertExactBody(body as Record<string, unknown>, []);
+    try {await this.authenticate(credential);}
+    catch (error) {
+      if (error instanceof AppError && error.code === 'STALE_STORAGE_LEASE') return {revoked: true};
+      throw error;
+    }
+    return this.withCurrentLease(credential, generation, async (client, lease, committee) => {
+      const now = this.now();
+      const updated = await client.query<{revision: number; storage_lease_generation: string | number}>(`UPDATE committees
+        SET storage_lease_generation=storage_lease_generation+1,revision=revision+1,updated_at=$2
+        WHERE id=$1 RETURNING revision,storage_lease_generation`, [committee.id, now]);
+      committee.revision = updated.rows[0]!.revision;
+      const revoked = await client.query<HostRow>(`UPDATE storage_hosts
+        SET status='REVOKED',revision=revision+1,revoked_at=$2,updated_at=$2 WHERE id=$1 RETURNING *`,
+      [lease.hostId, now]);
+      const row = revoked.rows[0]!;
+      await client.query(`UPDATE storage_pairing_codes SET revoked_at=$2
+        WHERE committee_id=$1 AND used_at IS NULL AND revoked_at IS NULL`, [committee.id, now]);
+      await client.query(`UPDATE file_entries SET sync_state='OUT_OF_SYNC',updated_at=$3
+        FROM storage_bindings binding WHERE file_entries.committee_id=$1
+          AND binding.id=$2 AND binding.provider_type='CHAIR_AGENT' AND binding.status='ACTIVE'
+          AND file_entries.status<>'DELETED'`, [committee.id, committee.active_storage_binding_id, now]);
+      const leaseGeneration = Number(updated.rows[0]!.storage_lease_generation);
+      await appendEvent(client, committee, {type: 'storage_host.status_changed', resourceType: 'storage_host',
+        resourceId: lease.hostId, revision: row.revision, audience: 'CHAIR',
+        payload: {status: 'REVOKED', leaseGeneration}});
+      await audit(client, context, {committeeId: committee.id, actorUserId: row.paired_by_user_id,
+        capabilities: ['STORAGE_AGENT'], action: 'storage.host_revoked', resourceType: 'storage_host',
+        resourceId: lease.hostId, before: {status: lease.status, leaseGeneration: generation},
+        after: {status: 'REVOKED', leaseGeneration, deviceId: lease.deviceId}});
+      return {revoked: true};
+    });
+  }
+
   async authenticate(credential: string): Promise<StorageAgentIdentity> {
     const parsed = parseDeviceCredential(credential);
     if (!parsed) throw new AppError({code: 'AUTHENTICATION_REQUIRED', message: 'Agent authentication is required.'});
