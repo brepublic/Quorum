@@ -181,13 +181,14 @@ function playTimerSound(): void {
 }
 
 type TimerControlsProps = {name: string; timer?: AuthoritativeTimer; run: Run; api: SelfHostedApi; canChair: boolean;
+  onCreate?: (durationMs: number) => Promise<AuthoritativeTimer>;
   onToggle?: () => Promise<void>; toggleKey?: string; children?: React.ReactNode};
 
 function TimerControls(props: TimerControlsProps) {
   return props.timer ? <ReadyTimerControls {...props} timer={props.timer} /> : <Message content={t('No timer')} />;
 }
 
-function ReadyTimerControls({name, timer, run, api, canChair, onToggle, toggleKey, children}: Omit<TimerControlsProps, 'timer'>
+function ReadyTimerControls({name, timer, run, api, canChair, onCreate, onToggle, toggleKey, children}: Omit<TimerControlsProps, 'timer'>
   & {timer: AuthoritativeTimer}) {
   const [pending, setPending] = React.useState<string>();
   const [muted, setMuted] = React.useState(true);
@@ -207,8 +208,12 @@ function ReadyTimerControls({name, timer, run, api, canChair, onToggle, toggleKe
   }, [muted, remainingMs]);
   const command = async (action: 'start' | 'pause' | 'resume' | 'reset') => {
     setPending(action);
-    try {await run(() => api.commandTimer(timer.id, action, timer.revision,
-      action === 'reset' ? Number(duration) * (unit === 'min' ? 60_000 : 1_000) : undefined));}
+    try {await run(async () => {
+      const durationMs = Number(duration) * (unit === 'min' ? 60_000 : 1_000);
+      const savedTimer = onCreate ? await onCreate(action === 'reset' ? durationMs : timer.remainingAtStartMs) : timer;
+      if (onCreate && action === 'reset') return;
+      return api.commandTimer(savedTimer.id, action, savedTimer.revision, action === 'reset' ? durationMs : undefined);
+    });}
     finally {setPending(undefined);}
   };
   const action = timer.running ? 'pause' : timer.remainingMs === timer.remainingAtStartMs ? 'start' : 'resume';
@@ -248,19 +253,21 @@ function ReadyTimerControls({name, timer, run, api, canChair, onToggle, toggleKe
 }
 
 function UnmoderatedCaucus({snapshot, run, api, canChair}: CommonProps) {
-  const [minutes, setMinutes] = React.useState(10); const [pending, setPending] = React.useState(false);
-  const timer = (snapshot.timers ?? []).find(item => item.ownerType === 'COMMITTEE' && item.ownerId === snapshot.committee.id);
-  const create = async () => {
-    setPending(true);
-    try {await run(() => api.createTimer(snapshot.committee.id, 'COMMITTEE', snapshot.committee.id, minutes * 60_000));}
-    finally {setPending(false);}
+  const [createdTimer, setCreatedTimer] = React.useState<AuthoritativeTimer>();
+  const timer = (snapshot.timers ?? []).find(item => item.ownerType === 'COMMITTEE' && item.ownerId === snapshot.committee.id)
+    ?? (createdTimer?.committeeId === snapshot.committee.id ? createdTimer : undefined);
+  const initialTimer: AuthoritativeTimer = {id: `unmod-${snapshot.committee.id}`, committeeId: snapshot.committee.id,
+    ownerType: 'COMMITTEE', ownerId: snapshot.committee.id, running: false, startedAt: null,
+    remainingAtStartMs: 600_000, remainingMs: 600_000, revision: 0, expiredAt: null, serverTime: ''};
+  const create = async (durationMs: number) => {
+    const created = await api.createTimer(snapshot.committee.id, 'COMMITTEE', snapshot.committee.id, durationMs);
+    setCreatedTimer(created);
+    return created;
   };
   return <Container text className="legacy-unmod-page">
-    {timer ? <TimerControls name="Unmoderated caucus" timer={timer} run={run} api={api} canChair={canChair} /> : canChair
-      ? <Form onSubmit={create}><Form.Input type="number" min={1} label={t('Duration in minutes')} value={minutes}
-        onChange={event => setMinutes(Number(event.currentTarget.value))} />
-        <Button primary loading={pending} disabled={!Number.isFinite(minutes) || minutes < 1}>{t('Create timer')}</Button></Form>
-      : <Message content={t('No timer')} />}</Container>;
+    <TimerControls name="Unmoderated caucus" timer={timer ?? initialTimer} run={run} api={api} canChair={canChair}
+      onCreate={timer ? undefined : create} />
+  </Container>;
 }
 
 function currentSpeech(list: SpeakerList): SpeechRecord | undefined {

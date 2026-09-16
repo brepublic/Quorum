@@ -63,6 +63,34 @@ function clickSemanticCheckbox(element?: Element | null) {
 }
 
 describe('committee workspace routes and roles', () => {
+  it.each(['start', 'set'] as const)('shows the unmoderated timer immediately and creates it on %s', async action => {
+    const timer = {id: 'unmod-timer', committeeId: 'committee', ownerType: 'COMMITTEE' as const, ownerId: 'committee',
+      running: false, startedAt: null, remainingAtStartMs: 600_000, remainingMs: 600_000,
+      revision: 1, expiredAt: null, serverTime: '2026-09-16T00:00:00.000Z'};
+    const createTimer = vi.fn(async () => timer);
+    const commandTimer = vi.fn(async () => ({...timer, running: true, revision: 2}));
+    const page = await render('CHAIR', '/committees/committee/unmod', user, value => value, {createTimer, commandTimer});
+    expect(page.querySelector('time')?.textContent).toBe('10:00');
+    expect(page.textContent).not.toContain('Create timer');
+    expect(createTimer).not.toHaveBeenCalled();
+    const button = action === 'start' ? page.querySelector<HTMLButtonElement>('.legacy-timer-display')
+      : [...page.querySelectorAll('button')].find(item => item.textContent === 'Set');
+    await act(async () => {button?.click();});
+    expect(createTimer).toHaveBeenCalledTimes(1);
+    expect(createTimer).toHaveBeenCalledWith('committee', 'COMMITTEE', 'committee', 600_000);
+    if (action === 'start') expect(commandTimer).toHaveBeenCalledWith('unmod-timer', 'start', 1, undefined);
+    else expect(commandTimer).not.toHaveBeenCalled();
+  });
+
+  it('shows a read-only unmoderated timer to viewers before one has been saved', async () => {
+    const createTimer = vi.fn();
+    const page = await render('PUBLIC', '/committees/committee/unmod', user, value => value, {createTimer});
+    expect(page.querySelector('time')?.textContent).toBe('10:00');
+    expect(page.querySelector<HTMLButtonElement>('.legacy-timer-display')?.disabled).toBe(true);
+    expect(page.querySelector('.proceedings-timer form')).toBeNull();
+    expect(createTimer).not.toHaveBeenCalled();
+  });
+
   it('lets each committee page own its layout inside a full-width workspace shell', async () => {
     const page = await render('OWNER', '/committees/committee/roll-call');
     const workspace = page.querySelector('.committee-workspace-page');
