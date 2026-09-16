@@ -2,7 +2,7 @@ import * as React from 'react';
 import type {CommitteeWorkspaceSnapshot, DelegateFileType, DelegateReviewFile, DelegateFileSettings} from '@quorum/contracts';
 import QRCode from 'qrcode';
 import {Button, Card, Divider, Form, Icon, Image, Message, Modal, Progress, Segment, Table} from 'semantic-ui-react';
-import {newIdempotencyKey, type SelfHostedApi} from '../../services/self-hosted-api';
+import {newIdempotencyKey, SelfHostedApiError, type SelfHostedApi} from '../../services/self-hosted-api';
 import {sha256File} from '../../services/sha256';
 import {storageErrorText} from './FilesPanel';
 
@@ -19,16 +19,82 @@ const toSubmissionTime = (value: string | null): number => {
   return Number.isNaN(parsed) ? 0 : parsed;
 };
 
-export function DelegateFileSharePanel({snapshot, api}: {snapshot: CommitteeWorkspaceSnapshot; api: SelfHostedApi}) {
-  const [share, setShare] = React.useState<Awaited<ReturnType<SelfHostedApi['getDelegateFileShare']>>>();
-  const [qr, setQr] = React.useState(''); const [working, setWorking] = React.useState(false);
-  const [error, setError] = React.useState<string>();
-  const refresh = React.useCallback(async () => {
-    try { setShare(await api.getDelegateFileShare(snapshot.committee.id)); setError(undefined); }
-    catch (caught) { setError(storageErrorText(caught)); }
+type Share = Awaited<ReturnType<SelfHostedApi['getDelegateFileShare']>>;
+
+// This parent stays mounted across file tabs; only server data is retained.
+export function DelegateFilePanels({snapshot, api, tab}: {
+  snapshot: CommitteeWorkspaceSnapshot; api: SelfHostedApi; tab: string;
+}) {
+  const [share, setShare] = React.useState<Share>();
+  const [qr, setQr] = React.useState('');
+  React.useEffect(() => {
+    let active = true;
+    setQr('');
+    if (share?.url) void QRCode.toDataURL(share.url, {width: 260, margin: 1})
+      .then(value => {if (active) setQr(value);}).catch(() => undefined);
+    return () => {active = false;};
+  }, [share?.url]);
+
+  const [files, setFiles] = React.useState<DelegateReviewFile[]>();
+  const [shareError, setShareError] = React.useState<string>();
+  const [filesError, setFilesError] = React.useState<string>();
+  const shareRequest = React.useRef(0); const filesRequest = React.useRef(0);
+  const previousTab = React.useRef(tab);
+  const refreshShare = React.useCallback(async () => {
+    const request = ++shareRequest.current;
+    setShareError(undefined);
+    try {
+      const next = await api.getDelegateFileShare(snapshot.committee.id);
+      if (request === shareRequest.current) setShare(next);
+    } catch (caught) {
+      if (request !== shareRequest.current) return;
+      if (caught instanceof SelfHostedApiError && [401, 403, 404].includes(caught.status)) setShare(undefined);
+      setShareError(storageErrorText(caught));
+    }
   }, [api, snapshot.committee.id]);
-  React.useEffect(() => { void refresh(); }, [refresh, snapshot.sync.committeeEventSequence]);
-  React.useEffect(() => { if (!share?.url) {setQr(''); return;} void QRCode.toDataURL(share.url, {width: 260, margin: 1}).then(setQr); }, [share?.url]);
+  const refreshFiles = React.useCallback(async () => {
+    const request = ++filesRequest.current;
+    setFilesError(undefined);
+    try {
+      const next = await api.listDelegateReviewFiles(snapshot.committee.id);
+      if (request === filesRequest.current) setFiles(next);
+    } catch (caught) {
+      if (request !== filesRequest.current) return;
+      if (caught instanceof SelfHostedApiError && [401, 403, 404].includes(caught.status)) setFiles(undefined);
+      setFilesError(storageErrorText(caught));
+    }
+  }, [api, snapshot.committee.id]);
+  React.useEffect(() => {
+    void refreshShare(); void refreshFiles();
+    return () => {++shareRequest.current; ++filesRequest.current;};
+  }, [refreshShare, refreshFiles, snapshot.sync.committeeEventSequence]);
+  React.useEffect(() => {
+    if (previousTab.current !== tab) {
+      if (tab === 'share') void refreshShare();
+      if (tab === 'review') void refreshFiles();
+    }
+    previousTab.current = tab;
+  }, [tab, refreshShare, refreshFiles]);
+  const updateShare = (next: Share) => {
+    ++shareRequest.current; setShare(next); setShareError(undefined);
+  };
+  if (tab !== 'share' && tab !== 'review') return null;
+  const error = tab === 'share' ? shareError : filesError;
+  const refresh = tab === 'share' ? refreshShare : refreshFiles;
+  const loaded = tab === 'share' ? share !== undefined : files !== undefined;
+  return <>
+    {error && <Message error><p>{error}</p><Button onClick={() => void refresh()}>重试</Button></Message>}
+    {!loaded ? !error && <Segment basic loading style={{minHeight: 120}} role="status" aria-label="加载中" /> : tab === 'share'
+      ? <DelegateFileSharePanel snapshot={snapshot} api={api} share={share!} setShare={updateShare} qr={qr} />
+      : <DelegateFileReviewPanel snapshot={snapshot} api={api} files={files!} refresh={refreshFiles} />}
+  </>;
+}
+
+function DelegateFileSharePanel({snapshot, api, share, setShare, qr}: {
+  snapshot: CommitteeWorkspaceSnapshot; api: SelfHostedApi; share: Share; setShare(share: Share): void; qr: string;
+}) {
+  const [working, setWorking] = React.useState(false);
+  const [error, setError] = React.useState<string>();
   const start = async () => {setWorking(true); try {setShare(await api.startDelegateFileShare(snapshot.committee.id,
     snapshot.committee.revision)); setError(undefined);} catch (caught) {setError(storageErrorText(caught));} finally {setWorking(false);}};
   const end = async () => {if (!share) return; setWorking(true); try {await api.endDelegateFileShare(snapshot.committee.id,
@@ -44,26 +110,10 @@ export function DelegateFileSharePanel({snapshot, api}: {snapshot: CommitteeWork
   </Segment>;
 }
 
-export function DelegateFileReviewPanel({snapshot, api}: {snapshot: CommitteeWorkspaceSnapshot; api: SelfHostedApi}) {
-  const [files, setFiles] = React.useState<DelegateReviewFile[]>([]); const [selected, setSelected] = React.useState<File>();
-  const [names, setNames] = React.useState<Record<string, string>>({});
-  const [rejecting, setRejecting] = React.useState<DelegateReviewFile>();
-  const [reason, setReason] = React.useState('');
-  const [settings, setSettings] = React.useState<DelegateFileSettings>();
-  const [rejectionTypeId, setRejectionTypeId] = React.useState('');
-  const [deleting, setDeleting] = React.useState<DelegateReviewFile>();
-  const [types, setTypes] = React.useState<Record<string, DelegateFileType>>({});
+export function DelegateFileUploadPanel({snapshot, api}: {snapshot: CommitteeWorkspaceSnapshot; api: SelfHostedApi}) {
+  const [selected, setSelected] = React.useState<File>();
   const [progress, setProgress] = React.useState<number>(); const [working, setWorking] = React.useState(false);
   const [error, setError] = React.useState<string>();
-  const refresh = React.useCallback(async () => {
-    try {
-      const next = await api.listDelegateReviewFiles(snapshot.committee.id);
-      setFiles(next);
-      setTypes(current => Object.fromEntries(next.map(item => [item.id, current[item.id] ?? item.fileType ?? 'WORKING_PAPER'])));
-      setError(undefined);
-    } catch (caught) { setError(storageErrorText(caught)); }
-  }, [api, snapshot.committee.id]);
-  React.useEffect(() => {void refresh();}, [refresh, snapshot.sync.committeeEventSequence]);
   const upload = async () => {
     if (!selected) return; setWorking(true); setProgress(0); setError(undefined);
     try {
@@ -71,9 +121,36 @@ export function DelegateFileReviewPanel({snapshot, api}: {snapshot: CommitteeWor
       const created = await api.createFileUpload(snapshot.committee.id, {logicalName: selected.name,
         originalName: selected.name, mediaType: selected.type || 'application/octet-stream', expectedSizeBytes: selected.size, sha256});
       await api.uploadFileContent(created.id, selected, newIdempotencyKey(), {onProgress: (done, total) => setProgress(20 + (total ? done / total * 75 : 0))});
-      setProgress(98); await api.commitFileUpload(created.id); setProgress(undefined); setSelected(undefined); await refresh();
+      setProgress(98); await api.commitFileUpload(created.id); setProgress(undefined); setSelected(undefined);
     } catch (caught) {setProgress(undefined); setError(storageErrorText(caught));} finally {setWorking(false);}
   };
+  return <div className="delegate-file-upload-panel">
+    {error && <Message error content={error} />}
+    <Card centered fluid className="delegate-file-chair-upload"><Card.Content><Form onSubmit={() => void upload()}>
+      <Form.Input type="file" label="选择文件" input={{onChange: (event: React.ChangeEvent<HTMLInputElement>) =>
+        setSelected(event.currentTarget.files?.[0]), 'aria-label': '选择文件'}} />
+      {progress === undefined ? <Button primary disabled={!selected || working}>上传文件 <Icon name="arrow up" /></Button>
+        : <Progress percent={Math.round(progress)} progress color="blue" />}
+    </Form></Card.Content></Card>
+  </div>;
+}
+
+function DelegateFileReviewPanel({snapshot, api, files, refresh}: {
+  snapshot: CommitteeWorkspaceSnapshot; api: SelfHostedApi; files: DelegateReviewFile[]; refresh(): Promise<void>;
+}) {
+  const [names, setNames] = React.useState<Record<string, string>>({});
+  const [rejecting, setRejecting] = React.useState<DelegateReviewFile>();
+  const [reason, setReason] = React.useState('');
+  const [settings, setSettings] = React.useState<DelegateFileSettings>();
+  const [rejectionTypeId, setRejectionTypeId] = React.useState('');
+  const [deleting, setDeleting] = React.useState<DelegateReviewFile>();
+  const [types, setTypes] = React.useState<Record<string, DelegateFileType>>(() =>
+    Object.fromEntries(files.map(item => [item.id, item.fileType ?? 'WORKING_PAPER'])));
+  const [working, setWorking] = React.useState(false);
+  const [error, setError] = React.useState<string>();
+  React.useEffect(() => {
+    setTypes(current => Object.fromEntries(files.map(item => [item.id, current[item.id] ?? item.fileType ?? 'WORKING_PAPER'])));
+  }, [files]);
   const run = async (operation: () => Promise<unknown>) => {setWorking(true); setError(undefined); try {await operation(); await refresh();}
     catch (caught) {setError(storageErrorText(caught));} finally {setWorking(false);}};
   const nameFor = (file: DelegateReviewFile) => names[file.id] ?? file.suggestedNames?.[types[file.id] ?? file.fileType ?? 'WORKING_PAPER'] ?? file.logicalName;
@@ -85,12 +162,6 @@ export function DelegateFileReviewPanel({snapshot, api}: {snapshot: CommitteeWor
     .sort((first, second) => toSubmissionTime(second.submittedAt) - toSubmissionTime(first.submittedAt));
   return <div className="delegate-file-review-panel">
     {error && <Message error content={error} />}
-    <Card centered fluid className="delegate-file-chair-upload"><Card.Content><Form onSubmit={() => void upload()}>
-      <Form.Input type="file" label="选择文件" input={{onChange: (event: React.ChangeEvent<HTMLInputElement>) =>
-        setSelected(event.currentTarget.files?.[0]), 'aria-label': '选择文件'}} />
-      {progress === undefined ? <Button primary disabled={!selected || working}>上传文件 <Icon name="arrow up" /></Button>
-        : <Progress percent={Math.round(progress)} progress color="blue" />}
-    </Form></Card.Content></Card>
     <div className="delegate-file-card-list">{pendingFiles.length ? pendingFiles.map(file => <Card fluid key={file.id} className="delegate-file-card motion-card">
       <Card.Content><div className="motion-heading delegate-file-heading"><Card.Header><Form.Input aria-label="文件名称" value={nameFor(file)}
         onChange={event => { const value = event.currentTarget.value; setNames(current => ({...current, [file.id]: value})); }} /></Card.Header></div>

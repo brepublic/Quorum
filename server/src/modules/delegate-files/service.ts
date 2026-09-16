@@ -269,8 +269,9 @@ export class DelegateFileService {
     await transaction(this.pool, client => this.requireManager(client, uuid(committeeId, 'Committee ID'), auth.user.id, false));
     const entries = await this.files.list(auth, committeeId);
     const metadata = await this.metadata(entries.map(item => item.id));
-    const reviewed = await Promise.all(entries.map(async file => ({...this.reviewFile(file, metadata.get(file.id)),
-      suggestedNames: await this.suggestedNames(committeeId, metadata.get(file.id)?.submitted_at ?? new Date(file.submittedAt ?? file.createdAt))})));
+    const names = await this.suggestedNames(committeeId, entries.map(file =>
+      metadata.get(file.id)?.submitted_at ?? new Date(file.submittedAt ?? file.createdAt)));
+    const reviewed = entries.map((file, index) => ({...this.reviewFile(file, metadata.get(file.id)), suggestedNames: names[index]!}));
     const deleted = await this.history(committeeId, undefined, true);
     return [...reviewed, ...deleted];
   }
@@ -554,18 +555,28 @@ export class DelegateFileService {
       rejectionReason: metadata?.rejection_reason ?? null, reviewedAt: metadata?.rejected_at?.toISOString() ?? file.publishedAt};
   }
 
-  private async suggestedNames(committeeId: string, submittedAt: Date): Promise<Record<DelegateFileType, string>> {
+  private async suggestedNames(committeeId: string, submittedDates: Date[]): Promise<Record<DelegateFileType, string>[]> {
+    if (!submittedDates.length) return [];
     const sessions = await this.pool.query<{id: string; ordinal: string; created_at: Date}>(`SELECT id,created_at,
       row_number() OVER (ORDER BY created_at,id)::text AS ordinal FROM meeting_sessions WHERE committee_id=$1 ORDER BY created_at,id`, [committeeId]);
-    const session = sessions.rows.filter(row => row.created_at <= submittedAt).at(-1) ?? sessions.rows[0];
-    const next = session ? sessions.rows[sessions.rows.indexOf(session)+1] : undefined;
-    const counts = await this.pool.query<{file_type: DelegateFileType; count: string}>(`SELECT m.file_type,count(*)::text FROM delegate_file_metadata m
+    // Count each session once for the entire list, including the no-session fallback.
+    const starts = sessions.rows.length ? sessions.rows.map(row => row.created_at) : [new Date(0)];
+    const ends = starts.map((_, index) => starts[index + 1] ?? null);
+    const counts = await this.pool.query<{ordinal: string; file_type: DelegateFileType; count: string}>(`
+      SELECT bounds.ordinal::text,m.file_type,count(*)::text FROM
+        unnest($2::timestamptz[],$3::timestamptz[]) WITH ORDINALITY AS bounds(start_at,end_at,ordinal)
+      JOIN delegate_file_metadata m ON m.submitted_at >= bounds.start_at
+        AND (bounds.end_at IS NULL OR m.submitted_at < bounds.end_at)
       JOIN file_entries e ON e.id=m.file_entry_id WHERE e.committee_id=$1 AND e.published_at IS NOT NULL
-      AND m.submitted_at >= $2 AND ($3::timestamptz IS NULL OR m.submitted_at < $3) GROUP BY m.file_type`,
-      [committeeId, session?.created_at ?? new Date(0),next?.created_at ?? null]);
+      GROUP BY bounds.ordinal,m.file_type`, [committeeId, starts, ends]);
+    const totals = new Map(counts.rows.map(row => [`${row.ordinal}:${row.file_type}`, Number(row.count)]));
     const labels = {WORKING_PAPER:'工作文件',DIRECTIVE_DRAFT:'指令草案',RESOLUTION_DRAFT:'决议草案'};
-    return Object.fromEntries(Object.entries(labels).map(([type,label]) => [type,
-      `${label} ${session?.ordinal ?? 1}.${Number(counts.rows.find(row => row.file_type === type)?.count ?? 0)+1}`])) as Record<DelegateFileType,string>;
+    return submittedDates.map(submittedAt => {
+      const session = sessions.rows.filter(row => row.created_at <= submittedAt).at(-1) ?? sessions.rows[0];
+      const ordinal = session?.ordinal ?? '1';
+      return Object.fromEntries(Object.entries(labels).map(([type, label]) => [type,
+        `${label} ${ordinal}.${(totals.get(`${ordinal}:${type}`) ?? 0) + 1}`])) as Record<DelegateFileType, string>;
+    });
   }
 
   private async history(committeeId: string, seatId?: string, deletedOnly = false): Promise<DelegateReviewFile[]> {

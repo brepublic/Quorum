@@ -1439,5 +1439,58 @@ describe('committee workspace routes and roles', () => {
     expect(stats).toContain('China');
   });
   it('redirects hidden resource routes to attachments', async () => { const page = await render('CHAIR', '/committees/committee/posts/links', user, value => ({...value, textPosts: [{id: 'link', title: 'Research', content: 'link:https://example.test/research', sortOrder: 0, revision: 1, authorSeatId: 'seat', authorDisplayName: 'China', actorUserId: 'chair', createdAt: '2026-08-16T00:00:00.000Z', updatedAt: '2026-08-16T00:00:00.000Z', deletedAt: null}]})); expect(page.textContent).toContain('Attachments'); expect(page.textContent).not.toContain('Link resources'); expect(page.textContent).not.toContain('Publisher: China'); expect(page.querySelector('a[href="https://example.test/research"]')).toBeNull(); });
+  it('retains prefetched file data across routes and clears it when access becomes read-only', async () => {
+    const share = {id: 'share', url: 'https://example.test/delegate-files#test', revision: 1};
+    const getDelegateFileShare = vi.fn().mockResolvedValueOnce(share).mockImplementation(() => new Promise(() => {}));
+    const listDelegateReviewFiles = vi.fn().mockResolvedValueOnce([{
+      id: 'reviewed', logicalName: 'cached.pdf', originalName: 'cached.pdf', status: 'PUBLISHED',
+      submittedAt: '2026-09-01T00:00:00Z', publishedAt: '2026-09-01T00:00:00Z'
+    }]).mockImplementation(() => new Promise(() => {}));
+    let disconnect: (() => void) | undefined;
+    let sequence = 1;
+    const page = await render('CHAIR', '/committees/committee/posts/review', user, value => ({...value,
+      committee: {...value.committee, operationMode: 'CHAIR_OPERATED'},
+      sync: {...value.sync, committeeEventSequence: sequence}}), {
+      listStorageBindings: vi.fn().mockResolvedValueOnce([{status: 'ACTIVE', providerType: 'CHAIR_AGENT'}])
+        .mockRejectedValue(new Error('binding refresh failed')),
+      getDelegateFileShare, listDelegateReviewFiles,
+      openCommitteeEvents: (_id, _after, handlers) => {disconnect = () => handlers.onState('OFFLINE_READONLY'); return () => undefined;}
+    });
+    expect(getDelegateFileShare).toHaveBeenCalledTimes(1);
+    expect(page.textContent).toContain('cached.pdf');
+    await act(async () => page.querySelector<HTMLAnchorElement>('a[href="/committees/committee/posts/share"]')!.click());
+    expect(page.querySelector<HTMLInputElement>('.delegate-file-share-panel input')?.value).toBe(share.url);
+    expect(page.textContent).not.toContain('开始分享');
+    await act(async () => page.querySelector<HTMLAnchorElement>('a[href="/committees/committee/posts/review"]')!.click());
+    expect(page.textContent).toContain('cached.pdf');
+    expect(page.textContent).not.toContain('暂无已审核文件');
+    sequence = 2;
+    await act(async () => window.dispatchEvent(new Event('focus')));
+    expect(page.textContent).toContain('binding refresh failed');
+    expect(page.textContent).toContain('cached.pdf');
+    await act(async () => disconnect!());
+    expect(page.querySelector('.delegate-file-review-panel')).toBeNull();
+    expect(page.textContent).not.toContain('cached.pdf');
+    expect(page.querySelector('a[href="/committees/committee/posts/share"]')).toBeNull();
+  });
+  it('separates Chair file upload from review', async () => {
+    const page = await render('CHAIR', '/committees/committee/posts/attachments', user, value => ({...value,
+      committee: {...value.committee, operationMode: 'CHAIR_OPERATED'}}), {
+      listStorageBindings: vi.fn(async () => [{id: 'binding', committeeId: 'committee', providerType: 'CHAIR_AGENT',
+        providerConfigId: null, storageHostId: 'host', status: 'ACTIVE', revision: 1,
+        createdAt: '2026-09-01T00:00:00.000Z'}] as Awaited<ReturnType<SelfHostedApi['listStorageBindings']>>),
+      getDelegateFileShare: vi.fn(async () => null),
+      listDelegateReviewFiles: vi.fn(async () => [])
+    });
+    await act(async () => {await Promise.resolve(); await Promise.resolve();});
+    expect(page.querySelector('a[href="/committees/committee/posts/attachments"]')).toBeNull();
+    const resourceLinks = Array.from(page.querySelectorAll<HTMLAnchorElement>('[aria-label="Resource sections"] a'))
+      .map(link => link.textContent?.trim());
+    expect(resourceLinks).toEqual(['审核', '分享', '上传文件', '存储设置', '文件设置']);
+    expect(page.querySelector('.delegate-file-chair-upload')).toBeNull();
+    await act(async () => {page.querySelector<HTMLAnchorElement>('a[href="/committees/committee/posts/upload"]')?.click(); await Promise.resolve();});
+    expect(page.querySelector('.delegate-file-chair-upload')).not.toBeNull();
+    expect(page.querySelector('.delegate-file-card-list')).toBeNull();
+  });
   it('keeps the strawpoll page mounted while typing a newly added option', async () => { const page = await render('CHAIR', '/committees/committee/strawpolls/poll', user, value => ({...value, strawpolls: [{id: 'poll', committeeId: 'committee', meetingSessionId: 'meeting', question: 'Choice?', votingMode: 'SEAT_AUTHENTICATED', multipleChoice: true, status: 'OPEN', stage: 'PREPARING', medium: 'LINK', optionsArePublic: false, seriesId: 'poll', roundNumber: 1, supersededById: null, options: [], seatVotes: [], revision: 1, createdAt: '2026-08-16T00:00:00.000Z', closedAt: null}]})); const add = [...page.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.includes('Add option')); await act(async () => {add?.click(); await Promise.resolve();}); const option = page.querySelectorAll<HTMLInputElement>('.strawpoll-page input')[1]; await act(async () => {Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(option, 'Option A'); option?.dispatchEvent(new Event('input', {bubbles: true})); await Promise.resolve();}); expect(page.querySelector('.strawpoll-page')).not.toBeNull(); expect(page.textContent).toContain('Create manual poll'); });
 });

@@ -21,7 +21,7 @@ import ProceedingsPanel from './self-hosted/ProceedingsPanel';
 import FilesPanel from './self-hosted/FilesPanel';
 import SystemSettings from './self-hosted/SystemSettings';
 import {DelegateFileSettingsPanel} from './self-hosted/DelegateFileSettingsPanel';
-import {DelegateFileReviewPanel, DelegateFileSharePanel} from './self-hosted/DelegateFileChairPanels';
+import {DelegateFilePanels, DelegateFileUploadPanel} from './self-hosted/DelegateFileChairPanels';
 import {AccountMenu, CommitteeNavigation} from './self-hosted/WorkspaceNavigation';
 import {CommitteeWorkspaceProvider, useCommitteeWorkspace} from './self-hosted/CommitteeWorkspaceContext';
 import {
@@ -281,32 +281,45 @@ function LinkResources({snapshot, run, api}: {snapshot: CommitteeWorkspaceSnapsh
 function PostsPanel({snapshot, api, userId, tab}: {snapshot: CommitteeWorkspaceSnapshot;
   api: SelfHostedApi; userId?: string; tab?: string}) {
   const canManageStorage = snapshot.viewer.audience === 'CHAIR' || snapshot.viewer.audience === 'OWNER';
-  const [delegateFilesEnabled, setDelegateFilesEnabled] = React.useState(false);
+  const [delegateFilesEnabled, setDelegateFilesEnabled] = React.useState<boolean>();
+  const [bindingError, setBindingError] = React.useState<string>();
+  const [bindingReload, setBindingReload] = React.useState(0);
   React.useEffect(() => {
     let active = true;
+    setBindingError(undefined);
     if (!canManageStorage || snapshot.committee.operationMode !== 'CHAIR_OPERATED') {setDelegateFilesEnabled(false); return;}
     void api.listStorageBindings(snapshot.committee.id).then(bindings => {
       if (active) setDelegateFilesEnabled(bindings.some(binding => binding.status === 'ACTIVE' && binding.providerType === 'CHAIR_AGENT'));
-    }).catch(() => {if (active) setDelegateFilesEnabled(false);});
+    }).catch(caught => {if (active) {
+      if (caught instanceof SelfHostedApiError && [401, 403, 404].includes(caught.status)) setDelegateFilesEnabled(undefined);
+      setBindingError(errorText(caught));
+    }});
     return () => {active = false;};
   }, [api, canManageStorage, snapshot.committee.id, snapshot.committee.operationMode,
-    snapshot.sync.committeeEventSequence]);
+    snapshot.sync.committeeEventSequence, bindingReload]);
+  if (canManageStorage && snapshot.committee.operationMode === 'CHAIR_OPERATED' && delegateFilesEnabled === undefined) {
+    return bindingError ? <Message error><p>{bindingError}</p><Button onClick={() => setBindingReload(value => value + 1)}>重试</Button></Message> : <Segment basic loading style={{minHeight: 120}} role="status" aria-label="加载中" />;
+  }
   const base = `/committees/${snapshot.committee.id}/posts`;
   if (tab === undefined || tab === 'text' || tab === 'links') return <Redirect to={`${base}/attachments`} />;
+  if (delegateFilesEnabled && tab === 'attachments') return <Redirect to={`${base}/review`} />;
   const active = tab === 'attachments' || tab === 'storage' || (tab === 'file-settings' && canManageStorage) || (tab === 'share' && delegateFilesEnabled)
-    ? tab : 'attachments';
+    || (tab === 'upload' && delegateFilesEnabled) || (tab === 'review' && delegateFilesEnabled)
+    ? tab : delegateFilesEnabled ? 'review' : 'attachments';
   return <><Menu pointing secondary aria-label={t('Resource sections')}>
-    <Menu.Item as={Link} to={`${base}/attachments`} active={active === 'attachments'}>{t('Attachments')}</Menu.Item>
-    {delegateFilesEnabled && <Menu.Item as={Link} to={`${base}/share`} active={active === 'share'}>分享</Menu.Item>}
-    {canManageStorage && <Menu.Item as={Link} to={`${base}/storage`} active={active === 'storage'}>{t('Storage')}</Menu.Item>}
+    {delegateFilesEnabled ? <><Menu.Item as={Link} to={`${base}/review`} active={active === 'review'}>审核</Menu.Item>
+      <Menu.Item as={Link} to={`${base}/share`} active={active === 'share'}>分享</Menu.Item>
+      <Menu.Item as={Link} to={`${base}/upload`} active={active === 'upload'}>上传文件</Menu.Item></>
+      : <Menu.Item as={Link} to={`${base}/attachments`} active={active === 'attachments'}>{t('Attachments')}</Menu.Item>}
+    {canManageStorage && <Menu.Item as={Link} to={`${base}/storage`} active={active === 'storage'}>存储设置</Menu.Item>}
     {canManageStorage && <Menu.Item as={Link} to={`${base}/file-settings`} active={active === 'file-settings'}>文件设置</Menu.Item>}
   </Menu>
+    {bindingError && <Message error><p>{bindingError}</p><Button onClick={() => setBindingReload(value => value + 1)}>重试</Button></Message>}
     {active === 'file-settings' && canManageStorage && <DelegateFileSettingsPanel key={snapshot.committee.id} committeeId={snapshot.committee.id} api={api}
       readOnly={!['ACTIVE', 'PAUSED'].includes(snapshot.committee.status)} />}
-    {active === 'attachments' && (delegateFilesEnabled
-      ? <DelegateFileReviewPanel snapshot={snapshot} api={api} />
-      : <FilesPanel section="attachments" snapshot={snapshot} api={api} currentUserId={userId} />)}
-    {active === 'share' && delegateFilesEnabled && <DelegateFileSharePanel snapshot={snapshot} api={api} />}
+    {active === 'upload' && delegateFilesEnabled && <DelegateFileUploadPanel snapshot={snapshot} api={api} />}
+    {active === 'attachments' && !delegateFilesEnabled && <FilesPanel section="attachments" snapshot={snapshot} api={api} currentUserId={userId} />}
+    {delegateFilesEnabled && <DelegateFilePanels snapshot={snapshot} api={api} tab={active} />}
     {active === 'storage' && canManageStorage && <FilesPanel section="storage" snapshot={snapshot} api={api} currentUserId={userId} />}
   </>;
 }
@@ -977,7 +990,7 @@ function CommitteeWorkspaceContent({id, api, user, logout}: {
           <Route exact path={`${base}/roll-call`}><RollCallPanel snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} /></Route>
           <Route exact path={`${base}/points`}><PointsPanel snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} /></Route>
           <Route exact path={`${base}/notes`}><NotesPanel snapshot={interactionSnapshot} run={run} api={api} /></Route>
-          <Route path={`${base}/posts/:tab?`} render={({match}) => <PostsPanel snapshot={interactionSnapshot} api={api}
+          <Route path={`${base}/posts/:tab?`} render={({match}) => <PostsPanel key={`${interactionSnapshot.committee.id}:${user?.id}:${interactionSnapshot.viewer.audience}:${interactionSnapshot.committee.operationMode}`} snapshot={interactionSnapshot} api={api}
             userId={user?.id} tab={match.params.tab} />} />
           <Route exact path={`${base}/files`}><Redirect to={`${base}/posts/attachments`} /></Route>
           <Route path={`${base}/motions`}><ProceedingsPanel view="motions" snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} /></Route>

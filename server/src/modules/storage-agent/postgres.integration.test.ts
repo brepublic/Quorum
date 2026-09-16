@@ -5,7 +5,7 @@ import {mkdtemp, rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
 import pg from 'pg';
-import {afterEach, beforeEach, describe, expect, it} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {runMigrations} from '../../db/migrations';
 import {PostgresIdentityStore} from '../identity/postgres';
 import {IdentityService} from '../identity/service';
@@ -184,6 +184,59 @@ integration('PostgreSQL stage 7 storage Agent identity', () => {
     expect((await tasks.fileStatus(paired.credential,paired.host.leaseGeneration)).files[0]).toMatchObject({status:'DELETED',logicalName:file.logicalName,cacheState:null});
     await agent.revokeHost(a.owner,a.committee.id,paired.host.id,{baseRevision:await committeeRevision(a.committee.id)},context('desktop-revoke'));
     await expect(tasks.fileStatus(paired.credential,paired.host.leaseGeneration)).rejects.toMatchObject({code:'STALE_STORAGE_LEASE'});
+  });
+
+  it('batches suggested file names across files and preserves session boundaries', async () => {
+    const value = await fixture();
+    const first = await committedFile(value.owner, value.committee.id);
+    const service = new DelegateFileService(pool!, uploads, {} as never,
+      new Stage6FileService(pool!, {} as never, {} as never, {} as never), storage);
+    const query = vi.spyOn(pool!, 'query');
+    try {
+      const single = await service.listReview(value.chair, value.committee.id);
+      const singleReads = query.mock.calls.length;
+      expect(single[0]?.suggestedNames?.WORKING_PAPER).toBe('工作文件 1.1');
+      const bindingId = (await pool!.query('SELECT active_storage_binding_id FROM committees WHERE id=$1', [value.committee.id])).rows[0].active_storage_binding_id;
+      const records = [
+        {file: first, date: '2025-12-31', type: 'WORKING_PAPER', published: true},
+        {date: '2026-01-01', type: 'WORKING_PAPER', published: true},
+        {date: '2026-01-20', type: 'WORKING_PAPER', published: true},
+        {date: '2026-02-01', type: 'DIRECTIVE_DRAFT', published: true},
+        {date: '2026-02-15', type: 'WORKING_PAPER', published: false},
+        {date: '2026-01-15', type: 'RESOLUTION_DRAFT', published: false}
+      ];
+      const ids: string[] = [];
+      for (const item of records) {
+        const file = item.file ?? await storage.recordProviderCommit(value.owner, value.committee.id, {
+          bindingId, blobId: randomUUID(), logicalName: item.date, originalName: 'draft.txt', mediaType: 'text/plain',
+          sizeBytes: 1, sha256: randomBytes(32).toString('hex'), storageKey: `blobs/aa/${randomUUID().replaceAll('-', '')}`
+        }, randomUUID(), context('name-file'));
+        ids.push(file.id);
+        await pool!.query(`UPDATE file_entries SET status=$2,submitted_at=$3,published_at=$4,published_by_user_id=$5 WHERE id=$1`,
+          [file.id, item.published ? 'PUBLISHED' : 'PENDING_REVIEW', item.date,
+            item.published ? item.date : null, item.published ? value.chair.user.id : null]);
+        await pool!.query(`INSERT INTO delegate_file_metadata(file_entry_id,submission_source,file_type,submitted_at)
+          VALUES ($1,'LEGACY',$2,$3)`, [file.id, item.type, item.date]);
+      }
+      query.mockClear();
+      const noSessions = await service.listReview(value.chair, value.committee.id);
+      expect(query.mock.calls.length).toBe(singleReads);
+      expect(noSessions).toHaveLength(records.length);
+      for (const file of noSessions) expect(file.suggestedNames).toEqual({
+        WORKING_PAPER: '工作文件 1.4', DIRECTIVE_DRAFT: '指令草案 1.2', RESOLUTION_DRAFT: '决议草案 1.1'});
+      for (const date of ['2026-01-01', '2026-02-01']) {
+        await pool!.query(`INSERT INTO meeting_sessions(id,committee_id,phase_id,active_rule_package_version_id,
+          status,created_by_user_id,created_at,closed_at,name) VALUES ($1,$2,'formal-debate',$3,'CLOSED',$4,$5,$5,$6)`,
+          [randomUUID(), value.committee.id, value.committee.activeRulePackageVersionId, value.chair.user.id, date, `测试会期 ${date}`]);
+      }
+      query.mockClear();
+      const withSessions = await service.listReview(value.chair, value.committee.id);
+      expect(query.mock.calls.length).toBe(singleReads);
+      for (const index of [0, 1, 2, 5]) expect(withSessions.find(file => file.id === ids[index])?.suggestedNames).toEqual({
+        WORKING_PAPER: '工作文件 1.3', DIRECTIVE_DRAFT: '指令草案 1.1', RESOLUTION_DRAFT: '决议草案 1.1'});
+      for (const index of [3, 4]) expect(withSessions.find(file => file.id === ids[index])?.suggestedNames).toEqual({
+        WORKING_PAPER: '工作文件 2.1', DIRECTIVE_DRAFT: '指令草案 2.2', RESOLUTION_DRAFT: '决议草案 2.1'});
+    } finally {query.mockRestore();}
   });
 
   it('binds one eligible delegation to an opaque browser credential and revokes it when the mode changes', async () => {
