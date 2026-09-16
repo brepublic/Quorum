@@ -50,6 +50,26 @@ afterEach(async () => {
 });
 
 integration('PostgreSQL migrations', () => {
+  it('upgrades schema 42 with default committee behavior values and formal-debate baseline', async () => {
+    const pool = new Pool({connectionString: databaseUrl});
+    const source = resolve('server/migrations'); const staged = await mkdtemp(join(tmpdir(), 'quorum-migrations-0043-'));
+    temporaryDirectories.push(staged);
+    const files = (await readdir(source)).filter(file => file.endsWith('.sql')).sort();
+    try {
+      for (const file of files.filter(file => Number(file.slice(0, 4)) <= 42)) await cp(join(source, file), join(staged, file));
+      await runMigrations(pool, staged);
+      await cp(join(source, files.find(file => file.startsWith('0043_')) as string), join(staged, '0043_default_committee_behavior.sql'));
+      await cp(join(source, files.find(file => file.startsWith('0044_')) as string), join(staged, '0044_formal_debate_general_list_continuity.sql'));
+      const applied = await runMigrations(pool, staged);
+      const defaults = await pool.query(`SELECT default_committee_creator_is_chair, default_committee_operation_mode,
+        default_committee_behavior_revision FROM system_settings WHERE singleton=true`);
+      expect(applied.latestAppliedVersion).toBe(44);
+      expect(defaults.rows).toEqual([{default_committee_creator_is_chair: true, default_committee_operation_mode: 'CHAIR_OPERATED',
+        default_committee_behavior_revision: 1}]);
+      await expect(pool.query(`UPDATE system_settings SET default_committee_behavior_revision=0 WHERE singleton=true`)).rejects.toMatchObject({code: '23514'});
+    } finally { await pool.end(); }
+  });
+
   it('migrates an empty database and is safe to run again', async () => {
     const pool = new Pool({connectionString: databaseUrl});
     const migrationsDirectory = resolve('server/migrations');
@@ -62,11 +82,11 @@ integration('PostgreSQL migrations', () => {
       );
       const applied = await pool.query('SELECT version FROM quorum_meta.schema_migrations');
 
-      expect(first).toEqual(expect.objectContaining({ready: true, latestAppliedVersion: 39}));
+      expect(first).toEqual(expect.objectContaining({ready: true, latestAppliedVersion: 52}));
       expect(second).toEqual(expect.objectContaining({ready: true, pendingVersions: []}));
       expect(status.ready).toBe(true);
-      expect(runtime.rows[0]?.schema_compatibility).toBe(39);
-      expect(applied.rowCount).toBe(39);
+      expect(runtime.rows[0]?.schema_compatibility).toBe(52);
+      expect(applied.rowCount).toBe(52);
       const stage3Tables = await pool.query<{name: string}>(`SELECT table_name AS name FROM information_schema.tables
         WHERE table_schema='public' AND table_name IN ('committees','committee_memberships','committee_capabilities',
         'committee_seats','seat_assignments','seat_invitations','rule_packages','rule_package_versions',
@@ -92,6 +112,11 @@ integration('PostgreSQL migrations', () => {
         WHERE table_schema='public' AND table_name IN
           ('committee_deletion_jobs','committee_deletion_agent_tasks')`);
       expect(stage8Tables.rowCount).toBe(2);
+      const cacheTables = await pool.query<{name: string}>(`SELECT table_name AS name FROM information_schema.tables
+        WHERE table_schema='public' AND table_name='storage_cache_entries'`);
+      expect(cacheTables.rowCount).toBe(1);
+      await expect(pool.query(`UPDATE system_settings SET pending_review_committee_max_bytes=6000000000
+        WHERE singleton=true`)).rejects.toMatchObject({code: '23514'});
     } finally {
       await pool.end();
     }

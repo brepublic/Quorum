@@ -8,6 +8,19 @@ const success = (data: unknown) => new Response(JSON.stringify({data, meta: {req
   status: 200, headers: {'content-type': 'application/json'}});
 
 describe('Chair Agent HTTP client', () => {
+  it('passes lifetime cancellation to ordinary requests and rejects credential redirects', async () => {
+    const controller = new AbortController();
+    const fetcher = vi.fn(async (_input: unknown, init?: RequestInit) => {
+      expect(init?.redirect).toBe('error');
+      expect(init?.signal).toBe(controller.signal);
+      return success({files:[],nextId:null,observedAt:'now'});
+    });
+    const client = new StorageAgentHttpClient('https://quorum.example.com',credential,fetcher as typeof fetch,controller.signal);
+    await client.fileStatus(7);
+    controller.abort();
+    expect((fetcher.mock.calls[0]?.[1]?.signal as AbortSignal).aborted).toBe(true);
+  });
+
   it('keeps device authorization on every fenced request without putting it in the URL', async () => {
     const fetcher = vi.fn(async () => success({events: [], nextSequence: 0, hasMore: false}));
     const client = new StorageAgentHttpClient('https://quorum.example.com', credential, fetcher as typeof fetch);
@@ -27,6 +40,24 @@ describe('Chair Agent HTTP client', () => {
     expect(url.toString()).toBe('https://quorum.example.com/api/v1/storage-agent/conflicts');
     expect(options.headers).toMatchObject({authorization: `QuorumAgent ${credential}`,
       'x-storage-lease-generation': '7'});
+  });
+
+  it('parses only wake events from the credentialed SSE stream', async () => {
+    const stream = new ReadableStream<Uint8Array>({start(controller) {
+      controller.enqueue(new TextEncoder().encode(': heartbeat\n\nevent: wake\ndata: {}\n'));
+      controller.enqueue(new TextEncoder().encode('\nevent: ignored\ndata: {}\n\n'));
+      controller.close();
+    }});
+    const fetcher = vi.fn(async () => new Response(stream, {status: 200,
+      headers: {'content-type': 'text/event-stream'}}));
+    const client = new StorageAgentHttpClient('https://quorum.example.com', credential, fetcher as typeof fetch);
+    const wake = vi.fn();
+    await client.events(7, new AbortController().signal, wake);
+    expect(wake).toHaveBeenCalledOnce();
+    const [url, options] = fetcher.mock.calls[0] as unknown as [URL, RequestInit];
+    expect(url.toString()).toBe('https://quorum.example.com/api/v1/storage-agent/events');
+    expect(options.headers).toMatchObject({authorization: `QuorumAgent ${credential}`,
+      'x-storage-lease-generation': '7', accept: 'text/event-stream'});
   });
 
   it('turns a durable Chair conflict response back into its typed result', async () => {

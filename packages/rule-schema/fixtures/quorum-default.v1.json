@@ -27,7 +27,7 @@
   "speakerLists": [
     {
       "id": "general-speakers-list",
-      "defaultDurationSeconds": 60,
+      "defaultDurationSeconds": 120,
       "allowDelegateRequests": true,
       "yieldMinimumRemainingSecondsExclusive": 1,
       "yieldTypes": ["CHAIR", "DELEGATE", "QUESTION", "COMMENT"],

@@ -6,7 +6,7 @@ import {SelfHostedApiError, newIdempotencyKey, type SelfHostedApi} from '../../s
 import {sha256File} from '../../services/sha256';
 
 const FILE_STATUS: Record<FileEntry['status'], string> = {
-  UPLOAD_COMPLETE: '上传完成', PENDING_REVIEW: '待审核', PUBLISHED: '已发布', DELETED: '已删除'
+  UPLOAD_COMPLETE: '上传完成', PENDING_REVIEW: '待审核', PUBLISHED: '已发布', REJECTED: '已驳回', DELETED: '已删除'
 };
 const MIGRATION_STATUS: Record<StorageMigration['status'], string> = {
   COPYING: '正在复制', READY_TO_CONFIRM: '等待确认', FAILED: '迁移失败', COMPLETED: '迁移完成', CANCELLED: '已取消'
@@ -73,7 +73,22 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
   const [error, setError] = React.useState<string>();
   const [working, setWorking] = React.useState(false);
   const [progress, setProgress] = React.useState<UploadProgress>();
+  const [preparingDownloads, setPreparingDownloads] = React.useState<Set<string>>(() => new Set());
   const uploadController = React.useRef<AbortController>();
+
+  const downloadFile = async (fileId: string) => {
+    setPreparingDownloads(current => new Set(current).add(fileId)); setError(undefined);
+    try {
+      let readiness = await api.prepareFileDownload(fileId);
+      while (readiness.status === 'PREPARING') {
+        await new Promise(resolve => window.setTimeout(resolve, (readiness.retryAfterSeconds ?? 2) * 1000));
+        readiness = await api.fileDownloadReadiness(fileId);
+      }
+      if (readiness.status !== 'READY') throw new Error(readiness.code ?? 'File is unavailable.');
+      window.location.assign(api.fileDownloadUrl(fileId));
+    } catch (caught) { setError(storageErrorText(caught)); }
+    finally { setPreparingDownloads(current => { const next = new Set(current); next.delete(fileId); return next; }); }
+  };
 
   const refresh = React.useCallback(async (clearError = true) => {
     try {
@@ -230,7 +245,10 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
           </Card.Meta>
           <Card.Description>{file.currentVersion.originalName}</Card.Description>
         </Card.Content><Card.Content extra className="self-hosted-file-actions">
-          <Button as="a" size="small" href={api.fileDownloadUrl(file.id)} download>下载文件</Button>
+          <Button as="a" size="small" href={api.fileDownloadUrl(file.id)} download
+            loading={preparingDownloads.has(file.id)} disabled={preparingDownloads.has(file.id)}
+            onClick={(event: React.MouseEvent) => {event.preventDefault(); void downloadFile(file.id);}}>
+            {preparingDownloads.has(file.id) ? '正在从主席电脑准备文件' : '下载文件'}</Button>
           {canChange && file.status === 'UPLOAD_COMPLETE' && <Button size="small"
             onClick={() => void run(() => api.submitFileForReview(file.id, file.revision))}>提交审核</Button>}
           {canManage && file.status === 'PENDING_REVIEW' && <Button primary size="small"
@@ -252,10 +270,14 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
         : <p>未配对</p>}
       {pairing && <Message info><Message.Header>配对码</Message.Header>
         <code className="self-hosted-pairing-code">{pairing.code}</code>
-        <span> · 有效至 {new Date(pairing.expiresAt).toLocaleTimeString('zh-CN')}</span>
-        <Button type="button" size="small" onClick={() => void navigator.clipboard?.writeText(pairing.code)}>
-          复制配对码
-        </Button>
+        <span className="self-hosted-pairing-code-meta">
+          · 有效至 {new Date(pairing.expiresAt).toLocaleTimeString('zh-CN')}
+        </span>
+        <span className="self-hosted-pairing-code-actions">
+          <Button type="button" size="small" onClick={() => void navigator.clipboard?.writeText(pairing.code)}>
+            复制配对码
+          </Button>
+        </span>
       </Message>}
       {!pairing && <Button type="button" size="small" disabled={working}
         onClick={() => void createPairing(activeHost ? 'TRANSFER' : 'INITIAL')}>

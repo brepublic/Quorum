@@ -37,16 +37,16 @@ flowchart LR
 
 - `/committees`：公开/私有委员会列表与创建；
 - `/countries`、`/templates`：沿用迁移前的表格编辑交互管理账号级国家模板和委员会模板；国家模板先按名称创建空模板再编辑国家，内置国家模板可查看和克隆，委员会创建器提供内置委员会模板；
-- `/committees/:id`：默认跳转点名页；委员会名称入口打开居中的卡片化委员会信息页。会场设置、动议、自由磋商、发言名单、决议草案、意向性投票、问题、笔记、资料、统计、设置和帮助保持各自路由；动态发言名单、决议草案与意向性投票使用资源 ID 子路由，资料页分为文本、附件和存储；
-- `/storage`：仅系统管理员使用的 S3 配置；
-- `/operations`：仅系统管理员使用的容量、队列与 retention 聚合状态；
+- `/committees/:id`：默认跳转点名页；委员会名称入口打开居中的卡片化委员会信息页。会场设置、动议、自由磋商、发言名单、决议草案、意向性投票、问题、笔记、资料、统计、设置和帮助保持各自路由；动态发言名单、决议草案与意向性投票使用资源 ID 子路由，资料页分为文本、附件和存储；主席代办且使用活动 Chair Agent 时另提供文件分享与代表文件审核；
+- `/delegate-files`：能力链接进入的免登录代表文件入口；浏览器以 HttpOnly 凭据绑定一次代表团选择，并使用独立 CSRF cookie、文件 API 与 SSE，不获得委员会普通成员权限；
+- `/system-settings`：仅系统管理员使用，按子路由分为运行状态（`operations`）、委员会默认设置（`defaults`）、缓存设置（`cache`）和存储配置（`storage`）；运行状态用卡片展示容量、队列、retention 与缓存信息，文件清单可折叠。缓存额度表单独立于状态页，委员会默认行为和默认驳回类型独立于账号管理。旧 `/operations`、`/storage` 地址跳转到对应子页；
 - `/admin`：账号创建、重置、禁用、Session 撤销和不可逆匿名化。
 
-委员会工作区 Context 统一持有受众过滤快照、活动规则只读模型、SSE 游标、连接状态、刷新和命令执行器；各路由子页不重复建立监听。一个委员会保持最多一条 SSE。客户端检测事件序号缺口、未知事件或过期游标时丢弃增量并重新取完整快照，不从本地猜测权威状态。陈旧 revision 会刷新快照并要求用户确认最新状态后重试；幂等冲突和规则冲突均要求显式刷新或裁决，不静默覆盖。`OFFLINE_READONLY` 状态在整个委员会工作区撤销写控件。活动规则只读模型由现有 `rule_package_versions.definition` 派生，不增加数据库表或 migration。
+委员会工作区 Context 统一持有受众过滤快照、活动规则只读模型、SSE 游标、连接状态、刷新和命令执行器；各路由子页不重复建立监听。一个委员会保持最多一条 SSE。文件区在确认活动 Chair Agent binding 后并行预取审核列表与分享状态，数据保留在文件区父组件的内存中；切换子页保留已加载内容并后台刷新，委员会事件也刷新两项数据。首次加载与空结果、错误分开显示；离开文件区或切换委员会、账号、权限及运作模式时释放数据，不写浏览器持久存储。客户端检测事件序号缺口、未知事件或过期游标时丢弃增量并重新取完整快照，不从本地猜测权威状态。陈旧 revision 会刷新快照并要求用户确认最新状态后重试；幂等冲突和规则冲突均要求显式刷新或裁决，不静默覆盖。`OFFLINE_READONLY` 状态在整个委员会工作区撤销写控件。活动规则只读模型由现有 `rule_package_versions.definition` 派生，不增加数据库表或 migration。
 
-点名页恢复迁移前的 18 席分页三列矩阵。Chair 可直接选择冻结名单中的任意席位并改答；浏览器仍只提交 `baseRevision`、目标席位和冻结回答，服务端在事务内追加新的 entry、撤销被替代 entry，并生成事件、审计及完成后的出席事件。原有顺序录入、撤销和重置命令继续保留。
+点名页使用每页 9 席的三列三行矩阵，按列从上到下排列。Chair 可直接选择冻结名单中的任意席位并改答；浏览器仍只提交 `baseRevision`、目标席位和冻结回答，服务端在事务内追加新的 entry、撤销被替代 entry，并生成事件、审计及完成后的出席事件。原有顺序录入、撤销和重置命令继续保留。
 
-会期按委员会创建顺序命名为“第X会期”。启动事务会打开待开始会期并创建唯一的主发言名单及发言计时器；“暂停会议”动议通过会原子关闭当前会期并预建下一待开始会期。migration 38 也会为升级时开放且尚无主发言名单的会议补建同一资源、公开事件和系统迁移审计，发言时间优先取活动规则包并以 60 秒兜底。普通有主持核心磋商仍由主席通过必填主题表单或已通过动议创建。旧版的队列顺序和双计时器分列设置保存在委员会行中，经 revision 命令、事件和审计更新，并随工作区快照下发。工作区快照同时提供会期清单与跨会期问题、动议历史，前端按会期名称分隔但仍按时间倒序展示。笔记保留多笔记选择器，浏览器停止输入约 600ms 后调用原有版本化笔记命令，服务端仍保存每次已提交修改的历史边界。
+会期按委员会创建顺序命名为“第X会期”。新会议启动事务会创建唯一、关闭的主发言名单及发言计时器；“暂停会议”动议通过会原子关闭当前会期并预建下一待开始会期，续会在同一事务中重新关联前一会期的同一名单，保留队列、计时器和发言历史。若名单缺失，首次启动返回可恢复冲突；主席确认后的重试可按待开始会期规则包创建唯一替代名单。会期内部的正式辩论状态只由已通过的开启/关闭正式辩论动议更新，并决定替代名单开关；主席手动开关名单不改变它。migration 38 也会为升级时开放且尚无主发言名单的会议补建同一资源、公开事件和系统迁移审计，发言时间优先取活动规则包并以 60 秒兜底。普通有主持核心磋商仍由主席通过必填主题表单或已通过动议创建。旧版的队列顺序和双计时器分列设置保存在委员会行中，经 revision 命令、事件和审计更新，并随工作区快照下发。工作区快照同时提供会期清单与跨会期问题、动议历史，前端按会期名称分隔但仍按时间倒序展示。笔记保留多笔记选择器，浏览器停止输入约 600ms 后调用原有版本化笔记命令，服务端仍保存每次已提交修改的历史边界。
 
 决议草案与修正案沿用迁移前的即时加号和卡片编辑交互，正文均支持文本或单个已审核文件。修正案先作为系统顺序命名的草稿创建，只有通过“展示修正案”动议才能公开；动议引用既有修正案，不重复创建资源。未产生正式表决、未进入结果状态的修正案可逻辑删除，正文和版本继续保留并追加审计；一旦产生表决或记录结果，服务端拒绝删除。主席在旧版状态下拉中记录纳入或未采纳，结果更正继续追加历史。“对修正案投票”动议通过后冻结当前版本并进入 `VOTING`，卡片内创建和显示保留的新式正式 ballot；此后人工状态下拉锁定，发布 ballot 结果原子写入纳入或未采纳状态。
 
@@ -54,7 +54,7 @@ flowchart LR
 
 ## 3. 服务端模块与数据边界
 
-`server/` 是单进程模块化单体。启动时使用 PostgreSQL advisory lock 执行带 SHA-256 校验和的顺序 migration；当前 schema compatibility 为 40。数据库版本、连接、存储目录可写性或容量采样不满足要求时 readiness 失败。
+`server/` 是单进程模块化单体。启动时使用 PostgreSQL advisory lock 执行带 SHA-256 校验和的顺序 migration；当前 schema compatibility 为 52。实例级 `system_settings` 保存新委员会的默认运作模式与创建者是否自动获得 Chair；它们只在创建事务中读取，不追溯既有委员会。系统管理员不能创建委员会。数据库版本、连接、存储目录可写性或容量采样不满足要求时 readiness 失败。
 
 | 模块 | 责任 |
 | --- | --- |
@@ -63,11 +63,12 @@ flowchart LR
 | Stage 5 | SSE、权威计时器、发言/让渡、动议、ballot、Strawpoll、决议与修正案 |
 | Storage | durable staging、provider、文件版本、审核发布、下载、删除和迁移 |
 | Storage Agent | 配对、lease fencing、manifest/task、内容传输、本地变化与冲突 |
+| Delegate Files | 主席控制的能力链接、代表团浏览器绑定、代表上传/审核、已发布文件与独立 SSE |
 | Operations | 归档导出、委员会删除、账号处置、retention、状态、健康和指标 |
 
 `packages/contracts/` 保存浏览器、后端与 Agent 共用的错误码、事件、审计动作、响应类型和不可变规则快照。`packages/rule-schema/` 保存规则包 v1 的 schema、安全表达式求值和内置 `Quorum Default`/北京学术标准 fixture。`packages/storage-agent/` 保存独立 Chair Agent 客户端、安全目录、扫描、恢复循环和发布入口。
 
-所有业务写入使用表达意图的命令。服务端从 Session 或独立 Agent 凭据推导 actor，在一个 PostgreSQL 事务中完成授权、行锁/revision 检查、状态变化、事件、审计和 durable 幂等结果。系统管理员、Committee Owner、Chair 与代表席位是独立能力；系统管理员和 Owner 不自动获得 Chair 学术权限。
+所有业务写入使用表达意图的命令。服务端从 Session 或独立 Agent 凭据推导 actor，在一个 PostgreSQL 事务中完成授权、行锁/revision 检查、状态变化、事件、审计和 durable 幂等结果。系统管理员、Committee Owner、Chair 与代表席位是独立能力；系统管理员不能创建委员会或获得 Chair 学术权限，普通创建者是否自动获得 Chair 由实例级默认设置决定。
 
 公开委员会只向匿名读者返回公开字段和已发布文件。私有委员会对未授权身份统一隐藏。正式 ballot 冻结席位资格、must-vote、门槛、否决席位和规则版本；一席一票由数据库唯一约束保证，更正票追加历史。匿名意向性投票分离回执与选项，不保存投票人与选项关联。
 
@@ -90,7 +91,27 @@ SERVER_VOLUME 使用 0600 临时文件、fsync 和无覆盖原子发布。S3 end
 
 逻辑删除立即隐藏文件并写不可恢复墓碑，再由 durable job 幂等清理每个物理副本。provider migration 复制全部历史 blob 并复验后才原子切换 binding；失败时旧 provider 继续服务。maintenance worker 只清理明确终态且可删除的 staging，唯一暂存副本、待重试 copy 和退休源副本不因期限、LRU 或容量压力删除。
 
-Chair Agent 使用独立 `QuorumAgent` authorization scheme。一次性配对码和设备凭据只保存哈希；一个委员会最多一个活动 host。单调 lease generation fence 使转移或撤销后的旧设备不能 heartbeat、claim、上传或完成任务。Agent 对本地路径做规范化并拒绝链接、硬链接、非普通文件和目录逃逸；服务端下发内容先完整校验再原子替换。本地并发编辑、墓碑冲突和主机转移不会静默覆盖，均形成 durable 冲突供 Chair 显式裁决。
+Chair Agent 使用独立 `QuorumAgent` authorization scheme。一次性配对码和设备凭据只保存哈希；一个委员会最多一个活动 host。单调 lease generation fence 使转移或撤销后的旧设备不能 heartbeat、claim、上传或完成任务。Agent 对本地路径做规范化并拒绝链接、硬链接、非普通文件和目录逃逸；服务端下发内容先完整校验再原子替换。本地并发编辑、墓碑冲突和主机转移不会静默覆盖，均形成 durable 冲突供 Chair 显式裁决。Agent 以独立 heartbeat 维持 lease，以不含任务内容的 SSE `wake` 近实时触发同一个单飞同步循环，并保留 30 秒 durable reconciliation；SSE 断线不改变 PostgreSQL task 的权威性。
+
+代表文件分享只在主席代办、活动委员会和活动 Chair Agent binding 同时成立时可启动。链接 capability 放在 URL fragment 中，服务端保存它以便主席重新显示；代表选定当前开放会期中出席或暂离的席位后，服务端发放 30 天 HttpOnly 浏览器凭据，分享结束或运行条件失效即撤销。该凭据只允许读取本委员会已发布文件、上传到主席电脑和接收代表文件发布事件；文件创建者仍使用分享发起主席作为现有存储链的技术保管人，代表团来源另存为审核与展示元数据。代表上传经 Chair Agent 完成内容提交后进入待审核，主席决定展示名和文件类型；批准与公开事件同事务提交，驳回独立保存状态、选填理由和审核时间，并通过仅向提交代表团开放的事件通知；网页默认保留文件，主席确认删除后才沿用逻辑删除和 Agent 清理。审核元数据在文件删除后仍保留，代表入口只返回所绑定代表团的提交历史。文件名建议按提交会期和同类型已批准文件数生成；上传大小上限由 bootstrap 返回部署运行值。
+
+委员会文件设置保存在委员会行的 `delegate_file_settings` 中，使用独立 revision 和审计保存。管理员在 `system_settings` 管理新委员会的默认驳回类型；两个委员会创建入口均在创建事务内复制默认值，既有委员会独立保存。主席资料页的“文件设置”管理驳回类型、固定代表提示或自行输入方式，以及三种文件类型的后缀白名单。代表 bootstrap 返回许可后缀和已绑定席位国旗；上传创建前服务端校验最后一个后缀（不区分大小写），不合规则不创建上传或审核记录。驳回命令按委员会当前选项解析消息并保存当时文本，历史记录不随选项修改。后缀限制不等同于文件内容检测。
+
+CHAIR_AGENT 字节的权威持久副本仍在主席电脑。服务器使用同一持久卷中的独立 cache 命名空间保存非权威副本，并用 `REVIEW_PINNED` / `READY` / `MISSING` / `FETCHING` / `EVICTING` / `FAILED` 记录状态。管理员配置保存在 PostgreSQL，生效容量上限取数据库值与部署硬边界的较小值，最低剩余空间取较大值。待审核副本不参与 LRU。
+
+### Linux 主席 Agent 桌面外壳
+
+`packages/storage-agent-desktop/` 用 Rust + Slint 提供非 WebView 的单窗口、单委员会管理界面，复用 Node 同步核心。Rust 经子进程管道与 `desktop-bridge.ts` 交换命令与脱敏快照；不开放本地监听端口。关闭窗口先停止 Agent，Linux CLI/GUI 对存储目录使用 `flock`，锁文件 `.quorum-storage.lock` 是保留路径。旧版 Agent 没有此锁，升级时仍须先停止旧进程。
+
+配置新增可选扫描间隔与 CA 路径，保持 schema 1 和已有身份；GUI 只在停止时修改，目录迁移由用户完成并经检查。CA 仅注入 Agent 子进程。新增只读 `/api/v1/storage-agent/file-status` 沿用当前设备认证和 generation 校验，仅返回绑定委员会的文件审核/发布与缓存状态，不返回服务器路径、不触发回传、不增加表。UI 按当前 blob 与本地校验合并状态，传输 100% 后仍需校验成功；离线缓存状态标记未知。
+
+桌面控制错误以白名单错误码和操作步骤传递，CLI 保留受控错误原因链，GUI 不显示原始异常或服务器响应体。成功操作返回 `completed`。GUI 跟踪未保存表单，启动前要求保存、导入及关闭前确认丢弃；配对码仅在成功配对或成功导入后清空，不因保存或失败清空。配对与保存操作固定在设置页底部。
+
+桌面配置另支持 schema 1、`kind: unpaired` 的未配对文件，仅保存服务器地址、存储目录、CA 路径、扫描间隔和设备名称，以 0600 权限写入；不保存配对码或设备授权。GUI 保存/另存不要求已配对，不进行网络请求；导入该文件清空当前启动身份但不撤销服务器授权。启动仍只接受原有完整私有配置。已有未配对文件须先导入才能更新；配对使用临时配置接收凭据，成功后替换原未配对文件，失败保留原设置。配置文件栏启动时为空。
+
+GUI 停止后支持“另存为”，以 0600 权限新建配置文件并保留同一设备身份，不覆盖已有目标。解除配对经确认调用 `POST /api/v1/storage-agent/revoke`：只用已加载配置中的原服务器与设备凭据，不接受目标设备 ID；以当前 generation 和事务锁撤销自身，推进委员会 generation、追加事件与审计，使旧凭据失效。已验证凭据对应的设备若已撤销或被转移，重试返回成功；错误 generation 不会撤销当前设备。仅服务端确认后 GUI 清空当前选择，保留磁盘配置和原目录；重新配对须使用新配置路径及新目录。该功能需要更新服务器，旧服务器不支持时保留配置并报错。
+
+开发使用 `pnpm start:storage-agent:desktop`，需要 Rust、Slint 构建依赖及 Linux 桌面 portal；新增 Rust 锁文件不改变现有 Web/服务器构建命令。详情与验收边界见 `packages/storage-agent-desktop/README.md`，产品取舍见 `.agents/CHAIR_AGENT_GUI.md`。
 
 ## 6. 归档、删除与运维
 
@@ -100,7 +121,7 @@ Owner 可把活动委员会归档。归档后全部业务写命令在服务端�
 
 禁用普通账号可由系统管理员在把委员会、账号级模板与规则包原子转移给活动接收方后不可逆匿名化。历史 actor ID 保留，但邮箱、显示名、凭据和 Session 被清除，数据库触发器禁止恢复个人身份。
 
-retention worker 使用 advisory lock，仅清理明确过期且不再承载业务真相的 Session、幂等结果、终态一次性秘密和已决定注册申请。事件、审计、Agent task、provider/delete job、deletion job 与墓碑不参与普通期限清理。系统管理员状态页只返回固定聚合字段，不返回标识、文件路径、provider key 或凭据。
+retention worker 使用 advisory lock，仅清理明确过期且不再承载业务真相的 Session、幂等结果、终态一次性秘密和已决定注册申请。事件、审计、Agent task、provider/delete job、deletion job 与墓碑不参与普通期限清理。系统管理员状态页可读取缓存文件名、委员会名、大小和 LRU 顺序，但不返回本地路径、storage key、哈希、正文、凭据或下载能力；读取该清单不写审计。
 
 `pnpm self-host:backup -- <new-directory>` 输出 PostgreSQL custom dump、文件 provider manifest 和 SHA-256 元数据。数据库与 provider 字节不是跨介质原子快照；恢复必须按 `docs/self-hosted/RECOVERY.md` 在隔离环境逐对象核对。首版不调度自动备份，也不提供自动破坏性 restore。
 
@@ -131,7 +152,7 @@ source scripts/wsl-env.sh
 ```sh
 pnpm start                         # 自托管浏览器开发服务器
 pnpm exec vitest run               # 全仓单元、契约与 HTTP 测试
-pnpm test:self-host                # 自托管有限测试集
+pnpm test:self-host                # 自动发现的非 PostgreSQL 测试集
 pnpm test:self-host:integration    # 真实 PostgreSQL 临时数据库测试
 pnpm build:self-host               # 浏览器、契约、规则、后端与 Agent 构建
 pnpm verify:no-legacy-runtime      # 检查生产源码、依赖、配置与构建产物
@@ -139,6 +160,8 @@ pnpm self-host:test-db:up          # 启动本地 PostgreSQL 16 测试服务
 pnpm self-host:test-db:down
 ```
 
-集成测试必须使用 `TEST_DATABASE_ADMIN_URL` 创建随机临时数据库；未配置时明确 skip，不使用内存数据库替代。GitHub Actions 提供 PostgreSQL 16 service 并执行自托管测试、真实 integration 与生产构建。
+前端日常开发无需重建镜像：`pnpm start` 的 Vite dev server 通过 `server.proxy` 把 `/api/v1` 代理到 Compose 部署的 Caddy（默认 `https://localhost`，可用环境变量 `QUORUM_DEV_API_ORIGIN` 覆盖），并将请求 `Origin` 重写为目标源以通过服务端 `QUORUM_ALLOWED_ORIGINS` 校验；`src/` 修改即时热更新。后端或契约变更仍需重建 app 镜像（`up -d --build app`）。
+
+集成测试必须使用 `TEST_DATABASE_ADMIN_URL` 创建随机临时数据库；未配置时明确 skip，不使用内存数据库替代。GitHub Actions 先构建 workspace 产物，再执行自动发现的非 PostgreSQL 测试和一次显式 PostgreSQL integration 测试，最后进行生产运行时检查。GitHub Actions 提供 PostgreSQL 16 service。真实 PostgreSQL、浏览器、TLS、S3 和原生平台证据仍不能由普通测试替代。
 
 当前 WSL 已完成类型、Vitest、构建、锁文件和静态零运行依赖验证。真实 PostgreSQL/Compose、Caddy TLS、多浏览器、真实 S3/持久卷、Chair 原生平台、签名公证、备份恢复和生产网络 HAR 仍按 `docs/self-hosted/MANUAL_ACCEPTANCE.md` 逐项取证；自动测试或 mock 不能替代这些证据。

@@ -8,7 +8,7 @@ import type {CommitteePoint, CommitteeWorkspaceSnapshot, CreatedStrawpoll, Proce
 import type {SelfHostedApi} from '../../services/self-hosted-api';
 import type {SelfHostedUser} from '../../services/self-hosted-identity';
 import SelfHostedWorkspace from '../SelfHostedWorkspace';
-import {legacyInterlacedQueue} from './ProceedingsPanel';
+import {generalQueueHasDividerBefore, legacyInterlacedQueue} from './ProceedingsPanel';
 
 vi.mock('../../services/sha256', () => ({sha256File: vi.fn(async () => 'a'.repeat(64))}));
 
@@ -63,12 +63,40 @@ function clickSemanticCheckbox(element?: Element | null) {
 }
 
 describe('committee workspace routes and roles', () => {
+  it.each(['start', 'set'] as const)('shows the unmoderated timer immediately and creates it on %s', async action => {
+    const timer = {id: 'unmod-timer', committeeId: 'committee', ownerType: 'COMMITTEE' as const, ownerId: 'committee',
+      running: false, startedAt: null, remainingAtStartMs: 600_000, remainingMs: 600_000,
+      revision: 1, expiredAt: null, serverTime: '2026-09-16T00:00:00.000Z'};
+    const createTimer = vi.fn(async () => timer);
+    const commandTimer = vi.fn(async () => ({...timer, running: true, revision: 2}));
+    const page = await render('CHAIR', '/committees/committee/unmod', user, value => value, {createTimer, commandTimer});
+    expect(page.querySelector('time')?.textContent).toBe('10:00');
+    expect(page.textContent).not.toContain('Create timer');
+    expect(createTimer).not.toHaveBeenCalled();
+    const button = action === 'start' ? page.querySelector<HTMLButtonElement>('.legacy-timer-display')
+      : [...page.querySelectorAll('button')].find(item => item.textContent === 'Set');
+    await act(async () => {button?.click();});
+    expect(createTimer).toHaveBeenCalledTimes(1);
+    expect(createTimer).toHaveBeenCalledWith('committee', 'COMMITTEE', 'committee', 600_000);
+    if (action === 'start') expect(commandTimer).toHaveBeenCalledWith('unmod-timer', 'start', 1, undefined);
+    else expect(commandTimer).not.toHaveBeenCalled();
+  });
+
+  it('shows a read-only unmoderated timer to viewers before one has been saved', async () => {
+    const createTimer = vi.fn();
+    const page = await render('PUBLIC', '/committees/committee/unmod', user, value => value, {createTimer});
+    expect(page.querySelector('time')?.textContent).toBe('10:00');
+    expect(page.querySelector<HTMLButtonElement>('.legacy-timer-display')?.disabled).toBe(true);
+    expect(page.querySelector('.proceedings-timer form')).toBeNull();
+    expect(createTimer).not.toHaveBeenCalled();
+  });
+
   it('lets each committee page own its layout inside a full-width workspace shell', async () => {
     const page = await render('OWNER', '/committees/committee/roll-call');
     const workspace = page.querySelector('.committee-workspace-page');
 
     expect(workspace?.classList.contains('fluid')).toBe(true);
-    expect(workspace?.querySelector(':scope > .ui.segment')).toBeNull();
+    expect(workspace?.querySelector(':scope > .roll-call-start-card')).toBeTruthy();
     expect(workspace?.textContent).toContain('Start meeting');
   });
 
@@ -120,6 +148,39 @@ describe('committee workspace routes and roles', () => {
     expect(page.textContent).toContain('Start meeting');
   });
 
+  it('starts roll call when the Chair starts the meeting session', async () => {
+    const startMeetingSession = vi.fn(async () => ({id: 'meeting', committeeId: 'committee', name: '第1会期',
+      phaseId: 'formal-debate', activeRulePackageVersionId: 'rules', status: 'OPEN' as const, revision: 1,
+      createdAt: '2026-08-14T00:00:00.000Z', closedAt: null}));
+    const startRollCall = vi.fn(async (): Promise<RollCall> => ({id: 'roll-call', committeeId: 'committee',
+      meetingSessionId: 'meeting', status: 'IN_PROGRESS', currentSeatId: 'seat', rulePackageVersionId: 'rules',
+      allowedResponses: ['PRESENT', 'ABSENT'], entries: [], revision: 1, startedAt: '2026-08-14T00:00:00.000Z',
+      completedAt: null}));
+    const page = await render('CHAIR', '/committees/committee/roll-call', user, value => value,
+      {startMeetingSession, startRollCall});
+
+    await act(async () => {page.querySelector<HTMLButtonElement>('button')?.click(); await Promise.resolve(); await Promise.resolve();});
+
+    expect(startMeetingSession).toHaveBeenCalledWith('committee');
+    expect(startRollCall).toHaveBeenCalledWith('committee', 'meeting');
+    expect(startRollCall.mock.invocationCallOrder[0]).toBeGreaterThan(startMeetingSession.mock.invocationCallOrder[0]);
+  });
+
+  it('automatically starts roll call for an already-open meeting session', async () => {
+    const startRollCall = vi.fn(async (): Promise<RollCall> => ({id: 'roll-call', committeeId: 'committee',
+      meetingSessionId: 'meeting', status: 'IN_PROGRESS', currentSeatId: 'seat', rulePackageVersionId: 'rules',
+      allowedResponses: ['PRESENT', 'ABSENT'], entries: [], revision: 1, startedAt: '2026-08-14T00:00:00.000Z',
+      completedAt: null}));
+    const page = await render('CHAIR', '/committees/committee/roll-call', user, value => ({...value,
+      meetingSession: {id: 'meeting', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate',
+        activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1, createdAt: '2026-08-14T00:00:00.000Z', closedAt: null}}),
+      {startRollCall});
+    await act(async () => {await Promise.resolve(); await Promise.resolve();});
+
+    expect(startRollCall).toHaveBeenCalledWith('committee', 'meeting');
+    expect(page.textContent).not.toContain('Start roll call');
+  });
+
   it('restores the paged roll-call board and lets a Chair directly change any frozen seat', async () => {
     const setRollCallResponse = vi.fn(async (): Promise<RollCall> => ({id: 'roll-call', committeeId: 'committee',
       meetingSessionId: 'meeting', status: 'IN_PROGRESS', currentSeatId: 'seat-0', rulePackageVersionId: 'rules',
@@ -138,15 +199,28 @@ describe('committee workspace routes and roles', () => {
           onBehalfOfSeatId: 'seat-1', rulePackageVersionId: 'rules', recordedAt: '2026-08-14T00:00:00.000Z', revision: 1}],
         revision: 3, startedAt: '2026-08-14T00:00:00.000Z', completedAt: null}}), {setRollCallResponse});
 
-    expect(page.querySelectorAll('.roll-call-grid .roll-call-member')).toHaveLength(18);
+    expect(page.querySelectorAll('.roll-call-grid .roll-call-member')).toHaveLength(9);
     expect(page.querySelector<HTMLButtonElement>('.roll-call-grid .roll-call-member')?.dataset.rollCallSeat).toBe('seat-0');
     expect(Array.from(page.querySelectorAll<HTMLButtonElement>('.roll-call-grid .roll-call-member'))
-      .slice(0, 6).map(seat => seat.dataset.rollCallSeat)).toEqual(['seat-0', 'seat-6', 'seat-12', 'seat-1', 'seat-7', 'seat-13']);
+      .map(seat => seat.dataset.rollCallSeat)).toEqual(Array.from({length: 9}, (_, index) => `seat-${index}`));
     expect(page.textContent).toContain('1 of 20 called');
     expect(page.textContent).toContain('Present and voting');
     const secondSeat = page.querySelector<HTMLButtonElement>('[data-roll-call-seat="seat-1"]');
     await act(async () => {secondSeat?.click(); await Promise.resolve();});
     expect(setRollCallResponse).toHaveBeenCalledWith('roll-call', 3, 'seat-1', 'ABSENT');
+  });
+
+  it('keeps general-list dividers anchored to three-person slots as speakers advance and the queue reorders', () => {
+    const dividerIndexes = (precedingCount: number, length: number) => Array.from({length}, (_, index) => index)
+      .filter(index => generalQueueHasDividerBefore(index, precedingCount));
+    expect(dividerIndexes(0, 9)).toEqual([3, 6]);
+    expect(dividerIndexes(1, 8)).toEqual([2, 5]);
+    expect(dividerIndexes(2, 7)).toEqual([1, 4]);
+    expect(dividerIndexes(3, 6)).toEqual([0, 3]);
+    const reordered = ['B', 'H', 'D', 'E', 'F', 'G', 'C', 'I'];
+    const boundaries = dividerIndexes(1, reordered.length);
+    expect([reordered.slice(0, boundaries[0]), reordered.slice(boundaries[0], boundaries[1]),
+      reordered.slice(boundaries[1])]).toEqual([['B', 'H'], ['D', 'E', 'F'], ['G', 'C', 'I']]);
   });
 
   it('keeps legacy interlacing order and drops absent queued seats', () => {
@@ -228,7 +302,8 @@ describe('committee workspace routes and roles', () => {
 
     expect(page.textContent).toContain('Open a meeting first.');
     expect(page.querySelector('.motions-empty-card')).not.toBeNull();
-    expect(page.querySelector('.motions-empty-card a[href="/committees/committee/roll-call"]')?.textContent).toContain('Roll call ->');
+    expect(page.querySelector('.motions-empty-card-content')).not.toBeNull();
+    expect(page.querySelector('.motions-empty-card a[href="/committees/committee/roll-call"]')?.textContent).toContain('Roll call');
   });
 
   it('shows the ended-session state immediately after passing a suspension motion', async () => {
@@ -257,7 +332,30 @@ describe('committee workspace routes and roles', () => {
     await act(async () => {passed?.click(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();});
     expect(decideMotion).toHaveBeenCalledWith('suspend', 1, 'PASSED');
     expect(page.textContent).toContain('Current meeting session has ended.');
-    expect(page.querySelector('.motions-empty-card a[href="/committees/committee/roll-call"]')?.textContent).toContain('Roll call ->');
+    expect(page.querySelector('.motions-empty-card a[href="/committees/committee/roll-call"]')?.textContent).toContain('Roll call');
+  });
+
+  it('links a passed formal-debate motion to the general speakers list', async () => {
+    const motion: ProceedingMotion = {id: 'open-debate', committeeId: 'committee', meetingSessionId: 'meeting',
+      motionTypeId: 'open-debate', proposedBySeatId: 'seat', proposedBySeatDisplayName: 'China', parameters: {},
+      status: 'PASSED', rulePackageVersionId: 'rules', ruleEvaluation: {schemaVersion: 1, packageVersionId: 'rules',
+        definition: {}, facts: {}, resolvedValues: {}, frozenAt: '2026-08-14T00:00:00.000Z'}, requiredSecondCount: 0,
+      seconds: [], revision: 1, directVote: {includeNonVotingSeats: false, startedAt: null, settingsRevision: 1,
+        eligibility: [], choices: ['FOR', 'AGAINST'], threshold: 1, automaticResult: null, votes: []},
+      createdAt: '2026-08-14T00:00:00.000Z', decidedAt: null,
+      destinationPath: '/committees/committee/caucuses/general'};
+    const page = await render('CHAIR', '/committees/committee/motions', user, value => ({...value,
+      meetingSession: {id: 'meeting', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate',
+        activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1,
+        createdAt: '2026-08-14T00:00:00.000Z', closedAt: null}, motions: [motion],
+      activeRules: {...value.activeRules, motionTypes: [{id: 'open-debate', names: {en: 'Open formal debate'},
+        procedural: true, requiredSecondCount: 0}]}}));
+
+    const link = page.querySelector<HTMLAnchorElement>('.motion-queue a[href="/committees/committee/caucuses/general"]');
+    expect(link?.textContent).toContain('General speakers list');
+    expect(link?.classList.contains('primary')).toBe(true);
+    expect(link?.classList.contains('fluid')).toBe(true);
+    expect(link?.classList.contains('bottom')).toBe(true);
   });
 
   it('separates motion history at meeting-session boundaries', async () => {
@@ -462,6 +560,28 @@ describe('committee workspace routes and roles', () => {
     expect(withdrawMotion).toHaveBeenCalledWith('motion', 1);
   });
 
+  it('uses compact second-based time controls and permits clearing a motion duration', async () => {
+    const page = await render('CHAIR', '/committees/committee/motions', user, value => ({...value,
+      meetingSession: {id: 'meeting', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate',
+        activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1,
+        createdAt: '2026-08-14T00:00:00.000Z', closedAt: null},
+      attendance: [{seatId: 'seat', state: 'PRESENT', lastEventId: 'attendance', updatedAt: '2026-08-14T00:00:00.000Z'}],
+      activeRules: {...value.activeRules, motionTypes: [{id: 'open-moderated-caucus',
+        names: {en: 'Open a moderated caucus', 'zh-CN': '开启有主持核心磋商'}, procedural: true,
+        requiredSecondCount: 0}]}}));
+
+    expect([...page.querySelectorAll('.motion-proposal-form label')].map(label => label.textContent)).toEqual(
+      expect.arrayContaining(['Topic', 'Proposer', 'Total duration', 'Unit duration']));
+    expect([...page.querySelectorAll<HTMLInputElement>('.motion-time-value input')].map(input => input.value)).toEqual(['600', '60']);
+    expect([...page.querySelectorAll<HTMLElement>('.motion-time-unit > .ui.dropdown > .text')].map(item => item.textContent)).toEqual(['sec', 'sec']);
+    expect([...page.querySelectorAll<HTMLElement>('.motion-time-conversion')].map(item => item.textContent)).toEqual(['10 min', '1 min']);
+    const duration = page.querySelector<HTMLInputElement>('.motion-time-value input');
+    await act(async () => {Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(duration, '');
+      duration?.dispatchEvent(new Event('input', {bubbles: true})); await Promise.resolve();});
+    expect(duration?.value).toBe('');
+    expect(page.querySelector<HTMLButtonElement>('button[aria-label="Propose motion"]')?.disabled).toBe(true);
+  });
+
   it('shows read-only counts and the non-voting-seat setting in delegate-operated motion cards', async () => {
     const motion: ProceedingMotion = {id: 'motion', committeeId: 'committee', meetingSessionId: 'meeting',
       motionTypeId: 'open-unmoderated-caucus', proposedBySeatId: 'seat', proposedBySeatDisplayName: 'China',
@@ -527,7 +647,7 @@ describe('committee workspace routes and roles', () => {
     expect([...chairOperatedPage.querySelectorAll<HTMLButtonElement>('button')]
       .some(button => button.textContent?.trim() === 'Open substantive ballot')).toBe(false);
     expect([...chairOperatedPage.querySelectorAll<HTMLButtonElement>('.motion > .buttons button')]
-      .map(button => button.textContent?.trim())).toEqual(['Failed', 'Passed']);
+      .map(button => button.textContent?.trim())).toEqual(['Passed', 'Failed']);
   });
 
   it('expands an open motion ballot and lets the Chair stop voting', async () => {
@@ -575,7 +695,134 @@ describe('committee workspace routes and roles', () => {
     expect(chairOperatedPage.querySelector('.motion-ballot-panel')).toBeNull();
     expect(chairOperatedPage.querySelector('.motion-stop-voting')).toBeNull();
     expect([...chairOperatedPage.querySelectorAll<HTMLButtonElement>('.motion > .buttons button')]
-      .map(button => button.textContent?.trim())).toEqual(['Failed', 'Passed']);
+      .map(button => button.textContent?.trim())).toEqual(['Passed', 'Failed']);
+  });
+
+  it('redirects the legacy caucus route into the moderated-caucus modal and creates from second defaults', async () => {
+    const createSpeakerList = vi.fn(async () => ({id: 'created'} as SpeakerList));
+    await render('CHAIR', '/committees/committee/caucuses/new', user, value => ({...value,
+      meetingSession: {id: 'meeting', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate',
+        activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1,
+        createdAt: '2026-08-14T00:00:00.000Z', closedAt: null}}), {createSpeakerList});
+    await act(async () => {await Promise.resolve(); await Promise.resolve();});
+    const modal = document.querySelector('.moderated-caucus-create-modal');
+    const topic = modal?.querySelector<HTMLInputElement>('input:not([inputmode="decimal"])');
+    const durations = modal?.querySelectorAll<HTMLInputElement>('input[inputmode="decimal"]');
+    const submit = modal?.querySelector<HTMLButtonElement>('button.primary');
+    expect(topic?.closest('.field')?.textContent).toContain('Topic');
+    expect(Array.from(durations ?? []).map(input => input.value)).toEqual(['60', '600']);
+    expect(submit?.disabled).toBe(true);
+
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(topic, 'Climate finance');
+      topic?.dispatchEvent(new Event('input', {bubbles: true}));
+      await Promise.resolve();
+    });
+    expect(submit?.disabled).toBe(false);
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(durations?.[1], '601');
+      durations?.[1]?.dispatchEvent(new Event('input', {bubbles: true}));
+      await Promise.resolve();
+    });
+    expect(durations?.[1]?.closest('.field')?.classList.contains('error')).toBe(true);
+    expect(submit?.disabled).toBe(true);
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(durations?.[1], '600');
+      durations?.[1]?.dispatchEvent(new Event('input', {bubbles: true}));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      modal?.querySelector<HTMLFormElement>('form')?.dispatchEvent(new Event('submit', {bubbles: true, cancelable: true}));
+      await Promise.resolve(); await Promise.resolve();
+    });
+
+    expect(createSpeakerList).toHaveBeenCalledWith('committee', {meetingSessionId: 'meeting', kind: 'MODERATED_CAUCUS',
+      name: 'Climate finance', topic: 'Climate finance', defaultSpeechMs: 60_000, totalDurationMs: 600_000});
+  });
+
+  it('shows static second units and rejects duration precision beyond two decimal places', async () => {
+    await render('CHAIR', '/committees/committee/caucuses/new', user, value => ({...value,
+      meetingSession: {id: 'meeting', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate',
+        activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1,
+        createdAt: '2026-08-14T00:00:00.000Z', closedAt: null}}));
+    await act(async () => {await Promise.resolve(); await Promise.resolve();});
+    const modal = document.querySelector('.moderated-caucus-create-modal');
+    const input = modal?.querySelector<HTMLInputElement>('input[inputmode="decimal"]');
+    expect(modal?.querySelector('.ui.dropdown')).toBeNull();
+    expect(Array.from(modal?.querySelectorAll('.moderated-caucus-duration-unit-text') ?? [])
+      .map(unit => unit.textContent)).toEqual(['sec', 'sec']);
+
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(input, '0.333');
+      input?.dispatchEvent(new Event('input', {bubbles: true})); await Promise.resolve();
+    });
+    expect(input?.closest('.field')?.classList.contains('error')).toBe(true);
+  });
+
+  it('keeps the moderated-caucus modal open after a dimmer click and explains how to close it', async () => {
+    const page = await render('CHAIR', '/committees/committee/motions', user, value => ({...value,
+      meetingSession: {id: 'meeting', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate',
+        activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1,
+        createdAt: '2026-08-14T00:00:00.000Z', closedAt: null}}));
+    const createItem = [...page.querySelectorAll<HTMLElement>('.committee-primary-navigation .dropdown .item')]
+      .find(item => item.textContent?.includes('New caucus'));
+    await act(async () => {createItem?.click(); await Promise.resolve();});
+    const dimmer = document.querySelector<HTMLElement>('.moderated-caucus-create-modal')?.parentElement;
+    act(() => dimmer?.dispatchEvent(new MouseEvent('click', {bubbles: true})));
+    expect(document.querySelector('.moderated-caucus-create-modal')?.textContent)
+      .toContain('To close the dialog, click "X".');
+    expect(document.querySelector('.moderated-caucus-create-header .moderated-caucus-create-close')).not.toBeNull();
+  });
+
+  it('shows an agenda field only on the general speakers list', async () => {
+    const withList = (value: CommitteeWorkspaceSnapshot, kind: 'GENERAL' | 'MODERATED_CAUCUS') => ({...value,
+      speakerLists: [{id: 'list', committeeId: 'committee', meetingSessionId: 'meeting', kind, status: 'OPEN' as const,
+        name: kind === 'GENERAL' ? "General Speakers' List" : 'Climate finance', topic: 'Climate finance',
+        defaultSpeechMs: 60_000, delegatesCanQueue: false, rulePackageVersionId: 'rules', currentEntryId: null,
+        speechTimerId: 'speech-timer', totalTimerId: kind === 'MODERATED_CAUCUS' ? 'total-timer' : null,
+        linkedResolutionId: null, revision: 1, queue: [], speeches: [],
+        createdAt: '2026-08-14T00:00:00.000Z', closedAt: null}]});
+    const general = await render('CHAIR', '/committees/committee/caucuses/list', user,
+      value => withList(value, 'GENERAL'));
+    expect(general.querySelector<HTMLTextAreaElement>('textarea')?.placeholder).toBe('Set agenda');
+
+    act(() => root?.unmount()); root = undefined; container?.remove(); container = undefined;
+    const updateSpeakerList = vi.fn(async () => ({id: 'list'} as SpeakerList));
+    const moderated = await render('CHAIR', '/committees/committee/caucuses/list', user,
+      value => withList(value, 'MODERATED_CAUCUS'), {updateSpeakerList});
+    expect(moderated.querySelector('textarea')).toBeNull();
+    const name = moderated.querySelector<HTMLInputElement>('input[placeholder="Set caucus name"]');
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(name, 'International finance');
+      name?.dispatchEvent(new Event('input', {bubbles: true}));
+      name?.dispatchEvent(new FocusEvent('focusout', {bubbles: true}));
+      await Promise.resolve(); await Promise.resolve();
+    });
+    expect(updateSpeakerList).toHaveBeenCalledWith('list', 1,
+      {name: 'International finance', topic: 'International finance'});
+  });
+
+  it('distinguishes an unopened general speakers list from one that was closed', async () => {
+    const closedGeneralList = (value: CommitteeWorkspaceSnapshot) => ({...value, speakerLists: [{id: 'list',
+      committeeId: 'committee', meetingSessionId: 'meeting', kind: 'GENERAL' as const, status: 'CLOSED' as const,
+      name: "General Speakers' List", topic: '', defaultSpeechMs: 60_000, delegatesCanQueue: true,
+      rulePackageVersionId: 'rules', currentEntryId: null, speechTimerId: 'speech-timer', totalTimerId: null,
+      linkedResolutionId: null, revision: 1, queue: [], speeches: [], createdAt: '2026-08-14T00:00:00.000Z',
+      closedAt: '2026-08-14T00:00:00.000Z'}]});
+    const unopened = await render('CHAIR', '/committees/committee/caucuses/list', user, closedGeneralList);
+    expect(unopened.textContent).toContain('General speakers list not open');
+    expect(unopened.querySelector('.legacy-speaker-workspace .ui.dropdown')?.textContent).toContain('Close');
+
+    act(() => root?.unmount()); root = undefined; container?.remove(); container = undefined;
+    const closed = await render('CHAIR', '/committees/committee/caucuses/list', user, value => ({...closedGeneralList(value),
+      motions: [{id: 'close-debate', committeeId: 'committee', meetingSessionId: 'meeting', motionTypeId: 'close-debate',
+        proposedBySeatId: 'seat', proposedBySeatDisplayName: 'China', parameters: {}, status: 'PASSED' as const,
+        rulePackageVersionId: 'rules', ruleEvaluation: {schemaVersion: 1, packageVersionId: 'rules', definition: {}, facts: {},
+          resolvedValues: {}, frozenAt: '2026-08-14T00:01:00.000Z'}, requiredSecondCount: 0, seconds: [], revision: 1,
+        directVote: {includeNonVotingSeats: false, startedAt: null, settingsRevision: 1, eligibility: [], choices: ['FOR', 'AGAINST'],
+          threshold: 1, automaticResult: null, votes: []}, createdAt: '2026-08-14T00:01:00.000Z',
+        decidedAt: '2026-08-14T00:01:00.000Z', destinationPath: null}]}));
+    expect(closed.textContent).toContain('Speakers list closed');
   });
 
   it('shows current, next, timers, and queue only for the selected speaker list route', async () => {
@@ -585,10 +832,19 @@ describe('committee workspace routes and roles', () => {
       speakerLists: [{id: 'list', committeeId: 'committee', meetingSessionId: 'meeting', kind: 'GENERAL', status: 'OPEN',
         name: "General Speakers' List", topic: '', defaultSpeechMs: 60_000, delegatesCanQueue: false,
         rulePackageVersionId: 'rules', currentEntryId: 'current', speechTimerId: 'speech-timer',
-        totalTimerId: null, linkedResolutionId: null, revision: 2, queue: [{id: 'current', seatId: 'seat', seatDisplayName: 'China', position: 1,
+        totalTimerId: null, linkedResolutionId: null, revision: 2, queue: [
+        {id: 'completed-1', seatId: 'seat', seatDisplayName: 'China', position: 1, status: 'COMPLETED', stance: 'NEUTRAL',
+          speechDurationMs: 60_000, createdAt: '2026-08-14T00:00:00.000Z'},
+        {id: 'completed-2', seatId: 'france', seatDisplayName: 'France', position: 2, status: 'COMPLETED', stance: 'FOR',
+          speechDurationMs: 60_000, createdAt: '2026-08-14T00:00:00.000Z'},
+        {id: 'current', seatId: 'seat', seatDisplayName: 'China', position: 1,
           status: 'CURRENT', stance: 'NEUTRAL', speechDurationMs: 60_000, createdAt: '2026-08-14T00:00:00.000Z'},
         {id: 'next', seatId: 'france', seatDisplayName: 'France', position: 2, status: 'QUEUED', stance: 'FOR',
-          speechDurationMs: 60_000, createdAt: '2026-08-14T00:00:00.000Z'}], createdAt: '2026-08-14T00:00:00.000Z', closedAt: null}],
+          speechDurationMs: 60_000, createdAt: '2026-08-14T00:00:00.000Z'}], speeches: [{id: 'completed-speech', speakerListId: 'list',
+          queueEntryId: 'current', seatId: 'seat', seatDisplayName: 'China', kind: 'ORIGINAL', status: 'PAUSED',
+          inheritedFromSpeechId: null, inheritedTimeMs: null, canYield: true, yieldType: null, yieldTargetSeatId: null,
+          yieldDecisionStatus: null, interactionTargetSeatId: null, revision: 1, startedAt: '2026-08-14T00:00:00.000Z',
+          endedAt: null, actions: [], contributions: []}], createdAt: '2026-08-14T00:00:00.000Z', closedAt: null}],
       timers: [{id: 'speech-timer', committeeId: 'committee', ownerType: 'SPEAKER_LIST', ownerId: 'list', running: false,
         startedAt: null, remainingAtStartMs: 60_000, remainingMs: 60_000, revision: 1, expiredAt: null,
         serverTime: '2026-08-14T00:00:00.000Z'}]}));
@@ -597,7 +853,123 @@ describe('committee workspace routes and roles', () => {
     expect(page.textContent).toContain('China');
     expect(page.textContent).toContain('France');
     expect(page.textContent).not.toContain('Motion type');
-    expect((page.textContent ?? '').indexOf('Next speaking')).toBeLessThan((page.textContent ?? '').indexOf('Queue'));
+    expect((page.textContent ?? '').indexOf('Queue')).toBeLessThan((page.textContent ?? '').indexOf('Next speaking'));
+    const nextPanel = [...page.querySelectorAll<HTMLElement>('.ui.segment')]
+      .find(segment => segment.querySelector('.top.left.attached.label')?.textContent === 'Next speaking');
+    const queuePanel = [...page.querySelectorAll<HTMLElement>('.ui.segment')]
+      .find(segment => segment.querySelector('.top.left.attached.label')?.textContent === 'Queue');
+    expect(nextPanel?.textContent).toContain('France');
+    expect(nextPanel?.querySelectorAll('.event')).toHaveLength(1);
+    expect(nextPanel?.querySelector('.speaker-feed-actions')).toBeNull();
+    expect(queuePanel?.textContent).toContain('France');
+    expect(queuePanel?.querySelector('.speaker-feed-actions')).not.toBeNull();
+    const queueFeed = queuePanel?.querySelector('.feed');
+    const queueDropdown = queuePanel?.querySelector('.ui.dropdown');
+    expect(queueFeed).not.toBeNull();
+    expect(queueDropdown).not.toBeNull();
+    expect(queueFeed!.compareDocumentPosition(queueDropdown!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const speakerTimer = [...page.querySelectorAll<HTMLElement>('.proceedings-timer')]
+      .find(timer => timer.querySelector('.top.left.attached.label')?.textContent === 'Speaker timer');
+    expect(speakerTimer?.querySelector('.speaker-timer-actions')?.textContent).toContain('Continue');
+    expect(speakerTimer?.querySelector('.speaker-timer-actions')?.textContent).toContain('Next');
+    const dividerNavigation = queuePanel?.querySelector('.speaker-queue-divider-navigation');
+    expect(dividerNavigation?.querySelectorAll('a')).toHaveLength(2);
+    expect(dividerNavigation?.textContent).toContain('Motions');
+    expect(dividerNavigation?.textContent).toContain('Question');
+    expect(dividerNavigation?.querySelector('a[href="/committees/committee/points"]')).not.toBeNull();
+    expect(dividerNavigation?.nextElementSibling?.classList.contains('speaker-queue-divider')).toBe(true);
+  });
+
+  it('closes the question form only after the contribution is saved and reports the result', async () => {
+    const questionSpeech = {id: 'question-speech', speakerListId: 'list', queueEntryId: 'current', seatId: 'france',
+      seatDisplayName: 'France', kind: 'INHERITED' as const, status: 'PAUSED' as const, inheritedFromSpeechId: 'original',
+      inheritedTimeMs: 30_000, canYield: false, yieldType: 'QUESTIONS' as const, yieldTargetSeatId: null,
+      yieldDecisionStatus: null, interactionTargetSeatId: 'france', revision: 1,
+      startedAt: '2026-08-14T00:00:00.000Z', endedAt: null, actions: [], contributions: []};
+    const withQuestion = (value: CommitteeWorkspaceSnapshot): CommitteeWorkspaceSnapshot => ({...value,
+      seats: [...value.seats, {id: 'france', stableKey: 'france', displayName: 'France', rank: 'STANDARD', canVote: true,
+        hasVeto: false, mustVote: false, sortOrder: 1, active: true, revision: 1, flag: {type: 'STANDARD', value: 'fr'}}],
+      meetingSession: {id: 'meeting', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate',
+        activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1,
+        createdAt: '2026-08-14T00:00:00.000Z', closedAt: null},
+      speakerLists: [{id: 'list', committeeId: 'committee', meetingSessionId: 'meeting', kind: 'GENERAL', status: 'OPEN',
+        name: "General Speakers' List", topic: '', defaultSpeechMs: 60_000, delegatesCanQueue: false,
+        rulePackageVersionId: 'rules', currentEntryId: 'current', speechTimerId: 'speech-timer', totalTimerId: null,
+        linkedResolutionId: null, revision: 2, queue: [{id: 'current', seatId: 'seat', seatDisplayName: 'China', position: 1,
+          status: 'CURRENT', stance: 'NEUTRAL', speechDurationMs: 60_000, createdAt: '2026-08-14T00:00:00.000Z'}],
+        speeches: [questionSpeech], createdAt: '2026-08-14T00:00:00.000Z', closedAt: null}],
+      timers: [{id: 'speech-timer', committeeId: 'committee', ownerType: 'SPEAKER_LIST', ownerId: 'list', running: false,
+        startedAt: null, remainingAtStartMs: 30_000, remainingMs: 30_000, revision: 1, expiredAt: null,
+        serverTime: '2026-08-14T00:00:00.000Z'}]});
+    vi.useFakeTimers();
+    let finishRecord: (value: typeof questionSpeech) => void = () => undefined;
+    const recordSpeechContribution = vi.fn(() => new Promise<typeof questionSpeech>(resolve => {finishRecord = resolve;}));
+    let page = await render('CHAIR', '/committees/committee/caucuses/list', user, withQuestion, {recordSpeechContribution});
+    const textarea = page.querySelector<HTMLTextAreaElement>('.speech-contribution-form textarea');
+    expect(textarea?.value).toBe('Q:\n\nA:');
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set?.call(textarea, 'Q: Why?\n\nA: Because.');
+      textarea?.dispatchEvent(new Event('input', {bubbles: true}));
+      page.querySelector<HTMLButtonElement>('.speech-contribution-form button')?.click();
+      await Promise.resolve();
+    });
+    const savingButton = page.querySelector<HTMLButtonElement>('.speech-contribution-form button');
+    expect(savingButton).toMatchObject({disabled: true});
+    expect(savingButton?.getAttribute('aria-busy')).toBe('true');
+    expect(savingButton?.textContent).toContain('Saving…');
+    expect(savingButton?.querySelector('.loading.spinner.icon')).not.toBeNull();
+    expect(recordSpeechContribution).toHaveBeenCalledWith('question-speech', 'QUESTION', 'Q: Why?\n\nA: Because.',
+      'france', expect.any(AbortSignal));
+    await act(async () => {finishRecord(questionSpeech); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();});
+    expect(page.querySelector('.speech-contribution-form')).toBeNull();
+    expect(page.textContent).toContain('may ask a question');
+    expect(page.textContent).toContain('Interaction recorded.');
+    await act(async () => {await vi.advanceTimersByTimeAsync(9_999);});
+    expect(page.textContent).toContain('Interaction recorded.');
+    await act(async () => {await vi.advanceTimersByTimeAsync(1);});
+    expect(page.querySelectorAll('.speaker-message-fade')).toHaveLength(2);
+    await act(async () => {await vi.advanceTimersByTimeAsync(180);});
+    expect(page.textContent).not.toContain('Interaction recorded.');
+    expect(page.textContent).not.toContain('may ask a question');
+    vi.useRealTimers();
+
+    act(() => root?.unmount()); root = undefined; container?.remove(); container = undefined;
+    const failedRecord = vi.fn(async () => {throw new Error('Save failed');});
+    page = await render('CHAIR', '/committees/committee/caucuses/list', user, withQuestion,
+      {recordSpeechContribution: failedRecord});
+    const failedTextarea = page.querySelector<HTMLTextAreaElement>('.speech-contribution-form textarea');
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set?.call(failedTextarea, 'Q: Keep this text\n\nA:');
+      failedTextarea?.dispatchEvent(new Event('input', {bubbles: true}));
+      page.querySelector<HTMLButtonElement>('.speech-contribution-form button')?.click();
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    });
+    expect(page.querySelector<HTMLTextAreaElement>('.speech-contribution-form textarea')?.value).toBe('Q: Keep this text\n\nA:');
+    expect(page.textContent).toContain('Save failed');
+    expect(page.textContent).not.toContain('Interaction recorded.');
+
+    act(() => root?.unmount()); page.remove(); root = undefined; container = undefined;
+    vi.useFakeTimers();
+    try {
+      const timedOutRecord = vi.fn((_id: string, _type: 'QUESTION' | 'COMMENT', _content: string,
+        _seatId?: string, signal?: AbortSignal) => new Promise<typeof questionSpeech>((_resolve, reject) => {
+        signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), {once: true});
+      }));
+      page = await render('CHAIR', '/committees/committee/caucuses/list', user, withQuestion,
+        {recordSpeechContribution: timedOutRecord});
+      const timedOutTextarea = page.querySelector<HTMLTextAreaElement>('.speech-contribution-form textarea');
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set?.call(timedOutTextarea, 'Q: Timeout text\n\nA:');
+        timedOutTextarea?.dispatchEvent(new Event('input', {bubbles: true}));
+        page.querySelector<HTMLButtonElement>('.speech-contribution-form button')?.click();
+        await vi.advanceTimersByTimeAsync(10_000); await Promise.resolve(); await Promise.resolve();
+      });
+      expect(page.querySelector<HTMLButtonElement>('.speech-contribution-form button')).toMatchObject({disabled: false});
+      expect(page.querySelector<HTMLTextAreaElement>('.speech-contribution-form textarea')?.value).toBe('Q: Timeout text\n\nA:');
+      expect(page.textContent).toContain('Saving timed out. Try again.');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('keeps the legacy one-click moderated-caucus yield while recording the backend decision chain', async () => {
@@ -647,6 +1019,15 @@ describe('committee workspace routes and roles', () => {
     expect(page.querySelector('.speaker-timer-column')?.textContent).toContain('Now speaking');
     expect(page.querySelector('.caucus-timer-column')?.textContent).toContain('Caucus timer');
     expect(page.querySelector('.caucus-timer-column')?.textContent).toContain('Queue');
+    const nextPanel = [...page.querySelectorAll<HTMLElement>('.ui.segment')]
+      .find(segment => segment.querySelector('.top.left.attached.label')?.textContent === 'Next speaking');
+    const queuePanel = [...page.querySelectorAll<HTMLElement>('.ui.segment')]
+      .find(segment => segment.querySelector('.top.left.attached.label')?.textContent === 'Queue');
+    expect(nextPanel?.querySelectorAll('.event')).toHaveLength(1);
+    expect(nextPanel?.querySelector('.speaker-feed-actions')).toBeNull();
+    expect(queuePanel?.textContent).toContain('France');
+    expect(queuePanel?.querySelector('.speaker-feed-actions')).not.toBeNull();
+    expect(page.querySelector('.speaker-timer-column .speaker-timer-actions')?.textContent).toContain('Next');
     const caucusTimerButton = page.querySelector<HTMLButtonElement>('.caucus-timer-column .legacy-timer-display');
     await act(async () => {caucusTimerButton?.click(); await Promise.resolve();});
     expect(commandTimer).toHaveBeenCalledWith('total-timer', 'pause', 2, undefined);
@@ -690,6 +1071,56 @@ describe('committee workspace routes and roles', () => {
     expect(page.textContent).not.toContain("For");
     expect(page.textContent).not.toContain("Neutral");
     expect(page.textContent).not.toContain("Against");
+  });
+
+  it('keeps absent countries visible but disabled in general and moderated speaker queues', async () => {
+    const withList = (value: CommitteeWorkspaceSnapshot, kind: 'GENERAL' | 'MODERATED_CAUCUS'): CommitteeWorkspaceSnapshot => ({...value,
+      seats: [...value.seats, {id: 'france', stableKey: 'france', displayName: 'France', rank: 'STANDARD', canVote: true,
+        hasVeto: false, mustVote: false, sortOrder: 1, active: true, revision: 1, flag: {type: 'STANDARD', value: 'fr'}}],
+      meetingSession: {id: 'meeting', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate',
+        activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1, createdAt: '2026-08-14T00:00:00.000Z', closedAt: null},
+      attendance: [{seatId: 'seat', state: 'PRESENT', lastEventId: 'present', updatedAt: '2026-08-14T00:00:00.000Z'},
+        {seatId: 'france', state: 'ABSENT', lastEventId: 'absent', updatedAt: '2026-08-14T00:00:00.000Z'}],
+      speakerLists: [{id: 'list', committeeId: 'committee', meetingSessionId: 'meeting', kind, status: 'OPEN',
+        name: kind === 'GENERAL' ? "General Speakers' List" : 'Climate finance', topic: '', defaultSpeechMs: 60_000,
+        delegatesCanQueue: false, rulePackageVersionId: 'rules', currentEntryId: null, speechTimerId: 'speech-timer',
+        totalTimerId: kind === 'MODERATED_CAUCUS' ? 'total-timer' : null, linkedResolutionId: null, revision: 2,
+        queue: [{id: 'france-entry', seatId: 'france', seatDisplayName: 'France', position: 1, status: 'QUEUED' as const,
+          stance: 'NEUTRAL' as const, speechDurationMs: 60_000, createdAt: '2026-08-14T00:00:00.000Z'}], speeches: [],
+        createdAt: '2026-08-14T00:00:00.000Z', closedAt: null}],
+      timers: [{id: 'speech-timer', committeeId: 'committee', ownerType: 'SPEAKER_LIST', ownerId: 'list', running: false,
+        startedAt: null, remainingAtStartMs: 60_000, remainingMs: 60_000, revision: 1, expiredAt: null,
+        serverTime: '2026-08-14T00:00:00.000Z'}, ...(kind === 'MODERATED_CAUCUS' ? [{id: 'total-timer', committeeId: 'committee',
+        ownerType: 'CAUCUS' as const, ownerId: 'list', running: false, startedAt: null, remainingAtStartMs: 600_000,
+        remainingMs: 600_000, revision: 1, expiredAt: null, serverTime: '2026-08-14T00:00:00.000Z'}] : [])]
+    });
+
+    for (const kind of ['GENERAL', 'MODERATED_CAUCUS'] as const) {
+      const removeSpeakerQueueEntry = vi.fn(async () => ({id: 'list'} as SpeakerList));
+      const page = await render('CHAIR', '/committees/committee/caucuses/list', user, value => withList(value, kind),
+        {removeSpeakerQueueEntry});
+      const dropdown = page.querySelector<HTMLElement>('.speaker-seat-dropdown .ui.dropdown');
+      await act(async () => {dropdown?.click(); await Promise.resolve();});
+      const absent = document.body.querySelector<HTMLElement>('.speaker-seat-dropdown-portal [role="option"]:nth-child(2)');
+      expect(absent?.textContent).toContain('France');
+      expect(absent?.textContent).toContain('Absent');
+      expect(absent).toMatchObject({className: expect.stringContaining('disabled')});
+      expect(absent?.getAttribute('aria-disabled')).toBe('true');
+      await act(async () => {absent?.click(); await Promise.resolve();});
+      expect(dropdown?.getAttribute('aria-expanded')).toBe('true');
+      const stage = page.querySelector<HTMLElement>('.speaker-absent-action-blocker');
+      expect(stage?.textContent).toContain('Stage');
+      await act(async () => {stage?.click(); await Promise.resolve();});
+      expect(page.textContent).toContain('Remove the absent delegation before continuing.');
+      const unavailableDrag = page.querySelector<HTMLElement>('.speaker-drag-handle-disabled');
+      expect(unavailableDrag).not.toBeNull();
+      await act(async () => {unavailableDrag?.click(); await Promise.resolve();});
+      const remove = [...page.querySelectorAll<HTMLButtonElement>('.speaker-queue-feed button')]
+        .find(button => button.textContent === 'Remove');
+      await act(async () => {remove?.click(); await Promise.resolve();});
+      expect(removeSpeakerQueueEntry).toHaveBeenCalledWith('list', 'france-entry', 2);
+      act(() => root?.unmount()); root = undefined; container?.remove(); container = undefined;
+    }
   });
 
   it('persists both legacy workspace layout switches as one revisioned setting command', async () => {
@@ -998,7 +1429,8 @@ describe('committee workspace routes and roles', () => {
 
   it('keeps storage inside the account-authorized resource tabs', async () => {
     const memberPage = await render('MEMBER', '/committees/committee/posts');
-    expect(memberPage.textContent).toContain('Text resources');
+    expect(memberPage.textContent).not.toContain('Text resources');
+    expect(memberPage.textContent).not.toContain('Link resources');
     expect(memberPage.textContent).toContain('Attachments');
     expect(memberPage.querySelector('.committee-workspace-page')?.textContent).not.toContain('Storage');
     act(() => root?.unmount()); root = undefined; container?.remove(); container = undefined;
@@ -1034,6 +1466,59 @@ describe('committee workspace routes and roles', () => {
     expect(stats).toContain('Document discussion entries');
     expect(stats).toContain('China');
   });
-  it('restores a dedicated link-resource route with its publisher', async () => { const page = await render('CHAIR', '/committees/committee/posts/links', user, value => ({...value, textPosts: [{id: 'link', title: 'Research', content: 'link:https://example.test/research', sortOrder: 0, revision: 1, authorSeatId: 'seat', authorDisplayName: 'China', actorUserId: 'chair', createdAt: '2026-08-16T00:00:00.000Z', updatedAt: '2026-08-16T00:00:00.000Z', deletedAt: null}]})); expect(page.textContent).toContain('Link resources'); expect(page.textContent).toContain('Publisher: China'); expect(page.querySelector('a[href="https://example.test/research"]')).not.toBeNull(); });
+  it('redirects hidden resource routes to attachments', async () => { const page = await render('CHAIR', '/committees/committee/posts/links', user, value => ({...value, textPosts: [{id: 'link', title: 'Research', content: 'link:https://example.test/research', sortOrder: 0, revision: 1, authorSeatId: 'seat', authorDisplayName: 'China', actorUserId: 'chair', createdAt: '2026-08-16T00:00:00.000Z', updatedAt: '2026-08-16T00:00:00.000Z', deletedAt: null}]})); expect(page.textContent).toContain('Attachments'); expect(page.textContent).not.toContain('Link resources'); expect(page.textContent).not.toContain('Publisher: China'); expect(page.querySelector('a[href="https://example.test/research"]')).toBeNull(); });
+  it('retains prefetched file data across routes and clears it when access becomes read-only', async () => {
+    const share = {id: 'share', url: 'https://example.test/delegate-files#test', revision: 1};
+    const getDelegateFileShare = vi.fn().mockResolvedValueOnce(share).mockImplementation(() => new Promise(() => {}));
+    const listDelegateReviewFiles = vi.fn().mockResolvedValueOnce([{
+      id: 'reviewed', logicalName: 'cached.pdf', originalName: 'cached.pdf', status: 'PUBLISHED',
+      submittedAt: '2026-09-01T00:00:00Z', publishedAt: '2026-09-01T00:00:00Z'
+    }]).mockImplementation(() => new Promise(() => {}));
+    let disconnect: (() => void) | undefined;
+    let sequence = 1;
+    const page = await render('CHAIR', '/committees/committee/posts/review', user, value => ({...value,
+      committee: {...value.committee, operationMode: 'CHAIR_OPERATED'},
+      sync: {...value.sync, committeeEventSequence: sequence}}), {
+      listStorageBindings: vi.fn().mockResolvedValueOnce([{status: 'ACTIVE', providerType: 'CHAIR_AGENT'}])
+        .mockRejectedValue(new Error('binding refresh failed')),
+      getDelegateFileShare, listDelegateReviewFiles,
+      openCommitteeEvents: (_id, _after, handlers) => {disconnect = () => handlers.onState('OFFLINE_READONLY'); return () => undefined;}
+    });
+    expect(getDelegateFileShare).toHaveBeenCalledTimes(1);
+    expect(page.textContent).toContain('cached.pdf');
+    await act(async () => page.querySelector<HTMLAnchorElement>('a[href="/committees/committee/posts/share"]')!.click());
+    expect(page.querySelector<HTMLInputElement>('.delegate-file-share-panel input')?.value).toBe(share.url);
+    expect(page.textContent).not.toContain('开始分享');
+    await act(async () => page.querySelector<HTMLAnchorElement>('a[href="/committees/committee/posts/review"]')!.click());
+    expect(page.textContent).toContain('cached.pdf');
+    expect(page.textContent).not.toContain('暂无已审核文件');
+    sequence = 2;
+    await act(async () => window.dispatchEvent(new Event('focus')));
+    expect(page.textContent).toContain('binding refresh failed');
+    expect(page.textContent).toContain('cached.pdf');
+    await act(async () => disconnect!());
+    expect(page.querySelector('.delegate-file-review-panel')).toBeNull();
+    expect(page.textContent).not.toContain('cached.pdf');
+    expect(page.querySelector('a[href="/committees/committee/posts/share"]')).toBeNull();
+  });
+  it('separates Chair file upload from review', async () => {
+    const page = await render('CHAIR', '/committees/committee/posts/attachments', user, value => ({...value,
+      committee: {...value.committee, operationMode: 'CHAIR_OPERATED'}}), {
+      listStorageBindings: vi.fn(async () => [{id: 'binding', committeeId: 'committee', providerType: 'CHAIR_AGENT',
+        providerConfigId: null, storageHostId: 'host', status: 'ACTIVE', revision: 1,
+        createdAt: '2026-09-01T00:00:00.000Z'}] as Awaited<ReturnType<SelfHostedApi['listStorageBindings']>>),
+      getDelegateFileShare: vi.fn(async () => null),
+      listDelegateReviewFiles: vi.fn(async () => [])
+    });
+    await act(async () => {await Promise.resolve(); await Promise.resolve();});
+    expect(page.querySelector('a[href="/committees/committee/posts/attachments"]')).toBeNull();
+    const resourceLinks = Array.from(page.querySelectorAll<HTMLAnchorElement>('[aria-label="Resource sections"] a'))
+      .map(link => link.textContent?.trim());
+    expect(resourceLinks).toEqual(['审核', '分享', '上传文件', '存储设置', '文件设置']);
+    expect(page.querySelector('.delegate-file-chair-upload')).toBeNull();
+    await act(async () => {page.querySelector<HTMLAnchorElement>('a[href="/committees/committee/posts/upload"]')?.click(); await Promise.resolve();});
+    expect(page.querySelector('.delegate-file-chair-upload')).not.toBeNull();
+    expect(page.querySelector('.delegate-file-card-list')).toBeNull();
+  });
   it('keeps the strawpoll page mounted while typing a newly added option', async () => { const page = await render('CHAIR', '/committees/committee/strawpolls/poll', user, value => ({...value, strawpolls: [{id: 'poll', committeeId: 'committee', meetingSessionId: 'meeting', question: 'Choice?', votingMode: 'SEAT_AUTHENTICATED', multipleChoice: true, status: 'OPEN', stage: 'PREPARING', medium: 'LINK', optionsArePublic: false, seriesId: 'poll', roundNumber: 1, supersededById: null, options: [], seatVotes: [], revision: 1, createdAt: '2026-08-16T00:00:00.000Z', closedAt: null}]})); const add = [...page.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.includes('Add option')); await act(async () => {add?.click(); await Promise.resolve();}); const option = page.querySelectorAll<HTMLInputElement>('.strawpoll-page input')[1]; await act(async () => {Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(option, 'Option A'); option?.dispatchEvent(new Event('input', {bubbles: true})); await Promise.resolve();}); expect(page.querySelector('.strawpoll-page')).not.toBeNull(); expect(page.textContent).toContain('Create manual poll'); });
 });

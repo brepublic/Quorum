@@ -40,6 +40,11 @@ describe('server configuration', () => {
     expect(config.maxFileBytes).toBe(20 * 1024 * 1024);
     expect(config.storageWarningPercent).toBe(80);
     expect(config.storageCriticalPercent).toBe(90);
+    expect(config.publishedCacheHardMaxBytes).toBe(15 * 1024 * 1024 * 1024);
+    expect(config.pendingReviewHardMaxBytes).toBe(5 * 1024 * 1024 * 1024);
+    expect(config.pendingReviewCommitteeHardMaxBytes).toBe(1024 * 1024 * 1024);
+    expect(config.storageHardMinFreeBytes).toBe(10 * 1024 * 1024 * 1024);
+    expect(config.storageHardMinFreePercent).toBe(20);
     expect(config.maxUploadRequestBytes).toBe(21 * 1024 * 1024);
     expect(config.uploadTtlSeconds).toBe(24 * 60 * 60);
     expect(config.retentionSessionDays).toBe(30);
@@ -61,6 +66,14 @@ describe('server configuration', () => {
       QUORUM_STORAGE_CRITICAL_PERCENT: '90'})).toThrow('warning below critical');
     expect(() => loadConfig({DATABASE_URL: 'postgresql://localhost/quorum', QUORUM_STORAGE_WARNING_PERCENT: '80',
       QUORUM_STORAGE_CRITICAL_PERCENT: '101'})).toThrow('warning below critical');
+  });
+
+  it('requires consistent storage cache hard boundaries', () => {
+    expect(() => loadConfig({DATABASE_URL: 'postgresql://localhost/quorum',
+      QUORUM_PENDING_REVIEW_HARD_MAX_BYTES: '100',
+      QUORUM_PENDING_REVIEW_COMMITTEE_HARD_MAX_BYTES: '101'})).toThrow('inconsistent');
+    expect(() => loadConfig({DATABASE_URL: 'postgresql://localhost/quorum',
+      QUORUM_STORAGE_HARD_MIN_FREE_PERCENT: '101'})).toThrow('inconsistent');
   });
 
   it('accepts only an explicit 32-byte storage master key', () => {

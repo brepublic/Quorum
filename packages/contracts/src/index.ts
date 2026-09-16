@@ -8,3 +8,5 @@ export * from './stage5.js';
 export * from './stage6.js';
 export * from './stage7.js';
 export * from './stage8.js';
+export * from './delegate-files.js';
+export * from './storage-cache.js';

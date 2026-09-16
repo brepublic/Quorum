@@ -263,7 +263,7 @@
 - 7.2 基线复跑：33 项针对性测试通过；9 项 PostgreSQL 用例因缺少 `TEST_DATABASE_ADMIN_URL` 明确 skip。`pnpm build:self-host` 通过。
 - migration 22 增加 host-bound `CHAIR_AGENT` binding、文件同步状态、upload 的 host commit 目标、Agent 本地变化和不可静默覆盖的冲突记录；schema compatibility 为 22。
 - Owner/Chair 可把当前 generation 的已配对 host 设为初始 provider；普通 member 与仅有 `SYSTEM_ADMIN` 的账号没有隐式权限，暂停/归档和陈旧 revision 继续拒绝。
-- 浏览器完整暂存提交返回 `202 PENDING_HOST_COMMIT` 并创建固定 generation 的 `STORE_BLOB` task。Agent 完成后，task、upload、blob、file entry/version、manifest、事件与审计在同一事务收敛；完成前不产生可下载文件记录。
+- 浏览器完整暂存提交返回 `202 PENDING_HOST_COMMIT` 并创建固定 generation 的 `HOST_COMMIT_BLOB` task。Agent 从 staging 原子写入本地后完成，task、upload、blob、file entry/version、manifest、事件与审计在同一事务收敛；`STORE_BLOB` 只表示已有 manifest 内容同步，完成前不产生可下载文件记录。
 - 受权限约束的 pending 查询让页面刷新或重新登录后仍显示“等待主席电脑保存”。普通 contributor 只见自己的 pending upload，Owner/Chair 可见委员会全部。
 - `local-changes` 复核当前 lease、最新 manifest、墓碑和 file revision；本地新增/修改创建服务器路径的 `UPLOAD_BLOB` task，重命名和删除使用显式 revision。冲突先持久化，再返回 `CHAIR_DECISION_REQUIRED`。
 - 主机转移取消旧 generation task，重排浏览器 pending upload 和每个文件最新 manifest；旧 host 独有的未上传内容转为 `HOST_TRANSFERRED` 冲突。既有文件保持 `OUT_OF_SYNC` 到新 host 完成相同 revision task。
@@ -456,9 +456,44 @@
 - 浏览器控制通道在建立连接时因桌面运行环境的工作区 URI 元数据错误而失败，未打开或操作页面。旧版视觉、拖放、移动侧栏动画、全流程点击与 HAR 零旧服务请求仍待真实浏览器验收。
 - 完整回滚副本：`/home/makoto/code/Quorum-checkpoints/22-postgres-integration-green`（Compose 启动前）及待保存的节点 23。未提交、推送、删除卷或改写既有 migration 记录。
 
+### 2026-08-24：GitHub Actions 测试清单与执行顺序修复
+
+- 更新 `.github/workflows/integration-tests.yml`：保留 Node 22、pnpm action、PostgreSQL 16 和既有 major 版本，加入顶层 `contents: read`、同一 PR/分支并发取消及 PostgreSQL job 的 30 分钟超时；执行顺序固定为安装、`pnpm build:self-host`、`pnpm test:self-host`、`pnpm test:self-host:integration`、`pnpm verify:no-legacy-runtime`。
+- `package.json` 的 `test:self-host` 改为自动发现并排除 `**/*.integration.test.ts`；静态枚举确认当前 77 个测试文件中有 69 个非 PostgreSQL 文件和 8 个显式 integration 文件。integration 脚本仍保留 8 个文件的显式清单。
+- 删除 `SelfHostedWorkspace` focus revalidation 用例中过期的默认路由 `Share committee` 断言，并删除 registry 中 `meeting_session_created` 后的重复 `proceedings.meeting_session_closed`；未修改后一个注册项或服务端审计 action。
+- 实际执行了 `source scripts/wsl-env.sh`、`pnpm install --frozen-lockfile`、`pnpm build:self-host`、`pnpm test:self-host`、`pnpm verify:no-legacy-runtime` 和 `git diff --check`。本地 fallback pnpm 为 11.19.0，依赖安装因当前环境无法访问 npm registry（`EAI_AGAIN`）未完成，故本次未取得构建或 Vitest 数字结果；未将其记为通过。既有 Semantic UI React 弃用警告和 Vite 大分块警告也未能在本次运行中重新观察。PostgreSQL integration 仍需 GitHub Actions PostgreSQL 16 service（或本地隔离 PostgreSQL）完成真实验证。
+
 ### 2026-08-15：Windows 浏览器验收交接
 
 - 当前 WSL 无法正常连接浏览器技能或 Computer Use；真实浏览器验收转移到 Windows 环境，不把命令行 HTTPS、jsdom 或静态测试替代为浏览器证据。
 - 新增 `WINDOWS_UI_ACCEPTANCE_HANDOFF.md`，记录当前 Compose/schema 39/自动化证据、旧版参照与节点 22–23、Windows 接手命令、测试角色与数据、桌面和窄屏矩阵、逐页旧版交互、动画、正式 ballot 与新增功能回归、HAR/SSE/PostgreSQL 证据、停止决策条件和完整完成标准。
 - 交接清单固化已确认产品语义：任意席位点名和改答、动议直投历史与观察国默认纳入、简单多数超过 50%、通过后先执行再显示目标按钮、唯一主发言名单、文本/文件二选一和审核发布、修正案删除边界、匿名提交后锁定、旧版移动 `uncover` 动画及两个运作模式开关的临时遮蔽/恢复。
 - 文档明确禁止修改已应用 migration、删除 Compose 卷、恢复 Firebase、合并旧直投与正式 ballot，或在旧版交互与新后端冲突时自行决定产品取舍。
+
+### 2026-08-24：CI 修复后的本地验证
+
+- 使用仓库指定的 pnpm 10.33.4 完成 `source scripts/wsl-env.sh`、`pnpm install --frozen-lockfile`；lockfile supply-chain 校验通过，`pnpm-lock.yaml` 和 `pnpm-workspace.yaml` 未改写。依赖安装运行了既有的 SWC、argon2 和 esbuild 原生构建脚本。
+- `pnpm build:self-host` 通过：前端构建转换 996 个模块，rule-schema、server 和 storage-agent 构建均通过；保留既有 Vite 大分块警告，未出现构建错误。
+- `pnpm test:self-host` 通过：69 个文件、457 项通过、0 失败、0 跳过；自动发现了 i18n/theme 测试，输出未包含 `*.integration.test.ts`。
+- `pnpm test:self-host:integration` 已按专用入口执行：8 个文件、86 项因本地 Docker daemon 不存在而明确 skip；`pnpm self-host:test-db:up` 同样因 `/var/run/docker.sock` 不存在无法启动 PostgreSQL 16。未将 skip 记为通过，真实数据库结果仍由 GitHub Actions PostgreSQL 16 service 完成。
+- `pnpm verify:no-legacy-runtime`、`git diff --check` 及 lockfile/workspace 未改写检查通过。
+
+### 2026-08-28：主席电脑文件分享与免登录代表门户
+
+- 在主席代办且委员会活动存储为有效 `CHAIR_AGENT` binding 时，主席端“文件”页面新增“分享”子页，可显式开始或结束分享并显示能力链接及二维码。分享要求当前存在开放会期；运作模式、委员会状态或活动存储不再满足条件时，数据库触发器结束分享并撤销代表浏览器凭据。
+- 新增同源 `/delegate-files` 免登录门户。能力值只放在 URL fragment 中；代表只能选择当前开放会期中 `PRESENT` 或 `TEMPORARILY_LEFT` 的活动席位。确认弹窗明确身份不可更改，服务端随后发放最长 30 天的独立 HttpOnly 凭据和独立 CSRF cookie；已有有效身份的浏览器不能再次选择代表团。清除浏览器数据仍可移除客户端凭据，因此该边界用于防止正常操作中的误改，不构成设备级身份认证。
+- 代表门户顶部固定显示委员会名称、“已发布文件”“上传文件”和实时状态，不显示账户入口。每个已发布文件使用居中表格卡片展示主席确定的文件名、提交国、文件类型、提交时间与公布时间，并提供下载按钮。文件类型限工作文件、指令草案和决议草案。
+- 代表上传沿用现有 durable staging、Chair Agent host commit 和文件版本链；分享发起主席是技术保管人，代表席位来源另存为审核元数据。主席电脑完成内容提交后，文件进入 `PENDING_REVIEW`；主席端附件页以卡片审核，可修改公布名称和文件类型并批准或驳回。批准与公开事件在同一事务中提交，驳回沿用逻辑删除和 Agent 清理。
+- 代表门户以独立 SSE 接收由代表门户提交的 `file.published` 事件。所有活跃门户会显示精确格式“`国家名 代表 提交的 文件名 现已可用。`”；横幅在 60 秒后、手动关闭或点击对应文件下载按钮后消失。状态显示为“实时”“离线”或“主席端故障”。
+- migration 48 新增分享、浏览器会话、上传来源和发布元数据，并保留 migration 39 的文件状态约束。空库完整迁移和重复执行通过；真实 PostgreSQL 定向用例验证了席位资格、凭据只存哈希、模式变化撤销、代表上传经 Chair Agent 落库后进入待审核，以及文件事件 revision 与文件 revision 一致。
+- `pnpm build:self-host` 通过。代表门户、HTTP、Cookie、migration 和身份路由的聚焦 Vitest 共 55 项通过，`git diff --check` 通过。全量有限测试另有两项未涉及本次文件代码的有主持核心磋商失焦校验断言失败：产品按既定行为仅在 `blur` 后显示错误样式，而旧测试只派发 `input`；该问题未混入本功能修改。
+- 浏览器已确认当前前端构建接管 `/delegate-files` 深层路由，但当时没有运行完整应用 API，只得到后端错误态。真实 TLS、有效分享数据、二维码扫码、多浏览器 Cookie/SSE、Chair Agent 断线恢复和三档宽度视觉证据仍按 `MANUAL_ACCEPTANCE.md` 的 SH-MAN-522 待执行，未以 jsdom 或数据库用例替代。
+
+### 2026-08-28：主席文件缓存、自动取回与 Agent SSE
+
+- migration 49/50 增加服务器非权威缓存状态、管理员额度 revision、Agent protocol/capability 和唯一 active `FETCH_BLOB_TO_CACHE`。主席电脑仍是 `CHAIR_AGENT` 的权威持久副本；待审核使用 `REVIEW_PINNED`，发布缓存按固定 LRU 顺序淘汰，cache miss 复用 durable fetch task。
+- 管理员运行状态增加硬边界内配置、容量与启动期 hit/miss/refill、发布缓存和待审核明细。明细只含委员会名、文件名、大小、状态和时间，不提供下载、预览、路径、哈希或导出；inventory GET 不写审计。
+- Agent protocol v2 使用不含业务内容的 SSE `wake` 近实时触发同一个单飞 processor；heartbeat 独立，SSE 以 1–60 秒退避，30 秒 reconciliation 保留。服务端每秒检查 durable 游标，每 15 秒发送 heartbeat；Caddy 继续使用既有 `flush_interval -1`。
+- 定向验证通过：TypeScript；23 项缓存页面/SSE/Agent 测试；Storage Agent build；真实 PostgreSQL 的 cache refill、LRU、安全明细、配置 revision/硬边界和 SSE 游标场景。完整 `pnpm test:self-host` 为 489 通过、3 失败，其中两项为既有 moderated-caucus blur 断言，一项 release 打包在全量负载下超过 5 秒；该 release 用例单独以 20 秒上限复跑 731 ms 通过。完整 PostgreSQL 入口为 31 通过、63 失败，失败集中在既有无效邮箱 fixture、5 秒并行超时、旧 Owner/Chair 断言和主机转移断言；新增 cache/refill/SSE/config 用例均通过。
+- `pnpm exec tsc --noEmit`、`pnpm build:self-host`、`pnpm verify:no-legacy-runtime` 和 `git diff --check` 通过。隔离 `quorum-cache-acceptance` Compose 使用临时 PostgreSQL、独立文件卷和 `127.0.0.1:18080`；schema 50/50、readiness 200，管理员配置真实 HTTP 更新到 revision 2，陈旧 revision 返回 409，匿名明细返回 401。现有 `quorum-dev` 未重建或复用。
+- 经明确授权使用无真实数据的 `quorum-dev`，真实浏览器以 1440、768、390 px 验证管理员运行状态页：三档均无整页横向溢出，390 px 仅文件表容器内部滚动；页面显示容量、硬边界内配置、委员会/文件名/大小、`REVIEW_PINNED`/`READY` 和“最先淘汰”，且普通账号恢复后不能访问全局明细。当前 Linux Agent 以既有配对升级到 protocol 2，并上报 `SSE_WAKE`/`CACHE_REFILL`；代表测试文件完成上传、0.6 秒内 host commit、待审核固定、主席批准、LRU 首项淘汰、cache miss 唯一回填和浏览器 attachment 下载。回填 task 从创建到完成约 0.57 秒；Caddy 重启时 Agent 记录 SSE 断线，并在 3 秒后重新建立长连接。证据和仍需专项故障注入的范围记录在 SH-MAN-523。

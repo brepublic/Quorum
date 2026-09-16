@@ -40,6 +40,8 @@ function client(overrides: Partial<SelfHostedIdentityClient>): SelfHostedIdentit
     changePassword: vi.fn(async () => ({...admin, mustChangePassword: false})),
     elevate: vi.fn(async () => admin),
     listUsers: vi.fn(async () => [admin]),
+    getDefaultCommitteeBehavior: vi.fn(async () => ({creatorIsChair: true, operationMode: 'CHAIR_OPERATED' as const, revision: 1})),
+    updateDefaultCommitteeBehavior: vi.fn(async input => input),
     createUser: vi.fn(async () => ({user: admin, temporaryPassword: 'temporary'})),
     resetPassword: vi.fn(async () => ({user: admin, temporaryPassword: 'temporary'})),
     disableUser: vi.fn(async () => undefined),
@@ -95,9 +97,13 @@ describe('self-hosted identity screens', () => {
   });
 
   it('shows account administration only to the system administrator', async () => {
-    const text = await renderClient(client({}));
+    const identityClient = client({});
+    const text = await renderClient(identityClient);
 
     expect(text).toContain('Account administration');
+    expect(text).not.toContain('Default behavior');
+    expect(text).not.toContain('默认驳回类型');
+    expect(identityClient.getDefaultCommitteeBehavior).not.toHaveBeenCalled();
     expect(text).toContain('Disable account');
     expect(text).toContain('Revoke sessions');
   });

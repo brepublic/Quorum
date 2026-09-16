@@ -204,7 +204,7 @@ interface TextPostRow extends QueryResultRow {
 
 interface MeetingSessionRow extends QueryResultRow {
   id: string; committee_id: string; name: string; phase_id: string; active_rule_package_version_id: string;
-  status: 'PENDING' | 'OPEN' | 'CLOSED'; revision: number; created_at: Date; closed_at: Date | null;
+  status: 'PENDING' | 'OPEN' | 'CLOSED'; formal_debate_open: boolean; revision: number; created_at: Date; closed_at: Date | null;
 }
 
 interface RollCallRow extends QueryResultRow {
@@ -994,13 +994,13 @@ export class Stage4Service {
   async createCommittee(auth: AuthenticatedSession, input: Record<string, unknown>, idempotencyKey: string,
     context: Stage4Context): Promise<CommitteeSummary> {
     requireBusinessIdentity(auth);
+    if (auth.user.isSystemAdmin) throw new AppError({code: 'FORBIDDEN', message: 'System administrators cannot create committees.'});
     assertExactBody(input, ['name', 'topic', 'conference', 'visibility', 'operationMode', 'activeRulePackageVersionId', 'committeeTemplateId', 'countryTemplateKey']);
     const name = requiredText(input.name, 'Committee name');
     const topic = optionalText(input.topic, 'Committee topic', 500);
     const conference = optionalText(input.conference, 'Conference name', 200);
     if (!['PUBLIC', 'PRIVATE'].includes(input.visibility as string)) throw new AppError({code: 'VALIDATION_FAILED', message: 'Committee visibility is invalid.'});
-    const operationMode = input.operationMode ?? 'DELEGATE_OPERATED';
-    if (!['DELEGATE_OPERATED', 'CHAIR_OPERATED'].includes(operationMode as string)) {
+    if (input.operationMode !== undefined && !['DELEGATE_OPERATED', 'CHAIR_OPERATED'].includes(input.operationMode as string)) {
       throw new AppError({code: 'VALIDATION_FAILED', message: 'Committee operation mode is invalid.'});
     }
     const committeeTemplateId = input.committeeTemplateId == null ? null : requiredText(input.committeeTemplateId, 'Committee template ID');
@@ -1010,6 +1010,12 @@ export class Stage4Service {
     }
     return idempotentTransaction({pool: this.pool, auth, route: 'POST /api/v1/committees', key: idempotencyKey,
       request: input, status: 201, work: async client => {
+        const defaults = await client.query<{creator_is_chair: boolean; operation_mode: 'DELEGATE_OPERATED' | 'CHAIR_OPERATED'}>(
+          `SELECT default_committee_creator_is_chair AS creator_is_chair,
+            default_committee_operation_mode AS operation_mode FROM system_settings WHERE singleton=true`);
+        const defaultBehavior = defaults.rows[0];
+        if (!defaultBehavior) throw new Error('system_settings singleton is missing');
+        const operationMode = (input.operationMode ?? defaultBehavior.operation_mode) as 'DELEGATE_OPERATED' | 'CHAIR_OPERATED';
         let versionId = typeof input.activeRulePackageVersionId === 'string' ? input.activeRulePackageVersionId : null;
         if (!versionId) {
           const builtin = await client.query<{id: string}>(`SELECT v.id FROM rule_package_versions v JOIN rule_packages p ON p.id=v.package_id
@@ -1037,13 +1043,20 @@ export class Stage4Service {
         [id, auth.user.id, name, topic, conference, input.visibility, operationMode, versionId,
           template?.builtin ? null : committeeTemplateId, countryTemplateKey, !template]);
         const row = inserted.rows[0] as Stage4CommitteeRow;
+      await client.query(`UPDATE committees SET delegate_file_settings=jsonb_set(delegate_file_settings,
+        '{rejectionTypes}', (SELECT default_file_rejection_types FROM system_settings WHERE singleton=true)) WHERE id=$1`, [id]);
         await client.query(`INSERT INTO committee_rule_bindings
           (id,committee_id,package_version_id,effective_from_event_sequence,activated_by_user_id)
           VALUES ($1,$2,$3,1,$4)`, [randomUUID(), id, versionId, auth.user.id]);
+        if (defaultBehavior.creator_is_chair) {
+          await client.query(`INSERT INTO committee_capabilities
+            (committee_id,user_id,capability,granted_by_user_id) VALUES ($1,$2,'CHAIR',$2)`, [id, auth.user.id]);
+        }
         await client.query(`INSERT INTO committee_events
           (committee_id,sequence,event_type,resource_type,resource_id,resource_revision,payload,audience)
           VALUES ($1,1,'committee.created','committee',$1,1,$2,'MEMBER')`,
-        [id, {sourceCommitteeTemplateId: committeeTemplateId, countryTemplateKey}]);
+        [id, {sourceCommitteeTemplateId: committeeTemplateId, countryTemplateKey, operationMode,
+          creatorIsChair: defaultBehavior.creator_is_chair}]);
         if (template) {
           for (const member of template.members) {
             await client.query(`INSERT INTO committee_seats
@@ -1055,7 +1068,8 @@ export class Stage4Service {
         }
         await audit(client, context, {committeeId: id, actorUserId: auth.user.id, capabilities: ['COMMITTEE_OWNER'],
           action: 'committee.created', resourceType: 'committee', resourceId: id,
-          after: {name, sourceCommitteeTemplateId: committeeTemplateId, countryTemplateKey, seatCount: template?.members.length ?? 0}});
+          after: {name, sourceCommitteeTemplateId: committeeTemplateId, countryTemplateKey, seatCount: template?.members.length ?? 0,
+            operationMode, creatorIsChair: defaultBehavior.creator_is_chair}});
         return committeeSummary(row);
       }});
   }
@@ -1293,7 +1307,7 @@ export class Stage4Service {
 
   async startMeetingSession(auth: AuthenticatedSession, committeeId: string, input: Record<string, unknown>,
     context: Stage4Context): Promise<MeetingSession> {
-    requireBusinessIdentity(auth); assertExactBody(input, ['phaseId']);
+    requireBusinessIdentity(auth); assertExactBody(input, ['phaseId', 'missingGeneralListAction']);
     return transaction(this.pool, async client => {
       const committee = await lockedCommittee(client, committeeId); await requireChair(client, committee, auth.user.id);
       requireProceedingsActive(committee);
@@ -1307,13 +1321,17 @@ export class Stage4Service {
       const phaseIds = phases.map(item => item && typeof item === 'object' ? (item as {id?: unknown}).id : undefined)
         .filter((value): value is string => typeof value === 'string' && Boolean(value));
       const phaseId = input.phaseId === undefined ? phaseIds[0] ?? 'open-debate' : requiredText(input.phaseId, 'Phase ID', 128);
+      const replacementRequested = input.missingGeneralListAction === 'CREATE_REPLACEMENT';
+      if (input.missingGeneralListAction !== undefined && !replacementRequested) {
+        throw new AppError({code: 'VALIDATION_FAILED', message: 'Missing general list action is invalid.'});
+      }
       if (phaseIds.length > 0 && !phaseIds.includes(phaseId)) {
         throw new AppError({code: 'VALIDATION_FAILED', message: 'Phase is not defined by the active rule package.'});
       }
       const pending = await client.query<MeetingSessionRow>(`SELECT * FROM meeting_sessions
         WHERE committee_id=$1 AND status='PENDING' FOR UPDATE`, [committeeId]);
       if ((pending.rowCount ?? 0) > 1) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'More than one meeting session is pending.'});
-      const id = pending.rows[0]?.id ?? randomUUID();
+      const pendingSession = pending.rows[0]; const id = pendingSession?.id ?? randomUUID();
       const inserted = pending.rows[0]
         ? await client.query<MeetingSessionRow>(`UPDATE meeting_sessions SET status='OPEN',phase_id=$2,revision=revision+1
           WHERE id=$1 RETURNING *`, [id, phaseId])
@@ -1324,30 +1342,63 @@ export class Stage4Service {
       const generalRule = definition.rows[0].definition.speakerLists?.find(item => item.id === 'general-speakers-list');
       const configuredDuration = generalRule?.defaultDurationSeconds;
       const defaultSpeechMs = typeof configuredDuration === 'number' && Number.isSafeInteger(configuredDuration)
-        && configuredDuration > 0 ? configuredDuration * 1000 : 60_000;
-      const speakerListId = randomUUID(); const speechTimerId = randomUUID();
-      await client.query(`INSERT INTO timer_states
-        (id,committee_id,owner_type,owner_id,remaining_at_start_ms,created_by_user_id)
-        VALUES ($1,$2,'SPEAKER_LIST',$3,$4,$5)`,
-      [speechTimerId, committeeId, speakerListId, defaultSpeechMs, auth.user.id]);
-      await client.query(`INSERT INTO speaker_lists
-        (id,committee_id,meeting_session_id,kind,name,topic,default_speech_ms,delegates_can_queue,
-         rule_package_version_id,speech_timer_id,created_by_user_id)
-        VALUES ($1,$2,$3,'GENERAL','General Speakers'' List','',$4,true,$5,$6,$7)`,
-      [speakerListId, committeeId, id, defaultSpeechMs, committee.active_rule_package_version_id,
-        speechTimerId, auth.user.id]);
+        && configuredDuration > 0 ? configuredDuration * 1000 : 120_000;
+      let speakerListId: string; let createdReplacement = false;
+      if (pendingSession) {
+        const alreadyLinked = await client.query<{id: string}>(`SELECT id FROM speaker_lists
+          WHERE meeting_session_id=$1 AND kind='GENERAL' FOR UPDATE`, [id]);
+        if (alreadyLinked.rows[0]) speakerListId = alreadyLinked.rows[0].id;
+        else {
+          const prior = await client.query<{id: string}>(`SELECT id FROM meeting_sessions
+            WHERE committee_id=$1 AND status='CLOSED' AND created_at <= $2
+            ORDER BY created_at DESC,id DESC LIMIT 1`, [committeeId, pendingSession.created_at]);
+          const priorList = prior.rows[0] && await client.query<{id: string}>(`SELECT id FROM speaker_lists
+            WHERE meeting_session_id=$1 AND kind='GENERAL' FOR UPDATE`, [prior.rows[0].id]);
+          if (priorList?.rows[0]) {
+            speakerListId = priorList.rows[0].id;
+            await client.query('UPDATE speaker_lists SET meeting_session_id=$2 WHERE id=$1', [speakerListId, id]);
+          } else {
+            if (!replacementRequested) throw new AppError({code: 'RESOURCE_CONFLICT',
+              message: 'The previous general speakers list is missing.',
+              details: {reason: 'GENERAL_SPEAKER_LIST_MISSING', allowCreateReplacement: true}});
+            speakerListId = randomUUID(); createdReplacement = true;
+            const speechTimerId = randomUUID();
+            await client.query(`INSERT INTO timer_states
+              (id,committee_id,owner_type,owner_id,remaining_at_start_ms,created_by_user_id)
+              VALUES ($1,$2,'SPEAKER_LIST',$3,$4,$5)`, [speechTimerId, committeeId, speakerListId, defaultSpeechMs, auth.user.id]);
+            await client.query(`INSERT INTO speaker_lists
+              (id,committee_id,meeting_session_id,kind,status,name,topic,default_speech_ms,delegates_can_queue,
+               rule_package_version_id,speech_timer_id,created_by_user_id,closed_at)
+              VALUES ($1,$2,$3,'GENERAL',$4,'General Speakers'' List','',$5,true,$6,$7,$8,
+                CASE WHEN $4='CLOSED' THEN now() ELSE NULL END)`,
+            [speakerListId, committeeId, id, pendingSession.formal_debate_open ? 'OPEN' : 'CLOSED', defaultSpeechMs,
+              pendingSession.active_rule_package_version_id, speechTimerId, auth.user.id]);
+          }
+        }
+      } else {
+        speakerListId = randomUUID(); const speechTimerId = randomUUID();
+        await client.query(`INSERT INTO timer_states
+          (id,committee_id,owner_type,owner_id,remaining_at_start_ms,created_by_user_id)
+          VALUES ($1,$2,'SPEAKER_LIST',$3,$4,$5)`, [speechTimerId, committeeId, speakerListId, defaultSpeechMs, auth.user.id]);
+        await client.query(`INSERT INTO speaker_lists
+          (id,committee_id,meeting_session_id,kind,status,name,topic,default_speech_ms,delegates_can_queue,
+           rule_package_version_id,speech_timer_id,created_by_user_id,closed_at)
+          VALUES ($1,$2,$3,'GENERAL','CLOSED','General Speakers'' List','',$4,true,$5,$6,$7,now())`,
+        [speakerListId, committeeId, id, defaultSpeechMs, committee.active_rule_package_version_id, speechTimerId, auth.user.id]);
+      }
       const session = inserted.rows[0] as MeetingSessionRow;
       await appendEvent(client, committee, {type: 'meeting_session.started', resourceType: 'meeting_session',
         resourceId: id, revision: session.revision, payload: {name: session.name, phaseId, rulePackageVersionId: session.active_rule_package_version_id,
           generalSpeakerListId: speakerListId}});
-      await appendEvent(client, committee, {type: 'speaker_list.created', resourceType: 'speaker_list',
+      if (!pendingSession || createdReplacement) await appendEvent(client, committee, {type: 'speaker_list.created', resourceType: 'speaker_list',
         resourceId: speakerListId, revision: 1, payload: {kind: 'GENERAL', name: "General Speakers' List", topic: '',
           defaultSpeechMs, totalDurationMs: null, delegatesCanQueue: true,
-          rulePackageVersionId: committee.active_rule_package_version_id}, audience: 'PUBLIC'});
+          rulePackageVersionId: pendingSession?.active_rule_package_version_id ?? committee.active_rule_package_version_id}, audience: 'PUBLIC'});
       await audit(client, context, {committeeId, actorUserId: auth.user.id, capabilities: ['CHAIR'],
         action: 'proceedings.meeting_session_started', resourceType: 'meeting_session', resourceId: id,
         after: {name: session.name, phaseId, rulePackageVersionId: session.active_rule_package_version_id,
-          generalSpeakerListId: speakerListId, generalSpeakerDefaultSpeechMs: defaultSpeechMs}});
+          generalSpeakerListId: speakerListId, generalSpeakerDefaultSpeechMs: defaultSpeechMs,
+          ...(createdReplacement ? {generalSpeakerListReplacement: true} : {})}});
       return meetingSession(session);
     });
   }

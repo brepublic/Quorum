@@ -50,8 +50,7 @@ export function AccountMenu({user, logout}: {user: SelfHostedUser; logout(): voi
       <Dropdown.Item as={Link} to="/countries" icon="flag outline" text={t('Country templates')} />
       {user.isSystemAdmin && <Dropdown.Divider />}
       {user.isSystemAdmin && <Dropdown.Item as={Link} to="/admin" icon="user secret" text={t('Account administration')} />}
-      {user.isSystemAdmin && <Dropdown.Item as={Link} to="/storage" icon="database" text={t('Storage configuration')} />}
-      {user.isSystemAdmin && <Dropdown.Item as={Link} to="/operations" icon="heartbeat" text={t('Operations status')} />}
+      {user.isSystemAdmin && <Dropdown.Item as={Link} to="/system-settings" icon="settings" text={t('System settings')} />}
       <Dropdown.Divider />
       <Dropdown.Item className="account-language"><LanguageSwitcher /></Dropdown.Item>
       <Dropdown.Item icon="paint brush" text={t('Appearance themes')} onClick={openThemes} />
@@ -65,18 +64,23 @@ function routeActive(pathname: string, destination: string, prefix = false) {
   return prefix ? pathname === destination || pathname.startsWith(`${destination}/`) : pathname === destination;
 }
 
-function PrimaryItems({snapshot, onNavigate}: {snapshot: CommitteeWorkspaceSnapshot; onNavigate?(): void}) {
+function PrimaryItems({snapshot, onNavigate, onCreateCaucus}: {
+  snapshot: CommitteeWorkspaceSnapshot; onNavigate?(): void; onCreateCaucus?(): void;
+}) {
   const location = useLocation();
   const base = `/committees/${snapshot.committee.id}`;
   const item = (path: string, label: string) => <Menu.Item key={path} as={Link} to={`${base}${path}`}
     active={routeActive(location.pathname, `${base}${path}`)} onClick={onNavigate}>{t(label)}</Menu.Item>;
   const dynamic = (kind: 'caucuses' | 'resolutions' | 'strawpolls', label: string, createLabel: string,
-    resources: Array<{id: string; label: string}>) => {
+    resources: Array<{id: string; label: string}>, activeOverride?: boolean) => {
     const destination = `${base}/${kind}`;
+    const isActive = activeOverride !== undefined ? activeOverride : routeActive(location.pathname, destination, true);
     return <Dropdown key={kind} item text={t(label)}
-      className={routeActive(location.pathname, destination, true) ? 'active' : undefined}>
+      className={isActive ? 'active' : undefined}>
       <Dropdown.Menu>
-        <Dropdown.Item as={Link} to={`${destination}/new`} icon="add" text={t(createLabel)} onClick={onNavigate} />
+        {kind === 'caucuses' && onCreateCaucus
+          ? <Dropdown.Item icon="add" text={t(createLabel)} onClick={() => {onNavigate?.(); onCreateCaucus();}} />
+          : <Dropdown.Item as={Link} to={`${destination}/new`} icon="add" text={t(createLabel)} onClick={onNavigate} />}
         {resources.map(resource => <Dropdown.Item key={resource.id} as={Link} to={`${destination}/${resource.id}`}
           active={location.pathname === `${destination}/${resource.id}` || location.pathname.startsWith(`${destination}/${resource.id}/`)}
           text={resource.label} onClick={onNavigate} />)}
@@ -84,6 +88,8 @@ function PrimaryItems({snapshot, onNavigate}: {snapshot: CommitteeWorkspaceSnaps
     </Dropdown>;
   };
   const generalSpeakerList = (snapshot.speakerLists ?? []).find(list => list.kind === 'GENERAL');
+  const gslPath = generalSpeakerList ? `${base}/caucuses/${generalSpeakerList.id}` : undefined;
+  const gslPathActive = gslPath !== undefined && routeActive(location.pathname, gslPath, true);
   const caucuses = (snapshot.speakerLists ?? []).filter(list => list.kind === 'MODERATED_CAUCUS').map(list => ({id: list.id,
     label: localizeGeneratedName(list.name || list.topic || 'untitled caucus')}));
   const resolutions = (snapshot.documents ?? []).filter(document => document.kind === 'RESOLUTION')
@@ -102,7 +108,7 @@ function PrimaryItems({snapshot, onNavigate}: {snapshot: CommitteeWorkspaceSnaps
       active={routeActive(location.pathname, `${base}/caucuses/${generalSpeakerList.id}`)} onClick={onNavigate}>
       {t("General Speakers' List")}</Menu.Item>}
     {item('/unmod', 'Unmod')}
-    {dynamic('caucuses', 'Caucuses', 'New caucus', caucuses)}
+    {dynamic('caucuses', 'Caucuses', 'New caucus', caucuses, gslPathActive ? false : undefined)}
     {dynamic('resolutions', 'Resolutions', 'New resolution', resolutions)}
     {dynamic('strawpolls', 'Strawpolls', 'New strawpoll', strawpolls)}
     {item('/notes', 'Notes')}
@@ -113,15 +119,15 @@ function PrimaryItems({snapshot, onNavigate}: {snapshot: CommitteeWorkspaceSnaps
   </>;
 }
 
-export function CommitteeNavigation({snapshot, user, logout, realtimeStatus = 'CONNECTING', children}: {
+export function CommitteeNavigation({snapshot, user, logout, realtimeStatus = 'CONNECTING', onCreateCaucus, children}: {
   snapshot: CommitteeWorkspaceSnapshot; user?: SelfHostedUser; logout(): void; realtimeStatus?: RealtimeStatus;
-  children?: React.ReactNode;
+  onCreateCaucus?(): void; children?: React.ReactNode;
 }) {
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
   return <>
     <nav className="committee-navigation-desktop" aria-label={t('Committee navigation')}>
       <Menu className="committee-primary-navigation" size="large" fluid>
-        <PrimaryItems snapshot={snapshot} />
+        <PrimaryItems snapshot={snapshot} onCreateCaucus={onCreateCaucus} />
         <Menu.Menu position="right"><AttendanceThresholdItem snapshot={snapshot} /><RealtimeStatusItem status={realtimeStatus} />
           {user && <AccountMenu user={user} logout={logout} />}</Menu.Menu>
       </Menu>
@@ -130,7 +136,7 @@ export function CommitteeNavigation({snapshot, user, logout, realtimeStatus = 'C
       <Sidebar className="committee-mobile-sidebar" as={Menu} animation="uncover" vertical visible={sidebarOpen}
         onHide={() => setSidebarOpen(false)}>
         <RealtimeStatusItem status={realtimeStatus} />
-        <PrimaryItems snapshot={snapshot} onNavigate={() => setSidebarOpen(false)} />
+        <PrimaryItems snapshot={snapshot} onNavigate={() => setSidebarOpen(false)} onCreateCaucus={onCreateCaucus} />
       </Sidebar>
       <Sidebar.Pusher dimmed={sidebarOpen} onClick={() => sidebarOpen && setSidebarOpen(false)}>
         <nav aria-label={t('Committee navigation')}>

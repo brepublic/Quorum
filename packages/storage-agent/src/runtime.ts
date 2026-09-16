@@ -1,12 +1,14 @@
 import {randomUUID} from 'node:crypto';
 import {watch, type FSWatcher} from 'node:fs';
+import {sep} from 'node:path';
 import type {StorageAgentConflict, StorageAgentTask, StorageManifestEvent} from '@quorum/contracts';
 import {StorageAgentHttpClient} from './client.js';
 import {AgentApiError, AgentFileSystemError} from './errors.js';
 import {AgentFileStore} from './files.js';
 import {secureAgentTarget} from './paths.js';
 import {AgentDirectoryScanner, type DetectedLocalChange} from './scanner.js';
-import type {AgentStateStore} from './state.js';
+import {AGENT_METADATA_FILE, AGENT_TEMP_DIRECTORY, type AgentStateStore} from './state.js';
+import {AGENT_LOCK_FILE} from './runtime-lock.js';
 
 function latest(events: StorageManifestEvent[]): Map<string, StorageManifestEvent> {
   const result = new Map<string, StorageManifestEvent>();
@@ -44,17 +46,31 @@ export interface AgentRuntimeLogger {
 
 const quietLogger: AgentRuntimeLogger = {info: () => undefined, error: () => undefined};
 
+export interface AgentActivity {fileEntryId: string; taskId: string; type: StorageAgentTask['type'];
+  phase: 'transfer' | 'verify' | 'complete' | 'failed'; name?: string; bytes: number; total: number; code?: string}
+export interface AgentRuntimeObserver {
+  activity(value: AgentActivity): void;
+  connected(): void;
+}
+
 export class StorageAgentRuntime {
   private manifest = new Map<string, StorageManifestEvent>();
   private watcher?: FSWatcher;
   private wake?: () => void;
+  private pendingWake = false;
+  private fatalError?: unknown;
 
   constructor(private readonly client: StorageAgentHttpClient, private readonly leaseGeneration: number,
     private readonly state: AgentStateStore, private readonly files: AgentFileStore,
-    private readonly scanner: AgentDirectoryScanner, private readonly logger: AgentRuntimeLogger = quietLogger) {}
+    private readonly scanner: AgentDirectoryScanner, private readonly logger: AgentRuntimeLogger = quietLogger,
+    private readonly observer?: AgentRuntimeObserver) {}
 
   async synchronizeOnce(): Promise<void> {
     await this.client.heartbeat(this.leaseGeneration);
+    await this.synchronizeWorkOnce();
+  }
+
+  private async synchronizeWorkOnce(): Promise<void> {
     const events = await this.loadManifest(); this.manifest = latest(events);
     const tombstones = [...this.manifest.values()].filter((event): event is Extract<StorageManifestEvent,
       {kind: 'DELETE'}> => event.kind === 'DELETE').sort((left, right) => left.sequence - right.sequence);
@@ -67,7 +83,7 @@ export class StorageAgentRuntime {
     await this.applyConflictResolutions(await this.client.conflicts(this.leaseGeneration));
     const tasks = await this.loadTasks();
     tasks.sort((left, right) => {
-      const order = {DELETE_FILE: 0, STORE_BLOB: 1, UPLOAD_BLOB: 2};
+      const order = {DELETE_FILE: 0, STORE_BLOB: 1, HOST_COMMIT_BLOB: 2, UPLOAD_BLOB: 3, FETCH_BLOB_TO_CACHE: 4};
       return order[left.type] - order[right.type] || left.sequence - right.sequence;
     });
     for (const task of tasks.filter(item => due(item))) await this.processTask(task);
@@ -79,18 +95,65 @@ export class StorageAgentRuntime {
   async run(signal: AbortSignal, options: {scanIntervalMs?: number; retryMaximumMs?: number} = {}): Promise<void> {
     const interval = options.scanIntervalMs ?? 30_000; const maximum = options.retryMaximumMs ?? 60_000;
     await this.files.cleanupTemporaryFiles(); this.startWatcher(); let delay = 1_000;
+    this.pendingWake = true; this.fatalError = undefined;
+    const runtimeAbort = new AbortController();
+    const abort = () => { runtimeAbort.abort(); this.signalWake(); };
+    signal.addEventListener('abort', abort, {once: true});
+    if (signal.aborted) abort();
+    const heartbeat = this.heartbeatLoop(runtimeAbort.signal);
+    const events = this.eventLoop(runtimeAbort.signal);
     try {
-      while (!signal.aborted) {
+      while (!runtimeAbort.signal.aborted) {
+        if (!this.pendingWake) await this.wait(interval, runtimeAbort.signal);
+        if (this.fatalError) throw this.fatalError;
+        if (runtimeAbort.signal.aborted) break;
+        this.pendingWake = false;
         try {
-          await this.synchronizeOnce(); delay = 1_000;
-          await this.wait(interval, signal);
+          await this.synchronizeWorkOnce(); delay = 1_000;
         } catch (error) {
           this.logger.error('storage_agent.cycle_failed', {code: safeReason(error)});
           if (error instanceof AgentApiError && error.code === 'STALE_STORAGE_LEASE') throw error;
-          await this.wait(delay, signal); delay = Math.min(maximum, delay * 2);
+          await this.wait(delay, runtimeAbort.signal); delay = Math.min(maximum, delay * 2);
         }
       }
-    } finally { this.watcher?.close(); this.watcher = undefined; }
+    } finally {
+      runtimeAbort.abort(); this.signalWake(); signal.removeEventListener('abort', abort);
+      this.watcher?.close(); this.watcher = undefined;
+      await Promise.allSettled([heartbeat, events]);
+    }
+  }
+
+  private async heartbeatLoop(signal: AbortSignal): Promise<void> {
+    while (!signal.aborted) {
+      try {
+        await this.client.heartbeat(this.leaseGeneration);
+        this.observer?.connected();
+      } catch (error) {
+        this.logger.error('storage_agent.heartbeat_failed', {code: safeReason(error)});
+        if (error instanceof AgentApiError && error.code === 'STALE_STORAGE_LEASE') {
+          this.fatalError = error; this.signalWake(); return;
+        }
+      }
+      await this.delay(15_000, signal);
+    }
+  }
+
+  private async eventLoop(signal: AbortSignal): Promise<void> {
+    let delay = 1_000;
+    while (!signal.aborted) {
+      try {
+        await this.client.events(this.leaseGeneration, signal, () => this.signalWake());
+        delay = 1_000;
+      } catch (error) {
+        if (signal.aborted) return;
+        this.logger.error('storage_agent.events_disconnected', {code: safeReason(error)});
+        if (error instanceof AgentApiError && error.code === 'STALE_STORAGE_LEASE') {
+          this.fatalError = error; this.signalWake(); return;
+        }
+      }
+      await this.delay(delay, signal);
+      delay = Math.min(60_000, delay * 2);
+    }
   }
 
   private async loadManifest(): Promise<StorageManifestEvent[]> {
@@ -110,7 +173,7 @@ export class StorageAgentRuntime {
     const tasks: StorageAgentTask[] = []; let after = 0;
     while (true) {
       const page = await this.client.tasks(this.leaseGeneration, after, 100);
-      if (page.tasks.some(task => !['STORE_BLOB', 'UPLOAD_BLOB', 'DELETE_FILE'].includes(task.type)
+      if (page.tasks.some(task => !['STORE_BLOB', 'HOST_COMMIT_BLOB', 'UPLOAD_BLOB', 'DELETE_FILE', 'FETCH_BLOB_TO_CACHE'].includes(task.type)
         || !['PENDING', 'IN_PROGRESS', 'RETRY', 'COMPLETED', 'FAILED', 'CANCELLED'].includes(task.status))
         || (page.hasMore && page.nextSequence <= after)) {
         throw new AgentApiError(502, 'UNKNOWN_PROTOCOL_STATE', 'Storage task response is invalid.');
@@ -129,6 +192,20 @@ export class StorageAgentRuntime {
     }
     if (!claimed.claimToken) throw new Error('Claimed task has no token.');
     const token = claimed.claimToken;
+    const manifestFile = this.manifest.get(claimed.fileEntryId);
+    const activity = (phase: AgentActivity['phase'], bytes = 0, code?: string) => this.observer?.activity({
+      fileEntryId: claimed.fileEntryId, taskId: claimed.id, type: claimed.type, phase,
+      name: claimed.logicalName ?? (manifestFile?.kind === 'UPSERT' ? manifestFile.logicalName : claimed.fileEntryId),
+      bytes, total: claimed.expectedSizeBytes ?? 0, code});
+    const client = this.client;
+    const download = async function* () {
+      let bytes = 0;
+      for await (const chunk of await client.download(claimed, token)) {
+        bytes += chunk.byteLength; activity('transfer', bytes); yield chunk;
+      }
+      activity('verify', bytes);
+    };
+    activity('transfer');
     try {
       if (claimed.type === 'DELETE_FILE') {
         const event = this.manifest.get(claimed.fileEntryId);
@@ -152,12 +229,21 @@ export class StorageAgentRuntime {
         const pending = claimed.resolutionConflictId ? snapshot.conflicts[claimed.resolutionConflictId] : undefined;
         const expected = claimed.resolutionConflictId
           ? conflictExpected(snapshot, claimed.resolutionConflictId) : undefined;
-        await this.files.applyUpsert(event, await this.client.download(claimed, token),
+        await this.files.applyUpsert(event, download(),
           {force: Boolean(pending), conflictPath: pending?.relativePath, conflictExpected: expected});
         if (pending && pending.relativePath !== event.logicalName) {
           await this.files.discardConflict(pending.relativePath, expected);
         }
-      } else {
+      } else if (claimed.type === 'HOST_COMMIT_BLOB') {
+        if (!claimed.logicalName || !claimed.blobId || claimed.expectedSizeBytes === null || !claimed.expectedSha256) {
+          throw new AgentFileSystemError('LOCAL_CONTENT_INVALID', 'Host commit task lacks file metadata.');
+        }
+        await this.files.applyUpsert({sequence: this.state.snapshot().manifestSequence, kind: 'UPSERT',
+          fileEntryId: claimed.fileEntryId, fileRevision: claimed.fileRevision, versionId: claimed.id,
+          blobId: claimed.blobId, logicalName: claimed.logicalName, originalName: claimed.logicalName,
+          mediaType: 'application/octet-stream', sizeBytes: claimed.expectedSizeBytes, sha256: claimed.expectedSha256,
+          createdAt: claimed.createdAt}, download());
+      } else if (claimed.type === 'UPLOAD_BLOB') {
         const pending = this.state.snapshot().pendingUploads[claimed.id];
         if (!pending || pending.fileRevision !== claimed.fileRevision || pending.sha256 !== claimed.expectedSha256) {
           throw new AgentFileSystemError('LOCAL_CONTENT_CONFLICT', 'Local upload task has no matching local content.');
@@ -167,13 +253,30 @@ export class StorageAgentRuntime {
         if (inspected.sizeBytes !== pending.sizeBytes || inspected.sha256 !== pending.sha256) {
           throw new AgentFileSystemError('LOCAL_CONTENT_CONFLICT', 'Local upload changed after it was queued.');
         }
-        await this.client.upload(claimed, token, target.absolutePath);
+        await this.client.upload(claimed, token, target.absolutePath, bytes => activity('transfer', bytes));
+        activity('verify', claimed.expectedSizeBytes ?? 0);
+      } else {
+        const event = this.manifest.get(claimed.fileEntryId);
+        if (!event || event.kind !== 'UPSERT' || event.fileRevision !== claimed.fileRevision
+          || event.blobId !== claimed.blobId || event.sizeBytes !== claimed.expectedSizeBytes
+          || event.sha256 !== claimed.expectedSha256) {
+          throw new AgentFileSystemError('LOCAL_CONTENT_INVALID', 'Cache refill does not match the local manifest.');
+        }
+        const target = await secureAgentTarget(this.state.rootPath, event.logicalName);
+        const inspected = await this.files.inspect(event.logicalName);
+        if (inspected.sizeBytes !== event.sizeBytes || inspected.sha256 !== event.sha256) {
+          throw new AgentFileSystemError('LOCAL_CONTENT_INVALID', 'Local cache refill source changed.');
+        }
+        await this.client.upload(claimed, token, target.absolutePath, bytes => activity('transfer', bytes));
+        activity('verify', claimed.expectedSizeBytes ?? 0);
       }
       await this.client.complete(claimed, token, randomUUID());
+      activity('complete', claimed.expectedSizeBytes ?? 0);
       if (claimed.resolutionConflictId) await this.scanner.completeConflict(claimed.resolutionConflictId);
       if (claimed.type === 'UPLOAD_BLOB') await this.recoverCompletedUpload(claimed);
     } catch (error) {
       const code = safeReason(error);
+      activity('failed', 0, code);
       if (claimed.resolutionConflictId) {
         if (error instanceof AgentFileSystemError && error.code === 'LOCAL_CONTENT_CONFLICT') {
           await this.client.fail(claimed, token, randomUUID(), code).catch(() => undefined);
@@ -235,9 +338,11 @@ export class StorageAgentRuntime {
   }
 
   private startWatcher(): void {
-    const changed = () => {
+    const changed = (_event: string, filename: string | Buffer | null) => {
+      const rootEntry = filename?.toString().split(sep)[0];
+      if (rootEntry && [AGENT_METADATA_FILE, AGENT_TEMP_DIRECTORY, AGENT_LOCK_FILE].includes(rootEntry)) return;
       this.logger.info('storage_agent.filesystem_changed');
-      this.wake?.();
+      this.signalWake();
     };
     try {
       this.watcher = watch(this.state.rootPath, {recursive: true}, changed);
@@ -248,6 +353,20 @@ export class StorageAgentRuntime {
         this.watcher.on('error', () => { this.watcher?.close(); this.watcher = undefined; });
       } catch { this.watcher = undefined; }
     }
+  }
+
+  private signalWake(): void {
+    this.pendingWake = true;
+    this.wake?.();
+  }
+
+  private delay(milliseconds: number, signal: AbortSignal): Promise<void> {
+    if (signal.aborted) return Promise.resolve();
+    return new Promise(resolve => {
+      const timer = setTimeout(done, milliseconds);
+      function done() { clearTimeout(timer); signal.removeEventListener('abort', done); resolve(); }
+      signal.addEventListener('abort', done, {once: true});
+    });
   }
 
   private wait(milliseconds: number, signal: AbortSignal): Promise<void> {

@@ -62,14 +62,27 @@ describe('self-hosted workspace navigation', () => {
     expect(active?.getAttribute('href')).toBe('/committees/committee/caucuses/mod');
   });
 
-  it('keeps templates and operations in the account menu', () => {
+  it('opens caucus creation without navigating to the legacy new route', () => {
+    const onCreateCaucus = vi.fn();
+    const page = render(<CommitteeNavigation snapshot={snapshot} user={user} logout={() => undefined}
+      onCreateCaucus={onCreateCaucus} />, '/committees/committee/caucuses/gsl');
+    const item = [...page.querySelectorAll<HTMLElement>('.committee-primary-navigation .dropdown .item')]
+      .find(candidate => candidate.textContent?.includes('New caucus'));
+    expect(item?.getAttribute('href')).toBeNull();
+    act(() => item?.click());
+    expect(onCreateCaucus).toHaveBeenCalledOnce();
+  });
+
+  it('keeps templates and system settings in the account menu', () => {
     const admin = {...user, isSystemAdmin: true};
     const page = render(<CommitteeNavigation snapshot={snapshot} user={admin} logout={() => undefined} />,
       '/committees/committee');
     expect(page.querySelector('.committee-primary-navigation > a[href="/templates"]')).toBeNull();
     expect(page.querySelector('.committee-primary-navigation > a[href="/operations"]')).toBeNull();
     expect(page.querySelector('.account-menu a[href="/templates"]')).not.toBeNull();
-    expect(page.querySelector('.account-menu a[href="/operations"]')).not.toBeNull();
+    expect(page.querySelector('.account-menu a[href="/system-settings"]')).not.toBeNull();
+    expect(page.querySelector('.account-menu a[href="/operations"]')).toBeNull();
+    expect(page.querySelector('.account-menu a[href="/storage"]')).toBeNull();
   });
 
   it("shows roll-call attendance thresholds immediately left of the realtime status", () => {
@@ -91,6 +104,7 @@ describe('self-hosted workspace navigation', () => {
   it("does not grant system administration entries to a regular account", () => {
     const page = render(<AccountMenu user={user} logout={vi.fn()} />);
     expect(page.querySelector('a[href="/admin"]')).toBeNull();
+    expect(page.querySelector('a[href="/system-settings"]')).toBeNull();
     expect(page.querySelector('a[href="/storage"]')).toBeNull();
     expect(page.querySelector('a[href="/operations"]')).toBeNull();
   });

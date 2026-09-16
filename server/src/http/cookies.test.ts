@@ -1,7 +1,7 @@
 // @vitest-environment node
 
 import {describe, expect, it} from 'vitest';
-import {csrfCookie, sessionCookie, verifyCsrf} from './cookies';
+import {csrfCookie, delegateFileCookies, sessionCookie, verifyCsrf} from './cookies';
 
 describe('identity cookies and CSRF', () => {
   it('sets the required Session Cookie attributes', () => {
@@ -24,5 +24,13 @@ describe('identity cookies and CSRF', () => {
     expect(() => verifyCsrf('same', 'same')).not.toThrow();
     expect(() => verifyCsrf(undefined, 'same')).toThrow(/CSRF/);
     expect(() => verifyCsrf('same', 'wrong')).toThrow(/CSRF/);
+  });
+
+  it('uses a separate HttpOnly delegate credential and readable CSRF cookie', () => {
+    const [credential, csrf] = delegateFileCookies('opaque', 'csrf', 3600);
+    expect(credential).toContain('__Host-quorum_delegate_files=opaque');
+    expect(credential).toContain('Secure; HttpOnly; SameSite=Lax');
+    expect(csrf).toContain('__Host-quorum_delegate_files_csrf=csrf');
+    expect(csrf).toContain('Secure; SameSite=Lax'); expect(csrf).not.toContain('HttpOnly');
   });
 });

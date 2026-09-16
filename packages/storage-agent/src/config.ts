@@ -6,6 +6,8 @@ import {AgentFileSystemError} from './errors.js';
 
 export interface StorageAgentLocalConfig {
   schemaVersion: 1;
+  scanIntervalMs?: number;
+  caCertificatePath?: string;
   serverUrl: string;
   credential: string;
   committeeId: string;
@@ -26,6 +28,9 @@ function valid(value: unknown): StorageAgentLocalConfig {
     || typeof config.devicePrivateKey !== 'string' || !config.devicePrivateKey.includes('PRIVATE KEY')) {
     throw new Error('Agent config is invalid.');
   }
+  if (config.scanIntervalMs !== undefined && (!Number.isSafeInteger(config.scanIntervalMs)
+    || config.scanIntervalMs < 1000 || config.scanIntervalMs > 3600000)) throw new Error('Scan interval must be 1–3600 seconds.');
+  if (config.caCertificatePath !== undefined && typeof config.caCertificatePath !== 'string') throw new Error('Invalid certificate path.');
   return config as StorageAgentLocalConfig;
 }
 

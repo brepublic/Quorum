@@ -11,16 +11,17 @@ import type {
   Stage4CommitteeSeat
 } from '@quorum/contracts';
 import {Link, Redirect, Route, Switch, useHistory, useLocation, useParams} from 'react-router-dom';
-import {Button, Card, Checkbox, Confirm, Container, Divider, Form, Grid, Header, Icon, Label, List, Menu, Message, Pagination, Popup, Segment, Table} from 'semantic-ui-react';
+import {Button, Card, Checkbox, Confirm, Container, Divider, Form, Grid, Header, Icon, Label, List, Menu, Message, Modal, Pagination, Popup, Segment, Table} from 'semantic-ui-react';
 import Loading from '../components/Loading';
 import {CountryFlagDisplay} from '../components/CountryFlagDisplay';
 import {LanguageMenuItem, t} from '../i18n';
-import {selfHostedApi, type SelfHostedApi} from '../services/self-hosted-api';
-import type {SelfHostedUser} from '../services/self-hosted-identity';
+import {selfHostedApi, SelfHostedApiError, type SelfHostedApi} from '../services/self-hosted-api';
+import {selfHostedIdentityClient, type SelfHostedIdentityClient, type SelfHostedUser} from '../services/self-hosted-identity';
 import ProceedingsPanel from './self-hosted/ProceedingsPanel';
 import FilesPanel from './self-hosted/FilesPanel';
-import StorageAdminPanel from './self-hosted/StorageAdminPanel';
-import OperationsPanel from './self-hosted/OperationsPanel';
+import SystemSettings from './self-hosted/SystemSettings';
+import {DelegateFileSettingsPanel} from './self-hosted/DelegateFileSettingsPanel';
+import {DelegateFilePanels, DelegateFileUploadPanel} from './self-hosted/DelegateFileChairPanels';
 import {AccountMenu, CommitteeNavigation} from './self-hosted/WorkspaceNavigation';
 import {CommitteeWorkspaceProvider, useCommitteeWorkspace} from './self-hosted/CommitteeWorkspaceContext';
 import {
@@ -114,7 +115,7 @@ function CommitteeList({api, user, logout}: {api: SelfHostedApi; user: SelfHoste
         {committeeGroups}
         <Button basic negative fluid icon="sign-out" content={t('Logout')} onClick={logout} />
       </Segment></Grid.Column>
-      <Grid.Column width={10}><Segment><Form onSubmit={create} loading={working}>
+      {!user.isSystemAdmin && <Grid.Column width={10}><Segment><Form onSubmit={create} loading={working}>
       <Form.Group unstackable className="template-picker-row">
         <Form.Dropdown className="template-picker-field" label={t('Template')} search clearable fluid selection
           placeholder={t('Template to skip manual member creation (optional)')} value={templateId}
@@ -140,7 +141,7 @@ function CommitteeList({api, user, logout}: {api: SelfHostedApi; user: SelfHoste
         {key: 'private', value: 'PRIVATE', text: t('Private')}, {key: 'public', value: 'PUBLIC', text: t('Public')}
       ]} onChange={(_, data) => setVisibility(data.value as 'PUBLIC' | 'PRIVATE')} />
       <Button primary fluid disabled={!name.trim() || (!templateId && !countryKey)}>{t('Create committee')}<Icon name="arrow right" /></Button>
-    </Form></Segment></Grid.Column>
+    </Form></Segment></Grid.Column>}
     </Grid>
     <Confirm open={Boolean(deleteTarget)} header={t('Delete committee?')}
       content={t('This permanently deletes the committee and all of its records and uploaded files.')}
@@ -277,40 +278,54 @@ function NotesPanel({snapshot, run, api}: {snapshot: CommitteeWorkspaceSnapshot;
 }
 
 function LinkResources({snapshot, run, api}: {snapshot: CommitteeWorkspaceSnapshot; run: WorkspaceCommand; api: SelfHostedApi}) { const [title, setTitle] = React.useState(''); const [url, setUrl] = React.useState(''); const canWrite = snapshot.viewer.audience !== 'PUBLIC' && snapshot.committee.status === 'ACTIVE'; const links = snapshot.textPosts.filter(post => post.content.startsWith('link:')).map(post => ({post, url: post.content.slice(5)})).filter(({url}) => {try {return ['http:', 'https:'].includes(new URL(url).protocol);} catch {return false;}}); const create = async () => {if (url.trim()) {await run(() => api.createTextPost(snapshot.committee.id, {title, content: `link:${url.trim()}`})); setTitle(''); setUrl('');}}; return <><Form onSubmit={create}>{canWrite && <><Form.Input label={t('Title')} value={title} onChange={event => setTitle(event.currentTarget.value)} /><Form.Input label={t('URL')} type="url" required value={url} onChange={event => setUrl(event.currentTarget.value)} /><Button primary disabled={!url.trim()}>{t('Publish link')}</Button></>}</Form><List divided relaxed>{links.map(({post, url}) => <List.Item key={post.id}>{canWrite && <List.Content floated="right"><Button size="mini" negative onClick={() => void run(() => api.deleteTextPost(post.id, post.revision))}>{t('Delete')}</Button></List.Content>}<List.Header>{post.title || t('Untitled')}</List.Header><List.Description><a href={url} target="_blank" rel="noreferrer">{url}</a></List.Description><List.Description>{t('Publisher')}: {post.authorDisplayName}</List.Description></List.Item>)}</List></>; }
-function PostsPanel({snapshot, run, api, userId, tab}: {snapshot: CommitteeWorkspaceSnapshot; run: WorkspaceCommand;
+function PostsPanel({snapshot, api, userId, tab}: {snapshot: CommitteeWorkspaceSnapshot;
   api: SelfHostedApi; userId?: string; tab?: string}) {
   const canManageStorage = snapshot.viewer.audience === 'CHAIR' || snapshot.viewer.audience === 'OWNER';
-  const active = tab === 'links' || tab === 'attachments' || tab === 'storage' ? tab : 'text';
+  const [delegateFilesEnabled, setDelegateFilesEnabled] = React.useState<boolean>();
+  const [bindingError, setBindingError] = React.useState<string>();
+  const [bindingReload, setBindingReload] = React.useState(0);
+  React.useEffect(() => {
+    let active = true;
+    setBindingError(undefined);
+    if (!canManageStorage || snapshot.committee.operationMode !== 'CHAIR_OPERATED') {setDelegateFilesEnabled(false); return;}
+    void api.listStorageBindings(snapshot.committee.id).then(bindings => {
+      if (active) setDelegateFilesEnabled(bindings.some(binding => binding.status === 'ACTIVE' && binding.providerType === 'CHAIR_AGENT'));
+    }).catch(caught => {if (active) {
+      if (caught instanceof SelfHostedApiError && [401, 403, 404].includes(caught.status)) setDelegateFilesEnabled(undefined);
+      setBindingError(errorText(caught));
+    }});
+    return () => {active = false;};
+  }, [api, canManageStorage, snapshot.committee.id, snapshot.committee.operationMode,
+    snapshot.sync.committeeEventSequence, bindingReload]);
+  if (canManageStorage && snapshot.committee.operationMode === 'CHAIR_OPERATED' && delegateFilesEnabled === undefined) {
+    return bindingError ? <Message error><p>{bindingError}</p><Button onClick={() => setBindingReload(value => value + 1)}>重试</Button></Message> : <Segment basic loading style={{minHeight: 120}} role="status" aria-label="加载中" />;
+  }
   const base = `/committees/${snapshot.committee.id}/posts`;
+  if (tab === undefined || tab === 'text' || tab === 'links') return <Redirect to={`${base}/attachments`} />;
+  if (delegateFilesEnabled && tab === 'attachments') return <Redirect to={`${base}/review`} />;
+  const active = tab === 'attachments' || tab === 'storage' || (tab === 'file-settings' && canManageStorage) || (tab === 'share' && delegateFilesEnabled)
+    || (tab === 'upload' && delegateFilesEnabled) || (tab === 'review' && delegateFilesEnabled)
+    ? tab : delegateFilesEnabled ? 'review' : 'attachments';
   return <><Menu pointing secondary aria-label={t('Resource sections')}>
-    <Menu.Item as={Link} to={base} active={active === 'text'}>{t('Text resources')}</Menu.Item>
-    <Menu.Item as={Link} to={`${base}/links`} active={active === 'links'}>{t('Link resources')}</Menu.Item>
-    <Menu.Item as={Link} to={`${base}/attachments`} active={active === 'attachments'}>{t('Attachments')}</Menu.Item>
-    {canManageStorage && <Menu.Item as={Link} to={`${base}/storage`} active={active === 'storage'}>{t('Storage')}</Menu.Item>}
+    {delegateFilesEnabled ? <><Menu.Item as={Link} to={`${base}/review`} active={active === 'review'}>审核</Menu.Item>
+      <Menu.Item as={Link} to={`${base}/share`} active={active === 'share'}>分享</Menu.Item>
+      <Menu.Item as={Link} to={`${base}/upload`} active={active === 'upload'}>上传文件</Menu.Item></>
+      : <Menu.Item as={Link} to={`${base}/attachments`} active={active === 'attachments'}>{t('Attachments')}</Menu.Item>}
+    {canManageStorage && <Menu.Item as={Link} to={`${base}/storage`} active={active === 'storage'}>存储设置</Menu.Item>}
+    {canManageStorage && <Menu.Item as={Link} to={`${base}/file-settings`} active={active === 'file-settings'}>文件设置</Menu.Item>}
   </Menu>
-    {active === 'text' && <TextResources kind="posts" snapshot={snapshot} run={run} api={api} />}
-    {active === 'links' && <LinkResources snapshot={snapshot} run={run} api={api} />}
-    {active === 'attachments' && <FilesPanel section="attachments" snapshot={snapshot} api={api} currentUserId={userId} />}
+    {bindingError && <Message error><p>{bindingError}</p><Button onClick={() => setBindingReload(value => value + 1)}>重试</Button></Message>}
+    {active === 'file-settings' && canManageStorage && <DelegateFileSettingsPanel key={snapshot.committee.id} committeeId={snapshot.committee.id} api={api}
+      readOnly={!['ACTIVE', 'PAUSED'].includes(snapshot.committee.status)} />}
+    {active === 'upload' && delegateFilesEnabled && <DelegateFileUploadPanel snapshot={snapshot} api={api} />}
+    {active === 'attachments' && !delegateFilesEnabled && <FilesPanel section="attachments" snapshot={snapshot} api={api} currentUserId={userId} />}
+    {delegateFilesEnabled && <DelegateFilePanels snapshot={snapshot} api={api} tab={active} />}
     {active === 'storage' && canManageStorage && <FilesPanel section="storage" snapshot={snapshot} api={api} currentUserId={userId} />}
   </>;
 }
 
 type WorkspaceCommand = (operation: () => Promise<unknown>) => Promise<void>;
-const ROLL_CALL_PAGE_SIZE = 18;
-
-function rollCallGridColumnCount(width = window.innerWidth) {
-  if (width <= 600) return 1;
-  return width <= 991 ? 2 : 3;
-}
-
-function columnFirstRollCallSeats<T>(seats: T[], columns: number) {
-  const rows = Math.ceil(seats.length / columns);
-  return Array.from({length: seats.length}, (_, index) => {
-    const row = Math.floor(index / columns);
-    const column = index % columns;
-    return seats[column * rows + row];
-  }).filter((seat): seat is T => seat !== undefined);
-}
+const ROLL_CALL_PAGE_SIZE = 9;
 function rollCallResponseLabel(response: string) {
   return t(response === 'PRESENT_AND_VOTING' ? 'Present and voting'
     : response === 'PRESENT' ? 'Present' : response === 'ABSENT' ? 'Absent' : response);
@@ -475,7 +490,7 @@ function SettingsPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
   const [ruleVersionId, setRuleVersionId] = React.useState(snapshot.committee.activeRulePackageVersionId);
   const [deleteName, setDeleteName] = React.useState('');
   const generalSpeakerList = (snapshot.speakerLists ?? []).find(list => list.kind === 'GENERAL');
-  const [generalSpeakerSeconds, setGeneralSpeakerSeconds] = React.useState((generalSpeakerList?.defaultSpeechMs ?? 60_000) / 1000);
+  const [generalSpeakerSeconds, setGeneralSpeakerSeconds] = React.useState((generalSpeakerList?.defaultSpeechMs ?? 120_000) / 1000);
   const owner = snapshot.viewer.audience === 'OWNER';
   const readOnly = snapshot.committee.status === 'ARCHIVED' || snapshot.committee.status === 'DELETING';
   const execute = async (key: string, operation: () => Promise<unknown>) => {setPending(key); try {await run(operation);} finally {setPending(undefined);}};
@@ -539,11 +554,12 @@ function RollCallPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
   const chair = canChair; const session = snapshot.meetingSession; const rollCall = snapshot.rollCall;
   const sessionName = session?.status === 'PENDING' ? session.name : snapshot.nextMeetingSessionName;
   const [pending, setPending] = React.useState<string>();
+  const [missingGeneralListConfirm, setMissingGeneralListConfirm] = React.useState(false);
   const [page, setPage] = React.useState(0); const [resetOpen, setResetOpen] = React.useState(false);
-  const [gridColumns, setGridColumns] = React.useState(() => rollCallGridColumnCount());
-  const execute = async (key: string, operation: () => Promise<unknown>) => {
+  const autoStartedSessionId = React.useRef<string>();
+  const execute = React.useCallback(async (key: string, operation: () => Promise<unknown>) => {
     setPending(key); try {await run(operation);} finally {setPending(undefined);}
-  };
+  }, [run]);
   const seats = snapshot.seats;
   const entryBySeat = React.useMemo(() => new Map(rollCall?.entries.map(entry => [entry.seatId, entry]) ?? []), [rollCall?.entries]);
   const currentSeat = snapshot.seats.find(seat => seat.id === rollCall?.currentSeatId);
@@ -552,22 +568,41 @@ function RollCallPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
     if (index >= 0) setPage(Math.floor(index / ROLL_CALL_PAGE_SIZE));
   }, [rollCall?.currentSeatId, seats]);
   React.useEffect(() => {
-    const updateGridColumns = () => setGridColumns(rollCallGridColumnCount());
-    window.addEventListener('resize', updateGridColumns);
-    return () => window.removeEventListener('resize', updateGridColumns);
-  }, []);
-  if (!rollCall) return <>{chair && (!session || session.status === 'PENDING') && <Form onSubmit={() => execute('meeting', () => api.startMeetingSession(snapshot.committee.id))}>
-      <Form.Input label={t('Meeting session')} value={sessionName ?? ''} readOnly />
-      <Button primary loading={pending === 'meeting'}>{t('Start meeting')}</Button>
-    </Form>}
-    {chair && session?.status === 'OPEN' && !rollCall && <Button primary loading={pending === 'roll-call'}
-      onClick={() => void execute('roll-call', () => api.startRollCall(snapshot.committee.id, session.id))}>{t('Start roll call')}</Button>}
+    if (!chair || rollCall || session?.status !== 'OPEN' || autoStartedSessionId.current === session.id) return;
+    autoStartedSessionId.current = session.id;
+    void execute('roll-call', () => api.startRollCall(snapshot.committee.id, session.id));
+  }, [api, chair, execute, rollCall, session?.id, session?.status, snapshot.committee.id]);
+  const startMeeting = (replacement = false) => execute('meeting', async () => {
+    try {
+      const meeting = replacement
+        ? await api.startMeetingSession(snapshot.committee.id, undefined, 'CREATE_REPLACEMENT')
+        : await api.startMeetingSession(snapshot.committee.id);
+      await api.startRollCall(snapshot.committee.id, meeting.id);
+    } catch (caught) {
+      if (!replacement && caught instanceof SelfHostedApiError && caught.code === 'RESOURCE_CONFLICT'
+        && (caught.details as {reason?: unknown} | undefined)?.reason === 'GENERAL_SPEAKER_LIST_MISSING') {
+        setMissingGeneralListConfirm(true);
+        return;
+      }
+      throw caught;
+    }
+  });
+  if (!rollCall) return <>{chair && (!session || session.status === 'PENDING') && <Segment className="roll-call-start-card">
+      <Label attached="top left" size="large">{t('Set meeting session')}</Label>
+      <Form onSubmit={() => startMeeting()}>
+        <Form.Input value={sessionName ?? ''} readOnly fluid />
+        <Button primary fluid loading={pending === 'meeting'}>{t('Start meeting')}</Button>
+      </Form>
+    </Segment>}<Confirm open={missingGeneralListConfirm} header={t('General speakers list missing')}
+      content={t('The previous session’s general speakers list could not be restored. Create a new list and continue?')}
+      cancelButton={t('Cancel')} confirmButton={t('Create and continue')}
+      onCancel={() => setMissingGeneralListConfirm(false)}
+      onConfirm={() => {setMissingGeneralListConfirm(false); void startMeeting(true);}} />
   </>;
 
   const totalPages = Math.max(1, Math.ceil(seats.length / ROLL_CALL_PAGE_SIZE));
   const activePage = Math.min(page, totalPages - 1);
-  const visibleSeats = columnFirstRollCallSeats(
-    seats.slice(activePage * ROLL_CALL_PAGE_SIZE, (activePage + 1) * ROLL_CALL_PAGE_SIZE), gridColumns);
+  const visibleSeats = seats.slice(activePage * ROLL_CALL_PAGE_SIZE, (activePage + 1) * ROLL_CALL_PAGE_SIZE);
   const setSeat = (seatId: string) => {
     const existing = entryBySeat.get(seatId);
     const next = existing?.response === 'ABSENT' ? 'PRESENT' : existing ? 'ABSENT' : 'PRESENT';
@@ -618,8 +653,10 @@ function RollCallPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
       <Segment className="roll-call-current" textAlign="center">
         <div className="roll-call-current-status">
         {rollCallFailed ? <Header as="h2" color="red">{t('Quorum not reached')}</Header>
-          : currentSeat ? <><div className="roll-call-current-label">{t('Now calling')}</div><Header as="h2"><Flag seat={currentSeat} />
-          <span className="roll-call-current-name">{currentSeat.displayName}</span></Header></>
+          : currentSeat ? <div className="roll-call-current-seat"><div className="roll-call-current-label">{t('Now calling')}</div>
+            <div className="roll-call-flag-stage"><Flag seat={currentSeat} /></div>
+            <Header as="h2" className="roll-call-current-name"><span>{currentSeat.displayName}</span></Header>
+          </div>
           : rollCallCompletedWithQuorum ? <Header as="h2" color="green">{t('Roll call complete')}</Header>
           : <Header as="h2">{t('Roll call')}</Header>}</div>
         {chair && <div className="roll-call-actions">
@@ -700,13 +737,13 @@ function PointsPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspa
     : point.pointTypeId === 'point-of-personal-privilege' ? t(point.status === 'UPHELD' ? 'Approved point' : 'Denied point')
     : t(point.status);
   const actions = (point: CommitteePoint) => point.pointTypeId === 'point-of-order' ? <Button.Group fluid>
-    <Button negative onClick={() => resolve(point, 'OVERRULED')}>{t('Overrule point')}</Button>
-    <Button positive onClick={() => resolve(point, 'UPHELD')}>{t('Uphold point')}</Button></Button.Group>
+    <Button positive onClick={() => resolve(point, 'UPHELD')}>{t('Uphold point')}</Button>
+    <Button negative onClick={() => resolve(point, 'OVERRULED')}>{t('Overrule point')}</Button></Button.Group>
     : point.pointTypeId === 'point-of-information' ? <Button primary fluid
       onClick={() => resolve(point, 'ANSWERED')}>{t('Handle point')}</Button>
     : point.pointTypeId === 'point-of-personal-privilege' ? <Button.Group fluid>
-      <Button negative onClick={() => resolve(point, 'REJECTED')}>{t('Deny point')}</Button>
-      <Button positive onClick={() => resolve(point, 'UPHELD')}>{t('Approve point')}</Button></Button.Group>
+      <Button positive onClick={() => resolve(point, 'UPHELD')}>{t('Approve point')}</Button>
+      <Button negative onClick={() => resolve(point, 'REJECTED')}>{t('Deny point')}</Button></Button.Group>
     : <PointResolutionForm point={point} run={run} api={api} />;
   const points = [...snapshot.points].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
   const sessionNames = new Map((snapshot.meetingSessions ?? []).map(item => [item.id, item.name]));
@@ -828,6 +865,97 @@ function HelpPanel({snapshot}: {snapshot: CommitteeWorkspaceSnapshot}) {
   </Container>;
 }
 
+function ModeratedCaucusCreateModal({open, snapshot, run, api, canChair, onClose, onCreated}: {
+  open: boolean; snapshot: CommitteeWorkspaceSnapshot; run: WorkspaceCommand; api: SelfHostedApi; canChair: boolean;
+  onClose(): void; onCreated(id: string): void;
+}) {
+  const fixedHundredths = (value: string) => {
+    const match = /^(\d+)(?:\.(\d{1,2}))?$/.exec(value.trim());
+    if (!match) return undefined;
+    return Number(match[1]) * 100 + Number((match[2] ?? '').padEnd(2, '0'));
+  };
+  const durationMs = (value: string) => {
+    const hundredths = fixedHundredths(value);
+    if (hundredths === undefined || hundredths <= 0) return undefined;
+    return hundredths * 10;
+  };
+  const session = snapshot.meetingSession?.status === 'OPEN' ? snapshot.meetingSession : undefined;
+  const [topic, setTopic] = React.useState('');
+  const [unitDuration, setUnitDuration] = React.useState('60');
+  const [totalDuration, setTotalDuration] = React.useState('600');
+  const [submitting, setSubmitting] = React.useState(false);
+  const [closeHint, setCloseHint] = React.useState(false);
+  const [topicTouched, setTopicTouched] = React.useState(false);
+  const [unitDurationTouched, setUnitDurationTouched] = React.useState(false);
+  const [totalDurationTouched, setTotalDurationTouched] = React.useState(false);
+  React.useEffect(() => {
+    if (!open) return;
+    setTopic(''); setUnitDuration('60'); setTotalDuration('600'); setSubmitting(false); setCloseHint(false);
+    setTopicTouched(false); setUnitDurationTouched(false); setTotalDurationTouched(false);
+  }, [open]);
+  const unitDurationMs = durationMs(unitDuration);
+  const totalDurationMs = durationMs(totalDuration);
+  const durationMultiple = unitDurationMs !== undefined && totalDurationMs !== undefined
+    && totalDurationMs % unitDurationMs === 0;
+  const valid = Boolean(topic.trim()) && durationMultiple;
+  const topicInvalid = topicTouched && !topic.trim();
+  const unitDurationInvalid = unitDurationTouched && unitDurationMs === undefined;
+  const totalDurationInvalid = totalDurationTouched && (totalDurationMs === undefined || !durationMultiple);
+  const validationMessages = [
+    topicInvalid ? '议题不能为空。' : null,
+    unitDurationInvalid ? '每次发言时长必须是大于 0 的数字。' : null,
+    totalDurationInvalid ? '总时长必须是正整数，且可被单位时长整除。' : null,
+  ].filter(Boolean) as string[];
+  const submit = async () => {
+    if (!canChair || !session || !valid || submitting || unitDurationMs === undefined || totalDurationMs === undefined) return;
+    setSubmitting(true);
+    let created: Awaited<ReturnType<SelfHostedApi['createSpeakerList']>> | undefined;
+    try {
+      await run(async () => {created = await api.createSpeakerList(snapshot.committee.id, {meetingSessionId: session.id,
+        kind: 'MODERATED_CAUCUS', name: topic.trim(), topic: topic.trim(), defaultSpeechMs: unitDurationMs,
+        totalDurationMs});});
+    } finally {
+      setSubmitting(false);
+    }
+    if (created) onCreated(created.id);
+  };
+  return <Modal className="moderated-caucus-create-modal" closeOnDimmerClick={false}
+    dimmer={{onClick: (event: React.MouseEvent<HTMLElement>) => {
+      if (event.target === event.currentTarget) setCloseHint(true);
+    }}} mountNode={document.body} onClose={onClose} open={open} size="small">
+    <Modal.Header className="moderated-caucus-create-header">{t('New caucus')}
+      <Button className="moderated-caucus-create-close" basic circular icon aria-label={t('Close')} onClick={onClose}>
+        <Icon name="close" />
+      </Button>
+    </Modal.Header>
+    <Modal.Content>
+      {canChair && session ? <Form error={validationMessages.length > 0} onSubmit={() => void submit()}>
+        <Form.Input required error={topicInvalid} label={t('Topic')} value={topic}
+          onBlur={() => setTopicTouched(true)} onChange={event => {setTopic(event.currentTarget.value); setCloseHint(false);}} />
+        <Form.Group className="moderated-caucus-duration-row"><Form.Input className="moderated-caucus-duration-value"
+          required type="text" inputMode="decimal" pattern="\d+(\.\d{1,2})?"
+          id="moderated-caucus-unit-duration"
+          label={t('Unit duration')} value={unitDuration}
+          onBlur={() => setUnitDurationTouched(true)} error={unitDurationInvalid}
+          onChange={event => {setUnitDuration(event.currentTarget.value); setCloseHint(false);}} />
+        <Form.Field className="moderated-caucus-duration-unit"><div className="moderated-caucus-duration-unit-text">{t('sec')}</div></Form.Field></Form.Group>
+        <Form.Group className="moderated-caucus-duration-row"><Form.Input className="moderated-caucus-duration-value"
+          required type="text" inputMode="decimal" pattern="\d+(\.\d{1,2})?"
+          id="moderated-caucus-total-duration"
+          label={t('Total duration')} value={totalDuration}
+          onBlur={() => setTotalDurationTouched(true)} error={totalDurationInvalid}
+          onChange={event => {setTotalDuration(event.currentTarget.value); setCloseHint(false);}} />
+        <Form.Field className="moderated-caucus-duration-unit"><div className="moderated-caucus-duration-unit-text">{t('sec')}</div></Form.Field></Form.Group>
+        {validationMessages.length > 0 && <Message error content={validationMessages.join('，')} />}
+        {closeHint && <Message info content={t('To close the dialog, click "X".')} />}
+        <Button primary fluid loading={submitting} disabled={!valid || submitting}>
+          {t('Moderated caucus')}<Icon name="arrow right" />
+        </Button>
+      </Form> : <Message content={session ? t('Chair capability is required.') : t('Start a meeting first.')} />}
+    </Modal.Content>
+  </Modal>;
+}
+
 export function SelfHostedCommitteeWorkspace({api = selfHostedApi, user, logout = () => undefined}: {
   api?: SelfHostedApi; user?: SelfHostedUser; logout?(): void;
 }) {
@@ -841,6 +969,10 @@ function CommitteeWorkspaceContent({id, api, user, logout}: {
   id: string; api: SelfHostedApi; user?: SelfHostedUser; logout(): void;
 }) {
   const {snapshot, error, realtimeStatus, refresh, run} = useCommitteeWorkspace();
+  const location = useLocation(); const history = useHistory();
+  const newCaucusPath = `/committees/${id}/caucuses/new`;
+  const [createCaucusOpen, setCreateCaucusOpen] = React.useState(location.pathname === newCaucusPath);
+  React.useEffect(() => {if (location.pathname === newCaucusPath) setCreateCaucusOpen(true);}, [location.pathname, newCaucusPath]);
   if (!snapshot && !error) return <Loading />;
   if (!snapshot) return <Container text><Message error content={error} /><Button onClick={() => void refresh()}>{t('Retry')}</Button></Container>;
   const interactionSnapshot: CommitteeWorkspaceSnapshot = realtimeStatus === 'OFFLINE_READONLY'
@@ -848,7 +980,8 @@ function CommitteeWorkspaceContent({id, api, user, logout}: {
   const canChair = (interactionSnapshot.viewer.audience === 'CHAIR' || interactionSnapshot.viewer.audience === 'OWNER')
     && snapshot.committee.status !== 'ARCHIVED' && snapshot.committee.status !== 'DELETING';
   const base = `/committees/${id}`;
-  return <CommitteeNavigation snapshot={snapshot} user={user} logout={logout} realtimeStatus={realtimeStatus}>
+  return <CommitteeNavigation snapshot={snapshot} user={user} logout={logout} realtimeStatus={realtimeStatus}
+    onCreateCaucus={() => setCreateCaucusOpen(true)}>
     <Container fluid className="committee-workspace-page">{error && <Message error content={error} />}
         <Switch>
           <Route exact path={base}><Redirect to={base + '/roll-call'} /></Route>
@@ -857,11 +990,12 @@ function CommitteeWorkspaceContent({id, api, user, logout}: {
           <Route exact path={`${base}/roll-call`}><RollCallPanel snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} /></Route>
           <Route exact path={`${base}/points`}><PointsPanel snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} /></Route>
           <Route exact path={`${base}/notes`}><NotesPanel snapshot={interactionSnapshot} run={run} api={api} /></Route>
-          <Route path={`${base}/posts/:tab?`} render={({match}) => <PostsPanel snapshot={interactionSnapshot} run={run} api={api}
+          <Route path={`${base}/posts/:tab?`} render={({match}) => <PostsPanel key={`${interactionSnapshot.committee.id}:${user?.id}:${interactionSnapshot.viewer.audience}:${interactionSnapshot.committee.operationMode}`} snapshot={interactionSnapshot} api={api}
             userId={user?.id} tab={match.params.tab} />} />
           <Route exact path={`${base}/files`}><Redirect to={`${base}/posts/attachments`} /></Route>
           <Route path={`${base}/motions`}><ProceedingsPanel view="motions" snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} /></Route>
           <Route path={`${base}/unmod`}><ProceedingsPanel view="unmod" snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} /></Route>
+          <Route exact path={newCaucusPath}><Redirect to={`${base}/motions`} /></Route>
           <Route path={`${base}/caucuses/:listId`} render={({match}) => <ProceedingsPanel view="caucus" resourceId={match.params.listId}
             snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} />} />
           <Route path={`${base}/resolutions/:documentId/:tab?`} render={({match}) => <ProceedingsPanel view="resolution"
@@ -874,11 +1008,15 @@ function CommitteeWorkspaceContent({id, api, user, logout}: {
           <Redirect to={base} />
         </Switch>
     </Container>
+    <ModeratedCaucusCreateModal open={createCaucusOpen} snapshot={interactionSnapshot} run={run} api={api}
+      canChair={canChair} onClose={() => setCreateCaucusOpen(false)} onCreated={listId => {
+        setCreateCaucusOpen(false); history.push(`${base}/caucuses/${listId}`);
+      }} />
   </CommitteeNavigation>;
 }
 
-export default function SelfHostedWorkspace({user, logout, accountManager, api = selfHostedApi}: {
-  user: SelfHostedUser; logout(): void; accountManager?: React.ReactNode; api?: SelfHostedApi;
+export default function SelfHostedWorkspace({user, logout, accountManager, api = selfHostedApi, identityClient = selfHostedIdentityClient}: {
+  user: SelfHostedUser; logout(): void; accountManager?: React.ReactNode; api?: SelfHostedApi; identityClient?: SelfHostedIdentityClient;
 }) {
   const location = useLocation();
   const committeeRoute = /^\/committees\/[^/]+/.test(location.pathname);
@@ -886,8 +1024,9 @@ export default function SelfHostedWorkspace({user, logout, accountManager, api =
     <Route exact path="/committees"><CommitteeList api={api} user={user} logout={logout} /></Route>
     <Route exact path="/countries"><CountryTemplateManager api={api} /></Route>
     <Route exact path="/templates"><CommitteeTemplateManager api={api} /></Route>
-    {user.isSystemAdmin && <Route exact path="/storage"><Container style={{padding: '1em'}}><StorageAdminPanel api={api} /></Container></Route>}
-    {user.isSystemAdmin && <Route exact path="/operations"><Container style={{padding: '1em'}}><OperationsPanel api={api} /></Container></Route>}
+    {user.isSystemAdmin && <Route exact path="/storage"><Redirect to="/system-settings/storage" /></Route>}
+    {user.isSystemAdmin && <Route exact path="/operations"><Redirect to="/system-settings/operations" /></Route>}
+    {user.isSystemAdmin && <Route path="/system-settings"><SystemSettings api={api} client={identityClient} /></Route>}
     <Route path="/committees/:id"><SelfHostedCommitteeWorkspace api={api} user={user} logout={logout} /></Route>
     {user.isSystemAdmin && <Route exact path="/admin">{accountManager}</Route>}
     <Route exact path="/"><Redirect to={user.isSystemAdmin ? '/admin' : '/committees'} /></Route>

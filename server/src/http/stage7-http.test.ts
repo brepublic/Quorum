@@ -55,6 +55,17 @@ async function send(storageAgent: Stage7StorageAgentService, options: {
 }
 
 describe('stage 7 storage Agent HTTP boundary', () => {
+  it('only uses the authenticated device and generation for self revocation', async () => {
+    const revokeSelf = vi.fn(async () => ({revoked: true}));
+    const service = {revokeSelf} as unknown as Stage7StorageAgentService;
+    const request = {method:'POST' as const, path:'/api/v1/storage-agent/revoke', body:{}};
+    expect((await send(service,request)).response.statusCode).toBe(401);
+    expect(revokeSelf).not.toHaveBeenCalled();
+    const {response} = await send(service,{...request,headers:{authorization:'QuorumAgent qsa1.device.secret',
+      'x-storage-lease-generation':'3'}});
+    expect(response.statusCode).toBe(200);
+    expect(revokeSelf).toHaveBeenCalledWith('qsa1.device.secret',3,{},expect.any(Object));
+  });
   it('pairs with a one-time code without accepting a browser identity as the Agent', async () => {
     const pairing = {pairingCode: 'QRM-PAIR', deviceLabel: 'Chair laptop', devicePublicKey: 'a'.repeat(43)};
     const pair = vi.fn(async () => ({credential: 'qsa1.device.secret', host: {id: 'host'}}));
@@ -105,6 +116,19 @@ describe('stage 7 storage Agent HTTP boundary', () => {
       headers: {origin: 'https://attacker.example.com', authorization: 'QuorumAgent qsa1.device.secret'}});
     expect(forbidden.response.statusCode).toBe(403);
     expect(createPairing).toHaveBeenCalledTimes(1);
+  });
+
+  it('exposes desktop status only through device credentials and a current generation', async () => {
+    const fileStatus = vi.fn(async () => ({files: [], nextId: null, observedAt: 'now'}));
+    const storageTasks = {fileStatus} as unknown as Stage7StorageTaskService;
+    const service = {} as Stage7StorageAgentService;
+    const headers = {authorization: 'QuorumAgent qsa1.device.secret', 'x-storage-lease-generation': '7'};
+    const response = await send(service, {method: 'GET', path: '/api/v1/storage-agent/file-status', headers, storageTasks});
+    expect(response.response.statusCode).toBe(200);
+    expect(fileStatus).toHaveBeenCalledWith('qsa1.device.secret', 7, '');
+    expect(response.identity.authenticate).not.toHaveBeenCalled();
+    expect((await send(service, {method: 'GET', path: '/api/v1/storage-agent/file-status', storageTasks})).response.statusCode).toBe(401);
+    expect(fileStatus).toHaveBeenCalledTimes(1);
   });
 
   it('forwards fenced manifest cursors and task claims without browser authentication', async () => {

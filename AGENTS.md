@@ -29,7 +29,7 @@ boundary, or deployment model.
   - `pnpm test` runs Vitest in watch mode (never exits). For a one-shot run use `pnpm exec vitest run`.
   - There is no `lint` script. Typecheck with `pnpm exec tsc --noEmit` (production `pnpm build` runs `tsc && vite build`).
 - The dev server (`pnpm start`, Vite) binds to `localhost` only, so `curl http://127.0.0.1:5173` fails while `curl http://localhost:5173` works. Pass `--host` to expose it on other interfaces.
-- `pnpm start` serves the self-hosted browser application. It expects the same-origin `/api/v1` backend; use the Compose deployment or an explicit local reverse proxy for end-to-end browser checks.
+- `pnpm start` serves the self-hosted browser application and proxies `/api/v1` to the Compose deployment Caddy at `https://localhost` (override with `QUORUM_DEV_API_ORIGIN`), rewriting `Origin` to the target origin so the server-side `QUORUM_ALLOWED_ORIGINS` check passes. Frontend edits hot-reload without rebuilding the Docker image; backend changes still require rebuilding the app image.
 
 ## User-facing copy
 
@@ -64,3 +64,46 @@ Prefer:
 control alone > short label > short helper text > paragraph.
 
 Before finishing any UI task, audit all user-facing strings and remove copy that does not change user behavior or understanding.
+
+## Editing WSL Files from PowerShell
+
+When Codex runs on Windows, host-side access to this checkout through the
+`\\wsl$\Debian\...` UNC path is unreliable. Even when the workspace is declared
+writable, direct `apply_patch`, `Get-Content`, `Out-File`, or similar operations
+may fail with `Access is denied` / `Wsl/Service/E_ACCESSDENIED`. Repeating the
+same UNC operation or changing repository permissions does not address this
+boundary.
+
+Use `wsl.exe -d Debian -- ...` for repository reads and commands. For edits,
+create a small, exact transformation script in a Windows path that Codex can
+write, then execute it inside Debian against `/home/makoto/code/Quorum`. The
+Windows file is available in WSL under `/mnt/c/...`.
+
+Example workflow:
+
+```powershell
+$script = @'
+from pathlib import Path
+
+path = Path('/home/makoto/code/Quorum/src/example.ts')
+text = path.read_text(encoding='utf-8')
+old = 'exact text to replace'
+new = 'replacement text'
+if text.count(old) != 1:
+    raise SystemExit(f'expected one target, found {text.count(old)}')
+path.write_text(text.replace(old, new), encoding='utf-8')
+'@
+$script | Out-File -LiteralPath 'C:\path\Codex-can-write\fix.py' -Encoding utf8
+wsl.exe -d Debian -- python3 /mnt/c/path/Codex-can-write/fix.py
+```
+
+Keep transformations guarded and deterministic: require the expected target
+count, preserve UTF-8, inspect the diff afterward, and remove the temporary
+script. Use a PowerShell single-quoted heredoc (`@'... '@`) so PowerShell does
+not expand `$variables`, backticks, or quotes before Python sees them.
+
+For simple reads without shell metacharacters, prefer direct argument passing,
+for example `wsl.exe -d Debian -- rg -n pattern /home/makoto/code/Quorum`.
+When a pipeline, redirection, or compound command is necessary, put the whole
+command inside one WSL `bash -lc` invocation; do not let PowerShell parse its
+metacharacters first.

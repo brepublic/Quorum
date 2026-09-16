@@ -9,6 +9,7 @@ import {PostgresIdentityStore} from '../identity/postgres';
 import {IdentityService} from '../identity/service';
 import type {AuthenticatedSession} from '../identity/store';
 import {Stage3Service} from '../stage3/service';
+import {DelegateFileService} from '../delegate-files/service';
 import {Stage4Service} from './service';
 
 const {Client, Pool} = pg;
@@ -67,6 +68,56 @@ const committeeTemplate = (countryTemplateKey: string) => ({names: {en: 'Council
     canVote: true, hasVeto: true, mustVote: false, sortOrder: 1, flag: {type: 'STANDARD' as const, value: 'cn'}}]});
 
 integration('PostgreSQL stage 4 templates and seat snapshots', () => {
+  it('isolates file settings and copies administrator rejection defaults only into new committees', async () => {
+    const owner = await user('file-settings');
+    const service = new DelegateFileService(pool!, {} as never, {} as never, {} as never, {} as never);
+    const create = (name: string) => stage4.createCommittee(owner, {name, visibility: 'PRIVATE', countryTemplateKey: 'builtin:default'}, randomUUID(), context(name));
+    const first = await create('first');
+    const initial = await service.getSettings(owner, first.id);
+    expect(initial.rejectionTypes.map(item => item.label)).toEqual(['内容格式不合要求', '重复提交', '其他']);
+    const defaults = await service.getSettings(administrator);
+    const newTypes = [{id: 'new', label: '缺少签署', message: '请补充签署国', custom: false}];
+    await expect(service.updateSettings(owner, undefined, {baseRevision: defaults.revision, rejectionTypes: newTypes}, context('unauthorized'))).rejects.toMatchObject({code:'FORBIDDEN'});
+    await service.updateSettings(administrator, undefined, {baseRevision: defaults.revision, rejectionTypes: newTypes}, context('defaults'));
+    const second = await create('second');
+    expect((await service.getSettings(owner, second.id)).rejectionTypes).toEqual(newTypes);
+    expect((await service.getSettings(owner, first.id)).rejectionTypes).toEqual(initial.rejectionTypes);
+    const extensions = {WORKING_PAPER:['pdf'],DIRECTIVE_DRAFT:['docx'],RESOLUTION_DRAFT:['odt']};
+    await service.updateSettings(owner, first.id, {baseRevision:initial.revision,rejectionTypes:newTypes,allowedExtensions:extensions},context('local'));
+    await expect(service.updateSettings(owner, first.id, {baseRevision:initial.revision,rejectionTypes:newTypes,allowedExtensions:extensions},context('stale'))).rejects.toMatchObject({code:'REVISION_CONFLICT'});
+    expect(await service.getSettings(owner, first.id)).toMatchObject({allowedExtensions:extensions});
+    expect(await service.getSettings(owner, second.id)).toMatchObject({allowedExtensions:{WORKING_PAPER:expect.arrayContaining(['doc','pdf','txt'])}});
+    await expect(service.getSettings(administrator, first.id)).rejects.toMatchObject({code:'FORBIDDEN'});
+    const outsider = await user('outsider-settings');
+    await expect(service.getSettings(outsider, first.id)).rejects.toMatchObject({code:'FORBIDDEN'});
+  });
+
+  it('applies only current administrator defaults when creating a committee', async () => {
+    const owner = await user('defaultbehavior');
+    const initial = await identity.getDefaultCommitteeBehavior(administrator);
+    const chairDefault = await identity.updateDefaultCommitteeBehavior(administrator,
+      {creatorIsChair: true, operationMode: 'CHAIR_OPERATED', baseRevision: initial.revision}, context('defaults-chair'));
+    const chaired = await stage4.createCommittee(owner, {name: 'Chaired by default', visibility: 'PRIVATE', countryTemplateKey: 'builtin:default'},
+      'default-chaired', context('default-chaired'));
+    expect((await pool?.query(`SELECT operation_mode FROM committees WHERE id=$1`, [chaired.id]))?.rows).toEqual([{operation_mode: 'CHAIR_OPERATED'}]);
+    expect((await pool?.query(`SELECT capability FROM committee_capabilities WHERE committee_id=$1 AND user_id=$2 AND revoked_at IS NULL`,
+      [chaired.id, owner.user.id]))?.rows).toEqual([{capability: 'CHAIR'}]);
+    expect((await stage4.snapshot(chaired.id, owner)).viewer.audience).toBe('CHAIR');
+
+    await identity.updateDefaultCommitteeBehavior(administrator,
+      {creatorIsChair: false, operationMode: 'DELEGATE_OPERATED', baseRevision: chairDefault.revision}, context('defaults-delegate'));
+    const delegated = await stage4.createCommittee(owner, {name: 'Delegate by default', visibility: 'PRIVATE', countryTemplateKey: 'builtin:default'},
+      'default-delegate', context('default-delegate'));
+    const overridden = await stage4.createCommittee(owner, {name: 'Explicit mode', visibility: 'PRIVATE', operationMode: 'CHAIR_OPERATED',
+      countryTemplateKey: 'builtin:default'}, 'default-override', context('default-override'));
+    expect((await pool?.query(`SELECT operation_mode FROM committees WHERE id=$1`, [delegated.id]))?.rows).toEqual([{operation_mode: 'DELEGATE_OPERATED'}]);
+    expect((await pool?.query(`SELECT count(*)::int AS count FROM committee_capabilities WHERE committee_id=$1 AND revoked_at IS NULL`,
+      [delegated.id]))?.rows).toEqual([{count: 0}]);
+    expect((await pool?.query(`SELECT operation_mode FROM committees WHERE id=$1`, [overridden.id]))?.rows).toEqual([{operation_mode: 'CHAIR_OPERATED'}]);
+    await expect(stage4.createCommittee(administrator, {name: 'Denied', visibility: 'PRIVATE', countryTemplateKey: 'builtin:default'},
+      'admin-denied', context('admin-denied'))).rejects.toMatchObject({code: 'FORBIDDEN'});
+  });
+
   it('clones the built-in countries and creates committees from the restored built-in templates', async () => {
     const owner = await user('builtinowner');
     const clonedCountries = await stage4.cloneCountryTemplate(owner, 'builtin:default', {}, 'clone-default-countries',
@@ -201,8 +252,8 @@ integration('PostgreSQL stage 4 templates and seat snapshots', () => {
     expect((await pool?.query(`SELECT l.kind,l.name,l.topic,l.default_speech_ms,l.delegates_can_queue,
       t.remaining_at_start_ms FROM speaker_lists l JOIN timer_states t ON t.id=l.speech_timer_id
       WHERE l.meeting_session_id=$1`, [session.id]))?.rows).toEqual([{
-      kind: 'GENERAL', name: "General Speakers' List", topic: '', default_speech_ms: '60000',
-      delegates_can_queue: true, remaining_at_start_ms: '60000'}]);
+      kind: 'GENERAL', name: "General Speakers' List", topic: '', default_speech_ms: '120000',
+      delegates_can_queue: true, remaining_at_start_ms: '120000'}]);
     await expect(stage4.startMeetingSession(chair, committee.id, {}, context('meeting-duplicate')))
       .rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
     const started = await stage4.startRollCall(chair, committee.id, {meetingSessionId: session.id},

@@ -10,3 +10,5 @@ deploy/.env
 node_modules
 server/.local
 **/dist
+packages/storage-agent-desktop/target
+release/storage-agent-desktop

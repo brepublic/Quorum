@@ -29,7 +29,8 @@ const en: Record<string, string> = {
   'Motion action: Reorder': 'Reorder',
   'Motion action: Create': 'Create',
   'Motion action: Vote': 'Vote',
-  'Motion action: Enact': 'Enact'
+  'Motion action: Enact': 'Enact',
+  'Close speaker list': 'Close'
 };
 
 const zhCN: Record<string, string> = {
@@ -185,6 +186,11 @@ const zhCN: Record<string, string> = {
   'Committees': '委员会',
   'My committees': '我的委员会',
   'My created committees': '我创建的委员会',
+  'Default behavior': '默认行为',
+  'Committee creator is automatically Chair': '委员会创建者自动获得主席身份',
+  'Default committee operation mode': '委员会创建后的默认运作模式',
+  'Chair operated': '主席代操作模式',
+  'Delegate operated': '代表自主模式',
   'My managed committees': '我管理的委员会',
   'My participating committees': '我参与的委员会',
   'Account menu': '账户菜单',
@@ -195,12 +201,18 @@ const zhCN: Record<string, string> = {
   'Speaker lists / moderated caucuses': '发言名单/有主持核心磋商',
   'General speakers list': '主发言名单',
   'Moderated caucus': '有主持核心磋商',
+  'Unit duration': '单位时长',
+  'Total duration': '总时长',
+  'To close the dialog, click "X".': '若要关闭弹窗，请点击"X"',
   'Create speaker list': '新建发言名单',
   'Draft resolutions': '决议草案',
   'Create draft resolution': '新建决议草案',
   'Create strawpoll': '新建意向性投票',
   'Files': '文件',
   'Statistics': '统计',
+  'System settings': '系统设置',
+  'Committee defaults': '委员会默认设置',
+  'Cache settings': '缓存设置',
   'Storage configuration': '存储配置',
   'Operations status': '运行状态',
   'Connecting': '正在连接',
@@ -255,13 +267,14 @@ const zhCN: Record<string, string> = {
   'Delete committee template?': '删除此委员会模板？',
   'Non-voting': '无表决权',
   'Start meeting': '开始会期',
+  'Set meeting session': '设置会期',
   'Meeting session': '会期',
   'Start roll call': '开始点名',
   'Undo last response': '撤销上一项回答',
   'Reset roll call': '重置点名',
   'Seat': '席位',
   'Attendance': '出席状态',
-  'Point type': '问题类型',
+  'Point type': '类型',
   'Represented seat': '代办席位',
   'Point proposer': '问题提出方',
   'Select point proposer': '选择问题提出方',
@@ -331,7 +344,7 @@ const zhCN: Record<string, string> = {
   'Speaker time in seconds': '单席发言时间（秒）',
   'Total time in minutes': '总时长（分钟）',
   'Start a meeting first.': '请先开始会期。',
-  'Open a meeting first.': '请先开启会期。',
+  'Open a meeting first.': '请先开始会期',
   'Current meeting session has ended.': '当前会期已结束。',
   '(No motions)': '（尚无动议）',
   'Roll call ->': '点名->',
@@ -345,8 +358,13 @@ const zhCN: Record<string, string> = {
   'Yield to': '让渡对象',
   'Target seat': '目标席位',
   'Record yield': '记录让渡',
+  'Record': '记录',
   'Contribution type': '互动类型',
   'Record contribution': '记录互动',
+  'Interaction recorded.': '互动已记录。',
+  '(Empty)': '（空）',
+  'Saving…': '保存中…',
+  'Saving timed out. Try again.': '保存超时，请重试。',
   'Speaker queue': '发言队列',
   'QUEUED': '等候中',
   'CURRENT': '发言中',
@@ -531,6 +549,7 @@ const zhCN: Record<string, string> = {
   'Present': '出席',
   'Present and voting': '出席并参与表决',
   'Absent': '缺席',
+  'Remove the absent delegation before continuing.': '请先移除该缺席国家。',
   'Must Vote': '必须投票',
   'Add at least one committee member to proceed': '请至少添加一名委员会成员后再继续',
   "General Speakers' List": '主发言名单',
@@ -557,9 +576,14 @@ const zhCN: Record<string, string> = {
   'New caucus': '新建有主持核心磋商',
   'Moderated caucus complete': '有主持核心磋商已结束',
   'Speakers list complete': '主发言名单已结束',
+  'Speakers list closed': '主发言名单已关闭',
+  'General speakers list not open': '主发言名单未开启',
+  'General speakers list missing': '主发言名单缺失',
+  'The previous session’s general speakers list could not be restored. Create a new list and continue?': '无法恢复上一会期的主发言名单。创建新名单并继续？',
+  'Create and continue': '创建并继续',
   'Resolutions': '决议草案',
   'New resolution': '新建决议草案',
-  'New draft resolution {count}': '新决议草案{count}',
+  'Draft resolution {session}.{count}': '决议草案 {session}.{count}',
   'New amendment {count}': '新修正案{count}',
   'Target amendment': '目标修正案',
   'Amendment file': '修正案文件',
@@ -573,6 +597,7 @@ const zhCN: Record<string, string> = {
   'Help': '帮助',
   'Open': '开放',
   'Closed': '已关闭',
+  'Close speaker list': '关闭',
   'Stage': '就位',
   'Start': '开始',
   'Pause': '暂停',
@@ -608,8 +633,7 @@ const zhCN: Record<string, string> = {
   'Set caucus name': '设置磋商名称',
   'Set speakers list name': '设置主发言名单名称',
   'untitled caucus': '未命名有主持核心磋商',
-  'Set caucus details': '设置磋商议题',
-  'Set speakers list details': '设置主发言名单议题',
+  'Set agenda': '设置议程',
   'Now speaking': '正在发言',
   'Speaker timer': '发言计时器',
   'Caucus timer': '磋商计时器',
@@ -968,8 +992,10 @@ const GENERATED_NAME_KEYS = new Set([
 ]);
 
 export function localizeGeneratedName(value: string): string {
-  const draftResolution = /^New draft resolution (\d+)$/.exec(value);
-  if (draftResolution) return t('New draft resolution {count}', {count: Number(draftResolution[1])});
+  const draftResolution = /^Draft resolution (\d+)\.(\d+)$/.exec(value);
+  if (draftResolution) return t('Draft resolution {session}.{count}', {
+    session: Number(draftResolution[1]), count: Number(draftResolution[2])
+  });
   const amendment = /^New amendment (\d+)$/.exec(value);
   if (amendment) return t('New amendment {count}', {count: Number(amendment[1])});
   const strawpoll = /^New strawpoll (\d+)$/.exec(value);

@@ -12,6 +12,11 @@ export interface ServerConfig {
   uploadTtlSeconds: number;
   storageWarningPercent: number;
   storageCriticalPercent: number;
+  publishedCacheHardMaxBytes: number;
+  pendingReviewHardMaxBytes: number;
+  pendingReviewCommitteeHardMaxBytes: number;
+  storageHardMinFreeBytes: number;
+  storageHardMinFreePercent: number;
   storageMasterKey: Buffer | null;
   storageMasterKeyVersion: number;
   shutdownGraceMs: number;
@@ -89,6 +94,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   if (storageWarningPercent >= storageCriticalPercent || storageCriticalPercent > 100) {
     throw new Error('Storage thresholds must be percentages with warning below critical.');
   }
+  const publishedCacheHardMaxBytes = integer(env.QUORUM_PUBLISHED_CACHE_HARD_MAX_BYTES,
+    15 * 1024 * 1024 * 1024, 'QUORUM_PUBLISHED_CACHE_HARD_MAX_BYTES');
+  const pendingReviewHardMaxBytes = integer(env.QUORUM_PENDING_REVIEW_HARD_MAX_BYTES,
+    5 * 1024 * 1024 * 1024, 'QUORUM_PENDING_REVIEW_HARD_MAX_BYTES');
+  const pendingReviewCommitteeHardMaxBytes = integer(env.QUORUM_PENDING_REVIEW_COMMITTEE_HARD_MAX_BYTES,
+    1024 * 1024 * 1024, 'QUORUM_PENDING_REVIEW_COMMITTEE_HARD_MAX_BYTES');
+  const storageHardMinFreePercent = integer(env.QUORUM_STORAGE_HARD_MIN_FREE_PERCENT, 20,
+    'QUORUM_STORAGE_HARD_MIN_FREE_PERCENT');
+  if (pendingReviewCommitteeHardMaxBytes > pendingReviewHardMaxBytes || storageHardMinFreePercent > 100) {
+    throw new Error('Storage cache hard limits are inconsistent.');
+  }
   return {
     host: env.HOST || '0.0.0.0',
     port: integer(env.PORT, 3000, 'PORT'),
@@ -101,6 +117,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     uploadTtlSeconds: integer(env.QUORUM_UPLOAD_TTL_SECONDS, 24 * 60 * 60, 'QUORUM_UPLOAD_TTL_SECONDS'),
     storageWarningPercent,
     storageCriticalPercent,
+    publishedCacheHardMaxBytes,
+    pendingReviewHardMaxBytes,
+    pendingReviewCommitteeHardMaxBytes,
+    storageHardMinFreeBytes: integer(env.QUORUM_STORAGE_HARD_MIN_FREE_BYTES,
+      10 * 1024 * 1024 * 1024, 'QUORUM_STORAGE_HARD_MIN_FREE_BYTES'),
+    storageHardMinFreePercent,
     storageMasterKey: masterKey,
     storageMasterKeyVersion: masterKey
       ? integer(env.QUORUM_STORAGE_MASTER_KEY_VERSION, 1, 'QUORUM_STORAGE_MASTER_KEY_VERSION')

@@ -1,6 +1,7 @@
 import {randomUUID} from 'node:crypto';
 import type {PoolClient, QueryResultRow} from 'pg';
 import type {
+  StorageAgentFileStatusPage,
   StorageAgentTask,
   StorageAgentTaskPage,
   StorageManifestEvent,
@@ -42,6 +43,7 @@ interface TaskRow extends QueryResultRow {
   blob_id: string | null;
   expected_size_bytes: string | number | null;
   expected_sha256_hex: string | null;
+  source_upload_logical_name: string | null;
   content_staging_key: string | null;
   source_upload_id: string | null;
   content_state: 'NONE' | 'RECEIVING' | 'STAGED';
@@ -76,9 +78,10 @@ export interface StorageAgentTaskCompletionFinalizer {
   }, committee: Stage4CommitteeRow, context: Stage4Context): Promise<void>;
 }
 
-const TASK_SELECT = `SELECT *,encode(expected_sha256,'hex') AS expected_sha256_hex,
-  encode(actual_sha256,'hex') AS actual_sha256_hex
-  FROM storage_agent_tasks`;
+const TASK_SELECT = `SELECT task.*,encode(task.expected_sha256,'hex') AS expected_sha256_hex,
+  encode(task.actual_sha256,'hex') AS actual_sha256_hex,
+  upload.logical_name AS source_upload_logical_name
+  FROM storage_agent_tasks task LEFT JOIN file_uploads upload ON upload.id=task.source_upload_id`;
 
 function positiveInteger(value: unknown, name: string): number {
   if (!Number.isSafeInteger(value) || Number(value) < 1) {
@@ -135,6 +138,7 @@ function task(row: TaskRow): StorageAgentTask {
     blobId: row.blob_id,
     expectedSizeBytes: row.expected_size_bytes === null ? null : Number(row.expected_size_bytes),
     expectedSha256: row.expected_sha256_hex,
+    logicalName: row.source_upload_logical_name ?? null,
     contentState: row.content_state,
     receivedSizeBytes: row.received_size_bytes === null ? null : Number(row.received_size_bytes),
     actualSha256: row.actual_sha256_hex,
@@ -198,6 +202,27 @@ export class Stage7StorageTaskService {
     private readonly finalizer?: StorageAgentTaskCompletionFinalizer
   ) {}
 
+  async fileStatus(credential: string, leaseGeneration: number, after = ''): Promise<StorageAgentFileStatusPage> {
+    const generation = positiveInteger(leaseGeneration, 'Lease generation');
+    if (after) uuid(after, 'After ID');
+    return this.agent.withCurrentLease(credential, generation, async (client, lease) => {
+      const result = await client.query(`SELECT e.id,e.logical_name,e.revision,e.status::text,e.updated_at,
+        v.blob_id,v.size_bytes,c.state::text AS cache_state
+        FROM file_entries e
+        LEFT JOIN LATERAL (SELECT blob_id,size_bytes FROM file_versions
+          WHERE file_entry_id=e.id AND (id=e.current_version_id OR e.status='DELETED') ORDER BY version_number DESC LIMIT 1) v ON true
+        LEFT JOIN storage_cache_entries c ON c.blob_id=v.blob_id AND c.committee_id=e.committee_id
+        WHERE e.committee_id=$1 AND ($2::uuid IS NULL OR e.id>$2::uuid)
+        ORDER BY e.id LIMIT 201`, [lease.committeeId, after || null]);
+      const rows = result.rows.slice(0, 200);
+      return {files: rows.map(row => ({fileEntryId: row.id, logicalName: row.logical_name,
+        fileRevision: row.revision, blobId: row.blob_id ?? null, sizeBytes: Number(row.size_bytes ?? 0),
+        status: row.status, cacheState: row.status === 'DELETED' ? null : row.cache_state ?? null,
+        updatedAt: row.updated_at.toISOString()})),
+        nextId: result.rows.length > 200 ? rows.at(-1)?.id ?? null : null, observedAt: new Date().toISOString()};
+    });
+  }
+
   async manifest(credential: string, leaseGeneration: number, after = 0, limit = 100): Promise<StorageManifestPage> {
     const requestedGeneration = positiveInteger(leaseGeneration, 'Lease generation');
     const from = cursor(after); const pageSize = Math.min(200, positiveInteger(limit, 'Limit'));
@@ -215,8 +240,8 @@ export class Stage7StorageTaskService {
     const requestedGeneration = positiveInteger(leaseGeneration, 'Lease generation');
     const from = cursor(after); const pageSize = Math.min(200, positiveInteger(limit, 'Limit'));
     return this.agent.withCurrentLease(credential, requestedGeneration, async (client, lease) => {
-      const result = await client.query<TaskRow>(`${TASK_SELECT} WHERE committee_id=$1 AND host_id=$2
-        AND lease_generation=$3 AND sequence>$4 ORDER BY sequence LIMIT $5`,
+      const result = await client.query<TaskRow>(`${TASK_SELECT} WHERE task.committee_id=$1 AND task.host_id=$2
+        AND task.lease_generation=$3 AND task.sequence>$4 ORDER BY task.sequence LIMIT $5`,
       [lease.committeeId, lease.hostId, lease.leaseGeneration, from, pageSize + 1]);
       const rows = result.rows.slice(0, pageSize);
       return {tasks: rows.map(task), nextSequence: Number(rows.at(-1)?.sequence ?? from),
@@ -232,7 +257,7 @@ export class Stage7StorageTaskService {
     const requestId = uuid(request.requestId, 'Request ID');
     const id = uuid(taskId, 'Task ID');
     return this.agent.withCurrentLease(credential, generation, async (client, lease) => {
-      const row = requireOwnedTask((await client.query<TaskRow>(`${TASK_SELECT} WHERE id=$1 FOR UPDATE`, [id])).rows[0], lease);
+      const row = requireOwnedTask((await client.query<TaskRow>(`${TASK_SELECT} WHERE task.id=$1 FOR UPDATE OF task`, [id])).rows[0], lease);
       if (row.file_revision !== fileRevision) {
         throw new AppError({code: 'REVISION_CONFLICT', message: 'Storage Agent task revision is stale.'});
       }
@@ -249,7 +274,10 @@ export class Stage7StorageTaskService {
         revision=revision+1,attempts=attempts+1,claimed_at=now(),claim_request_id=$2,claim_token=$3,
         failure_code=NULL,failure_reason=NULL,updated_at=now() WHERE id=$1
         RETURNING *,encode(expected_sha256,'hex') AS expected_sha256_hex,
-          encode(actual_sha256,'hex') AS actual_sha256_hex`, [row.id, requestId, randomUUID()]);
+          encode(actual_sha256,'hex') AS actual_sha256_hex,
+          (SELECT logical_name FROM file_uploads upload
+            WHERE upload.id=storage_agent_tasks.source_upload_id) AS source_upload_logical_name`,
+        [row.id, requestId, randomUUID()]);
       return task(updated.rows[0] as TaskRow);
     });
   }
@@ -266,9 +294,9 @@ export class Stage7StorageTaskService {
     const claimToken = uuid(input.claimToken, 'Claim token');
     const expectedHash = hash(input.expectedSha256);
     const claimed = await this.agent.withCurrentLease(credential, generation, async (client, lease) => {
-      const row = requireOwnedTask((await client.query<TaskRow>(`${TASK_SELECT} WHERE id=$1 FOR UPDATE`, [id])).rows[0], lease);
+      const row = requireOwnedTask((await client.query<TaskRow>(`${TASK_SELECT} WHERE task.id=$1 FOR UPDATE OF task`, [id])).rows[0], lease);
       requireClaim(row, claimToken);
-      if (row.task_type !== 'UPLOAD_BLOB' || !row.content_staging_key || row.file_revision !== fileRevision
+      if (!['UPLOAD_BLOB', 'FETCH_BLOB_TO_CACHE'].includes(row.task_type) || !row.content_staging_key || row.file_revision !== fileRevision
         || row.expected_sha256_hex !== expectedHash) {
         throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Storage Agent content does not match its task.'});
       }
@@ -299,7 +327,7 @@ export class Stage7StorageTaskService {
             contentLength: input.contentLength});
       }
       return await this.agent.withCurrentLease(credential, generation, async (client, lease, committee) => {
-        const row = requireOwnedTask((await client.query<TaskRow>(`${TASK_SELECT} WHERE id=$1 FOR UPDATE`, [id])).rows[0], lease);
+        const row = requireOwnedTask((await client.query<TaskRow>(`${TASK_SELECT} WHERE task.id=$1 FOR UPDATE OF task`, [id])).rows[0], lease);
         requireClaim(row, claimToken);
         if (row.file_revision !== fileRevision || row.content_state !== 'RECEIVING'
           || row.expected_sha256_hex !== expectedHash) {
@@ -334,9 +362,10 @@ export class Stage7StorageTaskService {
     const fileRevision = positiveInteger(input.fileRevision, 'File revision');
     const claimToken = uuid(input.claimToken, 'Claim token');
     const authorized = await this.agent.withCurrentLease(credential, generation, async (client, lease) => {
-      const row = requireOwnedTask((await client.query<TaskRow>(`${TASK_SELECT} WHERE id=$1 FOR UPDATE`, [taskId])).rows[0], lease);
+      const row = requireOwnedTask((await client.query<TaskRow>(`${TASK_SELECT} WHERE task.id=$1 FOR UPDATE OF task`, [taskId])).rows[0], lease);
       requireClaim(row, claimToken);
-      if (row.task_type !== 'STORE_BLOB' || row.blob_id !== blobId || row.file_revision !== fileRevision) {
+      if (!['STORE_BLOB', 'HOST_COMMIT_BLOB'].includes(row.task_type) || row.blob_id !== blobId
+        || row.file_revision !== fileRevision) {
         throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Blob does not match its storage Agent task.'});
       }
       let stagingKey: string | null = null;
@@ -390,7 +419,7 @@ export class Stage7StorageTaskService {
     const reason = outcome === 'FAILED' ? failureReason(request.failureReason) : null;
     const id = uuid(taskId, 'Task ID');
     return this.agent.withCurrentLease(credential, generation, async (client, lease, committee) => {
-      const row = requireOwnedTask((await client.query<TaskRow>(`${TASK_SELECT} WHERE id=$1 FOR UPDATE`, [id])).rows[0], lease);
+      const row = requireOwnedTask((await client.query<TaskRow>(`${TASK_SELECT} WHERE task.id=$1 FOR UPDATE OF task`, [id])).rows[0], lease);
       if (row.status === outcome && row.terminal_request_id === requestId) return task(row);
       if (row.terminal_request_id || ['COMPLETED', 'FAILED', 'CANCELLED'].includes(row.status)) {
         throw new AppError({code: 'IDEMPOTENCY_CONFLICT', message: 'Storage Agent task already has a different outcome.'});
@@ -399,11 +428,16 @@ export class Stage7StorageTaskService {
       if (row.file_revision !== fileRevision) {
         throw new AppError({code: 'REVISION_CONFLICT', message: 'Storage Agent task revision is stale.'});
       }
-      if (outcome === 'COMPLETED' && row.task_type === 'UPLOAD_BLOB' && row.content_state !== 'STAGED') {
+      if (outcome === 'COMPLETED' && ['UPLOAD_BLOB', 'FETCH_BLOB_TO_CACHE'].includes(row.task_type)
+        && row.content_state !== 'STAGED') {
         throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Storage Agent content is not staged.'});
       }
       if (outcome === 'FAILED' && row.content_state === 'STAGED') {
         throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Verified staged content cannot be failed.'});
+      }
+      if (outcome === 'FAILED' && row.task_type === 'FETCH_BLOB_TO_CACHE') {
+        await client.query(`UPDATE storage_cache_entries SET state='FAILED',storage_key=NULL,cached_at=NULL,
+          failure_code=$2,state_changed_at=now(),updated_at=now() WHERE blob_id=$1`, [row.blob_id, code]);
       }
       if (outcome === 'COMPLETED' && this.finalizer) {
         await this.finalizer.finalize(client, {id: row.id, committeeId: row.committee_id, hostId: row.host_id,
@@ -439,7 +473,7 @@ export class Stage7StorageTaskService {
   private async markStreamFailure(credential: string, generation: number, taskId: string, claimToken: string,
     failure: UploadStreamError, context: Stage4Context): Promise<void> {
     await this.agent.withCurrentLease(credential, generation, async (client, lease, committee) => {
-      const row = requireOwnedTask((await client.query<TaskRow>(`${TASK_SELECT} WHERE id=$1 FOR UPDATE`, [taskId])).rows[0], lease);
+      const row = requireOwnedTask((await client.query<TaskRow>(`${TASK_SELECT} WHERE task.id=$1 FOR UPDATE OF task`, [taskId])).rows[0], lease);
       requireClaim(row, claimToken);
       const updated = await client.query<TaskRow>(`UPDATE storage_agent_tasks SET status='RETRY',content_state='NONE',
         received_size_bytes=NULL,actual_sha256=NULL,claimed_at=NULL,claim_request_id=NULL,claim_token=NULL,

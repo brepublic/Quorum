@@ -6,10 +6,18 @@ on:
     branches:
       - master
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   postgres_api:
     name: PostgreSQL and API integration
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     services:
       postgres:
         image: postgres:16
@@ -41,14 +49,14 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build production artifacts
+        run: pnpm build:self-host
+
       - name: Run self-hosted tests
         run: pnpm test:self-host
 
       - name: Run PostgreSQL integration tests
         run: pnpm test:self-host:integration
-
-      - name: Build production artifacts
-        run: pnpm build:self-host
 
       - name: Verify the single production runtime
         run: pnpm verify:no-legacy-runtime

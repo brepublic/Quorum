@@ -4,7 +4,7 @@ export type StorageProviderType = typeof STORAGE_PROVIDER_TYPES[number];
 export const STORAGE_BINDING_STATUSES = ['PENDING', 'ACTIVE', 'MIGRATING', 'FAILED', 'RETIRED'] as const;
 export type StorageBindingStatus = typeof STORAGE_BINDING_STATUSES[number];
 
-export const FILE_ENTRY_STATUSES = ['UPLOAD_COMPLETE', 'PENDING_REVIEW', 'PUBLISHED', 'DELETED'] as const;
+export const FILE_ENTRY_STATUSES = ['UPLOAD_COMPLETE', 'PENDING_REVIEW', 'PUBLISHED', 'REJECTED', 'DELETED'] as const;
 export type FileEntryStatus = typeof FILE_ENTRY_STATUSES[number];
 
 export const FILE_BLOB_DURABILITY_STATES = ['COMMITTED', 'DELETE_PENDING', 'DELETED', 'FAILED'] as const;

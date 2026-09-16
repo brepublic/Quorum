@@ -924,7 +924,7 @@ POST /api/v1/storage-agent/blobs
 
 GET 请求通过 `X-Storage-Lease-Generation` 携带 generation；task 写请求体固定携带 `leaseGeneration`、`fileRevision`、UUID request ID，完成/失败另携带 claim token。领取把 `PENDING`/到期 `RETRY` 或超过五分钟的旧 claim 原子改为 `IN_PROGRESS`；相同 request ID 精确重放相同 token。terminal request ID 与 outcome 固定完成结果：同一完成/失败可重放，不同 outcome 返回 `IDEMPOTENCY_CONFLICT`。每次事务先锁委员会、再复核设备 credential、host、委员会 generation 和 task generation；转移、撤销或迟到提交返回 `STALE_STORAGE_LEASE`。
 
-`GET blobs/:id` 只允许持有匹配 `STORE_BLOB` claim 的 Agent 读取该 task 固定的 blob，并在发送正文前从原 provider 复验大小和 SHA-256。`POST blobs` 只允许匹配 `UPLOAD_BLOB` claim，以 task ID、claim token、file revision、generation 和 SHA-256 header 约束原始 HTTP 流；服务端使用 task 派生的内部 staging key，逐块执行容量、Content-Length、实际大小和 SHA-256 校验。流式网络 I/O 在短 claim 事务之外执行，完成时重新取得当前 lease 并复核 claim；旧 host 即使已传完字节也不能在转移后提交 task 状态。只有完整内容进入 `STAGED` 后 `UPLOAD_BLOB` task 才允许完成，断流、短写、长写、超限、哈希或磁盘失败进入 `RETRY` 且不产生文件版本。
+`GET blobs/:id` 只允许持有匹配 `STORE_BLOB` 或 `HOST_COMMIT_BLOB` claim 的 Agent 读取该 task 固定内容；前者在发送正文前从原 provider 复验，后者从关联的 durable staging 复验。`POST blobs` 只允许匹配 `UPLOAD_BLOB` claim，以 task ID、claim token、file revision、generation 和 SHA-256 header 约束原始 HTTP 流；服务端使用 task 派生的内部 staging key，逐块执行容量、Content-Length、实际大小和 SHA-256 校验。流式网络 I/O 在短 claim 事务之外执行，完成时重新取得当前 lease 并复核 claim；旧 host 即使已传完字节也不能在转移后提交 task 状态。只有完整内容进入 `STAGED` 后 `UPLOAD_BLOB` task 才允许完成，断流、短写、长写、超限、哈希或磁盘失败进入 `RETRY` 且不产生文件版本。
 
 阶段 7.2 只建立服务器协议原语；生产路径尚不创建 `UPLOAD_BLOB` task，也未开放 `local-changes`。`CHAIR_AGENT` binding、离线浏览器上传编排、墓碑优先恢复、本地路径/冲突处理和桌面 Agent 属于 7.3 以后。
 
@@ -941,7 +941,7 @@ GET  /api/v1/committees/:id/file-uploads/pending-host-commit
 
 初始 Chair binding 只允许 Owner 或明确 Chair 选择当前 `ACTIVE`/`DEGRADED` 且 generation 匹配的 host；委员会已有活动 binding、暂停/归档、陈旧 revision 或仅有 `SYSTEM_ADMIN` 身份均拒绝。待 host 提交列表要求 Session；Owner/Chair 可见委员会全部待提交 upload，普通 contributor 只见自己创建的项。
 
-浏览器 upload 在服务器 durable staging 完整复验后，提交命令返回 `202 PENDING_HOST_COMMIT` 并创建固定 blob、未来 file entry ID、host/generation 和 `STORE_BLOB` task。Agent 只能用该 task 的 claim 读取对应 staging。task 完成事务再次检查当前 binding、host、generation、upload 大小和 SHA-256，随后原子创建 blob、file entry/version、manifest、事件与审计并把 upload 改为 `HOST_COMMITTED`。数据库事务失败不会留下 file version，原 task 与 staging 保持可重试状态；普通 cleanup 仍不选择 `STAGED` upload。
+浏览器 upload 在服务器 durable staging 完整复验后，提交命令返回 `202 PENDING_HOST_COMMIT` 并创建固定 blob、未来 file entry ID、host/generation 和 `HOST_COMMIT_BLOB` task。Agent 只能用该 task 的 claim 读取对应 staging 并原子写入本地；`STORE_BLOB` 只用于已有 manifest 内容同步。task 完成事务再次检查当前 binding、host、generation、upload 大小和 SHA-256，随后原子创建 blob、file entry/version、manifest、事件与审计并把 upload 改为 `HOST_COMMITTED`。数据库事务失败不会留下 file version，原 task 与 staging 保持可重试状态；普通 cleanup 仍不选择 `STAGED` upload。
 
 生产 `local-changes` 接口现为：
 
@@ -965,9 +965,17 @@ GET  /api/v1/storage-agent/conflicts
 
 Agent 只以当前 `QuorumAgent` 凭据和 generation 拉取已裁决 conflict。采用本地或另存流程复用本地持久 request ID；不可修改的 `storage_agent_conflict_applications` 保证一个 conflict 只应用一次。保留服务端产生关联 task；磁盘或网络故障保持已领取状态供同一 claim 重试。若文件在 Chair 决定后再次变化，旧 task 失败并把新内容上报为新 conflict。裁决 task 不能覆盖 conflict 路径和既有 tracked 路径以外的本地文件。
 
-主机转移事务把活动 Chair binding 指向新 host，取消旧 generation 的非终态 task，为浏览器 `STORE_BLOB` 待提交 upload 重新创建新 generation task，并按每个文件最新 manifest 为新 host 补建任务。未完成的本地 `UPLOAD_BLOB` 因内容仍只在旧 host 而转成 `HOST_TRANSFERRED` 冲突。既有文件在转移时成为 `OUT_OF_SYNC`，相同 revision 的新 host task 完成后恢复 `SYNCED`。旧凭据、claim、内容上传和 local change 继续由 lease fencing 拒绝。
+主机转移事务把活动 Chair binding 指向新 host，取消旧 generation 的非终态 task，为浏览器 `HOST_COMMIT_BLOB` 待提交 upload 重新创建新 generation task，并按每个文件最新 manifest 为新 host 补建任务。未完成的本地 `UPLOAD_BLOB` 因内容仍只在旧 host 而转成 `HOST_TRANSFERRED` 冲突。既有文件在转移时成为 `OUT_OF_SYNC`，相同 revision 的新 host task 完成后恢复 `SYNCED`。旧凭据、claim、内容上传和 local change 继续由 lease fencing 拒绝。
 
 `CHAIR_AGENT` blob 不交给服务器 provider delete worker；当前 Agent 完成 `DELETE_FILE` 后才把对应 blob/delete job 标为完成。下载只在服务器仍保存并复验关联 upload staging 时可用；否则返回稳定 `SERVICE_NOT_READY`，浏览器从不直连 Agent。桌面文件系统 watcher、周期扫描和路径落盘已由 Agent 实现；Windows/macOS 发布包留到阶段 7.6。
+
+Agent protocol v2 声明 `SSE_WAKE` 与 `CACHE_REFILL` capability，并增加：
+
+```text
+GET /api/v1/storage-agent/events
+```
+
+该路由继续使用 Agent credential 与 `X-Storage-Lease-Generation` fencing。服务端每秒比较当前 host 的 task、manifest、conflict 和 lease 游标，仅在游标变化时发送不含业务内容的 `wake`，每 15 秒发送 SSE heartbeat。任务 payload、文件名、路径、哈希和 claim token 仍只能通过 durable API 读取。Agent 的 heartbeat、SSE listener 和 task processor 独立运行；启动、本地 watcher、SSE 与 30 秒 timer 合并到同一个单飞同步入口。SSE 以 1–60 秒退避重连，断线期间 timer reconciliation 保持有效，stale lease 立即停止旧 Agent。
 
 ### 11.16 阶段 8.1 委员会归档与一致性导出
 

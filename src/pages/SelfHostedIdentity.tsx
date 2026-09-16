@@ -10,6 +10,7 @@ import {
   type SelfHostedUser
 } from '../services/self-hosted-identity';
 import SelfHostedWorkspace, {SelfHostedCommitteeWorkspace, SelfHostedPublicCommittees} from './SelfHostedWorkspace';
+import DelegateFilePortal from './self-hosted/DelegateFilePortal';
 
 type Screen = 'loading' | 'bootstrap' | 'login' | 'change-password' | 'home';
 
@@ -203,7 +204,7 @@ function AccountManager({client, currentUser, onLogout}: {
     await refresh();
   });
 
-  return <Container style={{padding: '2em 1em'}}>
+  return <Container className="self-hosted-admin-page self-hosted-account-admin" style={{padding: '2em 1em'}}>
     <Header as="h1"><Icon name="users" />{t('Account administration')}</Header>
     {error && <Message error content={error} onDismiss={() => setError(undefined)} />}
     {temporary && <Message positive onDismiss={() => setTemporary(undefined)}
@@ -223,7 +224,7 @@ function AccountManager({client, currentUser, onLogout}: {
     </Segment>
     <Segment loading={working}>
       <Header as="h2">{t('Accounts')}</Header>
-      <Table celled stackable>
+      <Table celled stackable className="account-admin-table">
         <Table.Header><Table.Row>
           <Table.HeaderCell>{t('Email')}</Table.HeaderCell>
           <Table.HeaderCell>{t('Display name')}</Table.HeaderCell>
@@ -232,13 +233,13 @@ function AccountManager({client, currentUser, onLogout}: {
           <Table.HeaderCell>{t('Actions')}</Table.HeaderCell>
         </Table.Row></Table.Header>
         <Table.Body>{users.map(account => <Table.Row key={account.id} disabled={account.status !== 'ACTIVE'}>
-          <Table.Cell>{account.email || t('Anonymous account')}</Table.Cell>
-          <Table.Cell>{account.displayName}</Table.Cell>
-          <Table.Cell><code>{account.id}</code><Button basic size="mini" type="button"
+          <Table.Cell data-label={t('Email')}>{account.email || t('Anonymous account')}</Table.Cell>
+          <Table.Cell data-label={t('Display name')}>{account.displayName}</Table.Cell>
+          <Table.Cell data-label={t('Account ID')}><div className="account-admin-id"><code>{account.id}</code><Button basic size="mini" type="button"
             aria-label={`${t('Copy')} ${t('Account ID')} · ${account.email || account.displayName}`}
-            onClick={() => void navigator.clipboard?.writeText(account.id)}>{t('Copy')}</Button></Table.Cell>
-          <Table.Cell>{t(account.status)}</Table.Cell>
-          <Table.Cell>
+            onClick={() => void navigator.clipboard?.writeText(account.id)}>{t('Copy')}</Button></div></Table.Cell>
+          <Table.Cell data-label={t('Status')}>{t(account.status)}</Table.Cell>
+          <Table.Cell data-label={t('Actions')}><div className="account-admin-actions">
             <Button size="small" disabled={account.status !== 'ACTIVE'}
               onClick={() => reset(account)}>{t('Reset password')}</Button>
             <Button size="small" disabled={account.status === 'ANONYMIZED'} onClick={() => run(async () => {
@@ -256,7 +257,7 @@ function AccountManager({client, currentUser, onLogout}: {
             <Button size="small" negative disabled={account.isSystemAdmin || account.status !== 'DISABLED'
               || !users.some(candidate => candidate.id !== account.id && candidate.status === 'ACTIVE')}
               onClick={() => anonymize(account)}>{t('Anonymize account')}</Button>
-          </Table.Cell>
+          </div></Table.Cell>
         </Table.Row>)}</Table.Body>
       </Table>
     </Segment>
@@ -309,6 +310,8 @@ export default function SelfHostedIdentity({client = selfHostedIdentityClient}: 
     }
   };
 
+  if (location.pathname === '/delegate-files') return <DelegateFilePortal />;
+
   if (error) return <IdentityShell title={t('Authentication error')} icon="warning sign"><Message error content={error} /></IdentityShell>;
   if (screen === 'loading') return <Loading />;
   if (screen === 'bootstrap') return <BootstrapForm client={client} onAuthenticated={authenticated} />;
@@ -320,6 +323,6 @@ export default function SelfHostedIdentity({client = selfHostedIdentityClient}: 
   if (screen === 'login') return <LoginForm client={client} onAuthenticated={authenticated} />;
   if (screen === 'change-password') return <ChangePasswordForm client={client} onAuthenticated={authenticated} />;
   if (!user) return <Loading />;
-  return <SelfHostedWorkspace user={user} logout={logout}
+  return <SelfHostedWorkspace user={user} logout={logout} identityClient={client}
     accountManager={user.isSystemAdmin ? <AccountManager client={client} currentUser={user} onLogout={logout} /> : undefined} />;
 }

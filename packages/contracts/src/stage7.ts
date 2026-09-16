@@ -15,6 +15,8 @@ export interface StorageHost {
   lastSeenAt: string | null;
   pairedAt: string;
   revokedAt: string | null;
+  agentProtocolVersion: number | null;
+  capabilities: import('./storage-cache.js').StorageAgentCapability[];
 }
 
 export interface StoragePairingCode {
@@ -35,7 +37,9 @@ export interface StorageAgentIdentity {
   leaseGeneration: number;
 }
 
-export const STORAGE_AGENT_TASK_TYPES = ['STORE_BLOB', 'UPLOAD_BLOB', 'DELETE_FILE'] as const;
+export const STORAGE_AGENT_TASK_TYPES = [
+  'STORE_BLOB', 'HOST_COMMIT_BLOB', 'UPLOAD_BLOB', 'DELETE_FILE', 'FETCH_BLOB_TO_CACHE'
+] as const;
 export type StorageAgentTaskType = typeof STORAGE_AGENT_TASK_TYPES[number];
 
 export const STORAGE_AGENT_TASK_STATUSES = [
@@ -53,6 +57,7 @@ export interface StorageAgentTask {
   blobId: string | null;
   expectedSizeBytes: number | null;
   expectedSha256: string | null;
+  logicalName: string | null;
   contentState: 'NONE' | 'RECEIVING' | 'STAGED';
   receivedSizeBytes: number | null;
   actualSha256: string | null;
@@ -163,3 +168,20 @@ export type StorageAgentLocalChangeResult = {
   conflictId: string;
   reasonCode: StorageAgentConflictReason;
 };
+
+/** Read-only desktop view, scoped to the authenticated current storage host. */
+export interface StorageAgentFileStatus {
+  fileEntryId: string;
+  logicalName: string;
+  fileRevision: number;
+  blobId: string | null;
+  sizeBytes: number;
+  status: 'UPLOAD_COMPLETE' | 'PENDING_REVIEW' | 'PUBLISHED' | 'REJECTED' | 'DELETED';
+  cacheState: import('./storage-cache.js').StorageCacheState | null;
+  updatedAt: string;
+}
+export interface StorageAgentFileStatusPage {
+  files: StorageAgentFileStatus[];
+  nextId: string | null;
+  observedAt: string;
+}

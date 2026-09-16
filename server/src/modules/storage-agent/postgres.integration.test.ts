@@ -5,7 +5,7 @@ import {mkdtemp, rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
 import pg from 'pg';
-import {afterEach, beforeEach, describe, expect, it} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {runMigrations} from '../../db/migrations';
 import {PostgresIdentityStore} from '../identity/postgres';
 import {IdentityService} from '../identity/service';
@@ -14,13 +14,20 @@ import {Stage3Service} from '../stage3/service';
 import {Stage4Service} from '../stage4/service';
 import {Stage6StorageService} from '../storage/service';
 import {DurableStagingStore} from '../storage/staging';
-import type {Stage6FileService} from '../storage/file-service';
+import {Stage6FileService} from '../storage/file-service';
 import {Stage6UploadService} from '../storage/upload-service';
 import {Stage7StorageAgentService} from './service';
 import {Stage7StorageTaskService} from './task-service';
 import {Stage7ChairAgentProviderService} from './chair-provider-service';
 import {Stage7LocalChangeService} from './local-change-service';
 import {Stage7ConflictService} from './conflict-service';
+import {DelegateFileService} from '../delegate-files/service';
+import {Stage6ProviderCommitService} from '../storage/provider-commit-service';
+import {cacheStorageKey, StorageCacheService} from '../storage/cache-service';
+import {StorageCacheRefillService} from '../storage/cache-refill-service';
+import {StorageCachePolicyService} from '../storage/cache-policy-service';
+import {StorageCacheOperationsService, StorageCacheRuntimeStats} from '../operations/storage-cache-service';
+import {createLogger} from '../../logger';
 
 const {Client, Pool} = pg;
 const adminUrl = process.env.TEST_DATABASE_ADMIN_URL;
@@ -38,6 +45,7 @@ let chairProvider: Stage7ChairAgentProviderService;
 let localChanges: Stage7LocalChangeService;
 let conflicts: Stage7ConflictService;
 let staging: DurableStagingStore;
+let cache: StorageCacheService;
 let stagingRoot = '';
 let administrator: AuthenticatedSession;
 let clock = new Date('2026-08-13T08:00:00.000Z');
@@ -61,7 +69,13 @@ beforeEach(async () => {
   stagingRoot = await mkdtemp(join(tmpdir(), 'quorum-stage7-integration-'));
   staging = new DurableStagingStore(stagingRoot, 1024 * 1024, 1024 * 1024); await staging.initialize();
   uploads = new Stage6UploadService(pool, staging);
-  chairProvider = new Stage7ChairAgentProviderService(pool, storage);
+  cache = new StorageCacheService(pool, staging, staging, {effective: async () => ({
+    publishedCacheMaxBytes: 1024 * 1024, pendingReviewMaxBytes: 1024 * 1024,
+    pendingReviewCommitteeMaxBytes: 1024 * 1024, storageMinFreeBytes: 0, storageMinFreePercent: 0, revision: 1,
+    hardLimits: {publishedCacheMaxBytes: 1024 * 1024, pendingReviewMaxBytes: 1024 * 1024,
+      pendingReviewCommitteeMaxBytes: 1024 * 1024, storageMinFreeBytes: 0, storageMinFreePercent: 0}
+  })} as never);
+  chairProvider = new Stage7ChairAgentProviderService(pool, storage, cache);
   tasks = new Stage7StorageTaskService(agent, staging, {} as Stage6FileService, undefined, chairProvider);
   localChanges = new Stage7LocalChangeService(agent);
   conflicts = new Stage7ConflictService(pool, agent);
@@ -98,7 +112,7 @@ async function fixture() {
   const member = await user(`member${randomUUID().slice(0, 6)}`);
   let committee = await stage4.createCommittee(owner, {name: 'Agent Council', visibility: 'PRIVATE',
     countryTemplateKey: 'builtin:default'}, randomUUID(), context('committee'));
-  committee = await stage3.setChair(owner, committee.id, chair.user.id, true, committee.revision, context('chair'));
+  committee = await stage3.setChair(owner, committee.id, chair.user.email, true, committee.revision, context('chair'));
   return {owner, chair, member, committee};
 }
 
@@ -141,6 +155,214 @@ async function stagedUpload(owner: AuthenticatedSession, committeeId: string, na
 }
 
 integration('PostgreSQL stage 7 storage Agent identity', () => {
+  it('self revocation fences the device without changing another committee', async () => {
+    const a = await fixture(); const b = await fixture();
+    const first = (await pairInitial(a.owner,a.committee.id)).paired;
+    const other = (await pairInitial(b.owner,b.committee.id)).paired;
+    await expect(agent.revokeSelf(first.credential,first.host.leaseGeneration,{hostId:other.host.id},context('reject-target'))).rejects.toThrow();
+    await expect(agent.revokeSelf(first.credential,first.host.leaseGeneration+1,{},context('reject-generation'))).rejects.toMatchObject({code:'STALE_STORAGE_LEASE'});
+    expect(await agent.revokeSelf(first.credential,first.host.leaseGeneration,{},context('self-revoke'))).toEqual({revoked:true});
+    await expect(agent.authenticate(first.credential)).rejects.toMatchObject({code:'STALE_STORAGE_LEASE'});
+    await expect(agent.authenticate(other.credential)).resolves.toMatchObject({hostId:other.host.id});
+    await expect(agent.revokeSelf(first.credential,first.host.leaseGeneration,{},context('repeat-revoke'))).resolves.toEqual({revoked:true});
+  });
+  it('returns only current-host committee file/cache status and retains deleted names without private storage keys', async () => {
+    const a = await fixture(); const b = await fixture();
+    const file = await committedFile(a.owner, a.committee.id);
+    await committedFile(b.owner, b.committee.id);
+    const {paired} = await pairInitial(a.owner, a.committee.id);
+    const first = await tasks.fileStatus(paired.credential, paired.host.leaseGeneration);
+    expect(first.files).toHaveLength(1);
+    expect(first.files[0]).toMatchObject({fileEntryId:file.id,logicalName:file.logicalName,status:'UPLOAD_COMPLETE',cacheState:null});
+    expect(JSON.stringify(first)).not.toContain('storage_key');
+    expect(JSON.stringify(first)).not.toContain(paired.credential);
+    await pool?.query(`INSERT INTO storage_cache_entries(id,committee_id,file_entry_id,file_version_id,blob_id,state,size_bytes)
+      SELECT $1,e.committee_id,e.id,v.id,v.blob_id,'MISSING',v.size_bytes FROM file_entries e
+      JOIN file_versions v ON v.id=e.current_version_id WHERE e.id=$2`,[randomUUID(),file.id]);
+    expect((await tasks.fileStatus(paired.credential,paired.host.leaseGeneration)).files[0]?.cacheState).toBe('MISSING');
+    await storage.deleteFile(a.owner,file.id,{baseRevision:file.revision},randomUUID(),context('desktop-delete'));
+    expect((await tasks.fileStatus(paired.credential,paired.host.leaseGeneration)).files[0]).toMatchObject({status:'DELETED',logicalName:file.logicalName,cacheState:null});
+    await agent.revokeHost(a.owner,a.committee.id,paired.host.id,{baseRevision:await committeeRevision(a.committee.id)},context('desktop-revoke'));
+    await expect(tasks.fileStatus(paired.credential,paired.host.leaseGeneration)).rejects.toMatchObject({code:'STALE_STORAGE_LEASE'});
+  });
+
+  it('batches suggested file names across files and preserves session boundaries', async () => {
+    const value = await fixture();
+    const first = await committedFile(value.owner, value.committee.id);
+    const service = new DelegateFileService(pool!, uploads, {} as never,
+      new Stage6FileService(pool!, {} as never, {} as never, {} as never), storage);
+    const query = vi.spyOn(pool!, 'query');
+    try {
+      const single = await service.listReview(value.chair, value.committee.id);
+      const singleReads = query.mock.calls.length;
+      expect(single[0]?.suggestedNames?.WORKING_PAPER).toBe('工作文件 1.1');
+      const bindingId = (await pool!.query('SELECT active_storage_binding_id FROM committees WHERE id=$1', [value.committee.id])).rows[0].active_storage_binding_id;
+      const records = [
+        {file: first, date: '2025-12-31', type: 'WORKING_PAPER', published: true},
+        {date: '2026-01-01', type: 'WORKING_PAPER', published: true},
+        {date: '2026-01-20', type: 'WORKING_PAPER', published: true},
+        {date: '2026-02-01', type: 'DIRECTIVE_DRAFT', published: true},
+        {date: '2026-02-15', type: 'WORKING_PAPER', published: false},
+        {date: '2026-01-15', type: 'RESOLUTION_DRAFT', published: false}
+      ];
+      const ids: string[] = [];
+      for (const item of records) {
+        const file = item.file ?? await storage.recordProviderCommit(value.owner, value.committee.id, {
+          bindingId, blobId: randomUUID(), logicalName: item.date, originalName: 'draft.txt', mediaType: 'text/plain',
+          sizeBytes: 1, sha256: randomBytes(32).toString('hex'), storageKey: `blobs/aa/${randomUUID().replaceAll('-', '')}`
+        }, randomUUID(), context('name-file'));
+        ids.push(file.id);
+        await pool!.query(`UPDATE file_entries SET status=$2,submitted_at=$3,published_at=$4,published_by_user_id=$5 WHERE id=$1`,
+          [file.id, item.published ? 'PUBLISHED' : 'PENDING_REVIEW', item.date,
+            item.published ? item.date : null, item.published ? value.chair.user.id : null]);
+        await pool!.query(`INSERT INTO delegate_file_metadata(file_entry_id,submission_source,file_type,submitted_at)
+          VALUES ($1,'LEGACY',$2,$3)`, [file.id, item.type, item.date]);
+      }
+      query.mockClear();
+      const noSessions = await service.listReview(value.chair, value.committee.id);
+      expect(query.mock.calls.length).toBe(singleReads);
+      expect(noSessions).toHaveLength(records.length);
+      for (const file of noSessions) expect(file.suggestedNames).toEqual({
+        WORKING_PAPER: '工作文件 1.4', DIRECTIVE_DRAFT: '指令草案 1.2', RESOLUTION_DRAFT: '决议草案 1.1'});
+      for (const date of ['2026-01-01', '2026-02-01']) {
+        await pool!.query(`INSERT INTO meeting_sessions(id,committee_id,phase_id,active_rule_package_version_id,
+          status,created_by_user_id,created_at,closed_at,name) VALUES ($1,$2,'formal-debate',$3,'CLOSED',$4,$5,$5,$6)`,
+          [randomUUID(), value.committee.id, value.committee.activeRulePackageVersionId, value.chair.user.id, date, `测试会期 ${date}`]);
+      }
+      query.mockClear();
+      const withSessions = await service.listReview(value.chair, value.committee.id);
+      expect(query.mock.calls.length).toBe(singleReads);
+      for (const index of [0, 1, 2, 5]) expect(withSessions.find(file => file.id === ids[index])?.suggestedNames).toEqual({
+        WORKING_PAPER: '工作文件 1.3', DIRECTIVE_DRAFT: '指令草案 1.1', RESOLUTION_DRAFT: '决议草案 1.1'});
+      for (const index of [3, 4]) expect(withSessions.find(file => file.id === ids[index])?.suggestedNames).toEqual({
+        WORKING_PAPER: '工作文件 2.1', DIRECTIVE_DRAFT: '指令草案 2.2', RESOLUTION_DRAFT: '决议草案 2.1'});
+    } finally {query.mockRestore();}
+  });
+
+  it('binds one eligible delegation to an opaque browser credential and revokes it when the mode changes', async () => {
+    const value = await fixture(); const chairStorageResult = await chairStorage(value.owner, value.committee.id);
+    const seat = await stage4.createSeat(value.chair, value.committee.id,
+      {stableKey: 'delegate-file-seat', displayName: '中国', sortOrder: 1}, randomUUID(), context('delegate-file-seat'));
+    const meeting = await stage4.startMeetingSession(value.chair, value.committee.id, {}, context('delegate-file-meeting'));
+    await stage4.createAttendanceEvent(value.chair, value.committee.id,
+      {meetingSessionId: meeting.id, seatId: seat.id, type: 'PRESENT'}, context('delegate-file-present'));
+    const providerCommits = new Stage6ProviderCommitService(pool as pg.Pool, {} as never, {} as never, chairProvider);
+    const service = new DelegateFileService(pool as pg.Pool, uploads, providerCommits,
+      new Stage6FileService(pool as pg.Pool, {} as never, {} as never, {} as never), storage);
+    const share = await service.startShare(value.chair, value.committee.id, await committeeRevision(value.committee.id),
+      'https://quorum.example.com', context('delegate-file-share'));
+    expect(share.url).toMatch(/^https:\/\/quorum\.example\.com\/delegate-files#[A-Za-z0-9_-]{43}$/);
+    const capability = share.url.split('#')[1] as string;
+    const claimed = await service.claim(capability, seat.id, context('delegate-file-claim'));
+    expect(claimed.claimedSeat).toMatchObject({id: seat.id, displayName: '中国', flag: {type: expect.any(String)}});
+    expect((await service.bootstrap(capability, claimed.sessionToken)).claimedSeat).toEqual(claimed.claimedSeat);
+    const stored = await pool?.query<{credential_hash: Buffer}>('SELECT credential_hash FROM delegate_file_sessions');
+    expect(stored?.rows[0]?.credential_hash).toHaveLength(32);
+    expect(stored?.rows[0]?.credential_hash.toString('utf8')).not.toContain(claimed.sessionToken);
+
+    const counts = async () => (await pool!.query('SELECT (SELECT count(*) FROM file_uploads)::int AS uploads, (SELECT count(*) FROM file_entries)::int AS entries')).rows[0];
+    const beforeInvalid = await counts();
+    for (const name of ['video.mp4', 'draft.pdf.exe', 'no-extension', 'trailing.pdf.']) {
+      await expect(service.createUpload(claimed.sessionToken, {logicalName: name, originalName: name,
+        mediaType: 'application/pdf', expectedSizeBytes: 1, sha256: 'a'.repeat(64), fileType: 'WORKING_PAPER'}, randomUUID(), context('invalid-format')))
+        .rejects.toMatchObject({code: 'VALIDATION_FAILED', details: {allowedExtensions: expect.arrayContaining(['pdf', 'docx'])}});
+    }
+    expect(await counts()).toEqual(beforeInvalid);
+    const content = Buffer.from('delegate working paper');
+    const sha256 = createHash('sha256').update(content).digest('hex');
+    const upload = await service.createUpload(claimed.sessionToken, {logicalName: '原始文件名', originalName: 'wp.txt',
+      mediaType: 'text/plain', expectedSizeBytes: content.length, sha256, fileType: 'WORKING_PAPER'}, randomUUID(),
+    context('delegate-file-upload'));
+    await service.receiveContent(claimed.sessionToken, upload.id, (async function* () {yield content;})(), randomUUID(),
+      content.length, context('delegate-file-content'));
+    const pending = await service.commitUpload(claimed.sessionToken, upload.id, randomUUID(),
+      context('delegate-file-commit'));
+    expect(pending).toMatchObject({kind: 'PENDING_HOST_COMMIT'});
+    if (!('kind' in pending) || pending.kind !== 'PENDING_HOST_COMMIT') throw new Error('Expected pending host commit.');
+    const task = await tasks.claim(chairStorageResult.paired.credential, pending.taskId, {
+      leaseGeneration: pending.leaseGeneration, fileRevision: 1, requestId: randomUUID()});
+    await tasks.complete(chairStorageResult.paired.credential, pending.taskId, {leaseGeneration: pending.leaseGeneration,
+      fileRevision: 1, claimToken: task.claimToken, requestId: randomUUID()}, context('delegate-file-host-complete'));
+    const submitted = await pool?.query<{status: string; revision: number; event_revision: number;
+      submission_source: string; submitter_display_name: string; file_type: string; cache_state: string}>(`SELECT e.status::text,e.revision,
+      (SELECT resource_revision FROM committee_events WHERE resource_id=e.id AND event_type='file.review_requested') AS event_revision,
+      m.submission_source::text,m.submitter_display_name,m.file_type::text,
+      (SELECT state::text FROM storage_cache_entries WHERE file_entry_id=e.id) AS cache_state
+      FROM file_entries e JOIN delegate_file_metadata m ON m.file_entry_id=e.id
+      JOIN file_uploads u ON u.committed_file_entry_id=e.id WHERE u.id=$1`, [upload.id]);
+    expect(submitted?.rows[0]).toEqual({status: 'PENDING_REVIEW', revision: 2, event_revision: 2,
+      submission_source: 'DELEGATE_PORTAL', submitter_display_name: '中国', file_type: 'WORKING_PAPER',
+      cache_state: 'REVIEW_PINNED'});
+
+    const [firstFile] = await service.listReview(value.chair,value.committee.id);
+    expect(firstFile?.suggestedNames).toEqual({WORKING_PAPER:'工作文件 1.1',DIRECTIVE_DRAFT:'指令草案 1.1',RESOLUTION_DRAFT:'决议草案 1.1'});
+    await service.approve(value.chair,firstFile!.id,{baseRevision:firstFile!.revision,logicalName:'工作文件 1.1',fileType:'WORKING_PAPER'},context('approve'));
+    expect((await service.bootstrap(capability,claimed.sessionToken)).submissions).toEqual([expect.objectContaining({status:'PUBLISHED',logicalName:'工作文件 1.1'})]);
+    expect((await service.bootstrap(capability,claimed.sessionToken)).maxUploadSizeBytes).toBe(staging.maxFileBytes);
+    const submit = async () => {
+      const up = await service.createUpload(claimed.sessionToken,{logicalName:'original.txt',originalName:'original.txt',
+        mediaType:'text/plain',expectedSizeBytes:content.length,sha256,fileType:'WORKING_PAPER'},randomUUID(),context('upload'));
+      await service.receiveContent(claimed.sessionToken,up.id,(async function*(){yield content;})(),randomUUID(),content.length,context('content'));
+      const pending = await service.commitUpload(claimed.sessionToken,up.id,randomUUID(),context('commit'));
+      if (!('kind' in pending)) throw new Error('Expected host commit');
+      const task = await tasks.claim(chairStorageResult.paired.credential,pending.taskId,{leaseGeneration:pending.leaseGeneration,fileRevision:1,requestId:randomUUID()});
+      await tasks.complete(chairStorageResult.paired.credential,pending.taskId,{leaseGeneration:pending.leaseGeneration,fileRevision:1,
+        claimToken:task.claimToken,requestId:randomUUID()},context('complete'));
+      return (await service.listReview(value.chair,value.committee.id)).find(item => item.status==='PENDING_REVIEW')!;
+    };
+    const second = await submit();
+    expect(second.suggestedNames?.WORKING_PAPER).toBe('工作文件 1.2');
+    const rejection = {baseRevision:second.revision,logicalName:'工作文件 1.2',fileType:'WORKING_PAPER',reason:'请补充签署国',rejectionTypeId:'other'};
+    await expect(service.reject(value.chair, second.id, {...rejection,rejectionTypeId:'missing'},randomUUID(),context('missing-type'))).rejects.toMatchObject({code:'VALIDATION_FAILED'});
+    await expect(service.reject(value.chair, second.id, {...rejection,reason:''},randomUUID(),context('empty-custom'))).rejects.toMatchObject({code:'VALIDATION_FAILED'});
+    const rejectionKey = randomUUID();
+    await expect(service.reject(value.member,second.id,rejection,randomUUID(),context('forbidden'))).rejects.toMatchObject({code:'FORBIDDEN'});
+    await service.reject(value.chair,second.id,rejection,rejectionKey,context('reject'));
+    await service.reject(value.chair,second.id,rejection,rejectionKey,context('retry'));
+    expect((await service.bootstrap(capability,claimed.sessionToken)).submissions).toEqual(expect.arrayContaining([
+      expect.objectContaining({id:second.id,status:'REJECTED',rejectionReason:'请补充签署国',deleted:false})]));
+    expect((await pool!.query('SELECT count(*)::int AS count FROM file_tombstones WHERE file_entry_id=$1',[second.id])).rows[0].count).toBe(0);
+    const rejectedEvents = (await service.events(claimed.sessionToken,0)).rows.filter(item=>item.kind==='rejected');
+    expect(rejectedEvents).toEqual([expect.objectContaining({fileId:second.id,logicalName:'工作文件 1.2',rejectionReason:'请补充签署国'})]);
+    const savedSettings = await service.getSettings(value.chair, value.committee.id);
+    await service.updateSettings(value.chair, value.committee.id, {...savedSettings, baseRevision:savedSettings.revision,
+      rejectionTypes:savedSettings.rejectionTypes.map(item => item.id === 'format' ? {...item,message:'新的格式说明'} : item)},context('change-prompt'));
+    expect((await service.bootstrap(capability,claimed.sessionToken)).submissions).toEqual(expect.arrayContaining([
+      expect.objectContaining({id:second.id,rejectionReason:'请补充签署国'})]));
+    const otherSeat = await stage4.createSeat(value.chair,value.committee.id,{stableKey:'other-delegate',displayName:'法国',sortOrder:2},randomUUID(),context('other-seat'));
+    await stage4.createAttendanceEvent(value.chair,value.committee.id,{meetingSessionId:meeting.id,seatId:otherSeat.id,type:'PRESENT'},context('other-present'));
+    const other = await service.claim(capability,otherSeat.id,context('other-claim'));
+    expect((await service.bootstrap(capability,other.sessionToken)).submissions).toEqual([]);
+    expect((await service.events(other.sessionToken,0)).rows.filter(item=>item.kind==='rejected')).toEqual([]);
+    await expect(service.approve(value.chair,second.id,{baseRevision:second.revision+1,logicalName:'不能批准',fileType:'WORKING_PAPER'},context('invalid-approve'))).rejects.toMatchObject({code:'RESOURCE_CONFLICT'});
+    await storage.deleteFile(value.chair,second.id,{baseRevision:second.revision+1},randomUUID(),context('delete-rejected'));
+    expect((await service.listReview(value.chair,value.committee.id))).toEqual(expect.arrayContaining([
+      expect.objectContaining({id:second.id,status:'REJECTED',deleted:true,rejectionReason:'请补充签署国'})]));
+    expect((await service.bootstrap(capability,claimed.sessionToken)).submissions).toEqual(expect.arrayContaining([
+      expect.objectContaining({id:second.id,status:'REJECTED',deleted:true,rejectionReason:'请补充签署国'})]));
+    const third = await submit();
+    expect(third.suggestedNames?.WORKING_PAPER).toBe('工作文件 1.2');
+    await service.reject(value.chair,third.id,{baseRevision:third.revision,logicalName:'工作文件 1.2',fileType:'WORKING_PAPER',rejectionTypeId:'duplicate',reason:'ignored client text'},randomUUID(),context('no-reason'));
+    expect((await service.bootstrap(capability,claimed.sessionToken)).submissions).toEqual(expect.arrayContaining([
+      expect.objectContaining({id:third.id,status:'REJECTED',rejectionReason:'此文件已被提交过，请勿重复提交'})]));
+
+    // Isolated database fixture: place two preceding sessions before this upload's third session.
+    await pool!.query(`UPDATE meeting_sessions SET created_at=now()-interval '1 hour',name='第3会期' WHERE id=$1`,[meeting.id]);
+    for (const ordinal of [1,2]) await pool!.query(`INSERT INTO meeting_sessions
+      (id,committee_id,phase_id,active_rule_package_version_id,status,created_by_user_id,created_at,closed_at,name)
+      SELECT $1,committee_id,phase_id,active_rule_package_version_id,'CLOSED',created_by_user_id,
+        now()-($2::int*interval '1 day'),now()-($2::int*interval '1 day')+interval '1 hour',$3 FROM meeting_sessions WHERE id=$4`,
+      [randomUUID(),4-ordinal,`第${ordinal}会期`,meeting.id]);
+    const fourth = await submit();
+    expect(fourth.suggestedNames?.RESOLUTION_DRAFT).toBe('决议草案 3.1');
+
+    await stage3.setOperationMode(value.owner, value.committee.id, 'DELEGATE_OPERATED',
+      await committeeRevision(value.committee.id), context('delegate-file-mode-change'));
+    await expect(service.bootstrap(capability, claimed.sessionToken)).rejects.toMatchObject({code: 'LINK_EXPIRED'});
+    expect((await pool?.query<{revoked: boolean}>(`SELECT revoked_at IS NOT NULL AS revoked
+      FROM delegate_file_sessions`))?.rows).toEqual([{revoked: true},{revoked: true}]);
+  }, 30_000);
+
   it('keeps secrets hashed and management scoped to explicit Owner or Chair authority', async () => {
     const value = await fixture();
     await expect(agent.createPairing(value.member, value.committee.id,
@@ -217,7 +439,7 @@ integration('PostgreSQL stage 7 storage Agent identity', () => {
     const value = await fixture();
     const chairCode = await agent.createPairing(value.chair, value.committee.id,
       {baseRevision: value.committee.revision, purpose: 'INITIAL'}, context('chair-code'));
-    await stage3.setChair(value.owner, value.committee.id, value.chair.user.id, false,
+    await stage3.setChair(value.owner, value.committee.id, value.chair.user.email, false,
       await committeeRevision(value.committee.id), context('remove-chair'));
     await expect(agent.pair({pairingCode: chairCode.code, deviceLabel: 'Former Chair', devicePublicKey: publicKey()},
       context('former-chair-pair'))).rejects.toMatchObject({code: 'LINK_EXPIRED'});
@@ -330,10 +552,14 @@ integration('PostgreSQL stage 7 storage Agent identity', () => {
       context('queue-host-commit'));
     expect(pending).toMatchObject({kind: 'PENDING_HOST_COMMIT', upload: {
       status: 'STAGED', agentCommitState: 'PENDING_HOST_COMMIT'}});
+    const queued = await tasks.tasks(chair.paired.credential, pending.leaseGeneration, 0, 100);
+    expect(queued.tasks).toEqual([expect.objectContaining({id: pending.taskId, type: 'HOST_COMMIT_BLOB',
+      logicalName: source.staged.logicalName})]);
     await expect(uploads.listPendingHostCommits(value.owner, value.committee.id))
       .resolves.toEqual([expect.objectContaining({id: source.staged.id})]);
     const claimed = await tasks.claim(chair.paired.credential, pending.taskId, {
       leaseGeneration: pending.leaseGeneration, fileRevision: 1, requestId: randomUUID()});
+    expect(claimed).toMatchObject({type: 'HOST_COMMIT_BLOB', logicalName: source.staged.logicalName});
     const chunks: Buffer[] = [];
     await tasks.streamBlob(chair.paired.credential, {taskId: pending.taskId, blobId: claimed.blobId as string,
       leaseGeneration: pending.leaseGeneration, fileRevision: 1, claimToken: claimed.claimToken as string}, {
@@ -341,17 +567,133 @@ integration('PostgreSQL stage 7 storage Agent identity', () => {
       write: chunk => {chunks.push(Buffer.from(chunk)); return Promise.resolve();}
     });
     expect(Buffer.concat(chunks)).toEqual(source.content);
+    const completionRequestId = randomUUID();
     await tasks.complete(chair.paired.credential, pending.taskId, {leaseGeneration: pending.leaseGeneration,
-      fileRevision: 1, claimToken: claimed.claimToken, requestId: randomUUID()}, context('host-complete'));
+      fileRevision: 1, claimToken: claimed.claimToken, requestId: completionRequestId}, context('host-complete'));
+    await tasks.complete(chair.paired.credential, pending.taskId, {leaseGeneration: pending.leaseGeneration,
+      fileRevision: 1, claimToken: claimed.claimToken, requestId: completionRequestId}, context('host-complete-repeat'));
     await expect(uploads.listPendingHostCommits(value.owner, value.committee.id)).resolves.toEqual([]);
     const state = await pool?.query(`SELECT
       (SELECT status::text FROM file_uploads WHERE id=$1) AS upload_status,
       (SELECT agent_commit_state::text FROM file_uploads WHERE id=$1) AS agent_state,
       (SELECT count(*)::int FROM file_entries WHERE committee_id=$2) AS files,
       (SELECT count(*)::int FROM file_versions version JOIN file_entries entry ON entry.id=version.file_entry_id
-        WHERE entry.committee_id=$2) AS versions`, [source.staged.id, value.committee.id]);
-    expect(state?.rows[0]).toEqual({upload_status: 'COMMITTED', agent_state: 'HOST_COMMITTED', files: 1, versions: 1});
+        WHERE entry.committee_id=$2) AS versions,
+      (SELECT count(*)::int FROM storage_manifest_events WHERE committee_id=$2) AS manifest_events,
+      (SELECT count(*)::int FROM storage_agent_tasks WHERE id=$3 AND task_type='HOST_COMMIT_BLOB') AS host_commit_tasks,
+      (SELECT state::text FROM storage_cache_entries WHERE file_entry_id=(SELECT committed_file_entry_id
+        FROM file_uploads WHERE id=$1)) AS cache_state,
+      (SELECT count(*)::int FROM committee_events WHERE committee_id=$2 AND event_type='file.upload_committed') AS events,
+      (SELECT count(*)::int FROM audit_log WHERE committee_id=$2 AND action='storage.upload_host_committed') AS audits`,
+      [source.staged.id, value.committee.id, pending.taskId]);
+    expect(state?.rows[0]).toEqual({upload_status: 'COMMITTED', agent_state: 'HOST_COMMITTED', files: 1, versions: 1,
+      manifest_events: 1, host_commit_tasks: 1, cache_state: 'READY', events: 1, audits: 1});
   });
+
+  it('coalesces cache misses and restores verified bytes from a capable Chair Agent', async () => {
+    const value = await fixture(); const chair = await chairStorage(value.owner, value.committee.id);
+    const source = await stagedUpload(value.owner, value.committee.id, 'refill.txt');
+    const pending = await chairProvider.queueUpload(value.owner, source.staged.id, {}, randomUUID(),
+      context('refill-host-commit'));
+    const initial = await tasks.claim(chair.paired.credential, pending.taskId, {
+      leaseGeneration: pending.leaseGeneration, fileRevision: 1, requestId: randomUUID()});
+    await tasks.complete(chair.paired.credential, pending.taskId, {leaseGeneration: pending.leaseGeneration,
+      fileRevision: 1, claimToken: initial.claimToken, requestId: randomUUID()}, context('refill-initial-complete'));
+    const file = (await pool?.query<{file_entry_id: string; file_version_id: string; blob_id: string; revision: number}>(`SELECT
+      u.committed_file_entry_id AS file_entry_id,u.committed_file_version_id AS file_version_id,
+      u.committed_blob_id AS blob_id,e.revision FROM file_uploads u JOIN file_entries e ON e.id=u.committed_file_entry_id
+      WHERE u.id=$1`, [source.staged.id]))?.rows[0];
+    if (!file) throw new Error('Committed file missing.');
+    await staging.remove(cacheStorageKey(file.blob_id));
+    await pool?.query(`UPDATE storage_cache_entries SET state='MISSING',storage_key=NULL,cached_at=NULL,
+      last_accessed_at=NULL,state_changed_at=now(),updated_at=now() WHERE blob_id=$1`, [file.blob_id]);
+    await agent.heartbeat(chair.paired.credential, {leaseGeneration: pending.leaseGeneration,
+      agentProtocolVersion: 2, capabilities: ['SSE_WAKE', 'CACHE_REFILL']});
+    const refill = new StorageCacheRefillService(pool as pg.Pool, cache);
+    const request = {committeeId: value.committee.id, fileEntryId: file.file_entry_id, fileRevision: file.revision,
+      fileVersionId: file.file_version_id, blobId: file.blob_id, sizeBytes: source.content.length,
+      sha256: source.sha256, providerType: 'CHAIR_AGENT'};
+    await expect(Promise.all([refill.prepare(request), refill.prepare(request)])).resolves.toEqual([
+      expect.objectContaining({status: 'PREPARING'}), expect.objectContaining({status: 'PREPARING'})]);
+    const queued = (await tasks.tasks(chair.paired.credential, pending.leaseGeneration)).tasks
+      .filter(item => item.type === 'FETCH_BLOB_TO_CACHE');
+    expect(queued).toHaveLength(1);
+    const claimed = await tasks.claim(chair.paired.credential, queued[0]!.id, {
+      leaseGeneration: pending.leaseGeneration, fileRevision: queued[0]!.fileRevision, requestId: randomUUID()});
+    await tasks.receiveContent(chair.paired.credential, {taskId: claimed.id,
+      leaseGeneration: pending.leaseGeneration, fileRevision: claimed.fileRevision,
+      claimToken: claimed.claimToken as string, expectedSha256: source.sha256, contentLength: source.content.length,
+      source: (async function* () {yield source.content;})(), context: context('refill-content')});
+    await tasks.complete(chair.paired.credential, claimed.id, {leaseGeneration: pending.leaseGeneration,
+      fileRevision: claimed.fileRevision, claimToken: claimed.claimToken, requestId: randomUUID()},
+    context('refill-complete'));
+    await expect(refill.readiness(file.blob_id)).resolves.toEqual({status: 'READY'});
+    await expect(staging.verify(cacheStorageKey(file.blob_id), source.content.length, source.sha256)).resolves.toBeDefined();
+  });
+
+  it('changes the Agent SSE cursor for durable work and fences a stale generation', async () => {
+    const value = await fixture(); const chair = await chairStorage(value.owner, value.committee.id);
+    const generation = chair.paired.host.leaseGeneration;
+    const before = await agent.eventCursor(chair.paired.credential, generation);
+    const source = await stagedUpload(value.owner, value.committee.id, 'sse-wake.txt');
+    await chairProvider.queueUpload(value.owner, source.staged.id, {}, randomUUID(), context('sse-wake-queue'));
+    const after = await agent.eventCursor(chair.paired.credential, generation);
+    expect(after).not.toBe(before);
+    await expect(agent.eventCursor(chair.paired.credential, generation + 1))
+      .rejects.toMatchObject({code: 'STALE_STORAGE_LEASE'});
+  });
+
+  it('revision-updates cache settings within deployment boundaries', async () => {
+    const policy = new StorageCachePolicyService(pool as pg.Pool, {
+      publishedCacheHardMaxBytes: 2_000, pendingReviewHardMaxBytes: 1_000,
+      pendingReviewCommitteeHardMaxBytes: 500, storageHardMinFreeBytes: 100,
+      storageHardMinFreePercent: 20
+    } as never);
+    const operations = new StorageCacheOperationsService(pool as pg.Pool, staging, policy,
+      new StorageCacheRuntimeStats(), createLogger(() => undefined));
+    const configured = await operations.update(administrator, {publishedCacheMaxBytes: 1_500,
+      pendingReviewMaxBytes: 900, pendingReviewCommitteeMaxBytes: 400,
+      storageMinFreeBytes: 200, storageMinFreePercent: 25, revision: 1}, context('cache-config'));
+    expect(configured).toMatchObject({publishedCacheMaxBytes: 1_500, pendingReviewMaxBytes: 900,
+      pendingReviewCommitteeMaxBytes: 400, storageMinFreeBytes: 200, storageMinFreePercent: 25, revision: 2});
+    await expect(operations.update(administrator, {publishedCacheMaxBytes: 1_500,
+      pendingReviewMaxBytes: 900, pendingReviewCommitteeMaxBytes: 400,
+      storageMinFreeBytes: 200, storageMinFreePercent: 25, revision: 1}, context('cache-config-stale')))
+      .rejects.toMatchObject({code: 'REVISION_CONFLICT'});
+    await expect(operations.update(administrator, {publishedCacheMaxBytes: 2_001,
+      pendingReviewMaxBytes: 900, pendingReviewCommitteeMaxBytes: 400,
+      storageMinFreeBytes: 200, storageMinFreePercent: 25, revision: 2}, context('cache-config-over-limit')))
+      .rejects.toMatchObject({code: 'VALIDATION_FAILED'});
+    const audit = await pool?.query<{count: number}>(`SELECT count(*)::int AS count FROM audit_log
+      WHERE action='storage.cache_config_updated'`);
+    expect(audit?.rows).toEqual([{count: 1}]);
+  });
+
+  it('lists safe cache metadata in LRU order and evicts the first READY entry', async () => {
+    const value = await fixture(); const chair = await chairStorage(value.owner, value.committee.id);
+    const source = await stagedUpload(value.owner, value.committee.id, 'lru-first.txt');
+    const pending = await chairProvider.queueUpload(value.owner, source.staged.id, {}, randomUUID(), context('lru-queue'));
+    const claimed = await tasks.claim(chair.paired.credential, pending.taskId, {leaseGeneration: pending.leaseGeneration,
+      fileRevision: 1, requestId: randomUUID()});
+    await tasks.complete(chair.paired.credential, pending.taskId, {leaseGeneration: pending.leaseGeneration,
+      fileRevision: 1, claimToken: claimed.claimToken, requestId: randomUUID()}, context('lru-complete'));
+    const policy = {hardLimits: {publishedCacheMaxBytes: 0, pendingReviewMaxBytes: 1024,
+      pendingReviewCommitteeMaxBytes: 1024, storageMinFreeBytes: 0, storageMinFreePercent: 0},
+    effective: async () => ({publishedCacheMaxBytes: 0, pendingReviewMaxBytes: 1024,
+      pendingReviewCommitteeMaxBytes: 1024, storageMinFreeBytes: 0, storageMinFreePercent: 0, revision: 1,
+      hardLimits: {publishedCacheMaxBytes: 0, pendingReviewMaxBytes: 1024,
+        pendingReviewCommitteeMaxBytes: 1024, storageMinFreeBytes: 0, storageMinFreePercent: 0}})};
+    const operations = new StorageCacheOperationsService(pool as pg.Pool, staging, policy as never,
+      new StorageCacheRuntimeStats(), createLogger(() => undefined));
+    const listed = await operations.files(administrator, 'published', 1, 25);
+    expect(listed.files[0]).toMatchObject({fileName: 'lru-first.txt', committeeName: value.committee.name,
+      state: 'READY', sizeBytes: source.content.length});
+    expect(JSON.stringify(listed)).not.toMatch(/storage_key|sha256|credential|path/i);
+    await expect(operations.evictOne()).resolves.toBe(true);
+    const state = await pool?.query<{state: string; storage_key: string | null}>(`SELECT state::text,storage_key
+      FROM storage_cache_entries WHERE file_entry_id=$1`, [listed.files[0]?.fileEntryId]);
+    expect(state?.rows).toEqual([{state: 'MISSING', storage_key: null}]);
+  }, 15_000);
 
   it('rolls back file metadata and upload completion when the terminal Agent audit fails', async () => {
     const value = await fixture(); const chair = await chairStorage(value.owner, value.committee.id);

@@ -56,6 +56,8 @@ interface HostRow extends QueryResultRow {
   last_seen_at: Date | null;
   paired_at: Date;
   revoked_at: Date | null;
+  agent_protocol_version: number | null;
+  capabilities: string[];
 }
 
 export interface Stage7AgentOptions {
@@ -127,6 +129,8 @@ function host(row: HostRow): StorageHost {
     lastSeenAt: row.last_seen_at?.toISOString() ?? null,
     pairedAt: row.paired_at.toISOString(),
     revokedAt: row.revoked_at?.toISOString() ?? null
+    ,agentProtocolVersion: row.agent_protocol_version,
+    capabilities: row.capabilities as StorageHost['capabilities']
   };
 }
 
@@ -277,7 +281,7 @@ export class Stage7StorageAgentService {
           WHERE committee_id=$1 AND status<>'DELETED'`, [committee.id, now]);
       }
       const pendingUploads = await client.query<{
-        upload_id: string; task_id: string; task_type: 'STORE_BLOB' | 'UPLOAD_BLOB'; host_id: string; file_entry_id: string;
+        upload_id: string; task_id: string; task_type: 'HOST_COMMIT_BLOB' | 'UPLOAD_BLOB'; host_id: string; file_entry_id: string;
         file_revision: number; blob_id: string; expected_size_bytes: string | number; expected_sha256: Buffer;
       }>(`SELECT upload.id AS upload_id,task.id AS task_id,task.task_type,task.host_id,task.file_entry_id,task.file_revision,
         task.blob_id,task.expected_size_bytes,task.expected_sha256 FROM file_uploads upload
@@ -319,7 +323,7 @@ export class Stage7StorageAgentService {
         await client.query(`INSERT INTO storage_agent_tasks
           (id,committee_id,host_id,lease_generation,sequence,task_type,file_entry_id,file_revision,blob_id,
            expected_size_bytes,expected_sha256,source_upload_id)
-          VALUES ($1,$2,$3,$4,$5,'STORE_BLOB',$6,$7,$8,$9,$10,$11)`,
+          VALUES ($1,$2,$3,$4,$5,'HOST_COMMIT_BLOB',$6,$7,$8,$9,$10,$11)`,
         [replacementId, committee.id, hostId, leaseGeneration, allocated.rows[0]?.sequence,
           pending.file_entry_id, pending.file_revision, pending.blob_id, pending.expected_size_bytes,
           pending.expected_sha256, pending.upload_id]);
@@ -401,6 +405,42 @@ export class Stage7StorageAgentService {
     });
   }
 
+  async revokeSelf(credential: string, generation: number, body: unknown,
+    context: Stage4Context): Promise<{revoked: true}> {
+    assertExactBody(body as Record<string, unknown>, []);
+    try {await this.authenticate(credential);}
+    catch (error) {
+      if (error instanceof AppError && error.code === 'STALE_STORAGE_LEASE') return {revoked: true};
+      throw error;
+    }
+    return this.withCurrentLease(credential, generation, async (client, lease, committee) => {
+      const now = this.now();
+      const updated = await client.query<{revision: number; storage_lease_generation: string | number}>(`UPDATE committees
+        SET storage_lease_generation=storage_lease_generation+1,revision=revision+1,updated_at=$2
+        WHERE id=$1 RETURNING revision,storage_lease_generation`, [committee.id, now]);
+      committee.revision = updated.rows[0]!.revision;
+      const revoked = await client.query<HostRow>(`UPDATE storage_hosts
+        SET status='REVOKED',revision=revision+1,revoked_at=$2,updated_at=$2 WHERE id=$1 RETURNING *`,
+      [lease.hostId, now]);
+      const row = revoked.rows[0]!;
+      await client.query(`UPDATE storage_pairing_codes SET revoked_at=$2
+        WHERE committee_id=$1 AND used_at IS NULL AND revoked_at IS NULL`, [committee.id, now]);
+      await client.query(`UPDATE file_entries SET sync_state='OUT_OF_SYNC',updated_at=$3
+        FROM storage_bindings binding WHERE file_entries.committee_id=$1
+          AND binding.id=$2 AND binding.provider_type='CHAIR_AGENT' AND binding.status='ACTIVE'
+          AND file_entries.status<>'DELETED'`, [committee.id, committee.active_storage_binding_id, now]);
+      const leaseGeneration = Number(updated.rows[0]!.storage_lease_generation);
+      await appendEvent(client, committee, {type: 'storage_host.status_changed', resourceType: 'storage_host',
+        resourceId: lease.hostId, revision: row.revision, audience: 'CHAIR',
+        payload: {status: 'REVOKED', leaseGeneration}});
+      await audit(client, context, {committeeId: committee.id, actorUserId: row.paired_by_user_id,
+        capabilities: ['STORAGE_AGENT'], action: 'storage.host_revoked', resourceType: 'storage_host',
+        resourceId: lease.hostId, before: {status: lease.status, leaseGeneration: generation},
+        after: {status: 'REVOKED', leaseGeneration, deviceId: lease.deviceId}});
+      return {revoked: true};
+    });
+  }
+
   async authenticate(credential: string): Promise<StorageAgentIdentity> {
     const parsed = parseDeviceCredential(credential);
     if (!parsed) throw new AppError({code: 'AUTHENTICATION_REQUIRED', message: 'Agent authentication is required.'});
@@ -443,9 +483,35 @@ export class Stage7StorageAgentService {
     });
   }
 
+  async eventCursor(credential: string, requestedGeneration: number): Promise<string> {
+    const lease = await this.authenticate(credential);
+    if (lease.leaseGeneration !== requestedGeneration) {
+      throw new AppError({code: 'STALE_STORAGE_LEASE', message: 'Storage host lease is no longer current.'});
+    }
+    const result = await this.pool.query<{cursor: string}>(`SELECT concat_ws(':',
+          $2::text,
+          COALESCE((SELECT max(sequence)::text FROM storage_agent_tasks
+            WHERE host_id=$1 AND lease_generation=$2::bigint), '0'),
+          COALESCE((SELECT max(updated_at)::text FROM storage_agent_tasks
+            WHERE host_id=$1 AND lease_generation=$2::bigint), ''),
+          COALESCE((SELECT max(sequence)::text FROM storage_manifest_events WHERE committee_id=$3), '0'),
+          COALESCE((SELECT max(created_at)::text FROM storage_agent_conflicts WHERE host_id=$1), ''),
+          COALESCE((SELECT max(resolved_at)::text FROM storage_agent_conflicts WHERE host_id=$1), '')
+        ) AS cursor`, [lease.hostId, lease.leaseGeneration, lease.committeeId]);
+    return result.rows[0]?.cursor ?? String(lease.leaseGeneration);
+  }
+
   async heartbeat(credential: string, body: unknown): Promise<StorageHost> {
-    assertExactBody(body as Record<string, unknown>, ['leaseGeneration']);
-    const requestedGeneration = generation((body as {leaseGeneration?: unknown}).leaseGeneration);
+    assertExactBody(body as Record<string, unknown>, ['leaseGeneration', 'agentProtocolVersion', 'capabilities']);
+    const heartbeat = body as {leaseGeneration?: unknown; agentProtocolVersion?: unknown; capabilities?: unknown};
+    const requestedGeneration = generation(heartbeat.leaseGeneration);
+    const protocolVersion = heartbeat.agentProtocolVersion === undefined ? null : revision(heartbeat.agentProtocolVersion);
+    if (heartbeat.capabilities !== undefined && (!Array.isArray(heartbeat.capabilities)
+      || heartbeat.capabilities.some(value => value !== 'SSE_WAKE' && value !== 'CACHE_REFILL')
+      || new Set(heartbeat.capabilities).size !== heartbeat.capabilities.length)) {
+      throw new AppError({code: 'VALIDATION_FAILED', message: 'Agent capabilities are invalid.'});
+    }
+    const capabilities = (heartbeat.capabilities ?? []) as string[];
     const parsed = parseDeviceCredential(credential);
     if (!parsed) throw new AppError({code: 'AUTHENTICATION_REQUIRED', message: 'Agent authentication is required.'});
     const now = this.now();
@@ -467,8 +533,12 @@ export class Stage7StorageAgentService {
         throw new AppError({code: 'STALE_STORAGE_LEASE', message: 'Storage host lease is no longer current.'});
       }
       const recovered = row.status === 'DEGRADED';
+      const capabilityChanged = row.agent_protocol_version !== protocolVersion
+        || row.capabilities.length !== capabilities.length
+        || row.capabilities.some(value => !capabilities.includes(value));
       const updated = await client.query<HostRow>(`UPDATE storage_hosts SET status='ACTIVE',last_seen_at=$2,
-        revision=revision+$3,updated_at=$2 WHERE id=$1 RETURNING *`, [row.id, now, recovered ? 1 : 0]);
+        agent_protocol_version=$4,capabilities=$5,revision=revision+$3,updated_at=$2 WHERE id=$1 RETURNING *`,
+      [row.id, now, recovered || capabilityChanged ? 1 : 0, protocolVersion, capabilities]);
       if (recovered) {
         await appendEvent(client, committee, {type: 'storage_host.status_changed', resourceType: 'storage_host',
           resourceId: row.id, revision: row.revision + 1, audience: 'CHAIR',

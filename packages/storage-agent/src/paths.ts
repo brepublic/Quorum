@@ -4,7 +4,7 @@ import {AGENT_METADATA_FILE, AGENT_TEMP_DIRECTORY} from './state.js';
 import {AgentFileSystemError} from './errors.js';
 
 const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
-const RESERVED = new Set([AGENT_METADATA_FILE.toLowerCase(), AGENT_TEMP_DIRECTORY.toLowerCase()]);
+const RESERVED = new Set(['.quorum-storage.lock', AGENT_METADATA_FILE.toLowerCase(), AGENT_TEMP_DIRECTORY.toLowerCase()]);
 
 export function normalizeAgentRelativePath(value: unknown, _platform: NodeJS.Platform = process.platform): string {
   if (typeof value !== 'string' || value.length === 0 || value.length > 500 || value.includes('\0')) {

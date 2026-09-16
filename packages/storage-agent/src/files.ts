@@ -107,7 +107,9 @@ export class AgentFileStore {
   }
 
   async applyDelete(event: Extract<StorageManifestEvent, {kind: 'DELETE'}>, options: {force?: boolean} = {}): Promise<void> {
-    const tracked = this.state.snapshot().files[event.fileEntryId];
+    const snapshot = this.state.snapshot();
+    const tracked = snapshot.files[event.fileEntryId];
+    if (!tracked && snapshot.manifestSequence >= event.sequence) return;
     if (tracked) {
       const target = await secureAgentTarget(this.rootPath, tracked.relativePath);
       if (!await missing(target.absolutePath)) {

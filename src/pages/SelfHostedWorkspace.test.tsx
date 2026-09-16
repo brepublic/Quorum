@@ -31,6 +31,16 @@ let root: Root | undefined; let container: HTMLDivElement | undefined;
 afterEach(() => { if (root) act(() => root?.unmount()); container?.remove(); root = undefined; container = undefined; });
 
 describe('self-hosted stage 4 workspace', () => {
+  it('hides the committee creation form for the system administrator', async () => {
+    const api = {listCommittees: vi.fn(async () => []), listCountryTemplates: vi.fn(async () => []),
+      listCommitteeTemplates: vi.fn(async () => [])} as unknown as SelfHostedApi;
+    container = document.createElement('div'); document.body.append(container); root = createRoot(container);
+    await act(async () => { root?.render(<MemoryRouter initialEntries={['/committees']}>
+      <SelfHostedWorkspace user={{...user, isSystemAdmin: true}} logout={vi.fn()} api={api} />
+    </MemoryRouter>); await Promise.resolve(); await Promise.resolve(); });
+    const page = container.querySelector('.committee-create-page');
+    expect(page?.textContent).not.toContain('Create committee');
+  });
   it('restores the legacy two-column committee creation workspace without dropping self-hosted templates', async () => {
     const logout = vi.fn();
     const archiveCommittee = vi.fn(async () => ({id: 'committee', name: 'Security Council', status: 'ARCHIVED' as const, revision: 2}));
@@ -81,7 +91,6 @@ describe('self-hosted stage 4 workspace', () => {
       <SelfHostedWorkspace user={user} logout={() => undefined} api={api} />
     </MemoryRouter>); await Promise.resolve(); await Promise.resolve(); });
     expect(container.textContent).toContain('Security Council');
-    expect(container.textContent).toContain('Share committee');
     expect(api.snapshot).toHaveBeenCalledTimes(1);
     expect(api.openCommitteeEvents).toHaveBeenCalledWith('committee', 7, expect.any(Object));
     act(() => callbacks?.onState('OFFLINE_READONLY'));

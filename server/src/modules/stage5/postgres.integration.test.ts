@@ -327,8 +327,8 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
     const draft = await stage5.createResolution(fixture.firstChair, fixture.committee.id,
       {meetingSessionId: fixture.session.id, title: '', content: ''},
       'empty-resolution-draft', context('empty-resolution-draft'));
-    expect(draft).toMatchObject({title: 'New draft resolution 1', status: 'DRAFT', proposerSeatId: null,
-      seconderSeatId: null, currentVersion: {content: ''}});
+    expect(draft).toMatchObject({title: 'Draft resolution 1.1', status: 'DRAFT', proposerSeatId: null,
+      seconderSeatId: null, directVote: {majority: 'TWO_THIRDS'}, currentVersion: {content: ''}});
     const motion = await stage5.proposeMotion(fixture.firstChair, fixture.committee.id,
       {meetingSessionId: fixture.session.id, motionTypeId: 'introduce-draft-resolution',
         onBehalfOfSeatId: fixture.firstSeat.id, secondedBySeatId: fixture.secondSeat.id,
@@ -345,6 +345,22 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
       FROM documents d JOIN resolutions r ON r.document_id=d.id WHERE d.id=$1`, [draft.id]);
     expect(introduced?.rows[0]).toEqual({status: 'PUBLISHED', is_public: true,
       proposer_seat_id: fixture.firstSeat.id, seconder_seat_id: fixture.secondSeat.id});
+  });
+
+  it('numbers generated resolution titles within their meeting session', async () => {
+    const fixture = await meetingFixture();
+    const first = await stage5.createResolution(fixture.firstChair, fixture.committee.id,
+      {meetingSessionId: fixture.session.id, title: '', content: ''}, 'resolution-1-1', context('resolution-1-1'));
+    const second = await stage5.createResolution(fixture.firstChair, fixture.committee.id,
+      {meetingSessionId: fixture.session.id, title: '', content: ''}, 'resolution-1-2', context('resolution-1-2'));
+    expect([first.title, second.title]).toEqual(['Draft resolution 1.1', 'Draft resolution 1.2']);
+
+    await stage4.closeMeetingSession(fixture.firstChair, fixture.session.id,
+      {baseRevision: fixture.session.revision}, context('close-first-session'));
+    const nextSession = await stage4.startMeetingSession(fixture.firstChair, fixture.committee.id, {}, context('start-second-session'));
+    const next = await stage5.createResolution(fixture.firstChair, fixture.committee.id,
+      {meetingSessionId: nextSession.id, title: '', content: ''}, 'resolution-2-1', context('resolution-2-1'));
+    expect(next.title).toBe('Draft resolution 2.1');
   });
 
   it('creates, introduces, records, and softly deletes amendments without replacing their history', async () => {
@@ -597,7 +613,7 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
     expect(passed.destinationPath).toBe(`/committees/${fixture.committee.id}/resolutions/${draft.id}`);
     const created = await pool?.query(`SELECT title,status FROM documents
       WHERE committee_id=$1 AND meeting_session_id=$2`, [fixture.committee.id, fixture.session.id]);
-    expect(created?.rows).toEqual([{title: 'New draft resolution 1', status: 'PUBLISHED'}]);
+    expect(created?.rows).toEqual([{title: 'Draft resolution 1.1', status: 'PUBLISHED'}]);
     const audit = await pool?.query(`SELECT after_summary FROM audit_log
       WHERE committee_id=$1 AND action='proceedings.motion_decided' ORDER BY created_at DESC LIMIT 1`,
     [fixture.committee.id]);

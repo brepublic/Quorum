@@ -7,6 +7,7 @@ import {appendEvent, audit, idempotentTransaction, isChair, lockedCommittee, req
   requireProceedingsActive, type Stage4CommitteeRow, type Stage4Context} from '../stage4/database.js';
 import {assertExactBody} from '../stage4/validation.js';
 import type {Stage6StorageService} from '../storage/service.js';
+import type {StorageCacheService} from '../storage/cache-service.js';
 import type {StorageAgentTaskCompletionFinalizer} from './task-service.js';
 
 interface AgentUploadRow extends QueryResultRow {
@@ -65,7 +66,8 @@ async function uploadForUpdate(client: PoolClient, id: string): Promise<AgentUpl
 }
 
 export class Stage7ChairAgentProviderService implements StorageAgentTaskCompletionFinalizer {
-  constructor(private readonly pool: Pool, private readonly metadata: Stage6StorageService) {}
+  constructor(private readonly pool: Pool, private readonly metadata: Stage6StorageService,
+    private readonly cache?: StorageCacheService, private readonly cacheStats?: {refills: number}) {}
 
   async queueUpload(auth: AuthenticatedSession, uploadId: string, body: unknown,
     idempotencyKey: string, context: Stage4Context): Promise<PendingHostCommit> {
@@ -121,7 +123,7 @@ export class Stage7ChairAgentProviderService implements StorageAgentTaskCompleti
         await client.query(`INSERT INTO storage_agent_tasks
           (id,committee_id,host_id,lease_generation,sequence,task_type,file_entry_id,file_revision,blob_id,
            expected_size_bytes,expected_sha256,source_upload_id)
-          VALUES ($1,$2,$3,$4,$5,'STORE_BLOB',$6,1,$7,$8,decode($9,'hex'),$10)`,
+          VALUES ($1,$2,$3,$4,$5,'HOST_COMMIT_BLOB',$6,1,$7,$8,decode($9,'hex'),$10)`,
         [taskId, committee.id, active.id, active.lease_generation, allocated.rows[0]?.sequence, fileEntryId,
           blobId, current.expected_size_bytes, current.expected_sha256_hex, current.id]);
         const row = updated.rows[0] as AgentUploadRow;
@@ -141,6 +143,20 @@ export class Stage7ChairAgentProviderService implements StorageAgentTaskCompleti
   async finalize(client: PoolClient, task: Parameters<StorageAgentTaskCompletionFinalizer['finalize']>[1],
     committee: Stage4CommitteeRow, context: Stage4Context): Promise<void> {
     if (task.resolutionConflictId) return;
+    if (task.type === 'FETCH_BLOB_TO_CACHE') {
+      if (!this.cache || !task.blobId || !task.contentStagingKey || task.expectedSizeBytes === null
+        || !task.expectedSha256) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Cache refill is incomplete.'});
+      const version = (await client.query<{id: string}>(`SELECT v.id FROM file_entries e JOIN file_versions v
+        ON v.id=e.current_version_id WHERE e.id=$1 AND e.committee_id=$2
+          AND v.blob_id=$3 AND e.status<>'DELETED' FOR UPDATE OF e`,
+      [task.fileEntryId, committee.id, task.blobId])).rows[0];
+      if (!version) throw new AppError({code: 'REVISION_CONFLICT', message: 'The file changed during cache refill.'});
+      await this.cache.retain(client, {committeeId: committee.id, fileEntryId: task.fileEntryId,
+        fileVersionId: version.id, blobId: task.blobId, sourceKey: task.contentStagingKey,
+        sizeBytes: task.expectedSizeBytes, sha256: task.expectedSha256, reviewPinned: false});
+      if (this.cacheStats) this.cacheStats.refills += 1;
+      return;
+    }
     if (task.type === 'DELETE_FILE') {
       const binding = await client.query<{id: string}>(`SELECT id FROM storage_bindings WHERE committee_id=$1
         AND storage_host_id=$2 AND provider_type='CHAIR_AGENT' AND status='ACTIVE' FOR UPDATE`,
@@ -160,7 +176,7 @@ export class Stage7ChairAgentProviderService implements StorageAgentTaskCompleti
         WHERE blob_id=ANY($1::uuid[]) AND status<>'COMPLETED'`, [blobs.rows.map(row => row.id)]);
       return;
     }
-    if (task.type === 'STORE_BLOB' && !task.sourceUploadId) {
+    if (task.type === 'STORE_BLOB') {
       const binding = await client.query<{id: string}>(`SELECT id FROM storage_bindings WHERE committee_id=$1
         AND storage_host_id=$2 AND provider_type='CHAIR_AGENT' AND status='ACTIVE' FOR UPDATE`,
       [committee.id, task.hostId]);
@@ -219,6 +235,25 @@ export class Stage7ChairAgentProviderService implements StorageAgentTaskCompleti
     const refreshed = await client.query<{next_event_sequence: string | number}>(
       'SELECT next_event_sequence FROM committees WHERE id=$1', [committee.id]);
     committee.next_event_sequence = Number(refreshed.rows[0]?.next_event_sequence ?? committee.next_event_sequence);
+    const delegateContext = (await client.query<{delegate_session_id: string; seat_id: string;
+      seat_display_name: string; file_type: string; submitted_at: Date}>(`SELECT * FROM delegate_file_upload_contexts
+      WHERE upload_id=$1`, [current.id])).rows[0];
+    if (delegateContext) {
+      await client.query(`INSERT INTO delegate_file_metadata
+        (file_entry_id,submission_source,submitted_by_seat_id,submitter_display_name,file_type,submitted_at)
+        VALUES ($1,'DELEGATE_PORTAL',$2,$3,$4,$5)`, [file.id, delegateContext.seat_id,
+        delegateContext.seat_display_name, delegateContext.file_type, delegateContext.submitted_at]);
+      await client.query(`UPDATE file_entries SET status='PENDING_REVIEW',submitted_at=$2,
+        revision=revision+1,updated_at=now() WHERE id=$1`, [file.id, delegateContext.submitted_at]);
+      file.status = 'PENDING_REVIEW'; file.submittedAt = delegateContext.submitted_at.toISOString(); file.revision += 1;
+      await appendEvent(client, committee, {type: 'file.review_requested', resourceType: 'file_entry',
+        resourceId: file.id, revision: file.revision,
+        payload: {status: 'PENDING_REVIEW', submissionSource: 'DELEGATE_PORTAL',
+          submitterDisplayName: delegateContext.seat_display_name}});
+    }
+    if (this.cache) await this.cache.retain(client, {committeeId: committee.id, fileEntryId: file.id,
+      fileVersionId: file.currentVersion.id, blobId: task.blobId, sourceKey: current.staging_key,
+      sizeBytes: task.expectedSizeBytes, sha256: task.expectedSha256, reviewPinned: Boolean(delegateContext)});
     const committed = await client.query<{revision: number}>(`UPDATE file_uploads SET status='COMMITTED',
       agent_commit_state='HOST_COMMITTED',committed_at=now(),committed_blob_id=$2,
       committed_file_entry_id=$3,committed_file_version_id=$4,revision=revision+1,updated_at=now()

@@ -29,6 +29,50 @@ describe('migration discovery', () => {
     expect(migrations[0]?.checksum).toMatch(/^[a-f0-9]{64}$/);
   });
 
+  it('defaults new resolution direct votes to a two-thirds majority', async () => {
+    const migrations = await loadMigrations(resolve('server/migrations'));
+    const resolutionDefault = migrations.find(migration => migration.version === 45);
+    expect(resolutionDefault?.name).toBe('resolution_direct_vote_default');
+    expect(resolutionDefault?.sql).toContain("ALTER COLUMN direct_vote_majority SET DEFAULT 'TWO_THIRDS'");
+  });
+
+  it('separates browser host commits from manifest STORE_BLOB tasks', async () => {
+    const migrations = await loadMigrations(resolve('server/migrations'));
+    const type = migrations.find(migration => migration.version === 46);
+    const constraints = migrations.find(migration => migration.version === 47);
+    expect(type?.name).toBe('host_commit_blob_task');
+    expect(type?.sql).toContain("ADD VALUE IF NOT EXISTS 'HOST_COMMIT_BLOB'");
+    expect(constraints?.name).toBe('host_commit_blob_constraints');
+    expect(constraints?.sql).toContain('storage_agent_tasks_host_commit_source_check');
+    expect(constraints?.sql).toContain('schema_compatibility=47');
+  });
+
+  it('adds the chair-hosted delegate file portal', async () => {
+    const migration = (await loadMigrations(resolve('server/migrations'))).find(item => item.version === 48);
+    expect(migration?.name).toBe('delegate_file_portal');
+    expect(migration?.sql).toContain('CREATE TABLE delegate_file_shares');
+    expect(migration?.sql).toContain('CREATE TABLE delegate_file_sessions');
+    expect(migration?.sql).toContain("OLD.status = 'UPLOAD_COMPLETE' AND NEW.status IN ('PENDING_REVIEW', 'PUBLISHED', 'DELETED')");
+    expect(migration?.sql).toContain('schema_compatibility=48');
+  });
+
+  it('adds bounded cache metadata and capable Agent tasks', async () => {
+    const migration = (await loadMigrations(resolve('server/migrations'))).find(item => item.version === 49);
+    expect(migration?.name).toBe('storage_cache_policy');
+    expect(migration?.sql).toContain('CREATE TABLE storage_cache_entries');
+    expect(migration?.sql).toContain("ADD VALUE IF NOT EXISTS 'FETCH_BLOB_TO_CACHE'");
+    expect(migration?.sql).toContain('storage_agent_tasks_one_active_cache_fetch');
+    expect(migration?.sql).toContain('schema_compatibility=49');
+  });
+
+  it('allows verified Agent uploads to refill the server cache', async () => {
+    const migration = (await loadMigrations(resolve('server/migrations'))).find(item => item.version === 50);
+    expect(migration?.name).toBe('cache_refill_tasks');
+    expect(migration?.sql).toContain("'FETCH_BLOB_TO_CACHE'");
+    expect(migration?.sql).toContain('storage_agent_tasks_content_state_shape');
+    expect(migration?.sql).toContain('schema_compatibility=50');
+  });
+
   it('includes the stage 4 low-concurrency schema as migration 4', async () => {
     const migrations = await loadMigrations(resolve('server/migrations'));
     const stage4 = migrations.find(migration => migration.version === 4);

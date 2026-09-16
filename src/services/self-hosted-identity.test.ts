@@ -36,4 +36,17 @@ describe('self-hosted identity client', () => {
       body: JSON.stringify({newPassword: 'new-password-123'})
     }));
   });
+
+  it('maps the returned revision to the default committee behavior update precondition', async () => {
+    vi.spyOn(document, 'cookie', 'get').mockReturnValue('__Host-quorum_csrf=test-csrf');
+    const fetchMock = vi.fn(async () => ({ok: true, status: 200,
+      json: async () => ({data: {creatorIsChair: true, operationMode: 'CHAIR_OPERATED', revision: 2}, meta: {requestId: 'request'}})}));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await selfHostedIdentityClient.updateDefaultCommitteeBehavior({creatorIsChair: true, operationMode: 'CHAIR_OPERATED', revision: 1});
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/admin/default-committee-behavior', expect.objectContaining({
+      method: 'PUT', body: JSON.stringify({creatorIsChair: true, operationMode: 'CHAIR_OPERATED', baseRevision: 1})
+    }));
+  });
 });

@@ -49,6 +49,12 @@ export interface IdentityAnonymizationResult {
   transferred: IdentityResourceTransferCounts;
 }
 
+export interface DefaultCommitteeBehavior {
+  creatorIsChair: boolean;
+  operationMode: 'DELEGATE_OPERATED' | 'CHAIR_OPERATED';
+  revision: number;
+}
+
 export interface IdentityStore {
   bootstrapStatus(): Promise<boolean>;
   ensureBootstrapSecret(): Promise<string | null>;
@@ -85,6 +91,14 @@ export interface IdentityStore {
     audit: AuditContext;
   }): Promise<IdentityUser>;
   listUsers(): Promise<IdentityUser[]>;
+  getDefaultCommitteeBehavior(): Promise<DefaultCommitteeBehavior>;
+  updateDefaultCommitteeBehavior(input: {
+    actor: AuthenticatedSession;
+    creatorIsChair: boolean;
+    operationMode: DefaultCommitteeBehavior['operationMode'];
+    baseRevision: number;
+    audit: AuditContext;
+  }): Promise<DefaultCommitteeBehavior | 'revision_conflict'>;
   createUser(input: {
     actor: AuthenticatedSession;
     id: string;
