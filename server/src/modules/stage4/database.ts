@@ -19,6 +19,7 @@ export interface Stage4CommitteeRow extends QueryResultRow {
   move_queue_up: boolean;
   timers_in_separate_columns: boolean;
   status: 'ACTIVE' | 'PAUSED' | 'ARCHIVED' | 'DELETING';
+  meeting_ended_at: Date | null;
   active_rule_package_version_id: string;
   active_storage_binding_id: string | null;
   file_manifest_revision: number;

@@ -17,6 +17,8 @@ describe('i18n', () => {
   it('uses English keys as the default copy', () => {
     expect(t('Motions')).toBe('Motions');
     expect(t('Motion action: Open')).toBe('Open');
+    expect(t('Voting rights')).toBe('Voting rights');
+    expect(t('No abstention')).toBe('No abstention');
   });
 
   it('switches to Simplified Chinese and interpolates values', () => {
@@ -39,6 +41,8 @@ describe('i18n', () => {
     expect(t('Absent')).toBe('缺席');
     expect(t('Voting delegation')).toBe('投票代表团');
     expect(t('Now voting')).toBe('当前表决国家');
+    expect(t('Voting rights')).toBe('表决权');
+    expect(t('No abstention')).toBe('不得弃权');
     expect(localizeGeneratedName('Draft resolution 2.12')).toBe('决议草案 2.12');
     expect(localizeGeneratedName('New strawpoll 2')).toBe('新意向性投票2');
   });

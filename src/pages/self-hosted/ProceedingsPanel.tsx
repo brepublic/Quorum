@@ -904,7 +904,6 @@ const motionTypePosition = (id: string): number => ({
 
 function Motions({snapshot, run, api, canChair}: CommonProps) {
   const session = snapshot.meetingSession?.status === 'OPEN' ? snapshot.meetingSession : undefined;
-  const [meetingJustEnded, setMeetingJustEnded] = React.useState(false);
   const types = [...snapshot.activeRules.motionTypes].sort((first, second) => {
     const firstPosition = motionTypePosition(first.id); const secondPosition = motionTypePosition(second.id);
     if (firstPosition !== secondPosition) return firstPosition - secondPosition;
@@ -933,7 +932,7 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
   if (!session) return <Container text className="motions-page motions-empty-state">
     <Card className="motions-empty-card">
       <Card.Content textAlign="center" className="motions-empty-card-content">
-        <Card.Description>{t(meetingJustEnded ? 'Current meeting session has ended.' : 'Open a meeting first.')}</Card.Description>
+        <Card.Description>{t(snapshot.meetingEndedAt ? 'Meeting ended' : 'Open a meeting first.')}</Card.Description>
         <Button as={Link} to={`/committees/${snapshot.committee.id}/roll-call`} primary>{t('Roll call')}<Icon name="arrow right" /></Button>
       </Card.Content>
     </Card>

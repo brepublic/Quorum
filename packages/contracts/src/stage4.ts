@@ -317,6 +317,8 @@ export interface CommitteeWorkspaceSnapshot {
   chairs?: Array<{userEmail: string}>;
   assignments?: Array<{id: string; seatId: string; userEmail: string | null; status: string}>;
   meetingSession?: MeetingSession;
+  /** Set by adjournment; cleared when a new session starts. Does not restrict proceedings. */
+  meetingEndedAt?: string | null;
   meetingSessions?: MeetingSession[];
   nextMeetingSessionName?: string;
   rollCall?: RollCall;

@@ -52,9 +52,11 @@ flowchart LR
 
 `src/i18n.tsx` 提供英语与简体中文界面，使用大陆模拟联合国术语。语言选择继续保存在兼容键 `muncoordinated-language`。`src/theme/` 的 Theme API 2 只接受白名单声明式设置；旧 API 1 主题和既有 localStorage 键继续作为显式兼容边界。主题不能隐藏、重排或改写业务控件和数据。
 
+“休会”动议通过时与“暂停会议”共用结束当前会期、预建下一待开始会期的事务，并额外保存委员会的 `meeting_ended_at`。此标记表示整场会议已结束，不改变委员会生命周期状态、权限或后续操作；点名页仍允许直接开始下一会期，成功开始时在同一事务内清除标记。结束与重新开始的事件和审计保存标记变化，原休会动议及会期历史继续保留。动议空态、点名页和委员会信息显示“会议已结束”。旧的已通过动议不追溯执行。
+
 ## 3. 服务端模块与数据边界
 
-`server/` 是单进程模块化单体。启动时使用 PostgreSQL advisory lock 执行带 SHA-256 校验和的顺序 migration；当前 schema compatibility 为 52。实例级 `system_settings` 保存新委员会的默认运作模式与创建者是否自动获得 Chair；它们只在创建事务中读取，不追溯既有委员会。系统管理员不能创建委员会。数据库版本、连接、存储目录可写性或容量采样不满足要求时 readiness 失败。
+`server/` 是单进程模块化单体。启动时使用 PostgreSQL advisory lock 执行带 SHA-256 校验和的顺序 migration；当前 schema compatibility 为 53。实例级 `system_settings` 保存新委员会的默认运作模式与创建者是否自动获得 Chair；它们只在创建事务中读取，不追溯既有委员会。系统管理员不能创建委员会。数据库版本、连接、存储目录可写性或容量采样不满足要求时 readiness 失败。
 
 | 模块 | 责任 |
 | --- | --- |

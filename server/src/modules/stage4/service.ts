@@ -759,6 +759,7 @@ export class Stage4Service {
           documents: {amendmentsPublicByDefault: rules.documents?.amendmentsPublicByDefault === true}},
         sync: {committeeEventSequence: Number(committee.next_event_sequence) - 1},
         ...(currentSession ? {meetingSession: meetingSession(currentSession)} : {}),
+        meetingEndedAt: committee.meeting_ended_at?.toISOString() ?? null,
         meetingSessions: meetingSessionsResult.rows.map(meetingSession),
         nextMeetingSessionName: currentSession?.status === 'PENDING' ? currentSession.name : nextMeetingSessionName,
         ...(currentRollCall ? {rollCall: currentRollCall} : {})};
@@ -1387,9 +1388,12 @@ export class Stage4Service {
         [speakerListId, committeeId, id, defaultSpeechMs, committee.active_rule_package_version_id, speechTimerId, auth.user.id]);
       }
       const session = inserted.rows[0] as MeetingSessionRow;
+      if (committee.meeting_ended_at) {
+        await client.query('UPDATE committees SET meeting_ended_at=NULL WHERE id=$1', [committeeId]);
+      }
       await appendEvent(client, committee, {type: 'meeting_session.started', resourceType: 'meeting_session',
         resourceId: id, revision: session.revision, payload: {name: session.name, phaseId, rulePackageVersionId: session.active_rule_package_version_id,
-          generalSpeakerListId: speakerListId}});
+          generalSpeakerListId: speakerListId, meetingEndedAt: null}});
       if (!pendingSession || createdReplacement) await appendEvent(client, committee, {type: 'speaker_list.created', resourceType: 'speaker_list',
         resourceId: speakerListId, revision: 1, payload: {kind: 'GENERAL', name: "General Speakers' List", topic: '',
           defaultSpeechMs, totalDurationMs: null, delegatesCanQueue: true,
@@ -1398,6 +1402,7 @@ export class Stage4Service {
         action: 'proceedings.meeting_session_started', resourceType: 'meeting_session', resourceId: id,
         after: {name: session.name, phaseId, rulePackageVersionId: session.active_rule_package_version_id,
           generalSpeakerListId: speakerListId, generalSpeakerDefaultSpeechMs: defaultSpeechMs,
+          ...(committee.meeting_ended_at ? {previousMeetingEndedAt: committee.meeting_ended_at.toISOString(), meetingEndedAt: null} : {}),
           ...(createdReplacement ? {generalSpeakerListReplacement: true} : {})}});
       return meetingSession(session);
     });

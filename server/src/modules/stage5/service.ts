@@ -1477,7 +1477,8 @@ export class Stage5Service {
   private async enactMotion(client: PoolClient, committee: Stage4CommitteeRow, motion: MotionRow,
     actorUserId: string, now: Date, context: Stage4Context): Promise<string | null> {
     const parameters = motion.parameters; const committeeId = committee.id;
-    if (motion.motion_type_id === 'suspend-meeting') {
+    if (motion.motion_type_id === 'suspend-meeting' || motion.motion_type_id === 'adjourn-meeting') {
+      const adjourned = motion.motion_type_id === 'adjourn-meeting';
       const sessionResult = await client.query<MeetingSessionRow>(`SELECT * FROM meeting_sessions
         WHERE id=$1 AND committee_id=$2 FOR UPDATE`, [motion.meeting_session_id, committeeId]);
       const session = sessionResult.rows[0];
@@ -1497,8 +1498,10 @@ export class Stage5Service {
         FROM meeting_sessions WHERE committee_id=$2 RETURNING *`,
       [nextId, committeeId, session.phase_id, session.active_rule_package_version_id, session.formal_debate_open, actorUserId]);
       const nextSession = next.rows[0] as MeetingSessionRow;
+      if (adjourned) await client.query('UPDATE committees SET meeting_ended_at=$2 WHERE id=$1', [committeeId, now]);
       await appendEvent(client, committee, {type: 'meeting_session.closed', resourceType: 'meeting_session',
-        resourceId: session.id, revision: closed.rows[0]!.revision, payload: {phaseId: session.phase_id, motionId: motion.id}});
+        resourceId: session.id, revision: closed.rows[0]!.revision, payload: {phaseId: session.phase_id, motionId: motion.id,
+          ...(adjourned ? {meetingEndedAt: now.toISOString()} : {})}});
       await appendEvent(client, committee, {type: 'meeting_session.created', resourceType: 'meeting_session',
         resourceId: nextSession.id, revision: nextSession.revision,
         payload: {name: nextSession.name, phaseId: nextSession.phase_id, rulePackageVersionId: nextSession.active_rule_package_version_id,
@@ -1506,7 +1509,8 @@ export class Stage5Service {
       await audit(client, context, {committeeId, actorUserId, capabilities: ['CHAIR'],
         action: 'proceedings.meeting_session_closed', resourceType: 'meeting_session', resourceId: session.id,
         before: {status: session.status, revision: session.revision},
-        after: {status: 'CLOSED', revision: closed.rows[0]!.revision, motionId: motion.id}});
+        after: {status: 'CLOSED', revision: closed.rows[0]!.revision, motionId: motion.id,
+          ...(adjourned ? {meetingEndedAt: now.toISOString()} : {})}});
       await audit(client, context, {committeeId, actorUserId, capabilities: ['CHAIR'],
         action: 'proceedings.meeting_session_created', resourceType: 'meeting_session', resourceId: nextSession.id,
         after: {name: nextSession.name, status: 'PENDING', phaseId: nextSession.phase_id,

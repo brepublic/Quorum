@@ -343,7 +343,7 @@ function CommitteeOverviewPanel({snapshot}: {snapshot: CommitteeWorkspaceSnapsho
           <List.Item><List.Icon name="building outline" /><List.Content><List.Header>{t('Conference')}</List.Header>
             <List.Description>{snapshot.committee.conference || '—'}</List.Description></List.Content></List.Item>
           <List.Item><List.Icon name="signal" /><List.Content><List.Header>{t('Meeting status')}</List.Header>
-            <List.Description>{t(snapshot.committee.status)}{snapshot.meetingSession ? ` · ${snapshot.meetingSession.name} · ${t(snapshot.meetingSession.status)}` : ''}</List.Description>
+            <List.Description>{t(snapshot.committee.status)}{snapshot.meetingEndedAt ? ` · ${t('Meeting ended')}` : ''}{snapshot.meetingSession ? ` · ${snapshot.meetingSession.name} · ${t(snapshot.meetingSession.status)}` : ''}</List.Description>
           </List.Content></List.Item>
         </List>
       </Card.Content>
@@ -393,17 +393,17 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
     <Grid.Column width={9}><Header as="h2">{t('Seats')}</Header>
     <Table className="members-table" compact celled definition stackable><Table.Header><Table.Row>
       <Table.HeaderCell>{t('Seat')}</Table.HeaderCell><Table.HeaderCell>{t('Rank')}</Table.HeaderCell>
-      <Table.HeaderCell>{t('Voting')}</Table.HeaderCell><Table.HeaderCell>{t('Must Vote')}</Table.HeaderCell>
+      <Table.HeaderCell>{t('Voting rights')}</Table.HeaderCell><Table.HeaderCell>{t('No abstention')}</Table.HeaderCell>
       {canChair && !readOnly && <Table.HeaderCell />}</Table.Row>
       {canChair && !readOnly && <Table.Row className="add-seat-row"><Table.HeaderCell><Form.Select aria-label={t('Seat')} search selection
         value={selectedCountryStableKey} options={countryOptions} onChange={(_, data) => setSelectedCountryStableKey(String(data.value ?? ''))} /></Table.HeaderCell>
         <Table.HeaderCell><Form.Select aria-label={t('Rank')} search selection fluid value={seatRank} options={rankOptions}
           onChange={(_, data) => {const rank = data.value as typeof seatRank; setSeatRank(rank);
             if (rank === 'VETO') setSeatCanVote(true);}} /></Table.HeaderCell>
-        <Table.HeaderCell collapsing><Form.Checkbox aria-label={t('Voting')} toggle checked={seatCanVote}
+        <Table.HeaderCell collapsing><Form.Checkbox aria-label={t('Voting rights')} toggle checked={seatCanVote}
           disabled={seatRank === 'VETO'} onChange={(_, data) => {const canVote = data.checked ?? false;
             setSeatCanVote(canVote); if (!canVote) setSeatMustVote(false);}} /></Table.HeaderCell>
-        <Table.HeaderCell collapsing><Form.Checkbox aria-label={t('Must Vote')} toggle checked={seatMustVote}
+        <Table.HeaderCell collapsing><Form.Checkbox aria-label={t('No abstention')} toggle checked={seatMustVote}
           disabled={!seatCanVote} onChange={(_, data) => setSeatMustVote(data.checked ?? false)} /></Table.HeaderCell>
         <Table.HeaderCell collapsing><Button icon="plus" primary basic aria-label={t('Create seat')}
           loading={pending === 'create-seat'} disabled={!selectedCountry} onClick={() => void (async () => {
@@ -421,12 +421,12 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
             const rank = data.value as typeof seatRank; void execute(`rank-${seat.id}`, () => api.updateSeat(snapshot.committee.id,
               seat.id, seat.revision, {rank, hasVeto: rank === 'VETO', ...(rank === 'VETO' ? {canVote: true} : {})}));
           }} /> : t(seat.rank)}</Table.Cell>
-        <Table.Cell collapsing>{canChair && !readOnly ? <Form.Checkbox aria-label={`${t('Voting')} · ${seat.displayName}`}
+        <Table.Cell collapsing>{canChair && !readOnly ? <Form.Checkbox aria-label={`${t('Voting rights')} · ${seat.displayName}`}
           toggle checked={seat.canVote} disabled={seat.rank === 'VETO'} onChange={(_, data) => {
             const canVote = data.checked ?? false; void execute(`voting-${seat.id}`, () => api.updateSeat(snapshot.committee.id,
               seat.id, seat.revision, {canVote, hasVeto: canVote && seat.hasVeto, mustVote: canVote && seat.mustVote}));
-          }} /> : seat.canVote ? t('Voting') : t('Non-voting')}</Table.Cell>
-        <Table.Cell collapsing>{canChair && !readOnly ? <Form.Checkbox aria-label={`${t('Must Vote')} · ${seat.displayName}`}
+          }} /> : seat.canVote ? t('Voting rights') : t('Non-voting')}</Table.Cell>
+        <Table.Cell collapsing>{canChair && !readOnly ? <Form.Checkbox aria-label={`${t('No abstention')} · ${seat.displayName}`}
           toggle checked={seat.mustVote} disabled={!seat.canVote} onChange={(_, data) => void execute(`must-vote-${seat.id}`,
             () => api.updateSeat(snapshot.committee.id, seat.id, seat.revision, {mustVote: data.checked ?? false}))} />
           : seat.mustVote ? t('Yes') : t('No')}</Table.Cell>
@@ -587,7 +587,8 @@ function RollCallPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
       throw caught;
     }
   });
-  if (!rollCall) return <>{chair && (!session || session.status === 'PENDING') && <Segment className="roll-call-start-card">
+  if (!rollCall) return <>{snapshot.meetingEndedAt && <Message content={t('Meeting ended')} />}
+    {chair && (!session || session.status === 'PENDING') && <Segment className="roll-call-start-card">
       <Label attached="top left" size="large">{t('Set meeting session')}</Label>
       <Form onSubmit={() => startMeeting()}>
         <Form.Input value={sessionName ?? ''} readOnly fluid />

@@ -120,7 +120,7 @@ describe('committee workspace routes and roles', () => {
     expect(page.querySelector('[aria-label="Create seat"]')).toBeTruthy();
     expect(page.querySelector('[aria-label="Seat name"]')).toBeNull();
     expect(page.textContent).toContain('France');
-    expect(page.textContent).toContain('Must Vote');
+    expect(page.textContent).toContain('No abstention');
     expect(page.querySelector('.committee-setup-page > .ui.grid')).toBeTruthy();
     expect(page.textContent).toContain('Assign seat');
     expect(page.textContent).toContain('Create invitation');
@@ -306,10 +306,10 @@ describe('committee workspace routes and roles', () => {
     expect(page.querySelector('.motions-empty-card a[href="/committees/committee/roll-call"]')?.textContent).toContain('Roll call');
   });
 
-  it('shows the ended-session state immediately after passing a suspension motion', async () => {
+  it.each(['suspend-meeting', 'adjourn-meeting'])('returns to the pending-session page after passing %s', async motionTypeId => {
     let sessionEnded = false;
     const motion: ProceedingMotion = {id: 'suspend', committeeId: 'committee', meetingSessionId: 'meeting',
-      motionTypeId: 'suspend-meeting', proposedBySeatId: 'seat', proposedBySeatDisplayName: 'China', parameters: {},
+      motionTypeId, proposedBySeatId: 'seat', proposedBySeatDisplayName: 'China', parameters: {},
       status: 'SECONDED', rulePackageVersionId: 'rules', ruleEvaluation: {schemaVersion: 1, packageVersionId: 'rules',
         definition: {}, facts: {}, resolvedValues: {}, frozenAt: '2026-08-14T00:00:00.000Z'}, requiredSecondCount: 0,
       seconds: [], revision: 1, directVote: {includeNonVotingSeats: false, startedAt: null, settingsRevision: 1,
@@ -321,18 +321,51 @@ describe('committee workspace routes and roles', () => {
     });
     const page = await render('CHAIR', '/committees/committee/motions', user, value => ({...value,
       committee: {...value.committee, operationMode: 'CHAIR_OPERATED'},
-      meetingSession: {id: 'meeting', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate',
+      meetingEndedAt: sessionEnded && motionTypeId === 'adjourn-meeting' ? '2026-08-14T00:01:00.000Z' : null,
+      meetingSession: {id: sessionEnded ? 'next-meeting' : 'meeting', committeeId: 'committee',
+        name: sessionEnded ? '第2会期' : '第1会期', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: sessionEnded ? 'PENDING' : 'OPEN', revision: 1,
-        createdAt: '2026-08-14T00:00:00.000Z', closedAt: null}, motions: [motion],
-      activeRules: {...value.activeRules, motionTypes: [{id: 'suspend-meeting', names: {en: 'Suspend meeting'},
+        createdAt: '2026-08-14T00:00:00.000Z', closedAt: null},
+      motions: [{...motion, status: sessionEnded ? 'PASSED' : 'SECONDED'}],
+      activeRules: {...value.activeRules, motionTypes: [{id: motionTypeId,
+        names: motionTypeId === 'adjourn-meeting' ? {en: 'Adjourn the meeting', 'zh-CN': '休会'}
+          : {en: 'Suspend the meeting', 'zh-CN': '暂停会议'},
         procedural: true, requiredSecondCount: 0}]}}), {decideMotion});
 
     const passed = [...page.querySelectorAll<HTMLButtonElement>('button')]
       .find(button => button.textContent?.trim() === 'Passed');
     await act(async () => {passed?.click(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();});
     expect(decideMotion).toHaveBeenCalledWith('suspend', 1, 'PASSED');
-    expect(page.textContent).toContain('Current meeting session has ended.');
+    expect(page.querySelector('.motions-empty-card')?.textContent).toContain(
+      motionTypeId === 'adjourn-meeting' ? 'Meeting ended' : 'Open a meeting first.');
+    expect([...page.querySelectorAll('button')].some(button => button.textContent?.trim() === 'Passed')).toBe(false);
     expect(page.querySelector('.motions-empty-card a[href="/committees/committee/roll-call"]')?.textContent).toContain('Roll call');
+  });
+
+  it('allows starting the next session after adjournment and clears the ended notice', async () => {
+    let started = false;
+    const session = {id: 'next-meeting', committeeId: 'committee', name: '第2会期', phaseId: 'formal-debate',
+      activeRulePackageVersionId: 'rules', status: 'OPEN' as const, revision: 2,
+      createdAt: '2026-08-14T00:01:00.000Z', closedAt: null};
+    const rollCall: RollCall = {id: 'roll-call', committeeId: 'committee', meetingSessionId: session.id,
+      status: 'IN_PROGRESS', currentSeatId: 'seat', rulePackageVersionId: 'rules',
+      allowedResponses: ['PRESENT', 'ABSENT'], entries: [], revision: 1,
+      startedAt: '2026-08-14T00:02:00.000Z', completedAt: null};
+    const startMeetingSession = vi.fn(async () => {started = true; return session;});
+    const startRollCall = vi.fn(async () => rollCall);
+    const page = await render('CHAIR', '/committees/committee/roll-call', user, value => ({...value,
+      meetingEndedAt: started ? null : '2026-08-14T00:01:00.000Z',
+      meetingSession: {...session, status: started ? 'OPEN' : 'PENDING'},
+      ...(started ? {rollCall} : {})}), {startMeetingSession, startRollCall});
+    expect(page.textContent).toContain('Meeting ended');
+    const start = page.querySelector<HTMLButtonElement>('.roll-call-start-card button');
+    expect(start?.textContent).toBe('Start meeting');
+    expect(start?.disabled).toBe(false);
+    await act(async () => {start?.click();});
+    expect(startMeetingSession).toHaveBeenCalledWith('committee');
+    expect(startRollCall).toHaveBeenCalledWith('committee', session.id);
+    expect(page.textContent).not.toContain('Meeting ended');
+    expect(page.querySelector('.roll-call-start-card')).toBeNull();
   });
 
   it('links a passed formal-debate motion to the general speakers list', async () => {
@@ -724,8 +757,10 @@ describe('committee workspace routes and roles', () => {
       durations?.[1]?.dispatchEvent(new Event('input', {bubbles: true}));
       await Promise.resolve();
     });
-    expect(durations?.[1]?.closest('.field')?.classList.contains('error')).toBe(true);
+    expect(durations?.[1]?.closest('.field')?.classList.contains('error')).toBe(false);
     expect(submit?.disabled).toBe(true);
+    await act(async () => {durations?.[1]?.dispatchEvent(new FocusEvent('focusout', {bubbles: true}));});
+    expect(durations?.[1]?.closest('.field')?.classList.contains('error')).toBe(true);
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(durations?.[1], '600');
       durations?.[1]?.dispatchEvent(new Event('input', {bubbles: true}));
@@ -756,6 +791,9 @@ describe('committee workspace routes and roles', () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(input, '0.333');
       input?.dispatchEvent(new Event('input', {bubbles: true})); await Promise.resolve();
     });
+    expect(input?.closest('.field')?.classList.contains('error')).toBe(false);
+    expect(modal?.querySelector<HTMLButtonElement>('button.primary')?.disabled).toBe(true);
+    await act(async () => {input?.dispatchEvent(new FocusEvent('focusout', {bubbles: true}));});
     expect(input?.closest('.field')?.classList.contains('error')).toBe(true);
   });
 
@@ -1428,14 +1466,20 @@ describe('committee workspace routes and roles', () => {
   });
 
   it('keeps storage inside the account-authorized resource tabs', async () => {
-    const memberPage = await render('MEMBER', '/committees/committee/posts');
+    const apiOverrides = {listFiles: vi.fn(async () => []), listPendingHostCommits: vi.fn(async () => []),
+      listStorageBindings: vi.fn(async () => []), listS3ProviderConfigs: vi.fn(async () => []),
+      listStorageMigrations: vi.fn(async () => []), listStorageHosts: vi.fn(async () => []),
+      listStorageAgentConflicts: vi.fn(async () => [])};
+    const memberPage = await render('MEMBER', '/committees/committee/posts', user, value => value, apiOverrides);
     expect(memberPage.textContent).not.toContain('Text resources');
     expect(memberPage.textContent).not.toContain('Link resources');
     expect(memberPage.textContent).toContain('Attachments');
-    expect(memberPage.querySelector('.committee-workspace-page')?.textContent).not.toContain('Storage');
+    expect(memberPage.querySelector('a[href="/committees/committee/posts/storage"]')).toBeNull();
+    expect(memberPage.querySelector('.ui.negative.message')).toBeNull();
     act(() => root?.unmount()); root = undefined; container?.remove(); container = undefined;
-    const chairPage = await render('CHAIR', '/committees/committee/posts');
-    expect(chairPage.querySelector('.committee-workspace-page')?.textContent).toContain('Storage');
+    const chairPage = await render('CHAIR', '/committees/committee/posts', user, value => value, apiOverrides);
+    expect(chairPage.querySelector('a[href="/committees/committee/posts/storage"]')?.textContent).toBe('存储设置');
+    expect(chairPage.querySelector('.ui.negative.message')).toBeNull();
   });
 
   it('separates Chair operation controls from Owner lifecycle controls', async () => {

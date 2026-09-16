@@ -81,7 +81,68 @@ async function meetingFixture() {
   return {committee, session, generalList, firstChair, secondChair, firstDelegate, secondDelegate, sameSeatDelegate, firstSeat, secondSeat};
 }
 
+async function meetingEndFixture() {
+  const suffix = String(++fixtureSequence);
+  const firstChair = await user(`endchair${suffix}`);
+  const firstDelegate = await user(`enddelegate${suffix}`);
+  const committee = await stage4.createCommittee(firstChair, {name: 'Meeting lifecycle', visibility: 'PUBLIC',
+    countryTemplateKey: 'builtin:default'}, 'end-committee', context('end-committee'));
+  const firstSeat = await stage4.createSeat(firstChair, committee.id,
+    {stableKey: 'end-first', displayName: 'First', canVote: true}, 'end-seat', context('end-seat'));
+  const session = await stage4.startMeetingSession(firstChair, committee.id, {}, context('end-meeting'));
+  await stage4.createAttendanceEvent(firstChair, committee.id,
+    {meetingSessionId: session.id, seatId: firstSeat.id, type: 'PRESENT'}, context('end-present'));
+  const generalList = (await stage4.snapshot(committee.id, firstChair)).speakerLists!.find(list => list.kind === 'GENERAL')!;
+  return {committee, session, generalList, firstChair, firstDelegate, firstSeat};
+}
+
 integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
+  it.each(['suspend-meeting', 'adjourn-meeting'])('%s prepares the next session and preserves proceedings when it starts', async motionTypeId => {
+    const fixture = await meetingEndFixture();
+    await pool!.query("UPDATE committees SET operation_mode='CHAIR_OPERATED' WHERE id=$1", [fixture.committee.id]);
+    const motion = await stage5.proposeMotion(fixture.firstChair, fixture.committee.id,
+      {meetingSessionId: fixture.session.id, motionTypeId, onBehalfOfSeatId: fixture.firstSeat.id, parameters: {}},
+      'end-session', context('end-session'));
+    const passed = await stage5.decideMotion(fixture.firstChair, motion.id,
+      {baseRevision: motion.revision, result: 'PASSED'}, context('end-session-pass'));
+    const ended = await stage4.snapshot(fixture.committee.id, fixture.firstChair);
+    expect(ended.committee.status).toBe('ACTIVE');
+    expect(ended.meetingSessions?.find(session => session.id === fixture.session.id)?.status).toBe('CLOSED');
+    expect(ended.meetingSession).toMatchObject({status: 'PENDING', name: '第2会期'});
+    expect(ended.meetingSession?.id).not.toBe(fixture.session.id);
+    expect(ended.meetingEndedAt).toBe(motionTypeId === 'adjourn-meeting' ? passed.decidedAt : null);
+    expect((await stage4.snapshot(fixture.committee.id)).meetingEndedAt).toBe(ended.meetingEndedAt);
+    await expect(stage4.startMeetingSession(fixture.firstDelegate, fixture.committee.id, {}, context('unauthorized-start')))
+      .rejects.toMatchObject({code: 'FORBIDDEN'});
+    expect((await stage4.snapshot(fixture.committee.id)).meetingEndedAt).toBe(ended.meetingEndedAt);
+    const resumed = await stage4.startMeetingSession(fixture.firstChair, fixture.committee.id, {}, context('resume'));
+    expect(resumed).toMatchObject({id: ended.meetingSession?.id, status: 'OPEN'});
+    const active = await stage4.snapshot(fixture.committee.id, fixture.firstChair);
+    expect(active.meetingEndedAt).toBeNull();
+    expect(active.speakerLists?.find(list => list.kind === 'GENERAL')).toMatchObject({
+      id: fixture.generalList.id, meetingSessionId: resumed.id, speechTimerId: fixture.generalList.speechTimerId,
+      status: fixture.generalList.status});
+    expect(active.motions?.find(item => item.id === motion.id)).toMatchObject({status: 'PASSED', motionTypeId});
+    if (motionTypeId === 'adjourn-meeting') {
+      const audit = await pool!.query(`SELECT after_summary FROM audit_log WHERE committee_id=$1
+        AND action='proceedings.meeting_session_started' AND resource_id=$2`, [fixture.committee.id, resumed.id]);
+      expect(audit.rows[0]?.after_summary).toMatchObject({previousMeetingEndedAt: ended.meetingEndedAt, meetingEndedAt: null});
+    }
+  });
+
+  it('does not end the meeting when adjournment fails', async () => {
+    const fixture = await meetingEndFixture();
+    const motion = await stage5.proposeMotion(fixture.firstChair, fixture.committee.id,
+      {meetingSessionId: fixture.session.id, motionTypeId: 'adjourn-meeting', onBehalfOfSeatId: fixture.firstSeat.id, parameters: {}},
+      'failed-adjourn', context('failed-adjourn'));
+    await stage5.decideMotion(fixture.firstChair, motion.id,
+      {baseRevision: motion.revision, result: 'FAILED'}, context('failed-adjourn-result'));
+    const snapshot = await stage4.snapshot(fixture.committee.id, fixture.firstChair);
+    expect(snapshot.meetingEndedAt).toBeNull();
+    expect(snapshot.meetingSession).toMatchObject({id: fixture.session.id, status: 'OPEN'});
+    expect(snapshot.meetingSessions).toHaveLength(1);
+  });
+
   it('serializes two Chairs changing one speaker queue', async () => {
     const fixture = await meetingFixture();
     let list = fixture.generalList;

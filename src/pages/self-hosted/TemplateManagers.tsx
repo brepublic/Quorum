@@ -301,7 +301,7 @@ export function CommitteeTemplateManager({api}: {api: SelfHostedApi}) {
             onChange={(_event, data) => {setCountryKey(String(data.value)); setMemberName(''); setSaved(false);}} />
           <Header as="h3">{t('Committee members')}</Header><Table compact celled stackable><Table.Header><Table.Row>
             <Table.HeaderCell>{t('Country or delegation')}</Table.HeaderCell><Table.HeaderCell>{t('Rank')}</Table.HeaderCell>
-            <Table.HeaderCell>{t('Voting')}</Table.HeaderCell><Table.HeaderCell>{t('Must Vote')}</Table.HeaderCell><Table.HeaderCell />
+            <Table.HeaderCell>{t('Voting rights')}</Table.HeaderCell><Table.HeaderCell>{t('No abstention')}</Table.HeaderCell><Table.HeaderCell />
           </Table.Row></Table.Header><Table.Body>{members.map(member => <Table.Row key={member.id}>
             <Table.Cell><FlagDisplay flag={member.flag} />{localizedDisplayName(member.names, member.defaultLanguage)}</Table.Cell>
             <Table.Cell><Dropdown fluid selection value={member.rank} options={RANKS.map(value => ({key: value, value, text: t(value)}))}
