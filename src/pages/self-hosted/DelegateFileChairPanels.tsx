@@ -13,6 +13,11 @@ const FILE_TYPES: Array<{key: DelegateFileType; value: DelegateFileType; text: s
 ];
 
 function dateTime(value: string | null): string { return value ? new Date(value).toLocaleString('zh-CN') : '—'; }
+const toSubmissionTime = (value: string | null): number => {
+  if (!value) return 0;
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? 0 : parsed;
+};
 
 export function DelegateFileSharePanel({snapshot, api}: {snapshot: CommitteeWorkspaceSnapshot; api: SelfHostedApi}) {
   const [share, setShare] = React.useState<Awaited<ReturnType<SelfHostedApi['getDelegateFileShare']>>>();
@@ -72,8 +77,12 @@ export function DelegateFileReviewPanel({snapshot, api}: {snapshot: CommitteeWor
   const run = async (operation: () => Promise<unknown>) => {setWorking(true); setError(undefined); try {await operation(); await refresh();}
     catch (caught) {setError(storageErrorText(caught));} finally {setWorking(false);}};
   const nameFor = (file: DelegateReviewFile) => names[file.id] ?? file.suggestedNames?.[types[file.id] ?? file.fileType ?? 'WORKING_PAPER'] ?? file.logicalName;
-  const pendingFiles = files.filter(file => ['UPLOAD_COMPLETE', 'PENDING_REVIEW'].includes(file.status));
-  const reviewedFiles = files.filter(file => ['PUBLISHED', 'REJECTED'].includes(file.status));
+  const pendingFiles = files
+    .filter(file => ['UPLOAD_COMPLETE', 'PENDING_REVIEW'].includes(file.status))
+    .sort((first, second) => toSubmissionTime(first.submittedAt) - toSubmissionTime(second.submittedAt));
+  const reviewedFiles = files
+    .filter(file => ['PUBLISHED', 'REJECTED'].includes(file.status))
+    .sort((first, second) => toSubmissionTime(second.submittedAt) - toSubmissionTime(first.submittedAt));
   return <div className="delegate-file-review-panel">
     {error && <Message error content={error} />}
     <Card centered fluid className="delegate-file-chair-upload"><Card.Content><Form onSubmit={() => void upload()}>

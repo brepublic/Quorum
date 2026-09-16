@@ -57,4 +57,34 @@ describe('delegate file chair review', () => {
     expect(host.querySelector('.motion-decision-passed')).not.toBeNull();
     expect(host.querySelectorAll('.motion-metadata-table .motion-metadata-key')).toHaveLength(9);
   });
+
+  it('sorts 待审核文件按提交时间从早到晚', async () => {
+    const earliest = {...reviewFile, id: 'first', logicalName: '最早文件.md', submittedAt: '2026-09-01T00:00:00.000Z'};
+    const middle = {...reviewFile, id: 'middle', logicalName: '中间文件.md', submittedAt: '2026-09-02T00:00:00.000Z', status: 'UPLOAD_COMPLETE' as const};
+    const latest = {...reviewFile, id: 'last', logicalName: '最新文件.md', submittedAt: '2026-09-03T00:00:00.000Z'};
+    const api = {listDelegateReviewFiles: async () => [middle, earliest, latest]} as unknown as SelfHostedApi;
+    await act(async () => {root.render(<DelegateFileReviewPanel snapshot={snapshot} api={api} />);
+      await new Promise(resolve => setTimeout(resolve, 0));});
+    const pendingCards = host.querySelectorAll('.delegate-file-card-list')[0]?.querySelectorAll('.delegate-file-card') ?? [];
+    const names = Array.from(pendingCards).map(card => {
+      const input = card.querySelector('input[aria-label="文件名称"]') as HTMLInputElement | null;
+      return input?.value;
+    }).filter(Boolean) as string[];
+    expect(names).toEqual(['最早文件.md', '中间文件.md', '最新文件.md']);
+  });
+
+  it('sorts 已审核文件按提交时间从晚到早', async () => {
+    const latest = {...publishedFile, id: 'reviewed-latest', logicalName: '最新审核文件.pdf', submittedAt: '2026-09-03T00:00:00.000Z'};
+    const middle = {...publishedFile, id: 'reviewed-middle', logicalName: '中间审核文件.pdf', submittedAt: '2026-09-02T00:00:00.000Z', status:'REJECTED' as const};
+    const earliest = {...publishedFile, id: 'reviewed-earliest', logicalName: '最早审核文件.pdf', submittedAt: '2026-09-01T00:00:00.000Z'};
+    const api = {listDelegateReviewFiles: async () => [middle, latest, earliest]} as unknown as SelfHostedApi;
+    await act(async () => {root.render(<DelegateFileReviewPanel snapshot={snapshot} api={api} />);
+      await new Promise(resolve => setTimeout(resolve, 0));});
+    const reviewedCards = host.querySelectorAll('.delegate-file-card-list')[1]?.querySelectorAll('.delegate-file-card') ?? [];
+    const names = Array.from(reviewedCards).map(card => {
+      const header = card.querySelector('.motion-heading .header') as HTMLElement | null;
+      return header?.textContent?.trim();
+    }).filter(Boolean) as string[];
+    expect(names).toEqual(['最新审核文件.pdf', '中间审核文件.pdf', '最早审核文件.pdf']);
+  });
 });
