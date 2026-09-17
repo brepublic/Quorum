@@ -42,7 +42,7 @@ function snapshot(audience: CommitteeWorkspaceSnapshot['viewer']['audience']): C
 }
 
 let root: Root | undefined; let container: HTMLDivElement | undefined;
-afterEach(() => {if (root) act(() => root?.unmount()); container?.remove(); root = undefined; container = undefined;});
+afterEach(() => {if (root) act(() => root?.unmount()); container?.remove(); root = undefined; container = undefined; vi.useRealTimers();});
 
 async function render(audience: CommitteeWorkspaceSnapshot['viewer']['audience'], path: string,
   currentUser: SelfHostedUser = user,
@@ -130,7 +130,112 @@ describe('committee workspace routes and roles', () => {
   it('lets only Owners manage Chairs', async () => {
     const page = await render('OWNER', '/committees/committee/setup');
     expect(page.textContent).toContain('Grant Chair');
-    expect(page.textContent).toContain('Revoke Chair');
+    expect(page.querySelector('.committee-chairs-table')?.textContent).toContain('Revoke');
+    expect(page.querySelectorAll('.committee-setup-page .ui.card')).toHaveLength(3);
+  });
+
+  it('updates all seats while preserving voting constraints and skips unchanged seats', async () => {
+    vi.useFakeTimers();
+    const updateSeat = vi.fn(async () => ({})) as unknown as SelfHostedApi['updateSeat'];
+    const page = await render('CHAIR', '/committees/committee/setup', user, value => ({...value,
+      seats: [value.seats[0], {...value.seats[0], id: 'second', displayName: 'France', rank: 'STANDARD',
+        hasVeto: false, mustVote: true, revision: 3}]}), {updateSeat});
+    const all = page.querySelector('.all-seats-row')!;
+    expect(all.querySelector('button')).toBeNull();
+    expect(all.querySelector<HTMLInputElement>('[aria-label="Voting rights · All seats"]')?.disabled).toBe(true);
+    expect(all.querySelector('.toggle.indeterminate')).toBeTruthy();
+    expect(all.querySelectorAll('.toggle.checkbox')).toHaveLength(2);
+    expect(page.querySelectorAll('.members-table thead.full-width')).toHaveLength(2);
+    await act(async () => {clickSemanticCheckbox(all.querySelector('[aria-label="No abstention · All seats"]')?.parentElement);});
+    expect(updateSeat).not.toHaveBeenCalled();
+    await act(async () => {await vi.advanceTimersByTimeAsync(1500);});
+    expect(updateSeat).toHaveBeenCalledTimes(1);
+    expect(updateSeat).toHaveBeenCalledWith('committee', 'seat', 2, {canVote: true, hasVeto: true, mustVote: true});
+  });
+
+  it('clears no-abstention when all voting rights are removed', async () => {
+    vi.useFakeTimers();
+    const updateSeat = vi.fn(async () => ({})) as unknown as SelfHostedApi['updateSeat'];
+    const page = await render('CHAIR', '/committees/committee/setup', user, value => ({...value,
+      seats: [{...value.seats[0], rank: 'STANDARD', hasVeto: false, mustVote: true},
+        {...value.seats[0], id: 'second', rank: 'OBSERVER', hasVeto: false}]}), {updateSeat});
+    await act(async () => {clickSemanticCheckbox(page.querySelector('[aria-label="Voting rights · All seats"]')?.parentElement);});
+    expect(updateSeat).not.toHaveBeenCalled();
+    expect(page.querySelector<HTMLInputElement>('[aria-label="No abstention · China"]')?.checked).toBe(false);
+    await act(async () => {await vi.advanceTimersByTimeAsync(1500);});
+    expect(updateSeat).toHaveBeenCalledTimes(2);
+    expect(updateSeat).toHaveBeenCalledWith('committee', 'seat', 2, {canVote: false, hasVeto: false, mustVote: false});
+    expect(updateSeat).toHaveBeenCalledWith('committee', 'second', 2, {canVote: false, hasVeto: false, mustVote: false});
+  });
+
+  it('previews repeated bulk clicks immediately and saves only after the last 1.5 seconds', async () => {
+    vi.useFakeTimers();
+    let finishSave!: () => void;
+    const updateSeat = vi.fn(() => new Promise<void>(resolve => {finishSave = resolve;})) as unknown as SelfHostedApi['updateSeat'];
+    const page = await render('CHAIR', '/committees/committee/setup', user, value => value, {updateSeat});
+    const all = () => page.querySelector<HTMLInputElement>('[aria-label="No abstention · All seats"]')!;
+    const seat = () => page.querySelector<HTMLInputElement>('[aria-label="No abstention · China"]')!;
+    await act(async () => {clickSemanticCheckbox(all().parentElement);});
+    expect(seat().checked).toBe(true);
+    expect(all().disabled).toBe(false);
+    await act(async () => {await vi.advanceTimersByTimeAsync(1000); clickSemanticCheckbox(all().parentElement);});
+    expect(seat().checked).toBe(false);
+    await act(async () => {await vi.advanceTimersByTimeAsync(1000); clickSemanticCheckbox(all().parentElement);});
+    expect(seat().checked).toBe(true);
+    await act(async () => {await vi.advanceTimersByTimeAsync(1499);});
+    expect(updateSeat).not.toHaveBeenCalled();
+    expect(all().disabled).toBe(false);
+    await act(async () => {await vi.advanceTimersByTimeAsync(1);});
+    expect(updateSeat).toHaveBeenCalledTimes(1);
+    expect(all().disabled).toBe(true);
+    expect(seat().disabled).toBe(true);
+    await act(async () => {finishSave();});
+  });
+
+  it('remembers the last uniform state after a country is changed individually', async () => {
+    vi.useFakeTimers();
+    const seats = [snapshot('CHAIR').seats[0], {...snapshot('CHAIR').seats[0], id: 'second', displayName: 'France'}]
+      .map(seat => ({...seat, mustVote: true}));
+    const updateSeat = vi.fn(async (_committee, id, _revision, patch) => {
+      Object.assign(seats.find(seat => seat.id === id)!, patch);
+      return {};
+    }) as unknown as SelfHostedApi['updateSeat'];
+    const page = await render('CHAIR', '/committees/committee/setup', user, value => ({...value, seats}), {updateSeat});
+    await act(async () => {clickSemanticCheckbox(page.querySelector('[aria-label="No abstention · China"]')?.parentElement);});
+    expect(page.querySelector('.all-seats-row .indeterminate')).toBeTruthy();
+    vi.mocked(updateSeat).mockClear();
+    await act(async () => {clickSemanticCheckbox(page.querySelector('[aria-label="No abstention · All seats"]')?.parentElement);});
+    expect(page.querySelector<HTMLInputElement>('[aria-label="No abstention · France"]')?.checked).toBe(false);
+    expect(updateSeat).not.toHaveBeenCalled();
+    await act(async () => {await vi.advanceTimersByTimeAsync(1500);});
+    expect(updateSeat).toHaveBeenCalledTimes(1);
+    expect(updateSeat).toHaveBeenCalledWith('committee', 'second', 2, {canVote: true, hasVeto: true, mustVote: false});
+  });
+
+  it('cancels queued changes on leaving setup', async () => {
+    vi.useFakeTimers();
+    const updateSeat = vi.fn() as unknown as SelfHostedApi['updateSeat'];
+    const page = await render('CHAIR', '/committees/committee/setup', user, value => value, {updateSeat});
+    await act(async () => {clickSemanticCheckbox(page.querySelector('[aria-label="No abstention · All seats"]')?.parentElement);});
+    act(() => {root?.unmount(); root = undefined;});
+    await act(async () => {await vi.advanceTimersByTimeAsync(2000);});
+    expect(updateSeat).not.toHaveBeenCalled();
+  });
+
+  it('applies the selected rank to every seat with the existing veto rules', async () => {
+    const updateSeat = vi.fn(async () => ({})) as unknown as SelfHostedApi['updateSeat'];
+    const page = await render('CHAIR', '/committees/committee/setup', user, value => ({...value,
+      seats: [{...value.seats[0], rank: 'STANDARD', hasVeto: false, canVote: false},
+        {...value.seats[0], id: 'second', rank: 'OBSERVER', hasVeto: false, canVote: false}]}), {updateSeat});
+    expect(page.querySelector<HTMLInputElement>('[aria-label="No abstention · All seats"]')?.disabled).toBe(true);
+    const dropdown = page.querySelector('[aria-label="Rank · All seats"]')!;
+    await act(async () => {(dropdown as HTMLElement).click();});
+    const option = [...dropdown.querySelectorAll<HTMLElement>('.item')].find(item => item.textContent === 'VETO');
+    expect(option).toBeTruthy();
+    await act(async () => {option?.click();});
+    expect(updateSeat).toHaveBeenCalledTimes(2);
+    expect(updateSeat).toHaveBeenCalledWith('committee', 'seat', 2, {rank: 'VETO', hasVeto: true, canVote: true});
+    expect(updateSeat).toHaveBeenCalledWith('committee', 'second', 2, {rank: 'VETO', hasVeto: true, canVote: true});
   });
 
   it('does not turn a system administrator into a Committee Chair', async () => {

@@ -389,9 +389,66 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
       ? current : String(countryOptions[0]?.value ?? ''));
   }, [countryOptions]);
   const selectedCountry = countryOptions.find(option => option.value === selectedCountryStableKey)?.country;
+  type VotingPatch = Partial<Pick<Stage4CommitteeSeat, 'canVote' | 'mustVote'>>;
+  const [queuedVoting, setQueuedVoting] = React.useState<Record<string, VotingPatch>>();
+  const displayedSeats = snapshot.seats.map(seat => {
+    const patch = queuedVoting?.[seat.id];
+    const canVote = seat.rank === 'VETO' || (patch?.canVote ?? seat.canVote);
+    return {...seat, canVote, mustVote: canVote && (patch?.mustVote ?? seat.mustVote)};
+  });
+  const allRank = snapshot.seats.every(seat => seat.rank === snapshot.seats[0]?.rank) ? snapshot.seats[0]?.rank : '';
+  const allCanVote = displayedSeats.every(seat => seat.canVote);
+  const allMustVote = displayedSeats.every(seat => seat.mustVote);
+  // Remember the last uniform state; arriving with mixed values starts from off.
+  const lastUniformVoting = React.useRef({canVote: snapshot.seats.every(seat => seat.canVote),
+    mustVote: snapshot.seats.every(seat => seat.mustVote)});
+  React.useEffect(() => {
+    if (pending || !displayedSeats.length) return;
+    for (const field of ['canVote', 'mustVote'] as const) {
+      if (displayedSeats.every(seat => seat[field])) lastUniformVoting.current[field] = true;
+      else if (displayedSeats.every(seat => !seat[field])) lastUniformVoting.current[field] = false;
+    }
+  }, [displayedSeats, pending]);
+  const queueAllVoting = (field: 'canVote' | 'mustVote') => {
+    const value = !lastUniformVoting.current[field];
+    lastUniformVoting.current[field] = value;
+    setQueuedVoting(current => Object.fromEntries(snapshot.seats.map(seat => [seat.id,
+      {...current?.[seat.id], [field]: value}])));
+  };
+  const commitQueuedVoting = React.useRef<() => void>(() => undefined);
+  commitQueuedVoting.current = () => {
+    if (!queuedVoting) return;
+    void execute('all-voting', async () => {
+      for (const seat of snapshot.seats) {
+        const queued = queuedVoting[seat.id];
+        if (!queued) continue;
+        const canVote = seat.rank === 'VETO' || (queued.canVote ?? seat.canVote);
+        const patch = {canVote, hasVeto: canVote && seat.hasVeto,
+          mustVote: canVote && (queued.mustVote ?? seat.mustVote)};
+        if (Object.entries(patch).some(([field, value]) => seat[field as keyof Stage4CommitteeSeat] !== value)) {
+          await api.updateSeat(snapshot.committee.id, seat.id, seat.revision, patch);
+        }
+      }
+    }).finally(() => setQueuedVoting(undefined));
+  };
+  React.useEffect(() => {
+    if (!canChair || readOnly) {setQueuedVoting(undefined); return;}
+    if (!queuedVoting || pending) return;
+    const timer = window.setTimeout(() => commitQueuedVoting.current(), 1500);
+    return () => window.clearTimeout(timer);
+  }, [queuedVoting, pending, canChair, readOnly, snapshot.committee.id]);
+  const updateAllSeats = (key: string, patchFor: (seat: Stage4CommitteeSeat) => Record<string, unknown>) =>
+    execute(key, async () => {
+      for (const seat of snapshot.seats) {
+        const patch = patchFor(seat);
+        if (Object.entries(patch).some(([field, value]) => seat[field as keyof Stage4CommitteeSeat] !== value)) {
+          await api.updateSeat(snapshot.committee.id, seat.id, seat.revision, patch);
+        }
+      }
+    });
   return <Container className="committee-setup-page"><Grid columns={2} stackable><Grid.Row>
     <Grid.Column width={9}><Header as="h2">{t('Seats')}</Header>
-    <Table className="members-table" compact celled definition stackable><Table.Header><Table.Row>
+    {canChair && !readOnly && <Table className="members-table seat-create-table" compact celled definition stackable><Table.Header fullWidth><Table.Row>
       <Table.HeaderCell>{t('Seat')}</Table.HeaderCell><Table.HeaderCell>{t('Rank')}</Table.HeaderCell>
       <Table.HeaderCell>{t('Voting rights')}</Table.HeaderCell><Table.HeaderCell>{t('No abstention')}</Table.HeaderCell>
       {canChair && !readOnly && <Table.HeaderCell />}</Table.Row>
@@ -406,7 +463,7 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
         <Table.HeaderCell collapsing><Form.Checkbox aria-label={t('No abstention')} toggle checked={seatMustVote}
           disabled={!seatCanVote} onChange={(_, data) => setSeatMustVote(data.checked ?? false)} /></Table.HeaderCell>
         <Table.HeaderCell collapsing><Button icon="plus" primary basic aria-label={t('Create seat')}
-          loading={pending === 'create-seat'} disabled={!selectedCountry} onClick={() => void (async () => {
+          loading={pending === 'create-seat'} disabled={Boolean(pending) || !selectedCountry} onClick={() => void (async () => {
             if (!selectedCountry) return;
             await execute('create-seat', () => api.createSeat(snapshot.committee.id, {
               stableKey: selectedCountry.stableKey, displayName: localizedDisplayName(selectedCountry.names, selectedCountry.defaultLanguage),
@@ -414,23 +471,57 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
               mustVote: seatMustVote, sortOrder: snapshot.seats.length}));
             setSeatRank('STANDARD'); setSeatCanVote(true); setSeatMustVote(false);
           })()} /></Table.HeaderCell></Table.Row>}
-      </Table.Header><Table.Body>{snapshot.seats.map(seat => <Table.Row key={seat.id}><Table.Cell>
+      </Table.Header></Table>}
+      <Table className="members-table seat-list-table" compact celled definition stackable>
+      <Table.Header fullWidth><Table.Row><Table.HeaderCell>{t('Seat')}</Table.HeaderCell><Table.HeaderCell>{t('Rank')}</Table.HeaderCell>
+        <Table.HeaderCell>{t('Voting rights')}</Table.HeaderCell><Table.HeaderCell>{t('No abstention')}</Table.HeaderCell>
+        {canChair && !readOnly && <Table.HeaderCell />}</Table.Row></Table.Header>
+      <Table.Body>
+      {canChair && !readOnly && snapshot.seats.length > 0 && <Table.Row className="all-seats-row">
+        <Table.Cell>{t('All seats')}{pending?.startsWith('all-') && <Icon name="spinner" loading style={{marginLeft: '0.5em'}} />}</Table.Cell>
+        <Table.Cell><Form.Select aria-label={`${t('Rank')} · ${t('All seats')}`} search selection fluid
+          value={allRank ?? ''} placeholder={t('Mixed seat ranks')} options={rankOptions} disabled={Boolean(pending)}
+          onChange={(_, data) => {const rank = data.value as typeof seatRank;
+            void updateAllSeats('all-rank', () => ({rank, hasVeto: rank === 'VETO', ...(rank === 'VETO' ? {canVote: true} : {})}));}} /></Table.Cell>
+        <Table.Cell collapsing><Form.Checkbox aria-label={`${t('Voting rights')} · ${t('All seats')}`}
+          toggle checked={allCanVote} indeterminate={!allCanVote && displayedSeats.some(seat => seat.canVote)}
+          disabled={Boolean(pending) || snapshot.seats.some(seat => seat.rank === 'VETO')}
+          onChange={() => queueAllVoting('canVote')} /></Table.Cell>
+        <Table.Cell collapsing><Form.Checkbox aria-label={`${t('No abstention')} · ${t('All seats')}`}
+          toggle checked={allMustVote} indeterminate={!allMustVote && displayedSeats.some(seat => seat.mustVote)}
+          disabled={Boolean(pending) || !allCanVote}
+          onChange={() => queueAllVoting('mustVote')} /></Table.Cell>
+        <Table.Cell />
+      </Table.Row>}
+      {displayedSeats.map(seat => <Table.Row key={seat.id}><Table.Cell>
         <span className="committee-seat-identity"><Flag seat={seat} /><span>{seat.displayName}</span></span></Table.Cell>
         <Table.Cell>{canChair && !readOnly ? <Form.Select aria-label={`${t('Rank')} · ${seat.displayName}`}
-          search selection fluid value={seat.rank} options={rankOptions} onChange={(_, data) => {
+          search selection fluid disabled={Boolean(pending)} value={seat.rank} options={rankOptions} onChange={(_, data) => {
             const rank = data.value as typeof seatRank; void execute(`rank-${seat.id}`, () => api.updateSeat(snapshot.committee.id,
               seat.id, seat.revision, {rank, hasVeto: rank === 'VETO', ...(rank === 'VETO' ? {canVote: true} : {})}));
           }} /> : t(seat.rank)}</Table.Cell>
         <Table.Cell collapsing>{canChair && !readOnly ? <Form.Checkbox aria-label={`${t('Voting rights')} · ${seat.displayName}`}
-          toggle checked={seat.canVote} disabled={seat.rank === 'VETO'} onChange={(_, data) => {
-            const canVote = data.checked ?? false; void execute(`voting-${seat.id}`, () => api.updateSeat(snapshot.committee.id,
+          toggle checked={seat.canVote} disabled={Boolean(pending) || seat.rank === 'VETO'} onChange={(_, data) => {
+            const canVote = data.checked ?? false;
+            if (queuedVoting) {
+              setQueuedVoting(current => ({...current, [seat.id]: {...current?.[seat.id], canVote}}));
+              return;
+            }
+            void execute(`voting-${seat.id}`, () => api.updateSeat(snapshot.committee.id,
               seat.id, seat.revision, {canVote, hasVeto: canVote && seat.hasVeto, mustVote: canVote && seat.mustVote}));
           }} /> : seat.canVote ? t('Voting rights') : t('Non-voting')}</Table.Cell>
         <Table.Cell collapsing>{canChair && !readOnly ? <Form.Checkbox aria-label={`${t('No abstention')} · ${seat.displayName}`}
-          toggle checked={seat.mustVote} disabled={!seat.canVote} onChange={(_, data) => void execute(`must-vote-${seat.id}`,
-            () => api.updateSeat(snapshot.committee.id, seat.id, seat.revision, {mustVote: data.checked ?? false}))} />
+          toggle checked={seat.mustVote} disabled={Boolean(pending) || !seat.canVote} onChange={(_, data) => {
+            const mustVote = data.checked ?? false;
+            if (queuedVoting) {
+              setQueuedVoting(current => ({...current, [seat.id]: {...current?.[seat.id], mustVote}}));
+              return;
+            }
+            void execute(`must-vote-${seat.id}`,
+              () => api.updateSeat(snapshot.committee.id, seat.id, seat.revision, {mustVote}));
+          }} />
           : seat.mustVote ? t('Yes') : t('No')}</Table.Cell>
-        {canChair && !readOnly && <Table.Cell collapsing><Button icon="trash" basic negative
+        {canChair && !readOnly && <Table.Cell collapsing><Button icon="trash" basic negative disabled={Boolean(pending)}
           aria-label={`${t('Deactivate')} · ${seat.displayName}`} loading={pending === `deactivate-${seat.id}`} onClick={() => {
             if (window.confirm(t('Deactivate seat?'))) void execute(`deactivate-${seat.id}`,
               () => api.updateSeat(snapshot.committee.id, seat.id, seat.revision, {active: false}));}} /></Table.Cell>}
@@ -438,20 +529,25 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
       {snapshot.seats.length > 0 && <Button as={Link} to={`/committees/${snapshot.committee.id}/roll-call`} primary fluid>
         {t('Roll call')}<Icon name="arrow right" /></Button>}
     </Grid.Column><Grid.Column width={7}>
-    {owner && !readOnly && <><Header as="h2">{t('Chairs')}</Header>
+    {owner && !readOnly && <Card fluid><Card.Content><Header as="h2">{t('Chairs')}</Header>
       <Form onSubmit={async () => {await execute('grant-chair', () => api.grantChair(snapshot.committee.id,
         chairEmail.trim(), snapshot.committee.revision)); setChairEmail('');}}>
         <Form.Input label={t('Email')} required type="email" value={chairEmail} onChange={(_, data) => setChairEmail(String(data.value ?? ""))} />
         <Button primary loading={pending === 'grant-chair'} disabled={!chairEmail.trim()}>{t('Grant Chair')}</Button>
       </Form>
-      <List divided>{(snapshot.chairs ?? []).map(chair => <List.Item key={chair.userEmail}>
-        <List.Content floated="right"><Button size="mini" negative loading={pending === `chair-${chair.userEmail}`}
-          onClick={() => void execute(`chair-${chair.userEmail}`, () => api.revokeChair(snapshot.committee.id,
-            chair.userEmail, snapshot.committee.revision))}>{t('Revoke Chair')}</Button></List.Content>
-        <List.Content>{chair.userEmail}</List.Content>
-      </List.Item>)}</List></>}
+      <Table compact celled stackable className="committee-chairs-table">
+        <Table.Header fullWidth><Table.Row><Table.HeaderCell>{t('Email')}</Table.HeaderCell>
+          <Table.HeaderCell collapsing>{t('Actions')}</Table.HeaderCell></Table.Row></Table.Header>
+        <Table.Body>{(snapshot.chairs ?? []).map(chair => <Table.Row key={chair.userEmail}>
+          <Table.Cell>{chair.userEmail}</Table.Cell>
+          <Table.Cell collapsing><Button negative loading={pending === `chair-${chair.userEmail}`}
+            onClick={() => void execute(`chair-${chair.userEmail}`, () => api.revokeChair(snapshot.committee.id,
+              chair.userEmail, snapshot.committee.revision))}>{t('Revoke')}</Button></Table.Cell>
+        </Table.Row>)}</Table.Body>
+      </Table>
+    </Card.Content></Card>}
     {canChair && !readOnly && snapshot.seats.length > 0 && <>
-      <Header as="h2">{t('Seat assignments')}</Header>
+      <Card fluid><Card.Content><Header as="h2">{t('Seat assignments')}</Header>
       <Form onSubmit={async () => {await execute('assign-seat', () => api.assignSeat(snapshot.committee.id,
         assignmentSeatId, assignmentEmail.trim())); setAssignmentEmail('');}}>
         <Form.Select label={t('Seat')} value={assignmentSeatId} options={snapshot.seats.map(seat =>
@@ -466,7 +562,8 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
         <List.Header>{snapshot.seats.find(seat => seat.id === assignment.seatId)?.displayName ?? assignment.seatId}</List.Header>
         <List.Description>{assignment.userEmail}</List.Description>
       </List.Item>)}</List>
-      <Header as="h2">{t('One-time seat invitation')}</Header>
+      </Card.Content></Card>
+      <Card fluid><Card.Content><Header as="h2">{t('One-time seat invitation')}</Header>
       <Form onSubmit={createInvitation}>
         <Form.Select label={t('Seat')} value={invitationSeatId} options={snapshot.seats.map(seat =>
           ({key: seat.id, value: seat.id, text: seat.displayName}))} onChange={(_, data) => setInvitationSeatId(String(data.value))} />
@@ -475,6 +572,7 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
         <Button primary loading={pending === 'invitation'} disabled={!invitationSeatId || !invitationExpiresAt}>{t('Create invitation')}</Button>
       </Form>
       {invitationCode && <Message positive header={t('Invitation created')} content={<code>{invitationCode}</code>} />}
+      </Card.Content></Card>
     </>}
     </Grid.Column></Grid.Row></Grid></Container>;
 }

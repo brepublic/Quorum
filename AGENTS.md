@@ -107,3 +107,7 @@ for example `wsl.exe -d Debian -- rg -n pattern /home/makoto/code/Quorum`.
 When a pipeline, redirection, or compound command is necessary, put the whole
 command inside one WSL `bash -lc` invocation; do not let PowerShell parse its
 metacharacters first.
+
+## 本机 Quorum 开发环境
+
+用户确认：本机上的所有 Quorum 实例和数据均属于开发环境，数据无保留价值，可用于功能验收。对已授权的开发、调试和验收，可直接修改测试数据，包括批量修改席位类型、表决权和不得弃权设置，无需为保护这些开发数据额外请求确认或增加备份、恢复等防护流程。此说明仅适用于本机 Quorum，不扩展到其他系统或远程环境。
