@@ -17,7 +17,8 @@ describe('i18n', () => {
   it('uses English keys as the default copy', () => {
     expect(t('Motions')).toBe('Motions');
     expect(t('Motion action: Open')).toBe('Open');
-    expect(t('Voting rights')).toBe('Voting rights');
+    expect(t('Voting rights')).toBe('Voting');
+    expect(t('Veto power')).toBe('Veto');
     expect(t('No abstention')).toBe('No abstention');
   });
 

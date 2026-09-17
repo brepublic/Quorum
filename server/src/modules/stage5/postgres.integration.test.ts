@@ -60,17 +60,17 @@ async function meetingFixture() {
   const secondChair = await user(`chairtwo${suffix}`);
   const firstDelegate = await user(`delegateone${suffix}`); const secondDelegate = await user(`delegatetwo${suffix}`);
   const sameSeatDelegate = await user(`delegatethree${suffix}`);
-  const committee = await stage4.createCommittee(owner, {name: 'Stage 5 Council', visibility: 'PUBLIC',
+  const committee = await stage4.createCommittee(owner, {name: 'Stage 5 Council', visibility: 'PUBLIC', operationMode: 'DELEGATE_OPERATED',
     countryTemplateKey: 'builtin:default'}, 'committee', context('committee'));
-  let revised = await stage3.setChair(owner, committee.id, firstChair.user.id, true, committee.revision, context('chair-one'));
-  revised = await stage3.setChair(owner, committee.id, secondChair.user.id, true, revised.revision, context('chair-two'));
+  let revised = await stage3.setChair(owner, committee.id, firstChair.user.email, true, committee.revision, context('chair-one'));
+  revised = await stage3.setChair(owner, committee.id, secondChair.user.email, true, revised.revision, context('chair-two'));
   const firstSeat = await stage4.createSeat(firstChair, committee.id, {stableKey: 'first', displayName: 'First', canVote: true},
     'seat-first', context('seat-first'));
   const secondSeat = await stage4.createSeat(firstChair, committee.id, {stableKey: 'second', displayName: 'Second', canVote: true},
     'seat-second', context('seat-second'));
-  await stage3.assignSeat(firstChair, committee.id, {seatId: firstSeat.id, userId: firstDelegate.user.id}, context('assign-first'));
-  await stage3.assignSeat(firstChair, committee.id, {seatId: secondSeat.id, userId: secondDelegate.user.id}, context('assign-second'));
-  await stage3.assignSeat(firstChair, committee.id, {seatId: firstSeat.id, userId: sameSeatDelegate.user.id}, context('assign-third'));
+  await stage3.assignSeat(firstChair, committee.id, {seatId: firstSeat.id, email: firstDelegate.user.email}, context('assign-first'));
+  await stage3.assignSeat(firstChair, committee.id, {seatId: secondSeat.id, email: secondDelegate.user.email}, context('assign-second'));
+  await stage3.assignSeat(firstChair, committee.id, {seatId: firstSeat.id, email: sameSeatDelegate.user.email}, context('assign-third'));
   const session = await stage4.startMeetingSession(firstChair, committee.id, {}, context('meeting'));
   await stage4.createAttendanceEvent(firstChair, committee.id,
     {meetingSessionId: session.id, seatId: firstSeat.id, type: 'PRESENT'}, context('present-first'));
@@ -292,6 +292,68 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
     const commentQueue = await pool?.query<{status: string}>(`SELECT status FROM speaker_queue_entries
       WHERE speaker_list_id=$1 AND seat_id=$2`, [comments.list.id, comments.fixture.secondSeat.id]);
     expect(commentQueue?.rows[0]?.status).toBe('SKIPPED');
+  });
+
+  it.each(['STANDARD', 'NGO', 'OBSERVER'])('freezes independent capabilities for %s and applies changes only to the next ballot', async rank => {
+    const f = await meetingFixture();
+    let seat = await stage4.updateSeat(f.firstChair, f.committee.id, f.firstSeat.id,
+      {baseRevision: f.firstSeat.revision, patch: {rank, hasVeto: true, mustVote: true}}, context('capabilities'));
+    const document = await stage5.createResolution(f.firstChair, f.committee.id,
+      {meetingSessionId: f.session.id, title: 'Capabilities', content: 'Vote'}, 'cap-resolution', context('cap-resolution'));
+    await expect(stage5.setResolutionDirectVote(f.firstChair, document.id, {seatId: seat.id, choice: 'ABSTAIN'}, context('direct-abstain')))
+      .rejects.toMatchObject({code: 'VALIDATION_FAILED'});
+    await stage5.setResolutionDirectVote(f.firstChair, document.id,
+      {seatId: seat.id, choice: 'AGAINST'}, context('direct-veto'));
+    const direct = await stage5.setResolutionDirectVote(f.firstChair, document.id,
+      {seatId: f.secondSeat.id, choice: 'FOR'}, context('direct-for'));
+    expect(direct.directVote?.automaticResult).toBe('VETOED');
+    const create = async (key: string) => {
+      const subject = key === 'cap-ballot' ? document : await stage5.createResolution(f.firstChair, f.committee.id,
+        {meetingSessionId: f.session.id, title: key, content: 'Vote'}, key + '-document', context(key));
+      // Introduction is covered separately; enter voting through the actual command and frozen rule.
+      await pool!.query("UPDATE documents SET status='PUBLISHED' WHERE id=$1", [subject.id]);
+      await stage5.commandDocument(f.firstChair, subject.id,
+        {baseRevision: subject.revision, action: 'RECOMMEND_BALLOT', ruleStableId: 'vote-on-resolution'}, context(key));
+      return stage5.createBallot(f.firstChair, f.committee.id,
+        {meetingSessionId: f.session.id, subjectType: 'RESOLUTION', subjectId: subject.id,
+          procedural: false, thresholdKind: 'SIMPLE_MAJORITY'}, key, context(key));
+    };
+    let ballot = await create('cap-ballot');
+    expect(ballot.eligibility.find(item => item.seatId === seat.id)).toMatchObject({hasVeto: true, mustVote: true});
+    seat = await stage4.updateSeat(f.firstChair, f.committee.id, seat.id,
+      {baseRevision: seat.revision, patch: {canVote: false, hasVeto: false, mustVote: false}}, context('disable-capabilities'));
+    await expect(stage5.castVote(f.firstChair, ballot.id, {choice: 'ABSTAIN', onBehalfOfSeatId: seat.id},
+      'bad-chair-abstain', context('bad-chair-abstain'))).rejects.toMatchObject({code: 'VALIDATION_FAILED'});
+    await expect(stage5.castVote(f.firstDelegate, ballot.id, {choice: 'ABSTAIN'},
+      'bad-delegate-abstain', context('bad-delegate-abstain'))).rejects.toMatchObject({code: 'VALIDATION_FAILED'});
+    ballot = await stage5.castVote(f.firstDelegate, ballot.id, {choice: 'FOR'}, 'cap-for', context('cap-for'));
+    await expect(stage5.correctVote(f.firstChair, ballot.id,
+      {baseRevision: ballot.revision, seatId: seat.id, choice: 'ABSTAIN', reason: 'Invalid'}, context('bad-correction')))
+      .rejects.toMatchObject({code: 'VALIDATION_FAILED'});
+    ballot = await stage5.correctVote(f.firstChair, ballot.id,
+      {baseRevision: ballot.revision, seatId: seat.id, choice: 'AGAINST', reason: 'Correct recorded choice'}, context('cap-correction'));
+    ballot = await stage5.castVote(f.firstChair, ballot.id, {choice: 'FOR', onBehalfOfSeatId: f.secondSeat.id},
+      'cap-second', context('cap-second'));
+    const live = (await stage4.snapshot(f.committee.id, f.firstChair)).documents!.find(item => item.id === document.id)!;
+    expect(live.directVote?.eligibility.some(item => item.seatId === seat.id)).toBe(false);
+    expect(live.directVote?.automaticResult).not.toBe('VETOED');
+    const excluded = await create('cap-excluded');
+    expect(excluded.eligibility.map(item => item.seatId)).toEqual([f.secondSeat.id]);
+    await expect(stage5.castVote(f.firstDelegate, excluded.id, {choice: 'FOR'}, 'excluded', context('excluded')))
+      .rejects.toMatchObject({code: 'FORBIDDEN'});
+    seat = await stage4.updateSeat(f.firstChair, f.committee.id, seat.id,
+      {baseRevision: seat.revision, patch: {canVote: true}}, context('ordinary-seat'));
+    let ordinary = await create('cap-ordinary');
+    expect(ordinary.eligibility.find(item => item.seatId === seat.id)).toMatchObject({hasVeto: false, mustVote: false});
+    ordinary = await stage5.castVote(f.firstDelegate, ordinary.id, {choice: 'AGAINST'}, 'ordinary-against', context('ordinary-against'));
+    ordinary = await stage5.castVote(f.secondDelegate, ordinary.id, {choice: 'FOR'}, 'ordinary-for', context('ordinary-for'));
+    ordinary = await stage5.closeBallot(f.firstChair, ordinary.id, {baseRevision: ordinary.revision}, context('ordinary-close'));
+    ordinary = await stage5.publishBallot(f.firstChair, ordinary.id, {baseRevision: ordinary.revision}, context('ordinary-publish'));
+    expect(ordinary.result?.outcome).toBe('FAILED');
+    ballot = await stage5.closeBallot(f.firstChair, ballot.id, {baseRevision: ballot.revision}, context('cap-close'));
+    ballot = await stage5.publishBallot(f.firstChair, ballot.id, {baseRevision: ballot.revision}, context('cap-publish'));
+    expect(ballot).toMatchObject({status: 'PUBLISHED', result: {outcome: 'VETOED'}});
+    expect(ballot.eligibility.find(item => item.seatId === seat.id)).toMatchObject({hasVeto: true, mustVote: true});
   });
 
   it('allows only one concurrent vote from representatives of the same seat', async () => {

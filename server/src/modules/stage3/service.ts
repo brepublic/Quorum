@@ -582,8 +582,13 @@ export class Stage3Service {
 
   async createSeat(auth: AuthenticatedSession, committeeId: string, input: Record<string, unknown>, context: Context) {
     requireBusinessIdentity(auth);
-    const legacyRank = typeof input.rank === 'string' ? input.rank.toUpperCase() : 'STANDARD';
-    const rank = ['STANDARD', 'VETO', 'NGO', 'OBSERVER'].includes(legacyRank) ? legacyRank : 'STANDARD';
+    const rank = input.rank ?? 'STANDARD';
+    if (!['STANDARD', 'NGO', 'OBSERVER'].includes(rank as string)
+      || (input.canVote !== undefined && typeof input.canVote !== 'boolean')
+      || (input.hasVeto !== undefined && typeof input.hasVeto !== 'boolean')
+      || (input.hasVeto === true && input.canVote === false)) {
+      throw new AppError({code: 'VALIDATION_FAILED', message: 'Seat properties are invalid.'});
+    }
     return transaction(this.pool, async client => {
       const row = await lockedCommittee(client, committeeId); await requireChair(client, row, auth.user.id); requireEditable(row);
       const id = randomUUID();

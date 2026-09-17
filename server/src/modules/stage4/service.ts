@@ -116,10 +116,10 @@ function builtinCommitteeTemplate(definition: BuiltinCommitteeTemplateDefinition
           ? {stableKey: 'european-union', names: {'zh-CN': '欧洲联盟', en: 'European Union'}, flag: {type: 'STANDARD', value: 'eu'} as const}
           : undefined;
       const stableKey = organization?.stableKey ?? code;
-      const rank = veto.has(code) ? 'VETO' : 'STANDARD';
+      const rank = 'STANDARD';
       return {id: `${definition.key}:${stableKey}`, stableKey,
         names: organization?.names ?? {'zh-CN': builtInCountryName(code, 'zh-CN'), en: builtInCountryName(code, 'en')},
-        defaultLanguage: 'zh-CN', rank, canVote: true, hasVeto: rank === 'VETO', mustVote: false, sortOrder,
+        defaultLanguage: 'zh-CN', rank, canVote: true, hasVeto: veto.has(code), mustVote: false, sortOrder,
         flag: organization?.flag ?? {type: 'STANDARD', value: code}, revision: 1};
     })
   };
@@ -1082,12 +1082,12 @@ export class Stage4Service {
     const stableKey = requiredText(input.stableKey, 'Seat stable key', 128);
     const displayName = requiredText(input.displayName, 'Seat display name');
     const rank = (input.rank ?? 'STANDARD') as SeatRank;
-    const canVote = input.canVote ?? ['STANDARD', 'VETO'].includes(rank);
-    const hasVeto = input.hasVeto ?? rank === 'VETO'; const mustVote = input.mustVote ?? false;
+    const canVote = input.canVote ?? true;
+    const hasVeto = input.hasVeto ?? false; const mustVote = input.mustVote ?? false;
     const sortOrder = input.sortOrder ?? 0; const seatFlag = validateFlag(input.flag ?? {type: 'EMOJI', value: '🏳️'});
-    if (!['STANDARD', 'VETO', 'NGO', 'OBSERVER'].includes(rank) || typeof canVote !== 'boolean'
+    if (!['STANDARD', 'NGO', 'OBSERVER'].includes(rank) || typeof canVote !== 'boolean'
       || typeof hasVeto !== 'boolean' || typeof mustVote !== 'boolean' || !Number.isSafeInteger(sortOrder)
-      || (hasVeto && !canVote)) throw new AppError({code: 'VALIDATION_FAILED', message: 'Seat properties are invalid.'});
+      || ((hasVeto || mustVote) && !canVote)) throw new AppError({code: 'VALIDATION_FAILED', message: 'Seat properties are invalid.'});
     return idempotentTransaction({pool: this.pool, auth, route: `POST /api/v1/committees/${committeeId}/seats`,
       key: idempotencyKey, request: input, status: 201, work: async client => {
         const row = await lockedCommittee(client, committeeId); await requireChair(client, row, auth.user.id); requireEditable(row);
@@ -1134,9 +1134,9 @@ export class Stage4Service {
       const mustVote = patch.mustVote ?? current.must_vote; const sortOrder = patch.sortOrder ?? current.sort_order;
       const active = patch.active ?? current.active; const seatFlag = patch.flag === undefined
         ? flag(current.flag_type, current.flag_value) : validateFlag(patch.flag);
-      if (!['STANDARD', 'VETO', 'NGO', 'OBSERVER'].includes(rank) || typeof canVote !== 'boolean'
+      if (!['STANDARD', 'NGO', 'OBSERVER'].includes(rank) || typeof canVote !== 'boolean'
         || typeof hasVeto !== 'boolean' || typeof mustVote !== 'boolean' || !Number.isSafeInteger(sortOrder)
-        || typeof active !== 'boolean' || (hasVeto && !canVote)) {
+        || typeof active !== 'boolean' || ((hasVeto || mustVote) && !canVote)) {
         throw new AppError({code: 'VALIDATION_FAILED', message: 'Seat properties are invalid.'});
       }
       const result = await client.query(`UPDATE committee_seats SET display_name=$3,rank=$4,can_vote=$5,has_veto=$6,

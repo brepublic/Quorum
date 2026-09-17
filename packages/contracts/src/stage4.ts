@@ -6,7 +6,7 @@ import type {
 } from './stage3.js';
 
 export type LocalizedNames = Record<string, string>;
-export type SeatRank = 'STANDARD' | 'VETO' | 'NGO' | 'OBSERVER';
+export type SeatRank = 'STANDARD' | 'NGO' | 'OBSERVER';
 export type FlagSnapshot =
   | {type: 'STANDARD'; value: string}
   | {type: 'EMOJI'; value: string}

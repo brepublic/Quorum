@@ -133,7 +133,7 @@ export function mapRuleYieldTypes(values: string[]): YieldType[] {
 }
 
 const statusLabels: Record<string, string> = {
-  PENDING: 'Pending second', SECONDED: 'Seconded', VOTING: 'Voting', PASSED: 'Passed', FAILED: 'Failed',
+  PENDING: 'Pending second', SECONDED: 'Seconded', VOTING: 'Voting', PASSED: 'Passed', FAILED: 'Failed', VETOED: 'Vetoed',
   WITHDRAWN: 'Withdrawn', SUPERSEDED: 'Superseded', OPEN: 'Open', CLOSED: 'Closed', PUBLISHED: 'Published',
   DRAFT: 'Draft', POSTPONED: 'Postponed', INCORPORATED: 'Incorporated', REJECTED: 'Rejected',
   UPLOAD_COMPLETE: 'Upload complete', PENDING_REVIEW: 'Pending review'
@@ -651,14 +651,22 @@ function Ballots({snapshot, run, api, canChair, subjectId, embedded = false, sto
   subjectId?: string; embedded?: boolean; stopAction?: boolean;
 }) {
   const ballots = (snapshot.ballots ?? []).filter(ballot => !subjectId || ballot.subjectId === subjectId);
-  const [seatId, setSeatId] = React.useState(snapshot.viewer.seatId ?? snapshot.seats[0]?.id ?? '');
-  const canVote = snapshot.viewer.audience !== 'PUBLIC' && snapshot.committee.status === 'ACTIVE';
-  return <>{!embedded && <Header as="h2">{t('Formal ballot')}</Header>}{canChair && <Form.Select label={t('Represented seat')} value={seatId}
-    options={snapshot.seats.map(seat => ({key: seat.id, value: seat.id, text: seat.displayName}))}
-    onChange={(_, data) => setSeatId(String(data.value))} />}
-    <List divided>{ballots.map(ballot => { const choices = Array.isArray(ballot.choices) ? ballot.choices : []; return <List.Item key={ballot.id}><List.Header>{statusLabel(ballot.status)}</List.Header>
-      {ballot.status === 'OPEN' && canVote && choices.map(choice => <Button key={choice} size="mini"
-        onClick={() => void run(() => api.castVote(ballot.id, choice, canChair ? seatId : undefined))}>{t(choice)}</Button>)}
+  const [selectedSeats, setSelectedSeats] = React.useState<Record<string, string>>({});
+  const canVote = snapshot.committee.status === 'ACTIVE' && (canChair
+    || Boolean(snapshot.viewer.seatId) && snapshot.committee.operationMode !== 'CHAIR_OPERATED');
+  return <>{!embedded && <Header as="h2">{t('Formal ballot')}</Header>}
+    <List divided>{ballots.map(ballot => {
+      const seatId = canChair ? selectedSeats[ballot.id] ?? ballot.eligibility[0]?.seatId : snapshot.viewer.seatId;
+      const eligible = ballot.eligibility.find(seat => seat.seatId === seatId);
+      const choices = ballot.choices.filter(choice => choice !== 'ABSTAIN' || !eligible?.mustVote);
+      const alreadyVoted = ballot.votes.some(vote => vote.seatId === seatId);
+      return <List.Item key={ballot.id}><List.Header>{statusLabel(ballot.status)}</List.Header>
+      {canChair && ballot.status === 'OPEN' && <Form.Select label={t('Represented seat')} value={seatId ?? ''}
+        options={ballot.eligibility.map(seat => ({key: seat.seatId, value: seat.seatId, text: seat.seatDisplayName}))}
+        onChange={(_, data) => setSelectedSeats(current => ({...current, [ballot.id]: String(data.value)}))} />}
+      {eligible?.hasVeto && <Label>{t('Veto power')}</Label>}
+      {ballot.status === 'OPEN' && canVote && eligible && !alreadyVoted && choices.map(choice => <Button key={choice} size="mini"
+        onClick={() => void run(() => api.castVote(ballot.id, choice, canChair ? seatId ?? undefined : undefined))}>{t(choice)}</Button>)}
       {canChair && ballot.status === 'OPEN' && !stopAction && <Button size="mini"
         onClick={() => void run(() => api.closeBallot(ballot.id, ballot.revision))}>{t('Close ballot')}</Button>}
       {canChair && ballot.status === 'CLOSED' && <Button size="mini" primary onClick={() => void run(() => api.publishBallot(ballot.id,
@@ -666,7 +674,7 @@ function Ballots({snapshot, run, api, canChair, subjectId, embedded = false, sto
       {canChair && snapshot.activeRules.ballots.chairMayCorrectVote && ballot.status === 'OPEN'
         && <BallotCorrection ballot={ballot} run={run} api={api} />}
       {ballot.votes.length > 0 && <List.Description>{ballot.votes.map(vote => `${vote.seatDisplayName}: ${t(vote.choice)}`).join(' · ')}</List.Description>}
-      {ballot.result && <List.Description>{t('FOR')} {ballot.result.forCount} · {t('AGAINST')} {ballot.result.againstCount} · {t('ABSTAIN')} {ballot.result.abstainCount}</List.Description>}
+      {ballot.result && <List.Description>{statusLabel(ballot.result.outcome)} · {t('FOR')} {ballot.result.forCount} · {t('AGAINST')} {ballot.result.againstCount} · {t('ABSTAIN')} {ballot.result.abstainCount}</List.Description>}
       {canChair && ballot.status === 'OPEN' && stopAction && <Button className="motion-stop-voting" negative fluid
         onClick={() => void run(() => api.closeBallot(ballot.id, ballot.revision))}>{t('Stop voting')}</Button>}
     </List.Item>;})}</List></>;
@@ -676,13 +684,16 @@ function BallotCorrection({ballot, run, api}: {ballot: NonNullable<CommitteeWork
   const [seatId, setSeatId] = React.useState(ballot.eligibility[0]?.seatId ?? '');
   const [choice, setChoice] = React.useState<'FOR' | 'AGAINST' | 'ABSTAIN'>(ballot.choices[0] ?? 'FOR');
   const [reason, setReason] = React.useState('');
+  const eligible = ballot.eligibility.find(seat => seat.seatId === seatId);
+  const choices = ballot.choices.filter(value => value !== 'ABSTAIN' || !eligible?.mustVote);
+  React.useEffect(() => {if (!choices.includes(choice)) setChoice(choices[0] ?? 'FOR');}, [choices, choice]);
   return <Form onSubmit={async () => {await run(() => api.correctVote(ballot.id, ballot.revision, seatId, choice, reason)); setReason('');}}>
-    <Form.Select label={t('Corrected seat')} value={seatId} options={ballot.eligibility.map(seat => ({key: seat.seatId,
+    <Form.Select label={t('Corrected seat')} value={seatId} options={ballot.eligibility.filter(seat => ballot.votes.some(vote => vote.seatId === seat.seatId)).map(seat => ({key: seat.seatId,
       value: seat.seatId, text: seat.seatDisplayName}))} onChange={(_, data) => setSeatId(String(data.value))} />
-    <Form.Select label={t('Corrected vote')} value={choice} options={ballot.choices.map(value => ({key: value, value, text: t(value)}))}
+    <Form.Select label={t('Corrected vote')} value={choice} options={choices.map(value => ({key: value, value, text: t(value)}))}
       onChange={(_, data) => setChoice(data.value as typeof choice)} />
     <Form.Input label={t('Correction reason')} value={reason} onChange={event => setReason(event.currentTarget.value)} />
-    <Button size="mini" disabled={!seatId || !reason.trim()}>{t('Correct vote')}</Button>
+    <Button size="mini" disabled={!eligible || !choices.includes(choice) || !ballot.votes.some(vote => vote.seatId === seatId) || !reason.trim()}>{t('Correct vote')}</Button>
   </Form>;
 }
 
@@ -1583,6 +1594,7 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
         </aside></div>
       <div className="resolution-voting-current"><div className="resolution-voting-current-label">{t('Now voting')}</div>
         <Header as="h2">{currentVotingSeat?.seatDisplayName ?? t('No eligible delegations')}</Header>
+        {currentVotingSeat?.hasVeto && <Label>{t('Veto power')}</Label>}
         {canChair && <div className="resolution-voting-actions"><div className="resolution-voting-primary-actions">
           <Button positive content={t('yes')} icon="plus" disabled={!currentVotingSeat}
             onClick={() => void setDirectResolutionVote('FOR')} />

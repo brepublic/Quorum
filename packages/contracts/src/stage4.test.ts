@@ -12,7 +12,7 @@ describe('stage 4 shared contracts', () => {
 
   it('does not confuse must-vote with voting eligibility or veto power', () => {
     const seat = {
-      rank: 'VETO' as const,
+      rank: 'STANDARD' as const,
       canVote: true,
       hasVeto: true,
       mustVote: false

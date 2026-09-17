@@ -25,7 +25,7 @@ function snapshot(audience: CommitteeWorkspaceSnapshot['viewer']['audience']): C
       flag: {type: 'STANDARD', value: 'fr'}, revision: 1}]}} : {}), committee: {id: 'committee', name: 'Security Council', chairLabel: 'Chair',
     topic: 'Climate security', conference: 'Main Hall', visibility: 'PUBLIC', operationMode: 'DELEGATE_OPERATED',
     status: 'ACTIVE', activeRulePackageVersionId: 'rules', revision: 4}, seats: [{id: 'seat', stableKey: 'china',
-    displayName: 'China', rank: 'VETO', canVote: true, hasVeto: true, mustVote: false, sortOrder: 0, active: true,
+    displayName: 'China', rank: 'STANDARD', canVote: true, hasVeto: true, mustVote: false, sortOrder: 0, active: true,
     revision: 2, flag: {type: 'STANDARD', value: 'cn'}}], viewer: {audience, seatId: audience === 'MEMBER' ? 'seat' : null},
   motionSettings: {delegateMotionProposalsEnabled: false, delegateMotionVotingEnabled: false},
   layoutSettings: {moveQueueUp: false, timersInSeparateColumns: false},
@@ -127,6 +127,16 @@ describe('committee workspace routes and roles', () => {
     expect(page.textContent).not.toContain('Grant Chair');
   });
 
+  it('localizes existing seats from their country template and keeps unmatched names', async () => {
+    const page = await render('CHAIR', '/committees/committee/setup', user, value => ({...value,
+      seats: [...value.seats, {...value.seats[0], id: 'france-seat', stableKey: 'france', displayName: '法国'}]}));
+    expect(page.querySelector('.seat-list-table')?.textContent).toContain('France');
+    expect(page.querySelector('.seat-list-table')?.textContent).not.toContain('法国');
+    expect(page.querySelector('.seat-list-table')?.textContent).toContain('China');
+    expect(page.querySelector('[aria-label="Voting · France"]')).toBeTruthy();
+    expect(page.querySelector('[aria-label="Veto · France"]')).toBeTruthy();
+  });
+
   it('lets only Owners manage Chairs', async () => {
     const page = await render('OWNER', '/committees/committee/setup');
     expect(page.textContent).toContain('Grant Chair');
@@ -142,9 +152,9 @@ describe('committee workspace routes and roles', () => {
         hasVeto: false, mustVote: true, revision: 3}]}), {updateSeat});
     const all = page.querySelector('.all-seats-row')!;
     expect(all.querySelector('button')).toBeNull();
-    expect(all.querySelector<HTMLInputElement>('[aria-label="Voting rights · All seats"]')?.disabled).toBe(true);
+    expect(all.querySelector<HTMLInputElement>('[aria-label="Voting · All seats"]')?.disabled).toBe(false);
     expect(all.querySelector('.toggle.indeterminate')).toBeTruthy();
-    expect(all.querySelectorAll('.toggle.checkbox')).toHaveLength(2);
+    expect(all.querySelectorAll('.toggle.checkbox')).toHaveLength(3);
     expect(page.querySelectorAll('.members-table thead.full-width')).toHaveLength(2);
     await act(async () => {clickSemanticCheckbox(all.querySelector('[aria-label="No abstention · All seats"]')?.parentElement);});
     expect(updateSeat).not.toHaveBeenCalled();
@@ -159,7 +169,7 @@ describe('committee workspace routes and roles', () => {
     const page = await render('CHAIR', '/committees/committee/setup', user, value => ({...value,
       seats: [{...value.seats[0], rank: 'STANDARD', hasVeto: false, mustVote: true},
         {...value.seats[0], id: 'second', rank: 'OBSERVER', hasVeto: false}]}), {updateSeat});
-    await act(async () => {clickSemanticCheckbox(page.querySelector('[aria-label="Voting rights · All seats"]')?.parentElement);});
+    await act(async () => {clickSemanticCheckbox(page.querySelector('[aria-label="Voting · All seats"]')?.parentElement);});
     expect(updateSeat).not.toHaveBeenCalled();
     expect(page.querySelector<HTMLInputElement>('[aria-label="No abstention · China"]')?.checked).toBe(false);
     await act(async () => {await vi.advanceTimersByTimeAsync(1500);});
@@ -222,7 +232,7 @@ describe('committee workspace routes and roles', () => {
     expect(updateSeat).not.toHaveBeenCalled();
   });
 
-  it('applies the selected rank to every seat with the existing veto rules', async () => {
+  it('changes rank without changing capabilities', async () => {
     const updateSeat = vi.fn(async () => ({})) as unknown as SelfHostedApi['updateSeat'];
     const page = await render('CHAIR', '/committees/committee/setup', user, value => ({...value,
       seats: [{...value.seats[0], rank: 'STANDARD', hasVeto: false, canVote: false},
@@ -230,12 +240,31 @@ describe('committee workspace routes and roles', () => {
     expect(page.querySelector<HTMLInputElement>('[aria-label="No abstention · All seats"]')?.disabled).toBe(true);
     const dropdown = page.querySelector('[aria-label="Rank · All seats"]')!;
     await act(async () => {(dropdown as HTMLElement).click();});
-    const option = [...dropdown.querySelectorAll<HTMLElement>('.item')].find(item => item.textContent === 'VETO');
+    const option = [...dropdown.querySelectorAll<HTMLElement>('.item')].find(item => item.textContent === 'NGO');
     expect(option).toBeTruthy();
     await act(async () => {option?.click();});
     expect(updateSeat).toHaveBeenCalledTimes(2);
-    expect(updateSeat).toHaveBeenCalledWith('committee', 'seat', 2, {rank: 'VETO', hasVeto: true, canVote: true});
-    expect(updateSeat).toHaveBeenCalledWith('committee', 'second', 2, {rank: 'VETO', hasVeto: true, canVote: true});
+    expect(updateSeat).toHaveBeenCalledWith('committee', 'seat', 2, {rank: 'NGO'});
+    expect(updateSeat).toHaveBeenCalledWith('committee', 'second', 2, {rank: 'NGO'});
+  });
+
+  it('saves the final full combination after enabling veto, disabling voting and re-enabling voting', async () => {
+    vi.useFakeTimers();
+    const updateSeat = vi.fn(async () => ({})) as unknown as SelfHostedApi['updateSeat'];
+    const page = await render('CHAIR', '/committees/committee/setup', user, value => ({...value,
+      seats: [{...value.seats[0], rank: 'OBSERVER', canVote: false, hasVeto: false, mustVote: false}]}), {updateSeat});
+    const click = async (label: string) => act(async () => {
+      clickSemanticCheckbox(page.querySelector(`[aria-label="${label} · All seats"]`)?.parentElement);
+    });
+    await click('Veto');
+    expect(page.querySelector<HTMLInputElement>('[aria-label="Voting · China"]')?.checked).toBe(true);
+    await click('No abstention');
+    await click('Voting');
+    expect(page.querySelector<HTMLInputElement>('[aria-label="Veto · China"]')?.checked).toBe(false);
+    expect(page.querySelector<HTMLInputElement>('[aria-label="No abstention · China"]')?.checked).toBe(false);
+    await click('Voting');
+    await act(async () => {await vi.advanceTimersByTimeAsync(1500);});
+    expect(updateSeat).toHaveBeenCalledWith('committee', 'seat', 2, {canVote: true, hasVeto: false, mustVote: false});
   });
 
   it('does not turn a system administrator into a Committee Chair', async () => {
@@ -828,6 +857,25 @@ describe('committee workspace routes and roles', () => {
     expect(closeBallot).toHaveBeenCalledWith('ballot', 3);
 
     act(() => root?.unmount()); root = undefined; container?.remove(); container = undefined;
+    const castVote = vi.fn(async () => ({} as never));
+    for (const audience of ['CHAIR', 'MEMBER'] as const) {
+      const frozenPage = await render(audience, '/committees/committee/motions', user, value => {
+        const next = customize(value);
+        return {...next, seats: [{...value.seats[0], displayName: 'Renamed current seat', canVote: false, hasVeto: false, mustVote: false},
+          {...value.seats[0], id: 'new-seat', displayName: 'New seat'}],
+          ballots: next.ballots!.map(ballot => ({...ballot, votes: [],
+            eligibility: [{seatId: 'seat', seatDisplayName: 'Frozen China', mustVote: true, hasVeto: true}]}))};
+      }, {castVote});
+      const panel = frozenPage.querySelector('.motion-ballot-panel')!;
+      expect(panel.textContent).toContain('Veto');
+      expect(panel.textContent).not.toContain('New seat');
+      expect([...panel.querySelectorAll('button')].some(button => button.textContent === 'ABSTAIN')).toBe(false);
+      const forButton = [...panel.querySelectorAll('button')].find(button => button.textContent === 'FOR');
+      expect(forButton).toBeTruthy();
+      await act(async () => {forButton!.click();});
+      expect(castVote).toHaveBeenLastCalledWith('ballot', 'FOR', audience === 'CHAIR' ? 'seat' : undefined);
+      act(() => root?.unmount()); root = undefined; frozenPage.remove(); container = undefined;
+    }
     const chairOperatedPage = await render('CHAIR', '/committees/committee/motions', user, value => ({...customize(value),
       committee: {...value.committee, operationMode: 'CHAIR_OPERATED'}}), {closeBallot});
     expect(chairOperatedPage.querySelector('.motion-ballot-panel')).toBeNull();

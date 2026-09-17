@@ -64,7 +64,7 @@ const countryTemplate = {names: {en: 'Countries', 'zh-CN': '国家'}, defaultLan
     flag: {type: 'STANDARD' as const, value: 'cn'}}]};
 
 const committeeTemplate = (countryTemplateKey: string) => ({names: {en: 'Council'}, defaultLanguage: 'en', countryTemplateKey,
-  members: [{stableKey: 'china', names: {en: 'China', 'zh-CN': '中国'}, defaultLanguage: 'en', rank: 'VETO' as const,
+  members: [{stableKey: 'china', names: {en: 'China', 'zh-CN': '中国'}, defaultLanguage: 'en', rank: 'STANDARD' as const,
     canVote: true, hasVeto: true, mustVote: false, sortOrder: 1, flag: {type: 'STANDARD' as const, value: 'cn'}}]});
 
 integration('PostgreSQL stage 4 templates and seat snapshots', () => {
@@ -147,6 +147,34 @@ integration('PostgreSQL stage 4 templates and seat snapshots', () => {
       .toEqual([{count: securityCouncil.members.length}]);
   });
 
+  it('round-trips every capability through template update, clone and committee creation', async () => {
+    const owner = await user('capabilityowner');
+    const members = ['STANDARD', 'NGO', 'OBSERVER'].flatMap((rank, index) => [
+      {...committeeTemplate('builtin:default').members[0]!, stableKey: `veto-${index}`, rank, canVote: true, hasVeto: true, mustVote: true},
+      {...committeeTemplate('builtin:default').members[0]!, stableKey: `ordinary-${index}`, rank, canVote: true, hasVeto: false, mustVote: false},
+      {...committeeTemplate('builtin:default').members[0]!, stableKey: `nonvoter-${index}`, rank, canVote: false, hasVeto: false, mustVote: false}
+    ]);
+    const input = {...committeeTemplate('builtin:default'), members};
+    let template = await stage4.createCommitteeTemplate(owner, input, 'cap-template', context('cap-template'));
+    template = await stage4.updateCommitteeTemplate(owner, template.id,
+      {baseRevision: template.revision, template: {...input, names: {en: 'Updated capabilities'}}}, context('cap-update'));
+    const cloned = await stage4.cloneCommitteeTemplate(owner, template.id, {}, 'cap-clone', context('cap-clone'));
+    for (const member of members) expect(cloned.members.find(item => item.stableKey === member.stableKey)).toMatchObject(member);
+    const committee = await stage4.createCommittee(owner,
+      {name: 'Capabilities', visibility: 'PRIVATE', committeeTemplateId: cloned.id}, 'cap-committee', context('cap-committee'));
+    const seats = (await stage4.snapshot(committee.id, owner)).seats;
+    for (const member of members) expect(seats.find(item => item.stableKey === member.stableKey)).toMatchObject({
+      rank: member.rank, canVote: member.canVote, hasVeto: member.hasVeto, mustVote: member.mustVote});
+    const seat = seats.find(item => item.hasVeto)!;
+    for (const patch of [{canVote: false}, {canVote: false, hasVeto: false}, {rank: 'VETO'}]) {
+      await expect(stage4.updateSeat(owner, committee.id, seat.id,
+        {baseRevision: seat.revision, patch}, context('invalid-capability'))).rejects.toMatchObject({code: 'VALIDATION_FAILED'});
+      await expect(stage4.createSeat(owner, committee.id, {stableKey: 'invalid', displayName: 'Invalid',
+        canVote: true, hasVeto: true, mustVote: true, ...patch}, 'invalid-create', context('invalid-create')))
+        .rejects.toMatchObject({code: 'VALIDATION_FAILED'});
+    }
+  });
+
   it('isolates account templates, protects references, snapshots seats, and enforces revisions and Chair capability', async () => {
     const owner = await user('templateowner'); const other = await user('templateother'); const chair = await user('templatechair');
     const countries = await stage4.createCountryTemplate(owner, countryTemplate, 'countries-one', context('countries'));
@@ -171,7 +199,7 @@ integration('PostgreSQL stage 4 templates and seat snapshots', () => {
     const committee = await stage4.createCommittee(owner, {name: 'Snapshot Council', visibility: 'PRIVATE', committeeTemplateId: first.id},
       'committee-create', context('committee-create'));
     const seatsBefore = await pool?.query('SELECT stable_key,display_name,rank,can_vote,has_veto,must_vote,flag_type,flag_value FROM committee_seats WHERE committee_id=$1', [committee.id]);
-    expect(seatsBefore?.rows).toEqual([expect.objectContaining({stable_key: 'china', display_name: 'China', rank: 'VETO',
+    expect(seatsBefore?.rows).toEqual([expect.objectContaining({stable_key: 'china', display_name: 'China', rank: 'STANDARD',
       can_vote: true, has_veto: true, must_vote: false, flag_type: 'STANDARD', flag_value: 'cn'})]);
     await stage4.updateCommitteeTemplate(owner, first.id, {baseRevision: 1, template: {...committeeTemplate(countries.key),
       members: [{...committeeTemplate(countries.key).members[0]!, names: {en: 'Changed'}, flag: {type: 'EMOJI', value: '🏳️'}}]}}, context('change-source'));
@@ -189,7 +217,7 @@ integration('PostgreSQL stage 4 templates and seat snapshots', () => {
       .rejects.toMatchObject({code: 'FORBIDDEN'});
     const withChair = await stage3.setChair(owner, committee.id, chair.user.id, true, 1, context('grant-chair'));
     expect(withChair.revision).toBe(2);
-    const seat = await stage4.createSeat(chair, committee.id, {stableKey: 'france', displayName: 'France', rank: 'VETO',
+    const seat = await stage4.createSeat(chair, committee.id, {stableKey: 'france', displayName: 'France', rank: 'STANDARD',
       canVote: true, hasVeto: true, mustVote: true, flag: {type: 'STANDARD', value: 'fr'}}, 'chair-seat', context('chair-seat'));
     const renamed = await stage4.updateSeat(chair, committee.id, seat.id, {baseRevision: 1,
       patch: {displayName: '法兰西', flag: {type: 'EMOJI', value: '🇫🇷'}}}, context('rename-seat'));

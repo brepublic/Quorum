@@ -2,10 +2,10 @@ import * as React from 'react';
 import {act} from 'react';
 import {createRoot, type Root} from 'react-dom/client';
 import {afterEach, describe, expect, it, vi} from 'vitest';
-import type {CountryTemplate} from '@quorum/contracts';
+import type {CountryTemplate, CommitteeTemplate} from '@quorum/contracts';
 import type {SelfHostedApi} from '../../services/self-hosted-api';
 import {getLanguage} from '../../i18n';
-import {CountryTemplateManager} from './TemplateManagers';
+import {CountryTemplateManager, CommitteeTemplateManager} from './TemplateManagers';
 
 (globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT: boolean}).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -63,5 +63,38 @@ describe('self-hosted template managers', () => {
     await act(async () => {clone.click(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();});
     expect(cloneCountryTemplate).toHaveBeenCalledWith('builtin:default',
       {...builtin.names, [language]: `${builtin.names[language]} (${language === 'zh-CN' ? '副本' : 'copy'})`}, language);
+  });
+});
+
+
+describe('committee template independent capabilities', () => {
+  it('enables voting with veto, clears dependent flags, and saves the final independent values', async () => {
+    const template: CommitteeTemplate = {id: 'cap-template', key: 'custom:cap-template', builtin: false,
+      names: {en: 'Capabilities'}, defaultLanguage: 'en', countryTemplateKey: 'builtin:default', revision: 1,
+      createdAt: null, updatedAt: null, members: [{id: 'member', stableKey: 'cn', names: {en: 'China'}, defaultLanguage: 'en',
+        rank: 'OBSERVER', canVote: false, hasVeto: false, mustVote: false, sortOrder: 0,
+        flag: {type: 'STANDARD', value: 'cn'}, revision: 1}]};
+    const updateCommitteeTemplate = vi.fn(async () => template);
+    const api = {listCommitteeTemplates: vi.fn(async () => [template]), listCountryTemplates: vi.fn(async () => [builtin]),
+      updateCommitteeTemplate} as unknown as SelfHostedApi;
+    container = document.createElement('div'); document.body.append(container); root = createRoot(container);
+    await act(async () => {root!.render(<CommitteeTemplateManager api={api} />);});
+    await act(async () => {[...container!.querySelectorAll<HTMLElement>('.list .item')]
+      .find(item => item.textContent?.includes('Capabilities'))!.click();});
+    const row = () => container!.querySelector('tbody tr')!;
+    const toggles = () => row().querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
+    const click = async (index: number) => act(async () => {
+      for (const type of ['mousedown', 'mouseup', 'click']) toggles()[index].parentElement!.dispatchEvent(new MouseEvent(type, {bubbles: true}));
+    });
+    await click(1);
+    expect([...toggles()].map(input => input.checked)).toEqual([true, true, false]);
+    await click(2);
+    await click(0);
+    expect([...toggles()].map(input => input.checked)).toEqual([false, false, false]);
+    expect(toggles()[2].disabled).toBe(true);
+    await click(1);
+    await act(async () => {container!.querySelector('form')!.dispatchEvent(new Event('submit', {bubbles: true, cancelable: true}));});
+    expect(updateCommitteeTemplate).toHaveBeenCalledWith('cap-template', 1, expect.objectContaining({members: [expect.objectContaining({
+      rank: 'OBSERVER', canVote: true, hasVeto: true, mustVote: false})]}));
   });
 });

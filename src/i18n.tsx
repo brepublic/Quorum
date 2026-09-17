@@ -17,6 +17,8 @@ export const SUPPORTED_LANGUAGES: readonly Language[] = LANGUAGE_OPTIONS.map(opt
 const STORAGE_KEY = 'muncoordinated-language';
 
 const en: Record<string, string> = {
+  'Voting rights': 'Voting',
+  'Veto power': 'Veto',
   'Resolution proposer': 'Proposer',
   'Resolution seconder': 'Seconder',
   'Amendment proposer': 'Proposer',
@@ -482,7 +484,7 @@ const zhCN: Record<string, string> = {
   'PRIVATE': '私有',
   'PUBLIC': '公开',
   'STANDARD': '标准席位',
-  'VETO': '否决权席位',
+  'Veto power': '否决权',
   'OBSERVER': '观察员',
   'point-of-order': '程序性问题',
   'point-of-information': '咨询性问题',

@@ -70,6 +70,57 @@ integration('PostgreSQL migrations', () => {
     } finally { await pool.end(); }
   });
 
+  it('upgrades legacy seat ranks without rewriting formal snapshots or audit records', async () => {
+    const pool = new Pool({connectionString: databaseUrl});
+    const source = resolve('server/migrations'); const staged = await mkdtemp(join(tmpdir(), 'quorum-migrations-0054-'));
+    temporaryDirectories.push(staged);
+    const files = (await readdir(source)).filter(file => file.endsWith('.sql')).sort();
+    const userId = randomUUID(), committeeId = randomUUID(), packageId = randomUUID(), versionId = randomUUID();
+    const seatId = randomUUID(), templateId = randomUUID(), meetingId = randomUUID(), ballotId = randomUUID();
+    try {
+      for (const file of files.filter(file => Number(file.slice(0, 4)) <= 53)) await cp(join(source, file), join(staged, file));
+      await runMigrations(pool, staged);
+      await pool.query(`INSERT INTO users (id,email,display_name,status,is_system_admin,must_change_password)
+        VALUES ($1,'migration@example.test','Migration','ACTIVE',false,false)`, [userId]);
+      await pool.query(`INSERT INTO rule_packages (id,scope,stable_key) VALUES ($1,'BUILTIN','test:0054')`, [packageId]);
+      await pool.query(`INSERT INTO rule_package_versions (id,package_id,version,status,definition,schema_version,published_at)
+        VALUES ($1,$2,1,'PUBLISHED','{}',1,now())`, [versionId, packageId]);
+      await pool.query(`INSERT INTO committees (id,owner_user_id,name,visibility,operation_mode,active_rule_package_version_id)
+        VALUES ($1,$2,'Migration','PRIVATE','CHAIR_OPERATED',$3)`, [committeeId, userId, versionId]);
+      await pool.query(`INSERT INTO committee_seats (id,committee_id,stable_key,display_name,rank,can_vote,has_veto,must_vote)
+        VALUES ($1,$2,'one','One','VETO',true,true,true)`, [seatId, committeeId]);
+      await pool.query(`INSERT INTO committee_templates (id,owner_user_id,names,default_language,country_template_key)
+        VALUES ($1,$2,'{"en":"Migration"}','en','builtin:default')`, [templateId, userId]);
+      await pool.query(`INSERT INTO committee_template_members
+        (id,committee_template_id,stable_key,names,default_language,rank,can_vote,has_veto,must_vote,flag_type,flag_value)
+        VALUES ($1,$2,'one','{"en":"One"}','en','VETO',true,false,false,'EMOJI','🏳️')`, [randomUUID(), templateId]);
+      await pool.query(`INSERT INTO meeting_sessions (id,committee_id,phase_id,active_rule_package_version_id,created_by_user_id,name)
+        VALUES ($1,$2,'debate',$3,$4,'第1会期')`, [meetingId, committeeId, versionId, userId]);
+      await pool.query(`INSERT INTO ballots (id,committee_id,meeting_session_id,subject_type,subject_id,procedural,choices,
+        rule_package_version_id,rule_evaluation,eligibility_snapshot,threshold_definition,threshold_value,opened_by_user_id)
+        VALUES ($1,$2,$3,'MOTION',$4,false,'{FOR,AGAINST,ABSTAIN}',$5,'{}',$6,'{}',1,$7)`,
+      [ballotId, committeeId, meetingId, randomUUID(), versionId,
+        JSON.stringify([{seatId, seatDisplayName: 'One', hasVeto: true, mustVote: true}]), userId]);
+      await pool.query(`INSERT INTO audit_log (id,request_id,committee_id,action,resource_type,result,after_summary)
+        VALUES ($1,'migration-history',$2,'committee.seat_created','seat','SUCCEEDED','{"rank":"VETO","hasVeto":true}')`,
+      [randomUUID(), committeeId]);
+      const history = (await pool.query('SELECT * FROM audit_log')).rows;
+      const ballots = (await pool.query('SELECT * FROM ballots')).rows;
+      const migration = files.find(file => file.startsWith('0054_'))!;
+      await cp(join(source, migration), join(staged, migration));
+      expect((await runMigrations(pool, staged)).latestAppliedVersion).toBe(54);
+      expect((await pool.query('SELECT rank,can_vote,has_veto,must_vote FROM committee_seats')).rows)
+        .toEqual([{rank: 'STANDARD', can_vote: true, has_veto: true, must_vote: true}]);
+      expect((await pool.query('SELECT rank,has_veto FROM committee_template_members')).rows)
+        .toEqual([{rank: 'STANDARD', has_veto: false}]);
+      expect((await pool.query('SELECT * FROM audit_log')).rows).toEqual(history);
+      expect((await pool.query('SELECT * FROM ballots')).rows).toEqual(ballots);
+      expect((await pool.query(`SELECT enum_range(NULL::seat_rank)::text AS ranks`)).rows[0].ranks).toBe('{STANDARD,NGO,OBSERVER}');
+      await expect(pool.query("UPDATE committee_seats SET rank='VETO'")).rejects.toMatchObject({code: '22P02'});
+      await expect(pool.query('UPDATE committee_seats SET can_vote=false')).rejects.toMatchObject({code: '23514'});
+    } finally {await pool.end();}
+  });
+
   it('migrates an empty database and is safe to run again', async () => {
     const pool = new Pool({connectionString: databaseUrl});
     const migrationsDirectory = resolve('server/migrations');
@@ -82,11 +133,11 @@ integration('PostgreSQL migrations', () => {
       );
       const applied = await pool.query('SELECT version FROM quorum_meta.schema_migrations');
 
-      expect(first).toEqual(expect.objectContaining({ready: true, latestAppliedVersion: 53}));
+      expect(first).toEqual(expect.objectContaining({ready: true, latestAppliedVersion: 54}));
       expect(second).toEqual(expect.objectContaining({ready: true, pendingVersions: []}));
       expect(status.ready).toBe(true);
-      expect(runtime.rows[0]?.schema_compatibility).toBe(53);
-      expect(applied.rowCount).toBe(53);
+      expect(runtime.rows[0]?.schema_compatibility).toBe(54);
+      expect(applied.rowCount).toBe(54);
       const stage3Tables = await pool.query<{name: string}>(`SELECT table_name AS name FROM information_schema.tables
         WHERE table_schema='public' AND table_name IN ('committees','committee_memberships','committee_capabilities',
         'committee_seats','seat_assignments','seat_invitations','rule_packages','rule_package_versions',

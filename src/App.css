@@ -77,6 +77,11 @@
   width: 100%;
 }
 
+.committee-setup-page .members-table thead > tr:first-child > th {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .committee-setup-page .members-table .add-seat-row > th:first-child .ui.dropdown {
   max-width: min(32rem, calc(100vw - 3rem));
   min-width: 14rem;
@@ -94,11 +99,16 @@
     table-layout: fixed;
   }
 
-  .committee-setup-page .members-table tr > :first-child { width: 35%; }
-  .committee-setup-page .members-table tr > :nth-child(2) { width: 30%; }
+  .committee-setup-page .members-table tr > :first-child { width: 30%; }
+  .committee-setup-page .members-table tr > :nth-child(2) { width: 24%; }
   .committee-setup-page .members-table tr > :nth-child(3),
-  .committee-setup-page .members-table tr > :nth-child(4) { width: 12%; }
-  .committee-setup-page .members-table tr > :nth-child(5) { width: 11%; }
+  .committee-setup-page .members-table tr > :nth-child(4) { width: 11%; }
+  .committee-setup-page .members-table tr > :nth-child(5) { width: 15%; }
+  .committee-setup-page .members-table tr > :nth-child(6) { width: 9%; }
+
+  .committee-setup-page .members-table [data-label] {
+    text-align: center;
+  }
 
   .committee-setup-page .members-table .add-seat-row > th:first-child .ui.dropdown {
     min-width: 0;
@@ -134,10 +144,17 @@
   align-items: center;
   display: flex;
   gap: 0.5rem;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.committee-setup-page .committee-seat-identity > span:last-child {
+  min-width: 0;
 }
 
 .committee-setup-page .committee-seat-identity .country-flag-display {
   flex-basis: 1.5em;
+  flex-shrink: 0;
   font-size: 1.5em;
   margin-right: 0;
 }
@@ -2210,3 +2227,22 @@ html[lang='zh-CN'] .ui.grid > .column {
 .delegate-file-allowed-formats { overflow-wrap: anywhere; font-size: .9em; }
 
 .ui.segment.delegate-file-settings { max-width: 960px; margin-left: auto; margin-right: auto; }
+
+@media (max-width: 767px) {
+  .committee-setup-page .members-table thead > tr:first-child,
+  .template-members-table thead { display: none !important; }
+
+  .committee-setup-page .members-table [data-label],
+  .template-members-table [data-label] {
+    display: flex !important;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+
+  .committee-setup-page .members-table [data-label]::before,
+  .template-members-table [data-label]::before {
+    content: attr(data-label);
+    font-weight: normal;
+  }
+}

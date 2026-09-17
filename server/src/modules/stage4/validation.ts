@@ -9,7 +9,7 @@ import {AppError} from '../../http/errors.js';
 
 const LANGUAGE = /^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/;
 const STABLE_KEY = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
-const RANKS = new Set<SeatRank>(['STANDARD', 'VETO', 'NGO', 'OBSERVER']);
+const RANKS = new Set<SeatRank>(['STANDARD', 'NGO', 'OBSERVER']);
 const FLAG_DATA_PREFIX = 'data:image/webp;base64,';
 const MAX_FLAG_BYTES = 256 * 1024;
 
@@ -167,7 +167,7 @@ export function validateCommitteeTemplate(value: unknown): CommitteeTemplateInpu
     if (!RANKS.has(member.rank as SeatRank)
       || typeof member.canVote !== 'boolean' || typeof member.hasVeto !== 'boolean'
       || typeof member.mustVote !== 'boolean') invalid('Member voting properties are invalid.');
-    if (member.hasVeto && !member.canVote) invalid('A veto seat must be eligible to vote.');
+    if ((member.hasVeto || member.mustVote) && !member.canVote) invalid('Seat capabilities require voting rights.');
     return {
       stableKey,
       ...validateLocalizedNames(member.names, member.defaultLanguage),
