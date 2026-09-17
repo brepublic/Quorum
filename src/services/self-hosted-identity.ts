@@ -74,16 +74,33 @@ async function request<T>(path: string, options: {
     if (csrf) headers['x-csrf-token'] = csrf;
   }
   if (options.idempotencyKey) headers['idempotency-key'] = options.idempotencyKey;
-  const response = await fetch(path, {
-    method: options.method ?? 'GET',
-    credentials: 'same-origin',
-    headers,
-    ...(options.body ? {body: JSON.stringify(options.body)} : {})
-  });
-  const payload = await response.json() as ApiSuccess<T> | ApiFailure;
-  if (!response.ok || 'error' in payload) {
-    const error = 'error' in payload ? payload.error : {code: 'INTERNAL_ERROR', message: 'Request failed.', requestId: undefined};
-    throw new IdentityApiError(response.status, error.code, error.message, error.requestId);
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      method: options.method ?? 'GET',
+      credentials: 'same-origin',
+      headers,
+      ...(options.body ? {body: JSON.stringify(options.body)} : {})
+    });
+  } catch {
+    throw new IdentityApiError(0, 'NETWORK_ERROR', 'Unable to connect. Check your network and try again.');
+  }
+  let payload: ApiSuccess<T> | ApiFailure;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new IdentityApiError(response.status, response.ok ? 'INVALID_RESPONSE' : 'HTTP_ERROR',
+      'The server returned an invalid response. Try again later.');
+  }
+  if (payload && typeof payload === 'object' && 'error' in payload && payload.error
+      && typeof payload.error.code === 'string' && typeof payload.error.message === 'string') {
+    throw new IdentityApiError(response.status, payload.error.code, payload.error.message, payload.error.requestId);
+  }
+  if (!response.ok) {
+    throw new IdentityApiError(response.status, 'HTTP_ERROR', 'Request failed. Try again later.');
+  }
+  if (!payload || typeof payload !== 'object' || !('data' in payload) || 'error' in payload) {
+    throw new IdentityApiError(response.status, 'INVALID_RESPONSE', 'The server returned an invalid response. Try again later.');
   }
   return payload.data;
 }

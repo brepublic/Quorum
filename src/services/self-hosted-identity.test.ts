@@ -7,6 +7,32 @@ afterEach(() => {
 });
 
 describe('self-hosted identity client', () => {
+  it('classifies network failure without exposing fetch internals', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
+    await expect(selfHostedIdentityClient.bootstrapStatus()).rejects.toMatchObject({status: 0, code: 'NETWORK_ERROR'});
+  });
+
+  it.each([401, 403, 404, 429, 500, 502, 503, 504])('preserves HTTP %s for empty or non-JSON responses', async status => {
+    for (const body of ['', '<html>Proxy error</html>']) {
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(body, {status})));
+      await expect(selfHostedIdentityClient.bootstrapStatus()).rejects.toMatchObject({status, code: 'HTTP_ERROR'});
+    }
+  });
+
+  it.each(['', 'null', '[]', '{}', '{"error":null}', '{"error":{"code":123}}'])('rejects malformed success: %s', async body => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(body, {status: 200})));
+    await expect(selfHostedIdentityClient.bootstrapStatus()).rejects.toMatchObject({status: 200, code: 'INVALID_RESPONSE'});
+  });
+
+  it('preserves structured backend errors and request IDs', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({error: {
+      code: 'AUTHENTICATION_REQUIRED', message: 'Email or password is incorrect.', requestId: 'trace-1'
+    }}), {status: 401})));
+    await expect(selfHostedIdentityClient.login('user@example.com', 'bad')).rejects.toMatchObject({
+      status: 401, code: 'AUTHENTICATION_REQUIRED', message: 'Email or password is incorrect.', requestId: 'trace-1'
+    });
+  });
+
   it('uses same-origin credentials and sends the CSRF token only on protected writes', async () => {
     vi.spyOn(document, 'cookie', 'get').mockReturnValue('__Host-quorum_csrf=test-csrf');
     const fetchMock = vi.fn(async () => ({ok: true, status: 200,

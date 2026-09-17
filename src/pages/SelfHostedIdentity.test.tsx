@@ -4,7 +4,7 @@ import {createRoot, type Root} from 'react-dom/client';
 import {afterEach, describe, expect, it, vi} from 'vitest';
 import {MemoryRouter} from 'react-router-dom';
 import SelfHostedIdentity from './SelfHostedIdentity';
-import type {SelfHostedIdentityClient, SelfHostedUser} from '../services/self-hosted-identity';
+import {IdentityApiError, type SelfHostedIdentityClient, type SelfHostedUser} from '../services/self-hosted-identity';
 
 (globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT: boolean}).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -69,6 +69,39 @@ async function renderClient(identityClient: SelfHostedIdentityClient): Promise<s
 }
 
 describe('self-hosted identity screens', () => {
+  it.each([
+    [0, 'NETWORK_ERROR', 'Connection failed'],
+    [500, 'HTTP_ERROR', 'Server error'],
+    [502, 'HTTP_ERROR', 'Service unavailable'],
+    [503, 'SERVICE_NOT_READY', 'Service unavailable'],
+    [504, 'HTTP_ERROR', 'Request timed out'],
+    [403, 'FORBIDDEN', 'Access denied'],
+    [429, 'RATE_LIMITED', 'Too many requests'],
+    [200, 'INVALID_RESPONSE', 'Invalid server response']
+  ])('distinguishes startup error %s', async (status, code, title) => {
+    const text = await renderClient(client({bootstrapStatus: vi.fn(async () => {
+      throw new IdentityApiError(status as number, code as string, 'The server returned an invalid response. Try again later.');
+    })}));
+    expect(text).toContain(title);
+    expect(text).not.toContain('Authentication error');
+    expect(container?.querySelector('[role="alert"]')).toBeTruthy();
+  });
+
+  it('retries initialization and returns to login after recovery', async () => {
+    const bootstrapStatus = vi.fn().mockRejectedValueOnce(new IdentityApiError(500, 'HTTP_ERROR', 'raw error'))
+      .mockResolvedValue(true);
+    const identityClient = client({bootstrapStatus, me: vi.fn(async () => {
+      throw new IdentityApiError(401, 'AUTHENTICATION_REQUIRED', 'Authentication is required.');
+    })});
+    await renderClient(identityClient);
+    await act(async () => {
+      [...container!.querySelectorAll('button')].find(button => button.textContent === 'Retry')!.click();
+    });
+    expect(bootstrapStatus).toHaveBeenCalledTimes(2);
+    expect(container!.textContent).toContain('Login');
+    expect(container!.textContent).not.toContain('Server error');
+  });
+
   it('shows bootstrap only when the server reports an uninitialized instance', async () => {
     const identityClient = client({bootstrapStatus: vi.fn(async () => false)});
     const text = await renderClient(identityClient);

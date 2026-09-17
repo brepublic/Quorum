@@ -14,8 +14,33 @@ import DelegateFilePortal from './self-hosted/DelegateFilePortal';
 
 type Screen = 'loading' | 'bootstrap' | 'login' | 'change-password' | 'home';
 
+function errorTitle(error: unknown): string {
+  if (error instanceof IdentityApiError) {
+    if (error.status === 0) return t('Connection failed');
+    if (error.status === 502 || error.status === 503) return t('Service unavailable');
+    if (error.status === 504 || error.status === 408) return t('Request timed out');
+    if (error.status >= 500) return t('Server error');
+    if (error.status === 401) return t('Authentication error');
+    if (error.status === 403) return t('Access denied');
+    if (error.status === 429) return t('Too many requests');
+    if (error.code === 'INVALID_RESPONSE') return t('Invalid server response');
+  }
+  return t('Request failed');
+}
+
 function message(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  if (!(error instanceof IdentityApiError)) return t('Request failed. Try again later.');
+  if (error.status === 0) return t('Unable to connect. Check your network and try again.');
+  if (error.status === 502 || error.status === 503) return t('The service is unavailable. Try again later or contact the administrator.');
+  if (error.status === 504 || error.status === 408) return t('The server took too long to respond. Try again later.');
+  if (error.status >= 500) return t('The server could not complete the request. Try again later or contact the administrator.');
+  if (error.status === 429) return t('Too many requests. Wait a while before trying again.');
+  // Preserve specific backend explanations, such as an incorrect password or a validation failure.
+  if (error.code !== 'HTTP_ERROR') return t(error.message);
+  if (error.status === 401) return t('Please log in again.');
+  if (error.status === 403) return t('You do not have permission to perform this action.');
+  if (error.status === 404) return t('The requested resource or interface was not found.');
+  return t('Request failed. Try again later.');
 }
 
 interface IdentityFormProps {
@@ -271,7 +296,8 @@ export default function SelfHostedIdentity({client = selfHostedIdentityClient}: 
   const history = useHistory();
   const [screen, setScreen] = React.useState<Screen>('loading');
   const [user, setUser] = React.useState<SelfHostedUser>();
-  const [error, setError] = React.useState<string>();
+  const [error, setError] = React.useState<unknown>();
+  const [attempt, setAttempt] = React.useState(0);
 
   const authenticated = React.useCallback((identity: SelfHostedUser) => {
     setUser(identity);
@@ -294,11 +320,11 @@ export default function SelfHostedIdentity({client = selfHostedIdentityClient}: 
           else throw caught;
         }
       } catch (caught) {
-        if (active) setError(message(caught));
+        if (active) setError(caught);
       }
     })();
     return () => { active = false; };
-  }, [authenticated, client]);
+  }, [authenticated, client, attempt]);
 
   const logout = async () => {
     try {
@@ -312,7 +338,12 @@ export default function SelfHostedIdentity({client = selfHostedIdentityClient}: 
 
   if (location.pathname === '/delegate-files') return <DelegateFilePortal />;
 
-  if (error) return <IdentityShell title={t('Authentication error')} icon="warning sign"><Message error content={error} /></IdentityShell>;
+  if (error) return <IdentityShell title={errorTitle(error)} icon="warning sign">
+    <Message error role="alert" content={message(error)} />
+    <div style={{marginTop: '1.5em'}}>
+      <Button primary fluid style={{margin: 0}} onClick={() => { setError(undefined); setAttempt(value => value + 1); }}>{t('Retry')}</Button>
+    </div>
+  </IdentityShell>;
   if (screen === 'loading') return <Loading />;
   if (screen === 'bootstrap') return <BootstrapForm client={client} onAuthenticated={authenticated} />;
   if (screen === 'login' && location.pathname === '/committees') return <SelfHostedPublicCommittees />;
