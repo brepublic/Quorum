@@ -85,7 +85,7 @@ export function formatCommitteeContent(resource: AutomaticContentName, language:
   switch (resource.kind) {
     case 'FILE': return `${delegateFileTypeName(resource.fileType, language)} ${positiveOrdinal(resource.sessionOrdinal)}.${positiveOrdinal(resource.ordinal)}`;
     case 'SESSION': return zh ? `第${positiveOrdinal(resource.ordinal)}会期` : `Session ${positiveOrdinal(resource.ordinal)}`;
-    case 'GENERAL_SPEAKERS_LIST': return zh ? '主发言名单' : "General Speakers' List";
+    case 'GENERAL_SPEAKERS_LIST': return zh ? '主发言名单' : "General Speaker's List";
     case 'MODERATED_CAUCUS': return resource.topic || (zh ? '未命名有主持核心磋商' : 'Untitled caucus');
     case 'RESOLUTION': return `${zh ? '决议草案' : 'Draft resolution'} ${positiveOrdinal(resource.sessionOrdinal)}.${positiveOrdinal(resource.ordinal)}`;
     case 'AMENDMENT': return `${zh ? '新修正案' : 'New amendment '}${positiveOrdinal(resource.ordinal)}`;

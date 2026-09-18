@@ -351,7 +351,7 @@ function PostsPanel({snapshot, api, userId, tab}: {snapshot: CommitteeWorkspaceS
   }, [api, canManageStorage, snapshot.committee.id, snapshot.committee.operationMode,
     snapshot.sync.committeeEventSequence, bindingReload]);
   if (canManageStorage && snapshot.committee.operationMode === 'CHAIR_OPERATED' && delegateFilesEnabled === undefined) {
-    return bindingError ? <Message error><p>{bindingError}</p><Button onClick={() => setBindingReload(value => value + 1)}>重试</Button></Message> : <Segment basic loading style={{minHeight: 120}} role="status" aria-label="加载中" />;
+    return bindingError ? <Message error><p>{bindingError}</p><Button onClick={() => setBindingReload(value => value + 1)}>{t('Retry')}</Button></Message> : <Segment basic loading style={{minHeight: 120}} role="status" aria-label={t('Loading')} />;
   }
   const base = `/committees/${snapshot.committee.id}/posts`;
   if (tab === undefined || tab === 'text' || tab === 'links') return <Redirect to={`${base}/attachments`} />;
@@ -360,14 +360,14 @@ function PostsPanel({snapshot, api, userId, tab}: {snapshot: CommitteeWorkspaceS
     || (tab === 'upload' && delegateFilesEnabled) || (tab === 'review' && delegateFilesEnabled)
     ? tab : delegateFilesEnabled ? 'review' : 'attachments';
   return <><Menu pointing secondary aria-label={t('Resource sections')}>
-    {delegateFilesEnabled ? <><Menu.Item as={Link} to={`${base}/review`} active={active === 'review'}>审核</Menu.Item>
-      <Menu.Item as={Link} to={`${base}/share`} active={active === 'share'}>分享</Menu.Item>
-      <Menu.Item as={Link} to={`${base}/upload`} active={active === 'upload'}>上传文件</Menu.Item></>
+    {delegateFilesEnabled ? <><Menu.Item as={Link} to={`${base}/review`} active={active === 'review'}>{t('Review')}</Menu.Item>
+      <Menu.Item as={Link} to={`${base}/share`} active={active === 'share'}>{t('Share')}</Menu.Item>
+      <Menu.Item as={Link} to={`${base}/upload`} active={active === 'upload'}>{t('Upload files')}</Menu.Item></>
       : <Menu.Item as={Link} to={`${base}/attachments`} active={active === 'attachments'}>{t('Attachments')}</Menu.Item>}
-    {canManageStorage && <Menu.Item as={Link} to={`${base}/storage`} active={active === 'storage'}>存储设置</Menu.Item>}
-    {canManageStorage && <Menu.Item as={Link} to={`${base}/file-settings`} active={active === 'file-settings'}>文件设置</Menu.Item>}
+    {canManageStorage && <Menu.Item as={Link} to={`${base}/storage`} active={active === 'storage'}>{t('Storage settings')}</Menu.Item>}
+    {canManageStorage && <Menu.Item as={Link} to={`${base}/file-settings`} active={active === 'file-settings'}>{t('File settings')}</Menu.Item>}
   </Menu>
-    {bindingError && <Message error><p>{bindingError}</p><Button onClick={() => setBindingReload(value => value + 1)}>重试</Button></Message>}
+    {bindingError && <Message error><p>{bindingError}</p><Button onClick={() => setBindingReload(value => value + 1)}>{t('Retry')}</Button></Message>}
     {active === 'file-settings' && canManageStorage && <DelegateFileSettingsPanel committeeLanguage={snapshot.committee.committeeLanguage} key={snapshot.committee.id} committeeId={snapshot.committee.id} api={api}
       readOnly={!['ACTIVE', 'PAUSED'].includes(snapshot.committee.status)} />}
     {active === 'upload' && delegateFilesEnabled && <DelegateFileUploadPanel snapshot={snapshot} api={api} />}
@@ -1079,9 +1079,9 @@ function ModeratedCaucusCreateModal({open, snapshot, run, api, canChair, onClose
   const unitDurationInvalid = unitDurationTouched && unitDurationMs === undefined;
   const totalDurationInvalid = totalDurationTouched && (totalDurationMs === undefined || !durationMultiple);
   const validationMessages = [
-    topicInvalid ? '议题不能为空。' : null,
-    unitDurationInvalid ? '每次发言时长必须是大于 0 的数字。' : null,
-    totalDurationInvalid ? '总时长必须是正整数，且可被单位时长整除。' : null,
+    topicInvalid ? t('Topic is required.') : null,
+    unitDurationInvalid ? t('Speaking time must be a number greater than zero.') : null,
+    totalDurationInvalid ? t('Total duration must be greater than zero and a multiple of the speaking time.') : null,
   ].filter(Boolean) as string[];
   const submit = async () => {
     if (!canChair || !session || !valid || submitting || unitDurationMs === undefined || totalDurationMs === undefined) return;
@@ -1123,7 +1123,7 @@ function ModeratedCaucusCreateModal({open, snapshot, run, api, canChair, onClose
           onBlur={() => setTotalDurationTouched(true)} error={totalDurationInvalid}
           onChange={event => {setTotalDuration(event.currentTarget.value); setCloseHint(false);}} />
         <Form.Field className="moderated-caucus-duration-unit"><div className="moderated-caucus-duration-unit-text">{t('sec')}</div></Form.Field></Form.Group>
-        {validationMessages.length > 0 && <Message error content={validationMessages.join('，')} />}
+        {validationMessages.length > 0 && <Message error content={validationMessages.join(getLanguage() === 'zh-CN' ? '，' : ' ')} />}
         {closeHint && <Message info content={t('To close the dialog, click "X".')} />}
         <Button primary fluid loading={submitting} disabled={!valid || submitting}>
           {t('Moderated caucus')}<Icon name="arrow right" />

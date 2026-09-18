@@ -40,6 +40,8 @@ describe('committee content language', () => {
     expect(formatCommitteeContent({kind: 'STRAWPOLL', ordinal: 2, question: 'New strawpoll 1'}, language)).toBe('New strawpoll 1');
   });
   it('formats each resource using its explicit committee language and number', () => {
+    expect(formatCommitteeContent({kind: 'GENERAL_SPEAKERS_LIST', customTitle: null}, 'en')).toBe("General Speaker's List");
+    expect(formatCommitteeContent({kind: 'GENERAL_SPEAKERS_LIST', customTitle: null}, 'zh-CN')).toBe('主发言名单');
     expect(formatCommitteeContent({kind: 'SESSION', ordinal: 2}, 'en')).toBe('Session 2');
     expect(formatCommitteeContent({kind: 'SESSION', ordinal: 2}, 'zh-CN')).toBe('第2会期');
     expect(formatCommitteeContent({kind: 'RESOLUTION', sessionOrdinal: 2, ordinal: 12, customTitle: null}, 'zh-CN')).toBe('决议草案 2.12');

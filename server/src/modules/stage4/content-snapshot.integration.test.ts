@@ -209,13 +209,13 @@ integration('immutable committee content', () => {
     expect(custom).toMatchObject({ordinal: 2, question: 'New strawpoll 1', stage: 'VOTING'});
     await expect(pool!.query('UPDATE strawpolls SET ordinal=99 WHERE id=$1', [custom.id])).rejects.toThrow();
     const list = (await stage4.snapshot(committee.id, owner)).speakerLists!.find(item => item.kind === 'GENERAL')!;
-    expect(list).toMatchObject({customTitle: null, name: "General Speakers' List"});
+    expect(list).toMatchObject({customTitle: null, name: "General Speaker's List"});
     const renamed = await stage5.updateSpeakerList(owner, list.id,
       {baseRevision: list.revision, customTitle: '主发言名单'}, context('rename'));
     expect(renamed).toMatchObject({customTitle: '主发言名单', name: '主发言名单'});
     const restored = await stage5.updateSpeakerList(owner, list.id,
       {baseRevision: renamed.revision, customTitle: null}, context('restore'));
-    expect(restored).toMatchObject({customTitle: null, name: "General Speakers' List"});
+    expect(restored).toMatchObject({customTitle: null, name: "General Speaker's List"});
   });
 
   it('allocates document numbers and preserves explicit titles that look automatic', async () => {

@@ -109,7 +109,7 @@ describe('committee workspace routes and roles', () => {
     expect(page.querySelector('.committee-overview-page > .committee-overview-card')).toBeTruthy();
     expect(page.textContent).toContain('Climate security');
     expect(page.textContent).toContain('Main Hall');
-    expect(page.textContent).toContain('ACTIVE');
+    expect(page.textContent).toContain('Active');
     expect(page.textContent).toContain('Share committee');
     expect(page.textContent).not.toContain('Create seat');
     expect(page.textContent).not.toContain('Grant Chair');
@@ -237,7 +237,7 @@ describe('committee workspace routes and roles', () => {
       seats: [{...value.seats[0], rank: 'STANDARD', hasVeto: false, canVote: false},
         {...value.seats[0], id: 'second', rank: 'OBSERVER', hasVeto: false, canVote: false}]}), {updateSeat});
     expect(page.querySelector<HTMLInputElement>('[aria-label="No abstention · All seats"]')?.disabled).toBe(true);
-    const dropdown = page.querySelector('[aria-label="Rank · All seats"]')!;
+    const dropdown = page.querySelector('[aria-label="Seat type · All seats"]')!;
     await act(async () => {(dropdown as HTMLElement).click();});
     const option = [...dropdown.querySelectorAll<HTMLElement>('.item')].find(item => item.textContent === 'NGO');
     expect(option).toBeTruthy();
@@ -518,7 +518,7 @@ describe('committee workspace routes and roles', () => {
         procedural: true, requiredSecondCount: 0}]}}));
 
     const link = page.querySelector<HTMLAnchorElement>('.motion-queue a[href="/committees/committee/caucuses/general"]');
-    expect(link?.textContent).toContain('General speakers list');
+    expect(link?.textContent).toContain("General Speaker's List");
     expect(link?.classList.contains('primary')).toBe(true);
     expect(link?.classList.contains('fluid')).toBe(true);
     expect(link?.classList.contains('bottom')).toBe(true);
@@ -772,7 +772,7 @@ describe('committee workspace routes and roles', () => {
         requiredSecondCount: 0}]}}));
 
     expect([...page.querySelectorAll('.motion-proposal-form label')].map(label => label.textContent)).toEqual(
-      expect.arrayContaining(['Topic', 'Proposer', 'Total duration', 'Unit duration']));
+      expect.arrayContaining(['Topic', 'Proposer', 'Total duration', 'Speaking time']));
     expect([...page.querySelectorAll<HTMLInputElement>('.motion-time-value input')].map(input => input.value)).toEqual(['600', '60']);
     expect([...page.querySelectorAll<HTMLElement>('.motion-time-unit > .ui.dropdown > .text')].map(item => item.textContent)).toEqual(['sec', 'sec']);
     expect([...page.querySelectorAll<HTMLElement>('.motion-time-conversion')].map(item => item.textContent)).toEqual(['10 min', '1 min']);
@@ -883,7 +883,7 @@ describe('committee workspace routes and roles', () => {
     const page = await render('CHAIR', '/committees/committee/motions', user, customize, {closeBallot});
 
     expect(page.querySelector('.motion-ballot-panel')?.textContent).toContain('Formal ballot');
-    expect(page.querySelector('.motion-ballot-panel')?.textContent).toContain('China: FOR');
+    expect(page.querySelector('.motion-ballot-panel')?.textContent).toContain('China: For');
     const stop = page.querySelector<HTMLButtonElement>('.motion-stop-voting');
     expect(stop?.textContent?.trim()).toBe('Stop voting');
     expect(stop?.classList.contains('negative')).toBe(true);
@@ -903,8 +903,8 @@ describe('committee workspace routes and roles', () => {
       const panel = frozenPage.querySelector('.motion-ballot-panel')!;
       expect(panel.textContent).toContain('Veto');
       expect(panel.textContent).not.toContain('New seat');
-      expect([...panel.querySelectorAll('button')].some(button => button.textContent === 'ABSTAIN')).toBe(false);
-      const forButton = [...panel.querySelectorAll('button')].find(button => button.textContent === 'FOR');
+      expect([...panel.querySelectorAll('button')].some(button => button.textContent === 'Abstain')).toBe(false);
+      const forButton = [...panel.querySelectorAll('button')].find(button => button.textContent === 'For');
       expect(forButton).toBeTruthy();
       await act(async () => {forButton!.click();});
       expect(castVote).toHaveBeenLastCalledWith('ballot', 'FOR', audience === 'CHAIR' ? 'seat' : undefined);
@@ -1035,7 +1035,7 @@ describe('committee workspace routes and roles', () => {
       linkedResolutionId: null, revision: 1, queue: [], speeches: [], createdAt: '2026-08-14T00:00:00.000Z',
       closedAt: '2026-08-14T00:00:00.000Z'}]});
     const unopened = await render('CHAIR', '/committees/committee/caucuses/list', user, closedGeneralList);
-    expect(unopened.textContent).toContain('General speakers list not open');
+    expect(unopened.textContent).toContain("The General Speaker's List has not been opened yet");
     expect(unopened.querySelector('.legacy-speaker-workspace .ui.dropdown')?.textContent).toContain('Close');
 
     act(() => root?.unmount()); root = undefined; container?.remove(); container = undefined;
@@ -1047,7 +1047,7 @@ describe('committee workspace routes and roles', () => {
         directVote: {includeNonVotingSeats: false, startedAt: null, settingsRevision: 1, eligibility: [], choices: ['FOR', 'AGAINST'],
           threshold: 1, automaticResult: null, votes: []}, createdAt: '2026-08-14T00:01:00.000Z',
         decidedAt: '2026-08-14T00:01:00.000Z', destinationPath: null}]}));
-    expect(closed.textContent).toContain('Speakers list closed');
+    expect(closed.textContent).toContain("The General Speaker's List is closed");
   });
 
   it('shows current, next, timers, and queue only for the selected speaker list route', async () => {
@@ -1074,13 +1074,13 @@ describe('committee workspace routes and roles', () => {
         startedAt: null, remainingAtStartMs: 60_000, remainingMs: 60_000, revision: 1, expiredAt: null,
         serverTime: '2026-08-14T00:00:00.000Z'}]}));
     expect(page.textContent).toContain('Now speaking');
-    expect(page.textContent).toContain('Next speaking');
+    expect(page.textContent).toContain('Next speaker');
     expect(page.textContent).toContain('China');
     expect(page.textContent).toContain('France');
     expect(page.textContent).not.toContain('Motion type');
-    expect((page.textContent ?? '').indexOf('Queue')).toBeLessThan((page.textContent ?? '').indexOf('Next speaking'));
+    expect((page.textContent ?? '').indexOf('Queue')).toBeLessThan((page.textContent ?? '').indexOf('Next speaker'));
     const nextPanel = [...page.querySelectorAll<HTMLElement>('.ui.segment')]
-      .find(segment => segment.querySelector('.top.left.attached.label')?.textContent === 'Next speaking');
+      .find(segment => segment.querySelector('.top.left.attached.label')?.textContent === 'Next speaker');
     const queuePanel = [...page.querySelectorAll<HTMLElement>('.ui.segment')]
       .find(segment => segment.querySelector('.top.left.attached.label')?.textContent === 'Queue');
     expect(nextPanel?.textContent).toContain('France');
@@ -1245,7 +1245,7 @@ describe('committee workspace routes and roles', () => {
     expect(page.querySelector('.caucus-timer-column')?.textContent).toContain('Caucus timer');
     expect(page.querySelector('.caucus-timer-column')?.textContent).toContain('Queue');
     const nextPanel = [...page.querySelectorAll<HTMLElement>('.ui.segment')]
-      .find(segment => segment.querySelector('.top.left.attached.label')?.textContent === 'Next speaking');
+      .find(segment => segment.querySelector('.top.left.attached.label')?.textContent === 'Next speaker');
     const queuePanel = [...page.querySelectorAll<HTMLElement>('.ui.segment')]
       .find(segment => segment.querySelector('.top.left.attached.label')?.textContent === 'Queue');
     expect(nextPanel?.querySelectorAll('.event')).toHaveLength(1);
@@ -1354,7 +1354,7 @@ describe('committee workspace routes and roles', () => {
       layoutSettings: {moveQueueUp: false, timersInSeparateColumns: true}
     }), {setLayoutSettings});
     const queueSwitch = [...page.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')]
-      .find(input => input.closest('.checkbox')?.textContent?.includes("'Queue' should appear above 'Next speaking'"));
+      .find(input => input.closest('.checkbox')?.textContent?.includes("Show 'Queue' above 'Next speaker'"));
     expect(queueSwitch).toMatchObject({checked: false, disabled: false});
 
     await act(async () => {clickSemanticCheckbox(queueSwitch); await Promise.resolve(); await Promise.resolve();});
@@ -1540,8 +1540,8 @@ describe('committee workspace routes and roles', () => {
           mustVote: false, hasVeto: true}], threshold: {kind: 'SIMPLE_MAJORITY', value: 1}, votes: [], result: null,
         revision: 1, openedAt: '2026-08-14T00:00:00.000Z', closedAt: null, publishedAt: null}]}));
     expect(ballotPage.textContent).toContain('Formal ballot');
-    expect(ballotPage.textContent).toContain('FOR');
-    expect(ballotPage.textContent).toContain('AGAINST');
+    expect(ballotPage.textContent).toContain('For');
+    expect(ballotPage.textContent).toContain('Against');
   });
 
   it('creates an empty, system-named draft immediately from the resolution plus route', async () => {
@@ -1687,7 +1687,7 @@ describe('committee workspace routes and roles', () => {
     expect(memberPage.querySelector('.ui.negative.message')).toBeNull();
     act(() => root?.unmount()); root = undefined; container?.remove(); container = undefined;
     const chairPage = await render('CHAIR', '/committees/committee/posts', user, value => value, apiOverrides);
-    expect(chairPage.querySelector('a[href="/committees/committee/posts/storage"]')?.textContent).toBe('存储设置');
+    expect(chairPage.querySelector('a[href="/committees/committee/posts/storage"]')?.textContent).toBe('Storage settings');
     expect(chairPage.querySelector('.ui.negative.message')).toBeNull();
   });
 
@@ -1714,8 +1714,8 @@ describe('committee workspace routes and roles', () => {
     const stats = page.querySelector('.committee-workspace-page')?.textContent ?? '';
     expect(stats).toContain('Times spoken');
     expect(stats).toContain('Total speaking time');
-    expect(stats).toContain('Motion proposals');
-    expect(stats).toContain('Amendment proposals');
+    expect(stats).toContain('Motions proposed');
+    expect(stats).toContain('Amendments proposed');
     expect(stats).toContain('Document discussion entries');
     expect(stats).toContain('China');
   });
@@ -1767,7 +1767,7 @@ describe('committee workspace routes and roles', () => {
     expect(page.querySelector('a[href="/committees/committee/posts/attachments"]')).toBeNull();
     const resourceLinks = Array.from(page.querySelectorAll<HTMLAnchorElement>('[aria-label="Resource sections"] a'))
       .map(link => link.textContent?.trim());
-    expect(resourceLinks).toEqual(['审核', '分享', '上传文件', '存储设置', '文件设置']);
+    expect(resourceLinks).toEqual(['Review', 'Share', 'Upload files', 'Storage settings', 'File settings']);
     expect(page.querySelector('.delegate-file-chair-upload')).toBeNull();
     await act(async () => {page.querySelector<HTMLAnchorElement>('a[href="/committees/committee/posts/upload"]')?.click(); await Promise.resolve();});
     expect(page.querySelector('.delegate-file-chair-upload')).not.toBeNull();

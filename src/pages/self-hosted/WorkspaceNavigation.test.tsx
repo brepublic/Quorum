@@ -58,7 +58,7 @@ describe('self-hosted workspace navigation', () => {
     expect(links).toContain('/committees/committee/roll-call');
     expect(links).toContain('/committees/committee/caucuses/gsl');
     expect(links).toContain('/committees/committee/caucuses/mod');
-    expect(page.querySelector('a[href="/committees/committee/caucuses/gsl"]')?.textContent).toBe("General Speakers' List");
+    expect(page.querySelector('a[href="/committees/committee/caucuses/gsl"]')?.textContent).toBe("General Speaker's List");
     act(() => setLanguage('zh-CN'));
     expect(page.querySelector('a[href="/committees/committee/caucuses/gsl"]')?.textContent).toBe("主发言名单");
     const active = page.querySelector('a.active');
