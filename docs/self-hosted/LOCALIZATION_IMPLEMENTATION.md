@@ -1,6 +1,6 @@
 # 多语言与委员会快照实施记录
 
-本记录配合 `LOCALIZATION_REDESIGN.md` 使用。未完成项目不算通过；本记录不代表全计划交付。
+本记录配合 `LOCALIZATION_REDESIGN.md` 使用。当前代码及开发部署已更新，自动回归通过；原生 Agent 真实配对和文件传输人工验收仍未完成，不计为全计划验收通过。以下按时间保留实施过程，最终状态见末节。
 
 ## 实施前基线（2026-09-18）
 
@@ -197,3 +197,18 @@ migration 61 把开发环境旧默认驳回配置明确重置为双语内置定�
 最终 PostgreSQL 全套 9 文件 121 项通过，完整构建通过。非数据库首轮因沙箱禁止桥接监听中断，允许本机监听后 640/641 项通过；唯一失败是导航测试旧夹具没有提供快照 name，已补齐并以中文内容名断言英文界面不会重新翻译。相关定向结果及最终部署见后续记录。
 
 仍未完成的人工验收：原生 Agent 的实际配对、上传/下载及运行中语言切换。本会话没有原生应用交互控制能力，已完成原生窗口渲染、编译、翻译与 Node 桥接测试；不能用这些结果替代真实配对验收。Web 文件工作流有自动与 PostgreSQL 覆盖，尚未在新委员会完成连接真实 Agent 的端到端文件流程。
+
+
+## 最终部署与回归记录
+
+- 功能源码提交：`4952307`；本节仅补充验收文档，不改变部署代码。
+- `pnpm build:self-host`、前端类型检查、`pnpm verify:no-legacy-runtime`、diff 空白检查通过。
+- `pnpm test:self-host`：88 文件、641 项全部通过。
+- `pnpm test:self-host:integration`：9 文件、121 项全部通过，使用独立 PostgreSQL 临时数据库。
+- Rust 原生翻译测试：1 项通过；实际中英 ui-preview 窗口可运行，真实配对传输仍未验收。
+- 最终 app 镜像 `sha256:5d533c8081ded9c2b3559bc26f756d3d9e34c52d32fc5cdf06bb1d80c48eeed7`，容器 healthy。
+- 最终 Caddy 镜像 `sha256:10d0d2a753e9ff3df40c5e5083219ebe398d1ffe5731fe731b4eb028b892e738`，容器 running。
+- 严格 CA 校验的 `https://localhost/health/ready` 返回数据库/存储正常；`/api/v1/version` 返回 contract 3、schema 63。
+- HTTPS 首页与运行容器 `/srv/index.html` SHA-256 相同：`e903e4956b9acf9f6eea40b2b10f60bf68b910fae50456de7c5f6650eaf8d04a`。
+
+已完成的源代码、自动回归和部署不再待实施。剩余验收边界是上一节明确列出的真实原生交互及连接 Agent 的文件全流程；需要具有原生窗口控制能力的会话或人工操作，不应重复重建数据库或把整项计划标记为已验收。
