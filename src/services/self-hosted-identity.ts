@@ -1,3 +1,4 @@
+import type {ApiErrorBody} from '@quorum/contracts';
 export type SelfHostedUserStatus = 'ACTIVE' | 'DISABLED' | 'ANONYMIZED';
 
 export interface SelfHostedUser {
@@ -30,11 +31,12 @@ interface ApiSuccess<T> {
 }
 
 interface ApiFailure {
-  error: {code: string; message: string; requestId: string};
+  error: ApiErrorBody['error'];
 }
 
 export class IdentityApiError extends Error {
-  constructor(readonly status: number, readonly code: string, message: string, readonly requestId?: string) {
+  constructor(readonly status: number, readonly code: string, message: string, readonly requestId?: string,
+    readonly localization?: Pick<ApiErrorBody['error'], 'reason' | 'params' | 'fieldErrors'>) {
     super(message);
     this.name = 'IdentityApiError';
   }
@@ -94,7 +96,7 @@ async function request<T>(path: string, options: {
   }
   if (payload && typeof payload === 'object' && 'error' in payload && payload.error
       && typeof payload.error.code === 'string' && typeof payload.error.message === 'string') {
-    throw new IdentityApiError(response.status, payload.error.code, payload.error.message, payload.error.requestId);
+    throw new IdentityApiError(response.status, payload.error.code, payload.error.message, payload.error.requestId, payload.error);
   }
   if (!response.ok) {
     throw new IdentityApiError(response.status, 'HTTP_ERROR', 'Request failed. Try again later.');

@@ -1,3 +1,4 @@
+import {t, useLanguage, getLanguage} from '../../i18n';
 import * as React from 'react';
 import type {S3ProviderConfigSummary} from '@quorum/contracts';
 import {Button, Card, Form, Header, Message, Segment} from 'semantic-ui-react';
@@ -10,14 +11,16 @@ const EMPTY_FORM: S3ProviderConfigInput & {status: 'ACTIVE' | 'DISABLED'} = {
 };
 
 export default function StorageAdminPanel({api}: {api: SelfHostedApi}) {
+  useLanguage();
   const [configs, setConfigs] = React.useState<S3ProviderConfigSummary[]>([]);
   const [form, setForm] = React.useState(EMPTY_FORM);
   const [editing, setEditing] = React.useState<S3ProviderConfigSummary>();
-  const [error, setError] = React.useState<string>();
+  const [failure, setError] = React.useState<unknown>();
+  const error = failure ? storageErrorText(failure) : undefined;
   const [working, setWorking] = React.useState(false);
   const refresh = React.useCallback(async (clearError = true) => {
     try { setConfigs(await api.listS3ProviderConfigs()); if (clearError) setError(undefined); }
-    catch (caught) { setError(storageErrorText(caught)); }
+    catch (caught) { setError(caught); }
   }, [api]);
   React.useEffect(() => void refresh(), [refresh]);
 
@@ -25,7 +28,7 @@ export default function StorageAdminPanel({api}: {api: SelfHostedApi}) {
     setWorking(true); setError(undefined);
     let failed = false;
     try { await operation(); setEditing(undefined); setForm(EMPTY_FORM); }
-    catch (caught) { failed = true; setError(storageErrorText(caught)); }
+    catch (caught) { failed = true; setError(caught); }
     finally { await refresh(!failed); setWorking(false); }
   };
   const edit = (config: S3ProviderConfigSummary) => {
@@ -51,10 +54,10 @@ export default function StorageAdminPanel({api}: {api: SelfHostedApi}) {
   return <div className="self-hosted-storage-admin">
     {error && <Message error role="alert" content={error} />}
     <Segment loading={working}>
-      <Header as="h2">{editing ? '编辑存储配置' : '新增存储配置'}</Header>
+      <Header as="h2">{editing ? t("Edit storage configuration") : t("Add storage configuration")}</Header>
       <Form onSubmit={() => void save()}>
       <Form.Group widths="equal">
-        <Form.Input label="配置名称" required value={form.displayName}
+        <Form.Input label={t("Configuration name")} required value={form.displayName}
           onChange={event => setForm({...form, displayName: event.currentTarget.value})} />
         <Form.Input label="Endpoint" required type="url" value={form.endpoint}
           onChange={event => setForm({...form, endpoint: event.currentTarget.value})} />
@@ -77,25 +80,25 @@ export default function StorageAdminPanel({api}: {api: SelfHostedApi}) {
       <Form.Group inline>
         <Form.Checkbox label="Path-style" checked={form.forcePathStyle}
           onChange={(_, data) => setForm({...form, forcePathStyle: Boolean(data.checked)})} />
-        <Form.Checkbox label="允许私网 endpoint" checked={form.allowPrivateNetwork}
+        <Form.Checkbox label={t("Allow private network endpoint")} checked={form.allowPrivateNetwork}
           onChange={(_, data) => setForm({...form, allowPrivateNetwork: Boolean(data.checked)})} />
-        {editing && <Form.Select label="状态" value={form.status} options={[
-          {key: 'active', value: 'ACTIVE', text: '启用'}, {key: 'disabled', value: 'DISABLED', text: '停用'}
+        {editing && <Form.Select label={t("Status")} value={form.status} options={[
+          {key: 'active', value: 'ACTIVE', text: t("Enabled")}, {key: 'disabled', value: 'DISABLED', text: t("Deactivate")}
         ]} onChange={(_, data) => setForm({...form, status: data.value as 'ACTIVE' | 'DISABLED'})} />}
       </Form.Group>
-      <Button primary disabled={!valid}>{editing ? '保存配置' : '创建配置'}</Button>
-      {editing && <Button type="button" onClick={() => {setEditing(undefined); setForm(EMPTY_FORM);}}>取消编辑</Button>}
+      <Button primary disabled={!valid}>{editing ? t("Save configuration") : t("Create configuration")}</Button>
+      {editing && <Button type="button" onClick={() => {setEditing(undefined); setForm(EMPTY_FORM);}}>{t("Cancel editing")}</Button>}
     </Form></Segment>
     <Segment>
-      <Header as="h2">已配置的存储</Header>
-      {!configs.length && <p>暂无存储配置</p>}
+      <Header as="h2">{t("Configured storage")}</Header>
+      {!configs.length && <p>{t("No storage configurations")}</p>}
       {configs.length > 0 && <Card.Group stackable className="storage-config-cards">{configs.map(config => <Card key={config.id}><Card.Content>
-      <Card.Header>{config.displayName}</Card.Header><Card.Meta>{config.status === 'ACTIVE' ? '启用' : '停用'} · {
-        config.verifiedAt ? '验证通过' : '未验证'}</Card.Meta>
+      <Card.Header>{config.displayName}</Card.Header><Card.Meta>{config.status === 'ACTIVE' ? t("Enabled") : t("Deactivate")} · {
+        config.verifiedAt ? t("Verified") : t("Not verified")}</Card.Meta>
       <Card.Description>{config.endpoint}<br />{config.bucket}{config.prefix ? `/${config.prefix}` : ''}</Card.Description>
     </Card.Content><Card.Content extra className="admin-actions">
-      <Button size="small" onClick={() => edit(config)}>编辑配置</Button>
-      <Button size="small" onClick={() => void run(() => api.verifyS3ProviderConfig(config.id))}>验证配置</Button>
+      <Button size="small" onClick={() => edit(config)}>{t("Edit configuration")}</Button>
+      <Button size="small" onClick={() => void run(() => api.verifyS3ProviderConfig(config.id))}>{t("Verify configuration")}</Button>
     </Card.Content></Card>)}</Card.Group>}
     </Segment>
   </div>;

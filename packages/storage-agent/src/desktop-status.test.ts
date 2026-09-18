@@ -12,34 +12,34 @@ const task = {id:'task',fileEntryId:'file',blobId:'blob',sequence:1,type:'FETCH_
 const rows = (remote=[file], s=state, tasks:StorageAgentTask[]=[], active=new Map(), fresh=true, verified=new Set(['file'])) => desktopFiles(remote,s,tasks,verified,active,fresh);
 describe('desktop file status uses content and server authority separately', () => {
   it('publication revision changes do not invalidate identical local content', () => {
-    expect(rows()[0]).toMatchObject({local:'已就绪 - 公开可见',cache:'服务器无缓存 · 本地可用'});
-    expect(rows([{...file,status:'UPLOAD_COMPLETE'}])[0]?.local).toBe('已就绪 - 未提交审核');
-    expect(rows([{...file,status:'PENDING_REVIEW'}])[0]?.local).toBe('已就绪 - 待审核');
+    expect(rows()[0]).toMatchObject({local:'READY_PUBLISHED',cache:'CACHE_MISSING_LOCAL_READY'});
+    expect(rows([{...file,status:'UPLOAD_COMPLETE'}])[0]?.local).toBe('READY_UNSUBMITTED');
+    expect(rows([{...file,status:'PENDING_REVIEW'}])[0]?.local).toBe('READY_REVIEW');
   });
   it('does not claim a missing, unverified or older local blob is ready', () => {
     expect(rows([{...file,blobId:'new'}])[0]?.local).not.toContain('已就绪');
-    expect(rows([file],state,[],new Map(),true,new Set())[0]?.cache).toBe('服务器无缓存');
+    expect(rows([file],state,[],new Map(),true,new Set())[0]?.cache).toBe('CACHE_MISSING');
   });
   it('distinguishes queued refill from active transfer, and verification from readiness', () => {
-    expect(rows([file],state,[task])[0]?.cache).toBe('等待回传');
+    expect(rows([file],state,[task])[0]?.cache).toBe('PENDING_REFILL');
     const active = new Map([['file',{fileEntryId:'file',taskId:'task',type:'FETCH_BLOB_TO_CACHE',phase:'transfer',bytes:50,total:100}]]);
-    expect(rows([file],state,[task],active)[0]).toMatchObject({local:'已就绪 - 公开可见',cache:'正在回传',bytes:50,progress:true});
+    expect(rows([file],state,[task],active)[0]).toMatchObject({local:'READY_PUBLISHED',cache:'REFILLING',bytes:50,progress:true});
     active.get('file')!.type='STORE_BLOB';active.get('file')!.phase='verify';
-    expect(rows([file],state,[],active)[0]?.local).toBe('校验中');
+    expect(rows([file],state,[],active)[0]?.local).toBe('VERIFYING');
   });
   it('shows a newly received task immediately before the next metadata poll', () => {
     const active = new Map([['new',{fileEntryId:'new',taskId:'t',name:'新文件.pdf',type:'HOST_COMMIT_BLOB',phase:'transfer',bytes:20,total:100}]]);
-    expect(rows([], {...state,files:{}}, [], active)[0]).toMatchObject({name:'新文件.pdf',local:'下载中',bytes:20,progress:true});
+    expect(rows([], {...state,files:{}}, [], active)[0]).toMatchObject({name:'新文件.pdf',local:'DOWNLOADING',bytes:20,progress:true});
   });
   it('does not present cached remote status as live when disconnected', () => {
-    expect(rows([file],state,[],new Map(),false)[0]).toMatchObject({cache:'状态未知',local:'本地已保存 · 审核状态未知'});
+    expect(rows([file],state,[],new Map(),false)[0]).toMatchObject({cache:'UNKNOWN',local:'LOCAL_READY_REVIEW_UNKNOWN'});
   });
   it('distinguishes server deletion pending local removal from completed deletion', () => {
-    expect(rows([{...file,status:'DELETED'}])[0]?.local).toBe('待删除');
-    expect(rows([{...file,status:'DELETED'}],{...state,files:{}})[0]?.local).toBe('已删除');
+    expect(rows([{...file,status:'DELETED'}])[0]?.local).toBe('PENDING_DELETE');
+    expect(rows([{...file,status:'DELETED'}],{...state,files:{}})[0]?.local).toBe('DELETED');
   });
   it('does not let old failures override a later successful refill', () => {
     expect(rows([file],state,[{...task,status:'FAILED'},{...task,sequence:2,status:'COMPLETED'}])[0]?.cache)
-      .toBe('服务器无缓存 · 本地可用');
+      .toBe('CACHE_MISSING_LOCAL_READY');
   });
 });

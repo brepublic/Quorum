@@ -9,9 +9,11 @@ describe('delegate file settings validation', () => {
     for (const name of ['a.pdf.exe', 'a.mp4', 'pdf', 'a.pdf.', 'a.pdf ']) expect(isAllowedDelegateFile(name, ['pdf', 'docx'])).toBe(false);
   });
   it('requires unique options and messages except for custom input', () => {
-    const preset = {id: 'format', label: '格式', message: '请修改', custom: false};
-    expect(rejectionTypes([preset, {id: 'other', label: '其他', message: '', custom: true}])).toHaveLength(2);
-    for (const rows of [[], [preset, preset], [{...preset, message: ''}], [{...preset, custom: 'true'}]]) {
+    const preset = {id: 'format', label: {'zh-CN': '格式'}, message: {'zh-CN': '请修改'}, custom: false};
+    expect(() => rejectionTypes([preset], 'en')).toThrow();
+    expect(rejectionTypes([preset], 'zh-CN')).toHaveLength(1);
+    expect(rejectionTypes([preset, {id: 'other', label: {'zh-CN': '其他'}, message: {}, custom: true}])).toHaveLength(2);
+    for (const rows of [[], [preset, preset], [{...preset, message: {}}], [{...preset, custom: 'true'}]]) {
       expect(() => rejectionTypes(rows)).toThrow();
     }
   });

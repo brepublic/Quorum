@@ -1135,7 +1135,7 @@ describe('committee workspace routes and roles', () => {
       await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
     });
     expect(page.querySelector<HTMLTextAreaElement>('.speech-contribution-form textarea')?.value).toBe('Q: Keep this text\n\nA:');
-    expect(page.textContent).toContain('Save failed');
+    expect(page.textContent).toContain('Request failed. Try again later.');
     expect(page.textContent).not.toContain('Interaction recorded.');
 
     act(() => root?.unmount()); page.remove(); root = undefined; container = undefined;
@@ -1695,7 +1695,7 @@ describe('committee workspace routes and roles', () => {
     expect(page.textContent).not.toContain('暂无已审核文件');
     sequence = 2;
     await act(async () => window.dispatchEvent(new Event('focus')));
-    expect(page.textContent).toContain('binding refresh failed');
+    expect(page.textContent).toContain('Request failed. Try again later.');
     expect(page.textContent).toContain('cached.pdf');
     await act(async () => disconnect!());
     expect(page.querySelector('.delegate-file-review-panel')).toBeNull();

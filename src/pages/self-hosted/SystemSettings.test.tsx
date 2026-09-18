@@ -1,3 +1,4 @@
+import {setLanguage} from '../../i18n';
 import * as React from 'react';
 import {act} from 'react';
 import {createRoot, type Root} from 'react-dom/client';
@@ -8,7 +9,7 @@ import type {SelfHostedApi} from '../../services/self-hosted-api';
 import type {SelfHostedIdentityClient, SelfHostedUser} from '../../services/self-hosted-identity';
 
 let host: HTMLDivElement; let root: Root;
-beforeEach(() => {
+beforeEach(() => {setLanguage('zh-CN');
   host = document.createElement('div'); document.body.append(host); root = createRoot(host);
   (globalThis as {IS_REACT_ACT_ENVIRONMENT?: boolean}).IS_REACT_ACT_ENVIRONMENT = true;
 });
@@ -30,7 +31,7 @@ function clients() {
   storageCacheFiles: vi.fn(async () => ({files: [], page: 1, pageSize: 25, total: 0})),
   updateStorageCacheConfig: vi.fn(async input => ({...input, revision: input.revision + 1})),
   getDefaultFileRejectionTypes: vi.fn(async () => ({revision: 1, rejectionTypes: [
-    {id: 'format', label: '格式', message: '请修改', custom: false}]})),
+    {id: 'format', label: {'zh-CN': '格式'}, message: {'zh-CN': '请修改'}, custom: false}]})),
   listS3ProviderConfigs: vi.fn(async () => []), listCommittees: vi.fn(async () => []),
   listCountryTemplates: vi.fn(async () => []), listCommitteeTemplates: vi.fn(async () => [])};
   const client = {getDefaultCommitteeBehavior: vi.fn(async () => ({creatorIsChair: true,
@@ -69,7 +70,7 @@ describe('system settings navigation and extracted settings', () => {
   });
   it('groups committee defaults and uses the supplied identity client when saving', async () => {
     const {api, client} = await render('/system-settings/defaults');
-    expect(host.textContent).toContain('Default behavior');
+    expect(host.textContent).toContain('默认行为');
     expect(host.textContent).toContain('默认驳回类型');
     expect(api.getDefaultFileRejectionTypes).toHaveBeenCalledOnce();
     await act(async () => {host.querySelector('form')!.dispatchEvent(new Event('submit', {bubbles: true, cancelable: true}));});
@@ -85,7 +86,7 @@ describe('system settings navigation and extracted settings', () => {
     await fill('#cache-publishedCacheMaxBytes', '900');
     const submit = async () => act(async () => {host.querySelector('form')!.dispatchEvent(new Event('submit', {bubbles: true, cancelable: true}));});
     await submit();
-    expect(host.textContent).toContain('保存失败');
+    expect(host.textContent).toContain('请求失败，请稍后重试。');
     expect((host.querySelector('#cache-publishedCacheMaxBytes') as HTMLInputElement).value).toBe('900');
     expect(api.updateStorageCacheConfig).toHaveBeenLastCalledWith({...config, publishedCacheMaxBytes: mbToBytes(900)});
     await submit();

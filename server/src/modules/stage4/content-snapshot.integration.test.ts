@@ -106,6 +106,21 @@ integration('immutable committee content', () => {
     expect(records.find(record => record.section === 'committee_seats').record).toMatchObject({display_name: 'China', flag_value: 'cn'});
   });
 
+  it('validates and freezes default rejection translations during creation', async () => {
+    const {owner, input} = await fixture();
+    const original = (await pool!.query('SELECT default_file_rejection_types FROM system_settings')).rows[0].default_file_rejection_types;
+    const committee = await stage4.createCommittee(owner, input, randomUUID(), context('create'));
+    const chineseOnly = original.map((item: {label: Record<string, string>; message: Record<string, string>}) =>
+      ({...item, label: {'zh-CN': item.label['zh-CN']}, message: item.message['zh-CN'] ? {'zh-CN': item.message['zh-CN']} : {}}));
+    await pool!.query('UPDATE system_settings SET default_file_rejection_types=$1', [JSON.stringify(chineseOnly)]);
+    await expect(stage4.createCommittee(owner, input, randomUUID(), context('missing-default')))
+      .rejects.toMatchObject({reason: 'MISSING_CONTENT_TRANSLATION', fieldErrors: [
+        {field: 'rejectionTypes.0.label', reason: 'MISSING_CONTENT_TRANSLATION', params: {language: 'en'}}]});
+    const stored = (await pool!.query('SELECT delegate_file_settings FROM committees WHERE id=$1', [committee.id])).rows[0].delegate_file_settings;
+    expect(stored.rejectionTypes).toEqual(original);
+    expect(Number((await pool!.query('SELECT count(*) FROM committees')).rows[0].count)).toBe(1);
+  });
+
   it('rejects missing translations and stale revisions without partial creation', async () => {
     const {owner, countries, input} = await fixture();
     await expect(stage4.createCommittee(owner, {...input, committeeLanguage: 'fr'}, randomUUID(), context('bad')))

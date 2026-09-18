@@ -176,3 +176,11 @@ pnpm self-host:test-db:down
 集成测试必须使用 `TEST_DATABASE_ADMIN_URL` 创建随机临时数据库；未配置时明确 skip，不使用内存数据库替代。GitHub Actions 先构建 workspace 产物，再执行自动发现的非 PostgreSQL 测试和一次显式 PostgreSQL integration 测试，最后进行生产运行时检查。GitHub Actions 提供 PostgreSQL 16 service。真实 PostgreSQL、浏览器、TLS、S3 和原生平台证据仍不能由普通测试替代。
 
 当前 WSL 已完成类型、Vitest、构建、锁文件和静态零运行依赖验证。真实 PostgreSQL/Compose、Caddy TLS、多浏览器、真实 S3/持久卷、Chair 原生平台、签名公证、备份恢复和生产网络 HAR 仍按 `docs/self-hosted/MANUAL_ACCEPTANCE.md` 逐项取证；自动测试或 mock 不能替代这些证据。
+
+### 多语言切换补充（schema 62）
+
+驳回类型的 label/message 使用语言到文本的映射；创建委员会事务锁定并验证默认配置的委员会语言，复制后独立保存。拒绝文件时保存最终理由文本。文件来源 CHAIR 与账号状态 ANONYMIZED 单独表示系统身份，不把中文称谓写入姓名。
+
+Web 的共享错误格式化读取 reason/code 和受约束参数；身份、业务、上传及 Node Agent 客户端保留结构化信息。未知异常不直接展示消息。界面错误保留原结构并在渲染时解释，以支持切换语言。仍需完成全部字段定位和服务端具体原因覆盖，不能据此视为整体验收完成。
+
+原生 Rust/Slint 桌面通过内置目录翻译界面、状态、错误和步骤；Node 桥接传机器状态，文件名与路径原样保留。语言偏好独立存于 XDG_CONFIG_HOME（缺省 ~/.config）下 quorum-agent/desktop-language，不进入 Agent 私有配置、不改变配对或同步身份。切换只更新窗口属性和列表显示；服务器 Agent 协议仍为 2。

@@ -459,7 +459,7 @@ export class PostgresIdentityStore implements IdentityStore {
       await client.query('DELETE FROM sessions WHERE user_id = $1', [target.id]);
       await client.query('DELETE FROM user_credentials WHERE user_id = $1', [target.id]);
       const updated = await client.query<UserRow>(
-        `UPDATE users SET email = NULL, display_name = '匿名账号', status = 'ANONYMIZED',
+        `UPDATE users SET email = NULL, display_name = '', status = 'ANONYMIZED',
            session_version = session_version + 1, must_change_password = false,
            updated_at = $2, anonymized_at = $2 WHERE id = $1 RETURNING *`,
         [target.id, input.now]

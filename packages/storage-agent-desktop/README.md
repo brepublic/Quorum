@@ -32,7 +32,7 @@ pnpm start:storage-agent:desktop
 
 “解除配对”需确认，会请求原服务器撤销当前设备授权；服务端确认后才返回配对表单。失败保留当前配置，已撤销的请求可重试。旧配置与存储文件保留，但旧凭据不能继续连接。此操作需要服务器更新到支持 `/api/v1/storage-agent/revoke` 的版本；GUI 不内置网页登录。重新配对时填写新的私有配置路径，选择新的存储目录，并从目标服务器网页取得一次性配对码。
 
-系统标题栏使用 ASCII 标题 `Quorum Chair Agent`，避免标题栏字体缺少中文字形；页面内保留中文标题。设置表单支持滚动；配对码输入框、配对及保存按钮固定在底部，错误栏与日志展开时仍可访问。
+系统标题栏使用 ASCII 标题 `Quorum Chair Agent`，避免标题栏字体缺少中文字形；页面内标题跟随界面语言。设置表单支持滚动；配对码输入框、配对及保存按钮固定在底部，错误栏与日志展开时仍可访问。
 
 未保存修改显示“未保存”，启动、重启和撤销授权前须保存或重新导入。导入其他配置及关闭窗口前会确认是否放弃未保存的设置或配对码；取消保留输入。保存和失败重试保留配对码，配对成功或成功导入后清空。保存、导入、配对和日志导出提供结果反馈。
 
@@ -77,3 +77,7 @@ cargo run --locked --manifest-path packages/storage-agent-desktop/Cargo.toml --e
 也可将 release 编译的 `quorum-storage-agent-desktop` 放到现有 Linux Agent 自包含发布包根目录（与 `runtime/node`、`app/desktop-bridge.js` 相邻）。开发时脚本用 `QUORUM_AGENT_NODE`、`QUORUM_AGENT_BRIDGE` 指定当前构建。第一版仅验收当前 Linux 环境；未声称 Windows/macOS 可直接发行。
 
 项目沿用 GPLv3，Slint 按其 GPLv3 选项使用；Cargo.lock 固定依赖。二进制发行须附源码与相应第三方许可。
+
+## 界面语言
+
+窗口内可切换 English / 简体中文，选择保存于 `$XDG_CONFIG_HOME/quorum-agent/desktop-language`（缺省 `~/.config/quorum-agent/desktop-language`）。首次打开按 LANG 选择。切换保留未保存设置、文件名、路径、传输状态和配对身份；语言不写入私有 Agent 配置。Node 与桌面同包更新，内部状态使用标识，服务器 Agent 协议保持 2。

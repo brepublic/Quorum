@@ -25,7 +25,7 @@ export class AppError extends Error {
     this.code = options.code;
     this.status = options.status ?? ERROR_HTTP_STATUS[options.code];
     this.details = options.details;
-    this.reason = options.reason;
+    this.reason = options.reason ?? options.code;
     this.params = options.params;
     this.fieldErrors = options.fieldErrors;
     this.expose = options.expose ?? this.status < 500;

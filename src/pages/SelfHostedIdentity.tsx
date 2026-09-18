@@ -1,3 +1,5 @@
+import {useLanguage} from '../i18n';
+import {apiErrorText} from '../i18n';
 import * as React from 'react';
 import {Button, Container, Form, Header, Icon, Menu, Message, Segment, Table} from 'semantic-ui-react';
 import {Link, useHistory, useLocation} from 'react-router-dom';
@@ -36,7 +38,7 @@ function message(error: unknown): string {
   if (error.status >= 500) return t('The server could not complete the request. Try again later or contact the administrator.');
   if (error.status === 429) return t('Too many requests. Wait a while before trying again.');
   // Preserve specific backend explanations, such as an incorrect password or a validation failure.
-  if (error.code !== 'HTTP_ERROR') return t(error.message);
+  if (error.code !== 'HTTP_ERROR') return apiErrorText(error);
   if (error.status === 401) return t('Please log in again.');
   if (error.status === 403) return t('You do not have permission to perform this action.');
   if (error.status === 404) return t('The requested resource or interface was not found.');
@@ -49,9 +51,11 @@ interface IdentityFormProps {
 }
 
 function LoginForm({client, onAuthenticated}: IdentityFormProps) {
+  useLanguage();
   const [email, setEmail] = React.useState('');
   const [password, setPassword] = React.useState('');
-  const [error, setError] = React.useState<string>();
+  const [failure, setError] = React.useState<unknown>();
+  const error = failure ? message(failure) : undefined;
   const [working, setWorking] = React.useState(false);
 
   const submit = async () => {
@@ -60,7 +64,7 @@ function LoginForm({client, onAuthenticated}: IdentityFormProps) {
     try {
       onAuthenticated(await client.login(email.trim(), password));
     } catch (caught) {
-      setError(message(caught));
+      setError(caught);
     } finally {
       setWorking(false);
     }
@@ -86,12 +90,14 @@ function LoginForm({client, onAuthenticated}: IdentityFormProps) {
 }
 
 function BootstrapForm({client, onAuthenticated}: IdentityFormProps) {
+  useLanguage();
   const [secret, setSecret] = React.useState('');
   const [email, setEmail] = React.useState('');
   const [displayName, setDisplayName] = React.useState('');
   const [password, setPassword] = React.useState('');
   const [confirmation, setConfirmation] = React.useState('');
-  const [error, setError] = React.useState<string>();
+  const [failure, setError] = React.useState<unknown>();
+  const error = failure ? message(failure) : undefined;
   const [working, setWorking] = React.useState(false);
   const valid = secret && email && displayName && password.length >= 12 && password === confirmation;
 
@@ -102,7 +108,7 @@ function BootstrapForm({client, onAuthenticated}: IdentityFormProps) {
     try {
       onAuthenticated(await client.bootstrap({secret, email: email.trim(), displayName: displayName.trim(), password}));
     } catch (caught) {
-      setError(message(caught));
+      setError(caught);
     } finally {
       setWorking(false);
     }
@@ -128,9 +134,11 @@ function BootstrapForm({client, onAuthenticated}: IdentityFormProps) {
 }
 
 function ChangePasswordForm({client, onAuthenticated}: IdentityFormProps) {
+  useLanguage();
   const [newPassword, setNewPassword] = React.useState('');
   const [confirmation, setConfirmation] = React.useState('');
-  const [error, setError] = React.useState<string>();
+  const [failure, setError] = React.useState<unknown>();
+  const error = failure ? message(failure) : undefined;
   const [working, setWorking] = React.useState(false);
   const valid = newPassword.length >= 12 && newPassword === confirmation;
 
@@ -141,7 +149,7 @@ function ChangePasswordForm({client, onAuthenticated}: IdentityFormProps) {
     try {
       onAuthenticated(await client.changePassword(newPassword));
     } catch (caught) {
-      setError(message(caught));
+      setError(caught);
     } finally {
       setWorking(false);
     }
@@ -161,6 +169,7 @@ function ChangePasswordForm({client, onAuthenticated}: IdentityFormProps) {
 }
 
 function IdentityShell({title, icon, children}: {title: string; icon: React.ComponentProps<typeof Icon>['name']; children: React.ReactNode}) {
+  useLanguage();
   return <Container text style={{padding: '3em 1em'}}>
     <LanguageMenuItem position="right" />
     <Header as="h1" icon textAlign="center"><Icon name={icon} />{title}</Header>
@@ -173,18 +182,20 @@ function AccountManager({client, currentUser, onLogout}: {
   currentUser: SelfHostedUser;
   onLogout(): void;
 }) {
+  useLanguage();
   const [users, setUsers] = React.useState<SelfHostedUser[]>([]);
   const [email, setEmail] = React.useState('');
   const [displayName, setDisplayName] = React.useState('');
   const [temporary, setTemporary] = React.useState<{email: string; password: string}>();
-  const [error, setError] = React.useState<string>();
+  const [failure, setError] = React.useState<unknown>();
+  const error = failure ? message(failure) : undefined;
   const [working, setWorking] = React.useState(false);
 
   const refresh = React.useCallback(async () => {
     try {
       setUsers(await client.listUsers());
     } catch (caught) {
-      setError(message(caught));
+      setError(caught);
     }
   }, [client]);
   React.useEffect(() => void refresh(), [refresh]);
@@ -195,7 +206,7 @@ function AccountManager({client, currentUser, onLogout}: {
     try {
       await operation();
     } catch (caught) {
-      setError(message(caught));
+      setError(caught);
     } finally {
       setWorking(false);
     }
@@ -221,7 +232,7 @@ function AccountManager({client, currentUser, onLogout}: {
     if (!recipientEmail) return;
     const replacement = users.find(candidate => candidate.id !== target.id && candidate.status === 'ACTIVE'
       && candidate.email.toLowerCase() === recipientEmail);
-    if (!replacement) throw new Error(t('Select an active replacement account.'));
+    if (!replacement) throw Object.assign(new Error(), {code: 'INVALID_REPLACEMENT_ACCOUNT'});
     const confirmation = window.prompt(t('This cannot be undone. Enter “{email}” to anonymize this account:',
       {email: target.email}))?.trim().toLowerCase();
     if (!confirmation) return;
@@ -259,9 +270,9 @@ function AccountManager({client, currentUser, onLogout}: {
         </Table.Row></Table.Header>
         <Table.Body>{users.map(account => <Table.Row key={account.id} disabled={account.status !== 'ACTIVE'}>
           <Table.Cell data-label={t('Email')}>{account.email || t('Anonymous account')}</Table.Cell>
-          <Table.Cell data-label={t('Display name')}>{account.displayName}</Table.Cell>
+          <Table.Cell data-label={t('Display name')}>{account.status === 'ANONYMIZED' ? t('Anonymized account') : account.displayName}</Table.Cell>
           <Table.Cell data-label={t('Account ID')}><div className="account-admin-id"><code>{account.id}</code><Button basic size="mini" type="button"
-            aria-label={`${t('Copy')} ${t('Account ID')} · ${account.email || account.displayName}`}
+            aria-label={`${t('Copy')} ${t('Account ID')} · ${account.email || (account.status === 'ANONYMIZED' ? t('Anonymized account') : account.displayName)}`}
             onClick={() => void navigator.clipboard?.writeText(account.id)}>{t('Copy')}</Button></div></Table.Cell>
           <Table.Cell data-label={t('Status')}>{t(account.status)}</Table.Cell>
           <Table.Cell data-label={t('Actions')}><div className="account-admin-actions">
@@ -292,6 +303,7 @@ function AccountManager({client, currentUser, onLogout}: {
 }
 
 export default function SelfHostedIdentity({client = selfHostedIdentityClient}: {client?: SelfHostedIdentityClient}) {
+  useLanguage();
   const location = useLocation();
   const history = useHistory();
   const [screen, setScreen] = React.useState<Screen>('loading');

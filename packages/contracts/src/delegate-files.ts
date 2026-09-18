@@ -1,4 +1,4 @@
-import type {FlagSnapshot} from './stage4.js';
+import type {FlagSnapshot, LocalizedNames} from './stage4.js';
 
 export const DELEGATE_FILE_TYPES = ['WORKING_PAPER', 'DIRECTIVE_DRAFT', 'RESOLUTION_DRAFT'] as const;
 export type DelegateFileType = typeof DELEGATE_FILE_TYPES[number];
@@ -14,6 +14,7 @@ export interface DelegateFileShare {
 }
 
 export interface DelegatePublishedFile {
+  submissionSource: 'DELEGATE_PORTAL' | 'CHAIR' | 'ACCOUNT' | 'LEGACY';
   id: string;
   logicalName: string;
   submitterDisplayName: string | null;
@@ -67,8 +68,8 @@ export interface DelegateFileAvailableEvent {
 
 export interface FileRejectionType {
   id: string;
-  label: string;
-  message: string;
+  label: LocalizedNames;
+  message: LocalizedNames;
   custom: boolean;
 }
 export interface DelegateFileSettings {

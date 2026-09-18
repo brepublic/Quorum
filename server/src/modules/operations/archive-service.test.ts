@@ -11,7 +11,7 @@ const committeeId = '20000000-0000-4000-8000-000000000001';
 function database(options: {ownerId?: string; status?: string; failSection?: string} = {}) {
   const query = vi.fn(async (sql: string) => {
     if (sql.startsWith('BEGIN') || sql === 'COMMIT' || sql === 'ROLLBACK') return {rows: []};
-    if (sql.includes('FROM committees WHERE id=$1')) return {rows: [{id: committeeId,
+    if (sql.startsWith('SELECT id,owner_user_id,name,chair_label,topic,conference,')) return {rows: [{id: committeeId,
       owner_user_id: options.ownerId ?? auth.user.id, name: '委员会', chair_label: '主席', topic: '议题', conference: '大会',
       visibility: 'PRIVATE', operation_mode: 'DELEGATE_OPERATED', status: options.status ?? 'ARCHIVED', revision: 4,
       created_at: new Date('2026-08-12T00:00:00Z'), archived_at: new Date('2026-08-13T00:00:00Z')}]};

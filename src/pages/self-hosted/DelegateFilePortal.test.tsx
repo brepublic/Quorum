@@ -1,3 +1,4 @@
+import {setLanguage} from '../../i18n';
 import * as React from 'react';
 import {act} from 'react';
 import {createRoot, type Root} from 'react-dom/client';
@@ -17,7 +18,7 @@ class FakeEventSource {
 }
 
 let host: HTMLDivElement; let root: Root;
-beforeEach(() => {
+beforeEach(() => {setLanguage('zh-CN');
   host = document.createElement('div'); document.body.append(host); root = createRoot(host);
   window.location.hash = '#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
   vi.stubGlobal('EventSource', FakeEventSource);
@@ -108,7 +109,7 @@ describe('delegate file portal', () => {
   });
 
   it('shows the exact SSE publication banner and dismisses it on matching download', async () => {
-    const file = {id: 'file', logicalName: '决议草案 1.1', submitterDisplayName: '中国', fileType: 'RESOLUTION_DRAFT' as const,
+    const file = {id: 'file', submissionSource: 'DELEGATE_PORTAL' as const, logicalName: '决议草案 1.1', submitterDisplayName: '中国', fileType: 'RESOLUTION_DRAFT' as const,
       submittedAt: '2026-08-27T10:00:00.000Z', publishedAt: '2026-08-27T10:01:00.000Z', revision: 2};
     await act(async () => root.render(<DelegateFilePortal api={client({bootstrapDelegatePortal: async () => ({
       committeeId: 'committee', committeeLanguage: 'zh-CN' as const, committeeName: '裁军委员会', shareId: 'share', claimedSeat: {id: 'seat', displayName: '法国'},

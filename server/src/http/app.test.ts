@@ -126,7 +126,7 @@ describe('HTTP infrastructure contract', () => {
     expect(response.status).toBe(404);
     expect(response.body).toEqual({
       error: {
-        code: 'NOT_FOUND',
+        code: 'NOT_FOUND', reason: 'NOT_FOUND',
         message: 'Resource not found.',
         requestId: response.headers.get('x-request-id')
       }

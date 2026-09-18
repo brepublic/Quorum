@@ -57,6 +57,13 @@ export function motionContentName(names: LocalizedNames, interfaceLanguage: Cont
   return names[interfaceLanguage]?.trim() ? names[interfaceLanguage]! : committeeContentName(names, committeeLanguage);
 }
 
+export function delegateFileTypeName(type: import('./delegate-files.js').DelegateFileType, language: ContentLanguage): string {
+  const names = {WORKING_PAPER: {en: 'Working paper', 'zh-CN': '工作文件'},
+    DIRECTIVE_DRAFT: {en: 'Draft directive', 'zh-CN': '指令草案'},
+    RESOLUTION_DRAFT: {en: 'Draft resolution', 'zh-CN': '决议草案'}};
+  return names[type][language];
+}
+
 export type AutomaticContentName =
   | {kind: 'FILE'; fileType: import('./delegate-files.js').DelegateFileType; sessionOrdinal: number; ordinal: number}
   | {kind: 'SESSION'; ordinal: number}
@@ -76,11 +83,7 @@ export function formatCommitteeContent(resource: AutomaticContentName, language:
   if ('customTitle' in resource && resource.customTitle !== null) return resource.customTitle;
   const zh = language === 'zh-CN';
   switch (resource.kind) {
-    case 'FILE': {
-      const labels = {WORKING_PAPER: zh ? '工作文件' : 'Working paper',
-        DIRECTIVE_DRAFT: zh ? '指令草案' : 'Draft directive', RESOLUTION_DRAFT: zh ? '决议草案' : 'Draft resolution'};
-      return `${labels[resource.fileType]} ${positiveOrdinal(resource.sessionOrdinal)}.${positiveOrdinal(resource.ordinal)}`;
-    }
+    case 'FILE': return `${delegateFileTypeName(resource.fileType, language)} ${positiveOrdinal(resource.sessionOrdinal)}.${positiveOrdinal(resource.ordinal)}`;
     case 'SESSION': return zh ? `第${positiveOrdinal(resource.ordinal)}会期` : `Session ${positiveOrdinal(resource.ordinal)}`;
     case 'GENERAL_SPEAKERS_LIST': return zh ? '主发言名单' : "General Speakers' List";
     case 'MODERATED_CAUCUS': return resource.topic || (zh ? '未命名有主持核心磋商' : 'Untitled caucus');

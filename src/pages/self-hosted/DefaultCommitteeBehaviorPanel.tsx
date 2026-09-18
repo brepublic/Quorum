@@ -1,24 +1,28 @@
+import {useLanguage} from '../../i18n';
+import {apiErrorText} from '../../i18n';
 import * as React from 'react';
 import {Button, Checkbox, Form, Header, Message, Segment} from 'semantic-ui-react';
 import {t} from '../../i18n';
 import type {DefaultCommitteeBehavior, SelfHostedIdentityClient} from '../../services/self-hosted-identity';
 
 function message(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return apiErrorText(error);
 }
 
 export default function DefaultCommitteeBehaviorPanel({client}: {client: SelfHostedIdentityClient}) {
+  useLanguage();
   const [settings, setSettings] = React.useState<DefaultCommitteeBehavior>();
-  const [error, setError] = React.useState<string>();
+  const [failure, setError] = React.useState<unknown>();
+  const error = failure ? message(failure) : undefined;
   const [saving, setSaving] = React.useState(false);
   const load = React.useCallback(async () => {
-    try { setSettings(await client.getDefaultCommitteeBehavior()); } catch (caught) { setError(message(caught)); }
+    try { setSettings(await client.getDefaultCommitteeBehavior()); } catch (caught) { setError(caught); }
   }, [client]);
   React.useEffect(() => { void load(); }, [load]);
   const save = async () => {
     if (!settings) return;
     setSaving(true); setError(undefined);
-    try { setSettings(await client.updateDefaultCommitteeBehavior(settings)); } catch (caught) { setError(message(caught)); }
+    try { setSettings(await client.updateDefaultCommitteeBehavior(settings)); } catch (caught) { setError(caught); }
     finally { setSaving(false); }
   };
   return <Segment loading={!settings || saving}>

@@ -208,9 +208,11 @@ integration('PostgreSQL identity integration', () => {
     await pool?.query(
       `INSERT INTO committees
         (id, owner_user_id, name, visibility, operation_mode, active_rule_package_version_id,
-         source_committee_template_id, country_template_key, temporary_template)
-       VALUES ($1, $2, 'Transfer committee', 'PRIVATE', 'CHAIR_OPERATED', $3, $4, $5, false)`,
-      [committeeId, target.user.id, versionId, committeeTemplateId, `custom:${countryTemplateId}`]
+         source_committee_template_id, country_template_key, temporary_template, committee_language, content_snapshot)
+       VALUES ($1, $2, 'Transfer committee', 'PRIVATE', 'CHAIR_OPERATED', $3, $4, $5, false, 'en', $6)`,
+      [committeeId, target.user.id, versionId, committeeTemplateId, `custom:${countryTemplateId}`,
+        {schemaVersion: 1, initialRulePackageVersionId: versionId,
+          countryTemplate: {countries: []}, committeeTemplate: {members: []}}]
     );
     await identity.disableUser(adminAuth, target.user.id, context);
 
@@ -219,7 +221,7 @@ integration('PostgreSQL identity integration', () => {
       confirmationEmail: target.user.email
     }, 'account-anonymization', context);
     expect(result.transferred).toEqual({committees: 1, countryTemplates: 1, committeeTemplates: 1, rulePackages: 1});
-    expect(result.user).toMatchObject({email: '', displayName: '匿名账号', status: 'ANONYMIZED'});
+    expect(result.user).toMatchObject({email: '', displayName: '', status: 'ANONYMIZED'});
 
     const stored = await pool?.query(
       `SELECT u.email, u.display_name, u.status, u.anonymized_at,
@@ -227,7 +229,7 @@ integration('PostgreSQL identity integration', () => {
         EXISTS (SELECT 1 FROM sessions s WHERE s.user_id = u.id) AS has_session
        FROM users u WHERE u.id = $1`, [target.user.id]
     );
-    expect(stored?.rows[0]).toMatchObject({email: null, display_name: '匿名账号', status: 'ANONYMIZED',
+    expect(stored?.rows[0]).toMatchObject({email: null, display_name: '', status: 'ANONYMIZED',
       has_credential: false, has_session: false});
     expect(stored?.rows[0].anonymized_at).toBeInstanceOf(Date);
     const owners = await pool?.query(

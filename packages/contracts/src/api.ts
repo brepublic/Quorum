@@ -9,9 +9,8 @@ export interface ApiSuccess<T> {
   meta: ApiMeta;
 }
 
-export type ApiErrorReason = 'INVALID_COMMITTEE_LANGUAGE' | 'MISSING_CONTENT_TRANSLATION'
-  | 'SOURCE_REVISION_CHANGED' | 'UNKNOWN_FIXED_MEMBER';
-export interface ApiErrorParams {language?: 'zh-CN' | 'en'}
+export type ApiErrorReason = import('./error-localization.js').LocalizedErrorReason;
+export interface ApiErrorParams {language?: 'zh-CN' | 'en'; formats?: string}
 export interface ApiFieldError {field: string; reason: ApiErrorReason; params?: ApiErrorParams}
 
 export interface ApiErrorBody {

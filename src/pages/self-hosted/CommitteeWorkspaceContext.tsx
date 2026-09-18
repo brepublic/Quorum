@@ -1,3 +1,5 @@
+import {useLanguage} from '../../i18n';
+import {apiErrorText} from '../../i18n';
 import * as React from 'react';
 import type {CommitteeWorkspaceSnapshot} from '@quorum/contracts';
 import {useLocation} from 'react-router-dom';
@@ -6,7 +8,7 @@ import {SelfHostedApiError, type SelfHostedApi} from '../../services/self-hosted
 import type {RealtimeStatus} from './WorkspaceNavigation';
 
 function errorText(error: unknown): string {
-  return t(error instanceof Error ? error.message : String(error));
+  return t(apiErrorText(error));
 }
 
 interface CommitteeWorkspaceValue {
@@ -23,13 +25,15 @@ const CommitteeWorkspaceContext = React.createContext<CommitteeWorkspaceValue | 
 export function CommitteeWorkspaceProvider({committeeId, api, children}: React.PropsWithChildren<{
   committeeId: string; api: SelfHostedApi;
 }>) {
+  useLanguage();
   const location = useLocation();
   const pathname = location.pathname;
   const pathnameRef = React.useRef(pathname);
   const [snapshot, setSnapshot] = React.useState<CommitteeWorkspaceSnapshot>();
   const [streamAfter, setStreamAfter] = React.useState<number>();
   const [realtimeStatus, setRealtimeStatus] = React.useState<RealtimeStatus>('CONNECTING');
-  const [error, setError] = React.useState<string>();
+  const [failure, setError] = React.useState<unknown>();
+  const error = failure ? errorText(failure) : undefined;
   const [working, setWorking] = React.useState(false);
 
   React.useEffect(() => {
@@ -46,7 +50,7 @@ export function CommitteeWorkspaceProvider({committeeId, api, children}: React.P
       setError(undefined);
       return next;
     } catch (caught) {
-      if (pathnameRef.current === requestPathname) setError(errorText(caught));
+      if (pathnameRef.current === requestPathname) setError(caught);
       return undefined;
     }
   }, [api, committeeId]);
@@ -77,11 +81,11 @@ export function CommitteeWorkspaceProvider({committeeId, api, children}: React.P
       if (caught instanceof SelfHostedApiError && caught.code === 'REVISION_CONFLICT') {
         await refresh();
         if (pathnameRef.current === operationPathname) {
-          setError(t('Committee data changed. Review the latest state and try again.'));
+          setError(caught);
         }
       } else {
         await refresh();
-        if (pathnameRef.current === operationPathname) setError(errorText(caught));
+        if (pathnameRef.current === operationPathname) setError(caught);
       }
     } finally {
       setWorking(false);

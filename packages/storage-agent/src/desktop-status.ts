@@ -12,22 +12,22 @@ export function desktopFiles(remote: StorageAgentFileStatus[], state: AgentDirec
     const tracked = state.files[file.fileEntryId];
     const ready = Boolean(tracked && tracked.blobId === file.blobId && verified.has(file.fileEntryId));
     const deleted = file.status === 'DELETED';
-    let local = deleted ? (tracked ? '待删除' : '已删除') : ready
-      ? ({DELETED: '已删除', UPLOAD_COMPLETE: '已就绪 - 未提交审核', PENDING_REVIEW: '已就绪 - 待审核', PUBLISHED: '已就绪 - 公开可见', REJECTED: '已就绪 - 已驳回'}[file.status] ?? '状态未知')
-      : tracked ? '本地变化待同步' : '待下载';
-    let cache = !fresh ? '状态未知' : file.cacheState === 'READY' || file.cacheState === 'REVIEW_PINNED'
-      ? '服务器缓存可用' : file.cacheState === 'FETCHING' ? '等待回传' : file.cacheState === 'FAILED' ? '回传失败'
+    let local = deleted ? (tracked ? 'PENDING_DELETE' : 'DELETED') : ready
+      ? ({DELETED: 'DELETED', UPLOAD_COMPLETE: 'READY_UNSUBMITTED', PENDING_REVIEW: 'READY_REVIEW', PUBLISHED: 'READY_PUBLISHED', REJECTED: 'READY_REJECTED'}[file.status] ?? 'UNKNOWN')
+      : tracked ? 'LOCAL_CHANGED' : 'PENDING_DOWNLOAD';
+    let cache = !fresh ? 'UNKNOWN' : file.cacheState === 'READY' || file.cacheState === 'REVIEW_PINNED'
+      ? 'CACHE_READY' : file.cacheState === 'FETCHING' ? 'PENDING_REFILL' : file.cacheState === 'FAILED' ? 'REFILL_FAILED'
       : file.cacheState === 'MISSING' || file.cacheState === 'EVICTING'
-        ? ready ? '服务器无缓存 · 本地可用' : '服务器无缓存' : '状态未知';
+        ? ready ? 'CACHE_MISSING_LOCAL_READY' : 'CACHE_MISSING' : 'UNKNOWN';
     if (deleted) cache = '—';
-    if (!fresh && ready && !deleted) local = '本地已保存 · 审核状态未知';
+    if (!fresh && ready && !deleted) local = 'LOCAL_READY_REVIEW_UNKNOWN';
     rows.set(file.fileEntryId, {id: file.fileEntryId, name: file.logicalName, size: file.sizeBytes,
       local, cache, bytes: 0, total: 0, progress: false, deleted});
   }
   for (const pending of Object.values(state.pendingUploads)) {
     const row = rows.get(pending.fileEntryId) ?? {id: pending.fileEntryId, name: pending.relativePath,
-      size: pending.sizeBytes, local: '', cache: '状态未知', bytes: 0, total: 0, progress: false, deleted: false};
-    row.local = '待上传'; rows.set(row.id, row);
+      size: pending.sizeBytes, local: '', cache: 'UNKNOWN', bytes: 0, total: 0, progress: false, deleted: false};
+    row.local = 'PENDING_UPLOAD'; rows.set(row.id, row);
   }
   for (const task of [...tasks].filter(task => !tasks.some(other => other.fileEntryId === task.fileEntryId
     && other.type === task.type && other.blobId === task.blobId && other.sequence > task.sequence))
@@ -35,34 +35,34 @@ export function desktopFiles(remote: StorageAgentFileStatus[], state: AgentDirec
     if (task.status === 'COMPLETED' || task.status === 'CANCELLED') continue;
     let row = rows.get(task.fileEntryId);
     if (!row) {row = {id: task.fileEntryId, name: task.logicalName ?? task.fileEntryId,
-      size: task.expectedSizeBytes ?? 0, local: '待下载', cache: '状态未知', bytes: 0, total: 0, progress: false, deleted: false}; rows.set(row.id, row);}
+      size: task.expectedSizeBytes ?? 0, local: 'PENDING_DOWNLOAD', cache: 'UNKNOWN', bytes: 0, total: 0, progress: false, deleted: false}; rows.set(row.id, row);}
     const file = remote.find(f => f.fileEntryId === task.fileEntryId);
     if (file?.status === 'DELETED' && task.type !== 'DELETE_FILE') continue;
     if (file?.blobId && task.blobId && file.blobId !== task.blobId && task.type !== 'UPLOAD_BLOB') continue;
     const failed = task.status === 'FAILED';
-    if (task.type === 'FETCH_BLOB_TO_CACHE') {if (fresh) row.cache = failed ? '回传失败' : '等待回传';}
-    else row.local = failed ? '失败' : task.status === 'RETRY' ? '等待重试' : task.type === 'DELETE_FILE' ? '待删除'
-      : task.type === 'UPLOAD_BLOB' ? '待上传' : '待下载';
+    if (task.type === 'FETCH_BLOB_TO_CACHE') {if (fresh) row.cache = failed ? 'REFILL_FAILED' : 'PENDING_REFILL';}
+    else row.local = failed ? 'FAILED' : task.status === 'RETRY' ? 'RETRYING' : task.type === 'DELETE_FILE' ? 'PENDING_DELETE'
+      : task.type === 'UPLOAD_BLOB' ? 'PENDING_UPLOAD' : 'PENDING_DOWNLOAD';
   }
   for (const activity of activities.values()) {
     let row = rows.get(activity.fileEntryId);
     if (!row) {row = {id: activity.fileEntryId, name: activity.name ?? activity.fileEntryId, size: activity.total,
-      local: '状态待确认', cache: '状态未知', bytes: 0, total: 0, progress: false, deleted: false}; rows.set(row.id, row);}
+      local: 'UNCONFIRMED', cache: 'UNKNOWN', bytes: 0, total: 0, progress: false, deleted: false}; rows.set(row.id, row);}
     if (activity.phase === 'complete') continue;
     const refill = activity.type === 'FETCH_BLOB_TO_CACHE';
-    if (activity.phase === 'failed') {if (refill) row.cache = '回传失败'; else row.local = '等待重试'; continue;}
-    if (refill) row.cache = activity.phase === 'verify' ? '回传校验中' : '正在回传';
-    else row.local = activity.phase === 'verify' ? '校验中' : activity.type === 'UPLOAD_BLOB' ? '上传中'
-      : activity.type === 'DELETE_FILE' ? '待删除' : '下载中';
+    if (activity.phase === 'failed') {if (refill) row.cache = 'REFILL_FAILED'; else row.local = 'RETRYING'; continue;}
+    if (refill) row.cache = activity.phase === 'verify' ? 'REFILL_VERIFYING' : 'REFILLING';
+    else row.local = activity.phase === 'verify' ? 'VERIFYING' : activity.type === 'UPLOAD_BLOB' ? 'UPLOADING'
+      : activity.type === 'DELETE_FILE' ? 'PENDING_DELETE' : 'DOWNLOADING';
     row.bytes = activity.bytes; row.total = activity.total; row.progress = activity.type !== 'DELETE_FILE';
   }
   for (const conflict of Object.values(state.conflicts)) {
     const id = conflict.change.fileEntryId;
     const row = id ? rows.get(id) : [...rows.values()].find(row => row.name === conflict.relativePath);
-    if (row) row.local = '存在冲突';
+    if (row) row.local = 'CONFLICT';
     else rows.set(id ?? conflict.conflictId, {id: id ?? conflict.conflictId, name: conflict.relativePath,
       size: conflict.change.kind === 'UPSERT' ? conflict.change.sizeBytes : 0,
-      local: '存在冲突', cache: '状态未知', bytes: 0, total: 0, progress: false, deleted: false});
+      local: 'CONFLICT', cache: 'UNKNOWN', bytes: 0, total: 0, progress: false, deleted: false});
   }
   return [...rows.values()].sort((a,b) => Number(a.deleted)-Number(b.deleted) || a.name.localeCompare(b.name));
 }

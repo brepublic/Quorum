@@ -1,3 +1,7 @@
+import {apiErrorText} from '../../i18n';
+import {delegateFileTypeName, type ContentLanguage} from '@quorum/contracts';
+import {t, useLanguage} from '../../i18n';
+import {getLanguage, LANGUAGE_OPTIONS} from '../../i18n';
 import * as React from 'react';
 import {Prompt} from 'react-router-dom';
 import type {DefaultFileRejectionSettings, DelegateFileSettings, DelegateFileType} from '@quorum/contracts';
@@ -5,24 +9,27 @@ import {Button, Form, Header, Message, Modal, Segment} from 'semantic-ui-react';
 import {selfHostedApi, type SelfHostedApi} from '../../services/self-hosted-api';
 
 const FILE_TYPES: Array<[DelegateFileType, string]> = [
-  ['WORKING_PAPER', '工作文件'], ['DIRECTIVE_DRAFT', '指令草案'], ['RESOLUTION_DRAFT', '决议草案']
+  ['WORKING_PAPER', "Working paper"], ['DIRECTIVE_DRAFT', "Draft directive"], ['RESOLUTION_DRAFT', "resolution"]
 ];
 
-export function DelegateFileSettingsPanel({committeeId, api = selfHostedApi, readOnly = false}: {
-  committeeId?: string; api?: SelfHostedApi; readOnly?: boolean;
+export function DelegateFileSettingsPanel({committeeId, committeeLanguage, api = selfHostedApi, readOnly = false}: {
+  committeeId?: string; committeeLanguage?: ContentLanguage; api?: SelfHostedApi; readOnly?: boolean;
 }) {
+  useLanguage();
+  const [contentLanguage, setContentLanguage] = React.useState(() => committeeLanguage ?? getLanguage());
   const [settings, setSettings] = React.useState<DefaultFileRejectionSettings | DelegateFileSettings>();
   const [extensions, setExtensions] = React.useState<Record<string, string>>({});
   const [working, setWorking] = React.useState(false);
-  const [error, setError] = React.useState(''); const [saved, setSaved] = React.useState(false);
+  const [failure, setError] = React.useState<unknown>();
+  const error = failure ? apiErrorText(failure) : undefined; const [saved, setSaved] = React.useState(false);
   const [dirty, setDirty] = React.useState(false); const [reload, setReload] = React.useState(false);
   const load = React.useCallback(async () => {
-    setWorking(true); setError('');
+    setWorking(true); setError(undefined);
     try {
       const next = committeeId ? await api.getDelegateFileSettings(committeeId) : await api.getDefaultFileRejectionTypes();
       setSettings(next); setDirty(false); setSaved(false);
       if (committeeId) setExtensions(Object.fromEntries(FILE_TYPES.map(([type]) => [type, (next as DelegateFileSettings).allowedExtensions[type].join(', ')])));
-    } catch (caught) {setError(caught instanceof Error ? caught.message : String(caught));}
+    } catch (caught) {setError(caught);}
     finally {setWorking(false);}
   }, [api, committeeId]);
   React.useEffect(() => {void load();}, [load]);
@@ -33,7 +40,7 @@ export function DelegateFileSettingsPanel({committeeId, api = selfHostedApi, rea
   const changed = () => {setDirty(true); setSaved(false);};
   const save = async () => {
     if (!settings) return;
-    setWorking(true); setError(''); setSaved(false);
+    setWorking(true); setError(undefined); setSaved(false);
     try {
       const next = committeeId ? await api.updateDelegateFileSettings(committeeId, {...settings,
         allowedExtensions: Object.fromEntries(FILE_TYPES.map(([type]) => [type,
@@ -41,47 +48,49 @@ export function DelegateFileSettingsPanel({committeeId, api = selfHostedApi, rea
         : await api.updateDefaultFileRejectionTypes(settings);
       setSettings(next); setDirty(false); setSaved(true);
       if (committeeId) setExtensions(Object.fromEntries(FILE_TYPES.map(([type]) => [type, (next as DelegateFileSettings).allowedExtensions[type].join(', ')])));
-    } catch (caught) {setError(caught instanceof Error ? caught.message : String(caught));}
+    } catch (caught) {setError(caught);}
     finally {setWorking(false);}
   };
   return <Segment className="delegate-file-settings" loading={working}>
-    <Prompt when={dirty} message="放弃未保存的文件设置修改？" />
-    <Header as="h2">{committeeId ? '驳回类型管理' : '默认驳回类型'}</Header>
-    {!committeeId && <p>用于新建委员会。</p>}
+    <Prompt when={dirty} message={t("Discard unsaved file settings?")} />
+    <Header as="h2">{committeeId ? t("Rejection types") : t("Default rejection types")}</Header>
+    {!committeeId && <p>{t("Used for new committees.")}</p>}
     {error && <Message error content={error} />}
-    {saved && <Message positive content="已保存" />}
+    {saved && <Message positive content={t("Saved")} />}
     {settings && <Form onSubmit={() => void save()}>
+      <Form.Select label={t("Content language")} value={contentLanguage} options={LANGUAGE_OPTIONS.map(item => ({...item}))}
+        onChange={(_, data) => setContentLanguage(data.value as typeof contentLanguage)} />
       {settings.rejectionTypes.map((item, index) => <Segment key={item.id}>
         <Form.Group widths="equal">
-          <Form.Input label="类型名称" aria-label={`类型名称 ${index + 1}`} required maxLength={100} value={item.label} disabled={readOnly}
+          <Form.Input label={t("Type name")} aria-label={`${t('Type name')} ${index + 1}`} required maxLength={100} value={item.label[contentLanguage] ?? ''} disabled={readOnly}
             onChange={(_, data) => {const label = data.value; changed(); setSettings({...settings,
-              rejectionTypes: settings.rejectionTypes.map(row => row.id === item.id ? {...row, label} : row)});}} />
-          <Form.Select label="提示方式" value={item.custom ? 'custom' : 'preset'} disabled={readOnly} options={[
-            {key: 'preset', value: 'preset', text: '固定消息'}, {key: 'custom', value: 'custom', text: '主席自行输入'}]}
+              rejectionTypes: settings.rejectionTypes.map(row => row.id === item.id ? {...row, label: {...row.label, [contentLanguage]: label}} : row)});}} />
+          <Form.Select label={t("Message mode")} value={item.custom ? 'custom' : 'preset'} disabled={readOnly} options={[
+            {key: 'preset', value: 'preset', text: t("Preset message")}, {key: 'custom', value: 'custom', text: t("Chair enters a message")}]}
             onChange={(_, data) => {changed(); setSettings({...settings, rejectionTypes: settings.rejectionTypes.map(row =>
               row.id === item.id ? {...row, custom: data.value === 'custom'} : row)});}} />
         </Form.Group>
-        {!item.custom && <Form.TextArea label="代表端提示消息" aria-label={`代表端提示消息 ${index + 1}`} required maxLength={2000}
-          value={item.message} disabled={readOnly} onChange={(_, data) => {const message = String(data.value); changed(); setSettings({...settings,
-            rejectionTypes: settings.rejectionTypes.map(row => row.id === item.id ? {...row, message} : row)});}} />}
+        {!item.custom && <Form.TextArea label={t("Message to delegate")} aria-label={`${t('Message to delegate')} ${index + 1}`} required maxLength={2000}
+          value={item.message[contentLanguage] ?? ''} disabled={readOnly} onChange={(_, data) => {const message = String(data.value); changed(); setSettings({...settings,
+            rejectionTypes: settings.rejectionTypes.map(row => row.id === item.id ? {...row, message: {...row.message, [contentLanguage]: message}} : row)});}} />}
         {!readOnly && <Button type="button" basic negative size="small" disabled={settings.rejectionTypes.length === 1}
-          onClick={() => {changed(); setSettings({...settings, rejectionTypes: settings.rejectionTypes.filter(row => row.id !== item.id)});}}>删除类型</Button>}
+          onClick={() => {changed(); setSettings({...settings, rejectionTypes: settings.rejectionTypes.filter(row => row.id !== item.id)});}}>{t("Delete type")}</Button>}
       </Segment>)}
-      {!readOnly && <Button type="button" basic icon="plus" content="添加驳回类型" disabled={settings.rejectionTypes.length >= 30}
+      {!readOnly && <Button type="button" basic icon="plus" content={t("Add rejection type")} disabled={settings.rejectionTypes.length >= 30}
         onClick={() => {changed(); setSettings({...settings, rejectionTypes: [...settings.rejectionTypes,
-          {id: crypto.randomUUID(), label: '', message: '', custom: false}]});}} />}
+          {id: crypto.randomUUID(), label: {}, message: {}, custom: false}]});}} />}
       {committeeId && <>
-        <Header as="h2">文件格式设置</Header>
-        {FILE_TYPES.map(([type, label]) => <Form.Input key={type} id={`file-extensions-${type}`} label={`${label}允许的后缀名`} value={extensions[type] ?? ''}
+        <Header as="h2">{t("File format settings")}</Header>
+        {FILE_TYPES.map(([type]) => <Form.Input key={type} id={`file-extensions-${type}`} label={t('Allowed extensions for {type}', {type: delegateFileTypeName(type, committeeLanguage ?? contentLanguage)})} value={extensions[type] ?? ''}
           disabled={readOnly} required placeholder="docx, doc, pdf" onChange={(_, data) => {changed(); setExtensions({...extensions, [type]: data.value});}} />)}
       </>}
       <div className="delegate-file-settings-actions">
-        {!readOnly && <Button primary disabled={working || !dirty}>保存设置</Button>}
-        <Button type="button" disabled={working} onClick={() => dirty ? setReload(true) : void load()}>重新载入</Button>
+        {!readOnly && <Button primary disabled={working || !dirty}>{t("Save settings")}</Button>}
+        <Button type="button" disabled={working} onClick={() => dirty ? setReload(true) : void load()}>{t("Reload")}</Button>
       </div>
     </Form>}
-    {!settings && !working && <Button onClick={() => void load()}>重试</Button>}
-    <Modal size="tiny" open={reload} onClose={() => setReload(false)}><Modal.Header>放弃未保存的修改？</Modal.Header>
-      <Modal.Actions><Button onClick={() => setReload(false)}>继续编辑</Button><Button negative onClick={() => {setReload(false); void load();}}>放弃修改</Button></Modal.Actions></Modal>
+    {!settings && !working && <Button onClick={() => void load()}>{t("Retry")}</Button>}
+    <Modal size="tiny" open={reload} onClose={() => setReload(false)}><Modal.Header>{t("Discard unsaved changes?")}</Modal.Header>
+      <Modal.Actions><Button onClick={() => setReload(false)}>{t("Keep editing")}</Button><Button negative onClick={() => {setReload(false); void load();}}>{t("Discard changes")}</Button></Modal.Actions></Modal>
   </Segment>;
 }

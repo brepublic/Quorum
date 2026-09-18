@@ -1,8 +1,11 @@
+import {setLanguage} from '../../i18n';
 import * as React from 'react';
 import {act} from 'react';
 import {createRoot} from 'react-dom/client';
-import {afterEach, describe, expect, it, vi} from 'vitest';
+import {beforeEach, afterEach, describe, expect, it, vi} from 'vitest';
 import OperationsPanel from './OperationsPanel';
+
+beforeEach(() => setLanguage('zh-CN'));
 
 (globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT: boolean}).IS_REACT_ACT_ENVIRONMENT = true;
 let container: HTMLDivElement | undefined;

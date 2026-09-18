@@ -1,10 +1,11 @@
+import type {ApiErrorBody} from '@quorum/contracts';
 import {createReadStream} from 'node:fs';
 import type {StorageAgentConflict, StorageAgentLocalChange, StorageAgentLocalChangeResult, StorageAgentPairingResult,
   StorageAgentTask, StorageAgentTaskPage, StorageAgentFileStatusPage, StorageManifestPage} from '@quorum/contracts';
 import {AgentApiError} from './errors.js';
 
 interface SuccessEnvelope<T> {data: T; meta: {requestId: string}}
-interface ErrorEnvelope {error?: {code?: string; message?: string; details?: unknown}}
+interface ErrorEnvelope {error?: Partial<ApiErrorBody['error']>}
 type Fetch = typeof fetch;
 
 function serverUrl(value: string): URL {
@@ -21,7 +22,7 @@ async function error(response: Response): Promise<AgentApiError> {
   let body: ErrorEnvelope = {};
   try { body = await response.json() as ErrorEnvelope; } catch { /* bounded generic error */ }
   return new AgentApiError(response.status, body.error?.code ?? 'HTTP_ERROR',
-    body.error?.message ?? 'Storage Agent request failed.', body.error?.details);
+    body.error?.message ?? 'Storage Agent request failed.', body.error?.details, body.error);
 }
 
 export class StorageAgentHttpClient {

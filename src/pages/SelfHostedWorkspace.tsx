@@ -1,3 +1,4 @@
+import {useLanguage} from '../i18n';
 import * as React from 'react';
 import type {
   ContentLanguage,
@@ -17,7 +18,7 @@ import {Link, Redirect, Route, Switch, useHistory, useLocation, useParams} from 
 import {Button, Card, Checkbox, Confirm, Container, Divider, Form, Grid, Header, Icon, Label, List, Menu, Message, Modal, Pagination, Popup, Segment, Table} from 'semantic-ui-react';
 import Loading from '../components/Loading';
 import {CountryFlagDisplay} from '../components/CountryFlagDisplay';
-import {LanguageMenuItem, LANGUAGE_OPTIONS, getLanguage, t} from '../i18n';
+import {apiErrorText, LanguageMenuItem, LANGUAGE_OPTIONS, getLanguage, t} from '../i18n';
 import {selfHostedApi, SelfHostedApiError, type SelfHostedApi} from '../services/self-hosted-api';
 import {selfHostedIdentityClient, type SelfHostedIdentityClient, type SelfHostedUser} from '../services/self-hosted-identity';
 import ProceedingsPanel from './self-hosted/ProceedingsPanel';
@@ -34,25 +35,15 @@ import {
   TemplatePreview
 } from './self-hosted/TemplateManagers';
 
-function errorText(error: unknown): string {
-  if (error instanceof SelfHostedApiError && error.localization?.reason) {
-    const messages = {
-      INVALID_COMMITTEE_LANGUAGE: 'Choose a supported committee language',
-      MISSING_CONTENT_TRANSLATION: 'The selected content is missing translations',
-      SOURCE_REVISION_CHANGED: 'The selected source changed; refresh the preview',
-      UNKNOWN_FIXED_MEMBER: 'Select a member from the committee directory'
-    };
-    const message = messages[error.localization.reason];
-    if (message) return t(message);
-  }
-  return error instanceof Error ? error.message : String(error);
-}
+const errorText = apiErrorText;
 
 function Flag({seat}: {seat: Pick<Stage4CommitteeSeat, 'flag' | 'displayName'>}) {
+  useLanguage();
   return <CountryFlagDisplay flag={seat.flag} />;
 }
 
 function AppMenu({user, logout}: {user: SelfHostedUser; logout(): void}) {
+  useLanguage();
   return <Menu>
     <Menu.Item header as={Link} to="/committees">Quorum</Menu.Item>
     <Menu.Menu position="right"><AccountMenu user={user} logout={logout} /></Menu.Menu>
@@ -60,6 +51,7 @@ function AppMenu({user, logout}: {user: SelfHostedUser; logout(): void}) {
 }
 
 function CommitteeList({api, user, logout}: {api: SelfHostedApi; user: SelfHostedUser; logout(): void}) {
+  useLanguage();
   const history = useHistory(); const [committees, setCommittees] = React.useState<Awaited<ReturnType<SelfHostedApi['listCommittees']>>>([]);
   const [deleteTarget, setDeleteTarget] = React.useState<Awaited<ReturnType<SelfHostedApi['listCommittees']>>[number]>();
   const [deleting, setDeleting] = React.useState(false);
@@ -195,12 +187,14 @@ function CommitteeList({api, user, logout}: {api: SelfHostedApi; user: SelfHoste
 }
 
 export function SelfHostedPublicCommittees({api = selfHostedApi}: {api?: SelfHostedApi}) {
+  useLanguage();
   const [committees, setCommittees] = React.useState<Awaited<ReturnType<SelfHostedApi['listCommittees']>>>([]);
-  const [error, setError] = React.useState<string>(); const [loading, setLoading] = React.useState(true);
+  const [failure, setError] = React.useState<unknown>();
+  const error = failure ? errorText(failure) : undefined; const [loading, setLoading] = React.useState(true);
   React.useEffect(() => {
     let active = true;
     void api.listCommittees().then(items => { if (active) setCommittees(items); })
-      .catch(caught => { if (active) setError(errorText(caught)); })
+      .catch(caught => { if (active) setError(caught); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [api]);
@@ -222,6 +216,7 @@ export function SelfHostedPublicCommittees({api = selfHostedApi}: {api?: SelfHos
 
 function TextResources({kind, snapshot, run, api}: {kind: 'notes' | 'posts'; snapshot: CommitteeWorkspaceSnapshot;
   run(operation: () => Promise<unknown>): Promise<void>; api: SelfHostedApi}) {
+  useLanguage();
   const [title, setTitle] = React.useState(''); const [content, setContent] = React.useState('');
   const [editingId, setEditingId] = React.useState<string>(); const [editTitle, setEditTitle] = React.useState('');
   const [editContent, setEditContent] = React.useState(''); const [pending, setPending] = React.useState<string>();
@@ -257,6 +252,7 @@ function TextResources({kind, snapshot, run, api}: {kind: 'notes' | 'posts'; sna
 }
 
 function NotesPanel({snapshot, run, api}: {snapshot: CommitteeWorkspaceSnapshot; run: WorkspaceCommand; api: SelfHostedApi}) {
+  useLanguage();
   const [selectedId, setSelectedId] = React.useState<string | undefined>(snapshot.notes[0]?.id);
   const selected = snapshot.notes.find(note => note.id === selectedId);
   const [title, setTitle] = React.useState(selected?.title ?? ''); const [content, setContent] = React.useState(selected?.content ?? '');
@@ -320,9 +316,11 @@ function NotesPanel({snapshot, run, api}: {snapshot: CommitteeWorkspaceSnapshot;
   </div>;
 }
 
-function LinkResources({snapshot, run, api}: {snapshot: CommitteeWorkspaceSnapshot; run: WorkspaceCommand; api: SelfHostedApi}) { const [title, setTitle] = React.useState(''); const [url, setUrl] = React.useState(''); const canWrite = snapshot.viewer.audience !== 'PUBLIC' && snapshot.committee.status === 'ACTIVE'; const links = snapshot.textPosts.filter(post => post.content.startsWith('link:')).map(post => ({post, url: post.content.slice(5)})).filter(({url}) => {try {return ['http:', 'https:'].includes(new URL(url).protocol);} catch {return false;}}); const create = async () => {if (url.trim()) {await run(() => api.createTextPost(snapshot.committee.id, {title, content: `link:${url.trim()}`})); setTitle(''); setUrl('');}}; return <><Form onSubmit={create}>{canWrite && <><Form.Input label={t('Title')} value={title} onChange={event => setTitle(event.currentTarget.value)} /><Form.Input label={t('URL')} type="url" required value={url} onChange={event => setUrl(event.currentTarget.value)} /><Button primary disabled={!url.trim()}>{t('Publish link')}</Button></>}</Form><List divided relaxed>{links.map(({post, url}) => <List.Item key={post.id}>{canWrite && <List.Content floated="right"><Button size="mini" negative onClick={() => void run(() => api.deleteTextPost(post.id, post.revision))}>{t('Delete')}</Button></List.Content>}<List.Header>{post.title || t('Untitled')}</List.Header><List.Description><a href={url} target="_blank" rel="noreferrer">{url}</a></List.Description><List.Description>{t('Publisher')}: {post.authorDisplayName}</List.Description></List.Item>)}</List></>; }
+function LinkResources({snapshot, run, api}: {snapshot: CommitteeWorkspaceSnapshot; run: WorkspaceCommand; api: SelfHostedApi}) {
+  useLanguage(); const [title, setTitle] = React.useState(''); const [url, setUrl] = React.useState(''); const canWrite = snapshot.viewer.audience !== 'PUBLIC' && snapshot.committee.status === 'ACTIVE'; const links = snapshot.textPosts.filter(post => post.content.startsWith('link:')).map(post => ({post, url: post.content.slice(5)})).filter(({url}) => {try {return ['http:', 'https:'].includes(new URL(url).protocol);} catch {return false;}}); const create = async () => {if (url.trim()) {await run(() => api.createTextPost(snapshot.committee.id, {title, content: `link:${url.trim()}`})); setTitle(''); setUrl('');}}; return <><Form onSubmit={create}>{canWrite && <><Form.Input label={t('Title')} value={title} onChange={event => setTitle(event.currentTarget.value)} /><Form.Input label={t('URL')} type="url" required value={url} onChange={event => setUrl(event.currentTarget.value)} /><Button primary disabled={!url.trim()}>{t('Publish link')}</Button></>}</Form><List divided relaxed>{links.map(({post, url}) => <List.Item key={post.id}>{canWrite && <List.Content floated="right"><Button size="mini" negative onClick={() => void run(() => api.deleteTextPost(post.id, post.revision))}>{t('Delete')}</Button></List.Content>}<List.Header>{post.title || t('Untitled')}</List.Header><List.Description><a href={url} target="_blank" rel="noreferrer">{url}</a></List.Description><List.Description>{t('Publisher')}: {post.authorDisplayName}</List.Description></List.Item>)}</List></>; }
 function PostsPanel({snapshot, api, userId, tab}: {snapshot: CommitteeWorkspaceSnapshot;
   api: SelfHostedApi; userId?: string; tab?: string}) {
+  useLanguage();
   const canManageStorage = snapshot.viewer.audience === 'CHAIR' || snapshot.viewer.audience === 'OWNER';
   const [delegateFilesEnabled, setDelegateFilesEnabled] = React.useState<boolean>();
   const [bindingError, setBindingError] = React.useState<string>();
@@ -358,7 +356,7 @@ function PostsPanel({snapshot, api, userId, tab}: {snapshot: CommitteeWorkspaceS
     {canManageStorage && <Menu.Item as={Link} to={`${base}/file-settings`} active={active === 'file-settings'}>文件设置</Menu.Item>}
   </Menu>
     {bindingError && <Message error><p>{bindingError}</p><Button onClick={() => setBindingReload(value => value + 1)}>重试</Button></Message>}
-    {active === 'file-settings' && canManageStorage && <DelegateFileSettingsPanel key={snapshot.committee.id} committeeId={snapshot.committee.id} api={api}
+    {active === 'file-settings' && canManageStorage && <DelegateFileSettingsPanel committeeLanguage={snapshot.committee.committeeLanguage} key={snapshot.committee.id} committeeId={snapshot.committee.id} api={api}
       readOnly={!['ACTIVE', 'PAUSED'].includes(snapshot.committee.status)} />}
     {active === 'upload' && delegateFilesEnabled && <DelegateFileUploadPanel snapshot={snapshot} api={api} />}
     {active === 'attachments' && !delegateFilesEnabled && <FilesPanel section="attachments" snapshot={snapshot} api={api} currentUserId={userId} />}
@@ -375,6 +373,7 @@ function rollCallResponseLabel(response: string) {
 }
 
 function CommitteeOverviewPanel({snapshot}: {snapshot: CommitteeWorkspaceSnapshot}) {
+  useLanguage();
   const share = async () => navigator.clipboard?.writeText(`${window.location.origin}/committees/${snapshot.committee.id}`);
   return <Container className="committee-overview-page">
     <Card fluid className="committee-overview-card">
@@ -397,6 +396,7 @@ function CommitteeOverviewPanel({snapshot}: {snapshot: CommitteeWorkspaceSnapsho
 
 function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspaceSnapshot; run: WorkspaceCommand;
   api: SelfHostedApi; canChair: boolean}) {
+  useLanguage();
   const [selectedCountryStableKey, setSelectedCountryStableKey] = React.useState('');
   const [seatRank, setSeatRank] = React.useState<'STANDARD' | 'NGO' | 'OBSERVER'>('STANDARD');
   const [seatHasVeto, setSeatHasVeto] = React.useState(false);
@@ -638,6 +638,7 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
 
 function SettingsPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspaceSnapshot; run: WorkspaceCommand;
   api: SelfHostedApi; canChair: boolean}) {
+  useLanguage();
   const history = useHistory();
   const [name, setName] = React.useState(snapshot.committee.name); const [topic, setTopic] = React.useState(snapshot.committee.topic);
   const [conference, setConference] = React.useState(snapshot.committee.conference);
@@ -709,6 +710,7 @@ function SettingsPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
 
 function RollCallPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspaceSnapshot; run(operation: () => Promise<unknown>): Promise<void>;
   api: SelfHostedApi; canChair: boolean}) {
+  useLanguage();
   const chair = canChair; const session = snapshot.meetingSession; const rollCall = snapshot.rollCall;
   const nextOrdinal = session?.status === 'PENDING' ? session.ordinal : snapshot.nextMeetingSessionOrdinal;
   const sessionName = nextOrdinal ? formatCommitteeContent({kind: 'SESSION', ordinal: nextOrdinal}, snapshot.committee.committeeLanguage) : '';
@@ -856,6 +858,7 @@ function RollCallPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
 
 function PointResolutionForm({point, run, api}: {point: CommitteePoint; run(operation: () => Promise<unknown>): Promise<void>;
   api: SelfHostedApi}) {
+  useLanguage();
   const [status, setStatus] = React.useState<Exclude<PointStatus, 'PENDING'>>('ANSWERED');
   const [response, setResponse] = React.useState(''); const [attendance, setAttendance] = React.useState('');
   const [pending, setPending] = React.useState(false);
@@ -880,6 +883,7 @@ function PointResolutionForm({point, run, api}: {point: CommitteePoint; run(oper
 
 function PointsPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspaceSnapshot; run(operation: () => Promise<unknown>): Promise<void>;
   api: SelfHostedApi; canChair: boolean}) {
+  useLanguage();
   const types = snapshot.activeRules.pointTypes;
   const [type, setType] = React.useState(types[0]?.id ?? '');
   const [content, setContent] = React.useState('');
@@ -953,6 +957,7 @@ function PointsPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspa
 }
 
 function StatisticsPanel({snapshot}: {snapshot: CommitteeWorkspaceSnapshot}) {
+  useLanguage();
   const speechDuration = (seatId: string) => (snapshot.speakerLists ?? []).reduce((total, list) => total
     + (list.speeches ?? []).filter(speech => speech.seatId === seatId && speech.status === 'COMPLETED')
       .reduce((listTotal, speech) => {
@@ -992,6 +997,7 @@ function StatisticsPanel({snapshot}: {snapshot: CommitteeWorkspaceSnapshot}) {
 }
 
 function HelpPanel({snapshot}: {snapshot: CommitteeWorkspaceSnapshot}) {
+  useLanguage();
   const role = {PUBLIC: 'Public visitor', MEMBER: 'Member', CHAIR: 'Chair', OWNER: 'Owner'}[snapshot.viewer.audience];
   const shortcut = (key: string, label: string) => <List.Item><Button size="mini">Alt</Button>
     <Button size="mini">{key}</Button>{t(label)}</List.Item>;
@@ -1027,6 +1033,7 @@ function ModeratedCaucusCreateModal({open, snapshot, run, api, canChair, onClose
   open: boolean; snapshot: CommitteeWorkspaceSnapshot; run: WorkspaceCommand; api: SelfHostedApi; canChair: boolean;
   onClose(): void; onCreated(id: string): void;
 }) {
+  useLanguage();
   const fixedHundredths = (value: string) => {
     const match = /^(\d+)(?:\.(\d{1,2}))?$/.exec(value.trim());
     if (!match) return undefined;
@@ -1117,6 +1124,7 @@ function ModeratedCaucusCreateModal({open, snapshot, run, api, canChair, onClose
 export function SelfHostedCommitteeWorkspace({api = selfHostedApi, user, logout = () => undefined}: {
   api?: SelfHostedApi; user?: SelfHostedUser; logout?(): void;
 }) {
+  useLanguage();
   const {id} = useParams<{id: string}>();
   return <CommitteeWorkspaceProvider committeeId={id} api={api}>
     <CommitteeWorkspaceContent id={id} api={api} user={user} logout={logout} />
@@ -1126,6 +1134,7 @@ export function SelfHostedCommitteeWorkspace({api = selfHostedApi, user, logout 
 function CommitteeWorkspaceContent({id, api, user, logout}: {
   id: string; api: SelfHostedApi; user?: SelfHostedUser; logout(): void;
 }) {
+  useLanguage();
   const {snapshot, error, realtimeStatus, refresh, run} = useCommitteeWorkspace();
   const location = useLocation(); const history = useHistory();
   const newCaucusPath = `/committees/${id}/caucuses/new`;
@@ -1176,6 +1185,7 @@ function CommitteeWorkspaceContent({id, api, user, logout}: {
 export default function SelfHostedWorkspace({user, logout, accountManager, api = selfHostedApi, identityClient = selfHostedIdentityClient}: {
   user: SelfHostedUser; logout(): void; accountManager?: React.ReactNode; api?: SelfHostedApi; identityClient?: SelfHostedIdentityClient;
 }) {
+  useLanguage();
   const location = useLocation();
   const committeeRoute = /^\/committees\/[^/]+/.test(location.pathname);
   return <>{!committeeRoute && <AppMenu user={user} logout={logout} />}<Switch>

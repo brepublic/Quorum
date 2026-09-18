@@ -1,3 +1,4 @@
+import {apiErrorText} from '../../i18n';
 import {committeeContentName, type ContentLanguage} from '@quorum/contracts';
 import * as React from 'react';
 import type {
@@ -35,17 +36,18 @@ function errorText(error: unknown): string {
     const templates = (details.templates as Array<{name?: string}>).map(item => item.name).filter(Boolean).join('、');
     if (templates) return t('This country template cannot be deleted because it is used by: {templates}', {templates});
   }
-  return error instanceof Error ? error.message : String(error);
+  return apiErrorText(error);
 }
 
 function FlagDisplay({flag}: {flag: FlagSnapshot}) {
+  useLanguage();
   return <CountryFlagDisplay flag={flag} />;
 }
 
 function resizeFlagImage(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
-    if (!file.type.startsWith('image/')) { reject(new Error(t('Please choose an image file'))); return; }
-    if (file.size > 5 * 1024 * 1024) { reject(new Error(t('Flag images must be smaller than 5 MB'))); return; }
+    if (!file.type.startsWith('image/')) { reject(Object.assign(new Error(), {code: 'IMAGE_REQUIRED'})); return; }
+    if (file.size > 5 * 1024 * 1024) { reject(Object.assign(new Error(), {code: 'FLAG_TOO_LARGE'})); return; }
     const image = new Image(); const objectUrl = URL.createObjectURL(file);
     image.onload = () => {
       URL.revokeObjectURL(objectUrl);
@@ -53,10 +55,10 @@ function resizeFlagImage(file: File): Promise<string> {
       const canvas = document.createElement('canvas'); canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
       canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
       const context = canvas.getContext('2d');
-      if (!context) { reject(new Error(t('Could not process flag image'))); return; }
+      if (!context) { reject(Object.assign(new Error(), {code: 'FLAG_PROCESSING_FAILED'})); return; }
       context.drawImage(image, 0, 0, canvas.width, canvas.height); resolve(canvas.toDataURL('image/webp', 0.82));
     };
-    image.onerror = () => { URL.revokeObjectURL(objectUrl); reject(new Error(t('Could not process flag image'))); };
+    image.onerror = () => { URL.revokeObjectURL(objectUrl); reject(Object.assign(new Error(), {code: 'FLAG_PROCESSING_FAILED'})); };
     image.src = objectUrl;
   });
 }
@@ -80,11 +82,12 @@ export function CountryTemplateManager({api}: {api: SelfHostedApi}) {
   const [name, setName] = React.useState(''); const [defaultLanguage, setDefaultLanguage] = React.useState<Language>(displayLanguage);
   const [localizedNames, setLocalizedNames] = React.useState<LocalizedNameDraft[]>([]); const [languages, setLanguages] = React.useState<Language[]>([displayLanguage]);
   const [countries, setCountries] = React.useState<DraftCountry[]>([]); const [deleteOpen, setDeleteOpen] = React.useState(false);
-  const [saved, setSaved] = React.useState(false); const [saving, setSaving] = React.useState(false); const [error, setError] = React.useState<string>();
+  const [saved, setSaved] = React.useState(false); const [saving, setSaving] = React.useState(false); const [failure, setError] = React.useState<unknown>();
+  const error = failure ? errorText(failure) : undefined;
   const selected = templates.find(template => template.id === selectedId); const isBuiltin = selected?.builtin ?? false;
 
   const refresh = React.useCallback(async () => { const next = await api.listCountryTemplates(); setTemplates(next); return next; }, [api]);
-  React.useEffect(() => { void refresh().catch(caught => setError(errorText(caught))); }, [refresh]);
+  React.useEffect(() => { void refresh().catch(caught => setError(caught)); }, [refresh]);
 
   const load = React.useCallback((template: CountryTemplate) => {
     const nextLanguage = draftNameLanguage(template.names, template.defaultLanguage);
@@ -110,7 +113,7 @@ export function CountryTemplateManager({api}: {api: SelfHostedApi}) {
       const created = await api.createCountryTemplate({names: {[displayLanguage]: name.trim()}, defaultLanguage: displayLanguage,
         countryLanguages: [displayLanguage], countries: []});
       const next = await refresh(); load(next.find(item => item.id === created.id) ?? created);
-    } catch (caught) { setError(errorText(caught)); } finally { setSaving(false); }
+    } catch (caught) { setError(caught); } finally { setSaving(false); }
   };
 
   const templateNames = (): {names: LocalizedNames; defaultLanguage: Language} => {
@@ -134,7 +137,7 @@ export function CountryTemplateManager({api}: {api: SelfHostedApi}) {
           continent: country.continent, sortOrder, flag: country.flag
         }))});
       const next = await refresh(); load(next.find(item => item.id === updated.id) ?? updated); setSaved(true);
-    } catch (caught) { setError(errorText(caught)); } finally { setSaving(false); }
+    } catch (caught) { setError(caught); } finally { setSaving(false); }
   };
 
   const clone = async () => {
@@ -142,13 +145,13 @@ export function CountryTemplateManager({api}: {api: SelfHostedApi}) {
     const copyName = `${localizedDisplayName(selected.names, selected.defaultLanguage)} (${displayLanguage === 'zh-CN' ? '副本' : 'copy'})`;
     try { const copy = await api.cloneCountryTemplate(selected.id, {...selected.names, [displayLanguage]: copyName}, displayLanguage);
       const next = await refresh(); load(next.find(item => item.id === copy.id) ?? copy); }
-    catch (caught) { setError(errorText(caught)); } finally { setSaving(false); }
+    catch (caught) { setError(caught); } finally { setSaving(false); }
   };
 
   const remove = async () => {
     if (!selected || isBuiltin) return;
     try { await api.deleteCountryTemplate(selected.id); await refresh(); setDeleteOpen(false); startNew(); }
-    catch (caught) { setDeleteOpen(false); setError(errorText(caught)); }
+    catch (caught) { setDeleteOpen(false); setError(caught); }
   };
 
   const updateCountry = (id: string, patch: Partial<DraftCountry>) => { setCountries(current => current.map(country =>
@@ -215,7 +218,7 @@ export function CountryTemplateManager({api}: {api: SelfHostedApi}) {
                   value={country.flag.value} onChange={event => updateCountry(country.id, {flag: {...country.flag, value: event.currentTarget.value} as FlagSnapshot})} />}
                 {!isBuiltin && country.flagMode === 'IMAGE' && <input type="file" accept="image/*" onChange={event => {const file = event.currentTarget.files?.[0];
                   if (file) void resizeFlagImage(file).then(value => updateCountry(country.id, {flag: {type: 'IMAGE', value}, flagMode: 'IMAGE'}))
-                    .catch(caught => setError(errorText(caught)));}} />}
+                    .catch(caught => setError(caught));}} />}
               </div></Table.Cell>
               <Table.Cell><Dropdown disabled={isBuiltin} clearable selection value={country.continent ?? ''}
                 options={CONTINENTS.map(continent => ({key: continent, value: continent, text: t(continent)}))}
@@ -249,14 +252,15 @@ export function CommitteeTemplateManager({api}: {api: SelfHostedApi}) {
   const [rank, setRank] = React.useState<SeatRank>('STANDARD'); const [canVote, setCanVote] = React.useState(true);
   const [hasVeto, setHasVeto] = React.useState(false);
   const [mustVote, setMustVote] = React.useState(false); const [deleteOpen, setDeleteOpen] = React.useState(false);
-  const [saved, setSaved] = React.useState(false); const [saving, setSaving] = React.useState(false); const [error, setError] = React.useState<string>();
+  const [saved, setSaved] = React.useState(false); const [saving, setSaving] = React.useState(false); const [failure, setError] = React.useState<unknown>();
+  const error = failure ? errorText(failure) : undefined;
   const customTemplates = templates.filter(template => !template.builtin);
   const selectedCountry = countryTemplates.find(template => template.key === countryKey);
 
   const refresh = React.useCallback(async () => { const [nextTemplates, nextCountries] = await Promise.all([
     api.listCommitteeTemplates(), api.listCountryTemplates()]); setTemplates(nextTemplates); setCountryTemplates(nextCountries);
     return {nextTemplates, nextCountries}; }, [api]);
-  React.useEffect(() => { void refresh().catch(caught => setError(errorText(caught))); }, [refresh]);
+  React.useEffect(() => { void refresh().catch(caught => setError(caught)); }, [refresh]);
   const startNew = () => {const language = getLanguage(); setDisplayLanguage(language);
     setSelectedId(undefined); setName(''); setDefaultLanguage(language); setLocalizedNames([]);
     setCountryKey('builtin:default'); setMembers([]); setSaved(false); setError(undefined);};
@@ -275,10 +279,10 @@ export function CommitteeTemplateManager({api}: {api: SelfHostedApi}) {
         rank: member.rank, canVote: member.canVote, hasVeto: member.hasVeto, mustVote: member.mustVote, sortOrder, flag: member.flag}))};
     try { const result = selectedId ? await api.updateCommitteeTemplate(selectedId, templates.find(item => item.id === selectedId)!.revision, input)
       : await api.createCommitteeTemplate(input); const {nextTemplates} = await refresh(); load(nextTemplates.find(item => item.id === result.id) ?? result); setSaved(true); }
-    catch (caught) { setError(errorText(caught)); } finally { setSaving(false); }
+    catch (caught) { setError(caught); } finally { setSaving(false); }
   };
   const remove = async () => {if (!selectedId) return; try {await api.deleteCommitteeTemplate(selectedId); await refresh(); setDeleteOpen(false); startNew();}
-    catch (caught) {setDeleteOpen(false); setError(errorText(caught));}};
+    catch (caught) {setDeleteOpen(false); setError(caught);}};
   const countryOptions = selectedCountry?.countries.map(country => ({key: country.id, value: country.id,
     text: localizedDisplayName(country.names, country.defaultLanguage), country})) ?? [];
   const selectedMemberCountry = countryOptions.find(option => option.value === memberName)?.country;
@@ -357,6 +361,7 @@ export function CommitteeTemplateManager({api}: {api: SelfHostedApi}) {
 }
 
 export function TemplatePreview({template, language}: {template?: CommitteeTemplate; language?: ContentLanguage}) {
+  useLanguage();
   if (!template) return <p className="template-preview-empty">{t('Select a template to see which members will be added')}</p>;
   return <div className="template-preview">{template.members.map(member => <div className="template-preview-item" key={member.id}>
     <FlagDisplay flag={member.flag} /><span>{language ? committeeContentName(member.names, language) : localizedDisplayName(member.names, member.defaultLanguage)}</span>

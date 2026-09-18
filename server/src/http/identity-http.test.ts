@@ -61,7 +61,7 @@ function fakeIdentity(overrides: Record<string, unknown> = {}): IdentityService 
     resetPassword: vi.fn(async () => ({user, temporaryPassword: 'temporary-password'})),
     disableUser: vi.fn(async () => undefined),
     revokeUserSessions: vi.fn(async () => undefined),
-    anonymizeUser: vi.fn(async () => ({user: {...user, email: '', displayName: '匿名账号', status: 'ANONYMIZED'}})),
+    anonymizeUser: vi.fn(async () => ({user: {...user, email: '', displayName: '', status: 'ANONYMIZED'}})),
     ...overrides
   } as unknown as IdentityService;
 }

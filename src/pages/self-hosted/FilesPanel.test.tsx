@@ -1,11 +1,14 @@
+import {setLanguage} from '../../i18n';
 import * as React from 'react';
 import {act} from 'react';
 import {createRoot, type Root} from 'react-dom/client';
-import {afterEach, describe, expect, it, vi} from 'vitest';
+import {beforeEach, afterEach, describe, expect, it, vi} from 'vitest';
 import type {CommitteeWorkspaceSnapshot, FileEntry, StorageHost, StorageMigration} from '@quorum/contracts';
 import type {SelfHostedApi} from '../../services/self-hosted-api';
 import {SelfHostedApiError} from '../../services/self-hosted-api';
 import FilesPanel, {storageErrorText} from './FilesPanel';
+
+beforeEach(() => setLanguage('zh-CN'));
 
 (globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT: boolean}).IS_REACT_ACT_ENVIRONMENT = true;
 const committeeId = '20000000-0000-4000-8000-000000000001';

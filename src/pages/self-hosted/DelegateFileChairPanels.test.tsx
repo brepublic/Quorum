@@ -1,3 +1,4 @@
+import {setLanguage} from '../../i18n';
 import * as React from 'react';
 import {act} from 'react';
 import {createRoot, type Root} from 'react-dom/client';
@@ -16,7 +17,7 @@ const publishedFile: DelegateReviewFile = {...reviewFile, id: 'published-file', 
 const snapshot = {committee: {id: 'committee', committeeLanguage: 'zh-CN'}, sync: {committeeEventSequence: 1}} as CommitteeWorkspaceSnapshot;
 
 let host: HTMLDivElement; let root: Root;
-beforeEach(() => {host = document.createElement('div'); document.body.append(host); root = createRoot(host);
+beforeEach(() => {setLanguage('zh-CN');host = document.createElement('div'); document.body.append(host); root = createRoot(host);
   (globalThis as {IS_REACT_ACT_ENVIRONMENT?: boolean}).IS_REACT_ACT_ENVIRONMENT = true;});
 afterEach(async () => {await act(async () => root.unmount()); host.remove();});
 
@@ -29,11 +30,28 @@ describe('delegate file chair review', () => {
     expect(host.textContent).toContain('上传文件');
   });
 
+  it.each(['en', 'zh-CN'] as const)('keeps file content in %s while switching interface language', async committeeLanguage => {
+    const pending = {...reviewFile, suggestedNames: {WORKING_PAPER: {sessionOrdinal: 2, ordinal: 3},
+      DIRECTIVE_DRAFT: {sessionOrdinal: 2, ordinal: 1}, RESOLUTION_DRAFT: {sessionOrdinal: 2, ordinal: 1}}};
+    const api = {getDelegateFileShare: async () => null, listDelegateReviewFiles: async () => [pending]} as unknown as SelfHostedApi;
+    await act(async () => root.render(<DelegateFilePanels tab="review" api={api}
+      snapshot={{...snapshot, committee: {...snapshot.committee, committeeLanguage}}} />));
+    const input = host.querySelector('input') as HTMLInputElement;
+    expect(input.value).toBe(committeeLanguage === 'en' ? 'Working paper 2.3' : '工作文件 2.3');
+    await act(async () => setLanguage('en'));
+    expect(host.textContent).toContain('Submitted at');
+    expect(host.querySelector('input')).toBe(input);
+    expect(input.value).toBe(committeeLanguage === 'en' ? 'Working paper 2.3' : '工作文件 2.3');
+    await act(async () => setLanguage('zh-CN'));
+    expect(host.textContent).toContain('提交时间');
+    expect(input.value).toBe(committeeLanguage === 'en' ? 'Working paper 2.3' : '工作文件 2.3');
+  });
+
   it('suggests names, offers preset rejection messages, and defaults to keeping bytes', async () => {
     const pending = {...reviewFile,suggestedNames:{WORKING_PAPER:{sessionOrdinal:1,ordinal:2},DIRECTIVE_DRAFT:{sessionOrdinal:1,ordinal:1},RESOLUTION_DRAFT:{sessionOrdinal:1,ordinal:1}}};
     const rejectDelegateFile = vi.fn(async () => ({})); const deleteFile = vi.fn();
     const api = {getDelegateFileShare: async () => null, listDelegateReviewFiles:async () => [pending],rejectDelegateFile,deleteFile,
-      getDelegateFileSettings:async () => ({rejectionTypes:[{id:'format',label:'内容格式不合要求',message:'文件内容格式不合要求，请参阅《学术指引》修改后重新提交。',custom:false}]})} as unknown as SelfHostedApi;
+      getDelegateFileSettings:async () => ({rejectionTypes:[{id:'format',label:{'zh-CN':'内容格式不合要求'},message:{'zh-CN':'文件内容格式不合要求，请参阅《学术指引》修改后重新提交。'},custom:false}]})} as unknown as SelfHostedApi;
     await act(async () => root.render(<DelegateFilePanels tab="review" snapshot={snapshot} api={api} />));
     expect((host.querySelector('input[aria-label="文件名称"]') as HTMLInputElement).value).toBe('工作文件 1.2');
     await act(async () => (Array.from(host.querySelectorAll('button')).find(x => x.textContent==='驳回') as HTMLElement).click());
@@ -136,7 +154,7 @@ describe('prefetched chair file data', () => {
     await act(async () => root.render(<DelegateFilePanels snapshot={snapshot} api={api} tab={tab} />));
     expect(host.textContent).not.toMatch(/开始分享|暂无/);
     await act(async () => pending.reject(new Error('load failed')));
-    expect(host.textContent).toContain('load failed');
+    expect(host.textContent).toContain('请求失败，请稍后重试。');
     expect(host.textContent).toContain('重试');
     expect(host.textContent).not.toMatch(/开始分享|暂无/);
   });
@@ -148,10 +166,10 @@ describe('prefetched chair file data', () => {
     await act(async () => root.render(<DelegateFilePanels snapshot={snapshot} api={api} tab="review" />));
     await act(async () => root.render(<DelegateFilePanels snapshot={{...snapshot, sync: {...snapshot.sync, committeeEventSequence: 2}}} api={api} tab="review" />));
     expect(host.textContent).toContain(publishedFile.logicalName);
-    expect(host.textContent).toContain('offline');
+    expect(host.textContent).toContain('请求失败，请稍后重试。');
     await act(async () => (Array.from(host.querySelectorAll('button')).find(button => button.textContent === '重试') as HTMLButtonElement).click());
     expect(host.textContent).toContain('暂无已审核文件');
-    expect(host.textContent).not.toContain('offline');
+    expect(host.textContent).not.toContain('请求失败，请稍后重试。');
   });
 
   it('ignores an older response after a realtime refresh', async () => {

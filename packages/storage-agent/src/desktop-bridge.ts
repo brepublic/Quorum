@@ -84,7 +84,7 @@ async function settings(input: Record<string, unknown>) {
 }
 async function stop() {
   if (!child) return;
-  send({event: 'state', state: '停止中'});
+  send({event: 'state', state: 'STOPPING'});
   const running = child;
   await new Promise<void>(done => {
     const timeout = setTimeout(() => running.kill('SIGKILL'), 15000);
@@ -95,7 +95,7 @@ async function stop() {
 async function start() {
   if (child) return;
   if (!config) throw new Error('CONFIG_REQUIRED');
-  send({event: 'state', state: '启动中'});
+  send({event: 'state', state: 'STARTING'});
   const running = spawn(process.execPath, [cli, 'start', '--config', configPath, '--desktop', 'true'], {
     env: {...process.env, NODE_EXTRA_CA_CERTS: config.caCertificatePath || process.env.NODE_EXTRA_CA_CERTS || ''}, stdio: 'pipe'});
   child = running;
@@ -108,7 +108,7 @@ async function start() {
         text: `${new Date().toISOString()} ${data.event} ${/^[A-Z0-9_]{1,80}$/.test(data.code) ? data.code : ''}`});} catch { /* no raw secrets */ }
   });
   running.on('error', () => send({event: 'error', code: 'START_FAILED'}));
-  running.on('close', code => {if (child === running) child = undefined; send({event: 'state', state: '已退出'});
+  running.on('close', code => {if (child === running) child = undefined; send({event: 'state', state: 'EXITED'});
     if (code) send({event: 'error', code: 'AGENT_EXITED'});});
 }
 async function command(input: Record<string, unknown>) {
@@ -189,7 +189,7 @@ async function command(input: Record<string, unknown>) {
       const destination = resolve(String(pathInput));
       if (action === 'save' && draft && destination !== configPath) throw new Error('CONFIG_PATH_CHANGED');
       const next: DraftConfig = {schemaVersion: 1, kind: 'unpaired', ...await settings(input),
-        deviceLabel: String(input.deviceLabel || 'Linux 主席电脑')};
+        deviceLabel: String(input.deviceLabel || 'Linux Chair computer')};
       await checkDraftDestination(destination, next);
       const source = JSON.stringify(next, null, 2) + '\n';
       stage = 'config-write';
@@ -329,4 +329,4 @@ async function shutdown() {if (exiting) return; exiting = true; await pending; a
 input.on('close', () => void shutdown());
 process.on('SIGTERM', () => void shutdown()); process.on('SIGINT', () => void shutdown());
 process.stdout.on('error', () => void shutdown());
-send({event: 'state', state: '未启动'});
+send({event: 'state', state: 'STOPPED'});

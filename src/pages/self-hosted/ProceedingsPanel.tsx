@@ -1,3 +1,4 @@
+import {apiErrorText} from '../../i18n';
 import {motionContentName, type ContentLanguage} from '@quorum/contracts';
 import * as React from 'react';
 import {createPortal} from 'react-dom';
@@ -619,7 +620,7 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
             await api.advanceSpeakerQueue(list.id, list.revision);
           }
         } catch (caught) {
-          if (controller.signal.aborted) throw new Error(t('Saving timed out. Try again.'));
+          if (controller.signal.aborted) throw Object.assign(new Error(), {code: 'SAVE_TIMEOUT'});
           throw caught;
         } finally {
           window.clearTimeout(timeout);
@@ -716,7 +717,8 @@ function AmendmentCard({snapshot, amendment, run, api, canChair, representedSeat
   const [selectedFileId, setSelectedFileId] = React.useState('');
   const [upload, setUpload] = React.useState<File>();
   const [uploadPercent, setUploadPercent] = React.useState<number>();
-  const [fileError, setFileError] = React.useState('');
+  const [fileFailure, setFileError] = React.useState<unknown>();
+  const fileError = fileFailure ? apiErrorText(fileFailure) : undefined;
   const [ballotThreshold, setBallotThreshold] = React.useState<'SIMPLE_MAJORITY' | 'TWO_THIRDS'>('SIMPLE_MAJORITY');
   const represented = canChair && representedSeatId ? {onBehalfOfSeatId: representedSeatId} : {};
   const editable = snapshot.committee.status === 'ACTIVE' && (canChair || amendment.proposerSeatId === snapshot.viewer.seatId)
@@ -733,10 +735,10 @@ function AmendmentCard({snapshot, amendment, run, api, canChair, representedSeat
   }, [amendment.id, amendment.revision]);
   React.useEffect(() => {
     if (source !== 'FILE') return;
-    let active = true; setFileError('');
+    let active = true; setFileError(undefined);
     void api.listFiles(snapshot.committee.id).then(items => {
       if (active) setFiles(items.filter(file => file.status !== 'DELETED'));
-    }).catch(caught => {if (active) setFileError(caught instanceof Error ? caught.message : String(caught));});
+    }).catch(caught => {if (active) setFileError(caught);});
     return () => {active = false;};
   }, [api, snapshot.committee.id, snapshot.sync.committeeEventSequence, source]);
   const save = (nextSource = source, nextFileId = fileId) => {
@@ -751,7 +753,7 @@ function AmendmentCard({snapshot, amendment, run, api, canChair, representedSeat
   };
   const uploadFile = async () => {
     if (!upload) return;
-    let attached = false; setFileError(''); setUploadPercent(0);
+    let attached = false; setFileError(undefined); setUploadPercent(0);
     try {
       await run(async () => {
         const sha256 = await sha256File(upload, {onProgress: (processed, total) =>
@@ -762,7 +764,7 @@ function AmendmentCard({snapshot, amendment, run, api, canChair, representedSeat
         await api.uploadFileContent(created.id, upload, newIdempotencyKey(), {onProgress: (processed, total) =>
           setUploadPercent(total ? 20 + Math.round(processed / total * 70) : 20)});
         const committed = await api.commitFileUpload(created.id, newIdempotencyKey());
-        if ('kind' in committed) throw new Error(t('Waiting for Chair computer to save the file'));
+        if ('kind' in committed) throw Object.assign(new Error(), {code: 'CHAIR_COMMIT_PENDING'});
         setUploadPercent(95);
         await api.createDocumentVersion(amendment.id, {baseRevision: amendment.revision, customTitle: titleDirty ? title.trim() || null : amendment.customTitle,
           content: '', contentFileEntryId: committed.id, ...represented});
@@ -1409,7 +1411,8 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
   const [selectedExistingFileId, setSelectedExistingFileId] = React.useState('');
   const [resolutionUpload, setResolutionUpload] = React.useState<File>();
   const [resolutionUploadPercent, setResolutionUploadPercent] = React.useState<number>();
-  const [fileError, setFileError] = React.useState('');
+  const [fileFailure, setFileError] = React.useState<unknown>();
+  const fileError = fileFailure ? apiErrorText(fileFailure) : undefined;
   const [seatId, setSeatId] = React.useState(snapshot.viewer.seatId ?? snapshot.seats[0]?.id ?? '');
   const [votingPage, setVotingPage] = React.useState(0);
   const [currentVotingSeatId, setCurrentVotingSeatId] = React.useState(selectedDocument?.directVote?.eligibility[0]?.seatId ?? '');
@@ -1436,10 +1439,10 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
   }, [selectedDocument?.id, selectedDocument?.revision]);
   React.useEffect(() => {
     if (contentSource !== 'FILE') return;
-    let active = true; setFileError('');
+    let active = true; setFileError(undefined);
     void api.listFiles(snapshot.committee.id).then(files => {
       if (active) setAvailableFiles(files.filter(file => file.status !== 'DELETED'));
-    }).catch(caught => { if (active) setFileError(caught instanceof Error ? caught.message : String(caught)); });
+    }).catch(caught => { if (active) setFileError(caught); });
     return () => { active = false; };
   }, [api, contentSource, snapshot.committee.id, snapshot.sync.committeeEventSequence]);
   React.useEffect(() => {
@@ -1471,7 +1474,7 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
   };
   const uploadResolutionFile = async () => {
     if (!resolutionUpload) return;
-    let attached = false; setFileError(''); setResolutionUploadPercent(0);
+    let attached = false; setFileError(undefined); setResolutionUploadPercent(0);
     try {
       await run(async () => {
         const sha256 = await sha256File(resolutionUpload, {onProgress: (processed, total) =>
@@ -1482,7 +1485,7 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
         await api.uploadFileContent(upload.id, resolutionUpload, newIdempotencyKey(), {onProgress: (processed, total) =>
           setResolutionUploadPercent(total ? 20 + Math.round(processed / total * 70) : 20)});
         const committed = await api.commitFileUpload(upload.id, newIdempotencyKey());
-        if ('kind' in committed) throw new Error(t('Waiting for Chair computer to save the file'));
+        if ('kind' in committed) throw Object.assign(new Error(), {code: 'CHAIR_COMMIT_PENDING'});
         setResolutionUploadPercent(95);
         await api.createDocumentVersion(document.id, {baseRevision: document.revision, customTitle: versionTitleDirty ? versionTitle.trim() || null : document.customTitle,
           content: '', contentFileEntryId: committed.id, ...represented});

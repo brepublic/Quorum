@@ -9,7 +9,10 @@ export component MainWindow inherits Window {
     preferred-width: 1160px; preferred-height: 800px; min-width: 920px; min-height: 660px;
     background: #f5f7fb;
     default-font-size: 14px;
-    in-out property <string> status: "未启动";
+    in-out property <string> language: "en";
+    pure callback translate(string, string) -> string;
+    callback language-changed();
+    in-out property <string> status: "STOPPED";
     in-out property <bool> running: false;
     in-out property <bool> busy: false;
     in-out property <bool> loaded: false;
@@ -21,14 +24,17 @@ export component MainWindow inherits Window {
     in-out property <string> saved-config-path;
     in-out property <string> last-connection;
     in-out property <string> observed;
-    in-out property <string> error-text;
+    in-out property <string> error-code;
+    in-out property <string> error-stage;
+    out property <string> error-text: root.error-code == "" ? "" :
+        (root.error-stage == "" ? "" : root.translate(root.error-stage, root.language) + ": ") + root.translate(root.error-code, root.language);
     in-out property <string> config-path;
     in-out property <string> server-url: "https://localhost";
     in-out property <string> root-path;
     in-out property <string> certificate;
     in-out property <string> scan-seconds: "30";
     in-out property <string> pairing-code;
-    in-out property <string> device-label: "Linux 主席电脑";
+    in-out property <string> device-label: "Linux Chair computer";
     in-out property <string> committee-url;
     in-out property <string> search;
     in-out property <bool> show-deleted: false;
@@ -45,77 +51,79 @@ export component MainWindow inherits Window {
         padding: 24px; spacing: 16px;
         HorizontalBox {
             VerticalBox { padding: 0px; spacing: 5px;
-                Text { text: "Quorum  /  主席本地 Agent"; font-size: 22px; font-weight: 700; color: #18273c; }
-                Caption { text: root.status + (root.dirty ? " · 未保存" : "") + (root.last-connection == "" ? "" : "  ·  最近连接 " + root.last-connection); }
+                Text { text: root.translate("Quorum / Chair Storage Agent", root.language); font-size: 22px; font-weight: 700; color: #18273c; }
+                Caption { text: root.translate(root.status, root.language) + (root.dirty ? root.translate(" · Unsaved", root.language) : "") + (root.last-connection == "" ? "" : root.translate("  ·  Last connected ", root.language) + root.last-connection); }
             }
-            Button { text: "启动"; enabled: root.loaded && !root.running && !root.busy && !root.closing; clicked => { root.action("start"); } }
-            Button { text: "停止"; enabled: root.running && !root.busy && !root.closing; clicked => { root.action("stop"); } }
-            Button { text: "重启"; enabled: root.running && !root.busy && !root.closing; clicked => { root.action("restart"); } }
-            Button { text: root.show-settings ? "返回文件" : "设置与配对"; enabled: !root.closing; clicked => { root.show-settings = !root.show-settings; } }
+            ComboBox { horizontal-stretch: 0; min-width: 130px; model: ["English", "简体中文"]; current-index: root.language == "zh-CN" ? 1 : 0;
+                selected(value) => { root.language = value == "English" ? "en" : "zh-CN"; root.language-changed(); }
+            }
+            Button { text: root.translate("Start", root.language); enabled: root.loaded && !root.running && !root.busy && !root.closing; clicked => { root.action("start"); } }
+            Button { text: root.translate("Stop", root.language); enabled: root.running && !root.busy && !root.closing; clicked => { root.action("stop"); } }
+            Button { text: root.translate("Restart", root.language); enabled: root.running && !root.busy && !root.closing; clicked => { root.action("restart"); } }
+            Button { text: root.show-settings ? root.translate("Back to files", root.language) : root.translate("Settings and pairing", root.language); enabled: !root.closing; clicked => { root.show-settings = !root.show-settings; } }
         }
         if root.error-text != "": Rectangle {
             background: #fff0ee; border-radius: 8px; min-height: 46px;
             HorizontalBox { padding: 10px;
                 Text { text: root.error-text; color: #9a3028; wrap: word-wrap; }
-                Button { text: "关闭"; horizontal-stretch: 0; clicked => {root.error-text = "";} }
+                Button { text: root.translate("Close", root.language); horizontal-stretch: 0; clicked => {root.error-code = ""; root.error-stage = "";} }
             }
         }
         if root.show-settings: ScrollView {
             viewport-height: settings-content.preferred-height;
             settings-content := VerticalBox { padding: 12px; spacing: 8px;
-                Text { text: "连接与存储"; font-size: 18px; font-weight: 600; }
-                Caption { text: "私有配置"; }
+                Text { text: root.translate("Connection and storage", root.language); font-size: 18px; font-weight: 600; }
+                Caption { text: root.translate("Private configuration", root.language); }
                 HorizontalBox { padding: 0px; spacing: 8px;
                     LineEdit { text <=> root.config-path; enabled: !root.running && !root.busy; }
-                    Button { text: "选择配置"; enabled: !root.running && !root.busy; clicked => {root.choose("config");} }
-                    Button { text: "导入"; enabled: !root.running && !root.busy; clicked => {root.action("load");} }
+                    Button { text: root.translate("Choose configuration", root.language); enabled: !root.running && !root.busy; clicked => {root.choose("config");} }
+                    Button { text: root.translate("Import", root.language); enabled: !root.running && !root.busy; clicked => {root.action("load");} }
                 }
-                Caption { text: "服务器地址"; }
+                Caption { text: root.translate("Server address", root.language); }
                 LineEdit { text <=> root.server-url; enabled: !root.running && !root.busy; }
-                Caption { text: "存储目录"; }
+                Caption { text: root.translate("Storage directory", root.language); }
                 HorizontalBox { padding: 0px; spacing: 8px;
                     LineEdit { text <=> root.root-path; enabled: !root.running && !root.busy; }
-                    Button { text: "选择目录"; enabled: !root.running && !root.busy; clicked => {root.choose("root");} }
+                    Button { text: root.translate("Choose directory", root.language); enabled: !root.running && !root.busy; clicked => {root.choose("root");} }
                 }
-                Caption { text: "CA 证书"; }
+                Caption { text: root.translate("CA certificate", root.language); }
                 HorizontalBox { padding: 0px; spacing: 8px;
-                    LineEdit { placeholder-text: "服务器证书未受系统信任时选择"; text <=> root.certificate; enabled: !root.running && !root.busy; }
-                    Button { text: "选择证书"; enabled: !root.running && !root.busy; clicked => {root.choose("certificate");} }
+                    LineEdit { placeholder-text: root.translate("Select if the server certificate is not trusted by the system", root.language); text <=> root.certificate; enabled: !root.running && !root.busy; }
+                    Button { text: root.translate("Choose certificate", root.language); enabled: !root.running && !root.busy; clicked => {root.choose("certificate");} }
                 }
                 HorizontalBox { padding: 0px; spacing: 8px;
-                    Caption { text: "完整扫描间隔（秒）"; }
+                    Caption { text: root.translate("Full scan interval (seconds)", root.language); }
                     LineEdit { text <=> root.scan-seconds; input-type: number; enabled: !root.running && !root.busy; }
                 }
                 if root.confirm-unpair: VerticalBox {
-                    Text { text: "撤销原服务器对此设备的授权？原委员会的本地文件将无法继续通过此设备访问。"; wrap: word-wrap; }
+                    Text { text: root.translate("Revoke this device's authorization? This device will no longer provide access to the committee's local files.", root.language); wrap: word-wrap; }
                     HorizontalBox { padding: 0px; spacing: 8px;
-                        Button { text: "取消"; enabled: !root.busy; clicked => {root.confirm-unpair = false;} }
-                        Button { text: "撤销授权并解除配对"; enabled: !root.running && !root.busy; clicked => {root.action("unpair");} }
+                        Button { text: root.translate("Cancel", root.language); enabled: !root.busy; clicked => {root.confirm-unpair = false;} }
+                        Button { text: root.translate("Revoke and unpair", root.language); enabled: !root.running && !root.busy; clicked => {root.action("unpair");} }
                     }
                 }
                 if !root.loaded: VerticalBox { padding: 0px; spacing: 8px;
-                    Text { text: "配对"; font-size: 18px; font-weight: 600; }
-                    Caption { text: "设备名称"; }
+                    Text { text: root.translate("Pairing", root.language); font-size: 18px; font-weight: 600; }
+                    Caption { text: root.translate("Device name", root.language); }
                     LineEdit { text <=> root.device-label; enabled: !root.busy; }
 
                 }
-                Caption { text: "桌面外壳 0.1.0 · Slint 1.17.1 · Agent 协议 2"; }
             }
         }
         if !root.show-settings: VerticalBox { padding: 0px; spacing: 10px;
             HorizontalBox {
-                LineEdit { placeholder-text: "搜索文件"; text <=> root.search; edited => {root.filter-changed();} }
-                CheckBox { text: "显示已删除"; checked <=> root.show-deleted; toggled => {root.filter-changed();} }
-                Button { text: "打开目录"; enabled: root.loaded; clicked => {root.action("open-root");} }
-                Button { text: "委员会网页"; enabled: root.loaded; clicked => {root.action("open-web");} }
+                LineEdit { placeholder-text: root.translate("Search files", root.language); text <=> root.search; edited => {root.filter-changed();} }
+                CheckBox { text: root.translate("Show deleted", root.language); checked <=> root.show-deleted; toggled => {root.filter-changed();} }
+                Button { text: root.translate("Open directory", root.language); enabled: root.loaded; clicked => {root.action("open-root");} }
+                Button { text: root.translate("Committee web page", root.language); enabled: root.loaded; clicked => {root.action("open-web");} }
             }
             Rectangle { height: 34px; background: #e9eef5; border-radius: 6px;
                 HorizontalBox { padding-left: 12px; padding-right: 12px;
-                    Caption { text: "文件"; horizontal-stretch: 1; }
-                    Caption { text: "大小"; width: 85px; }
-                    Caption { text: "本地状态"; width: 190px; }
-                    Caption { text: "服务器缓存"; width: 190px; }
-                    Caption { text: "传输进度"; width: 135px; }
+                    Caption { text: root.translate("Files", root.language); horizontal-stretch: 1; }
+                    Caption { text: root.translate("Size", root.language); width: 85px; }
+                    Caption { text: root.translate("Local status", root.language); width: 190px; }
+                    Caption { text: root.translate("Server cache", root.language); width: 190px; }
+                    Caption { text: root.translate("Transfer progress", root.language); width: 135px; }
                 }
             }
             ListView {
@@ -134,34 +142,34 @@ export component MainWindow inherits Window {
                         }
                     }
             }
-            if root.files.length == 0: Caption { text: root.running ? "暂无匹配文件" : "启动 Agent 后读取文件状态"; horizontal-alignment: center; }
-            Caption { text: root.observed == "" ? "" : "缓存状态更新于 " + root.observed; }
+            if root.files.length == 0: Caption { text: root.running ? root.translate("No matching files", root.language) : root.translate("Start the Agent to load file status", root.language); horizontal-alignment: center; }
+            Caption { text: root.observed == "" ? "" : root.translate("Cache status updated at ", root.language) + root.observed; }
         }
         if root.confirm-discard != "": VerticalBox { padding: 0px; spacing: 6px;
-            Text { text: "当前输入尚未保存，放弃后继续？"; }
+            Text { text: root.translate("Discard unsaved changes and continue?", root.language); }
             HorizontalBox { padding: 0px;
-                Button { text: "取消"; clicked => {root.confirm-discard = "";} }
-                Button { text: "放弃修改并继续"; clicked => {root.action("discard-" + root.confirm-discard);} }
+                Button { text: root.translate("Cancel", root.language); clicked => {root.confirm-discard = "";} }
+                Button { text: root.translate("Discard and continue", root.language); clicked => {root.action("discard-" + root.confirm-discard);} }
             }
         }
         if root.show-settings: VerticalBox { padding: 0px; spacing: 6px;
             if !root.loaded: HorizontalBox { padding: 0px;
-                Caption { text: "一次性配对码"; }
+                Caption { text: root.translate("One-time pairing code", root.language); }
                 LineEdit { text <=> root.pairing-code; input-type: password; enabled: !root.busy && !root.closing; }
-                Button { text: "配对此电脑"; enabled: !root.busy && !root.running && !root.closing; clicked => {root.action("pair");} }
+                Button { text: root.translate("Pair this computer", root.language); enabled: !root.busy && !root.running && !root.closing; clicked => {root.action("pair");} }
             }
             HorizontalBox { padding: 0px;
-                Button { text: "保存设置"; enabled: !root.running && !root.busy && !root.closing; clicked => {root.action("save");} }
-                Button { text: "另存为"; enabled: !root.running && !root.busy && !root.closing; clicked => {root.action("save-as");} }
-                if root.loaded: Button { text: "解除配对"; enabled: !root.running && !root.busy && !root.closing; clicked => {root.confirm-unpair = true;} }
+                Button { text: root.translate("Save settings", root.language); enabled: !root.running && !root.busy && !root.closing; clicked => {root.action("save");} }
+                Button { text: root.translate("Save as", root.language); enabled: !root.running && !root.busy && !root.closing; clicked => {root.action("save-as");} }
+                if root.loaded: Button { text: root.translate("Unpair", root.language); enabled: !root.running && !root.busy && !root.closing; clicked => {root.confirm-unpair = true;} }
             }
         }
-        if root.feedback != "": Caption { text: root.feedback; }
+        if root.feedback != "": Caption { text: root.translate(root.feedback, root.language); }
         HorizontalBox {
-            Button { text: root.show-logs ? "收起日志" : "查看日志"; clicked => {root.show-logs = !root.show-logs;} }
-            if root.show-logs: LineEdit { placeholder-text: "筛选日志"; text <=> root.log-filter; edited => {root.filter-changed();} }
-            if root.show-logs: Button { text: "复制"; clicked => {log-edit.select-all(); log-edit.copy();} }
-            if root.show-logs: Button { text: "导出"; clicked => {root.action("export-logs");} }
+            Button { text: root.show-logs ? root.translate("Hide logs", root.language) : root.translate("Show logs", root.language); clicked => {root.show-logs = !root.show-logs;} }
+            if root.show-logs: LineEdit { placeholder-text: root.translate("Filter logs", root.language); text <=> root.log-filter; edited => {root.filter-changed();} }
+            if root.show-logs: Button { text: root.translate("Copy", root.language); clicked => {log-edit.select-all(); log-edit.copy();} }
+            if root.show-logs: Button { text: root.translate("Export", root.language); clicked => {root.action("export-logs");} }
         }
         log-edit := TextEdit { visible: root.show-logs; text: root.log-text; read-only: true; height: root.show-logs ? 150px : 0px; }
     }

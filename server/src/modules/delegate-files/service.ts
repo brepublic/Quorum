@@ -12,7 +12,7 @@ import type {
   FileUpload,
   PendingHostCommit
 } from '@quorum/contracts';
-import {isAllowedDelegateFile, type DelegateFileSettings, type DefaultFileRejectionSettings} from '@quorum/contracts';
+import {committeeContentName, isAllowedDelegateFile, type DelegateFileSettings, type DefaultFileRejectionSettings} from '@quorum/contracts';
 import {rejectionTypes, allowedExtensions} from './settings.js';
 import {AppError} from '../../http/errors.js';
 import type {AuthenticatedSession, IdentityUser} from '../identity/store.js';
@@ -95,7 +95,8 @@ export class DelegateFileService {
       const before = await this.readSettings(client, committeeId, true);
       if (before.revision !== positiveRevision(body.baseRevision)) throw new AppError({code: 'REVISION_CONFLICT',
         message: '设置已被其他人修改，请重新载入后再保存。'});
-      const types = rejectionTypes(body.rejectionTypes);
+      const language = committeeId ? (await lockedCommittee(client, committeeId)).committee_language : undefined;
+      const types = rejectionTypes(body.rejectionTypes, language);
       if (committeeId) {
         const extensions = allowedExtensions(body.allowedExtensions);
         await client.query(`UPDATE committees SET delegate_file_settings=$2,delegate_file_settings_revision=delegate_file_settings_revision+1
@@ -235,7 +236,7 @@ export class DelegateFileService {
     const settings = (await this.pool.query('SELECT delegate_file_settings FROM committees WHERE id=$1', [session.committee_id])).rows[0].delegate_file_settings as DelegateFileSettings;
     const extensions = settings.allowedExtensions[type];
     if (typeof body.originalName !== 'string' || !isAllowedDelegateFile(body.originalName, extensions)) {
-      throw new AppError({code: 'VALIDATION_FAILED', message: `允许的文件格式：${extensions.map(ext => '.' + ext).join('、')}`,
+      throw new AppError({code: 'VALIDATION_FAILED', reason: 'INVALID_FILE_EXTENSION', params: {formats: extensions.map(ext => '.' + ext).join(', ')}, message: 'The file extension is not allowed.',
         details: {allowedExtensions: extensions}});
     }
     const auth = await this.custodian(session.created_by_user_id);
@@ -295,7 +296,7 @@ export class DelegateFileService {
       let submitter = existing?.submitter_display_name ?? null; let seatId = existing?.submitted_by_seat_id ?? null;
       if (!existing) {
         const chair = entry.created_by_user_id === committee.owner_user_id || await isChair(client, committee.id, entry.created_by_user_id);
-        if (chair) { source = 'CHAIR'; submitter = '主席'; }
+        if (chair) { source = 'CHAIR'; submitter = null; }
         else {
           const seat = (await client.query<{id: string; display_name: string}>(`SELECT s.id,s.display_name FROM seat_assignments a
             JOIN committee_seats s ON s.id=a.seat_id WHERE a.committee_id=$1 AND a.user_id=$2 AND a.status='ACTIVE'`,
@@ -343,7 +344,7 @@ export class DelegateFileService {
         const settings = await this.readSettings(client, committee.id);
         const rejection = settings.rejectionTypes.find(item => item.id === body.rejectionTypeId);
         if (!rejection) throw new AppError({code: 'VALIDATION_FAILED', message: '请选择有效的驳回类型。'});
-        const reason = rejection.custom ? bounded(body.reason, 'Rejection reason', 2000) : rejection.message;
+        const reason = rejection.custom ? bounded(body.reason, 'Rejection reason', 2000) : committeeContentName(rejection.message, committee.committee_language);
         const now = new Date();
         await client.query(`INSERT INTO delegate_file_metadata
           (file_entry_id,submission_source,submitter_display_name,file_type,submitted_at,rejection_reason,rejected_at)
@@ -599,7 +600,7 @@ export class DelegateFileService {
       .filter(item => item.status === 'PUBLISHED');
     const metadata = await this.metadata(entries.map(item => item.id));
     return entries.map(file => { const item = metadata.get(file.id); return {
-      id: file.id, logicalName: file.logicalName, submitterDisplayName: item?.submitter_display_name ?? null,
+      id: file.id, logicalName: file.logicalName, submissionSource: item?.submission_source ?? 'LEGACY', submitterDisplayName: item?.submitter_display_name ?? null,
       fileType: item?.file_type ?? null, submittedAt: item?.submitted_at?.toISOString() ?? file.submittedAt,
       publishedAt: file.publishedAt as string, revision: file.revision
     }; }).sort((a, b) => b.publishedAt.localeCompare(a.publishedAt));

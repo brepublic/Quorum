@@ -47,7 +47,7 @@ function store(overrides: Partial<IdentityStore> = {}): IdentityStore {
     disableUser: vi.fn(async () => 'disabled'),
     revokeUserSessions: vi.fn(async () => true),
     anonymizeUser: vi.fn(async () => ({
-      user: {...user, email: '', displayName: '匿名账号', status: 'ANONYMIZED'},
+      user: {...user, email: '', displayName: '', status: 'ANONYMIZED'},
       replacementUserId: admin.id,
       transferred: {committees: 0, countryTemplates: 0, committeeTemplates: 0, rulePackages: 0}
     })),

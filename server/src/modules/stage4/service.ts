@@ -1,3 +1,4 @@
+import {rejectionTypes} from '../delegate-files/settings.js';
 import {speakerListName} from '../stage5/service.js';
 import {createHash, randomUUID} from 'node:crypto';
 import type {Pool, PoolClient, QueryResultRow} from 'pg';
@@ -1028,9 +1029,9 @@ export class Stage4Service {
     }
     return idempotentTransaction({pool: this.pool, auth, route: 'POST /api/v1/committees', key: idempotencyKey,
       request: input, status: 201, work: async client => {
-        const defaults = await client.query<{creator_is_chair: boolean; operation_mode: 'DELEGATE_OPERATED' | 'CHAIR_OPERATED'}>(
+        const defaults = await client.query<{default_file_rejection_types: unknown; creator_is_chair: boolean; operation_mode: 'DELEGATE_OPERATED' | 'CHAIR_OPERATED'}>(
           `SELECT default_committee_creator_is_chair AS creator_is_chair,
-            default_committee_operation_mode AS operation_mode FROM system_settings WHERE singleton=true`);
+            default_committee_operation_mode AS operation_mode,default_file_rejection_types FROM system_settings WHERE singleton=true FOR SHARE`);
         const defaultBehavior = defaults.rows[0];
         if (!defaultBehavior) throw new Error('system_settings singleton is missing');
         const operationMode = (input.operationMode ?? defaultBehavior.operation_mode) as 'DELEGATE_OPERATED' | 'CHAIR_OPERATED';
@@ -1062,6 +1063,7 @@ export class Stage4Service {
         if (missing.length) throw new AppError({code: 'VALIDATION_FAILED', reason: 'MISSING_CONTENT_TRANSLATION',
           message: 'The selected content does not support the committee language.', params: {language},
           fieldErrors: missing.map(item => ({field: item.path, reason: 'MISSING_CONTENT_TRANSLATION', params: {language}}))});
+        const defaultRejections = rejectionTypes(defaultBehavior.default_file_rejection_types, language);
         const contentSnapshot: CommitteeContentSnapshot = {schemaVersion: 1, countryTemplate: countries,
           committeeTemplate: template,
           initialRulePackageVersionId: versionId};
@@ -1074,7 +1076,7 @@ export class Stage4Service {
           template?.builtin ? null : committeeTemplateId, countryTemplateKey, !template, language, contentSnapshot]);
         const row = inserted.rows[0] as Stage4CommitteeRow;
       await client.query(`UPDATE committees SET delegate_file_settings=jsonb_set(delegate_file_settings,
-        '{rejectionTypes}', (SELECT default_file_rejection_types FROM system_settings WHERE singleton=true)) WHERE id=$1`, [id]);
+        '{rejectionTypes}', $2::jsonb) WHERE id=$1`, [id, JSON.stringify(defaultRejections)]);
         await client.query(`INSERT INTO committee_rule_bindings
           (id,committee_id,package_version_id,effective_from_event_sequence,activated_by_user_id)
           VALUES ($1,$2,$3,1,$4)`, [randomUUID(), id, versionId, auth.user.id]);

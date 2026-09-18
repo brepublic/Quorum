@@ -133,7 +133,7 @@ function ThemeManager(props: {
     if (!file) return;
     try {
       if (file.size > MAX_THEME_FILE_BYTES) {
-        throw new Error(t('Theme file is too large. The maximum size is 3 MB.'));
+        throw Object.assign(new Error(), {code: 'THEME_TOO_LARGE'});
       }
       const theme = props.onImport(await file.text());
       setNotice({text: t('Imported and applied theme {name}.', {name: theme.manifest.name})});

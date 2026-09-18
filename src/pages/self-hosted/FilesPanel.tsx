@@ -1,3 +1,5 @@
+import {apiErrorText} from '../../i18n';
+import {t, useLanguage, getLanguage} from '../../i18n';
 import * as React from 'react';
 import type {CommitteeWorkspaceSnapshot, FileEntry, FileUpload, StorageMigration,
   StorageAgentConflict, StorageAgentConflictResolution, StoragePairingCode, StorageProviderType} from '@quorum/contracts';
@@ -6,37 +8,38 @@ import {SelfHostedApiError, newIdempotencyKey, type SelfHostedApi} from '../../s
 import {sha256File} from '../../services/sha256';
 
 const FILE_STATUS: Record<FileEntry['status'], string> = {
-  UPLOAD_COMPLETE: '上传完成', PENDING_REVIEW: '待审核', PUBLISHED: '已发布', REJECTED: '已驳回', DELETED: '已删除'
+  UPLOAD_COMPLETE: "Upload complete", PENDING_REVIEW: "Pending review", PUBLISHED: "Published", REJECTED: "File status: Rejected", DELETED: "Deleted"
 };
 const MIGRATION_STATUS: Record<StorageMigration['status'], string> = {
-  COPYING: '正在复制', READY_TO_CONFIRM: '等待确认', FAILED: '迁移失败', COMPLETED: '迁移完成', CANCELLED: '已取消'
+  COPYING: "Copying", READY_TO_CONFIRM: "Awaiting confirmation", FAILED: "Migration failed", COMPLETED: "Migration completed", CANCELLED: "Cancelled"
 };
-const HOST_STATUS = {ACTIVE: '在线', DEGRADED: '离线', REVOKED: '已撤销'} as const;
+const HOST_STATUS = {ACTIVE: "Online", DEGRADED: "Offline", REVOKED: "Revoked"} as const;
 const CONFLICT_REASON: Record<StorageAgentConflict['reasonCode'], string> = {
-  MANIFEST_STALE: '同步状态已更新', FILE_DELETED: '文件已删除', REVISION_CONFLICT: '文件已有新版本',
-  NAME_CONFLICT: '文件名冲突', HOST_TRANSFERRED: '主席电脑已转移'
+  MANIFEST_STALE: "Sync state changed", FILE_DELETED: "File deleted", REVISION_CONFLICT: "A newer file version exists",
+  NAME_CONFLICT: "File name conflict", HOST_TRANSFERRED: "Chair computer transferred"
 };
 
 function migrationFailureText(code: string): string {
-  if (code === 'MANIFEST_CHANGED') return '文件列表已变更，请重试迁移。';
-  return '复制失败，请检查存储服务后重试。';
+  if (code === 'MANIFEST_CHANGED') return t("The file list changed. Retry the migration.");
+  return t("Copy failed. Check the storage service and retry.");
 }
 
 export function storageErrorText(error: unknown): string {
-  if (error instanceof DOMException && error.name === 'AbortError') return '已取消上传。';
-  if (!(error instanceof SelfHostedApiError)) return error instanceof Error ? error.message : String(error);
+  if (error instanceof DOMException && error.name === 'AbortError') return t("Upload cancelled.");
+  if (!(error instanceof SelfHostedApiError)) return apiErrorText(error);
+  if (error.localization?.reason && error.localization.reason !== error.code) return apiErrorText(error);
   const messages: Partial<Record<string, string>> = {
-    PAYLOAD_TOO_LARGE: '文件过大，请选择较小的文件。',
-    REVISION_CONFLICT: '状态已更新，请重新操作。',
-    IDEMPOTENCY_CONFLICT: '请求内容已变更，请重新操作。',
-    RESOURCE_CONFLICT: '当前状态不允许此操作。',
-    SERVICE_NOT_READY: '存储暂不可用，请检查容量和存储服务后重试。',
-    FORBIDDEN: '你没有权限执行此操作。',
-    AUTHENTICATION_REQUIRED: '登录已失效，请重新登录。',
-    LINK_EXPIRED: '配对码已失效，请重新生成。',
-    VALIDATION_FAILED: '文件信息无效，请重新选择文件。'
+    PAYLOAD_TOO_LARGE: t("The file is too large. Choose a smaller file."),
+    REVISION_CONFLICT: t("The state changed. Try again."),
+    IDEMPOTENCY_CONFLICT: t("The request changed. Try again."),
+    RESOURCE_CONFLICT: t("The current state does not allow this action."),
+    SERVICE_NOT_READY: t("Storage is unavailable. Check capacity and the storage service, then retry."),
+    FORBIDDEN: t("You do not have permission for this action."),
+    AUTHENTICATION_REQUIRED: t("Your session expired. Sign in again."),
+    LINK_EXPIRED: t("The pairing code expired. Generate a new one."),
+    VALIDATION_FAILED: t("Invalid file information. Select the file again.")
   };
-  return messages[error.code] ?? error.message;
+  return messages[error.code] ?? apiErrorText(error);
 }
 
 function formatBytes(bytes: number): string {
@@ -53,6 +56,7 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
   currentUserId?: string;
   section?: 'attachments' | 'storage' | 'all';
 }) {
+  useLanguage();
   const committeeId = snapshot.committee.id;
   const readOnly = snapshot.committee.status === 'ARCHIVED' || snapshot.committee.status === 'DELETING';
   const canManage = !readOnly && (snapshot.viewer.audience === 'CHAIR' || snapshot.viewer.audience === 'OWNER');
@@ -70,7 +74,8 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
   const [logicalName, setLogicalName] = React.useState('');
   const [targetType, setTargetType] = React.useState<StorageProviderType>('SERVER_VOLUME');
   const [targetConfigId, setTargetConfigId] = React.useState('');
-  const [error, setError] = React.useState<string>();
+  const [failure, setError] = React.useState<unknown>();
+  const error = failure ? storageErrorText(failure) : undefined;
   const [working, setWorking] = React.useState(false);
   const [progress, setProgress] = React.useState<UploadProgress>();
   const [preparingDownloads, setPreparingDownloads] = React.useState<Set<string>>(() => new Set());
@@ -86,7 +91,7 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
       }
       if (readiness.status !== 'READY') throw new Error(readiness.code ?? 'File is unavailable.');
       window.location.assign(api.fileDownloadUrl(fileId));
-    } catch (caught) { setError(storageErrorText(caught)); }
+    } catch (caught) { setError(caught); }
     finally { setPreparingDownloads(current => { const next = new Set(current); next.delete(fileId); return next; }); }
   };
 
@@ -129,7 +134,7 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
         setBindings([]); setConfigs([]); setMigrations([]); setHosts([]); setConflicts([]);
       }
       if (clearError) setError(undefined);
-    } catch (caught) { setError(storageErrorText(caught)); }
+    } catch (caught) { setError(caught); }
   }, [api, canManage, canUpload, committeeId]);
 
   React.useEffect(() => { void refresh(); }, [refresh, snapshot.sync.committeeEventSequence]);
@@ -139,7 +144,7 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
     setWorking(true); setError(undefined);
     let failed = false;
     try { await operation(); }
-    catch (caught) { failed = true; setError(storageErrorText(caught)); }
+    catch (caught) { failed = true; setError(caught); }
     finally { await refresh(!failed); setWorking(false); }
   }, [refresh]);
 
@@ -162,7 +167,7 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
       setSelectedFile(undefined); setLogicalName(''); setProgress(undefined);
       await refresh();
     } catch (caught) {
-      setError(storageErrorText(caught));
+      setError(caught);
       setProgress(undefined);
       await refresh(false);
     } finally {
@@ -182,11 +187,11 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
   const createPairing = async (purpose: 'INITIAL' | 'TRANSFER') => {
     setWorking(true); setError(undefined);
     try { setPairing(await api.createStoragePairingCode(committeeId, snapshot.committee.revision, purpose)); }
-    catch (caught) { setError(storageErrorText(caught)); await refresh(false); }
+    catch (caught) { setError(caught); await refresh(false); }
     finally { setWorking(false); }
   };
   const resolveConflict = (item: StorageAgentConflict, action: StorageAgentConflictResolution) => {
-    if (!activeHost) return Promise.reject(new Error('当前没有主席电脑。'));
+    if (!activeHost) return Promise.reject(Object.assign(new Error(), {code: 'CHAIR_HOST_REQUIRED'}));
     const resolvedName = item.change.kind === 'DELETE' ? ''
       : conflictNames[item.id] ?? item.change.logicalName;
     return api.resolveStorageAgentConflict(committeeId, item.id, {baseRevision: item.revision,
@@ -196,9 +201,9 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
   };
   const targetOptions = [
     ...(!activeBinding || (activeBinding.providerType !== 'SERVER_VOLUME' && activeBinding.providerType !== 'CHAIR_AGENT')
-      ? [{key: 'volume', value: 'SERVER_VOLUME', text: '服务器卷'}] : []),
+      ? [{key: 'volume', value: 'SERVER_VOLUME', text: t("Server volume")}] : []),
     ...(!activeBinding && hosts.some(host => host.status === 'ACTIVE' || host.status === 'DEGRADED')
-      ? [{key: 'chair-agent', value: 'CHAIR_AGENT', text: '主席电脑'}] : []),
+      ? [{key: 'chair-agent', value: 'CHAIR_AGENT', text: t("Chair computer")}] : []),
     ...(activeBinding?.providerType === 'CHAIR_AGENT' ? [] : configs.filter(config => config.status === 'ACTIVE'
       && config.id !== activeBinding?.providerConfigId)).map(config => ({key: config.id,
       value: `S3:${config.id}`, text: `S3 · ${config.displayName}`}))
@@ -213,34 +218,34 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
   return <div className="self-hosted-files">
     {error && <Message error role="alert" content={error} />}
     {section !== 'storage' && <>
-    {pendingHostCommits.length > 0 && <Message info header="等待主席电脑保存"
+    {pendingHostCommits.length > 0 && <Message info header={t("Waiting for the chair computer to save")}
       list={pendingHostCommits.map(item => item.logicalName)} />}
-    {canUpload && <Segment loading={working && !progress}><Header as="h3">上传文件</Header>
-      <Form onSubmit={() => void upload()}><Form.Input type="file" label="选择文件" input={{
+    {canUpload && <Segment loading={working && !progress}><Header as="h3">{t("Upload files")}</Header>
+      <Form onSubmit={() => void upload()}><Form.Input type="file" label={t("Choose file")} input={{
         onChange: (event: React.ChangeEvent<HTMLInputElement>) => { const file = event.currentTarget.files?.[0];
-          setSelectedFile(file); if (file) setLogicalName(file.name); }, 'aria-label': '选择上传文件'
+          setSelectedFile(file); if (file) setLogicalName(file.name); }, 'aria-label': t("Select a file to upload")
       }} />
-      <Form.Input label="文件名称" value={logicalName} onChange={event => setLogicalName(event.currentTarget.value)} />
-      <Button primary disabled={working || !selectedFile || !logicalName.trim()}>上传文件</Button>
+      <Form.Input label={t("File name")} value={logicalName} onChange={event => setLogicalName(event.currentTarget.value)} />
+      <Button primary disabled={working || !selectedFile || !logicalName.trim()}>{t("Upload files")}</Button>
       {progress && progress.phase !== 'COMMITTING'
-        && <Button type="button" onClick={() => uploadController.current?.abort()}>取消上传</Button>}
+        && <Button type="button" onClick={() => uploadController.current?.abort()}>{t("Cancel upload")}</Button>}
       </Form>
-      {progress && <Progress percent={progressPercent} progress aria-label={progress.phase === 'HASHING' ? '正在校验文件'
-        : progress.phase === 'UPLOADING' ? '正在上传文件' : '正在提交文件'}>
-        {progress.phase === 'HASHING' ? '正在校验' : progress.phase === 'UPLOADING' ? '正在上传' : '正在提交'}
+      {progress && <Progress percent={progressPercent} progress aria-label={progress.phase === 'HASHING' ? t("Verifying file")
+        : progress.phase === 'UPLOADING' ? t("Uploading file") : t("Committing file")}>
+        {progress.phase === 'HASHING' ? t("Verifying") : progress.phase === 'UPLOADING' ? t("Uploading") : t("Committing")}
       </Progress>}
     </Segment>}
 
-    <Header as="h3">文件</Header>
-    {files.length === 0 ? <Message content="暂无文件" /> : <Card.Group itemsPerRow={3} stackable>
+    <Header as="h3">{t("File")}</Header>
+    {files.length === 0 ? <Message content={t("No files")} /> : <Card.Group itemsPerRow={3} stackable>
       {files.map(file => {
         const ownsFile = currentUserId === file.createdByUserId;
         const canChange = !readOnly && (canManage || ownsFile);
         return <Card key={file.id} className="self-hosted-file-card"><Card.Content>
           <Card.Header>{file.logicalName}</Card.Header>
-          <Card.Meta>{formatBytes(file.currentVersion.sizeBytes)} · <Label size="tiny">{FILE_STATUS[file.status]}</Label>
+          <Card.Meta>{formatBytes(file.currentVersion.sizeBytes)} · <Label size="tiny">{t(FILE_STATUS[file.status])}</Label>
             {file.syncState !== 'SYNCED' && <> · <Label size="tiny" color="orange">
-              {file.syncState === 'PENDING_HOST_COMMIT' ? '等待主席电脑保存' : '等待主席电脑同步'}
+              {file.syncState === 'PENDING_HOST_COMMIT' ? t("Waiting for the chair computer to save") : t("Waiting for chair computer sync")}
             </Label></>}
           </Card.Meta>
           <Card.Description>{file.currentVersion.originalName}</Card.Description>
@@ -248,95 +253,98 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
           <Button as="a" size="small" href={api.fileDownloadUrl(file.id)} download
             loading={preparingDownloads.has(file.id)} disabled={preparingDownloads.has(file.id)}
             onClick={(event: React.MouseEvent) => {event.preventDefault(); void downloadFile(file.id);}}>
-            {preparingDownloads.has(file.id) ? '正在从主席电脑准备文件' : '下载文件'}</Button>
+            {preparingDownloads.has(file.id) ? t("Preparing the file from the chair computer") : t("Download file")}</Button>
           {canChange && file.status === 'UPLOAD_COMPLETE' && <Button size="small"
-            onClick={() => void run(() => api.submitFileForReview(file.id, file.revision))}>提交审核</Button>}
+            onClick={() => void run(() => api.submitFileForReview(file.id, file.revision))}>{t("Submit for review")}</Button>}
           {canManage && file.status === 'PENDING_REVIEW' && <Button primary size="small"
-            onClick={() => void run(() => api.publishFile(file.id, file.revision))}>发布文件</Button>}
+            onClick={() => void run(() => api.publishFile(file.id, file.revision))}>{t("Publish file")}</Button>}
           {canChange && <Button negative size="small" onClick={() => {
-            if (window.confirm(`永久删除“${file.logicalName}”？文件将立即不可下载，且无法恢复。`)) {
+            if (window.confirm(t('Permanently delete “{name}”? The file will become unavailable and cannot be recovered.', {name: file.logicalName}))) {
               void run(() => api.deleteFile(file.id, file.revision));
             }
-          }}>永久删除</Button>}
+          }}>{t("Delete permanently")}</Button>}
         </Card.Content></Card>;
       })}
     </Card.Group>}</>}
 
     {section !== 'attachments' && canManage && <Segment loading={working && !progress} className="self-hosted-storage-panel">
-      <Header as="h3">文件存储</Header>
-      <Header as="h4">主席电脑</Header>
-      {activeHost ? <p>{activeHost.deviceLabel} · {HOST_STATUS[activeHost.status]}
-        {activeHost.lastSeenAt ? ` · ${new Date(activeHost.lastSeenAt).toLocaleString('zh-CN')}` : ''}</p>
-        : <p>未配对</p>}
-      {pairing && <Message info><Message.Header>配对码</Message.Header>
+      <Header as="h3">{t("File storage")}</Header>
+      <Header as="h4">{t("Chair computer")}</Header>
+      {activeHost ? <p>{activeHost.deviceLabel} · {t(HOST_STATUS[activeHost.status])}
+        {activeHost.lastSeenAt ? ` · ${new Date(activeHost.lastSeenAt).toLocaleString(getLanguage())}` : ''}</p>
+        : <p>{t("Not paired")}</p>}
+      {pairing && <Message info><Message.Header>{t("Pairing code")}</Message.Header>
         <code className="self-hosted-pairing-code">{pairing.code}</code>
         <span className="self-hosted-pairing-code-meta">
-          · 有效至 {new Date(pairing.expiresAt).toLocaleTimeString('zh-CN')}
+
+          {t("· Expires at")} {new Date(pairing.expiresAt).toLocaleTimeString(getLanguage())}
         </span>
         <span className="self-hosted-pairing-code-actions">
           <Button type="button" size="small" onClick={() => void navigator.clipboard?.writeText(pairing.code)}>
-            复制配对码
+
+            {t("Copy pairing code")}
           </Button>
         </span>
       </Message>}
       {!pairing && <Button type="button" size="small" disabled={working}
         onClick={() => void createPairing(activeHost ? 'TRANSFER' : 'INITIAL')}>
-        {activeHost ? '转移到其他电脑' : '配对主席电脑'}
+        {activeHost ? t("Transfer to another computer") : t("Pair chair computer")}
       </Button>}
-      {pairing && <Button type="button" size="small" onClick={() => setPairing(undefined)}>关闭配对码</Button>}
+      {pairing && <Button type="button" size="small" onClick={() => setPairing(undefined)}>{t("Close pairing code")}</Button>}
       {activeHost && <Button type="button" negative size="small" disabled={working} onClick={() => {
-        if (window.confirm(`撤销“${activeHost.deviceLabel}”？`)) {
+        if (window.confirm(t('Revoke “{name}”?', {name: activeHost.deviceLabel}))) {
           void run(() => api.revokeStorageHost(committeeId, activeHost.id, snapshot.committee.revision));
         }
-      }}>撤销主席电脑</Button>}
+      }}>{t("Revoke chair computer")}</Button>}
       {conflicts.some(item => item.status === 'PENDING') && <div className="self-hosted-storage-conflicts">
-        <Header as="h4">同步冲突</Header>
+        <Header as="h4">{t("Sync conflicts")}</Header>
         {conflicts.filter(item => item.status === 'PENDING').map(item => <Card key={item.id} fluid>
-          <Card.Content><Card.Header>{item.change.kind === 'DELETE' ? '本地删除' : item.change.logicalName}</Card.Header>
-            <Card.Meta>{CONFLICT_REASON[item.reasonCode]}</Card.Meta>
+          <Card.Content><Card.Header>{item.change.kind === 'DELETE' ? t("Local deletion") : item.change.logicalName}</Card.Header>
+            <Card.Meta>{t(CONFLICT_REASON[item.reasonCode])}</Card.Meta>
             {(item.change.kind === 'UPSERT' || item.reasonCode === 'NAME_CONFLICT')
               && item.change.kind !== 'DELETE' && <Form.Input label={item.reasonCode === 'NAME_CONFLICT'
-                ? '新文件名称' : '另存名称'} aria-label={item.reasonCode === 'NAME_CONFLICT' ? '新文件名称' : '另存名称'}
+                ? t("New file name") : t("Save as name")} aria-label={item.reasonCode === 'NAME_CONFLICT' ? t("New file name") : t("Save as name")}
               value={conflictNames[item.id] ?? item.change.logicalName}
               onChange={event => { const value = event.currentTarget.value;
                 setConflictNames(current => ({...current, [item.id]: value})); }} />}
           </Card.Content><Card.Content extra>
             <Button size="small" onClick={() => void run(() => resolveConflict(item, 'KEEP_SERVER'))}>
-              保留服务端版本
+
+              {t("Keep server version")}
             </Button>
             {!['FILE_DELETED', 'HOST_TRANSFERRED'].includes(item.reasonCode) && <Button primary size="small"
               disabled={item.reasonCode === 'NAME_CONFLICT' && !conflictNames[item.id]?.trim()}
-              onClick={() => void run(() => resolveConflict(item, 'ACCEPT_LOCAL'))}>采用本地版本</Button>}
+              onClick={() => void run(() => resolveConflict(item, 'ACCEPT_LOCAL'))}>{t("Use local version")}</Button>}
             {item.change.kind === 'UPSERT' && item.reasonCode !== 'HOST_TRANSFERRED' && <Button size="small"
               disabled={!conflictNames[item.id]?.trim()}
-              onClick={() => void run(() => resolveConflict(item, 'SAVE_AS_NEW'))}>另存为新文件</Button>}
+              onClick={() => void run(() => resolveConflict(item, 'SAVE_AS_NEW'))}>{t("Save as a new file")}</Button>}
           </Card.Content></Card>)}
       </div>}
-      {activeBinding && <p>当前：{activeBinding.providerType === 'SERVER_VOLUME' ? '服务器卷'
-        : activeBinding.providerType === 'CHAIR_AGENT' ? '主席电脑'
-          : `S3 · ${configs.find(config => config.id === activeBinding.providerConfigId)?.displayName ?? '已配置存储'}`}</p>}
+      {activeBinding && <p>{t("Current:")}{activeBinding.providerType === 'SERVER_VOLUME' ? t("Server volume")
+        : activeBinding.providerType === 'CHAIR_AGENT' ? t("Chair computer")
+          : `S3 · ${configs.find(config => config.id === activeBinding.providerConfigId)?.displayName ?? t("Configured storage")}`}</p>}
       <Form onSubmit={activeBinding ? createMigration : initializeStorage}>
-        <Form.Select label={activeBinding ? '迁移到' : '初始存储'} options={targetOptions}
+        <Form.Select label={activeBinding ? t("Migrate to") : t("Initial storage")} options={targetOptions}
           value={targetType === 'S3_COMPATIBLE' ? `S3:${targetConfigId}` : targetType}
           onChange={(_, data) => setTarget(String(data.value))} />
         <Button primary disabled={working || targetOptions.length === 0
           || (targetType === 'S3_COMPATIBLE' && !targetConfigId)}>
-          {activeBinding ? '开始迁移' : '启用存储'}
+          {activeBinding ? t("Start migration") : t("Enable storage")}
         </Button>
       </Form>
       {migrations.length > 0 && <Card.Group stackable className="self-hosted-migrations">{migrations.map(migration =>
-        <Card key={migration.id}><Card.Content><Card.Header>{MIGRATION_STATUS[migration.status]}</Card.Header>
+        <Card key={migration.id}><Card.Content><Card.Header>{t(MIGRATION_STATUS[migration.status])}</Card.Header>
           <Card.Meta>{migration.completedItems}/{migration.totalItems}</Card.Meta>
           {migration.failureCode && <Card.Description>{migrationFailureText(migration.failureCode)}</Card.Description>}
         </Card.Content><Card.Content extra>
           {migration.status === 'FAILED' && <Button size="small"
-            onClick={() => void run(() => api.retryStorageMigration(migration.id, migration.revision))}>重试迁移</Button>}
+            onClick={() => void run(() => api.retryStorageMigration(migration.id, migration.revision))}>{t("Retry migration")}</Button>}
           {migration.status === 'READY_TO_CONFIRM' && <Button primary size="small"
-            onClick={() => void run(() => api.confirmStorageMigration(migration.id, migration.revision))}>确认切换</Button>}
+            onClick={() => void run(() => api.confirmStorageMigration(migration.id, migration.revision))}>{t("Confirm switch")}</Button>}
           {!['COMPLETED', 'CANCELLED'].includes(migration.status) && <Button size="small"
-            onClick={() => { if (window.confirm('取消此次存储迁移？')) {
+            onClick={() => { if (window.confirm(t("Cancel this storage migration?"))) {
               void run(() => api.cancelStorageMigration(migration.id, migration.revision));
-            } }}>取消迁移</Button>}
+            } }}>{t("Cancel migration")}</Button>}
         </Card.Content></Card>)}</Card.Group>}
     </Segment>}
   </div>;

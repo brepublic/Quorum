@@ -184,7 +184,7 @@ describe('ThemeProvider runtime', () => {
     await act(async () => container.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());
     const submit = () => act(async () => {container.querySelector('form')!.dispatchEvent(new Event('submit', {bubbles: true, cancelable: true}));});
     await submit();
-    expect(container.textContent).toContain('Save failed');
+    expect(container.textContent).toContain('Request failed. Try again later.');
     expect(document.getElementById('quorum-theme-portal')).toBeNull();
     await submit();
     expect(updateThemeSettings).toHaveBeenLastCalledWith({enabled: true, revision: 1});

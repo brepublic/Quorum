@@ -1,3 +1,5 @@
+import {apiErrorText} from '../../i18n';
+import {t, useLanguage, getLanguage} from '../../i18n';
 import * as React from 'react';
 import {Prompt} from 'react-router-dom';
 import {Button, Form, Header, Select, Message, Segment} from 'semantic-ui-react';
@@ -7,9 +9,9 @@ type Config = Awaited<ReturnType<SelfHostedApi['storageCacheStatus']>>['config']
 type ByteField = 'publishedCacheMaxBytes' | 'pendingReviewMaxBytes' | 'pendingReviewCommitteeMaxBytes';
 type ByteUnit = 'B' | 'KB' | 'MB' | 'GB';
 const byteFields: Array<{key: ByteField; label: string}> = [
-  {key: 'publishedCacheMaxBytes', label: '发布缓存额度'},
-  {key: 'pendingReviewMaxBytes', label: '待审核总额度'},
-  {key: 'pendingReviewCommitteeMaxBytes', label: '单委员会待审核额度'}
+  {key: 'publishedCacheMaxBytes', label: "Published cache quota"},
+  {key: 'pendingReviewMaxBytes', label: "Total review quota"},
+  {key: 'pendingReviewCommitteeMaxBytes', label: "Review quota per committee"}
 ];
 const byteUnits: ByteUnit[] = ['B', 'KB', 'MB', 'GB'];
 const defaultByteUnit: ByteUnit = 'MB';
@@ -26,8 +28,10 @@ const parseDisplayValue = (raw: string, unit: ByteUnit): number | undefined => {
 };
 
 export default function StorageCacheSettingsPanel({api}: {api: SelfHostedApi}) {
+  useLanguage();
   const [config, setConfig] = React.useState<Config>();
-  const [error, setError] = React.useState<string>();
+  const [failure, setError] = React.useState<unknown>();
+  const error = failure ? apiErrorText(failure) : undefined;
   const [displayed, setDisplayed] = React.useState<Record<ByteField, string>>({
     publishedCacheMaxBytes: '', pendingReviewMaxBytes: '', pendingReviewCommitteeMaxBytes: ''
   });
@@ -55,7 +59,7 @@ export default function StorageCacheSettingsPanel({api}: {api: SelfHostedApi}) {
         pendingReviewCommitteeMaxBytes: defaultByteUnit});
       setInvalid({publishedCacheMaxBytes: false, pendingReviewMaxBytes: false, pendingReviewCommitteeMaxBytes: false});
     }, caught => {
-      if (active) setError(caught instanceof Error ? caught.message : String(caught));
+      if (active) setError(caught);
     });
     return () => {active = false;};
   }, [api, reload]);
@@ -74,7 +78,7 @@ export default function StorageCacheSettingsPanel({api}: {api: SelfHostedApi}) {
         pendingReviewCommitteeMaxBytes: bytesToDisplayValue(next.pendingReviewCommitteeMaxBytes, units.pendingReviewCommitteeMaxBytes),
       });
       setDirty(false); setSaved(true);}
-    catch (caught) {setError(caught instanceof Error ? caught.message : String(caught));}
+    catch (caught) {setError(caught);}
     finally {setSaving(false);}
   };
   const updateSavedBytes = (key: ByteField, raw: string) => {
@@ -94,35 +98,35 @@ export default function StorageCacheSettingsPanel({api}: {api: SelfHostedApi}) {
     setInvalid(current => ({...current, [key]: false}));
   };
   const input = (field: (typeof byteFields)[number]) => <Form.Field key={field.key} error={invalid[field.key]}>
-    <label>{field.label}</label>
+    <label>{t(field.label)}</label>
     <Form.Input id={`cache-${field.key}`} type="number" required min={0} step="any"
       value={displayed[field.key]} onChange={(_, data) => updateSavedBytes(field.key, String(data.value))}
       action={<Select compact button options={unitOptions} value={units[field.key]}
         id={`cache-${field.key}-unit`} onChange={(_, data) => updateUnit(field.key, data.value as ByteUnit)} />} />
   </Form.Field>;
   return <div className="self-hosted-cache-settings">
-    <Prompt when={dirty} message="放弃未保存的缓存设置修改？" />
+    <Prompt when={dirty} message={t("Discard unsaved cache settings?")} />
     {error && <Message error role="alert" content={error} />}
-    {saved && <Message positive role="status" content="已保存" />}
+    {saved && <Message positive role="status" content={t("Saved")} />}
     {!config ? <Segment loading={!error} style={{minHeight: '8em'}}>
-      {error && <Button onClick={() => setReload(value => value + 1)}>重试</Button>}
+      {error && <Button onClick={() => setReload(value => value + 1)}>{t("Retry")}</Button>}
     </Segment> : <Form onSubmit={() => void save()} loading={saving}>
       <Segment>
-        <Header as="h2">缓存额度</Header>
+        <Header as="h2">{t("Cache quotas")}</Header>
         <Form.Group widths="equal">
           {byteFields.map(field => input(field))}
         </Form.Group>
       </Segment>
       <Segment>
-        <Header as="h2">可用空间预留</Header>
+        <Header as="h2">{t("Free space reserve")}</Header>
         <Form.Group widths="equal">
-          <Form.Input id="cache-storageMinFreeBytes" label="最低可用空间（字节）" type="number" required min={0} step={1}
+          <Form.Input id="cache-storageMinFreeBytes" label={t("Minimum free space (bytes)")} type="number" required min={0} step={1}
             value={config.storageMinFreeBytes} onChange={(_, data) => {setConfig({...config, storageMinFreeBytes: Number(data.value)}); setDirty(true); setSaved(false);}} />
-          <Form.Input id="cache-storageMinFreePercent" label="最低可用空间（%）" type="number" required min={0} max={100}
+          <Form.Input id="cache-storageMinFreePercent" label={t("Minimum free space (%)")} type="number" required min={0} max={100}
             value={config.storageMinFreePercent} onChange={(_, data) => {setConfig({...config, storageMinFreePercent: Number(data.value)}); setDirty(true); setSaved(false);}} />
         </Form.Group>
       </Segment>
-      <Button primary disabled={saving || !dirty || Object.values(invalid).some(value => value)}>保存缓存配置</Button>
+      <Button primary disabled={saving || !dirty || Object.values(invalid).some(value => value)}>{t("Save cache configuration")}</Button>
     </Form>}
   </div>;
 }

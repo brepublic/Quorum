@@ -28,7 +28,7 @@ export interface IdentityServiceOptions {
 function normalizeEmail(value: string): string {
   const email = value.trim().toLowerCase();
   if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: 'Enter a valid email address.'});
+    throw new AppError({code: 'VALIDATION_FAILED', reason: 'INVALID_EMAIL', fieldErrors: [{field: 'email', reason: 'INVALID_EMAIL'}], message: 'Enter a valid email address.'});
   }
   return email;
 }
@@ -36,14 +36,14 @@ function normalizeEmail(value: string): string {
 function displayName(value: string): string {
   const name = value.trim();
   if (!name || name.length > 120) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: 'Enter a display name.'});
+    throw new AppError({code: 'VALIDATION_FAILED', reason: 'DISPLAY_NAME_REQUIRED', fieldErrors: [{field: 'displayName', reason: 'DISPLAY_NAME_REQUIRED'}], message: 'Enter a display name.'});
   }
   return name;
 }
 
 function requirePassword(password: string): void {
   if (password.length < 12 || password.length > 256) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: 'Password must be at least 12 characters.'});
+    throw new AppError({code: 'VALIDATION_FAILED', reason: 'PASSWORD_TOO_SHORT', fieldErrors: [{field: 'password', reason: 'PASSWORD_TOO_SHORT'}], message: 'Password must be at least 12 characters.'});
   }
 }
 
@@ -77,7 +77,7 @@ export class IdentityService {
   async bootstrapAdmin(input: {secret?: string; email: string; displayName: string; password: string},
     context: RequestIdentityContext): Promise<SessionResult> {
     if (!input.secret) {
-      throw new AppError({code: 'BAD_REQUEST', message: 'Bootstrap secret is required.'});
+      throw new AppError({code: 'BAD_REQUEST', reason: 'BOOTSTRAP_SECRET_REQUIRED', message: 'Bootstrap secret is required.'});
     }
     const email = normalizeEmail(input.email);
     const name = displayName(input.displayName);
@@ -116,7 +116,7 @@ export class IdentityService {
       } else {
         await hashPassword(input.password || createOpaqueToken());
       }
-      throw new AppError({code: 'AUTHENTICATION_REQUIRED', message: 'Email or password is incorrect.'});
+      throw new AppError({code: 'AUTHENTICATION_REQUIRED', reason: 'INCORRECT_CREDENTIALS', message: 'Email or password is incorrect.'});
     }
 
     const session = this.newSession(context);
@@ -150,7 +150,7 @@ export class IdentityService {
     context: RequestIdentityContext): Promise<SessionResult> {
     const login = await this.store.findLogin(auth.user.email);
     if (!login || !(await verifyPassword(login.passwordHash, password))) {
-      throw new AppError({code: 'FORBIDDEN', message: 'Password is incorrect.'});
+      throw new AppError({code: 'FORBIDDEN', reason: 'INCORRECT_PASSWORD', message: 'Password is incorrect.'});
     }
     const session = this.newSession(context);
     const user = await this.store.rotateSession({
@@ -168,7 +168,7 @@ export class IdentityService {
     if (!auth.user.mustChangePassword) {
       const login = await this.store.findLogin(auth.user.email);
       if (!input.currentPassword || !login || !(await verifyPassword(login.passwordHash, input.currentPassword))) {
-        throw new AppError({code: 'FORBIDDEN', message: 'Current password is incorrect.'});
+        throw new AppError({code: 'FORBIDDEN', reason: 'INCORRECT_CURRENT_PASSWORD', fieldErrors: [{field: 'currentPassword', reason: 'INCORRECT_CURRENT_PASSWORD'}], message: 'Current password is incorrect.'});
       }
     }
     const passwordHash = await hashPassword(input.newPassword);
@@ -241,7 +241,7 @@ export class IdentityService {
       return {user, temporaryPassword};
     } catch (error) {
       if ((error as {code?: string}).code === '23505') {
-        throw new AppError({code: 'RESOURCE_CONFLICT', message: 'This email address is already in use.'});
+        throw new AppError({code: 'RESOURCE_CONFLICT', reason: 'EMAIL_IN_USE', fieldErrors: [{field: 'email', reason: 'EMAIL_IN_USE'}], message: 'This email address is already in use.'});
       }
       throw error;
     }
@@ -259,7 +259,7 @@ export class IdentityService {
       audit: this.audit(context)
     });
     if (!user) throw new AppError({code: 'NOT_FOUND', message: 'User not found.'});
-    if (user === 'not_active') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Only active accounts can be reset.'});
+    if (user === 'not_active') throw new AppError({code: 'RESOURCE_CONFLICT', reason: 'ACCOUNT_NOT_ACTIVE', message: 'Only active accounts can be reset.'});
     return {user, temporaryPassword};
   }
 
@@ -268,10 +268,10 @@ export class IdentityService {
     const result = await this.store.disableUser({actor: auth, targetUserId, now: this.now(), audit: this.audit(context)});
     if (result === 'not_found') throw new AppError({code: 'NOT_FOUND', message: 'User not found.'});
     if (result === 'system_admin') {
-      throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The system administrator cannot be disabled.'});
+      throw new AppError({code: 'RESOURCE_CONFLICT', reason: 'ADMIN_ACCOUNT_PROTECTED', message: 'The system administrator cannot be disabled.'});
     }
     if (result === 'not_active') {
-      throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Only active accounts can be disabled.'});
+      throw new AppError({code: 'RESOURCE_CONFLICT', reason: 'ACCOUNT_NOT_ACTIVE', message: 'Only active accounts can be disabled.'});
     }
   }
 
@@ -308,19 +308,19 @@ export class IdentityService {
     });
     if (result === 'not_found') throw new AppError({code: 'NOT_FOUND', message: 'User not found.'});
     if (result === 'system_admin') {
-      throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The system administrator cannot be anonymized.'});
+      throw new AppError({code: 'RESOURCE_CONFLICT', reason: 'ADMIN_ACCOUNT_PROTECTED', message: 'The system administrator cannot be anonymized.'});
     }
     if (result === 'not_disabled') {
-      throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Disable the account before anonymizing it.'});
+      throw new AppError({code: 'RESOURCE_CONFLICT', reason: 'ACCOUNT_DISABLE_REQUIRED', message: 'Disable the account before anonymizing it.'});
     }
     if (result === 'invalid_replacement') {
-      throw new AppError({code: 'VALIDATION_FAILED', message: 'Select an active replacement account.'});
+      throw new AppError({code: 'VALIDATION_FAILED', reason: 'INVALID_REPLACEMENT_ACCOUNT', message: 'Select an active replacement account.'});
     }
     if (result === 'confirmation_mismatch') {
-      throw new AppError({code: 'VALIDATION_FAILED', message: 'The confirmation email does not match.'});
+      throw new AppError({code: 'VALIDATION_FAILED', reason: 'CONFIRMATION_EMAIL_MISMATCH', fieldErrors: [{field: 'confirmationEmail', reason: 'CONFIRMATION_EMAIL_MISMATCH'}], message: 'The confirmation email does not match.'});
     }
     if (result === 'deletion_in_progress') {
-      throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Wait for committee deletion to finish.'});
+      throw new AppError({code: 'RESOURCE_CONFLICT', reason: 'COMMITTEE_DELETION_PENDING', message: 'Wait for committee deletion to finish.'});
     }
     if (result === 'idempotency_conflict') {
       throw new AppError({code: 'IDEMPOTENCY_CONFLICT', message: 'Idempotency key was already used for another request.'});
@@ -330,10 +330,10 @@ export class IdentityService {
 
   private requireAdministrator(auth: AuthenticatedSession): void {
     if (auth.user.mustChangePassword) {
-      throw new AppError({code: 'FORBIDDEN', message: 'Change the temporary password first.'});
+      throw new AppError({code: 'FORBIDDEN', reason: 'PASSWORD_CHANGE_REQUIRED', message: 'Change the temporary password first.'});
     }
     if (!auth.user.isSystemAdmin) {
-      throw new AppError({code: 'FORBIDDEN', message: 'System administrator access is required.'});
+      throw new AppError({code: 'FORBIDDEN', reason: 'SYSTEM_ADMIN_REQUIRED', message: 'System administrator access is required.'});
     }
   }
 
