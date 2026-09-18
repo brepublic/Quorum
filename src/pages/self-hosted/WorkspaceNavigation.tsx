@@ -1,4 +1,5 @@
 import * as React from 'react';
+import {useThemeFeature} from '../../theme/ThemeProvider';
 import type {CommitteeWorkspaceSnapshot} from '@quorum/contracts';
 import {Dropdown, Icon, Menu, Sidebar} from 'semantic-ui-react';
 import {Link, useLocation} from 'react-router-dom';
@@ -39,6 +40,7 @@ function AttendanceThresholdItem({snapshot}: {snapshot: CommitteeWorkspaceSnapsh
 }
 
 export function AccountMenu({user, logout}: {user: SelfHostedUser; logout(): void}) {
+  const {enabled: themesEnabled} = useThemeFeature();
   const openThemes = () => {
     const launcher = document.querySelector<HTMLButtonElement>('#quorum-theme-portal [aria-label="Appearance themes"], #quorum-theme-portal [aria-label="外观主题"]');
     launcher?.click();
@@ -53,7 +55,7 @@ export function AccountMenu({user, logout}: {user: SelfHostedUser; logout(): voi
       {user.isSystemAdmin && <Dropdown.Item as={Link} to="/system-settings" icon="settings" text={t('System settings')} />}
       <Dropdown.Divider />
       <Dropdown.Item className="account-language"><LanguageSwitcher /></Dropdown.Item>
-      <Dropdown.Item icon="paint brush" text={t('Appearance themes')} onClick={openThemes} />
+      {themesEnabled && <Dropdown.Item icon="paint brush" text={t('Appearance themes')} onClick={openThemes} />}
       <Dropdown.Divider />
       <Dropdown.Item icon="sign-out" text={t('Logout')} onClick={logout} />
     </Dropdown.Menu>

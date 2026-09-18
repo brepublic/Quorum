@@ -13,6 +13,7 @@ import {
   Portal
 } from 'semantic-ui-react';
 import {t} from '../i18n';
+import {getThemeSettings} from '../services/self-hosted-identity';
 import {
   classifyThemeRoute,
   DEFAULT_THEME,
@@ -237,12 +238,38 @@ function ThemeManager(props: {
   </div>;
 }
 
+const ThemeFeatureContext = React.createContext({enabled: false, setEnabled: (_enabled: boolean) => {}});
+export const useThemeFeature = () => React.useContext(ThemeFeatureContext);
+
 export function ThemeProvider(props: React.PropsWithChildren) {
   const location = useLocation();
+  const [enabled, setFeatureEnabled] = React.useState(false);
+  const settingsGeneration = React.useRef(0);
+  const enabledRef = React.useRef(false);
   const [installedThemes, setInstalledThemes] = React.useState<ThemePackage[]>(loadInstalledThemes);
   const [activeThemeId, setActiveThemeId] = React.useState(() => loadActiveThemeId(installedThemes));
   const allThemes = React.useMemo(() => [DEFAULT_THEME, ...installedThemes], [installedThemes]);
-  const activeTheme = allThemes.find(theme => theme.manifest.id === activeThemeId) ?? DEFAULT_THEME;
+  const activeTheme = (enabled && allThemes.find(theme => theme.manifest.id === activeThemeId)) || DEFAULT_THEME;
+  const setEnabled = React.useCallback((value: boolean) => {
+    settingsGeneration.current += 1;
+    enabledRef.current = value;
+    setFeatureEnabled(value);
+    if (!value) {
+      storeActiveThemeId(DEFAULT_THEME_ID);
+      setActiveThemeId(DEFAULT_THEME_ID);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    const generation = settingsGeneration.current;
+    void getThemeSettings().then(settings => {
+      if (!cancelled && generation === settingsGeneration.current) setEnabled(settings.enabled === true);
+    }).catch(() => {
+      if (!cancelled && generation === settingsGeneration.current) setEnabled(false);
+    });
+    return () => { cancelled = true; };
+  }, [location.pathname, setEnabled]);
   const route = classifyThemeRoute(location.pathname);
 
   const persistThemes = React.useCallback((themes: ThemePackage[]) => {
@@ -255,6 +282,7 @@ export function ThemeProvider(props: React.PropsWithChildren) {
   }, []);
 
   const activate = React.useCallback((id: string) => {
+    if (!enabledRef.current) return;
     const nextId = [DEFAULT_THEME, ...installedThemes].some(theme => theme.manifest.id === id)
       ? id
       : DEFAULT_THEME_ID;
@@ -263,6 +291,7 @@ export function ThemeProvider(props: React.PropsWithChildren) {
   }, [installedThemes]);
 
   const importTheme = React.useCallback((source: string) => {
+    if (!enabledRef.current) return DEFAULT_THEME;
     const theme = parseThemePackage(source);
     if (theme.manifest.id === DEFAULT_THEME_ID) {
       storeActiveThemeId(DEFAULT_THEME_ID);
@@ -277,6 +306,7 @@ export function ThemeProvider(props: React.PropsWithChildren) {
   }, [installedThemes, persistThemes]);
 
   const removeTheme = React.useCallback((id: string) => {
+    if (!enabledRef.current) return;
     if (id === DEFAULT_THEME_ID) return;
     persistThemes(installedThemes.filter(theme => theme.manifest.id !== id));
     storeActiveThemeId(DEFAULT_THEME_ID);
@@ -334,7 +364,7 @@ export function ThemeProvider(props: React.PropsWithChildren) {
     };
   }, []);
 
-  return <>
+  return <ThemeFeatureContext.Provider value={{enabled, setEnabled}}>
     <div
       id="quorum-app"
       data-theme-page={route.page}
@@ -358,7 +388,7 @@ export function ThemeProvider(props: React.PropsWithChildren) {
       {props.children}
       <div id="quorum-theme-overlays" data-theme-component="overlay-root" />
     </div>
-    {createPortal(<ThemeManager
+    {enabled && createPortal(<ThemeManager
       activeTheme={activeTheme}
       activeThemeId={activeTheme.manifest.id}
       themes={allThemes}
@@ -366,5 +396,5 @@ export function ThemeProvider(props: React.PropsWithChildren) {
       onImport={importTheme}
       onRemove={removeTheme}
     />, document.body)}
-  </>;
+  </ThemeFeatureContext.Provider>;
 }

@@ -1583,7 +1583,9 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
           className={`resolution-voting-member${vote ? ` vote-${vote.choice === 'ABSTAIN' ? 'abstaining' : vote.choice.toLowerCase()}` : ''}${item.seatId === currentVotingSeatId ? ' is-current' : ''}`}
           aria-pressed={item.seatId === currentVotingSeatId} onClick={() => canChair && setCurrentVotingSeatId(item.seatId)}>
           <span className="resolution-voting-status-light" aria-hidden="true" />
-          <span className="resolution-voting-member-name">{item.seatDisplayName}</span>
+          <span className="resolution-voting-member-name"><span>{item.seatDisplayName}</span>
+            {item.hasVeto && <span className="resolution-voting-veto-badge">{t('Veto power')}</span>}
+          </span>
         </button>;})}</div>{directTotalPages > 1 && <Pagination className="resolution-voting-pagination"
           activePage={directVotingPage + 1} totalPages={directTotalPages} boundaryRange={1} siblingRange={1} ellipsisItem={null}
           onPageChange={(_, data) => setVotingPage(Number(data.activePage) - 1)} />}</div>
@@ -1594,7 +1596,6 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
         </aside></div>
       <div className="resolution-voting-current"><div className="resolution-voting-current-label">{t('Now voting')}</div>
         <Header as="h2">{currentVotingSeat?.seatDisplayName ?? t('No eligible delegations')}</Header>
-        {currentVotingSeat?.hasVeto && <Label>{t('Veto power')}</Label>}
         {canChair && <div className="resolution-voting-actions"><div className="resolution-voting-primary-actions">
           <Button positive content={t('yes')} icon="plus" disabled={!currentVotingSeat}
             onClick={() => void setDirectResolutionVote('FOR')} />
@@ -1602,8 +1603,8 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
             onClick={() => void setDirectResolutionVote('AGAINST')} />
           <Button color="yellow" content={t('abstaining')} icon="minus"
             disabled={!currentVotingSeat || currentVotingSeat.mustVote} onClick={() => void setDirectResolutionVote('ABSTAIN')} />
-        </div><Button basic className="resolution-voting-undo" content={t('Undo')} icon="undo"
-          disabled={votingHistory.length === 0} onClick={() => void undoDirectVote()} /></div>}
+        </div>{directVote.automaticResult === null && <Button basic className="resolution-voting-undo" content={t('Undo')} icon="undo"
+          disabled={votingHistory.length === 0} onClick={() => void undoDirectVote()} />}</div>}
       </div><div className="resolution-voting-outcome">
         {directVote.automaticResult === 'PASSED' && <Statistic className="resolution-result outcome-passed">
           <Statistic.Value>{t('Passed')}</Statistic.Value></Statistic>}

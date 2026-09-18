@@ -94,7 +94,7 @@ describe('system settings navigation and extracted settings', () => {
     await submit();
     expect(api.updateStorageCacheConfig).toHaveBeenLastCalledWith({...config, publishedCacheMaxBytes: mbToBytes(800), revision: 3});
   });
-  it.each(['/system-settings/operations', '/system-settings/defaults', '/system-settings/cache', '/system-settings/storage'])
+  it.each(['/system-settings/interface', '/system-settings/operations', '/system-settings/defaults', '/system-settings/cache', '/system-settings/storage'])
   ('does not load administrator settings for a regular account at %s', async path => {
     const {api, client} = await render(path, clients(), false);
     expect(host.querySelector('.self-hosted-system-settings')).toBeNull();

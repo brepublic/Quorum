@@ -188,6 +188,22 @@ export class IdentityService {
     return this.store.listUsers();
   }
 
+  async getThemeSettings() {
+    return this.store.getThemeSettings();
+  }
+
+  async updateThemeSettings(auth: AuthenticatedSession, input: Record<string, unknown>, context: RequestIdentityContext) {
+    this.requireAdministrator(auth);
+    if (Object.keys(input).length !== 2 || typeof input.enabled !== 'boolean'
+      || !Number.isInteger(input.baseRevision) || (input.baseRevision as number) < 1) {
+      throw new AppError({code: 'VALIDATION_FAILED', message: 'Theme settings are invalid.'});
+    }
+    const result = await this.store.updateThemeSettings({actor: auth, enabled: input.enabled,
+      baseRevision: input.baseRevision as number, audit: this.audit(context)});
+    if (result === 'revision_conflict') throw new AppError({code: 'REVISION_CONFLICT', message: 'The settings were changed by another administrator.'});
+    return result;
+  }
+
   async getDefaultCommitteeBehavior(auth: AuthenticatedSession): Promise<DefaultCommitteeBehavior> {
     this.requireAdministrator(auth);
     return this.store.getDefaultCommitteeBehavior();

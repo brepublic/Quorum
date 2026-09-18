@@ -58,6 +58,23 @@ function service(): IdentityService {
 const context = {requestId: 'integration-request', sourceIp: '127.0.0.1', userAgent: 'Vitest'};
 
 integration('PostgreSQL identity integration', () => {
+  it('defaults themes off, persists changes, rejects stale revisions and audits updates', async () => {
+    const identity = service();
+    expect(await identity.getThemeSettings()).toEqual({enabled: false, revision: 1});
+    const secret = await identity.ensureBootstrapSecret();
+    const session = await identity.bootstrapAdmin({secret: secret!, email: 'themes@example.test',
+      displayName: 'Admin', password: 'theme-password-123'}, context);
+    const auth = await identity.authenticate(session.sessionToken);
+    expect(await identity.updateThemeSettings(auth, {enabled: true, baseRevision: 1}, context))
+      .toEqual({enabled: true, revision: 2});
+    expect(await service().getThemeSettings()).toEqual({enabled: true, revision: 2});
+    await expect(identity.updateThemeSettings(auth, {enabled: false, baseRevision: 1}, context))
+      .rejects.toMatchObject({code: 'REVISION_CONFLICT'});
+    expect(await identity.updateThemeSettings(auth, {enabled: false, baseRevision: 2}, context))
+      .toEqual({enabled: false, revision: 3});
+    expect((await pool!.query("SELECT action FROM identity_audit_log WHERE action='admin.theme_settings_updated'")).rowCount).toBe(2);
+  });
+
   it('allows only one concurrent bootstrap and destroys the secret after success', async () => {
     const identity = service();
     const secret = await identity.ensureBootstrapSecret();

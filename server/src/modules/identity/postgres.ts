@@ -271,6 +271,25 @@ export class PostgresIdentityStore implements IdentityStore {
     return result.rows.map(userFromRow);
   }
 
+  async getThemeSettings() {
+    const {rows} = await this.pool.query<{enabled: boolean; revision: number}>(
+      'SELECT themes_enabled AS enabled, theme_settings_revision AS revision FROM system_settings WHERE singleton=true');
+    if (!rows[0]) throw new Error('system_settings singleton is missing');
+    return rows[0];
+  }
+
+  async updateThemeSettings(input: Parameters<IdentityStore['updateThemeSettings']>[0]) {
+    return this.transaction(async client => {
+      const {rows} = await client.query<{enabled: boolean; revision: number}>(
+        `UPDATE system_settings SET themes_enabled=$1, theme_settings_revision=theme_settings_revision+1
+         WHERE singleton=true AND theme_settings_revision=$2
+         RETURNING themes_enabled AS enabled, theme_settings_revision AS revision`, [input.enabled, input.baseRevision]);
+      if (!rows[0]) return 'revision_conflict' as const;
+      await audit(client, input.audit, {actorUserId: input.actor.user.id, action: 'admin.theme_settings_updated'});
+      return rows[0];
+    });
+  }
+
   async getDefaultCommitteeBehavior(): Promise<DefaultCommitteeBehavior> {
     const result = await this.pool.query<{
       default_committee_creator_is_chair: boolean; default_committee_operation_mode: DefaultCommitteeBehavior['operationMode']; revision: number;

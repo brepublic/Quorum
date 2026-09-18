@@ -36,6 +36,9 @@ const en: Record<string, string> = {
 };
 
 const zhCN: Record<string, string> = {
+  'Interface settings': '界面设置',
+  'Enable themes (experimental)': '启用主题功能（实验性）',
+  'Theme settings are invalid.': '主题设置无效。',
   'Total seats': '\u603b\u5e2d\u4f4d\u6570',
   'Restart roll call': '\u91cd\u65b0\u70b9\u540d',
   'Restart roll call?': '\u91cd\u65b0\u70b9\u540d\uff1f',

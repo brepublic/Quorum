@@ -38,9 +38,17 @@ try {
       await compose('down', '--volumes');
       await up();
       break;
+    case 'test-themes':
     case 'test':
       await up();
-      await run('pnpm', ['test:self-host:integration'], {
+      await run('pnpm', command === 'test-themes' ? ['exec', 'vitest', 'run',
+        'server/src/db/migrations.integration.test.ts',
+        'server/src/modules/identity/postgres.integration.test.ts',
+        'server/src/http/identity-http.test.ts', 'server/src/modules/identity/service.test.ts',
+        'src/theme/ThemeProvider.test.tsx', 'src/pages/self-hosted/SystemSettings.test.tsx',
+        'src/pages/self-hosted/WorkspaceNavigation.test.tsx',
+        'src/services/self-hosted-identity.test.ts', 'src/i18n.test.ts'
+      ] : ['test:self-host:integration'], {
         env: {
           TEST_DATABASE_ADMIN_URL: process.env.TEST_DATABASE_ADMIN_URL
             || 'postgresql://quorum_test:quorum_test@127.0.0.1:55432/postgres'
@@ -48,7 +56,7 @@ try {
       });
       break;
     default:
-      process.stderr.write('Usage: node server/scripts/test-db.mjs <up|down|reset|test>\n');
+      process.stderr.write('Usage: node server/scripts/test-db.mjs <up|down|reset|test|test-themes>\n');
       process.exitCode = 2;
   }
 } catch (error) {

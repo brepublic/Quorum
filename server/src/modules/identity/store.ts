@@ -55,7 +55,15 @@ export interface DefaultCommitteeBehavior {
   revision: number;
 }
 
+export interface ThemeSettings {
+  enabled: boolean;
+  revision: number;
+}
+
 export interface IdentityStore {
+  getThemeSettings(): Promise<ThemeSettings>;
+  updateThemeSettings(input: {actor: AuthenticatedSession; enabled: boolean; baseRevision: number;
+    audit: AuditContext}): Promise<ThemeSettings | 'revision_conflict'>;
   bootstrapStatus(): Promise<boolean>;
   ensureBootstrapSecret(): Promise<string | null>;
   bootstrapAdmin(input: {

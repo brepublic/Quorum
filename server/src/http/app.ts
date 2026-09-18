@@ -1241,6 +1241,18 @@ async function handleIdentityRequest(options: {
   const context = identityContext(request, requestId);
   const cookies = identityCookies(request);
 
+  if (method === 'GET' && pathname === '/api/v1/theme-settings') {
+    sendJson(response, 200, success(await identity.getThemeSettings(), requestId));
+    return true;
+  }
+
+  if (method === 'PUT' && pathname === '/api/v1/admin/theme-settings') {
+    requireOrigin(request, allowedOrigins);
+    const auth = await authenticatedWrite(request, identity);
+    sendJson(response, 200, success(await identity.updateThemeSettings(auth, await readJson(request), context), requestId));
+    return true;
+  }
+
   if (method === 'GET' && pathname === '/api/v1/bootstrap/status') {
     sendJson(response, 200, success({initialized: await identity.bootstrapStatus()}, requestId));
     return true;

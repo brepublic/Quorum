@@ -1,5 +1,5 @@
 import {afterEach, describe, expect, it, vi} from 'vitest';
-import {selfHostedIdentityClient} from './self-hosted-identity';
+import {getThemeSettings, updateThemeSettings, selfHostedIdentityClient} from './self-hosted-identity';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -75,4 +75,18 @@ describe('self-hosted identity client', () => {
       method: 'PUT', body: JSON.stringify({creatorIsChair: true, operationMode: 'CHAIR_OPERATED', baseRevision: 1})
     }));
   });
+});
+
+it('reads the global theme policy and saves the revision with CSRF protection', async () => {
+  vi.spyOn(document, 'cookie', 'get').mockReturnValue('__Host-quorum_csrf=test-csrf');
+  const fetchMock = vi.fn(async () => ({ok: true, status: 200,
+    json: async () => ({data: {enabled: false, revision: 1}, meta: {requestId: 'request'}})}));
+  vi.stubGlobal('fetch', fetchMock);
+  expect(await getThemeSettings()).toEqual({enabled: false, revision: 1});
+  expect(fetchMock).toHaveBeenLastCalledWith('/api/v1/theme-settings', expect.objectContaining({method: 'GET'}));
+  await updateThemeSettings({enabled: true, revision: 1});
+  expect(fetchMock).toHaveBeenLastCalledWith('/api/v1/admin/theme-settings', expect.objectContaining({
+    method: 'PUT', body: JSON.stringify({enabled: true, baseRevision: 1}),
+    headers: expect.objectContaining({'x-csrf-token': 'test-csrf'})
+  }));
 });

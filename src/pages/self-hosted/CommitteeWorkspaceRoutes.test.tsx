@@ -1594,7 +1594,8 @@ describe('committee workspace routes and roles', () => {
     expect(publishFile).toHaveBeenCalledWith('file', 2);
   });
 
-  it('restores the legacy resolution voting matrix without removing the formal ballot area', async () => {
+  it.each([null, 'PASSED', 'FAILED', 'VETOED'] as const)(
+    'keeps resolution voting controls and shows undo only while the result is pending (%s)', async automaticResult => {
     const setResolutionDirectVote = vi.fn(async (): Promise<ProceedingDocument> => ({} as ProceedingDocument));
     const page = await render('CHAIR', '/committees/committee/resolutions/resolution/voting', user, value => ({...value,
       attendance: [{seatId: 'seat', state: 'PRESENT', lastEventId: 'attendance',
@@ -1606,16 +1607,20 @@ describe('committee workspace routes and roles', () => {
         votingVersionId: null, public: true, proposerSeatId: 'seat', seconderSeatId: null, delegatesCanAmend: false,
         directVote: {majority: 'SIMPLE_MAJORITY', startedAt: null, settingsRevision: 1,
           eligibility: [{seatId: 'seat', seatDisplayName: 'China', mustVote: false, hasVeto: true}], threshold: 1,
-          automaticResult: null, votes: []}, resultDecisions: [], revision: 2, discussion: [],
+          automaticResult, votes: []}, resultDecisions: [], revision: 2, discussion: [],
         createdAt: '2026-08-14T00:00:00.000Z', updatedAt: '2026-08-14T00:00:00.000Z'}]}),
     {setResolutionDirectVote});
     expect(page.querySelector('.resolution-voting-board')).not.toBeNull();
     expect(page.querySelectorAll('.resolution-voting-member')).toHaveLength(1);
     expect(page.textContent).toContain('Now voting');
     expect(page.textContent).toContain('Formal ballot');
+    const undo = [...page.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.trim() === 'Undo');
+    expect(Boolean(undo)).toBe(automaticResult === null);
+    if (automaticResult === null) expect(undo?.disabled).toBe(true);
     const yes = [...page.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.trim() === 'yes');
     await act(async () => {yes?.click(); await Promise.resolve();});
     expect(setResolutionDirectVote).toHaveBeenCalledWith('resolution', 'seat', 'FOR');
+    if (automaticResult === null) expect(undo?.disabled).toBe(false);
   });
 
   it('keeps storage inside the account-authorized resource tabs', async () => {

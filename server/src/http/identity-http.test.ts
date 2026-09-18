@@ -238,3 +238,21 @@ describe('identity HTTP security boundary', () => {
     expect([404, 405]).toContain(response.status);
   });
 });
+
+it('exposes theme settings publicly and protects updates with origin and CSRF', async () => {
+  const identity = fakeIdentity({getThemeSettings: vi.fn(async () => ({enabled: false, revision: 1})),
+    updateThemeSettings: vi.fn(async () => ({enabled: true, revision: 2}))});
+  const read = await request(identity, {path: '/api/v1/theme-settings'});
+  expect(read.status).toBe(200);
+  expect(identity.authenticate).not.toHaveBeenCalled();
+  const headers = {origin: 'https://quorum.example.com',
+    cookie: '__Host-quorum_session=session; __Host-quorum_csrf=expected', 'x-csrf-token': 'expected'};
+  const write = (input: Record<string, string>) => request(identity, {path: '/api/v1/admin/theme-settings',
+    method: 'PUT', headers: input, body: {enabled: true, baseRevision: 1}});
+  expect((await write({...headers, origin: 'https://attacker.example'})).status).toBe(403);
+  expect((await write({...headers, 'x-csrf-token': ''})).status).toBe(403);
+  expect(identity.updateThemeSettings).not.toHaveBeenCalled();
+  expect((await write(headers)).status).toBe(200);
+  expect(identity.updateThemeSettings).toHaveBeenCalledWith(expect.objectContaining({user}),
+    {enabled: true, baseRevision: 1}, expect.anything());
+});

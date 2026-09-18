@@ -4,7 +4,18 @@ import {createRoot, Root} from 'react-dom/client';
 import {MemoryRouter} from 'react-router-dom';
 import {Button, Segment} from 'semantic-ui-react';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
-import {ThemeProvider} from './ThemeProvider';
+import {ThemeProvider, useThemeFeature} from './ThemeProvider';
+import {DEFAULT_THEME_ID} from './theme-package';
+import {getThemeSettings, updateThemeSettings} from '../services/self-hosted-identity';
+import ThemeSettingsPanel from '../pages/self-hosted/ThemeSettingsPanel';
+import {AccountMenu} from '../pages/self-hosted/WorkspaceNavigation';
+import type {SelfHostedUser} from '../services/self-hosted-identity';
+vi.mock('../services/self-hosted-identity', () => ({getThemeSettings: vi.fn(), updateThemeSettings: vi.fn()}));
+function ToggleFeature() {
+  const {enabled, setEnabled} = useThemeFeature();
+  return <button id="toggle-feature" onClick={() => setEnabled(!enabled)}>Toggle</button>;
+}
+
 
 const installedTheme = {
   schema: 'quorum-theme',
@@ -52,6 +63,8 @@ describe('ThemeProvider runtime', () => {
   let root: Root;
 
   beforeEach(() => {
+    vi.mocked(getThemeSettings).mockReset().mockResolvedValue({enabled: true, revision: 1});
+    vi.mocked(updateThemeSettings).mockReset();
     (globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT: boolean}).IS_REACT_ACT_ENVIRONMENT = true;
     const originalConsoleError = console.error.bind(console);
     vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
@@ -132,4 +145,50 @@ describe('ThemeProvider runtime', () => {
     expect(app.dataset.themeDensity).toBeUndefined();
     expect(document.getElementById('quorum-active-theme-styles')?.textContent).toContain('--legacy-runtime-test: yes');
   });
+  it.each([false, 'error', 'pending'])('uses the default and hides controls when settings are %s', async mode => {
+    if (mode === false) vi.mocked(getThemeSettings).mockResolvedValue({enabled: false, revision: 1});
+    if (mode === 'error') vi.mocked(getThemeSettings).mockRejectedValue(new Error('Offline'));
+    if (mode === 'pending') vi.mocked(getThemeSettings).mockReturnValue(new Promise(() => {}));
+    await act(async () => root.render(<MemoryRouter><ThemeProvider>
+      <AccountMenu user={{displayName: 'User'} as SelfHostedUser} logout={() => {}} />
+    </ThemeProvider></MemoryRouter>));
+    expect(document.getElementById('quorum-app')?.dataset.themeId).toBe(DEFAULT_THEME_ID);
+    expect(document.getElementById('quorum-active-theme-styles')?.textContent).toBe('');
+    expect(document.getElementById('quorum-theme-portal')).toBeNull();
+    expect(container.querySelector('.paint.brush')).toBeNull();
+    expect(JSON.parse(localStorage.getItem('quorum-themes-v2')!)).toHaveLength(1);
+    if (mode !== 'pending') expect(localStorage.getItem('quorum-active-theme-v2')).toBe(DEFAULT_THEME_ID);
+  });
+
+  it('closes an open manager and resets selection without deleting imported themes', async () => {
+    await act(async () => root.render(<MemoryRouter><ThemeProvider><ToggleFeature /></ThemeProvider></MemoryRouter>));
+    await act(async () => (document.querySelector('.quorum-theme-launcher') as HTMLButtonElement).click());
+    expect(document.querySelector('.quorum-theme-manager')).not.toBeNull();
+    await act(async () => (document.getElementById('toggle-feature') as HTMLButtonElement).click());
+    expect(document.querySelector('.quorum-theme-manager')).toBeNull();
+    expect(document.getElementById('quorum-theme-portal')).toBeNull();
+    expect(document.getElementById('quorum-active-theme-styles')?.textContent).toBe('');
+    expect(localStorage.getItem('quorum-active-theme-v2')).toBe(DEFAULT_THEME_ID);
+    expect(JSON.parse(localStorage.getItem('quorum-themes-v2')!)).toHaveLength(1);
+    await act(async () => (document.getElementById('toggle-feature') as HTMLButtonElement).click());
+    expect(document.getElementById('quorum-theme-portal')).not.toBeNull();
+    expect(document.getElementById('quorum-app')?.dataset.themeId).toBe(DEFAULT_THEME_ID);
+  });
+
+  it('keeps the administrator switch visible and applies only successful saves', async () => {
+    vi.mocked(getThemeSettings).mockResolvedValue({enabled: false, revision: 1});
+    vi.mocked(updateThemeSettings).mockRejectedValueOnce(new Error('Save failed'))
+      .mockResolvedValueOnce({enabled: true, revision: 2});
+    await act(async () => root.render(<MemoryRouter><ThemeProvider><ThemeSettingsPanel /></ThemeProvider></MemoryRouter>));
+    expect(container.textContent).toContain('Enable themes (experimental)');
+    await act(async () => container.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());
+    const submit = () => act(async () => {container.querySelector('form')!.dispatchEvent(new Event('submit', {bubbles: true, cancelable: true}));});
+    await submit();
+    expect(container.textContent).toContain('Save failed');
+    expect(document.getElementById('quorum-theme-portal')).toBeNull();
+    await submit();
+    expect(updateThemeSettings).toHaveBeenLastCalledWith({enabled: true, revision: 1});
+    expect(document.getElementById('quorum-theme-portal')).not.toBeNull();
+  });
+
 });

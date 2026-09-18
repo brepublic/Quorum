@@ -9,6 +9,7 @@ import {DelegateFileSettingsPanel} from './DelegateFileSettingsPanel';
 import OperationsPanel from './OperationsPanel';
 import StorageCacheSettingsPanel from './StorageCacheSettingsPanel';
 import StorageAdminPanel from './StorageAdminPanel';
+import ThemeSettingsPanel from './ThemeSettingsPanel';
 
 export default function SystemSettings({api, client}: {api: SelfHostedApi; client: SelfHostedIdentityClient}) {
   const {pathname} = useLocation();
@@ -18,13 +19,14 @@ export default function SystemSettings({api, client}: {api: SelfHostedApi; clien
     <Menu secondary pointing className="system-settings-navigation" as="nav" aria-label={t('System settings')}>
       {[
         ['operations', 'Operations status'], ['defaults', 'Committee defaults'],
-        ['cache', 'Cache settings'], ['storage', 'Storage configuration']
+        ['interface', 'Interface settings'], ['cache', 'Cache settings'], ['storage', 'Storage configuration']
       ].map(([path, label]) => <Menu.Item key={path} as={Link} to={`${base}/${path}`}
         active={pathname === `${base}/${path}`} aria-current={pathname === `${base}/${path}` ? 'page' : undefined}>
         {t(label)}
       </Menu.Item>)}
     </Menu>
     <Switch>
+      <Route exact path={`${base}/interface`}><ThemeSettingsPanel /></Route>
       <Route exact path={`${base}/operations`}><OperationsPanel api={api} /></Route>
       <Route exact path={`${base}/defaults`}>
         <DefaultCommitteeBehaviorPanel client={client} />

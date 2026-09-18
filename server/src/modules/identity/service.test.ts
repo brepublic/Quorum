@@ -30,6 +30,8 @@ beforeAll(async () => {
 function store(overrides: Partial<IdentityStore> = {}): IdentityStore {
   return {
     bootstrapStatus: vi.fn(async () => true),
+    getThemeSettings: vi.fn(async () => ({enabled: false, revision: 1})),
+    updateThemeSettings: vi.fn(async () => ({enabled: true, revision: 2})),
     ensureBootstrapSecret: vi.fn(async () => null),
     bootstrapAdmin: vi.fn(async () => admin),
     findLogin: vi.fn(async () => null),
@@ -167,5 +169,31 @@ describe('identity service policy', () => {
     expect(authentication.status).toBe(401);
     expect(authorization.status).toBe(403);
     expect(JSON.stringify([authentication, authorization])).not.toContain('valid-password-123');
+  });
+});
+
+describe('theme settings policy', () => {
+  it('allows public reads but rejects non-administrator writes', async () => {
+    const fake = store(); const service = new IdentityService(fake);
+    await expect(service.getThemeSettings()).resolves.toEqual({enabled: false, revision: 1});
+    await expect(service.updateThemeSettings(auth({...user, mustChangePassword: false}),
+      {enabled: true, baseRevision: 1}, {requestId: 'themes'})).rejects.toMatchObject({code: 'FORBIDDEN'});
+    expect(fake.updateThemeSettings).not.toHaveBeenCalled();
+  });
+  it.each([{enabled: 'true', baseRevision: 1}, {enabled: true, baseRevision: 0},
+    {enabled: true}, {enabled: true, baseRevision: 1, extra: true}])('rejects invalid input %j', async input => {
+    const fake = store(); const service = new IdentityService(fake);
+    await expect(service.updateThemeSettings(auth(admin), input, {requestId: 'themes'}))
+      .rejects.toMatchObject({code: 'VALIDATION_FAILED'});
+    expect(fake.updateThemeSettings).not.toHaveBeenCalled();
+  });
+  it('passes the administrator and revision to storage and reports conflicts', async () => {
+    const fake = store(); const service = new IdentityService(fake);
+    await expect(service.updateThemeSettings(auth(admin), {enabled: true, baseRevision: 1}, {requestId: 'themes'}))
+      .resolves.toEqual({enabled: true, revision: 2});
+    expect(fake.updateThemeSettings).toHaveBeenCalledWith(expect.objectContaining({actor: auth(admin), enabled: true, baseRevision: 1}));
+    vi.mocked(fake.updateThemeSettings).mockResolvedValue('revision_conflict');
+    await expect(service.updateThemeSettings(auth(admin), {enabled: false, baseRevision: 1}, {requestId: 'themes'}))
+      .rejects.toMatchObject({code: 'REVISION_CONFLICT'});
   });
 });

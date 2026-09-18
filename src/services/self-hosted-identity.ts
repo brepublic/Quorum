@@ -161,3 +161,15 @@ export const selfHostedIdentityClient: SelfHostedIdentityClient = {
     });
   }
 };
+
+export interface ThemeSettings {enabled: boolean; revision: number}
+
+export function getThemeSettings(): Promise<ThemeSettings> {
+  return request<ThemeSettings>('/api/v1/theme-settings');
+}
+
+export function updateThemeSettings(settings: ThemeSettings): Promise<ThemeSettings> {
+  return request<ThemeSettings>('/api/v1/admin/theme-settings', {
+    method: 'PUT', csrf: true, body: {enabled: settings.enabled, baseRevision: settings.revision}
+  });
+}
