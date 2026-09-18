@@ -96,13 +96,19 @@ integration('immutable committee content', () => {
     expect(saved.committeeTemplate.members[0].names.en).toBe('China');
     expect(saved.initialRulePackageVersionId).toBe(input.activeRulePackageVersionId);
     expect((await stage4.snapshot(committee.id)).countryTemplate).toBeUndefined();
-    await stage3.archiveCommittee(owner, committee.id, committee.revision, context('archive'));
+    const future = await stage3.overrideRule(owner, committee.id, {scope: 'FUTURE',
+      path: 'ballots.chairMayCorrectVote', value: false}, context('unactivated-rules'));
+    expect((await stage4.snapshot(committee.id, owner)).activeRules.versionId).toBe(input.activeRulePackageVersionId);
+    const revision = (await pool!.query('SELECT revision FROM committees WHERE id=$1', [committee.id])).rows[0].revision;
+    await stage3.archiveCommittee(owner, committee.id, revision, context('archive'));
     const exported = await new Stage8ArchiveService(pool!).exportCommittee(owner, committee.id);
     const chunks: string[] = [];
     for await (const chunk of exported.content) chunks.push(String(chunk));
     const records = chunks.join('').trim().split('\n').map(line => JSON.parse(line));
     expect(records[0]).toMatchObject({schemaVersion: 2, committee: {committeeLanguage: 'en', contentSnapshot: saved}});
-    expect(records.find(record => record.section === 'rule_versions').record).toMatchObject({id: input.activeRulePackageVersionId, definition: expect.any(Object)});
+    expect(records.find(record => record.section === 'rule_versions' && record.record.id === input.activeRulePackageVersionId).record).toMatchObject({id: input.activeRulePackageVersionId, definition: expect.any(Object)});
+    expect(records.filter(record => record.section === 'rule_versions').map(record => record.record.id))
+      .toEqual(expect.arrayContaining([input.activeRulePackageVersionId, future.createdVersionId]));
     expect(records.find(record => record.section === 'committee_seats').record).toMatchObject({display_name: 'China', flag_value: 'cn'});
   });
 

@@ -13,8 +13,18 @@ const RANKS = new Set<SeatRank>(['STANDARD', 'NGO', 'OBSERVER']);
 const FLAG_DATA_PREFIX = 'data:image/webp;base64,';
 const MAX_FLAG_BYTES = 256 * 1024;
 
-function invalid(message: string): never {
-  throw new AppError({code: 'VALIDATION_FAILED', message});
+function invalid(message: string, field?: string): never {
+  throw new AppError({code: 'VALIDATION_FAILED', reason: 'INVALID_FIELD', message,
+    ...(field ? {fieldErrors: [{field, reason: 'INVALID_FIELD'}]} : {})});
+}
+
+function atField<T>(field: string, validate: () => T): T {
+  try { return validate(); } catch (error) {
+    if (!(error instanceof AppError) || error.code !== 'VALIDATION_FAILED') throw error;
+    throw new AppError({code: error.code, reason: error.reason, message: error.message,
+      fieldErrors: error.fieldErrors?.map(item => ({...item, field: `${field}.${item.field}`}))
+        ?? [{field, reason: error.reason ?? 'INVALID_FIELD'}]});
+  }
 }
 
 function object(value: unknown, name: string): Record<string, unknown> {
@@ -47,11 +57,13 @@ export function validateLocalizedNames(value: unknown, defaultLanguage: unknown)
   const names: LocalizedNames = {};
   for (const [key, candidate] of Object.entries(raw)) {
     if (!LANGUAGE.test(key)) invalid('Name language is invalid.');
-    const name = string(candidate, 'Localized name', 200);
+    const name = atField(`names.${key}`, () => string(candidate, 'Localized name', 200));
     names[key] = name;
   }
   if (Object.keys(names).length === 0 || !names[defaultLanguage as string]) {
-    invalid('Names must include the default language.');
+    throw new AppError({code: 'VALIDATION_FAILED', reason: 'MISSING_CONTENT_TRANSLATION',
+      message: 'Names must include the default language.',
+      fieldErrors: [{field: `names.${language}`, reason: 'MISSING_CONTENT_TRANSLATION'}]});
   }
   return {names, defaultLanguage: language};
 }
@@ -125,7 +137,7 @@ export function validateCountryTemplate(value: unknown): CountryTemplateInput {
     invalid('Countries are invalid.');
   }
   const stableKeys = new Set<string>();
-  const countries = raw.countries.map((candidate, index) => {
+  const countries = raw.countries.map((candidate, index) => atField(`countries.${index}`, () => {
     const country = object(candidate, `Country ${index + 1}`);
     exactKeys(country, ['stableKey', 'names', 'defaultLanguage', 'continent', 'sortOrder', 'flag'], 'Country');
     const stableKey = string(country.stableKey, 'Country stable key', 128);
@@ -140,9 +152,9 @@ export function validateCountryTemplate(value: unknown): CountryTemplateInput {
       ...names,
       continent: country.continent == null ? null : string(country.continent, 'Continent', 80),
       sortOrder: integer(country.sortOrder, 'Country sort order'),
-      flag: validateFlag(country.flag)
+      flag: atField('flag', () => validateFlag(country.flag))
     };
-  });
+  }));
   return {...localized, countryLanguages, countries};
 }
 
@@ -158,7 +170,7 @@ export function validateCommitteeTemplate(value: unknown): CommitteeTemplateInpu
     invalid('Committee template members are invalid.');
   }
   const stableKeys = new Set<string>();
-  const members = raw.members.map((candidate, index) => {
+  const members = raw.members.map((candidate, index) => atField(`members.${index}`, () => {
     const member = object(candidate, `Member ${index + 1}`);
     exactKeys(member, ['stableKey', 'names', 'defaultLanguage', 'rank', 'canVote', 'hasVeto', 'mustVote', 'sortOrder', 'flag'], 'Template member');
     const stableKey = string(member.stableKey, 'Member stable key', 128);
@@ -176,9 +188,9 @@ export function validateCommitteeTemplate(value: unknown): CommitteeTemplateInpu
       hasVeto: member.hasVeto,
       mustVote: member.mustVote,
       sortOrder: integer(member.sortOrder, 'Member sort order'),
-      flag: validateFlag(member.flag)
+      flag: atField('flag', () => validateFlag(member.flag))
     };
-  });
+  }));
   return {...localized, countryTemplateKey, members};
 }
 

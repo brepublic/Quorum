@@ -50,7 +50,7 @@ describe('file settings editor', () => {
     const updateDelegateFileSettings = vi.fn(async (_id, value) => ({...value,revision:2}));
     const api = {getDelegateFileSettings:async () => settings,updateDelegateFileSettings} as unknown as SelfHostedApi;
     await act(async () => root.render(<MemoryRouter><DelegateFileSettingsPanel committeeId="one" api={api} /></MemoryRouter>));
-    await fill('#file-extensions-WORKING_PAPER','.PDF，docx pdf');
+    await fill('input[id$="-allowedExtensions.WORKING_PAPER"]','.PDF，docx pdf');
     await act(async () => button('保存设置').click());
     expect(updateDelegateFileSettings).toHaveBeenCalledWith('one',{...settings,allowedExtensions:{...settings.allowedExtensions,WORKING_PAPER:['pdf','docx']}});
     expect(host.textContent).toContain('已保存');

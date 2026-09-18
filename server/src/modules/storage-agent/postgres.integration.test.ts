@@ -1,3 +1,4 @@
+import {testCommitteeInput} from '../../test/committee-fixture';
 // @vitest-environment node
 
 import {createHash, randomBytes, randomUUID} from 'node:crypto';
@@ -110,8 +111,8 @@ async function fixture() {
   const owner = await user(`owner${randomUUID().slice(0, 6)}`);
   const chair = await user(`chair${randomUUID().slice(0, 6)}`);
   const member = await user(`member${randomUUID().slice(0, 6)}`);
-  let committee = await stage4.createCommittee(owner, {name: 'Agent Council', visibility: 'PRIVATE',
-    countryTemplateKey: 'builtin:default'}, randomUUID(), context('committee'));
+  let committee = await stage4.createCommittee(owner, await testCommitteeInput(pool!, owner, {name: 'Agent Council', visibility: 'PRIVATE',
+    countryTemplateKey: 'builtin:default'}), randomUUID(), context('committee'));
   committee = await stage3.setChair(owner, committee.id, chair.user.email, true, committee.revision, context('chair'));
   return {owner, chair, member, committee};
 }
@@ -195,7 +196,7 @@ integration('PostgreSQL stage 7 storage Agent identity', () => {
     try {
       const single = await service.listReview(value.chair, value.committee.id);
       const singleReads = query.mock.calls.length;
-      expect(single[0]?.suggestedNames?.WORKING_PAPER).toBe('工作文件 1.1');
+      expect(single[0]?.suggestedNames?.WORKING_PAPER).toEqual({sessionOrdinal: 1, ordinal: 1});
       const bindingId = (await pool!.query('SELECT active_storage_binding_id FROM committees WHERE id=$1', [value.committee.id])).rows[0].active_storage_binding_id;
       const records = [
         {file: first, date: '2025-12-31', type: 'WORKING_PAPER', published: true},
@@ -223,27 +224,27 @@ integration('PostgreSQL stage 7 storage Agent identity', () => {
       expect(query.mock.calls.length).toBe(singleReads);
       expect(noSessions).toHaveLength(records.length);
       for (const file of noSessions) expect(file.suggestedNames).toEqual({
-        WORKING_PAPER: '工作文件 1.4', DIRECTIVE_DRAFT: '指令草案 1.2', RESOLUTION_DRAFT: '决议草案 1.1'});
+        WORKING_PAPER: {sessionOrdinal: 1, ordinal: 4}, DIRECTIVE_DRAFT: {sessionOrdinal: 1, ordinal: 2}, RESOLUTION_DRAFT: {sessionOrdinal: 1, ordinal: 1}});
       for (const date of ['2026-01-01', '2026-02-01']) {
         await pool!.query(`INSERT INTO meeting_sessions(id,committee_id,phase_id,active_rule_package_version_id,
-          status,created_by_user_id,created_at,closed_at,name) VALUES ($1,$2,'formal-debate',$3,'CLOSED',$4,$5,$5,$6)`,
-          [randomUUID(), value.committee.id, value.committee.activeRulePackageVersionId, value.chair.user.id, date, `测试会期 ${date}`]);
+          status,created_by_user_id,created_at,closed_at) VALUES ($1,$2,'formal-debate',$3,'CLOSED',$4,$5,$5)`,
+          [randomUUID(), value.committee.id, value.committee.activeRulePackageVersionId, value.chair.user.id, date]);
       }
       query.mockClear();
       const withSessions = await service.listReview(value.chair, value.committee.id);
       expect(query.mock.calls.length).toBe(singleReads);
       for (const index of [0, 1, 2, 5]) expect(withSessions.find(file => file.id === ids[index])?.suggestedNames).toEqual({
-        WORKING_PAPER: '工作文件 1.3', DIRECTIVE_DRAFT: '指令草案 1.1', RESOLUTION_DRAFT: '决议草案 1.1'});
+        WORKING_PAPER: {sessionOrdinal: 1, ordinal: 3}, DIRECTIVE_DRAFT: {sessionOrdinal: 1, ordinal: 1}, RESOLUTION_DRAFT: {sessionOrdinal: 1, ordinal: 1}});
       for (const index of [3, 4]) expect(withSessions.find(file => file.id === ids[index])?.suggestedNames).toEqual({
-        WORKING_PAPER: '工作文件 2.1', DIRECTIVE_DRAFT: '指令草案 2.2', RESOLUTION_DRAFT: '决议草案 2.1'});
+        WORKING_PAPER: {sessionOrdinal: 2, ordinal: 1}, DIRECTIVE_DRAFT: {sessionOrdinal: 2, ordinal: 2}, RESOLUTION_DRAFT: {sessionOrdinal: 2, ordinal: 1}});
     } finally {query.mockRestore();}
   });
 
   it('binds one eligible delegation to an opaque browser credential and revokes it when the mode changes', async () => {
     const value = await fixture(); const chairStorageResult = await chairStorage(value.owner, value.committee.id);
     const seat = await stage4.createSeat(value.chair, value.committee.id,
-      {stableKey: 'delegate-file-seat', displayName: '中国', sortOrder: 1}, randomUUID(), context('delegate-file-seat'));
-    const meeting = await stage4.startMeetingSession(value.chair, value.committee.id, {}, context('delegate-file-meeting'));
+      {stableKey: 'delegate-file-seat', sortOrder: 1}, randomUUID(), context('delegate-file-seat'));
+    const meeting = await stage4.startMeetingSession(value.chair, value.committee.id, {}, context('delegate-file-meeting'), randomUUID());
     await stage4.createAttendanceEvent(value.chair, value.committee.id,
       {meetingSessionId: meeting.id, seatId: seat.id, type: 'PRESENT'}, context('delegate-file-present'));
     const providerCommits = new Stage6ProviderCommitService(pool as pg.Pool, {} as never, {} as never, chairProvider);
@@ -295,7 +296,7 @@ integration('PostgreSQL stage 7 storage Agent identity', () => {
       cache_state: 'REVIEW_PINNED'});
 
     const [firstFile] = await service.listReview(value.chair,value.committee.id);
-    expect(firstFile?.suggestedNames).toEqual({WORKING_PAPER:'工作文件 1.1',DIRECTIVE_DRAFT:'指令草案 1.1',RESOLUTION_DRAFT:'决议草案 1.1'});
+    expect(firstFile?.suggestedNames).toEqual({WORKING_PAPER:{sessionOrdinal: 1, ordinal: 1},DIRECTIVE_DRAFT:{sessionOrdinal: 1, ordinal: 1},RESOLUTION_DRAFT:{sessionOrdinal: 1, ordinal: 1}});
     await service.approve(value.chair,firstFile!.id,{baseRevision:firstFile!.revision,logicalName:'工作文件 1.1',fileType:'WORKING_PAPER'},context('approve'));
     expect((await service.bootstrap(capability,claimed.sessionToken)).submissions).toEqual([expect.objectContaining({status:'PUBLISHED',logicalName:'工作文件 1.1'})]);
     expect((await service.bootstrap(capability,claimed.sessionToken)).maxUploadSizeBytes).toBe(staging.maxFileBytes);
@@ -311,7 +312,7 @@ integration('PostgreSQL stage 7 storage Agent identity', () => {
       return (await service.listReview(value.chair,value.committee.id)).find(item => item.status==='PENDING_REVIEW')!;
     };
     const second = await submit();
-    expect(second.suggestedNames?.WORKING_PAPER).toBe('工作文件 1.2');
+    expect(second.suggestedNames?.WORKING_PAPER).toEqual({sessionOrdinal: 1, ordinal: 2});
     const rejection = {baseRevision:second.revision,logicalName:'工作文件 1.2',fileType:'WORKING_PAPER',reason:'请补充签署国',rejectionTypeId:'other'};
     await expect(service.reject(value.chair, second.id, {...rejection,rejectionTypeId:'missing'},randomUUID(),context('missing-type'))).rejects.toMatchObject({code:'VALIDATION_FAILED'});
     await expect(service.reject(value.chair, second.id, {...rejection,reason:''},randomUUID(),context('empty-custom'))).rejects.toMatchObject({code:'VALIDATION_FAILED'});
@@ -326,10 +327,10 @@ integration('PostgreSQL stage 7 storage Agent identity', () => {
     expect(rejectedEvents).toEqual([expect.objectContaining({fileId:second.id,logicalName:'工作文件 1.2',rejectionReason:'请补充签署国'})]);
     const savedSettings = await service.getSettings(value.chair, value.committee.id);
     await service.updateSettings(value.chair, value.committee.id, {...savedSettings, baseRevision:savedSettings.revision,
-      rejectionTypes:savedSettings.rejectionTypes.map(item => item.id === 'format' ? {...item,message:'新的格式说明'} : item)},context('change-prompt'));
+      rejectionTypes:savedSettings.rejectionTypes.map(item => item.id === 'format' ? {...item,message:{en:'New format instructions','zh-CN':'新的格式说明'}} : item)},context('change-prompt'));
     expect((await service.bootstrap(capability,claimed.sessionToken)).submissions).toEqual(expect.arrayContaining([
       expect.objectContaining({id:second.id,rejectionReason:'请补充签署国'})]));
-    const otherSeat = await stage4.createSeat(value.chair,value.committee.id,{stableKey:'other-delegate',displayName:'法国',sortOrder:2},randomUUID(),context('other-seat'));
+    const otherSeat = await stage4.createSeat(value.chair,value.committee.id,{stableKey:'other-delegate', sortOrder:2},randomUUID(),context('other-seat'));
     await stage4.createAttendanceEvent(value.chair,value.committee.id,{meetingSessionId:meeting.id,seatId:otherSeat.id,type:'PRESENT'},context('other-present'));
     const other = await service.claim(capability,otherSeat.id,context('other-claim'));
     expect((await service.bootstrap(capability,other.sessionToken)).submissions).toEqual([]);
@@ -341,20 +342,20 @@ integration('PostgreSQL stage 7 storage Agent identity', () => {
     expect((await service.bootstrap(capability,claimed.sessionToken)).submissions).toEqual(expect.arrayContaining([
       expect.objectContaining({id:second.id,status:'REJECTED',deleted:true,rejectionReason:'请补充签署国'})]));
     const third = await submit();
-    expect(third.suggestedNames?.WORKING_PAPER).toBe('工作文件 1.2');
+    expect(third.suggestedNames?.WORKING_PAPER).toEqual({sessionOrdinal: 1, ordinal: 2});
     await service.reject(value.chair,third.id,{baseRevision:third.revision,logicalName:'工作文件 1.2',fileType:'WORKING_PAPER',rejectionTypeId:'duplicate',reason:'ignored client text'},randomUUID(),context('no-reason'));
     expect((await service.bootstrap(capability,claimed.sessionToken)).submissions).toEqual(expect.arrayContaining([
-      expect.objectContaining({id:third.id,status:'REJECTED',rejectionReason:'此文件已被提交过，请勿重复提交'})]));
+      expect.objectContaining({id:third.id,status:'REJECTED',rejectionReason:'This file has already been submitted. Please do not submit it again.'})]));
 
-    // Isolated database fixture: place two preceding sessions before this upload's third session.
-    await pool!.query(`UPDATE meeting_sessions SET created_at=now()-interval '1 hour',name='第3会期' WHERE id=$1`,[meeting.id]);
-    for (const ordinal of [1,2]) await pool!.query(`INSERT INTO meeting_sessions
-      (id,committee_id,phase_id,active_rule_package_version_id,status,created_by_user_id,created_at,closed_at,name)
+    // Backdated sessions must not renumber the existing session.
+    await pool!.query(`UPDATE meeting_sessions SET created_at=now()-interval '1 hour' WHERE id=$1`,[meeting.id]);
+    for (const ordinal of [2,3]) await pool!.query(`INSERT INTO meeting_sessions
+      (id,committee_id,phase_id,active_rule_package_version_id,status,created_by_user_id,created_at,closed_at)
       SELECT $1,committee_id,phase_id,active_rule_package_version_id,'CLOSED',created_by_user_id,
-        now()-($2::int*interval '1 day'),now()-($2::int*interval '1 day')+interval '1 hour',$3 FROM meeting_sessions WHERE id=$4`,
-      [randomUUID(),4-ordinal,`第${ordinal}会期`,meeting.id]);
+        now()-($2::int*interval '1 day'),now()-($2::int*interval '1 day')+interval '1 hour' FROM meeting_sessions WHERE id=$3`,
+      [randomUUID(),ordinal,meeting.id]);
     const fourth = await submit();
-    expect(fourth.suggestedNames?.RESOLUTION_DRAFT).toBe('决议草案 3.1');
+    expect(fourth.suggestedNames?.RESOLUTION_DRAFT).toEqual({sessionOrdinal: 1, ordinal: 1});
 
     await stage3.setOperationMode(value.owner, value.committee.id, 'DELEGATE_OPERATED',
       await committeeRevision(value.committee.id), context('delegate-file-mode-change'));
@@ -736,7 +737,7 @@ integration('PostgreSQL stage 7 storage Agent identity', () => {
       fileRevision: 1, claimToken: oldClaim.claimToken, requestId: randomUUID()}, context('old-late-complete')))
       .rejects.toMatchObject({code: 'STALE_STORAGE_LEASE'});
     const replacement = (await tasks.tasks(second.credential, second.host.leaseGeneration)).tasks
-      .find(item => item.type === 'STORE_BLOB' && item.blobId === oldClaim.blobId);
+      .find(item => item.type === 'HOST_COMMIT_BLOB' && item.blobId === oldClaim.blobId);
     expect(replacement).toMatchObject({status: 'PENDING', leaseGeneration: second.host.leaseGeneration});
     const state = await pool?.query(`SELECT
       (SELECT status::text FROM storage_agent_tasks WHERE id=$1) AS old_status,

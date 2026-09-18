@@ -1,3 +1,4 @@
+import {useApiFieldErrors} from '../../components/useApiFieldErrors';
 import {apiErrorText} from '../../i18n';
 import {committeeContentName, type ContentLanguage} from '@quorum/contracts';
 import * as React from 'react';
@@ -84,6 +85,7 @@ export function CountryTemplateManager({api}: {api: SelfHostedApi}) {
   const [countries, setCountries] = React.useState<DraftCountry[]>([]); const [deleteOpen, setDeleteOpen] = React.useState(false);
   const [saved, setSaved] = React.useState(false); const [saving, setSaving] = React.useState(false); const [failure, setError] = React.useState<unknown>();
   const error = failure ? errorText(failure) : undefined;
+  const field = useApiFieldErrors(failure);
   const selected = templates.find(template => template.id === selectedId); const isBuiltin = selected?.builtin ?? false;
 
   const refresh = React.useCallback(async () => { const next = await api.listCountryTemplates(); setTemplates(next); return next; }, [api]);
@@ -172,7 +174,7 @@ export function CountryTemplateManager({api}: {api: SelfHostedApi}) {
       </Segment></Grid.Column>
       <Grid.Column className="country-manager-editor"><Segment loading={saving}>
         {!selected ? <Form onSubmit={create} error={!!error}><Header as="h2">{t('New country template')}</Header>
-          <Form.Input required label={t('Country template name')} value={name} placeholder={t('Enter a country template name')}
+          <Form.Input {...field(`names.${displayLanguage}`)} required label={t('Country template name')} value={name} placeholder={t('Enter a country template name')}
             onChange={event => setName(event.currentTarget.value)} />
           {error && <Message error content={error} />}<Button primary disabled={!name.trim()}>{t('Create country template')}</Button>
         </Form> : <>
@@ -180,7 +182,7 @@ export function CountryTemplateManager({api}: {api: SelfHostedApi}) {
             <Button type="button" basic primary onClick={() => void clone()}><Icon name="copy outline" />{t('Clone country template')}</Button></div>
           {isBuiltin && <Message info content={t('The built-in country template is read-only. Clone it to customize the countries.')} />}
           <Form success={saved} error={!!error} onSubmit={save}>
-            <Form.Input required disabled={isBuiltin} label={t('Country template name')} value={name}
+            <Form.Input {...field(`names.${displayLanguage}`)} required disabled={isBuiltin} label={t('Country template name')} value={name}
               onChange={event => {setName(event.currentTarget.value); setSaved(false);}} />
             <div className="template-localized-names">{localizedNames.map(item => <Form.Group key={item.id} className="template-localized-name-row">
               <Form.Dropdown disabled={isBuiltin} label={t('Language')} selection value={item.language}
@@ -188,7 +190,7 @@ export function CountryTemplateManager({api}: {api: SelfHostedApi}) {
                   || !localizedNames.some(candidate => candidate.language === option.value)))}
                 onChange={(_event, data) => {setLocalizedNames(current => current.map(candidate => candidate.id === item.id
                   ? {...candidate, language: data.value as Language} : candidate)); setSaved(false);}} />
-              <Form.Input disabled={isBuiltin} label={t('Country template name')} value={item.name}
+              <Form.Input {...field(`names.${item.language}`)} disabled={isBuiltin} label={t('Country template name')} value={item.name}
                 onChange={event => {setLocalizedNames(current => current.map(candidate => candidate.id === item.id
                   ? {...candidate, name: event.currentTarget.value} : candidate)); setSaved(false);}} />
               {!isBuiltin && <Form.Button type="button" basic negative icon="trash" aria-label={t('Remove')}
@@ -204,8 +206,8 @@ export function CountryTemplateManager({api}: {api: SelfHostedApi}) {
             <div className="country-table-scroll"><Table compact celled className="country-editor-table"><Table.Header><Table.Row>
               {languages.map(language => <Table.HeaderCell key={language}>{t('Country name')} · {LANGUAGE_OPTIONS.find(item => item.value === language)?.text}</Table.HeaderCell>)}
               <Table.HeaderCell>{t('Flag')}</Table.HeaderCell><Table.HeaderCell>{t('Continent')}</Table.HeaderCell>{!isBuiltin && <Table.HeaderCell />}
-            </Table.Row></Table.Header><Table.Body>{countries.map(country => <Table.Row key={country.id}>
-              {languages.map(language => <Table.Cell key={language}><Form.Input disabled={isBuiltin} value={country.names[language] ?? ''}
+            </Table.Row></Table.Header><Table.Body>{countries.map((country, index) => <Table.Row key={country.id}>
+              {languages.map(language => <Table.Cell key={language}><Form.Input {...field(`countries.${index}.names.${language}`)} disabled={isBuiltin} value={country.names[language] ?? ''}
                 onChange={event => updateCountry(country.id, {names: {...country.names, [language]: event.currentTarget.value}, defaultLanguage: country.defaultLanguage || language})} /></Table.Cell>)}
               <Table.Cell><div className="country-flag-editor"><FlagDisplay flag={country.flag} />
                 <Dropdown disabled={isBuiltin} selection value={country.flagMode} options={[
@@ -254,6 +256,7 @@ export function CommitteeTemplateManager({api}: {api: SelfHostedApi}) {
   const [mustVote, setMustVote] = React.useState(false); const [deleteOpen, setDeleteOpen] = React.useState(false);
   const [saved, setSaved] = React.useState(false); const [saving, setSaving] = React.useState(false); const [failure, setError] = React.useState<unknown>();
   const error = failure ? errorText(failure) : undefined;
+  const field = useApiFieldErrors(failure);
   const customTemplates = templates.filter(template => !template.builtin);
   const selectedCountry = countryTemplates.find(template => template.key === countryKey);
 
@@ -308,7 +311,7 @@ export function CommitteeTemplateManager({api}: {api: SelfHostedApi}) {
               && (option.value === item.language || !localizedNames.some(candidate => candidate.language === option.value)))}
               onChange={(_event, data) => setLocalizedNames(current => current.map(candidate => candidate.id === item.id
                 ? {...candidate, language: data.value as Language} : candidate))} />
-            <Form.Input label={t('Template name')} value={item.name} onChange={event => setLocalizedNames(current => current.map(candidate =>
+            <Form.Input {...field(`names.${item.language}`)} label={t('Template name')} value={item.name} onChange={event => setLocalizedNames(current => current.map(candidate =>
               candidate.id === item.id ? {...candidate, name: event.currentTarget.value} : candidate))} />
             <Form.Button type="button" basic negative icon="trash" aria-label={t('Remove')}
               onClick={() => setLocalizedNames(current => current.filter(candidate => candidate.id !== item.id))} />

@@ -225,12 +225,16 @@ async function motionState(client: PoolClient, row: MotionRow): Promise<Proceedi
 }
 
 async function ballotState(client: PoolClient, row: BallotRow, includeVotes = true): Promise<FormalBallot> {
+  const rules = await client.query<{allowed: boolean}>(`SELECT
+    COALESCE((definition->'ballots'->>'chairMayCorrectVote')::boolean,false) AS allowed
+    FROM rule_package_versions WHERE id=$1`, [row.rule_package_version_id]);
   const votes = includeVotes ? await client.query<{id: string; seat_id: string; seat_display_name: string;
     current_choice: BallotChoice; revision: number; cast_at: Date}>(`SELECT id,seat_id,seat_display_name,current_choice,
     revision,cast_at FROM ballot_votes WHERE ballot_id=$1 AND retracted_at IS NULL ORDER BY seat_id`, [row.id]) : {rows: []};
   return {id: row.id, committeeId: row.committee_id, meetingSessionId: row.meeting_session_id,
     subjectType: row.subject_type, subjectId: row.subject_id, status: row.status, procedural: row.procedural,
     choices: ballotChoices(row.choices), rulePackageVersionId: row.rule_package_version_id, ruleEvaluation: row.rule_evaluation,
+    chairMayCorrectVote: rules.rows[0]?.allowed === true,
     eligibility: row.eligibility_snapshot, threshold: row.threshold_definition,
     votes: votes.rows.map(vote => ({id: vote.id, seatId: vote.seat_id, seatDisplayName: vote.seat_display_name,
       choice: vote.current_choice, revision: vote.revision, castAt: vote.cast_at.toISOString()})), result: row.result,

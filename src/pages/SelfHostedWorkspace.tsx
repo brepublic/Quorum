@@ -1,3 +1,4 @@
+import {useApiFieldErrors} from '../components/useApiFieldErrors';
 import {useLanguage} from '../i18n';
 import * as React from 'react';
 import type {
@@ -64,6 +65,7 @@ function CommitteeList({api, user, logout}: {api: SelfHostedApi; user: SelfHoste
   const [visibility, setVisibility] = React.useState<'PUBLIC' | 'PRIVATE'>('PRIVATE');
   const [templateId, setTemplateId] = React.useState(''); const [countryKey, setCountryKey] = React.useState('builtin:default');
   const [error, setError] = React.useState<unknown>(); const [working, setWorking] = React.useState(false);
+  const field = useApiFieldErrors(error);
   const [loading, setLoading] = React.useState(true);
   const refresh = React.useCallback(async () => {
     try {
@@ -146,7 +148,7 @@ function CommitteeList({api, user, logout}: {api: SelfHostedApi; user: SelfHoste
       </Segment></Grid.Column>
       {!user.isSystemAdmin && <Grid.Column width={10}><Segment><Form onSubmit={create} loading={working}>
       <Form.Group unstackable className="template-picker-row">
-        <Form.Dropdown className="template-picker-field" label={t('Template')} search clearable fluid selection
+        <Form.Dropdown {...field('committeeTemplateId', 'committeeTemplateRevision', 'members')} className="template-picker-field" label={t('Template')} search clearable fluid selection
           placeholder={t('Template to skip manual member creation (optional)')} value={templateId}
           options={committeeTemplates.map(item => ({key: item.id, value: item.id,
             text: localizedDisplayName(item.names, item.defaultLanguage), description: item.builtin ? t('Built-in') : t('My template')}))}
@@ -156,21 +158,21 @@ function CommitteeList({api, user, logout}: {api: SelfHostedApi; user: SelfHoste
           <Popup.Content><TemplatePreview template={selectedTemplate} language={selectedLanguageValid ? committeeLanguage || undefined : undefined} /></Popup.Content>
         </Popup>
       </Form.Group>
-      <Form.Select className="template-picker-field" label={t('Country template')} required disabled={!!templateId} value={countryKey}
+      <Form.Select {...field('countryTemplateKey', 'countryTemplateRevision', 'countries')} className="template-picker-field" label={t('Country template')} required disabled={!!templateId} value={countryKey}
         options={countryTemplates.map(item => ({key: item.key, value: item.key, text: localizedDisplayName(item.names, item.defaultLanguage),
           description: item.builtin ? t('Built-in') : t('My template')}))}
         onChange={(_, data) => setCountryKey(String(data.value))} />
-      <Form.Select label={t('Rules')} required value={ruleVersionId} options={ruleOptions}
+      <Form.Select {...field('activeRulePackageVersionId', 'rules')} label={t('Rules')} required value={ruleVersionId} options={ruleOptions}
         onChange={(_, data) => setRuleVersionId(String(data.value))} />
-      <Form.Select label={t('Committee language')} required value={committeeLanguage}
+      <Form.Select {...field('committeeLanguage')} label={t('Committee language')} required value={committeeLanguage}
         options={LANGUAGE_OPTIONS.filter(option => supportedLanguages.includes(option.value))}
         onChange={(_, data) => setCommitteeLanguage(data.value as ContentLanguage)} />
       {!loading && supportedLanguages.length === 0 && <Message warning content={t('No common language for the selected content')} />}
-      <Form.Input label={t('Name')} required fluid value={name} placeholder={t('Committee name')}
+      <Form.Input {...field('name')} label={t('Name')} required fluid value={name} placeholder={t('Committee name')}
         onChange={event => setName(event.currentTarget.value)} />
-      <Form.Input label={t('Topic')} fluid value={topic} placeholder={t('Committee topic')}
+      <Form.Input {...field('topic')} label={t('Topic')} fluid value={topic} placeholder={t('Committee topic')}
         onChange={event => setTopic(event.currentTarget.value)} />
-      <Form.Input label={t('Conference')} fluid value={conference} placeholder={t('Conference name')}
+      <Form.Input {...field('conference')} label={t('Conference')} fluid value={conference} placeholder={t('Conference name')}
         onChange={event => setConference(event.currentTarget.value)} />
       <Form.Select label={t('Visibility')} value={visibility} options={[
         {key: 'private', value: 'PRIVATE', text: t('Private')}, {key: 'public', value: 'PUBLIC', text: t('Public')}

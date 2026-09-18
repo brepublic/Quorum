@@ -1,3 +1,4 @@
+import {testCommitteeInput} from '../../test/committee-fixture';
 // @vitest-environment node
 
 import {randomUUID} from 'node:crypto';
@@ -34,6 +35,7 @@ beforeEach(async () => {
   identity = new IdentityService(new PostgresIdentityStore(pool));
   stage3 = new Stage3Service(pool);
   await stage3.ensureBuiltins();
+  await pool!.query("UPDATE system_settings SET default_committee_creator_is_chair=false");
   const secret = await identity.ensureBootstrapSecret();
   const session = await identity.bootstrapAdmin({secret: secret as string, email: 'admin@example.com',
     displayName: 'System Admin', password: 'admin-password-123'}, context('bootstrap'));
@@ -60,16 +62,16 @@ async function user(name: string): Promise<AuthenticatedSession> {
 integration('PostgreSQL stage 3 integration', () => {
   it('keeps owner, Chair, membership, assignment, and system administration independent', async () => {
     const owner = await user('owner'); const chair = await user('chair'); const member = await user('member');
-    const created = await stage3.createCommittee(owner, {name: 'Private Committee', visibility: 'PRIVATE'}, context('committee'));
+    const created = await stage3.createCommittee(owner, await testCommitteeInput(pool!, owner, {name: 'Private Committee', visibility: 'PRIVATE'}), context('committee'), randomUUID());
     expect(created.ownerUserId).toBe(owner.user.id);
     await expect(stage3.setOperationMode(owner, created.id, 'CHAIR_OPERATED', 1, context('owner-mode')))
       .rejects.toMatchObject({code: 'FORBIDDEN'});
     await expect(stage3.setOperationMode(administrator, created.id, 'CHAIR_OPERATED', 1, context('admin-mode')))
       .rejects.toMatchObject({code: 'FORBIDDEN'});
 
-    const afterGrant = await stage3.setChair(owner, created.id, chair.user.id, true, 1, context('grant'));
+    const afterGrant = await stage3.setChair(owner, created.id, chair.user.email, true, 1, context('grant'));
     expect(afterGrant.revision).toBe(2);
-    await expect(stage3.setChair(member, created.id, member.user.id, true, 2, context('member-grant')))
+    await expect(stage3.setChair(member, created.id, member.user.email, true, 2, context('member-grant')))
       .rejects.toMatchObject({code: 'FORBIDDEN'});
     const operated = await stage3.setOperationMode(chair, created.id, 'CHAIR_OPERATED', 2, context('chair-mode'));
     expect(operated).toEqual(expect.objectContaining({operationMode: 'CHAIR_OPERATED', revision: 3}));
@@ -84,17 +86,17 @@ integration('PostgreSQL stage 3 integration', () => {
     await expect(stage3.snapshot(created.id)).rejects.toMatchObject({code: 'NOT_FOUND'});
     await expect(stage3.snapshot(created.id, member)).rejects.toMatchObject({code: 'NOT_FOUND'});
 
-    const seat = await stage3.createSeat(chair, created.id, {stableKey: 'china', displayName: '中国'}, context('seat'));
-    await expect(stage3.assignSeat(owner, created.id, {seatId: seat.id, userId: member.user.id}, context('owner-assign')))
+    const seat = await stage3.createSeat(chair, created.id, {stableKey: 'china'}, context('seat'), randomUUID());
+    await expect(stage3.assignSeat(owner, created.id, {seatId: seat.id, email: member.user.email}, context('owner-assign')))
       .rejects.toMatchObject({code: 'FORBIDDEN'});
-    await stage3.assignSeat(chair, created.id, {seatId: seat.id, userId: member.user.id}, context('chair-assign'));
+    await stage3.assignSeat(chair, created.id, {seatId: seat.id, email: member.user.email}, context('chair-assign'));
     const memberSnapshot = await stage3.snapshot(created.id, member);
     expect(memberSnapshot.viewer).toEqual({audience: 'MEMBER', seatId: seat.id});
     expect(memberSnapshot.committee.ownerUserId).toBeUndefined();
     expect(memberSnapshot.chairs).toBeUndefined();
     const chairSnapshot = await stage3.snapshot(created.id, chair);
-    expect(chairSnapshot.chairs).toEqual([{userId: chair.user.id}]);
-    expect(chairSnapshot.assignments).toEqual(expect.arrayContaining([expect.objectContaining({userId: member.user.id})]));
+    expect(chairSnapshot.chairs).toEqual([{userEmail: chair.user.email}]);
+    expect(chairSnapshot.assignments).toEqual(expect.arrayContaining([expect.objectContaining({userEmail: member.user.email})]));
 
     await expect(stage3.updateCommittee(owner, created.id, 1, {name: 'Stale'}, context('stale')))
       .rejects.toMatchObject({code: 'REVISION_CONFLICT', details: {currentRevision: 5}});
@@ -113,16 +115,16 @@ integration('PostgreSQL stage 3 integration', () => {
   it('enforces assignment history, invitation hashing, atomic redemption, and final-use concurrency', async () => {
     const owner = await user('seatowner'); const chair = await user('seatchair');
     const first = await user('firstdelegate'); const second = await user('seconddelegate');
-    const committee = await stage3.createCommittee(owner, {name: 'Public Committee', visibility: 'PUBLIC'}, context('public'));
-    await stage3.setChair(owner, committee.id, chair.user.id, true, 1, context('seat-grant'));
-    const seat = await stage3.createSeat(chair, committee.id, {stableKey: 'shared', displayName: '共享席位'}, context('shared'));
-    const other = await stage3.createSeat(chair, committee.id, {stableKey: 'other', displayName: '其他席位'}, context('other'));
-    const assignment = await stage3.assignSeat(chair, committee.id, {seatId: seat.id, userId: first.user.id}, context('assign-first'));
-    await stage3.assignSeat(chair, committee.id, {seatId: seat.id, userId: second.user.id}, context('assign-second'));
-    await expect(stage3.assignSeat(chair, committee.id, {seatId: other.id, userId: first.user.id}, context('duplicate')))
+    const committee = await stage3.createCommittee(owner, await testCommitteeInput(pool!, owner, {name: 'Public Committee', visibility: 'PUBLIC'}), context('public'), randomUUID());
+    await stage3.setChair(owner, committee.id, chair.user.email, true, 1, context('seat-grant'));
+    const seat = await stage3.createSeat(chair, committee.id, {stableKey: 'shared'}, context('shared'), randomUUID());
+    const other = await stage3.createSeat(chair, committee.id, {stableKey: 'other'}, context('other'), randomUUID());
+    const assignment = await stage3.assignSeat(chair, committee.id, {seatId: seat.id, email: first.user.email}, context('assign-first'));
+    await stage3.assignSeat(chair, committee.id, {seatId: seat.id, email: second.user.email}, context('assign-second'));
+    await expect(stage3.assignSeat(chair, committee.id, {seatId: other.id, email: first.user.email}, context('duplicate')))
       .rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
     await stage3.assignSeat(chair, committee.id, {action: 'END', assignmentId: assignment.id}, context('end'));
-    await stage3.assignSeat(chair, committee.id, {seatId: other.id, userId: first.user.id}, context('reassign'));
+    await stage3.assignSeat(chair, committee.id, {seatId: other.id, email: first.user.email}, context('reassign'));
     const history = await pool?.query('SELECT status FROM seat_assignments WHERE committee_id=$1 AND user_id=$2 ORDER BY assigned_at',
       [committee.id, first.user.id]);
     expect(history?.rows.map(row => row.status)).toEqual(['ENDED', 'ACTIVE']);
@@ -163,8 +165,8 @@ integration('PostgreSQL stage 3 integration', () => {
 
   it('keeps built-ins and published versions immutable and restricts rule management to the correct scope', async () => {
     const owner = await user('ruleowner'); const chair = await user('rulechair');
-    const committee = await stage3.createCommittee(owner, {name: 'Rules Committee', visibility: 'PUBLIC'}, context('rules'));
-    await stage3.setChair(owner, committee.id, chair.user.id, true, 1, context('rules-grant'));
+    const committee = await stage3.createCommittee(owner, await testCommitteeInput(pool!, owner, {name: 'Rules Committee', visibility: 'PUBLIC'}), context('rules'), randomUUID());
+    await stage3.setChair(owner, committee.id, chair.user.email, true, 1, context('rules-grant'));
     const packages = await stage3.listRulePackages();
     expect(packages.filter(item => item.scope === 'BUILTIN')).toHaveLength(2);
     const source = packages.find(item => item.key === 'builtin:quorum-default') as (typeof packages)[number];

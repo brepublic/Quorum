@@ -1,3 +1,4 @@
+import {testCommitteeInput} from '../../test/committee-fixture';
 // @vitest-environment node
 
 import {randomUUID} from 'node:crypto';
@@ -75,8 +76,8 @@ async function text(stream: NodeJS.ReadableStream): Promise<string> {
 integration('PostgreSQL stage 8 integration', () => {
   it('executes every archive section against the migrated schema and preserves the owner boundary', async () => {
     const owner = await user('archiveowner'); const outsider = await user('archiveoutsider');
-    const committee = await stage3.createCommittee(owner, {name: 'Archived Committee', visibility: 'PRIVATE'},
-      context('committee'));
+    const committee = await stage3.createCommittee(owner, await testCommitteeInput(pool!, owner, {name: 'Archived Committee', visibility: 'PRIVATE'}),
+      context('committee'), randomUUID());
     await pool?.query(`INSERT INTO committee_memberships (committee_id,user_id,status)
       VALUES ($1,$2,'ACTIVE')`, [committee.id, outsider.user.id]);
     await expect(archives.exportCommittee(owner, committee.id)).rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
@@ -96,8 +97,8 @@ integration('PostgreSQL stage 8 integration', () => {
 
   it('atomically removes an archived committee after its durable cleanup boundary is clear', async () => {
     const owner = await user('deleteowner');
-    const committee = await stage3.createCommittee(owner, {name: 'Delete Committee', visibility: 'PRIVATE'},
-      context('delete-committee'));
+    const committee = await stage3.createCommittee(owner, await testCommitteeInput(pool!, owner, {name: 'Delete Committee', visibility: 'PRIVATE'}),
+      context('delete-committee'), randomUUID());
     await stage3.archiveCommittee(owner, committee.id, committee.revision, context('delete-archive'));
     const job = await deletions.requestDeletion(owner, committee.id,
       {baseRevision: committee.revision + 1, confirmationName: 'Delete Committee'}, 'delete-key', context('delete'));
@@ -112,8 +113,8 @@ integration('PostgreSQL stage 8 integration', () => {
 
   it('deletes expired ephemeral identity records without deleting committee history', async () => {
     const owner = await user('retentionowner');
-    const committee = await stage3.createCommittee(owner, {name: 'Retained history', visibility: 'PRIVATE'},
-      context('retention-committee'));
+    const committee = await stage3.createCommittee(owner, await testCommitteeInput(pool!, owner, {name: 'Retained history', visibility: 'PRIVATE'}),
+      context('retention-committee'), randomUUID());
     await pool?.query("UPDATE sessions SET revoked_at='2026-06-01T00:00:00Z' WHERE user_id=$1", [owner.user.id]);
     await pool?.query(`INSERT INTO identity_idempotency_keys
       (actor_user_id,idempotency_key,request_hash,response_body,created_at)

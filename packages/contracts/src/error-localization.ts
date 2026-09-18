@@ -58,13 +58,16 @@ export type LocalizedErrorReason = keyof typeof ERROR_TEXT;
 /** Unknown server messages and exception bodies never become user-facing text. */
 export function formatApiError(error: unknown, language: ContentLanguage): string {
   const value = error && typeof error === 'object' ? error as {
-    code?: unknown; reason?: unknown; params?: {formats?: unknown}; localization?: {reason?: unknown; params?: {formats?: unknown}}; name?: unknown;
+    code?: unknown; requestId?: unknown; reason?: unknown; params?: {formats?: unknown}; localization?: {reason?: unknown; params?: {formats?: unknown}}; name?: unknown;
   } : undefined;
   const reason = value?.localization?.reason ?? value?.reason;
   const key = typeof reason === 'string' && Object.hasOwn(ERROR_TEXT, reason) ? reason
     : typeof value?.code === 'string' && Object.hasOwn(ERROR_TEXT, value.code) ? value.code
       : value?.name === 'AbortError' ? 'ABORTED' : 'OPERATION_FAILED';
-  const text = ERROR_TEXT[key as LocalizedErrorReason][language];
+  let text: string = ERROR_TEXT[key as LocalizedErrorReason][language];
+  if (['OPERATION_FAILED', 'INTERNAL_ERROR', 'INVALID_RESPONSE'].includes(key) && typeof value?.requestId === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value.requestId)) {
+    text += language === 'zh-CN' ? ` 请求编号：${value.requestId}` : ` Request ID: ${value.requestId}`;
+  }
   const formats = value?.localization?.params?.formats ?? value?.params?.formats;
   return key === 'INVALID_FILE_EXTENSION' ? text.replace('{formats}',
     typeof formats === 'string' && formats.length <= 2048 && /^[a-zA-Z0-9., ]+$/.test(formats) ? formats : '—') : text;

@@ -1,3 +1,4 @@
+import {useApiFieldErrors} from '../components/useApiFieldErrors';
 import {useLanguage} from '../i18n';
 import {apiErrorText} from '../i18n';
 import * as React from 'react';
@@ -56,6 +57,7 @@ function LoginForm({client, onAuthenticated}: IdentityFormProps) {
   const [password, setPassword] = React.useState('');
   const [failure, setError] = React.useState<unknown>();
   const error = failure ? message(failure) : undefined;
+  const field = useApiFieldErrors(failure);
   const [working, setWorking] = React.useState(false);
 
   const submit = async () => {
@@ -75,9 +77,9 @@ function LoginForm({client, onAuthenticated}: IdentityFormProps) {
     <Header as="h3" attached="top">{t('Login')}</Header>
     <Segment attached="bottom">
       <Form onSubmit={submit} loading={working} error={!!error}>
-        <Form.Input label={t('Email')} type="email" autoComplete="username" required value={email}
+        <Form.Input {...field('email')} label={t('Email')} type="email" autoComplete="username" required value={email}
           onChange={event => setEmail(event.currentTarget.value)} />
-        <Form.Input label={t('Password')} type="password" autoComplete="current-password" required value={password}
+        <Form.Input {...field('password')} label={t('Password')} type="password" autoComplete="current-password" required value={password}
           onChange={event => setPassword(event.currentTarget.value)} />
         {error && <Message error content={error} />}
         <Button primary fluid disabled={working || !email || !password}>{t('Login')}</Button>
@@ -98,6 +100,7 @@ function BootstrapForm({client, onAuthenticated}: IdentityFormProps) {
   const [confirmation, setConfirmation] = React.useState('');
   const [failure, setError] = React.useState<unknown>();
   const error = failure ? message(failure) : undefined;
+  const field = useApiFieldErrors(failure);
   const [working, setWorking] = React.useState(false);
   const valid = secret && email && displayName && password.length >= 12 && password === confirmation;
 
@@ -117,13 +120,13 @@ function BootstrapForm({client, onAuthenticated}: IdentityFormProps) {
   return <IdentityShell title={t('Initialize administrator')} icon="user secret">
     {error && <Message error content={error} />}
     <Form onSubmit={submit} loading={working}>
-      <Form.Input label={t('Bootstrap secret')} type="password" autoComplete="off" required value={secret}
+      <Form.Input {...field('secret')} label={t('Bootstrap secret')} type="password" autoComplete="off" required value={secret}
         onChange={event => setSecret(event.currentTarget.value)} />
-      <Form.Input label={t('Email')} type="email" autoComplete="username" required value={email}
+      <Form.Input {...field('email')} label={t('Email')} type="email" autoComplete="username" required value={email}
         onChange={event => setEmail(event.currentTarget.value)} />
-      <Form.Input label={t('Display name')} required value={displayName}
+      <Form.Input {...field('displayName')} label={t('Display name')} required value={displayName}
         onChange={event => setDisplayName(event.currentTarget.value)} />
-      <Form.Input label={t('Password')} type="password" minLength={12} autoComplete="new-password" required value={password}
+      <Form.Input {...field('password')} label={t('Password')} type="password" minLength={12} autoComplete="new-password" required value={password}
         onChange={event => setPassword(event.currentTarget.value)} />
       <Form.Input label={t('Confirm password')} type="password" minLength={12} autoComplete="new-password" required
         error={!!confirmation && confirmation !== password} value={confirmation}
@@ -139,6 +142,7 @@ function ChangePasswordForm({client, onAuthenticated}: IdentityFormProps) {
   const [confirmation, setConfirmation] = React.useState('');
   const [failure, setError] = React.useState<unknown>();
   const error = failure ? message(failure) : undefined;
+  const field = useApiFieldErrors(failure);
   const [working, setWorking] = React.useState(false);
   const valid = newPassword.length >= 12 && newPassword === confirmation;
 
@@ -158,7 +162,7 @@ function ChangePasswordForm({client, onAuthenticated}: IdentityFormProps) {
   return <IdentityShell title={t('Change temporary password')} icon="key">
     {error && <Message error content={error} />}
     <Form onSubmit={submit} loading={working}>
-      <Form.Input label={t('New password')} type="password" minLength={12} autoComplete="new-password" required
+      <Form.Input {...field('newPassword', 'password')} label={t('New password')} type="password" minLength={12} autoComplete="new-password" required
         value={newPassword} onChange={event => setNewPassword(event.currentTarget.value)} />
       <Form.Input label={t('Confirm password')} type="password" minLength={12} autoComplete="new-password" required
         error={!!confirmation && confirmation !== newPassword} value={confirmation}

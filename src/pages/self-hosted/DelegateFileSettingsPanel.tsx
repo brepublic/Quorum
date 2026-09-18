@@ -1,12 +1,13 @@
+import {useApiFieldErrors} from '../../components/useApiFieldErrors';
 import {apiErrorText} from '../../i18n';
-import {delegateFileTypeName, type ContentLanguage} from '@quorum/contracts';
+import {delegateFileTypeName, isContentLanguage, type ContentLanguage} from '@quorum/contracts';
 import {t, useLanguage} from '../../i18n';
 import {getLanguage, LANGUAGE_OPTIONS} from '../../i18n';
 import * as React from 'react';
 import {Prompt} from 'react-router-dom';
 import type {DefaultFileRejectionSettings, DelegateFileSettings, DelegateFileType} from '@quorum/contracts';
 import {Button, Form, Header, Message, Modal, Segment} from 'semantic-ui-react';
-import {selfHostedApi, type SelfHostedApi} from '../../services/self-hosted-api';
+import {selfHostedApi, SelfHostedApiError, type SelfHostedApi} from '../../services/self-hosted-api';
 
 const FILE_TYPES: Array<[DelegateFileType, string]> = [
   ['WORKING_PAPER', "Working paper"], ['DIRECTIVE_DRAFT', "Draft directive"], ['RESOLUTION_DRAFT', "resolution"]
@@ -21,6 +22,7 @@ export function DelegateFileSettingsPanel({committeeId, committeeLanguage, api =
   const [extensions, setExtensions] = React.useState<Record<string, string>>({});
   const [working, setWorking] = React.useState(false);
   const [failure, setError] = React.useState<unknown>();
+  const field = useApiFieldErrors(failure);
   const error = failure ? apiErrorText(failure) : undefined; const [saved, setSaved] = React.useState(false);
   const [dirty, setDirty] = React.useState(false); const [reload, setReload] = React.useState(false);
   const load = React.useCallback(async () => {
@@ -29,7 +31,13 @@ export function DelegateFileSettingsPanel({committeeId, committeeLanguage, api =
       const next = committeeId ? await api.getDelegateFileSettings(committeeId) : await api.getDefaultFileRejectionTypes();
       setSettings(next); setDirty(false); setSaved(false);
       if (committeeId) setExtensions(Object.fromEntries(FILE_TYPES.map(([type]) => [type, (next as DelegateFileSettings).allowedExtensions[type].join(', ')])));
-    } catch (caught) {setError(caught);}
+    } catch (caught) {
+      if (caught instanceof SelfHostedApiError) {
+        const missingLanguage = caught.localization?.fieldErrors?.[0]?.params?.language;
+        if (isContentLanguage(missingLanguage)) setContentLanguage(missingLanguage);
+      }
+      setError(caught);
+    }
     finally {setWorking(false);}
   }, [api, committeeId]);
   React.useEffect(() => {void load();}, [load]);
@@ -48,7 +56,13 @@ export function DelegateFileSettingsPanel({committeeId, committeeLanguage, api =
         : await api.updateDefaultFileRejectionTypes(settings);
       setSettings(next); setDirty(false); setSaved(true);
       if (committeeId) setExtensions(Object.fromEntries(FILE_TYPES.map(([type]) => [type, (next as DelegateFileSettings).allowedExtensions[type].join(', ')])));
-    } catch (caught) {setError(caught);}
+    } catch (caught) {
+      if (caught instanceof SelfHostedApiError) {
+        const missingLanguage = caught.localization?.fieldErrors?.[0]?.params?.language;
+        if (isContentLanguage(missingLanguage)) setContentLanguage(missingLanguage);
+      }
+      setError(caught);
+    }
     finally {setWorking(false);}
   };
   return <Segment className="delegate-file-settings" loading={working}>
@@ -62,7 +76,7 @@ export function DelegateFileSettingsPanel({committeeId, committeeLanguage, api =
         onChange={(_, data) => setContentLanguage(data.value as typeof contentLanguage)} />
       {settings.rejectionTypes.map((item, index) => <Segment key={item.id}>
         <Form.Group widths="equal">
-          <Form.Input label={t("Type name")} aria-label={`${t('Type name')} ${index + 1}`} required maxLength={100} value={item.label[contentLanguage] ?? ''} disabled={readOnly}
+          <Form.Input {...field(`rejectionTypes.${index}.label`)} label={t("Type name")} aria-label={`${t('Type name')} ${index + 1}`} required maxLength={100} value={item.label[contentLanguage] ?? ''} disabled={readOnly}
             onChange={(_, data) => {const label = data.value; changed(); setSettings({...settings,
               rejectionTypes: settings.rejectionTypes.map(row => row.id === item.id ? {...row, label: {...row.label, [contentLanguage]: label}} : row)});}} />
           <Form.Select label={t("Message mode")} value={item.custom ? 'custom' : 'preset'} disabled={readOnly} options={[
@@ -70,7 +84,7 @@ export function DelegateFileSettingsPanel({committeeId, committeeLanguage, api =
             onChange={(_, data) => {changed(); setSettings({...settings, rejectionTypes: settings.rejectionTypes.map(row =>
               row.id === item.id ? {...row, custom: data.value === 'custom'} : row)});}} />
         </Form.Group>
-        {!item.custom && <Form.TextArea label={t("Message to delegate")} aria-label={`${t('Message to delegate')} ${index + 1}`} required maxLength={2000}
+        {!item.custom && <Form.TextArea {...field(`rejectionTypes.${index}.message`)} label={t("Message to delegate")} aria-label={`${t('Message to delegate')} ${index + 1}`} required maxLength={2000}
           value={item.message[contentLanguage] ?? ''} disabled={readOnly} onChange={(_, data) => {const message = String(data.value); changed(); setSettings({...settings,
             rejectionTypes: settings.rejectionTypes.map(row => row.id === item.id ? {...row, message: {...row.message, [contentLanguage]: message}} : row)});}} />}
         {!readOnly && <Button type="button" basic negative size="small" disabled={settings.rejectionTypes.length === 1}
@@ -81,7 +95,7 @@ export function DelegateFileSettingsPanel({committeeId, committeeLanguage, api =
           {id: crypto.randomUUID(), label: {}, message: {}, custom: false}]});}} />}
       {committeeId && <>
         <Header as="h2">{t("File format settings")}</Header>
-        {FILE_TYPES.map(([type]) => <Form.Input key={type} id={`file-extensions-${type}`} label={t('Allowed extensions for {type}', {type: delegateFileTypeName(type, committeeLanguage ?? contentLanguage)})} value={extensions[type] ?? ''}
+        {FILE_TYPES.map(([type]) => <Form.Input key={type} {...field(`allowedExtensions.${type}`)} label={t('Allowed extensions for {type}', {type: delegateFileTypeName(type, committeeLanguage ?? contentLanguage)})} value={extensions[type] ?? ''}
           disabled={readOnly} required placeholder="docx, doc, pdf" onChange={(_, data) => {changed(); setExtensions({...extensions, [type]: data.value});}} />)}
       </>}
       <div className="delegate-file-settings-actions">

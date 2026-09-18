@@ -678,7 +678,7 @@ function Ballots({snapshot, run, api, canChair, subjectId, embedded = false, sto
         onClick={() => void run(() => api.closeBallot(ballot.id, ballot.revision))}>{t('Close ballot')}</Button>}
       {canChair && ballot.status === 'CLOSED' && <Button size="mini" primary onClick={() => void run(() => api.publishBallot(ballot.id,
         ballot.revision))}>{t('Publish result')}</Button>}
-      {canChair && snapshot.activeRules.ballots.chairMayCorrectVote && ballot.status === 'OPEN'
+      {canChair && ballot.chairMayCorrectVote && ballot.status === 'OPEN'
         && <BallotCorrection ballot={ballot} run={run} api={api} />}
       {ballot.votes.length > 0 && <List.Description>{ballot.votes.map(vote => `${vote.seatDisplayName}: ${t(vote.choice)}`).join(' · ')}</List.Description>}
       {ballot.result && <List.Description>{statusLabel(ballot.result.outcome)} · {t('FOR')} {ballot.result.forCount} · {t('AGAINST')} {ballot.result.againstCount} · {t('ABSTAIN')} {ballot.result.abstainCount}</List.Description>}

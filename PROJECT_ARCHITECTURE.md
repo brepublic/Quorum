@@ -163,7 +163,7 @@ source scripts/wsl-env.sh
 pnpm start                         # 自托管浏览器开发服务器
 pnpm exec vitest run               # 全仓单元、契约与 HTTP 测试
 pnpm test:self-host                # 自动发现的非 PostgreSQL 测试集
-pnpm test:self-host:integration    # 真实 PostgreSQL 临时数据库测试
+pnpm test:self-host:integration    # 真实 PostgreSQL 临时数据库测试（先 build:self-host，切换脚本验收复用编译后的删除逻辑）
 pnpm test:self-host:themes         # 自动启动独立测试数据库并执行主题、身份和迁移相关测试
 pnpm build:self-host               # 浏览器、契约、规则、后端与 Agent 构建
 pnpm verify:no-legacy-runtime      # 检查生产源码、依赖、配置与构建产物
@@ -184,3 +184,5 @@ pnpm self-host:test-db:down
 Web 的共享错误格式化读取 reason/code 和受约束参数；身份、业务、上传及 Node Agent 客户端保留结构化信息。未知异常不直接展示消息。界面错误保留原结构并在渲染时解释，以支持切换语言。仍需完成全部字段定位和服务端具体原因覆盖，不能据此视为整体验收完成。
 
 原生 Rust/Slint 桌面通过内置目录翻译界面、状态、错误和步骤；Node 桥接传机器状态，文件名与路径原样保留。语言偏好独立存于 XDG_CONFIG_HOME（缺省 ~/.config）下 quorum-agent/desktop-language，不进入 Agent 私有配置、不改变配对或同步身份。切换只更新窗口属性和列表显示；服务器 Agent 协议仍为 2。
+
+本机 schema 55→62 开发切换使用 `server/scripts/localization-rebuild.mjs --local-development-rebuild`，须先停止 app/worker。脚本复用受控委员会清理顺序，在同一事务验证账号、源模板及其成员、全局规则和系统配置未变；随后再应用 migration 56–62。脚本不适用于生产升级，不清理外部主席电脑的本地目录。字段错误通过 `useApiFieldErrors` 对应到输入、展开并聚焦；切换界面语言仅重译提示。历史表决按钮读取该表决的规则版本。

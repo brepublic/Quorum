@@ -834,7 +834,10 @@ export class Stage4Service {
           }, revision: row.revision, createdAt: row.created_at.toISOString(),
           decidedAt: row.decided_at?.toISOString() ?? null, destinationPath: row.destination_path};
       }));
-      const ballotRows = await client.query<SnapshotBallotRow>('SELECT * FROM ballots WHERE committee_id=$1 ORDER BY opened_at,id', [committeeId]);
+      const ballotRows = await client.query<SnapshotBallotRow & {chair_may_correct_vote: boolean}>(`SELECT b.*,
+        COALESCE((v.definition->'ballots'->>'chairMayCorrectVote')::boolean,false) AS chair_may_correct_vote
+        FROM ballots b JOIN rule_package_versions v ON v.id=b.rule_package_version_id
+        WHERE b.committee_id=$1 ORDER BY b.opened_at,b.id`, [committeeId]);
       result.ballots = await Promise.all(ballotRows.rows.map(async row => {
         const revealVotes = viewer.audience === 'CHAIR' || viewer.audience === 'OWNER' || row.status === 'PUBLISHED';
         const votes = revealVotes ? await client.query<{id: string; seat_id: string; seat_display_name: string;
@@ -843,6 +846,7 @@ export class Stage4Service {
         return {id: row.id, committeeId: row.committee_id, meetingSessionId: row.meeting_session_id,
           subjectType: row.subject_type, subjectId: row.subject_id, status: row.status, procedural: row.procedural,
           choices: ballotChoices(row.choices), rulePackageVersionId: row.rule_package_version_id, ruleEvaluation: row.rule_evaluation,
+          chairMayCorrectVote: row.chair_may_correct_vote,
           eligibility: viewer.audience === 'PUBLIC' ? [] : row.eligibility_snapshot, threshold: row.threshold_definition,
           votes: votes.rows.map(vote => ({id: vote.id, seatId: vote.seat_id, seatDisplayName: vote.seat_display_name,
             choice: vote.current_choice, revision: vote.revision, castAt: vote.cast_at.toISOString()})),

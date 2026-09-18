@@ -188,6 +188,7 @@ export interface BallotVote {
 }
 
 export interface FormalBallot {
+  chairMayCorrectVote?: boolean;
   id: string;
   committeeId: string;
   meetingSessionId: string;

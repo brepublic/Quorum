@@ -1,3 +1,4 @@
+import {testCommitteeInput} from '../../test/committee-fixture';
 // @vitest-environment node
 
 import {createHash, randomUUID} from 'node:crypto';
@@ -128,12 +129,12 @@ async function storageFixture(visibility: 'PUBLIC' | 'PRIVATE' = 'PUBLIC') {
   const owner = await user('owner');
   const chair = await user('chair');
   const member = await user('member');
-  let committee = await stage4.createCommittee(owner, {name: 'Stage 6 Council', visibility,
-    countryTemplateKey: 'builtin:default'}, 'committee', context('committee'));
-  committee = await stage3.setChair(owner, committee.id, chair.user.id, true, committee.revision, context('chair'));
+  let committee = await stage4.createCommittee(owner, await testCommitteeInput(pool!, owner, {name: 'Stage 6 Council', visibility,
+    countryTemplateKey: 'builtin:default'}), 'committee', context('committee'));
+  committee = await stage3.setChair(owner, committee.id, chair.user.email, true, committee.revision, context('chair'));
   const seat = await stage4.createSeat(chair, committee.id,
-    {stableKey: 'member', displayName: 'Member', canVote: true}, 'seat', context('seat'));
-  await stage3.assignSeat(chair, committee.id, {seatId: seat.id, userId: member.user.id}, context('assign'));
+    {stableKey: 'member', canVote: true}, 'seat', context('seat'));
+  await stage3.assignSeat(chair, committee.id, {seatId: seat.id, email: member.user.email}, context('assign'));
   const binding = await storage.createServerVolumeBinding(chair, committee.id,
     {baseRevision: committee.revision}, 'binding', context('binding'));
   return {owner, chair, member, committee, binding};
@@ -166,12 +167,12 @@ async function s3Fixture() {
   const owner = await user('s3owner');
   const chair = await user('s3chair');
   const member = await user('s3member');
-  let committee = await stage4.createCommittee(owner, {name: 'S3 Council', visibility: 'PUBLIC',
-    countryTemplateKey: 'builtin:default'}, 's3-committee', context('s3-committee'));
-  committee = await stage3.setChair(owner, committee.id, chair.user.id, true, committee.revision, context('s3-chair'));
+  let committee = await stage4.createCommittee(owner, await testCommitteeInput(pool!, owner, {name: 'S3 Council', visibility: 'PUBLIC',
+    countryTemplateKey: 'builtin:default'}), 's3-committee', context('s3-committee'));
+  committee = await stage3.setChair(owner, committee.id, chair.user.email, true, committee.revision, context('s3-chair'));
   const seat = await stage4.createSeat(chair, committee.id,
-    {stableKey: 's3-member', displayName: 'S3 Member', canVote: true}, 's3-seat', context('s3-seat'));
-  await stage3.assignSeat(chair, committee.id, {seatId: seat.id, userId: member.user.id}, context('s3-assign'));
+    {stableKey: 's3-member', canVote: true}, 's3-seat', context('s3-seat'));
+  await stage3.assignSeat(chair, committee.id, {seatId: seat.id, email: member.user.email}, context('s3-assign'));
   const configs = new Stage6S3ConfigService(pool as pg.Pool,
     new StorageCredentialCipher(Buffer.alloc(32, 9), 1), () => new IntegrationS3Transport());
   const config = await configs.create(administrator, {displayName: '测试 S3', endpoint: 'https://s3.example.com',
@@ -210,8 +211,8 @@ integration('PostgreSQL stage 6 file metadata', () => {
     await expect(storage.listBindings(fixture.chair, fixture.committee.id)).resolves.toEqual([fixture.binding]);
     await expect(storage.listBindings(fixture.member, fixture.committee.id)).rejects.toMatchObject({code: 'FORBIDDEN'});
     await expect(storage.listBindings(administrator, fixture.committee.id)).rejects.toMatchObject({code: 'FORBIDDEN'});
-    const ownerCommittee = await stage4.createCommittee(fixture.owner, {name: 'Owner storage', visibility: 'PRIVATE',
-      countryTemplateKey: 'builtin:default'}, 'owner-storage-committee', context('owner-storage-committee'));
+    const ownerCommittee = await stage4.createCommittee(fixture.owner, await testCommitteeInput(pool!, fixture.owner, {name: 'Owner storage', visibility: 'PRIVATE',
+      countryTemplateKey: 'builtin:default'}), 'owner-storage-committee', context('owner-storage-committee'));
     await expect(storage.createServerVolumeBinding(fixture.owner, ownerCommittee.id,
       {baseRevision: ownerCommittee.revision}, 'owner-storage-binding', context('owner-storage-binding')))
       .resolves.toMatchObject({committeeId: ownerCommittee.id, providerType: 'SERVER_VOLUME', status: 'ACTIVE'});

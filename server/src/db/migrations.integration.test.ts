@@ -1,6 +1,7 @@
 // @vitest-environment node
 
 import {randomUUID} from 'node:crypto';
+import {spawnSync} from 'node:child_process';
 import {cp, mkdtemp, readdir, rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -144,6 +145,15 @@ integration('PostgreSQL migrations', () => {
       expect((await pool.query(`SELECT column_name FROM information_schema.columns
         WHERE table_name='committees' AND column_name='committee_language'`)).rowCount).toBe(0);
       expect((await pool.query('SELECT schema_compatibility FROM quorum_meta.runtime_metadata')).rows[0].schema_compatibility).toBe(55);
+      const rebuilt = spawnSync(process.execPath, ['server/scripts/localization-rebuild.mjs', '--local-development-rebuild'], {
+        env: {...process.env, DATABASE_URL: databaseUrl}, encoding: 'utf8'});
+      expect(rebuilt.stderr).toBe('');
+      expect(rebuilt.status).toBe(0);
+      expect(JSON.parse(rebuilt.stdout)).toEqual({removedCommittees: 1, retainedAccountsTemplatesAndSettings: true});
+      expect((await pool.query('SELECT id FROM users')).rows).toEqual([{id: owner}]);
+      expect((await pool.query('SELECT id FROM rule_package_versions')).rows).toEqual([{id: version}]);
+      await runMigrations(pool, source);
+      expect((await pool.query('SELECT count(*)::int AS count FROM committees')).rows[0].count).toBe(0);
     } finally {await pool.end();}
   });
 
