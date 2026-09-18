@@ -1,6 +1,6 @@
 import {formatApiError} from '@quorum/contracts';
 import * as React from 'react';
-import { Dropdown, Icon, Menu } from 'semantic-ui-react';
+import { Dropdown, Icon, Menu, Pagination } from 'semantic-ui-react';
 
 import type {ContentLanguage} from '@quorum/contracts';
 
@@ -40,6 +40,11 @@ const en: Record<string, string> = {
 };
 
 const zhCN: Record<string, string> = {
+  'Pagination Navigation': '分页导航',
+  'First item': '第一页',
+  'Previous item': '上一页',
+  'Next item': '下一页',
+  'Last item': '最后一页',
   'Anonymized account': '匿名账号',
   'File status: Rejected': '已驳回',
   "Permanently delete “{name}”? The file will become unavailable and cannot be recovered.": "永久删除“{name}”？文件将立即不可下载，且无法恢复。",
@@ -246,6 +251,7 @@ const zhCN: Record<string, string> = {
   'The selected content is missing translations': '所选内容缺少翻译',
   'The selected source changed; refresh the preview': '所选来源已修改，请刷新预览',
   'Select a member from the committee directory': '请从委员会固定目录选择成员',
+  'Missing translations': '缺少翻译',
   'No common language for the selected content': '所选内容没有共同支持的语言',
   'Interface settings': '界面设置',
   'Enable themes (experimental)': '启用主题功能（实验性）',
@@ -1261,6 +1267,13 @@ export function LanguageProvider(props: React.PropsWithChildren) {
     additionLabel: t('Add '),
     noResultsMessage: t('No results found.')
   };
+
+  const pagination = Pagination as typeof Pagination & {defaultProps?: Record<string, unknown>};
+  const defaults = pagination.defaultProps ?? {};
+  pagination.defaultProps = {...defaults, 'aria-label': t('Pagination Navigation'),
+    ...Object.fromEntries([['firstItem', 'First item'], ['prevItem', 'Previous item'],
+      ['nextItem', 'Next item'], ['lastItem', 'Last item']].map(([key, label]) =>
+      [key, {...defaults[key] as object, 'aria-label': t(label)}]))};
 
   React.useEffect(() => {
     document.documentElement.lang = language;

@@ -168,6 +168,16 @@ function CommitteeList({api, user, logout}: {api: SelfHostedApi; user: SelfHoste
         options={LANGUAGE_OPTIONS.filter(option => supportedLanguages.includes(option.value))}
         onChange={(_, data) => setCommitteeLanguage(data.value as ContentLanguage)} />
       {!loading && supportedLanguages.length === 0 && <Message warning content={t('No common language for the selected content')} />}
+      {!loading && ((templateAvailability?.missing.length ?? 0) > 0 || (selectedRule?.languageAvailability.missing.length ?? 0) > 0)
+        && <details className="content-translation-errors"><summary>{t('Missing translations')}</summary><ul>
+          {templateAvailability?.missing.map(issue => {
+            const [section, index] = issue.path.split('.');
+            const entry = section === 'countries' ? selectedCountries?.countries[Number(index)] : selectedTemplate?.members[Number(index)];
+            return <li key={`${issue.language}:${issue.path}`}>{LANGUAGE_OPTIONS.find(item => item.value === issue.language)?.text} · {t(section === 'countries' ? 'Country template' : 'Template')} · {entry ? localizedDisplayName(entry.names, entry.defaultLanguage) : Number(index) + 1}</li>;
+          })}
+          {selectedRule?.languageAvailability.missing.map(issue => <li key={`${issue.language}:${issue.path}`}>
+            {LANGUAGE_OPTIONS.find(item => item.value === issue.language)?.text} · {t('Rules')} · {issue.path}</li>)}
+        </ul></details>}
       <Form.Input {...field('name')} label={t('Name')} required fluid value={name} placeholder={t('Committee name')}
         onChange={event => setName(event.currentTarget.value)} />
       <Form.Input {...field('topic')} label={t('Topic')} fluid value={topic} placeholder={t('Committee topic')}

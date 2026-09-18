@@ -85,8 +85,8 @@ fn render(ui: &MainWindow, rows: &[Value], logs: &[String]) {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ui = MainWindow::new()?;
     ui.set_show_settings(true);
-    ui.set_language(load_language().into());
     ui.on_translate(|key, language| translate(key.as_str(), language.as_str()).into());
+    ui.set_language(load_language().into());
     let saved_form = Rc::new(RefCell::new(form_state(&ui)));
     let exe = std::env::current_exe()?;
     let node = std::env::var_os("QUORUM_AGENT_NODE")

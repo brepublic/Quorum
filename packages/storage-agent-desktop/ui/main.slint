@@ -9,7 +9,7 @@ export component MainWindow inherits Window {
     preferred-width: 1160px; preferred-height: 800px; min-width: 920px; min-height: 660px;
     background: #f5f7fb;
     default-font-size: 14px;
-    in-out property <string> language: "en";
+    in-out property <string> language: "";
     pure callback translate(string, string) -> string;
     callback language-changed();
     in-out property <string> status: "STOPPED";

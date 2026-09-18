@@ -1593,6 +1593,23 @@ describe('committee workspace routes and roles', () => {
     expect(publishFile).toHaveBeenCalledWith('file', 2);
   });
 
+  it('does not save untouched automatic titles or text when focus moves away', async () => {
+    const createDocumentVersion = vi.fn();
+    const document: ProceedingDocument = {id: 'resolution', committeeId: 'committee', meetingSessionId: 'meeting',
+      kind: 'RESOLUTION', resolutionId: null, ordinal: 1, customTitle: null, title: 'Draft resolution 1.1', status: 'DRAFT',
+      rulePackageVersionId: 'rules', currentVersion: {id: 'version', versionNumber: 1, content: '', contentFile: null,
+        createdAt: '2026-08-14T00:00:00.000Z'}, votingVersionId: null, public: false,
+      proposerSeatId: null, seconderSeatId: null, delegatesCanAmend: false, directVote: null, resultDecisions: [],
+      revision: 1, discussion: [], createdAt: '2026-08-14T00:00:00.000Z', updatedAt: '2026-08-14T00:00:00.000Z'};
+    const page = await render('CHAIR', '/committees/committee/resolutions/resolution/text', user,
+      value => ({...value, documents: [document]}), {createDocumentVersion});
+    await act(async () => {
+      page.querySelector('input[aria-label="Set resolution name"]')?.dispatchEvent(new FocusEvent('focusout', {bubbles: true}));
+      page.querySelector('textarea')?.dispatchEvent(new FocusEvent('focusout', {bubbles: true}));
+    });
+    expect(createDocumentVersion).not.toHaveBeenCalled();
+  });
+
   it.each([null, 'PASSED', 'FAILED', 'VETOED'] as const)(
     'keeps resolution voting controls and shows undo only while the result is pending (%s)', async automaticResult => {
     const setResolutionDirectVote = vi.fn(async (): Promise<ProceedingDocument> => ({} as ProceedingDocument));

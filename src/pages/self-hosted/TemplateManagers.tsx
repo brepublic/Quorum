@@ -278,7 +278,8 @@ export function CommitteeTemplateManager({api}: {api: SelfHostedApi}) {
     if (!name.trim() || members.length === 0 || !selectedCountry) return; setSaving(true); setError(undefined);
     const names: LocalizedNames = {[displayLanguage]: name.trim()}; localizedNames.forEach(item => {if (item.name.trim()) names[item.language] = item.name.trim();});
     const input: CommitteeTemplateInput = {names, defaultLanguage: names[defaultLanguage] ? defaultLanguage : displayLanguage, countryTemplateKey: countryKey,
-      members: members.map((member, sortOrder) => ({stableKey: member.stableKey, names: member.names, defaultLanguage: member.defaultLanguage,
+      members: members.map((member, sortOrder) => ({stableKey: member.stableKey,
+        names: Object.fromEntries(Object.entries(member.names).filter(([, value]) => value.trim())), defaultLanguage: member.defaultLanguage,
         rank: member.rank, canVote: member.canVote, hasVeto: member.hasVeto, mustVote: member.mustVote, sortOrder, flag: member.flag}))};
     try { const result = selectedId ? await api.updateCommitteeTemplate(selectedId, templates.find(item => item.id === selectedId)!.revision, input)
       : await api.createCommitteeTemplate(input); const {nextTemplates} = await refresh(); load(nextTemplates.find(item => item.id === result.id) ?? result); setSaved(true); }
@@ -325,8 +326,14 @@ export function CommitteeTemplateManager({api}: {api: SelfHostedApi}) {
           <Header as="h3">{t('Committee members')}</Header><Table className="template-members-table" compact celled stackable><Table.Header><Table.Row>
             <Table.HeaderCell>{t('Country or delegation')}</Table.HeaderCell><Table.HeaderCell>{t('Rank')}</Table.HeaderCell>
             <Table.HeaderCell>{t('Voting rights')}</Table.HeaderCell><Table.HeaderCell>{t('Veto power')}</Table.HeaderCell><Table.HeaderCell>{t('No abstention')}</Table.HeaderCell><Table.HeaderCell />
-          </Table.Row></Table.Header><Table.Body>{members.map(member => <Table.Row key={member.id}>
-            <Table.Cell><FlagDisplay flag={member.flag} />{localizedDisplayName(member.names, member.defaultLanguage)}</Table.Cell>
+          </Table.Row></Table.Header><Table.Body>{members.map((member, index) => <Table.Row key={member.id}>
+            <Table.Cell><details><summary><FlagDisplay flag={member.flag} />{localizedDisplayName(member.names, member.defaultLanguage)}</summary>
+              {LANGUAGE_OPTIONS.map(language => <Form.Input key={language.value}
+                {...field(`members.${index}.names.${language.value}`)} label={language.text}
+                value={member.names[language.value] ?? ''} onChange={event => {
+                  const name = event.currentTarget.value; setMembers(current => current.map(item => item.id === member.id
+                    ? {...item, names: {...item.names, [language.value]: name}} : item)); setSaved(false);
+                }} />)}</details></Table.Cell>
             <Table.Cell><Dropdown fluid selection value={member.rank} options={RANKS.map(value => ({key: value, value, text: t(value)}))}
               onChange={(_event, data) => setMembers(current => current.map(item => item.id === member.id
                 ? {...item, rank: data.value as SeatRank} : item))} /></Table.Cell>

@@ -8,8 +8,8 @@ slint::include_modules!();
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let window = MainWindow::new()?;
     let language = if std::env::args().any(|arg| arg == "--en") { "en" } else { "zh-CN" };
-    window.set_language(language.into());
     window.on_translate(|key, language| translate(key.as_str(), language.as_str()).into());
+    window.set_language(language.into());
     window.set_status("RUNNING".into());
     let settings = std::env::args().any(|arg| arg == "--settings");
     window.set_loaded(!settings || std::env::args().any(|arg| arg == "--paired"));

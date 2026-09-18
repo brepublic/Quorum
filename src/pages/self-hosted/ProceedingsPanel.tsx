@@ -747,7 +747,7 @@ function AmendmentCard({snapshot, amendment, run, api, canChair, representedSeat
     if (!editable || nextSource === 'TEXT' && !nextContent.trim()
       || nextSource === 'FILE' && !contentFileEntryId
       || !titleDirty && nextContent === amendment.currentVersion.content
-        && contentFileEntryId === amendment.currentVersion.contentFile?.id) return;
+        && contentFileEntryId === (amendment.currentVersion.contentFile?.id ?? null)) return;
     return run(() => api.createDocumentVersion(amendment.id, {baseRevision: amendment.revision,
       customTitle: titleDirty ? title.trim() || null : amendment.customTitle, content: nextContent, contentFileEntryId, ...represented}));
   };
@@ -1463,7 +1463,7 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
     const contentFileEntryId = nextSource === 'FILE' ? nextFileId : null;
     if (!editable || nextSource === 'FILE' && !contentFileEntryId
       || !versionTitleDirty && nextContent === document.currentVersion.content
-        && contentFileEntryId === document.currentVersion.contentFile?.id) return;
+        && contentFileEntryId === (document.currentVersion.contentFile?.id ?? null)) return;
     return run(() => api.createDocumentVersion(document.id, {baseRevision: document.revision,
       customTitle: versionTitleDirty ? versionTitle.trim() || null : document.customTitle, content: nextContent, contentFileEntryId, ...represented}));
   };

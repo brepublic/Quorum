@@ -108,7 +108,7 @@ function PrimaryItems({snapshot, onNavigate, onCreateCaucus}: {
     {generalSpeakerList && <Menu.Item key="general-speakers-list" as={Link}
       to={`${base}/caucuses/${generalSpeakerList.id}`}
       active={routeActive(location.pathname, `${base}/caucuses/${generalSpeakerList.id}`)} onClick={onNavigate}>
-      {t("General Speakers' List")}</Menu.Item>}
+      {generalSpeakerList.name}</Menu.Item>}
     {item('/unmod', 'Unmod')}
     {dynamic('caucuses', 'Caucuses', 'New caucus', caucuses, gslPathActive ? false : undefined)}
     {dynamic('resolutions', 'Resolutions', 'New resolution', resolutions)}

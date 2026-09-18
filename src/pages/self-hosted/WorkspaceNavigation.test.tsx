@@ -13,7 +13,7 @@ const user: SelfHostedUser = {id: 'user', email: 'user@example.com', displayName
   isSystemAdmin: false, sessionVersion: 1, mustChangePassword: false, createdAt: '2026-08-13T00:00:00.000Z', disabledAt: null};
 
 const snapshot = {committee: {id: 'committee', name: 'Security Council'}, activeRules: {}, speakerLists: [
-  {id: 'gsl', kind: 'GENERAL', topic: '', status: 'OPEN'},
+  {id: 'gsl', kind: 'GENERAL', name: '主发言名单', topic: '', status: 'OPEN'},
   {id: 'mod', kind: 'MODERATED_CAUCUS', topic: 'Climate security', status: 'OPEN'}
 ], documents: [{id: 'resolution', kind: 'RESOLUTION', title: 'A/RES/1'}],
 strawpolls: [{id: 'poll', question: 'Suspend the meeting?'}]} as unknown as CommitteeWorkspaceSnapshot;
@@ -57,7 +57,7 @@ describe('self-hosted workspace navigation', () => {
     expect(links).toContain('/committees/committee/roll-call');
     expect(links).toContain('/committees/committee/caucuses/gsl');
     expect(links).toContain('/committees/committee/caucuses/mod');
-    expect(page.querySelector('a[href="/committees/committee/caucuses/gsl"]')?.textContent).toBe("General Speakers' List");
+    expect(page.querySelector('a[href="/committees/committee/caucuses/gsl"]')?.textContent).toBe("主发言名单");
     const active = page.querySelector('a.active');
     expect(active?.getAttribute('href')).toBe('/committees/committee/caucuses/mod');
   });
