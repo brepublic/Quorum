@@ -519,7 +519,7 @@ async function handleStage4Request(options: {
   const meetingSessions = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/meeting-sessions$/.exec(pathname);
   if (meetingSessions && method === 'POST') {
     const auth = await write(); const body = await readJson(request);
-    sendJson(response, 201, success(await stage4.startMeetingSession(auth, meetingSessions[1] as string, body, context), requestId));
+    sendJson(response, 201, success(await stage4.startMeetingSession(auth, meetingSessions[1] as string, body, context, idempotencyKey(request)), requestId));
     return true;
   }
   const closeMeetingSession = /^\/api\/v1\/meeting-sessions\/([0-9a-f-]{36})\/close$/.exec(pathname);

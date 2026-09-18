@@ -574,8 +574,8 @@ export const selfHostedApi = {
   deleteTextPost(id: string, baseRevision: number) {
     return request<{deleted: true}>(`/api/v1/text-posts/${id}`, {method: 'DELETE', body: {baseRevision}});
   },
-  startMeetingSession(committeeId: string, phaseId?: string, missingGeneralListAction?: 'CREATE_REPLACEMENT') {
-    return request<MeetingSession>(`/api/v1/committees/${committeeId}/meeting-sessions`, {method: 'POST',
+  startMeetingSession(committeeId: string, phaseId?: string, missingGeneralListAction?: 'CREATE_REPLACEMENT', idempotencyKey: string = key()) {
+    return request<MeetingSession>(`/api/v1/committees/${committeeId}/meeting-sessions`, {method: 'POST', idempotencyKey,
       body: {...(phaseId ? {phaseId} : {}), ...(missingGeneralListAction ? {missingGeneralListAction} : {})}});
   },
   closeMeetingSession(id: string, baseRevision: number) {

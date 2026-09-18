@@ -69,6 +69,15 @@ describe('self-hosted stage 4 API client', () => {
       .rejects.toMatchObject({localization: {reason: 'MISSING_CONTENT_TRANSLATION', params: {language: 'en'}, fieldErrors: fields}});
   });
 
+  it('keeps the supplied idempotency key when retrying meeting creation', async () => {
+    const fetchMock = vi.fn(async () => ({ok: true, status: 201, json: async () => ({data: {id: 'meeting'}, meta: {requestId: 'start'}})}));
+    vi.stubGlobal('fetch', fetchMock);
+    await selfHostedApi.startMeetingSession('committee', undefined, undefined, 'same-start');
+    await selfHostedApi.startMeetingSession('committee', undefined, undefined, 'same-start');
+    for (const call of fetchMock.mock.calls) expect(call).toEqual(['/api/v1/committees/committee/meeting-sessions',
+      expect.objectContaining({method: 'POST', body: '{}', headers: expect.objectContaining({'idempotency-key': 'same-start'})})]);
+  });
+
   it('sends a typed point ruling with an optional attendance change', async () => {
     const fetchMock = vi.fn(async () => ({ok: true, status: 200,
       json: async () => ({data: {id: 'point'}, meta: {requestId: 'point'}})}));

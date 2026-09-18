@@ -45,7 +45,7 @@ interface SpeechRow extends QueryResultRow {
 }
 
 interface MeetingSessionRow extends QueryResultRow {
-  id: string; committee_id: string; name: string; phase_id: string; active_rule_package_version_id: string;
+  id: string; committee_id: string; ordinal: number; phase_id: string; active_rule_package_version_id: string;
   status: 'PENDING' | 'OPEN' | 'CLOSED'; formal_debate_open: boolean; revision: number; created_at: Date; closed_at: Date | null;
 }
 
@@ -1493,9 +1493,8 @@ export class Stage5Service {
         closed_at=$2 WHERE id=$1 RETURNING *`, [session.id, now]);
       const nextId = randomUUID();
       const next = await client.query<MeetingSessionRow>(`INSERT INTO meeting_sessions
-        (id,committee_id,name,phase_id,active_rule_package_version_id,status,formal_debate_open,created_by_user_id)
-        SELECT $1,$2,'第' || (count(*) + 1)::text || '会期',$3,$4,'PENDING',$5,$6
-        FROM meeting_sessions WHERE committee_id=$2 RETURNING *`,
+        (id,committee_id,phase_id,active_rule_package_version_id,status,formal_debate_open,created_by_user_id)
+        VALUES ($1,$2,$3,$4,'PENDING',$5,$6) RETURNING *`,
       [nextId, committeeId, session.phase_id, session.active_rule_package_version_id, session.formal_debate_open, actorUserId]);
       const nextSession = next.rows[0] as MeetingSessionRow;
       if (adjourned) await client.query('UPDATE committees SET meeting_ended_at=$2 WHERE id=$1', [committeeId, now]);
@@ -1504,7 +1503,7 @@ export class Stage5Service {
           ...(adjourned ? {meetingEndedAt: now.toISOString()} : {})}});
       await appendEvent(client, committee, {type: 'meeting_session.created', resourceType: 'meeting_session',
         resourceId: nextSession.id, revision: nextSession.revision,
-        payload: {name: nextSession.name, phaseId: nextSession.phase_id, rulePackageVersionId: nextSession.active_rule_package_version_id,
+        payload: {ordinal: nextSession.ordinal, phaseId: nextSession.phase_id, rulePackageVersionId: nextSession.active_rule_package_version_id,
           status: 'PENDING', motionId: motion.id}});
       await audit(client, context, {committeeId, actorUserId, capabilities: ['CHAIR'],
         action: 'proceedings.meeting_session_closed', resourceType: 'meeting_session', resourceId: session.id,
@@ -1513,7 +1512,7 @@ export class Stage5Service {
           ...(adjourned ? {meetingEndedAt: now.toISOString()} : {})}});
       await audit(client, context, {committeeId, actorUserId, capabilities: ['CHAIR'],
         action: 'proceedings.meeting_session_created', resourceType: 'meeting_session', resourceId: nextSession.id,
-        after: {name: nextSession.name, status: 'PENDING', phaseId: nextSession.phase_id,
+        after: {ordinal: nextSession.ordinal, status: 'PENDING', phaseId: nextSession.phase_id,
           rulePackageVersionId: nextSession.active_rule_package_version_id, motionId: motion.id}});
       return null;
     }
@@ -2916,9 +2915,7 @@ export class Stage5Service {
       let title = suppliedTitle;
       if (kind === 'RESOLUTION' && !title) {
         const sequence = await client.query<{session_number: number; resolution_number: number}>(`SELECT
-          (SELECT count(*)::int FROM meeting_sessions prior
-            WHERE prior.committee_id=$1
-              AND (prior.created_at,prior.id) <= (current.created_at,current.id)) AS session_number,
+          current.ordinal AS session_number,
           (SELECT count(*)::int+1 FROM documents
             WHERE committee_id=$1 AND meeting_session_id=$2 AND kind='RESOLUTION') AS resolution_number
           FROM meeting_sessions current WHERE current.id=$2`, [committeeId, meetingSessionId]);

@@ -9,6 +9,7 @@ export type Stage4Context = {requestId: string; sourceIp?: string; userAgent?: s
 export interface Stage4CommitteeRow extends QueryResultRow {
   id: string;
   committee_language: ContentLanguage;
+  next_session_ordinal: number;
   content_snapshot: CommitteeContentSnapshot;
   owner_user_id: string;
   name: string;

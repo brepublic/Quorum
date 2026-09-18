@@ -11,6 +11,7 @@ import type {AuthenticatedSession} from '../identity/store';
 import {Stage3Service} from '../stage3/service';
 import {Stage8ArchiveService} from '../operations/archive-service';
 import {Stage4Service} from './service';
+import {Stage5Service} from '../stage5/service';
 
 const {Client, Pool} = pg;
 const adminUrl = process.env.TEST_DATABASE_ADMIN_URL;
@@ -146,6 +147,58 @@ integration('immutable committee content', () => {
       expect(directory.revision).toBe(countries.revision);
       expect(directory.countries[0]?.names.en).toBe('China');
     } else expect(created.reason).toMatchObject({reason: 'SOURCE_REVISION_CHANGED'});
+  });
+
+  it.each(['suspend-meeting', 'adjourn-meeting'])('keeps the allocated pending ordinal through %s and resume', async motionTypeId => {
+    const {owner, input} = await fixture();
+    const committee = await stage4.createCommittee(owner, {...input, operationMode: 'CHAIR_OPERATED'}, randomUUID(), context('create'));
+    const first = await stage4.startMeetingSession(owner, committee.id, {}, context('start'), randomUUID());
+    const before = await stage4.snapshot(committee.id, owner);
+    const seat = before.seats[0]!;
+    await stage4.createAttendanceEvent(owner, committee.id, {meetingSessionId: first.id, seatId: seat.id, type: 'PRESENT'}, context('present'));
+    const stage5 = new Stage5Service(pool!);
+    const motion = await stage5.proposeMotion(owner, committee.id,
+      {meetingSessionId: first.id, motionTypeId, onBehalfOfSeatId: seat.id, parameters: {}}, randomUUID(), context('motion'));
+    await stage5.decideMotion(owner, motion.id, {baseRevision: motion.revision, result: 'PASSED'}, context('pass'));
+    const pending = (await stage4.snapshot(committee.id, owner)).meetingSession!;
+    expect(pending).toMatchObject({ordinal: 2, name: 'Session 2', status: 'PENDING'});
+    const resumed = await stage4.startMeetingSession(owner, committee.id, {}, context('resume'), randomUUID());
+    expect(resumed).toMatchObject({id: pending.id, ordinal: 2, name: 'Session 2', status: 'OPEN'});
+    const after = await stage4.snapshot(committee.id, owner);
+    expect(after.nextMeetingSessionName).toBe('Session 3');
+    expect(after.speakerLists?.find(item => item.kind === 'GENERAL')?.id).toBe(before.speakerLists?.find(item => item.kind === 'GENERAL')?.id);
+  });
+
+  it('allocates permanent session ordinals and replays concurrent start requests', async () => {
+    const {owner, input} = await fixture();
+    const committee = await stage4.createCommittee(owner, input, randomUUID(), context('create'));
+    const key = randomUUID();
+    const [first, replay] = await Promise.all([
+      stage4.startMeetingSession(owner, committee.id, {}, context('start'), key),
+      stage4.startMeetingSession(owner, committee.id, {}, context('retry'), key)
+    ]);
+    expect(first).toMatchObject({ordinal: 1, name: 'Session 1'});
+    expect(replay).toEqual(first);
+    await expect(stage4.startMeetingSession(owner, committee.id, {phaseId: first.phaseId}, context('conflict'), key))
+      .rejects.toMatchObject({code: 'IDEMPOTENCY_CONFLICT'});
+    await expect(stage4.startMeetingSession(owner, committee.id, {}, context('already-open'), randomUUID()))
+      .rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
+    await stage4.closeMeetingSession(owner, first.id, {baseRevision: first.revision}, context('close'));
+    const removed = randomUUID();
+    await pool!.query(`INSERT INTO meeting_sessions (id,committee_id,phase_id,active_rule_package_version_id,status,created_by_user_id,closed_at)
+      VALUES ($1,$2,$3,$4,'CLOSED',$5,now())`, [removed, committee.id, first.phaseId, input.activeRulePackageVersionId, owner.user.id]);
+    await pool!.query('DELETE FROM meeting_sessions WHERE id=$1', [removed]);
+    const third = await stage4.startMeetingSession(owner, committee.id, {}, context('third'), randomUUID());
+    expect(third).toMatchObject({ordinal: 3, name: 'Session 3'});
+    await pool!.query("UPDATE meeting_sessions SET created_at='2000-01-01' WHERE id=$1", [third.id]);
+    const snapshot = await stage4.snapshot(committee.id, owner);
+    expect(snapshot.meetingSessions?.find(item => item.id === third.id)).toMatchObject({ordinal: 3, name: 'Session 3'});
+    expect(snapshot.nextMeetingSessionName).toBe('Session 4');
+    await expect(pool!.query('UPDATE meeting_sessions SET ordinal=7 WHERE id=$1', [third.id])).rejects.toMatchObject({code: '23514'});
+    await expect(pool!.query('UPDATE committees SET next_session_ordinal=1 WHERE id=$1', [committee.id])).rejects.toMatchObject({code: '23514'});
+    const chinese = await stage4.createCommittee(owner, {...input, committeeLanguage: 'zh-CN'}, randomUUID(), context('chinese'));
+    expect(await stage4.startMeetingSession(owner, chinese.id, {}, context('chinese-session'), randomUUID()))
+      .toMatchObject({ordinal: 1, name: '第1会期'});
   });
 
   it('guards immutable identities in both API and SQL and binds retries to content choices', async () => {

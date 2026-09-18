@@ -32,7 +32,7 @@ import type {
   SeatRank,
   Stage4CommitteeSeat
 } from '@quorum/contracts';
-import {localizedDisplayName, isContentLanguage, committeeContentName, templateLanguageAvailability,
+import {formatCommitteeContent, type ContentLanguage, localizedDisplayName, isContentLanguage, committeeContentName, templateLanguageAvailability,
   type CommitteeContentSnapshot} from '@quorum/contracts';
 import {ruleLanguageAvailability, validateRulePackage} from '@quorum/rule-schema';
 import {AppError} from '../../http/errors.js';
@@ -205,7 +205,7 @@ interface TextPostRow extends QueryResultRow {
 }
 
 interface MeetingSessionRow extends QueryResultRow {
-  id: string; committee_id: string; name: string; phase_id: string; active_rule_package_version_id: string;
+  id: string; committee_id: string; ordinal: number; phase_id: string; active_rule_package_version_id: string;
   status: 'PENDING' | 'OPEN' | 'CLOSED'; formal_debate_open: boolean; revision: number; created_at: Date; closed_at: Date | null;
 }
 
@@ -323,8 +323,9 @@ function textPost(row: TextPostRow): CommitteeTextPost {
     deletedAt: row.deleted_at?.toISOString() ?? null};
 }
 
-function meetingSession(row: MeetingSessionRow): MeetingSession {
-  return {id: row.id, committeeId: row.committee_id, name: row.name, phaseId: row.phase_id,
+function meetingSession(row: MeetingSessionRow, language: ContentLanguage): MeetingSession {
+  return {id: row.id, committeeId: row.committee_id, ordinal: row.ordinal,
+    name: formatCommitteeContent({kind: 'SESSION', ordinal: row.ordinal}, language), phaseId: row.phase_id,
     activeRulePackageVersionId: row.active_rule_package_version_id, status: row.status, revision: row.revision,
     createdAt: row.created_at.toISOString(), closedAt: row.closed_at?.toISOString() ?? null};
 }
@@ -693,14 +694,13 @@ export class Stage4Service {
         can_vote AS "canVote",has_veto AS "hasVeto",must_vote AS "mustVote",sort_order AS "sortOrder",active,revision,
         json_build_object('type',flag_type,'value',flag_value) AS flag FROM committee_seats
         WHERE committee_id=$1 AND active=true ORDER BY sort_order,stable_key,id`, [committeeId]);
-      const [sessionResult, meetingSessionsResult, sessionCount] = await Promise.all([
+      const [sessionResult, meetingSessionsResult] = await Promise.all([
         client.query<MeetingSessionRow>(`SELECT * FROM meeting_sessions WHERE committee_id=$1
-          ORDER BY (status='OPEN') DESC,(status='PENDING') DESC,created_at DESC,id DESC LIMIT 1`, [committeeId]),
-        client.query<MeetingSessionRow>('SELECT * FROM meeting_sessions WHERE committee_id=$1 ORDER BY created_at DESC,id DESC', [committeeId]),
-        client.query<{count: string}>('SELECT count(*)::text AS count FROM meeting_sessions WHERE committee_id=$1', [committeeId])
+          ORDER BY (status='OPEN') DESC,(status='PENDING') DESC,ordinal DESC LIMIT 1`, [committeeId]),
+        client.query<MeetingSessionRow>('SELECT * FROM meeting_sessions WHERE committee_id=$1 ORDER BY ordinal DESC', [committeeId])
       ]);
       const currentSession = sessionResult.rows[0];
-      const nextMeetingSessionName = `第${Number(sessionCount.rows[0]?.count ?? 0) + 1}会期`;
+      const nextMeetingSessionName = formatCommitteeContent({kind: 'SESSION', ordinal: committee.next_session_ordinal}, committee.committee_language);
       let currentRollCall: RollCall | undefined; let attendance: AttendanceState[] = [];
       const pointRows = await client.query<PointRow>('SELECT * FROM points WHERE committee_id=$1 ORDER BY created_at,id', [committeeId]);
       const points: Array<CommitteePoint | PublicCommitteePoint> = viewer.audience === 'PUBLIC'
@@ -757,10 +757,10 @@ export class Stage4Service {
             mustCollectAllVotesWhenVetoSeatEligible: rules.ballots?.mustCollectAllVotesWhenVetoSeatEligible === true},
           documents: {amendmentsPublicByDefault: rules.documents?.amendmentsPublicByDefault === true}},
         sync: {committeeEventSequence: Number(committee.next_event_sequence) - 1},
-        ...(currentSession ? {meetingSession: meetingSession(currentSession)} : {}),
+        ...(currentSession ? {meetingSession: meetingSession(currentSession, committee.committee_language)} : {}),
         meetingEndedAt: committee.meeting_ended_at?.toISOString() ?? null,
-        meetingSessions: meetingSessionsResult.rows.map(meetingSession),
-        nextMeetingSessionName: currentSession?.status === 'PENDING' ? currentSession.name : nextMeetingSessionName,
+        meetingSessions: meetingSessionsResult.rows.map(row => meetingSession(row, committee.committee_language)),
+        nextMeetingSessionName: currentSession?.status === 'PENDING' ? meetingSession(currentSession, committee.committee_language).name : nextMeetingSessionName,
         ...(currentRollCall ? {rollCall: currentRollCall} : {})};
       const speakerRows = await client.query<SnapshotSpeakerListRow>(`SELECT * FROM speaker_lists
         WHERE committee_id=$1 ORDER BY created_at,id`, [committeeId]);
@@ -1329,9 +1329,10 @@ export class Stage4Service {
   }
 
   async startMeetingSession(auth: AuthenticatedSession, committeeId: string, input: Record<string, unknown>,
-    context: Stage4Context): Promise<MeetingSession> {
+    context: Stage4Context, key: string): Promise<MeetingSession> {
     requireBusinessIdentity(auth); assertExactBody(input, ['phaseId', 'missingGeneralListAction']);
-    return transaction(this.pool, async client => {
+    return idempotentTransaction({pool: this.pool, auth, route: `POST /api/v1/committees/${committeeId}/meeting-sessions`,
+      key, request: input, status: 201, work: async client => {
       const committee = await lockedCommittee(client, committeeId); await requireChair(client, committee, auth.user.id);
       requireProceedingsActive(committee);
       const definition = await client.query<{definition: {phases?: unknown; speakerLists?: Array<{
@@ -1359,8 +1360,8 @@ export class Stage4Service {
         ? await client.query<MeetingSessionRow>(`UPDATE meeting_sessions SET status='OPEN',phase_id=$2,revision=revision+1
           WHERE id=$1 RETURNING *`, [id, phaseId])
         : await client.query<MeetingSessionRow>(`INSERT INTO meeting_sessions
-          (id,committee_id,name,phase_id,active_rule_package_version_id,created_by_user_id)
-          SELECT $1,$2,'第' || (count(*) + 1)::text || '会期',$3,$4,$5 FROM meeting_sessions WHERE committee_id=$2
+          (id,committee_id,phase_id,active_rule_package_version_id,created_by_user_id)
+          VALUES ($1,$2,$3,$4,$5)
           RETURNING *`, [id, committeeId, phaseId, committee.active_rule_package_version_id, auth.user.id]);
       const generalRule = definition.rows[0].definition.speakerLists?.find(item => item.id === 'general-speakers-list');
       const configuredDuration = generalRule?.defaultDurationSeconds;
@@ -1373,8 +1374,8 @@ export class Stage4Service {
         if (alreadyLinked.rows[0]) speakerListId = alreadyLinked.rows[0].id;
         else {
           const prior = await client.query<{id: string}>(`SELECT id FROM meeting_sessions
-            WHERE committee_id=$1 AND status='CLOSED' AND created_at <= $2
-            ORDER BY created_at DESC,id DESC LIMIT 1`, [committeeId, pendingSession.created_at]);
+            WHERE committee_id=$1 AND status='CLOSED' AND ordinal < $2
+            ORDER BY ordinal DESC LIMIT 1`, [committeeId, pendingSession.ordinal]);
           const priorList = prior.rows[0] && await client.query<{id: string}>(`SELECT id FROM speaker_lists
             WHERE meeting_session_id=$1 AND kind='GENERAL' FOR UPDATE`, [prior.rows[0].id]);
           if (priorList?.rows[0]) {
@@ -1414,7 +1415,7 @@ export class Stage4Service {
         await client.query('UPDATE committees SET meeting_ended_at=NULL WHERE id=$1', [committeeId]);
       }
       await appendEvent(client, committee, {type: 'meeting_session.started', resourceType: 'meeting_session',
-        resourceId: id, revision: session.revision, payload: {name: session.name, phaseId, rulePackageVersionId: session.active_rule_package_version_id,
+        resourceId: id, revision: session.revision, payload: {ordinal: session.ordinal, phaseId, rulePackageVersionId: session.active_rule_package_version_id,
           generalSpeakerListId: speakerListId, meetingEndedAt: null}});
       if (!pendingSession || createdReplacement) await appendEvent(client, committee, {type: 'speaker_list.created', resourceType: 'speaker_list',
         resourceId: speakerListId, revision: 1, payload: {kind: 'GENERAL', name: "General Speakers' List", topic: '',
@@ -1422,21 +1423,23 @@ export class Stage4Service {
           rulePackageVersionId: pendingSession?.active_rule_package_version_id ?? committee.active_rule_package_version_id}, audience: 'PUBLIC'});
       await audit(client, context, {committeeId, actorUserId: auth.user.id, capabilities: ['CHAIR'],
         action: 'proceedings.meeting_session_started', resourceType: 'meeting_session', resourceId: id,
-        after: {name: session.name, phaseId, rulePackageVersionId: session.active_rule_package_version_id,
+        after: {ordinal: session.ordinal, phaseId, rulePackageVersionId: session.active_rule_package_version_id,
           generalSpeakerListId: speakerListId, generalSpeakerDefaultSpeechMs: defaultSpeechMs,
           ...(committee.meeting_ended_at ? {previousMeetingEndedAt: committee.meeting_ended_at.toISOString(), meetingEndedAt: null} : {}),
           ...(createdReplacement ? {generalSpeakerListReplacement: true} : {})}});
-      return meetingSession(session);
-    });
+      return meetingSession(session, committee.committee_language);
+    }});
   }
 
   async closeMeetingSession(auth: AuthenticatedSession, sessionId: string, input: Record<string, unknown>,
     context: Stage4Context): Promise<MeetingSession> {
     requireBusinessIdentity(auth); assertExactBody(input, ['baseRevision']); const baseRevision = positiveRevision(input.baseRevision);
     return transaction(this.pool, async client => {
+      const located = await client.query<{committee_id: string}>('SELECT committee_id FROM meeting_sessions WHERE id=$1', [sessionId]);
+      if (!located.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Meeting session not found.'});
+      const committee = await lockedCommittee(client, located.rows[0].committee_id); await requireChair(client, committee, auth.user.id);
       const found = await client.query<MeetingSessionRow>('SELECT * FROM meeting_sessions WHERE id=$1 FOR UPDATE', [sessionId]);
       const current = found.rows[0]; if (!current) throw new AppError({code: 'NOT_FOUND', message: 'Meeting session not found.'});
-      const committee = await lockedCommittee(client, current.committee_id); await requireChair(client, committee, auth.user.id);
       requireProceedingsActive(committee);
       if (current.status !== 'OPEN') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Meeting session is already closed.'});
       if (current.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT', message: 'This meeting session changed since it was loaded.',
@@ -1450,7 +1453,7 @@ export class Stage4Service {
       await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id, capabilities: ['CHAIR'],
         action: 'proceedings.meeting_session_closed', resourceType: 'meeting_session', resourceId: sessionId,
         before: {status: current.status, revision: current.revision}, after: {status: 'CLOSED', revision: current.revision + 1}});
-      return meetingSession(updated.rows[0] as MeetingSessionRow);
+      return meetingSession(updated.rows[0] as MeetingSessionRow, committee.committee_language);
     });
   }
 

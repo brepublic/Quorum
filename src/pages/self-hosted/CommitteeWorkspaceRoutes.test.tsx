@@ -282,7 +282,7 @@ describe('committee workspace routes and roles', () => {
   });
 
   it('starts roll call when the Chair starts the meeting session', async () => {
-    const startMeetingSession = vi.fn(async () => ({id: 'meeting', committeeId: 'committee', name: '第1会期',
+    const startMeetingSession = vi.fn(async () => ({id: 'meeting', committeeId: 'committee', ordinal: 1, name: '第1会期',
       phaseId: 'formal-debate', activeRulePackageVersionId: 'rules', status: 'OPEN' as const, revision: 1,
       createdAt: '2026-08-14T00:00:00.000Z', closedAt: null}));
     const startRollCall = vi.fn(async (): Promise<RollCall> => ({id: 'roll-call', committeeId: 'committee',
@@ -305,7 +305,7 @@ describe('committee workspace routes and roles', () => {
       allowedResponses: ['PRESENT', 'ABSENT'], entries: [], revision: 1, startedAt: '2026-08-14T00:00:00.000Z',
       completedAt: null}));
     const page = await render('CHAIR', '/committees/committee/roll-call', user, value => ({...value,
-      meetingSession: {id: 'meeting', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate',
+      meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: '第1会期', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1, createdAt: '2026-08-14T00:00:00.000Z', closedAt: null}}),
       {startRollCall});
     await act(async () => {await Promise.resolve(); await Promise.resolve();});
@@ -324,7 +324,7 @@ describe('committee workspace routes and roles', () => {
       hasVeto: false, mustVote: false, sortOrder: index, active: true, revision: 1,
       flag: {type: 'EMOJI' as const, value: index === 0 ? '🏳️' : '🌐'}}));
     const page = await render('CHAIR', '/committees/committee/roll-call', user, value => ({...value, seats,
-      meetingSession: {id: 'meeting', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate',
+      meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: '第1会期', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1, createdAt: '2026-08-14T00:00:00.000Z', closedAt: null},
       rollCall: {id: 'roll-call', committeeId: 'committee', meetingSessionId: 'meeting', status: 'IN_PROGRESS',
         currentSeatId: 'seat-0', rulePackageVersionId: 'rules', allowedResponses: ['PRESENT', 'PRESENT_AND_VOTING', 'ABSENT'],
@@ -413,7 +413,7 @@ describe('committee workspace routes and roles', () => {
 
   it('gives Chairs a ruling and attendance form for a pending personal privilege point', async () => {
     const page = await render('CHAIR', '/committees/committee/points', user, value => ({...value,
-      meetingSession: {id: 'meeting', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate',
+      meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: '第1会期', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1, createdAt: '2026-08-14T00:00:00.000Z', closedAt: null},
       points: [{id: 'point', committeeId: 'committee', meetingSessionId: 'meeting',
         pointTypeId: 'point-of-personal-privilege', content: 'The room is too warm.', raisedBySeatId: 'seat',
@@ -429,7 +429,7 @@ describe('committee workspace routes and roles', () => {
 
   it('guides users to roll call when no meeting is open', async () => {
     const page = await render('CHAIR', '/committees/committee/motions', user, value => ({...value,
-      meetingSession: {id: 'meeting', committeeId: 'committee', name: '第2会期', phaseId: 'formal-debate',
+      meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 2, name: '第2会期', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'PENDING', revision: 2,
         createdAt: '2026-08-14T00:00:00.000Z', closedAt: null}}));
 
@@ -456,7 +456,7 @@ describe('committee workspace routes and roles', () => {
       committee: {...value.committee, operationMode: 'CHAIR_OPERATED'},
       meetingEndedAt: sessionEnded && motionTypeId === 'adjourn-meeting' ? '2026-08-14T00:01:00.000Z' : null,
       meetingSession: {id: sessionEnded ? 'next-meeting' : 'meeting', committeeId: 'committee',
-        name: sessionEnded ? '第2会期' : '第1会期', phaseId: 'formal-debate',
+        ordinal: sessionEnded ? 2 : 1, name: sessionEnded ? '第2会期' : '第1会期', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: sessionEnded ? 'PENDING' : 'OPEN', revision: 1,
         createdAt: '2026-08-14T00:00:00.000Z', closedAt: null},
       motions: [{...motion, status: sessionEnded ? 'PASSED' : 'SECONDED'}],
@@ -477,7 +477,7 @@ describe('committee workspace routes and roles', () => {
 
   it('allows starting the next session after adjournment and clears the ended notice', async () => {
     let started = false;
-    const session = {id: 'next-meeting', committeeId: 'committee', name: '第2会期', phaseId: 'formal-debate',
+    const session = {id: 'next-meeting', committeeId: 'committee', ordinal: 2, name: '第2会期', phaseId: 'formal-debate',
       activeRulePackageVersionId: 'rules', status: 'OPEN' as const, revision: 2,
       createdAt: '2026-08-14T00:01:00.000Z', closedAt: null};
     const rollCall: RollCall = {id: 'roll-call', committeeId: 'committee', meetingSessionId: session.id,
@@ -511,7 +511,7 @@ describe('committee workspace routes and roles', () => {
       createdAt: '2026-08-14T00:00:00.000Z', decidedAt: null,
       destinationPath: '/committees/committee/caucuses/general'};
     const page = await render('CHAIR', '/committees/committee/motions', user, value => ({...value,
-      meetingSession: {id: 'meeting', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate',
+      meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: '第1会期', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1,
         createdAt: '2026-08-14T00:00:00.000Z', closedAt: null}, motions: [motion],
       activeRules: {...value.activeRules, motionTypes: [{id: 'open-debate', names: {en: 'Open formal debate'},
@@ -526,9 +526,9 @@ describe('committee workspace routes and roles', () => {
 
   it('separates motion history at meeting-session boundaries', async () => {
     const sessions: NonNullable<CommitteeWorkspaceSnapshot['meetingSessions']> = [
-      {id: 'session-2', committeeId: 'committee', name: '第2会期', phaseId: 'formal-debate',
+      {id: 'session-2', committeeId: 'committee', ordinal: 2, name: '第2会期', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 2, createdAt: '2026-08-14T01:00:00.000Z', closedAt: null},
-      {id: 'session-1', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate',
+      {id: 'session-1', committeeId: 'committee', ordinal: 1, name: '第1会期', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'CLOSED', revision: 2, createdAt: '2026-08-14T00:00:00.000Z',
         closedAt: '2026-08-14T00:30:00.000Z'}
     ];
@@ -554,9 +554,9 @@ describe('committee workspace routes and roles', () => {
 
   it('separates point history at meeting-session boundaries', async () => {
     const sessions: NonNullable<CommitteeWorkspaceSnapshot['meetingSessions']> = [
-      {id: 'session-2', committeeId: 'committee', name: '第2会期', phaseId: 'formal-debate',
+      {id: 'session-2', committeeId: 'committee', ordinal: 2, name: '第2会期', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 2, createdAt: '2026-08-14T01:00:00.000Z', closedAt: null},
-      {id: 'session-1', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate',
+      {id: 'session-1', committeeId: 'committee', ordinal: 1, name: '第1会期', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'CLOSED', revision: 2, createdAt: '2026-08-14T00:00:00.000Z',
         closedAt: '2026-08-14T00:30:00.000Z'}
     ];
@@ -580,7 +580,7 @@ describe('committee workspace routes and roles', () => {
   it('uses rule-package motion choices and does not render the former combined workspace', async () => {
     const page = await render('MEMBER', '/committees/committee/motions', user, value => ({...value,
       motionSettings: {...value.motionSettings, delegateMotionProposalsEnabled: true},
-      meetingSession: {id: 'meeting', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate',
+      meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: '第1会期', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1, createdAt: '2026-08-14T00:00:00.000Z', closedAt: null},
       activeRules: {...value.activeRules, motionTypes: [{id: 'open-moderated-caucus',
         names: {en: 'Open a moderated caucus', 'zh-CN': '开启有主持核心磋商'}, procedural: true, requiredSecondCount: 1}]}}));
@@ -594,7 +594,7 @@ describe('committee workspace routes and roles', () => {
 
   it('targets an existing unintroduced draft instead of naming a new resolution in the introduction motion', async () => {
     const page = await render('CHAIR', '/committees/committee/motions', user, value => ({...value,
-      meetingSession: {id: 'meeting', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate',
+      meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: '第1会期', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1,
         createdAt: '2026-08-14T00:00:00.000Z', closedAt: null},
       attendance: [{seatId: 'seat', state: 'PRESENT', lastEventId: 'attendance',
@@ -620,7 +620,7 @@ describe('committee workspace routes and roles', () => {
       directVote: null, resultDecisions: [], revision: 1, discussion: [], createdAt: '2026-08-14T00:00:00.000Z',
       updatedAt: '2026-08-14T00:00:00.000Z'};
     const page = await render('CHAIR', '/committees/committee/motions', user, value => ({...value,
-      meetingSession: {id: 'meeting', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate',
+      meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: '第1会期', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1,
         createdAt: '2026-08-14T00:00:00.000Z', closedAt: null},
       attendance: [{seatId: 'seat', state: 'PRESENT', lastEventId: 'attendance',
@@ -646,7 +646,7 @@ describe('committee workspace routes and roles', () => {
       directVote: null, resultDecisions: [], revision: 2, discussion: [], createdAt: '2026-08-14T00:00:00.000Z',
       updatedAt: '2026-08-14T00:00:00.000Z'};
     const page = await render('CHAIR', '/committees/committee/motions', user, value => ({...value,
-      meetingSession: {id: 'meeting', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate',
+      meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: '第1会期', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1,
         createdAt: '2026-08-14T00:00:00.000Z', closedAt: null},
       attendance: [{seatId: 'seat', state: 'PRESENT', lastEventId: 'attendance',
@@ -666,7 +666,7 @@ describe('committee workspace routes and roles', () => {
       seats: [...value.seats, {id: 'seconder', stableKey: 'usa', displayName: 'United States', rank: 'STANDARD',
         canVote: true, hasVeto: false, mustVote: false, sortOrder: 1, active: true, revision: 1,
         flag: {type: 'STANDARD', value: 'us'}}],
-      meetingSession: {id: 'meeting', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate',
+      meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: '第1会期', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1,
         createdAt: '2026-08-14T00:00:00.000Z', closedAt: null},
       attendance: [{seatId: 'seat', state: 'PRESENT', lastEventId: 'attendance-1',
@@ -704,7 +704,7 @@ describe('committee workspace routes and roles', () => {
     const withdrawMotion = vi.fn(async (): Promise<ProceedingMotion> => ({...proposed, status: 'WITHDRAWN', revision: 2,
       decidedAt: '2026-08-14T00:01:00.000Z'}));
     const page = await render('CHAIR', '/committees/committee/motions', user, value => ({...value,
-      meetingSession: {id: 'meeting', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate',
+      meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: '第1会期', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1,
         createdAt: '2026-08-14T00:00:00.000Z', closedAt: null},
       attendance: [{seatId: 'seat', state: 'PRESENT', lastEventId: 'attendance', updatedAt: '2026-08-14T00:00:00.000Z'}],
@@ -728,7 +728,7 @@ describe('committee workspace routes and roles', () => {
 
   it('uses compact second-based time controls and permits clearing a motion duration', async () => {
     const page = await render('CHAIR', '/committees/committee/motions', user, value => ({...value,
-      meetingSession: {id: 'meeting', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate',
+      meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: '第1会期', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1,
         createdAt: '2026-08-14T00:00:00.000Z', closedAt: null},
       attendance: [{seatId: 'seat', state: 'PRESENT', lastEventId: 'attendance', updatedAt: '2026-08-14T00:00:00.000Z'}],
@@ -763,7 +763,7 @@ describe('committee workspace routes and roles', () => {
       seats: [...value.seats, {id: 'observer', stableKey: 'observer', displayName: 'Observer', rank: 'OBSERVER',
         canVote: false, hasVeto: false, mustVote: false, sortOrder: 1, active: true, revision: 1,
         flag: {type: 'EMOJI', value: '🌐'}}],
-      meetingSession: {id: 'meeting', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate',
+      meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: '第1会期', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1,
         createdAt: '2026-08-14T00:00:00.000Z', closedAt: null},
       attendance: [{seatId: 'seat', state: 'PRESENT', lastEventId: 'attendance-1',
@@ -794,7 +794,7 @@ describe('committee workspace routes and roles', () => {
         choices: ['FOR', 'AGAINST', 'ABSTAIN'], threshold: 1, automaticResult: null, votes: []},
       createdAt: '2026-08-14T00:00:00.000Z', decidedAt: null, destinationPath: null};
     const customize = (value: CommitteeWorkspaceSnapshot) => ({...value,
-      meetingSession: {id: 'meeting', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate',
+      meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: '第1会期', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'OPEN' as const, revision: 1,
         createdAt: '2026-08-14T00:00:00.000Z', closedAt: null}, motions: [motion],
       activeRules: {...value.activeRules, motionTypes: [{id: 'introduce-draft-resolution',
@@ -829,7 +829,7 @@ describe('committee workspace routes and roles', () => {
         choices: ['FOR', 'AGAINST', 'ABSTAIN'], threshold: 1, automaticResult: null, votes: []},
       createdAt: '2026-08-14T00:00:00.000Z', decidedAt: null, destinationPath: null};
     const customize = (value: CommitteeWorkspaceSnapshot): CommitteeWorkspaceSnapshot => ({...value,
-      meetingSession: {id: 'meeting', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate',
+      meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: '第1会期', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1,
         createdAt: '2026-08-14T00:00:00.000Z', closedAt: null}, motions: [motion],
       attendance: [{seatId: 'seat', state: 'PRESENT', lastEventId: 'attendance',
@@ -886,7 +886,7 @@ describe('committee workspace routes and roles', () => {
   it('redirects the legacy caucus route into the moderated-caucus modal and creates from second defaults', async () => {
     const createSpeakerList = vi.fn(async () => ({id: 'created'} as SpeakerList));
     await render('CHAIR', '/committees/committee/caucuses/new', user, value => ({...value,
-      meetingSession: {id: 'meeting', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate',
+      meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: '第1会期', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1,
         createdAt: '2026-08-14T00:00:00.000Z', closedAt: null}}), {createSpeakerList});
     await act(async () => {await Promise.resolve(); await Promise.resolve();});
@@ -929,7 +929,7 @@ describe('committee workspace routes and roles', () => {
 
   it('shows static second units and rejects duration precision beyond two decimal places', async () => {
     await render('CHAIR', '/committees/committee/caucuses/new', user, value => ({...value,
-      meetingSession: {id: 'meeting', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate',
+      meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: '第1会期', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1,
         createdAt: '2026-08-14T00:00:00.000Z', closedAt: null}}));
     await act(async () => {await Promise.resolve(); await Promise.resolve();});
@@ -951,7 +951,7 @@ describe('committee workspace routes and roles', () => {
 
   it('keeps the moderated-caucus modal open after a dimmer click and explains how to close it', async () => {
     const page = await render('CHAIR', '/committees/committee/motions', user, value => ({...value,
-      meetingSession: {id: 'meeting', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate',
+      meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: '第1会期', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1,
         createdAt: '2026-08-14T00:00:00.000Z', closedAt: null}}));
     const createItem = [...page.querySelectorAll<HTMLElement>('.committee-primary-navigation .dropdown .item')]
@@ -1017,7 +1017,7 @@ describe('committee workspace routes and roles', () => {
 
   it('shows current, next, timers, and queue only for the selected speaker list route', async () => {
     const page = await render('CHAIR', '/committees/committee/caucuses/list', user, value => ({...value,
-      meetingSession: {id: 'meeting', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate',
+      meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: '第1会期', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1, createdAt: '2026-08-14T00:00:00.000Z', closedAt: null},
       speakerLists: [{id: 'list', committeeId: 'committee', meetingSessionId: 'meeting', kind: 'GENERAL', status: 'OPEN',
         name: "General Speakers' List", topic: '', defaultSpeechMs: 60_000, delegatesCanQueue: false,
@@ -1079,7 +1079,7 @@ describe('committee workspace routes and roles', () => {
     const withQuestion = (value: CommitteeWorkspaceSnapshot): CommitteeWorkspaceSnapshot => ({...value,
       seats: [...value.seats, {id: 'france', stableKey: 'france', displayName: 'France', rank: 'STANDARD', canVote: true,
         hasVeto: false, mustVote: false, sortOrder: 1, active: true, revision: 1, flag: {type: 'STANDARD', value: 'fr'}}],
-      meetingSession: {id: 'meeting', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate',
+      meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: '第1会期', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1,
         createdAt: '2026-08-14T00:00:00.000Z', closedAt: null},
       speakerLists: [{id: 'list', committeeId: 'committee', meetingSessionId: 'meeting', kind: 'GENERAL', status: 'OPEN',
@@ -1184,7 +1184,7 @@ describe('committee workspace routes and roles', () => {
       layoutSettings: {moveQueueUp: true, timersInSeparateColumns: true},
       seats: [...value.seats, {id: 'france', stableKey: 'france', displayName: 'France', rank: 'STANDARD', canVote: true,
         hasVeto: false, mustVote: false, sortOrder: 1, active: true, revision: 1, flag: {type: 'STANDARD', value: 'fr'}}],
-      meetingSession: {id: 'meeting', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate',
+      meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: '第1会期', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1,
         createdAt: '2026-08-14T00:00:00.000Z', closedAt: null},
       attendance: [{seatId: 'seat', state: 'PRESENT', lastEventId: 'a', updatedAt: '2026-08-14T00:00:00.000Z'},
@@ -1235,7 +1235,7 @@ describe('committee workspace routes and roles', () => {
   it('shows the delegate queue switch only in delegate-operated mode', async () => {
     const withList = (value: CommitteeWorkspaceSnapshot, operationMode: 'CHAIR_OPERATED' | 'DELEGATE_OPERATED') => ({
       ...value, committee: {...value.committee, operationMode},
-      meetingSession: {id: 'meeting', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate',
+      meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: '第1会期', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'OPEN' as const, revision: 1,
         createdAt: '2026-08-14T00:00:00.000Z', closedAt: null},
       speakerLists: [{id: 'list', committeeId: 'committee', meetingSessionId: 'meeting', kind: 'GENERAL' as const,
@@ -1267,7 +1267,7 @@ describe('committee workspace routes and roles', () => {
     const withList = (value: CommitteeWorkspaceSnapshot, kind: 'GENERAL' | 'MODERATED_CAUCUS'): CommitteeWorkspaceSnapshot => ({...value,
       seats: [...value.seats, {id: 'france', stableKey: 'france', displayName: 'France', rank: 'STANDARD', canVote: true,
         hasVeto: false, mustVote: false, sortOrder: 1, active: true, revision: 1, flag: {type: 'STANDARD', value: 'fr'}}],
-      meetingSession: {id: 'meeting', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate',
+      meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: '第1会期', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1, createdAt: '2026-08-14T00:00:00.000Z', closedAt: null},
       attendance: [{seatId: 'seat', state: 'PRESENT', lastEventId: 'present', updatedAt: '2026-08-14T00:00:00.000Z'},
         {seatId: 'france', state: 'ABSENT', lastEventId: 'absent', updatedAt: '2026-08-14T00:00:00.000Z'}],
@@ -1335,7 +1335,7 @@ describe('committee workspace routes and roles', () => {
       createdAt: '2026-08-14T00:00:00.000Z', closedAt: null};
     const createStrawpoll = vi.fn(async () => created);
     await render('CHAIR', '/committees/committee/strawpolls/new', user, value => ({...value,
-      meetingSession: {id: 'meeting', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate',
+      meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: '第1会期', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1,
         createdAt: '2026-08-14T00:00:00.000Z', closedAt: null}}), {createStrawpoll});
     expect(createStrawpoll).toHaveBeenCalledWith('committee', {meetingSessionId: 'meeting', question: '',
@@ -1446,7 +1446,7 @@ describe('committee workspace routes and roles', () => {
       currentVersion: {id: 'amendment-version', versionNumber: 1, content: 'Replace clause 1', contentFile: null,
         createdAt: '2026-08-14T00:00:00.000Z'}, revision: 1};
     const page = await render('CHAIR', '/committees/committee/resolutions/resolution/amendments', user, value => ({...value,
-      meetingSession: {id: 'meeting', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate',
+      meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: '第1会期', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1,
         createdAt: '2026-08-14T00:00:00.000Z', closedAt: null},
       attendance: [{seatId: 'seat', state: 'PRESENT', lastEventId: 'attendance',
@@ -1480,7 +1480,7 @@ describe('committee workspace routes and roles', () => {
       currentVersion: {id: 'amendment-version', versionNumber: 1, content: 'Replace clause 1', contentFile: null,
         createdAt: '2026-08-14T00:00:00.000Z'}, revision: 3};
     const base = (value: CommitteeWorkspaceSnapshot) => ({...value,
-      meetingSession: {id: 'meeting', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate',
+      meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: '第1会期', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'OPEN' as const, revision: 1,
         createdAt: '2026-08-14T00:00:00.000Z', closedAt: null},
       attendance: [{seatId: 'seat', state: 'PRESENT' as const, lastEventId: 'attendance',
@@ -1518,7 +1518,7 @@ describe('committee workspace routes and roles', () => {
       discussion: [], createdAt: '2026-08-14T00:00:00.000Z', updatedAt: '2026-08-14T00:00:00.000Z'};
     const createResolution = vi.fn(async () => created);
     await render('CHAIR', '/committees/committee/resolutions/new', user, value => ({...value,
-      meetingSession: {id: 'meeting', committeeId: 'committee', name: '第1会期', phaseId: 'formal-debate',
+      meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: '第1会期', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1,
         createdAt: '2026-08-14T00:00:00.000Z', closedAt: null}}), {createResolution});
     expect(createResolution).toHaveBeenCalledTimes(1);

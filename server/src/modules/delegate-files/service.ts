@@ -558,7 +558,7 @@ export class DelegateFileService {
   private async suggestedNames(committeeId: string, submittedDates: Date[]): Promise<Record<DelegateFileType, string>[]> {
     if (!submittedDates.length) return [];
     const sessions = await this.pool.query<{id: string; ordinal: string; created_at: Date}>(`SELECT id,created_at,
-      row_number() OVER (ORDER BY created_at,id)::text AS ordinal FROM meeting_sessions WHERE committee_id=$1 ORDER BY created_at,id`, [committeeId]);
+      ordinal::text AS ordinal FROM meeting_sessions WHERE committee_id=$1 ORDER BY created_at,id`, [committeeId]);
     // Count each session once for the entire list, including the no-session fallback.
     const starts = sessions.rows.length ? sessions.rows.map(row => row.created_at) : [new Date(0)];
     const ends = starts.map((_, index) => starts[index + 1] ?? null);

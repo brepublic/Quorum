@@ -167,6 +167,7 @@ export interface UpdateTextResourceRequest {
 
 export type MeetingSessionStatus = 'PENDING' | 'OPEN' | 'CLOSED';
 export interface MeetingSession {
+  ordinal: number;
   id: string;
   committeeId: string;
   name: string;
