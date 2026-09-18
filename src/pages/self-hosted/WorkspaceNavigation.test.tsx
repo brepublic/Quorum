@@ -5,6 +5,7 @@ import {MemoryRouter} from 'react-router-dom';
 import {afterEach, describe, expect, it, vi} from 'vitest';
 import type {CommitteeWorkspaceSnapshot} from '@quorum/contracts';
 import type {SelfHostedUser} from '../../services/self-hosted-identity';
+import {setLanguage} from '../../i18n';
 import {AccountMenu, CommitteeNavigation} from './WorkspaceNavigation';
 
 (globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT: boolean}).IS_REACT_ACT_ENVIRONMENT = true;
@@ -38,7 +39,7 @@ let container: HTMLDivElement | undefined;
 
 afterEach(() => {
   if (root) act(() => root?.unmount());
-  container?.remove(); root = undefined; container = undefined;
+  container?.remove(); root = undefined; container = undefined; setLanguage('en');
 });
 
 function render(node: React.ReactNode, path = '/') {
@@ -57,6 +58,8 @@ describe('self-hosted workspace navigation', () => {
     expect(links).toContain('/committees/committee/roll-call');
     expect(links).toContain('/committees/committee/caucuses/gsl');
     expect(links).toContain('/committees/committee/caucuses/mod');
+    expect(page.querySelector('a[href="/committees/committee/caucuses/gsl"]')?.textContent).toBe("General Speakers' List");
+    act(() => setLanguage('zh-CN'));
     expect(page.querySelector('a[href="/committees/committee/caucuses/gsl"]')?.textContent).toBe("主发言名单");
     const active = page.querySelector('a.active');
     expect(active?.getAttribute('href')).toBe('/committees/committee/caucuses/mod');

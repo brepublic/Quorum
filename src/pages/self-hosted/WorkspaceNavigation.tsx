@@ -3,7 +3,7 @@ import {useThemeFeature} from '../../theme/ThemeProvider';
 import {formatCommitteeContent, type CommitteeWorkspaceSnapshot} from '@quorum/contracts';
 import {Dropdown, Icon, Menu, Sidebar} from 'semantic-ui-react';
 import {Link, useLocation} from 'react-router-dom';
-import {LanguageSwitcher, t} from '../../i18n';
+import {LanguageSwitcher, t, useLanguage} from '../../i18n';
 import type {SelfHostedUser} from '../../services/self-hosted-identity';
 
 export type RealtimeStatus = 'CONNECTING' | 'LIVE' | 'RESYNCING' | 'OFFLINE_READONLY' | 'DEGRADED';
@@ -69,6 +69,7 @@ function routeActive(pathname: string, destination: string, prefix = false) {
 function PrimaryItems({snapshot, onNavigate, onCreateCaucus}: {
   snapshot: CommitteeWorkspaceSnapshot; onNavigate?(): void; onCreateCaucus?(): void;
 }) {
+  useLanguage();
   const location = useLocation();
   const base = `/committees/${snapshot.committee.id}`;
   const item = (path: string, label: string) => <Menu.Item key={path} as={Link} to={`${base}${path}`}
@@ -108,7 +109,7 @@ function PrimaryItems({snapshot, onNavigate, onCreateCaucus}: {
     {generalSpeakerList && <Menu.Item key="general-speakers-list" as={Link}
       to={`${base}/caucuses/${generalSpeakerList.id}`}
       active={routeActive(location.pathname, `${base}/caucuses/${generalSpeakerList.id}`)} onClick={onNavigate}>
-      {generalSpeakerList.name}</Menu.Item>}
+      {t("General Speakers' List")}</Menu.Item>}
     {item('/unmod', 'Unmod')}
     {dynamic('caucuses', 'Caucuses', 'New caucus', caucuses, gslPathActive ? false : undefined)}
     {dynamic('resolutions', 'Resolutions', 'New resolution', resolutions)}
