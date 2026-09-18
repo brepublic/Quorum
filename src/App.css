@@ -1479,7 +1479,6 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
 
 .motion-metadata-table .motion-seat-option .country-flag-display,
 .motion-metadata-table .motion-seat-option .country-flag-display:has(> .country-flag-display-image) {
-  border-color: transparent;
   flex: 0 0 2.5rem;
   font-size: 1.5rem;
   height: 1.5rem;
@@ -1487,12 +1486,18 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   width: 2.5rem;
 }
 
+.motion-metadata-table .motion-seat-option .country-flag-display:has(> .country-flag-display-image) {
+  border-color: transparent;
+}
+
 .motion-metadata-table .motion-seat-option .country-flag-display-image {
-  height: 100%;
+  border: 0.1mm solid #a6a6a6;
+  box-sizing: border-box;
+  height: auto;
   max-height: 100%;
   max-width: 100%;
   object-fit: contain;
-  width: 100%;
+  width: auto;
 }
 
 .motion-metadata-table .motion-metadata-value > .ui.mini.label {
