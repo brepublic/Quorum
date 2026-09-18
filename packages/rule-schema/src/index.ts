@@ -461,3 +461,5 @@ export function resolveRuleValue(input: {
   if (fallback === undefined) throw new Error('MISSING_PRODUCT_RULE_DEFAULT');
   return structuredClone(fallback);
 }
+
+export {ruleLanguageAvailability} from './localization.js';
