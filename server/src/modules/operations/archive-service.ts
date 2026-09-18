@@ -23,6 +23,22 @@ export const ARCHIVE_SECTIONS: readonly ArchiveSection[] = Object.freeze([
   {name: 'seat_assignments', query: `SELECT id,seat_id,user_id,status,assigned_at,ended_at FROM seat_assignments WHERE committee_id=$1 ORDER BY assigned_at,id`},
   {name: 'seat_invitations', query: `SELECT id,seat_id,max_uses,use_count,expires_at,revoked_at,created_at FROM seat_invitations WHERE committee_id=$1 ORDER BY created_at,id`},
   {name: 'rule_bindings', query: `SELECT b.id,b.package_version_id,b.effective_from_event_sequence,b.activated_at,v.version,v.schema_version,v.definition FROM committee_rule_bindings b JOIN rule_package_versions v ON v.id=b.package_version_id WHERE b.committee_id=$1 ORDER BY b.effective_from_event_sequence,b.id`},
+  {name: 'rule_versions', query: `SELECT v.id,v.package_id,v.version,v.schema_version,v.definition
+    FROM rule_package_versions v WHERE v.id IN (
+      SELECT active_rule_package_version_id FROM committees WHERE id=$1
+      UNION SELECT (content_snapshot->>'initialRulePackageVersionId')::uuid FROM committees WHERE id=$1
+      UNION SELECT package_version_id FROM committee_rule_bindings WHERE committee_id=$1
+      UNION SELECT source_package_version_id FROM chair_rule_overrides WHERE committee_id=$1
+      UNION SELECT created_package_version_id FROM chair_rule_overrides WHERE committee_id=$1
+      UNION SELECT active_rule_package_version_id FROM meeting_sessions WHERE committee_id=$1
+      UNION SELECT rule_package_version_id FROM roll_calls WHERE committee_id=$1
+      UNION SELECT rule_package_version_id FROM roll_call_entries WHERE committee_id=$1
+      UNION SELECT rule_package_version_id FROM points WHERE committee_id=$1
+      UNION SELECT rule_package_version_id FROM speaker_lists WHERE committee_id=$1
+      UNION SELECT rule_package_version_id FROM motions WHERE committee_id=$1
+      UNION SELECT rule_package_version_id FROM ballots WHERE committee_id=$1
+      UNION SELECT rule_package_version_id FROM documents WHERE committee_id=$1
+    ) ORDER BY v.id`},
   {name: 'rule_overrides', query: `SELECT id,scope,stable_rule_id,value,operation_key,source_package_version_id,created_package_version_id,created_at FROM chair_rule_overrides WHERE committee_id=$1 ORDER BY created_at,id`},
   {name: 'notes', query: `SELECT id,title,content,sort_order,revision,created_at,updated_at,deleted_at FROM committee_notes WHERE committee_id=$1 ORDER BY sort_order,id`},
   {name: 'text_posts', query: `SELECT id,title,content,sort_order,revision,author_seat_id,author_display_name,created_at,updated_at,deleted_at FROM committee_text_posts WHERE committee_id=$1 ORDER BY created_at,id`},
@@ -33,7 +49,7 @@ export const ARCHIVE_SECTIONS: readonly ArchiveSection[] = Object.freeze([
   {name: 'attendance_events', query: `SELECT id,meeting_session_id,seat_id,seat_display_name,type,on_behalf_of_seat_id,source_roll_call_entry_id,source_point_id,created_at FROM attendance_events WHERE committee_id=$1 ORDER BY created_at,id`},
   {name: 'points', query: `SELECT id,meeting_session_id,point_type_id,content,raised_by_seat_id,raised_by_seat_display_name,on_behalf_of_seat_id,interrupt_requested,status,chair_response,rule_package_version_id,revision,created_at,resolved_at FROM points WHERE committee_id=$1 ORDER BY created_at,id`},
   {name: 'timers', query: `SELECT id,owner_type,owner_id,running,started_at,remaining_at_start_ms,revision,expired_at,created_at,updated_at FROM timer_states WHERE committee_id=$1 ORDER BY created_at,id`},
-  {name: 'speaker_lists', query: `SELECT id,meeting_session_id,kind,status,topic,default_speech_ms,rule_package_version_id,current_entry_id,speech_timer_id,total_timer_id,revision,created_at,closed_at FROM speaker_lists WHERE committee_id=$1 ORDER BY created_at,id`},
+  {name: 'speaker_lists', query: `SELECT id,meeting_session_id,kind,status,custom_title,linked_resolution_document_id,topic,default_speech_ms,rule_package_version_id,current_entry_id,speech_timer_id,total_timer_id,revision,created_at,closed_at FROM speaker_lists WHERE committee_id=$1 ORDER BY created_at,id`},
   {name: 'speaker_queue_entries', query: `SELECT id,speaker_list_id,seat_id,seat_display_name,position,status,on_behalf_of_seat_id,created_at,completed_at FROM speaker_queue_entries WHERE committee_id=$1 ORDER BY speaker_list_id,position,id`},
   {name: 'caucuses', query: `SELECT id,meeting_session_id,speaker_list_id,topic,status,total_timer_id,speech_timer_id,revision,created_at,closed_at FROM caucuses WHERE committee_id=$1 ORDER BY created_at,id`},
   {name: 'speeches', query: `SELECT id,speaker_list_id,queue_entry_id,seat_id,seat_display_name,kind,status,inherited_from_speech_id,inherited_time_ms,can_yield,yield_type,yield_target_seat_id,on_behalf_of_seat_id,revision,started_at,ended_at,created_at FROM speeches WHERE committee_id=$1 ORDER BY created_at,id`},
@@ -44,11 +60,11 @@ export const ARCHIVE_SECTIONS: readonly ArchiveSection[] = Object.freeze([
   {name: 'ballots', query: `SELECT id,meeting_session_id,subject_type,subject_id,status,procedural,choices,rule_package_version_id,rule_evaluation,eligibility_snapshot,threshold_definition,threshold_value,result,opened_at,closed_at,published_at,revision FROM ballots WHERE committee_id=$1 ORDER BY opened_at,id`},
   {name: 'ballot_votes', query: `SELECT v.id,v.ballot_id,v.seat_id,v.seat_display_name,v.current_choice,v.cast_on_behalf,v.cast_at,v.revision FROM ballot_votes v JOIN ballots b ON b.id=v.ballot_id WHERE b.committee_id=$1 ORDER BY v.ballot_id,v.seat_id`},
   {name: 'ballot_vote_revisions', query: `SELECT r.id,r.ballot_id,r.vote_id,r.seat_id,r.previous_choice,r.new_choice,r.on_behalf_of_seat_id,r.reason,r.created_at FROM ballot_vote_revisions r JOIN ballots b ON b.id=r.ballot_id WHERE b.committee_id=$1 ORDER BY r.created_at,r.id`},
-  {name: 'strawpolls', query: `SELECT id,meeting_session_id,question,voting_mode,multiple_choice,status,revision,created_at,closed_at FROM strawpolls WHERE committee_id=$1 ORDER BY created_at,id`},
+  {name: 'strawpolls', query: `SELECT id,meeting_session_id,ordinal,question,voting_mode,multiple_choice,status,revision,created_at,closed_at FROM strawpolls WHERE committee_id=$1 ORDER BY created_at,id`},
   {name: 'strawpoll_options', query: `SELECT o.id,o.strawpoll_id,o.label,o.sort_order FROM strawpoll_options o JOIN strawpolls s ON s.id=o.strawpoll_id WHERE s.committee_id=$1 ORDER BY o.strawpoll_id,o.sort_order`},
   {name: 'strawpoll_seat_votes', query: `SELECT v.id,v.strawpoll_id,v.seat_id,v.option_ids,v.on_behalf_of_seat_id,v.created_at FROM strawpoll_seat_votes v JOIN strawpolls s ON s.id=v.strawpoll_id WHERE s.committee_id=$1 ORDER BY v.created_at,v.id`},
   {name: 'strawpoll_anonymous_votes', query: `SELECT v.id,v.strawpoll_id,v.option_ids FROM strawpoll_anonymous_votes v JOIN strawpolls s ON s.id=v.strawpoll_id WHERE s.committee_id=$1 ORDER BY v.strawpoll_id,v.id`},
-  {name: 'documents', query: `SELECT id,meeting_session_id,kind,title,status,rule_package_version_id,current_version_id,voting_version_id,is_public,created_on_behalf_of_seat_id,revision,created_at,updated_at FROM documents WHERE committee_id=$1 ORDER BY created_at,id`},
+  {name: 'documents', query: `SELECT id,meeting_session_id,kind,ordinal,custom_title,status,rule_package_version_id,current_version_id,voting_version_id,is_public,created_on_behalf_of_seat_id,revision,created_at,updated_at FROM documents WHERE committee_id=$1 ORDER BY created_at,id`},
   {name: 'document_versions', query: `SELECT v.id,v.document_id,v.version_number,v.content,v.created_on_behalf_of_seat_id,v.created_at FROM document_versions v JOIN documents d ON d.id=v.document_id WHERE d.committee_id=$1 ORDER BY v.document_id,v.version_number`},
   {name: 'resolutions', query: `SELECT r.document_id,r.proposer_seat_id FROM resolutions r JOIN documents d ON d.id=r.document_id WHERE d.committee_id=$1 ORDER BY r.document_id`},
   {name: 'amendments', query: `SELECT a.document_id,a.resolution_document_id,a.proposer_seat_id FROM amendments a JOIN documents d ON d.id=a.document_id WHERE d.committee_id=$1 ORDER BY a.document_id`},

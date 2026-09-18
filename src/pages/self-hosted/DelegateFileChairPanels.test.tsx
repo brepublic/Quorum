@@ -13,7 +13,7 @@ const reviewFile: DelegateReviewFile = {id: 'file', logicalName: '原文件.md',
   submittedAt: '2026-08-28T00:00:00.000Z', publishedAt: '', revision: 1};
 const publishedFile: DelegateReviewFile = {...reviewFile, id: 'published-file', logicalName: 'approved-file.pdf',
   originalName: 'approved.pdf', status: 'PUBLISHED', publishedAt: '2026-08-28T01:00:00.000Z', revision: 2};
-const snapshot = {committee: {id: 'committee'}, sync: {committeeEventSequence: 1}} as CommitteeWorkspaceSnapshot;
+const snapshot = {committee: {id: 'committee', committeeLanguage: 'zh-CN'}, sync: {committeeEventSequence: 1}} as CommitteeWorkspaceSnapshot;
 
 let host: HTMLDivElement; let root: Root;
 beforeEach(() => {host = document.createElement('div'); document.body.append(host); root = createRoot(host);
@@ -30,7 +30,7 @@ describe('delegate file chair review', () => {
   });
 
   it('suggests names, offers preset rejection messages, and defaults to keeping bytes', async () => {
-    const pending = {...reviewFile,suggestedNames:{WORKING_PAPER:'工作文件 1.2',DIRECTIVE_DRAFT:'指令草案 1.1',RESOLUTION_DRAFT:'决议草案 1.1'}};
+    const pending = {...reviewFile,suggestedNames:{WORKING_PAPER:{sessionOrdinal:1,ordinal:2},DIRECTIVE_DRAFT:{sessionOrdinal:1,ordinal:1},RESOLUTION_DRAFT:{sessionOrdinal:1,ordinal:1}}};
     const rejectDelegateFile = vi.fn(async () => ({})); const deleteFile = vi.fn();
     const api = {getDelegateFileShare: async () => null, listDelegateReviewFiles:async () => [pending],rejectDelegateFile,deleteFile,
       getDelegateFileSettings:async () => ({rejectionTypes:[{id:'format',label:'内容格式不合要求',message:'文件内容格式不合要求，请参阅《学术指引》修改后重新提交。',custom:false}]})} as unknown as SelfHostedApi;

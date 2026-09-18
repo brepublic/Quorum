@@ -416,7 +416,7 @@ describe('committee workspace routes and roles', () => {
       meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: '第1会期', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1, createdAt: '2026-08-14T00:00:00.000Z', closedAt: null},
       points: [{id: 'point', committeeId: 'committee', meetingSessionId: 'meeting',
-        pointTypeId: 'point-of-personal-privilege', content: 'The room is too warm.', raisedBySeatId: 'seat',
+        typeNames: {en: 'Point of personal privilege', 'zh-CN': '个人特权问题'}, pointTypeId: 'point-of-personal-privilege', content: 'The room is too warm.', raisedBySeatId: 'seat',
         raisedBySeatDisplayName: 'China', actorUserId: 'delegate', onBehalfOfSeatId: 'seat', interruptRequested: true,
         status: 'PENDING', chairResponse: '', resolvedByUserId: null, rulePackageVersionId: 'rules', revision: 1,
         createdAt: '2026-08-14T00:00:00.000Z', resolvedAt: null}],
@@ -561,7 +561,7 @@ describe('committee workspace routes and roles', () => {
         closedAt: '2026-08-14T00:30:00.000Z'}
     ];
     const point = (id: string, meetingSessionId: string, createdAt: string): CommitteePoint => ({id, committeeId: 'committee',
-      meetingSessionId, pointTypeId: 'point-of-order', content: 'Order', raisedBySeatId: 'seat',
+      meetingSessionId, typeNames: {en: 'Point of order', 'zh-CN': '程序问题'}, pointTypeId: 'point-of-order', content: 'Order', raisedBySeatId: 'seat',
       raisedBySeatDisplayName: 'China', actorUserId: 'user', onBehalfOfSeatId: 'seat', interruptRequested: false,
       status: 'UPHELD', chairResponse: '', resolvedByUserId: 'user', rulePackageVersionId: 'rules', revision: 1,
       createdAt, resolvedAt: createdAt});
@@ -600,7 +600,7 @@ describe('committee workspace routes and roles', () => {
       attendance: [{seatId: 'seat', state: 'PRESENT', lastEventId: 'attendance',
         updatedAt: '2026-08-14T00:00:00.000Z'}],
       documents: [{id: 'resolution', committeeId: 'committee', meetingSessionId: 'meeting', kind: 'RESOLUTION',
-        resolutionId: null, title: 'New draft resolution 1', status: 'DRAFT', rulePackageVersionId: 'rules',
+        resolutionId: null, ordinal: 1, customTitle: null, title: 'New draft resolution 1', status: 'DRAFT', rulePackageVersionId: 'rules',
         currentVersion: {id: 'version', versionNumber: 1, content: '', contentFile: null,
           createdAt: '2026-08-14T00:00:00.000Z'},
         votingVersionId: null, public: false, proposerSeatId: null, seconderSeatId: null, delegatesCanAmend: false,
@@ -626,10 +626,10 @@ describe('committee workspace routes and roles', () => {
       attendance: [{seatId: 'seat', state: 'PRESENT', lastEventId: 'attendance',
         updatedAt: '2026-08-14T00:00:00.000Z'}],
       documents: [
-        {...baseDocument, id: 'resolution', kind: 'RESOLUTION', resolutionId: null, title: 'New draft resolution 1',
+        {...baseDocument, id: 'resolution', kind: 'RESOLUTION', resolutionId: null, ordinal: 1, customTitle: null, title: 'New draft resolution 1',
           status: 'PUBLISHED', public: true, currentVersion: {id: 'resolution-version', versionNumber: 1,
             content: 'Resolution body', contentFile: null, createdAt: '2026-08-14T00:00:00.000Z'}},
-        {...baseDocument, id: 'amendment', kind: 'AMENDMENT', resolutionId: 'resolution', title: 'New amendment 1',
+        {...baseDocument, id: 'amendment', kind: 'AMENDMENT', resolutionId: 'resolution', ordinal: 1, customTitle: null, title: 'New amendment 1',
           status: 'DRAFT', currentVersion: {id: 'amendment-version', versionNumber: 1,
             content: 'Replace clause 1', contentFile: null, createdAt: '2026-08-14T00:00:00.000Z'}}
       ] as ProceedingDocument[],
@@ -651,7 +651,7 @@ describe('committee workspace routes and roles', () => {
         createdAt: '2026-08-14T00:00:00.000Z', closedAt: null},
       attendance: [{seatId: 'seat', state: 'PRESENT', lastEventId: 'attendance',
         updatedAt: '2026-08-14T00:00:00.000Z'}],
-      documents: [{...document, id: 'amendment', kind: 'AMENDMENT', resolutionId: 'resolution',
+      documents: [{...document, id: 'amendment', kind: 'AMENDMENT', resolutionId: 'resolution', ordinal: 1, customTitle: null,
         title: 'New amendment 1', status: 'PUBLISHED', currentVersion: {id: 'amendment-version', versionNumber: 1,
           content: 'Replace clause 1', contentFile: null, createdAt: '2026-08-14T00:00:00.000Z'}}] as ProceedingDocument[],
       activeRules: {...value.activeRules, motionTypes: [{id: 'vote-on-amendment',
@@ -673,7 +673,7 @@ describe('committee workspace routes and roles', () => {
         updatedAt: '2026-08-14T00:00:00.000Z'}, {seatId: 'seconder', state: 'PRESENT',
         lastEventId: 'attendance-2', updatedAt: '2026-08-14T00:00:00.000Z'}],
       documents: [{id: 'resolution', committeeId: 'committee', meetingSessionId: 'meeting', kind: 'RESOLUTION',
-        resolutionId: null, title: 'New draft resolution 1', status: 'PUBLISHED', rulePackageVersionId: 'rules',
+        resolutionId: null, ordinal: 1, customTitle: null, title: 'New draft resolution 1', status: 'PUBLISHED', rulePackageVersionId: 'rules',
         currentVersion: {id: 'version', versionNumber: 1, content: 'Draft body', contentFile: null,
           createdAt: '2026-08-14T00:00:00.000Z'}, votingVersionId: null, public: true,
         proposerSeatId: 'seat', seconderSeatId: 'seconder', delegatesCanAmend: false, directVote: null,
@@ -923,8 +923,8 @@ describe('committee workspace routes and roles', () => {
       await Promise.resolve(); await Promise.resolve();
     });
 
-    expect(createSpeakerList).toHaveBeenCalledWith('committee', {meetingSessionId: 'meeting', kind: 'MODERATED_CAUCUS',
-      name: 'Climate finance', topic: 'Climate finance', defaultSpeechMs: 60_000, totalDurationMs: 600_000});
+    expect(createSpeakerList).toHaveBeenCalledWith('committee', {meetingSessionId: 'meeting', kind: 'MODERATED_CAUCUS', customTitle: null,
+      topic: 'Climate finance', defaultSpeechMs: 60_000, totalDurationMs: 600_000});
   });
 
   it('shows static second units and rejects duration precision beyond two decimal places', async () => {
@@ -966,7 +966,7 @@ describe('committee workspace routes and roles', () => {
 
   it('shows an agenda field only on the general speakers list', async () => {
     const withList = (value: CommitteeWorkspaceSnapshot, kind: 'GENERAL' | 'MODERATED_CAUCUS') => ({...value,
-      speakerLists: [{id: 'list', committeeId: 'committee', meetingSessionId: 'meeting', kind, status: 'OPEN' as const,
+      speakerLists: [{id: 'list', committeeId: 'committee', meetingSessionId: 'meeting', kind, customTitle: null, status: 'OPEN' as const,
         name: kind === 'GENERAL' ? "General Speakers' List" : 'Climate finance', topic: 'Climate finance',
         defaultSpeechMs: 60_000, delegatesCanQueue: false, rulePackageVersionId: 'rules', currentEntryId: null,
         speechTimerId: 'speech-timer', totalTimerId: kind === 'MODERATED_CAUCUS' ? 'total-timer' : null,
@@ -989,12 +989,12 @@ describe('committee workspace routes and roles', () => {
       await Promise.resolve(); await Promise.resolve();
     });
     expect(updateSpeakerList).toHaveBeenCalledWith('list', 1,
-      {name: 'International finance', topic: 'International finance'});
+      {customTitle: 'International finance', topic: 'International finance'});
   });
 
   it('distinguishes an unopened general speakers list from one that was closed', async () => {
     const closedGeneralList = (value: CommitteeWorkspaceSnapshot) => ({...value, speakerLists: [{id: 'list',
-      committeeId: 'committee', meetingSessionId: 'meeting', kind: 'GENERAL' as const, status: 'CLOSED' as const,
+      committeeId: 'committee', meetingSessionId: 'meeting', kind: 'GENERAL' as const, customTitle: null, status: 'CLOSED' as const,
       name: "General Speakers' List", topic: '', defaultSpeechMs: 60_000, delegatesCanQueue: true,
       rulePackageVersionId: 'rules', currentEntryId: null, speechTimerId: 'speech-timer', totalTimerId: null,
       linkedResolutionId: null, revision: 1, queue: [], speeches: [], createdAt: '2026-08-14T00:00:00.000Z',
@@ -1019,7 +1019,7 @@ describe('committee workspace routes and roles', () => {
     const page = await render('CHAIR', '/committees/committee/caucuses/list', user, value => ({...value,
       meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: '第1会期', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1, createdAt: '2026-08-14T00:00:00.000Z', closedAt: null},
-      speakerLists: [{id: 'list', committeeId: 'committee', meetingSessionId: 'meeting', kind: 'GENERAL', status: 'OPEN',
+      speakerLists: [{id: 'list', committeeId: 'committee', meetingSessionId: 'meeting', kind: 'GENERAL', customTitle: null, status: 'OPEN',
         name: "General Speakers' List", topic: '', defaultSpeechMs: 60_000, delegatesCanQueue: false,
         rulePackageVersionId: 'rules', currentEntryId: 'current', speechTimerId: 'speech-timer',
         totalTimerId: null, linkedResolutionId: null, revision: 2, queue: [
@@ -1082,7 +1082,7 @@ describe('committee workspace routes and roles', () => {
       meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: '第1会期', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1,
         createdAt: '2026-08-14T00:00:00.000Z', closedAt: null},
-      speakerLists: [{id: 'list', committeeId: 'committee', meetingSessionId: 'meeting', kind: 'GENERAL', status: 'OPEN',
+      speakerLists: [{id: 'list', committeeId: 'committee', meetingSessionId: 'meeting', kind: 'GENERAL', customTitle: null, status: 'OPEN',
         name: "General Speakers' List", topic: '', defaultSpeechMs: 60_000, delegatesCanQueue: false,
         rulePackageVersionId: 'rules', currentEntryId: 'current', speechTimerId: 'speech-timer', totalTimerId: null,
         linkedResolutionId: null, revision: 2, queue: [{id: 'current', seatId: 'seat', seatDisplayName: 'China', position: 1,
@@ -1176,7 +1176,7 @@ describe('committee workspace routes and roles', () => {
       revision: 3, expiredAt: null, serverTime: '2026-08-14T00:00:10.000Z'}));
     const yieldSpeech = vi.fn(async () => offeredSpeech);
     const decideSpeechYield = vi.fn(async (): Promise<SpeakerList> => ({id: 'list', committeeId: 'committee',
-      meetingSessionId: 'meeting', kind: 'MODERATED_CAUCUS', status: 'OPEN', name: 'Climate finance',
+      meetingSessionId: 'meeting', kind: 'MODERATED_CAUCUS', customTitle: null, status: 'OPEN', name: 'Climate finance',
       topic: 'Climate finance', defaultSpeechMs: 60_000, delegatesCanQueue: false, rulePackageVersionId: 'rules',
       currentEntryId: 'current', speechTimerId: 'speech-timer', totalTimerId: 'total-timer', linkedResolutionId: null, revision: 3,
       queue: [], speeches: [], createdAt: '2026-08-14T00:00:00.000Z', closedAt: null}));
@@ -1189,7 +1189,7 @@ describe('committee workspace routes and roles', () => {
         createdAt: '2026-08-14T00:00:00.000Z', closedAt: null},
       attendance: [{seatId: 'seat', state: 'PRESENT', lastEventId: 'a', updatedAt: '2026-08-14T00:00:00.000Z'},
         {seatId: 'france', state: 'PRESENT', lastEventId: 'b', updatedAt: '2026-08-14T00:00:00.000Z'}],
-      speakerLists: [{id: 'list', committeeId: 'committee', meetingSessionId: 'meeting', kind: 'MODERATED_CAUCUS',
+      speakerLists: [{id: 'list', committeeId: 'committee', meetingSessionId: 'meeting', kind: 'MODERATED_CAUCUS', customTitle: null,
         status: 'OPEN', name: 'Climate finance', topic: 'Climate finance', defaultSpeechMs: 60_000,
         delegatesCanQueue: false, rulePackageVersionId: 'rules', currentEntryId: 'current', speechTimerId: 'speech-timer',
         totalTimerId: 'total-timer', linkedResolutionId: null, revision: 2, queue: [{id: 'current', seatId: 'seat', seatDisplayName: 'China',
@@ -1238,7 +1238,7 @@ describe('committee workspace routes and roles', () => {
       meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: '第1会期', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'OPEN' as const, revision: 1,
         createdAt: '2026-08-14T00:00:00.000Z', closedAt: null},
-      speakerLists: [{id: 'list', committeeId: 'committee', meetingSessionId: 'meeting', kind: 'GENERAL' as const,
+      speakerLists: [{id: 'list', committeeId: 'committee', meetingSessionId: 'meeting', kind: 'GENERAL' as const, customTitle: null,
         status: 'OPEN' as const, name: "General Speakers' List", topic: '', defaultSpeechMs: 60_000,
         delegatesCanQueue: true, rulePackageVersionId: 'rules', currentEntryId: null, speechTimerId: 'speech-timer',
         totalTimerId: null, linkedResolutionId: null, revision: 2, queue: [], speeches: [], createdAt: '2026-08-14T00:00:00.000Z', closedAt: null}],
@@ -1271,7 +1271,7 @@ describe('committee workspace routes and roles', () => {
         activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1, createdAt: '2026-08-14T00:00:00.000Z', closedAt: null},
       attendance: [{seatId: 'seat', state: 'PRESENT', lastEventId: 'present', updatedAt: '2026-08-14T00:00:00.000Z'},
         {seatId: 'france', state: 'ABSENT', lastEventId: 'absent', updatedAt: '2026-08-14T00:00:00.000Z'}],
-      speakerLists: [{id: 'list', committeeId: 'committee', meetingSessionId: 'meeting', kind, status: 'OPEN',
+      speakerLists: [{id: 'list', committeeId: 'committee', meetingSessionId: 'meeting', kind, customTitle: null, status: 'OPEN',
         name: kind === 'GENERAL' ? "General Speakers' List" : 'Climate finance', topic: '', defaultSpeechMs: 60_000,
         delegatesCanQueue: false, rulePackageVersionId: 'rules', currentEntryId: null, speechTimerId: 'speech-timer',
         totalTimerId: kind === 'MODERATED_CAUCUS' ? 'total-timer' : null, linkedResolutionId: null, revision: 2,
@@ -1328,7 +1328,7 @@ describe('committee workspace routes and roles', () => {
   });
 
   it('creates a system-named strawpoll immediately from the plus route', async () => {
-    const created: CreatedStrawpoll = {id: 'poll', committeeId: 'committee', meetingSessionId: 'meeting',
+    const created: CreatedStrawpoll = {id: 'poll', committeeId: 'committee', meetingSessionId: 'meeting', ordinal: 1,
       question: 'New strawpoll 1', votingMode: 'SEAT_AUTHENTICATED', multipleChoice: true, status: 'OPEN',
       stage: 'PREPARING', medium: 'LINK', optionsArePublic: false, seriesId: 'poll', roundNumber: 1,
       supersededById: null, options: [], seatVotes: [], revision: 1,
@@ -1345,7 +1345,7 @@ describe('committee workspace routes and roles', () => {
   it('submits an anonymous strawpoll once and locks every answer afterward', async () => {
     const voteStrawpoll = vi.fn(async (): Promise<Strawpoll> => ({} as Strawpoll));
     const page = await render('MEMBER', '/committees/committee/strawpolls/poll', user, value => ({...value,
-      strawpolls: [{id: 'poll', committeeId: 'committee', meetingSessionId: 'meeting', question: 'Preferred option?',
+      strawpolls: [{id: 'poll', committeeId: 'committee', meetingSessionId: 'meeting', ordinal: 1, question: 'Preferred option?',
         votingMode: 'ANONYMOUS', multipleChoice: false, status: 'OPEN', stage: 'VOTING', medium: 'LINK',
         optionsArePublic: false, seriesId: 'poll', roundNumber: 1, supersededById: null,
         options: [{id: 'one', label: 'Option one', sortOrder: 0, voteCount: 0},
@@ -1374,7 +1374,7 @@ describe('committee workspace routes and roles', () => {
   it('keeps seat-authenticated strawpoll answers as direct changeable and retractable clicks', async () => {
     const voteStrawpoll = vi.fn(async (): Promise<Strawpoll> => ({} as Strawpoll));
     const page = await render('MEMBER', '/committees/committee/strawpolls/poll', user, value => ({...value,
-      strawpolls: [{id: 'poll', committeeId: 'committee', meetingSessionId: 'meeting', question: 'Preferred option?',
+      strawpolls: [{id: 'poll', committeeId: 'committee', meetingSessionId: 'meeting', ordinal: 1, question: 'Preferred option?',
         votingMode: 'SEAT_AUTHENTICATED', multipleChoice: false, status: 'OPEN', stage: 'VOTING', medium: 'LINK',
         optionsArePublic: false, seriesId: 'poll', roundNumber: 1, supersededById: null,
         options: [{id: 'one', label: 'Option one', sortOrder: 0, voteCount: 1},
@@ -1392,7 +1392,7 @@ describe('committee workspace routes and roles', () => {
 
   it('keeps manual tallies and the legacy results progress view separate from linked voting', async () => {
     const setStrawpollManualTally = vi.fn(async (): Promise<Strawpoll> => ({} as Strawpoll));
-    const manual: Strawpoll = {id: 'poll', committeeId: 'committee', meetingSessionId: 'meeting', question: 'Count?',
+    const manual: Strawpoll = {id: 'poll', committeeId: 'committee', meetingSessionId: 'meeting', ordinal: 1, question: 'Count?',
       votingMode: 'SEAT_AUTHENTICATED', multipleChoice: true, status: 'OPEN', stage: 'VOTING', medium: 'MANUAL',
       optionsArePublic: false, seriesId: 'poll', roundNumber: 1, supersededById: null,
       options: [{id: 'one', label: 'Option one', sortOrder: 0, voteCount: 3}], seatVotes: [], revision: 4,
@@ -1416,7 +1416,7 @@ describe('committee workspace routes and roles', () => {
 
   it('keeps only text, amendments, and voting after the resolution feed is removed', async () => {
     const page = await render('PUBLIC', '/committees/committee/resolutions/resolution/text', user, value => ({...value,
-      documents: [{id: 'resolution', committeeId: 'committee', meetingSessionId: 'meeting', kind: 'RESOLUTION', resolutionId: null,
+      documents: [{id: 'resolution', committeeId: 'committee', meetingSessionId: 'meeting', kind: 'RESOLUTION', resolutionId: null, ordinal: 1, customTitle: null,
         title: 'Climate resolution', status: 'PUBLISHED', rulePackageVersionId: 'rules', currentVersion: {id: 'version',
           versionNumber: 1, content: 'Operative text', contentFile: null,
           createdAt: '2026-08-14T00:00:00.000Z'}, votingVersionId: null,
@@ -1435,14 +1435,14 @@ describe('committee workspace routes and roles', () => {
     const createAmendment = vi.fn(async (): Promise<ProceedingDocument> => ({} as ProceedingDocument));
     const deleteAmendment = vi.fn(async () => ({id: 'amendment', deleted: true as const}));
     const resolution: ProceedingDocument = {id: 'resolution', committeeId: 'committee', meetingSessionId: 'meeting',
-      kind: 'RESOLUTION', resolutionId: null, title: 'New draft resolution 1', status: 'PUBLISHED',
+      kind: 'RESOLUTION', resolutionId: null, ordinal: 1, customTitle: null, title: 'New draft resolution 1', status: 'PUBLISHED',
       rulePackageVersionId: 'rules', currentVersion: {id: 'resolution-version', versionNumber: 1,
         content: 'Resolution body', contentFile: null, createdAt: '2026-08-14T00:00:00.000Z'}, votingVersionId: null,
       public: true, proposerSeatId: 'seat', seconderSeatId: null, delegatesCanAmend: false, directVote: null,
       resultDecisions: [], revision: 2, discussion: [], createdAt: '2026-08-14T00:00:00.000Z',
       updatedAt: '2026-08-14T00:00:00.000Z'};
     const amendment: ProceedingDocument = {...resolution, id: 'amendment', kind: 'AMENDMENT',
-      resolutionId: 'resolution', title: 'New amendment 1', status: 'DRAFT', public: false,
+      resolutionId: 'resolution', ordinal: 1, customTitle: null, title: 'New amendment 1', status: 'DRAFT', public: false,
       currentVersion: {id: 'amendment-version', versionNumber: 1, content: 'Replace clause 1', contentFile: null,
         createdAt: '2026-08-14T00:00:00.000Z'}, revision: 1};
     const page = await render('CHAIR', '/committees/committee/resolutions/resolution/amendments', user, value => ({...value,
@@ -1459,7 +1459,7 @@ describe('committee workspace routes and roles', () => {
     const add = page.querySelector<HTMLButtonElement>('button[aria-label="Create amendment"]');
     await act(async () => {add?.click(); await Promise.resolve();});
     expect(createAmendment).toHaveBeenCalledWith('resolution',
-      {meetingSessionId: 'meeting', title: '', content: '', onBehalfOfSeatId: 'seat'});
+      {meetingSessionId: 'meeting', customTitle: null, content: '', onBehalfOfSeatId: 'seat'});
     const trash = page.querySelector<HTMLButtonElement>('.amendment-card button[aria-label="Delete"]');
     expect(trash?.disabled).toBe(false);
     await act(async () => {trash?.click(); await Promise.resolve();});
@@ -1469,14 +1469,14 @@ describe('committee workspace routes and roles', () => {
   it('opens and embeds the retained formal ballot from a voting amendment card', async () => {
     const createBallot = vi.fn(async () => ({}));
     const resolution: ProceedingDocument = {id: 'resolution', committeeId: 'committee', meetingSessionId: 'meeting',
-      kind: 'RESOLUTION', resolutionId: null, title: 'New draft resolution 1', status: 'PUBLISHED',
+      kind: 'RESOLUTION', resolutionId: null, ordinal: 1, customTitle: null, title: 'New draft resolution 1', status: 'PUBLISHED',
       rulePackageVersionId: 'rules', currentVersion: {id: 'resolution-version', versionNumber: 1,
         content: 'Resolution body', contentFile: null, createdAt: '2026-08-14T00:00:00.000Z'}, votingVersionId: null,
       public: true, proposerSeatId: 'seat', seconderSeatId: null, delegatesCanAmend: false, directVote: null,
       resultDecisions: [], revision: 2, discussion: [], createdAt: '2026-08-14T00:00:00.000Z',
       updatedAt: '2026-08-14T00:00:00.000Z'};
     const amendment: ProceedingDocument = {...resolution, id: 'amendment', kind: 'AMENDMENT',
-      resolutionId: 'resolution', title: 'New amendment 1', status: 'VOTING', votingVersionId: 'amendment-version',
+      resolutionId: 'resolution', ordinal: 1, customTitle: null, title: 'New amendment 1', status: 'VOTING', votingVersionId: 'amendment-version',
       currentVersion: {id: 'amendment-version', versionNumber: 1, content: 'Replace clause 1', contentFile: null,
         createdAt: '2026-08-14T00:00:00.000Z'}, revision: 3};
     const base = (value: CommitteeWorkspaceSnapshot) => ({...value,
@@ -1511,7 +1511,7 @@ describe('committee workspace routes and roles', () => {
 
   it('creates an empty, system-named draft immediately from the resolution plus route', async () => {
     const created: ProceedingDocument = {id: 'created-resolution', committeeId: 'committee', meetingSessionId: 'meeting',
-      kind: 'RESOLUTION', resolutionId: null, title: 'New draft resolution 1', status: 'DRAFT',
+      kind: 'RESOLUTION', resolutionId: null, ordinal: 1, customTitle: null, title: 'New draft resolution 1', status: 'DRAFT',
       rulePackageVersionId: 'rules', currentVersion: {id: 'version', versionNumber: 1, content: '', contentFile: null,
         createdAt: '2026-08-14T00:00:00.000Z'}, votingVersionId: null, public: false, proposerSeatId: null,
       seconderSeatId: null, delegatesCanAmend: false, directVote: null, resultDecisions: [], revision: 1,
@@ -1522,12 +1522,12 @@ describe('committee workspace routes and roles', () => {
         activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1,
         createdAt: '2026-08-14T00:00:00.000Z', closedAt: null}}), {createResolution});
     expect(createResolution).toHaveBeenCalledTimes(1);
-    expect(createResolution).toHaveBeenCalledWith('committee', {meetingSessionId: 'meeting', title: '', content: ''});
+    expect(createResolution).toHaveBeenCalledWith('committee', {meetingSessionId: 'meeting', customTitle: null, content: ''});
   });
 
   it('uploads a resolution body file and attaches it as the new document version', async () => {
     const document: ProceedingDocument = {id: 'resolution', committeeId: 'committee', meetingSessionId: 'meeting',
-      kind: 'RESOLUTION', resolutionId: null, title: 'New draft resolution 1', status: 'DRAFT',
+      kind: 'RESOLUTION', resolutionId: null, ordinal: 1, customTitle: null, title: 'New draft resolution 1', status: 'DRAFT',
       rulePackageVersionId: 'rules', currentVersion: {id: 'version', versionNumber: 1, content: '', contentFile: null,
         createdAt: '2026-08-14T00:00:00.000Z'}, votingVersionId: null, public: false, proposerSeatId: null,
       seconderSeatId: null, delegatesCanAmend: false, directVote: null, resultDecisions: [], revision: 1,
@@ -1564,7 +1564,7 @@ describe('committee workspace routes and roles', () => {
     expect(uploadFileContent).toHaveBeenCalledWith('upload', body, expect.any(String), expect.any(Object));
     expect(commitFileUpload).toHaveBeenCalledWith('upload', expect.any(String));
     expect(createDocumentVersion).toHaveBeenCalledWith('resolution', {baseRevision: 1,
-      title: 'New draft resolution 1', content: '', contentFileEntryId: 'file', onBehalfOfSeatId: 'seat'});
+      customTitle: null, content: '', contentFileEntryId: 'file', onBehalfOfSeatId: 'seat'});
   });
 
   it('publishes an attached resolution file through the existing review workflow', async () => {
@@ -1575,7 +1575,7 @@ describe('committee workspace routes and roles', () => {
       revision: 2, submittedAt: '2026-08-14T00:01:00.000Z', publishedAt: null,
       createdAt: '2026-08-14T00:00:00.000Z', updatedAt: '2026-08-14T00:01:00.000Z'};
     const document: ProceedingDocument = {id: 'resolution', committeeId: 'committee', meetingSessionId: 'meeting',
-      kind: 'RESOLUTION', resolutionId: null, title: 'New draft resolution 1', status: 'DRAFT',
+      kind: 'RESOLUTION', resolutionId: null, ordinal: 1, customTitle: null, title: 'New draft resolution 1', status: 'DRAFT',
       rulePackageVersionId: 'rules', currentVersion: {id: 'version', versionNumber: 2, content: '', contentFile: {
         id: 'file', logicalName: 'draft.pdf', originalName: 'draft.pdf', mediaType: 'application/pdf',
         status: 'PENDING_REVIEW'}, createdAt: '2026-08-14T00:01:00.000Z'}, votingVersionId: null, public: false,
@@ -1600,7 +1600,7 @@ describe('committee workspace routes and roles', () => {
       attendance: [{seatId: 'seat', state: 'PRESENT', lastEventId: 'attendance',
         updatedAt: '2026-08-14T00:00:00.000Z'}],
       documents: [{id: 'resolution', committeeId: 'committee', meetingSessionId: 'meeting', kind: 'RESOLUTION',
-        resolutionId: null, title: 'A/RES/1', status: 'PUBLISHED', rulePackageVersionId: 'rules',
+        resolutionId: null, ordinal: 1, customTitle: null, title: 'A/RES/1', status: 'PUBLISHED', rulePackageVersionId: 'rules',
         currentVersion: {id: 'version', versionNumber: 1, content: '', contentFile: null,
           createdAt: '2026-08-14T00:00:00.000Z'},
         votingVersionId: null, public: true, proposerSeatId: 'seat', seconderSeatId: null, delegatesCanAmend: false,
@@ -1721,5 +1721,5 @@ describe('committee workspace routes and roles', () => {
     expect(page.querySelector('.delegate-file-chair-upload')).not.toBeNull();
     expect(page.querySelector('.delegate-file-card-list')).toBeNull();
   });
-  it('keeps the strawpoll page mounted while typing a newly added option', async () => { const page = await render('CHAIR', '/committees/committee/strawpolls/poll', user, value => ({...value, strawpolls: [{id: 'poll', committeeId: 'committee', meetingSessionId: 'meeting', question: 'Choice?', votingMode: 'SEAT_AUTHENTICATED', multipleChoice: true, status: 'OPEN', stage: 'PREPARING', medium: 'LINK', optionsArePublic: false, seriesId: 'poll', roundNumber: 1, supersededById: null, options: [], seatVotes: [], revision: 1, createdAt: '2026-08-16T00:00:00.000Z', closedAt: null}]})); const add = [...page.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.includes('Add option')); await act(async () => {add?.click(); await Promise.resolve();}); const option = page.querySelectorAll<HTMLInputElement>('.strawpoll-page input')[1]; await act(async () => {Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(option, 'Option A'); option?.dispatchEvent(new Event('input', {bubbles: true})); await Promise.resolve();}); expect(page.querySelector('.strawpoll-page')).not.toBeNull(); expect(page.textContent).toContain('Create manual poll'); });
+  it('keeps the strawpoll page mounted while typing a newly added option', async () => { const page = await render('CHAIR', '/committees/committee/strawpolls/poll', user, value => ({...value, strawpolls: [{id: 'poll', committeeId: 'committee', meetingSessionId: 'meeting', ordinal: 1, question: 'Choice?', votingMode: 'SEAT_AUTHENTICATED', multipleChoice: true, status: 'OPEN', stage: 'PREPARING', medium: 'LINK', optionsArePublic: false, seriesId: 'poll', roundNumber: 1, supersededById: null, options: [], seatVotes: [], revision: 1, createdAt: '2026-08-16T00:00:00.000Z', closedAt: null}]})); const add = [...page.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.includes('Add option')); await act(async () => {add?.click(); await Promise.resolve();}); const option = page.querySelectorAll<HTMLInputElement>('.strawpoll-page input')[1]; await act(async () => {Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(option, 'Option A'); option?.dispatchEvent(new Event('input', {bubbles: true})); await Promise.resolve();}); expect(page.querySelector('.strawpoll-page')).not.toBeNull(); expect(page.textContent).toContain('Create manual poll'); });
 });

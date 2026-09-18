@@ -138,7 +138,7 @@ describe('self-hosted stage 4 API client', () => {
     const fetchMock = vi.fn(async () => ({ok: true, status: 200,
       json: async () => ({data: {id: 'list'}, meta: {requestId: 'speaker'}})}));
     vi.stubGlobal('fetch', fetchMock);
-    await selfHostedApi.updateSpeakerList('list', 2, {name: '主发言名单', delegatesCanQueue: true});
+    await selfHostedApi.updateSpeakerList('list', 2, {customTitle: '主发言名单', delegatesCanQueue: true});
     await selfHostedApi.joinSpeakerQueue('list', 'seat', 'FOR');
     await selfHostedApi.removeSpeakerQueueEntry('list', 'entry', 3);
     await selfHostedApi.setSpeakerListStatus('list', 4, 'CLOSED');
@@ -153,7 +153,7 @@ describe('self-hosted stage 4 API client', () => {
       '/api/v1/speeches/speech/yield',
       '/api/v1/speeches/speech/yield-decision'
     ]);
-    expect(calls[0]?.[1].body).toBe(JSON.stringify({baseRevision: 2, name: '主发言名单', delegatesCanQueue: true}));
+    expect(calls[0]?.[1].body).toBe(JSON.stringify({baseRevision: 2, customTitle: '主发言名单', delegatesCanQueue: true}));
     expect(calls[1]?.[1].body).toBe(JSON.stringify({seatId: 'seat', stance: 'FOR'}));
     expect(calls[4]?.[1].body).toBe(JSON.stringify({baseRevision: 5, type: 'QUESTIONS', targetSeatId: 'questioner'}));
     expect(calls[5]?.[1].body).toBe(JSON.stringify({baseRevision: 6, decision: 'ACCEPT'}));

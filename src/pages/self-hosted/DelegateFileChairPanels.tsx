@@ -1,3 +1,4 @@
+import {formatCommitteeContent} from '@quorum/contracts';
 import * as React from 'react';
 import type {CommitteeWorkspaceSnapshot, DelegateFileType, DelegateReviewFile, DelegateFileSettings} from '@quorum/contracts';
 import QRCode from 'qrcode';
@@ -153,7 +154,12 @@ function DelegateFileReviewPanel({snapshot, api, files, refresh}: {
   }, [files]);
   const run = async (operation: () => Promise<unknown>) => {setWorking(true); setError(undefined); try {await operation(); await refresh();}
     catch (caught) {setError(storageErrorText(caught));} finally {setWorking(false);}};
-  const nameFor = (file: DelegateReviewFile) => names[file.id] ?? file.suggestedNames?.[types[file.id] ?? file.fileType ?? 'WORKING_PAPER'] ?? file.logicalName;
+  const nameFor = (file: DelegateReviewFile) => {
+    const fileType = types[file.id] ?? file.fileType ?? 'WORKING_PAPER';
+    const suggestion = file.suggestedNames?.[fileType];
+    return names[file.id] ?? (suggestion ? formatCommitteeContent({kind: 'FILE', fileType, ...suggestion},
+      snapshot.committee.committeeLanguage) : file.logicalName);
+  };
   const pendingFiles = files
     .filter(file => ['UPLOAD_COMPLETE', 'PENDING_REVIEW'].includes(file.status))
     .sort((first, second) => toSubmissionTime(first.submittedAt) - toSubmissionTime(second.submittedAt));

@@ -1,3 +1,4 @@
+import {speakerListName} from '../stage5/service.js';
 import {createHash, randomUUID} from 'node:crypto';
 import type {Pool, PoolClient, QueryResultRow} from 'pg';
 import type {
@@ -233,8 +234,9 @@ interface SnapshotTimerRow extends QueryResultRow {
 }
 
 interface SnapshotSpeakerListRow extends QueryResultRow {
+  rule_definition: {speakerLists?: Array<{id: string; yieldTypes?: string[]}>};
   id: string; committee_id: string; meeting_session_id: string; kind: SpeakerList['kind']; status: SpeakerList['status'];
-  name: string; topic: string; default_speech_ms: string | number; delegates_can_queue: boolean;
+  custom_title: string | null; topic: string; default_speech_ms: string | number; delegates_can_queue: boolean;
   rule_package_version_id: string; current_entry_id: string | null;
   speech_timer_id: string; total_timer_id: string | null; linked_resolution_document_id: string | null;
   revision: number; created_at: Date; closed_at: Date | null;
@@ -270,7 +272,7 @@ function ballotChoices(value: BallotChoice[] | string): BallotChoice[] {
 }
 
 interface SnapshotStrawpollRow extends QueryResultRow {
-  id: string; committee_id: string; meeting_session_id: string; question: string;
+  id: string; committee_id: string; meeting_session_id: string; ordinal: number; question: string;
   voting_mode: Strawpoll['votingMode']; multiple_choice: boolean; status: Strawpoll['status']; stage: Strawpoll['stage'];
   medium: Strawpoll['medium']; options_are_public: boolean; series_id: string; round_number: number;
   superseded_by_id: string | null; revision: number;
@@ -278,7 +280,7 @@ interface SnapshotStrawpollRow extends QueryResultRow {
 }
 
 interface SnapshotDocumentRow extends QueryResultRow {
-  id: string; committee_id: string; meeting_session_id: string; kind: ProceedingDocument['kind']; title: string;
+  id: string; committee_id: string; meeting_session_id: string; kind: ProceedingDocument['kind']; custom_title: string | null; ordinal: number;
   status: ProceedingDocument['status']; rule_package_version_id: string; current_version_id: string;
   voting_version_id: string | null; is_public: boolean; revision: number; created_at: Date; updated_at: Date;
   resolution_document_id: string | null;
@@ -369,9 +371,17 @@ async function insertAttendanceEvent(client: PoolClient, input: {
     sourcePointId: input.sourcePointId ?? null, createdAt: createdAt.toISOString()};
 }
 
-function point(row: PointRow): CommitteePoint {
+async function pointTypeNames(client: PoolClient, row: PointRow): Promise<LocalizedNames> {
+  const result = await client.query<{definition: {points?: Array<{id: string; names?: LocalizedNames}>}}>(
+    'SELECT definition FROM rule_package_versions WHERE id=$1', [row.rule_package_version_id]);
+  const names = result.rows[0]?.definition.points?.find(item => item.id === row.point_type_id)?.names;
+  if (!names) throw new AppError({code: 'SERVICE_NOT_READY', message: 'Point rule definition is unavailable.'});
+  return names;
+}
+
+async function point(client: PoolClient, row: PointRow): Promise<CommitteePoint> {
   return {id: row.id, committeeId: row.committee_id, meetingSessionId: row.meeting_session_id,
-    pointTypeId: row.point_type_id, content: row.content, raisedBySeatId: row.raised_by_seat_id,
+    typeNames: await pointTypeNames(client, row), pointTypeId: row.point_type_id, content: row.content, raisedBySeatId: row.raised_by_seat_id,
     raisedBySeatDisplayName: row.raised_by_seat_display_name, actorUserId: row.actor_user_id,
     onBehalfOfSeatId: row.on_behalf_of_seat_id, interruptRequested: row.interrupt_requested, status: row.status,
     chairResponse: row.chair_response, resolvedByUserId: row.resolved_by_user_id,
@@ -700,16 +710,15 @@ export class Stage4Service {
         client.query<MeetingSessionRow>('SELECT * FROM meeting_sessions WHERE committee_id=$1 ORDER BY ordinal DESC', [committeeId])
       ]);
       const currentSession = sessionResult.rows[0];
-      const nextMeetingSessionName = formatCommitteeContent({kind: 'SESSION', ordinal: committee.next_session_ordinal}, committee.committee_language);
       let currentRollCall: RollCall | undefined; let attendance: AttendanceState[] = [];
       const pointRows = await client.query<PointRow>('SELECT * FROM points WHERE committee_id=$1 ORDER BY created_at,id', [committeeId]);
-      const points: Array<CommitteePoint | PublicCommitteePoint> = viewer.audience === 'PUBLIC'
-        ? pointRows.rows.map(row => ({id: row.id, committeeId: row.committee_id, meetingSessionId: row.meeting_session_id,
+      const points: Array<CommitteePoint | PublicCommitteePoint> = await Promise.all(viewer.audience === 'PUBLIC'
+        ? pointRows.rows.map(async row => ({typeNames: await pointTypeNames(client, row), id: row.id, committeeId: row.committee_id, meetingSessionId: row.meeting_session_id,
           pointTypeId: row.point_type_id, raisedBySeatId: row.raised_by_seat_id,
           raisedBySeatDisplayName: row.raised_by_seat_display_name, interruptRequested: row.interrupt_requested,
           status: row.status, rulePackageVersionId: row.rule_package_version_id, revision: row.revision,
           createdAt: row.created_at.toISOString(), resolvedAt: row.resolved_at?.toISOString() ?? null}))
-        : pointRows.rows.map(point);
+        : pointRows.rows.map(row => point(client, row)));
       if (currentSession) {
         if (viewer.audience !== 'PUBLIC') {
           const rollCallResult = await client.query<RollCallRow>(`SELECT * FROM roll_calls WHERE meeting_session_id=$1
@@ -760,10 +769,10 @@ export class Stage4Service {
         ...(currentSession ? {meetingSession: meetingSession(currentSession, committee.committee_language)} : {}),
         meetingEndedAt: committee.meeting_ended_at?.toISOString() ?? null,
         meetingSessions: meetingSessionsResult.rows.map(row => meetingSession(row, committee.committee_language)),
-        nextMeetingSessionName: currentSession?.status === 'PENDING' ? meetingSession(currentSession, committee.committee_language).name : nextMeetingSessionName,
+        nextMeetingSessionOrdinal: currentSession?.status === 'PENDING' ? currentSession.ordinal : committee.next_session_ordinal,
         ...(currentRollCall ? {rollCall: currentRollCall} : {})};
-      const speakerRows = await client.query<SnapshotSpeakerListRow>(`SELECT * FROM speaker_lists
-        WHERE committee_id=$1 ORDER BY created_at,id`, [committeeId]);
+      const speakerRows = await client.query<SnapshotSpeakerListRow>(`SELECT s.*,v.definition AS rule_definition FROM speaker_lists s
+        JOIN rule_package_versions v ON v.id=s.rule_package_version_id WHERE s.committee_id=$1 ORDER BY s.created_at,s.id`, [committeeId]);
       result.speakerLists = await Promise.all(speakerRows.rows.map(async row => {
         const queue = await client.query<{id: string; seat_id: string; seat_display_name: string; position: number;
           status: SpeakerList['queue'][number]['status']; stance: SpeakerList['queue'][number]['stance'];
@@ -771,7 +780,8 @@ export class Stage4Service {
           stance,speech_duration_ms,created_at
           FROM speaker_queue_entries WHERE speaker_list_id=$1 ORDER BY position,created_at,id`, [row.id]);
         return {id: row.id, committeeId: row.committee_id, meetingSessionId: row.meeting_session_id, kind: row.kind,
-          status: row.status, name: row.name, topic: row.topic, defaultSpeechMs: Number(row.default_speech_ms),
+          status: row.status, yieldTypes: row.rule_definition.speakerLists?.find(item => item.id === (row.kind === 'GENERAL' ? 'general-speakers-list' : 'moderated-caucus'))?.yieldTypes,
+          customTitle: row.custom_title, name: await speakerListName(client, row, committee.committee_language), topic: row.topic, defaultSpeechMs: Number(row.default_speech_ms),
           delegatesCanQueue: row.delegates_can_queue,
           rulePackageVersionId: row.rule_package_version_id, currentEntryId: row.current_entry_id,
           speechTimerId: row.speech_timer_id, totalTimerId: row.total_timer_id,
@@ -856,7 +866,7 @@ export class Stage4Service {
           FROM strawpoll_seat_votes WHERE strawpoll_id=$1 AND retracted_at IS NULL AND ($2 OR seat_id=$3)
           ORDER BY seat_id`, [row.id, revealAllSeatVotes, viewer.seatId]);
         return {id: row.id, committeeId: row.committee_id, meetingSessionId: row.meeting_session_id,
-          question: row.question, votingMode: row.voting_mode, multipleChoice: row.multiple_choice, status: row.status,
+          ordinal: row.ordinal, question: row.question, votingMode: row.voting_mode, multipleChoice: row.multiple_choice, status: row.status,
           stage: row.stage, medium: row.medium, optionsArePublic: row.options_are_public, seriesId: row.series_id,
           roundNumber: row.round_number, supersededById: row.superseded_by_id,
           options: options.rows.map(option => ({id: option.id, label: option.label, sortOrder: option.sort_order,
@@ -942,7 +952,9 @@ export class Stage4Service {
           proposerSeatId = amendment.rows[0]?.proposer_seat_id ?? null;
         }
         return {id: row.id, committeeId: row.committee_id, meetingSessionId: row.meeting_session_id, kind: row.kind,
-          resolutionId: row.resolution_document_id, title: row.title, status: row.status,
+          resolutionId: row.resolution_document_id, ordinal: row.ordinal, customTitle: row.custom_title,
+          title: formatCommitteeContent({kind: row.kind, ordinal: row.ordinal, customTitle: row.custom_title,
+            sessionOrdinal: meetingSessionsResult.rows.find(session => session.id === row.meeting_session_id)!.ordinal}, committee.committee_language), status: row.status,
           rulePackageVersionId: row.rule_package_version_id,
           currentVersion: {id: current.id, versionNumber: current.version_number, content: current.content,
             contentFile: current.content_file_entry_id && current.logical_name && current.original_name && current.media_type
@@ -1391,9 +1403,9 @@ export class Stage4Service {
               (id,committee_id,owner_type,owner_id,remaining_at_start_ms,created_by_user_id)
               VALUES ($1,$2,'SPEAKER_LIST',$3,$4,$5)`, [speechTimerId, committeeId, speakerListId, defaultSpeechMs, auth.user.id]);
             await client.query(`INSERT INTO speaker_lists
-              (id,committee_id,meeting_session_id,kind,status,name,topic,default_speech_ms,delegates_can_queue,
+              (id,committee_id,meeting_session_id,kind,status,custom_title,topic,default_speech_ms,delegates_can_queue,
                rule_package_version_id,speech_timer_id,created_by_user_id,closed_at)
-              VALUES ($1,$2,$3,'GENERAL',$4,'General Speakers'' List','',$5,true,$6,$7,$8,
+              VALUES ($1,$2,$3,'GENERAL',$4,NULL,'',$5,true,$6,$7,$8,
                 CASE WHEN $4='CLOSED' THEN now() ELSE NULL END)`,
             [speakerListId, committeeId, id, pendingSession.formal_debate_open ? 'OPEN' : 'CLOSED', defaultSpeechMs,
               pendingSession.active_rule_package_version_id, speechTimerId, auth.user.id]);
@@ -1405,9 +1417,9 @@ export class Stage4Service {
           (id,committee_id,owner_type,owner_id,remaining_at_start_ms,created_by_user_id)
           VALUES ($1,$2,'SPEAKER_LIST',$3,$4,$5)`, [speechTimerId, committeeId, speakerListId, defaultSpeechMs, auth.user.id]);
         await client.query(`INSERT INTO speaker_lists
-          (id,committee_id,meeting_session_id,kind,status,name,topic,default_speech_ms,delegates_can_queue,
+          (id,committee_id,meeting_session_id,kind,status,custom_title,topic,default_speech_ms,delegates_can_queue,
            rule_package_version_id,speech_timer_id,created_by_user_id,closed_at)
-          VALUES ($1,$2,$3,'GENERAL','CLOSED','General Speakers'' List','',$4,true,$5,$6,$7,now())`,
+          VALUES ($1,$2,$3,'GENERAL','CLOSED',NULL,'',$4,true,$5,$6,$7,now())`,
         [speakerListId, committeeId, id, defaultSpeechMs, committee.active_rule_package_version_id, speechTimerId, auth.user.id]);
       }
       const session = inserted.rows[0] as MeetingSessionRow;
@@ -1418,7 +1430,7 @@ export class Stage4Service {
         resourceId: id, revision: session.revision, payload: {ordinal: session.ordinal, phaseId, rulePackageVersionId: session.active_rule_package_version_id,
           generalSpeakerListId: speakerListId, meetingEndedAt: null}});
       if (!pendingSession || createdReplacement) await appendEvent(client, committee, {type: 'speaker_list.created', resourceType: 'speaker_list',
-        resourceId: speakerListId, revision: 1, payload: {kind: 'GENERAL', name: "General Speakers' List", topic: '',
+        resourceId: speakerListId, revision: 1, payload: {kind: 'GENERAL', customTitle: null, topic: '',
           defaultSpeechMs, totalDurationMs: null, delegatesCanQueue: true,
           rulePackageVersionId: pendingSession?.active_rule_package_version_id ?? committee.active_rule_package_version_id}, audience: 'PUBLIC'});
       await audit(client, context, {committeeId, actorUserId: auth.user.id, capabilities: ['CHAIR'],
@@ -1794,7 +1806,7 @@ export class Stage4Service {
         if (actedOnBehalf) await audit(client, context, {committeeId, actorUserId: auth.user.id, capabilities: ['CHAIR'],
           onBehalfOfSeatId: seatId, action: 'proceedings.chair_acted_on_behalf', resourceType: 'point', resourceId: id,
           after: {command: 'point.raised', pointTypeId}});
-        return point(result.rows[0] as PointRow);
+        return point(client, result.rows[0] as PointRow);
       }});
   }
 
@@ -1852,7 +1864,7 @@ export class Stage4Service {
         capabilities: ['CHAIR'], onBehalfOfSeatId: current.raised_by_seat_id,
         action: 'proceedings.attendance_changed', resourceType: 'point', resourceId: pointId,
         after: {meetingSessionId: current.meeting_session_id, seatId: current.raised_by_seat_id, type: attendanceType}});
-      return point(updated.rows[0] as PointRow);
+      return point(client, updated.rows[0] as PointRow);
     });
   }
 

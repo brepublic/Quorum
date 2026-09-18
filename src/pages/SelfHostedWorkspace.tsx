@@ -12,7 +12,7 @@ import type {
   CountryTemplate,
   Stage4CommitteeSeat
 } from '@quorum/contracts';
-import {committeeContentName, templateLanguageAvailability, intersectContentLanguages} from '@quorum/contracts';
+import {formatCommitteeContent, committeeContentName, templateLanguageAvailability, intersectContentLanguages} from '@quorum/contracts';
 import {Link, Redirect, Route, Switch, useHistory, useLocation, useParams} from 'react-router-dom';
 import {Button, Card, Checkbox, Confirm, Container, Divider, Form, Grid, Header, Icon, Label, List, Menu, Message, Modal, Pagination, Popup, Segment, Table} from 'semantic-ui-react';
 import Loading from '../components/Loading';
@@ -710,7 +710,8 @@ function SettingsPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
 function RollCallPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspaceSnapshot; run(operation: () => Promise<unknown>): Promise<void>;
   api: SelfHostedApi; canChair: boolean}) {
   const chair = canChair; const session = snapshot.meetingSession; const rollCall = snapshot.rollCall;
-  const sessionName = session?.status === 'PENDING' ? session.name : snapshot.nextMeetingSessionName;
+  const nextOrdinal = session?.status === 'PENDING' ? session.ordinal : snapshot.nextMeetingSessionOrdinal;
+  const sessionName = nextOrdinal ? formatCommitteeContent({kind: 'SESSION', ordinal: nextOrdinal}, snapshot.committee.committeeLanguage) : '';
   const [pending, setPending] = React.useState<string>();
   const [missingGeneralListConfirm, setMissingGeneralListConfirm] = React.useState(false);
   const [page, setPage] = React.useState(0); const [resetOpen, setResetOpen] = React.useState(false);
@@ -918,7 +919,7 @@ function PointsPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspa
     {canRaise && session?.status === 'OPEN' && <Form className="point-proposal-form" onSubmit={create}>
       <Form.Select label={t('Point type')} placeholder={t('Select type')} search selection fluid icon="search"
         value={type} options={types.map(item => ({key: item.id, value: item.id,
-          text: item.names ? localizedDisplayName(item.names, 'zh-CN') : t(item.id)}))}
+          text: item.names ? committeeContentName(item.names, snapshot.committee.committeeLanguage) : t(item.id)}))}
         onChange={(_, data) => setType(String(data.value))} />
       {canChair && <Form.Select label={t('Point proposer')} placeholder={t('Select point proposer')} search selection
         fluid icon="search" value={seatId || false} options={snapshot.seats.map(seat => ({key: seat.id,
@@ -933,10 +934,8 @@ function PointsPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspa
       {group.meetingSessionId !== snapshot.meetingSession?.id && <Divider horizontal className="history-session-divider">{sessionNames.get(group.meetingSessionId) ?? t('Meeting session')}</Divider>}
       <Card.Group itemsPerRow={1} className="point-list">{group.points.map(item => {
       const point = 'content' in item ? item as CommitteePoint : undefined;
-      const definition = types.find(candidate => candidate.id === item.pointTypeId);
       return <Card className="point-card" key={item.id}><Card.Content>
-        <div className="motion-heading"><Card.Header>{definition?.names
-          ? localizedDisplayName(definition.names, 'zh-CN') : t(item.pointTypeId)}</Card.Header>
+        <div className="motion-heading"><Card.Header>{committeeContentName(item.typeNames, snapshot.committee.committeeLanguage)}</Card.Header>
           <Label>{point ? label(point) : t(item.status)}</Label></div>
         <Card.Meta className="motion-metadata">
           <div className="motion-metadata-row"><Label horizontal>{t('Point proposer')}</Label>
@@ -1071,7 +1070,7 @@ function ModeratedCaucusCreateModal({open, snapshot, run, api, canChair, onClose
     let created: Awaited<ReturnType<SelfHostedApi['createSpeakerList']>> | undefined;
     try {
       await run(async () => {created = await api.createSpeakerList(snapshot.committee.id, {meetingSessionId: session.id,
-        kind: 'MODERATED_CAUCUS', name: topic.trim(), topic: topic.trim(), defaultSpeechMs: unitDurationMs,
+        kind: 'MODERATED_CAUCUS', customTitle: null, topic: topic.trim(), defaultSpeechMs: unitDurationMs,
         totalDurationMs});});
     } finally {
       setSubmitting(false);

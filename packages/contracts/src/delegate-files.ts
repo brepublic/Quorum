@@ -28,7 +28,7 @@ export interface DelegateReviewFile extends DelegatePublishedFile {
   rejectionReason?: string | null;
   reviewedAt?: string | null;
   deleted?: boolean;
-  suggestedNames?: Record<DelegateFileType, string>;
+  suggestedNames?: Record<DelegateFileType, {sessionOrdinal: number; ordinal: number}>;
   submissionSource: 'DELEGATE_PORTAL' | 'CHAIR' | 'ACCOUNT' | 'LEGACY';
   originalName: string;
   sizeBytes: number;

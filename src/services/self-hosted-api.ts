@@ -307,11 +307,11 @@ export const selfHostedApi = {
       body: {baseRevision, ...(durationMs === undefined ? {} : {durationMs})}});
   },
   createSpeakerList(committeeId: string, input: {meetingSessionId: string; kind: 'GENERAL' | 'MODERATED_CAUCUS';
-    name?: string; topic?: string; defaultSpeechMs: number; totalDurationMs?: number; delegatesCanQueue?: boolean}) {
+    customTitle?: string | null; topic?: string; defaultSpeechMs: number; totalDurationMs?: number; delegatesCanQueue?: boolean}) {
     return request<SpeakerList>(`/api/v1/committees/${committeeId}/speaker-lists`, {method: 'POST',
       body: input, idempotencyKey: key()});
   },
-  updateSpeakerList(id: string, baseRevision: number, input: {name?: string; topic?: string; defaultSpeechMs?: number;
+  updateSpeakerList(id: string, baseRevision: number, input: {customTitle?: string | null; topic?: string; defaultSpeechMs?: number;
     delegatesCanQueue?: boolean}) {
     return request<SpeakerList>(`/api/v1/speaker-lists/${id}/settings`, {method: 'POST',
       body: {baseRevision, ...input}});
@@ -423,12 +423,12 @@ export const selfHostedApi = {
     return request<Strawpoll>(`/api/v1/strawpolls/${id}/manual-tallies`, {method: 'POST',
       body: {baseRevision, optionId, tally}});
   },
-  createResolution(committeeId: string, input: {meetingSessionId: string; title: string; content: string;
+  createResolution(committeeId: string, input: {meetingSessionId: string; customTitle: string | null; content: string;
     onBehalfOfSeatId?: string}) {
     return request<ProceedingDocument>(`/api/v1/committees/${committeeId}/resolutions`, {method: 'POST',
       body: input, idempotencyKey: key()});
   },
-  createAmendment(resolutionId: string, input: {meetingSessionId: string; title: string; content: string;
+  createAmendment(resolutionId: string, input: {meetingSessionId: string; customTitle: string | null; content: string;
     onBehalfOfSeatId?: string}) {
     return request<ProceedingDocument>(`/api/v1/resolutions/${resolutionId}/amendments`, {method: 'POST',
       body: input, idempotencyKey: key()});
@@ -436,7 +436,7 @@ export const selfHostedApi = {
   deleteAmendment(id: string, baseRevision: number) {
     return request<{id: string; deleted: true}>(`/api/v1/documents/${id}`, {method: 'DELETE', body: {baseRevision}});
   },
-  createDocumentVersion(id: string, input: {baseRevision: number; title: string; content: string; contentFileEntryId?: string | null;
+  createDocumentVersion(id: string, input: {baseRevision: number; customTitle: string | null; content: string; contentFileEntryId?: string | null;
     onBehalfOfSeatId?: string}) {
     return request<ProceedingDocument>(`/api/v1/documents/${id}/versions`, {method: 'POST', body: input});
   },

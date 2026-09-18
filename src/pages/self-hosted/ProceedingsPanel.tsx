@@ -1,3 +1,4 @@
+import {motionContentName, type ContentLanguage} from '@quorum/contracts';
 import * as React from 'react';
 import {createPortal} from 'react-dom';
 import type {
@@ -16,7 +17,7 @@ import {Button, Card, Checkbox, Container, Divider, Dropdown, Feed, Form, Grid, 
 import {Link, useHistory} from 'react-router-dom';
 import {CountryFlagDisplay} from '../../components/CountryFlagDisplay';
 import Loading from '../../components/Loading';
-import {getLanguage, localizeGeneratedName, t} from "../../i18n";
+import {getLanguage, t} from "../../i18n";
 import {newIdempotencyKey, type SelfHostedApi} from '../../services/self-hosted-api';
 import {sha256File} from '../../services/sha256';
 import {localizedDisplayName} from './TemplateManagers';
@@ -372,13 +373,19 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
   const [savingContribution, setSavingContribution] = React.useState(false);
   const [localQueueOrder, setLocalQueueOrder] = React.useState<string[] | null>(null);
   const [absentActionBlocked, setAbsentActionBlocked] = React.useState(false);
-  const displayedListName = list ? localizeGeneratedName(list.name) : '';
+  const displayedListName = list ? list.name : '';
   const [nameDraft, setNameDraft] = React.useState(displayedListName);
+  const [nameDirty, setNameDirty] = React.useState(false);
   const [topicDraft, setTopicDraft] = React.useState(list?.topic ?? '');
   React.useEffect(() => {
-    setNameDraft(list ? localizeGeneratedName(list.name) : '');
+    setNameDraft(list ? list.name : ''); setNameDirty(false);
     setTopicDraft(list?.topic ?? '');
   }, [resourceId]);
+  React.useEffect(() => {
+    if (list && (!nameDirty || (nameDraft.trim() || null) === list.customTitle)) {
+      setNameDraft(list.name); setNameDirty(false);
+    }
+  }, [list?.customTitle, list?.name]);
   const serverQueuedForCheck = (list?.queue ?? []).filter(entry => entry.status === 'QUEUED');
   const serverOrderStr = serverQueuedForCheck.map(e => e.id).join(',');
   const serverCaughtUp = localQueueOrder !== null && serverOrderStr === localQueueOrder.join(',');
@@ -404,7 +411,7 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
   }, [speech?.id, speech?.kind, speech?.yieldType]);
   const speechTimer = (snapshot.timers ?? []).find(timer => timer.id === list.speechTimerId);
   const totalTimer = (snapshot.timers ?? []).find(timer => timer.id === list.totalTimerId);
-  const configuredYields = snapshot.activeRules.speakerLists.find(item => item.id === list.kind.toLowerCase().replace('_', '-'))?.yieldTypes;
+  const configuredYields = list.yieldTypes;
   const allowedYields = configuredYields ? mapRuleYieldTypes(configuredYields) : ['CHAIR', 'SEAT', 'QUESTIONS', 'COMMENTS'];
   const presentSeatIds = new Set(snapshot.attendance.filter(item => item.state === 'PRESENT').map(item => item.seatId));
   const presentSeats = snapshot.seats.filter(seat => presentSeatIds.has(seat.id));
@@ -414,13 +421,12 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
   const operationAllowsDelegates = snapshot.committee.operationMode === 'DELEGATE_OPERATED';
   const delegatesCanQueue = operationAllowsDelegates && list.delegatesCanQueue;
   const persistHeader = (change: {name?: string; topic?: string}) => {
-    if (!canChair) return;
-    const cleaned = {...change, ...(change.name !== undefined ? {name: change.name.trim()} : {})};
-    const nameUnchanged = cleaned.name === undefined || cleaned.name === list.name
-      || cleaned.name === localizeGeneratedName(list.name);
-    const topicUnchanged = cleaned.topic === undefined || cleaned.topic === list.topic;
-    if (cleaned.name === '' || (nameUnchanged && topicUnchanged)) return;
-    void run(() => api.updateSpeakerList(list.id, list.revision, cleaned));
+    if (!canChair || change.name !== undefined && !nameDirty) return;
+    const customTitle = change.name !== undefined && nameDirty ? change.name.trim() || null : undefined;
+    const topic = change.topic !== undefined && change.topic !== list.topic ? change.topic : undefined;
+    if ((customTitle === undefined || customTitle === list.customTitle) && topic === undefined) return;
+    void run(() => api.updateSpeakerList(list.id, list.revision, {
+      ...(customTitle !== undefined ? {customTitle} : {}), ...(topic !== undefined ? {topic} : {})}));
   };
   const joinQueue = () => void run(() => api.joinSpeakerQueue(list.id, canChair ? seatId : undefined));
   const removeEntry = (entryId: string) => void run(() => api.removeSpeakerQueueEntry(list.id, entryId, list.revision));
@@ -531,7 +537,7 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
       list.revision, data.value as 'OPEN' | 'CLOSED'))} /> : <span>{statusLabel}</span>;
   const header = <Grid.Row><Grid.Column><Input label={statusControl} labelPosition="right" value={nameDraft} fluid size="massive"
     readOnly={!canChair} placeholder={t(list.kind === 'GENERAL' ? 'Set speakers list name' : 'Set caucus name')}
-    onChange={event => setNameDraft(event.currentTarget.value)}
+    onChange={event => {setNameDraft(event.currentTarget.value); setNameDirty(true);}}
     onBlur={() => persistHeader(list.kind === 'GENERAL' ? {name: nameDraft} : {name: nameDraft, topic: nameDraft})} />
     {list.kind === 'GENERAL' && <Form><TextArea value={topicDraft} rows={1} readOnly={!canChair}
       placeholder={t('Set agenda')}
@@ -702,6 +708,7 @@ function AmendmentCard({snapshot, amendment, run, api, canChair, representedSeat
   seatOptions: Array<{key: string; value: string; text: string; disabled: boolean}>;
 }) {
   const [title, setTitle] = React.useState(amendment.title);
+  const [titleDirty, setTitleDirty] = React.useState(false);
   const [content, setContent] = React.useState(amendment.currentVersion.content);
   const [source, setSource] = React.useState<'TEXT' | 'FILE'>(amendment.currentVersion.contentFile ? 'FILE' : 'TEXT');
   const [fileId, setFileId] = React.useState(amendment.currentVersion.contentFile?.id ?? '');
@@ -720,7 +727,7 @@ function AmendmentCard({snapshot, amendment, run, api, canChair, representedSeat
   const deletable = editable && !hasBallot && !amendment.votingVersionId
     && !['VOTING', 'INCORPORATED', 'REJECTED'].includes(amendment.status);
   React.useEffect(() => {
-    setTitle(amendment.title); setContent(amendment.currentVersion.content);
+    setTitle(amendment.title); setTitleDirty(false); setContent(amendment.currentVersion.content);
     setSource(amendment.currentVersion.contentFile ? 'FILE' : 'TEXT');
     setFileId(amendment.currentVersion.contentFile?.id ?? '');
   }, [amendment.id, amendment.revision]);
@@ -735,12 +742,12 @@ function AmendmentCard({snapshot, amendment, run, api, canChair, representedSeat
   const save = (nextSource = source, nextFileId = fileId) => {
     const nextContent = nextSource === 'TEXT' ? content : '';
     const contentFileEntryId = nextSource === 'FILE' ? nextFileId : null;
-    if (!editable || !title.trim() || nextSource === 'TEXT' && !nextContent.trim()
+    if (!editable || nextSource === 'TEXT' && !nextContent.trim()
       || nextSource === 'FILE' && !contentFileEntryId
-      || title === amendment.title && nextContent === amendment.currentVersion.content
+      || !titleDirty && nextContent === amendment.currentVersion.content
         && contentFileEntryId === amendment.currentVersion.contentFile?.id) return;
     return run(() => api.createDocumentVersion(amendment.id, {baseRevision: amendment.revision,
-      title, content: nextContent, contentFileEntryId, ...represented}));
+      customTitle: titleDirty ? title.trim() || null : amendment.customTitle, content: nextContent, contentFileEntryId, ...represented}));
   };
   const uploadFile = async () => {
     if (!upload) return;
@@ -757,7 +764,7 @@ function AmendmentCard({snapshot, amendment, run, api, canChair, representedSeat
         const committed = await api.commitFileUpload(created.id, newIdempotencyKey());
         if ('kind' in committed) throw new Error(t('Waiting for Chair computer to save the file'));
         setUploadPercent(95);
-        await api.createDocumentVersion(amendment.id, {baseRevision: amendment.revision, title,
+        await api.createDocumentVersion(amendment.id, {baseRevision: amendment.revision, customTitle: titleDirty ? title.trim() || null : amendment.customTitle,
           content: '', contentFileEntryId: committed.id, ...represented});
         attached = true; setUploadPercent(100);
       });
@@ -790,8 +797,8 @@ function AmendmentCard({snapshot, amendment, run, api, canChair, representedSeat
     placeholder={t('Amendment proposer')} options={seatOptions} disabled={!canChair}
     onChange={(_, data) => void run(() => api.updateDocumentSettings(amendment.id,
       {baseRevision: amendment.revision, proposerSeatId: String(data.value)}))} /></Card.Meta>
-  <Input fluid value={localizeGeneratedName(title)} disabled={!editable} placeholder={t('Amendment title')}
-    onChange={event => setTitle(event.currentTarget.value)} onBlur={() => void save()} />
+  <Input fluid value={title} disabled={!editable} placeholder={t('Amendment title')}
+    onChange={event => {setTitle(event.currentTarget.value); setTitleDirty(true);}} onBlur={() => void save()} />
   <Divider hidden /><Button.Group basic compact><Button active={source === 'TEXT'}
     onClick={() => setSource('TEXT')}>{t('Text')}</Button><Button active={source === 'FILE'}
     onClick={() => setSource('FILE')}>{t('File')}</Button></Button.Group><Divider hidden />
@@ -902,8 +909,8 @@ const motionTypeFallbackLabels: Record<string, string> = {
   'introduce-working-paper': 'Introduce working paper'
 };
 
-function motionTypeName(type: {id: string; names?: Record<string, string>} | undefined, id: string): string {
-  return type?.names ? localizedDisplayName(type.names, 'en') : t(motionTypeFallbackLabels[id] ?? id);
+function motionTypeName(type: {id: string; names?: Record<string, string>} | undefined, id: string, language: ContentLanguage): string {
+  return type?.names ? motionContentName(type.names, getLanguage(), language) : t(motionTypeFallbackLabels[id] ?? id);
 }
 
 const motionTypePosition = (id: string): number => ({
@@ -962,10 +969,10 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
     && document.proposerSeatId && document.seconderSeatId && !linkedResolutionIds.has(document.id));
   const motionOptions = [
     ...types.map(type => ({key: type.id, value: type.id,
-      text: motionTypeName(type, type.id)})),
+      text: motionTypeName(type, type.id, snapshot.committee.committeeLanguage)})),
     ...(types.some(type => type.id === 'open-moderated-caucus') ? caucusResolutionOptions.map(document => ({
       key: linkedResolutionMotionValue(document.id), value: linkedResolutionMotionValue(document.id),
-      text: `${t('Moderated caucus')} - ${localizeGeneratedName(document.title)}`})) : [])
+      text: `${t('Moderated caucus')} - ${document.title}`})) : [])
   ];
   const targetResolutions = resolutions.filter(document => motionType === 'introduce-draft-resolution'
     ? document.status === 'DRAFT'
@@ -1032,7 +1039,7 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
             const targetId = value.slice(linkedResolutionMotionPrefix.length);
             const target = caucusResolutionOptions.find(document => document.id === targetId);
             setMotionType('open-moderated-caucus'); setResolutionTarget(targetId);
-            setProposal(target ? localizeGeneratedName(target.title) : '');
+            setProposal(target ? target.title : '');
           } else {
             setMotionType(value); setResolutionTarget(''); setAmendmentTarget(''); setProposal('');
           }
@@ -1068,12 +1075,12 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
         {hasResolutionTarget(motionType) && <Form.Select required key="resolutionTarget" search selection fluid error={!resolutionTarget}
           icon="search" label={t('Target resolution')} value={resolutionTarget}
           options={targetResolutions.map(document => ({key: document.id, value: document.id,
-            text: localizeGeneratedName(document.title)}))}
+            text: document.title}))}
           onChange={(_, data) => setResolutionTarget(String(data.value))} />}
         {hasAmendmentTarget(motionType) && <Form.Select required key="amendmentTarget" search selection fluid
           error={!amendmentTarget} icon="search" label={t('Target amendment')} value={amendmentTarget}
           options={targetAmendments.map(document => ({key: document.id, value: document.id,
-            text: localizeGeneratedName(document.title)}))}
+            text: document.title}))}
           onChange={(_, data) => {const id = String(data.value); const target = targetAmendments.find(item => item.id === id);
             setAmendmentTarget(id); setProposal(target?.currentVersion.content.trim()
               || target?.currentVersion.contentFile?.logicalName || target?.title || '');}} />}
@@ -1116,7 +1123,7 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
     {motionGroups.map(group => <React.Fragment key={group.meetingSessionId}>
       {group.meetingSessionId !== snapshot.meetingSession?.id && <Divider horizontal className="history-session-divider">{sessionNames.get(group.meetingSessionId) ?? t('Meeting session')}</Divider>}
       <Card.Group itemsPerRow={1} className="motion-queue">{group.motions.map(motion => {
-      const type = types.find(item => item.id === motion.motionTypeId);
+      const type = {id: motion.motionTypeId, names: motion.ruleEvaluation.definition.names as Record<string, string> | undefined};
       const proposer = snapshot.seats.find(seat => seat.id === motion.proposedBySeatId);
       const firstSecond = motion.seconds[0]; const seconder = snapshot.seats.find(seat => seat.id === firstSecond?.seatId);
       const duration = Number(motion.parameters.caucusDuration ?? 0);
@@ -1137,7 +1144,7 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
       const counts = {FOR: 0, AGAINST: 0, ABSTAIN: 0};
       for (const vote of motion.directVote.votes) counts[vote.choice] += 1;
       return <Card className="motion motion-card" key={motion.id}><Card.Content>
-        <div className="motion-heading"><Card.Header>{time && `${time} `}{motionTypeName(type, motion.motionTypeId)}</Card.Header>
+        <div className="motion-heading"><Card.Header>{time && `${time} `}{motionTypeName(type, motion.motionTypeId, snapshot.committee.committeeLanguage)}</Card.Header>
           {decided ? <time className={`motion-decision motion-decision-${motion.status.toLowerCase()}`}
             dateTime={motion.decidedAt ?? undefined}>{statusLabel(motion.status)}{motion.decidedAt
               ? ` · ${new Date(motion.decidedAt).toLocaleString(document.documentElement.lang)}` : ''}</time>
@@ -1277,7 +1284,7 @@ function StrawpollWorkspace({snapshot, run, api, canChair, resourceId}: CommonPr
   if (!poll) return <Message error content={t('Strawpoll not found.')} />;
   const canVote = snapshot.viewer.audience !== 'PUBLIC' && snapshot.committee.status === 'ACTIVE';
   const cleanOptions = optionLabels.map(value => value.trim()).filter(Boolean);
-  const ready = Boolean(question.trim() && !/^New strawpoll \d+$/.test(question.trim()) && cleanOptions.length >= 2
+  const ready = Boolean(question.trim() && cleanOptions.length >= 2
     && cleanOptions.length === optionLabels.length && new Set(cleanOptions).size === cleanOptions.length);
   const canDelegateAdd = snapshot.committee.operationMode === 'DELEGATE_OPERATED' && poll.optionsArePublic
     && snapshot.viewer.audience === 'MEMBER';
@@ -1316,7 +1323,7 @@ function StrawpollWorkspace({snapshot, run, api, canChair, resourceId}: CommonPr
     : current.includes(optionId) ? [] : [optionId]);
   const totalVotes = poll.options.reduce((sum, option) => sum + option.voteCount, 0);
   return <Container text className="strawpoll-page" style={{padding: '1em 0'}}>
-    <Header as="h2"><Input value={localizeGeneratedName(question)} fluid placeholder={t('Type your question here')}
+    <Header as="h2"><Input value={question} fluid placeholder={t('Type your question here')}
       disabled={poll.stage !== 'PREPARING' || !canChair} onChange={event => setQuestion(event.currentTarget.value)}
       onBlur={() => {if (canChair && question.trim() && question !== poll.question) void revise({question: question.trim()});}} /></Header>
     {poll.stage === 'PREPARING' && <>
@@ -1393,6 +1400,7 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
   const session = snapshot.meetingSession?.status === 'OPEN' ? snapshot.meetingSession : undefined;
   const selectedDocument = (snapshot.documents ?? []).find(item => item.id === resourceId && item.kind === 'RESOLUTION');
   const [versionTitle, setVersionTitle] = React.useState(selectedDocument?.title ?? '');
+  const [versionTitleDirty, setVersionTitleDirty] = React.useState(false);
   const [versionContent, setVersionContent] = React.useState(selectedDocument?.currentVersion.content ?? '');
   const [contentSource, setContentSource] = React.useState<'TEXT' | 'FILE'>(
     selectedDocument?.currentVersion.contentFile ? 'FILE' : 'TEXT');
@@ -1415,14 +1423,14 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
     void (async () => {
       let created: Awaited<ReturnType<SelfHostedApi['createResolution']>> | undefined;
       await run(async () => {created = await api.createResolution(snapshot.committee.id,
-        {meetingSessionId: session.id, title: '', content: ''});});
+        {meetingSessionId: session.id, customTitle: null, content: ''});});
       if (created) history.replace(`/committees/${snapshot.committee.id}/resolutions/${created.id}`);
       else creatingDraft.current = false;
     })();
   }, [api, canParticipate, history, resourceId, run, session, snapshot.committee.id]);
   React.useEffect(() => {
     if (!selectedDocument) return;
-    setVersionTitle(selectedDocument.title); setVersionContent(selectedDocument.currentVersion.content);
+    setVersionTitle(selectedDocument.title); setVersionTitleDirty(false); setVersionContent(selectedDocument.currentVersion.content);
     setContentSource(selectedDocument.currentVersion.contentFile ? 'FILE' : 'TEXT');
     setVersionFileId(selectedDocument.currentVersion.contentFile?.id ?? '');
   }, [selectedDocument?.id, selectedDocument?.revision]);
@@ -1450,11 +1458,11 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
   const saveVersion = (nextSource = contentSource, nextFileId = versionFileId) => {
     const nextContent = nextSource === 'TEXT' ? versionContent : '';
     const contentFileEntryId = nextSource === 'FILE' ? nextFileId : null;
-    if (!editable || !versionTitle.trim() || nextSource === 'FILE' && !contentFileEntryId
-      || versionTitle === document.title && nextContent === document.currentVersion.content
+    if (!editable || nextSource === 'FILE' && !contentFileEntryId
+      || !versionTitleDirty && nextContent === document.currentVersion.content
         && contentFileEntryId === document.currentVersion.contentFile?.id) return;
     return run(() => api.createDocumentVersion(document.id, {baseRevision: document.revision,
-      title: versionTitle, content: nextContent, contentFileEntryId, ...represented}));
+      customTitle: versionTitleDirty ? versionTitle.trim() || null : document.customTitle, content: nextContent, contentFileEntryId, ...represented}));
   };
   const attachExistingFile = async () => {
     if (!selectedExistingFileId) return;
@@ -1476,7 +1484,7 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
         const committed = await api.commitFileUpload(upload.id, newIdempotencyKey());
         if ('kind' in committed) throw new Error(t('Waiting for Chair computer to save the file'));
         setResolutionUploadPercent(95);
-        await api.createDocumentVersion(document.id, {baseRevision: document.revision, title: versionTitle,
+        await api.createDocumentVersion(document.id, {baseRevision: document.revision, customTitle: versionTitleDirty ? versionTitle.trim() || null : document.customTitle,
           content: '', contentFileEntryId: committed.id, ...represented});
         attached = true; setResolutionUploadPercent(100);
       });
@@ -1521,9 +1529,9 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
     await setDirectResolutionVote(previous.previousChoice, previous.seatId, false);
   };
   return <Container className="resolution-page" fluid style={{paddingBottom: '2em'}}><Grid columns="equal" stackable>
-    <Grid.Row><Grid.Column><Input value={localizeGeneratedName(versionTitle)} loading={!document} labelPosition="right"
+    <Grid.Row><Grid.Column><Input value={versionTitle} loading={!document} labelPosition="right"
       label={<Label>{statusLabel(document.status)}</Label>} size="massive" fluid placeholder={t('Set resolution name')}
-      disabled={!editable} onChange={event => setVersionTitle(event.currentTarget.value)} onBlur={() => void saveVersion()} /></Grid.Column></Grid.Row>
+      disabled={!editable} onChange={event => {setVersionTitle(event.currentTarget.value); setVersionTitleDirty(true);}} onBlur={() => void saveVersion()} /></Grid.Column></Grid.Row>
     <Grid.Row><Grid.Column width={activeTab === 'voting' ? 16 : 11}><Menu pointing secondary>
       {[['text', 'Text'], ['amendments', 'Amendments'], ['voting', 'Voting']].map(([path, label]) =>
         <Menu.Item key={path} as={Link} to={path === 'text' ? base : `${base}/${path}`}
@@ -1566,7 +1574,7 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
     {activeTab === 'amendments' && <Card.Group itemsPerRow={1}>
       {canParticipate && session && ['PUBLISHED', 'POSTPONED'].includes(document.status) && <Card><Button icon="plus"
         primary fluid basic aria-label={t('Create amendment')} onClick={() => void run(() => api.createAmendment(document.id,
-          {meetingSessionId: session.id, title: '', content: '', ...represented}))} /></Card>}
+          {meetingSessionId: session.id, customTitle: null, content: '', ...represented}))} /></Card>}
       {[...amendments].reverse().map(amendment => <AmendmentCard key={amendment.id} snapshot={snapshot}
         amendment={amendment} run={run} api={api} canChair={canChair} representedSeatId={seatId}
         seatOptions={seatOptions} />)}

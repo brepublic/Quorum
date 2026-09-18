@@ -102,6 +102,7 @@ integration('immutable committee content', () => {
     for await (const chunk of exported.content) chunks.push(String(chunk));
     const records = chunks.join('').trim().split('\n').map(line => JSON.parse(line));
     expect(records[0]).toMatchObject({schemaVersion: 2, committee: {committeeLanguage: 'en', contentSnapshot: saved}});
+    expect(records.find(record => record.section === 'rule_versions').record).toMatchObject({id: input.activeRulePackageVersionId, definition: expect.any(Object)});
     expect(records.find(record => record.section === 'committee_seats').record).toMatchObject({display_name: 'China', flag_value: 'cn'});
   });
 
@@ -165,8 +166,68 @@ integration('immutable committee content', () => {
     const resumed = await stage4.startMeetingSession(owner, committee.id, {}, context('resume'), randomUUID());
     expect(resumed).toMatchObject({id: pending.id, ordinal: 2, name: 'Session 2', status: 'OPEN'});
     const after = await stage4.snapshot(committee.id, owner);
-    expect(after.nextMeetingSessionName).toBe('Session 3');
+    expect(after.nextMeetingSessionOrdinal).toBe(3);
     expect(after.speakerLists?.find(item => item.kind === 'GENERAL')?.id).toBe(before.speakerLists?.find(item => item.kind === 'GENERAL')?.id);
+  });
+
+  it('keeps poll questions explicit and speaker titles distinct from automatic names', async () => {
+    const {owner, input} = await fixture();
+    const committee = await stage4.createCommittee(owner, input, randomUUID(), context('create'));
+    const session = await stage4.startMeetingSession(owner, committee.id, {}, context('start'), randomUUID());
+    const stage5 = new Stage5Service(pool!);
+    const request = {meetingSessionId: session.id, question: '', votingMode: 'SEAT_AUTHENTICATED',
+      multipleChoice: false, options: ['Yes', 'No'], medium: 'MANUAL'};
+    const key = randomUUID();
+    const [first, retry] = await Promise.all([
+      stage5.createStrawpoll(owner, committee.id, request, key, context('poll')),
+      stage5.createStrawpoll(owner, committee.id, request, key, context('retry'))
+    ]);
+    expect(first).toMatchObject({id: retry.id, ordinal: 1, question: '', stage: 'PREPARING'});
+    const custom = await stage5.createStrawpoll(owner, committee.id, {...request, question: 'New strawpoll 1'},
+      randomUUID(), context('custom-poll'));
+    expect(custom).toMatchObject({ordinal: 2, question: 'New strawpoll 1', stage: 'VOTING'});
+    await expect(pool!.query('UPDATE strawpolls SET ordinal=99 WHERE id=$1', [custom.id])).rejects.toThrow();
+    const list = (await stage4.snapshot(committee.id, owner)).speakerLists!.find(item => item.kind === 'GENERAL')!;
+    expect(list).toMatchObject({customTitle: null, name: "General Speakers' List"});
+    const renamed = await stage5.updateSpeakerList(owner, list.id,
+      {baseRevision: list.revision, customTitle: '主发言名单'}, context('rename'));
+    expect(renamed).toMatchObject({customTitle: '主发言名单', name: '主发言名单'});
+    const restored = await stage5.updateSpeakerList(owner, list.id,
+      {baseRevision: renamed.revision, customTitle: null}, context('restore'));
+    expect(restored).toMatchObject({customTitle: null, name: "General Speakers' List"});
+  });
+
+  it('allocates document numbers and preserves explicit titles that look automatic', async () => {
+    const {owner, input} = await fixture();
+    const committee = await stage4.createCommittee(owner, {...input, committeeLanguage: 'zh-CN'}, randomUUID(), context('create'));
+    const session = await stage4.startMeetingSession(owner, committee.id, {}, context('start'), randomUUID());
+    const stage5 = new Stage5Service(pool!);
+    const request = {meetingSessionId: session.id, customTitle: null, content: ''};
+    const key = randomUUID();
+    const [first, replay] = await Promise.all([
+      stage5.createResolution(owner, committee.id, request, key, context('first')),
+      stage5.createResolution(owner, committee.id, request, key, context('retry'))
+    ]);
+    expect(first).toMatchObject({ordinal: 1, customTitle: null, title: '决议草案 1.1'});
+    expect(replay).toEqual(first);
+    const custom = await stage5.createResolution(owner, committee.id, {...request, customTitle: 'New amendment 1'}, randomUUID(), context('custom'));
+    expect(custom).toMatchObject({ordinal: 2, customTitle: 'New amendment 1', title: 'New amendment 1'});
+    const seat = (await stage4.snapshot(committee.id, owner)).seats[0]!;
+    await stage4.createAttendanceEvent(owner, committee.id, {meetingSessionId: session.id, seatId: seat.id, type: 'PRESENT'}, context('present'));
+    const changed = await stage5.createDocumentVersion(owner, custom.id, {baseRevision: custom.revision,
+      customTitle: null, content: 'Body', onBehalfOfSeatId: seat.id}, context('restore-default'));
+    expect(changed).toMatchObject({ordinal: 2, customTitle: null, title: '决议草案 1.2'});
+    await pool!.query("UPDATE documents SET status='PUBLISHED',is_public=true WHERE id=$1", [first.id]);
+    const amendment = await stage5.createAmendment(owner, first.id, {...request, onBehalfOfSeatId: seat.id}, randomUUID(), context('amendment'));
+    expect(amendment).toMatchObject({ordinal: 1, customTitle: null, title: '新修正案1'});
+    await stage5.deleteAmendment(owner, amendment.id, {baseRevision: amendment.revision}, context('delete'));
+    const next = await stage5.createAmendment(owner, first.id, {...request, customTitle: '第1会期', onBehalfOfSeatId: seat.id}, randomUUID(), context('amendment-next'));
+    expect(next).toMatchObject({ordinal: 2, customTitle: '第1会期', title: '第1会期'});
+    await expect(pool!.query('UPDATE documents SET ordinal=10 WHERE id=$1', [next.id])).rejects.toMatchObject({code: '23514'});
+    await expect(pool!.query('UPDATE committees SET next_amendment_ordinal=1 WHERE id=$1', [committee.id])).rejects.toMatchObject({code: '23514'});
+    await expect(pool!.query('UPDATE meeting_sessions SET next_resolution_ordinal=1 WHERE id=$1', [session.id])).rejects.toMatchObject({code: '23514'});
+    const snapshot = await stage4.snapshot(committee.id, owner);
+    expect(snapshot.documents?.find(item => item.id === next.id)?.title).toBe('第1会期');
   });
 
   it('allocates permanent session ordinals and replays concurrent start requests', async () => {
@@ -193,7 +254,7 @@ integration('immutable committee content', () => {
     await pool!.query("UPDATE meeting_sessions SET created_at='2000-01-01' WHERE id=$1", [third.id]);
     const snapshot = await stage4.snapshot(committee.id, owner);
     expect(snapshot.meetingSessions?.find(item => item.id === third.id)).toMatchObject({ordinal: 3, name: 'Session 3'});
-    expect(snapshot.nextMeetingSessionName).toBe('Session 4');
+    expect(snapshot.nextMeetingSessionOrdinal).toBe(4);
     await expect(pool!.query('UPDATE meeting_sessions SET ordinal=7 WHERE id=$1', [third.id])).rejects.toMatchObject({code: '23514'});
     await expect(pool!.query('UPDATE committees SET next_session_ordinal=1 WHERE id=$1', [committee.id])).rejects.toMatchObject({code: '23514'});
     const chinese = await stage4.createCommittee(owner, {...input, committeeLanguage: 'zh-CN'}, randomUUID(), context('chinese'));

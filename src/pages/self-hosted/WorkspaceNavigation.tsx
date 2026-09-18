@@ -1,9 +1,9 @@
 import * as React from 'react';
 import {useThemeFeature} from '../../theme/ThemeProvider';
-import type {CommitteeWorkspaceSnapshot} from '@quorum/contracts';
+import {formatCommitteeContent, type CommitteeWorkspaceSnapshot} from '@quorum/contracts';
 import {Dropdown, Icon, Menu, Sidebar} from 'semantic-ui-react';
 import {Link, useLocation} from 'react-router-dom';
-import {LanguageSwitcher, localizeGeneratedName, t} from '../../i18n';
+import {LanguageSwitcher, t} from '../../i18n';
 import type {SelfHostedUser} from '../../services/self-hosted-identity';
 
 export type RealtimeStatus = 'CONNECTING' | 'LIVE' | 'RESYNCING' | 'OFFLINE_READONLY' | 'DEGRADED';
@@ -93,11 +93,11 @@ function PrimaryItems({snapshot, onNavigate, onCreateCaucus}: {
   const gslPath = generalSpeakerList ? `${base}/caucuses/${generalSpeakerList.id}` : undefined;
   const gslPathActive = gslPath !== undefined && routeActive(location.pathname, gslPath, true);
   const caucuses = (snapshot.speakerLists ?? []).filter(list => list.kind === 'MODERATED_CAUCUS').map(list => ({id: list.id,
-    label: localizeGeneratedName(list.name || list.topic || 'untitled caucus')}));
+    label: list.name}));
   const resolutions = (snapshot.documents ?? []).filter(document => document.kind === 'RESOLUTION')
-    .map(document => ({id: document.id, label: localizeGeneratedName(document.title)}));
+    .map(document => ({id: document.id, label: document.title}));
   const strawpolls = (snapshot.strawpolls ?? []).filter(poll => !poll.supersededById)
-    .map(poll => ({id: poll.id, label: localizeGeneratedName(poll.question)}));
+    .map(poll => ({id: poll.id, label: formatCommitteeContent({kind: 'STRAWPOLL', ordinal: poll.ordinal, question: poll.question}, snapshot.committee.committeeLanguage)}));
 
   return <>
     <Menu.Item header as={Link} to={base + '/info'} active={location.pathname === base + '/info'} onClick={onNavigate}>{snapshot.committee.name}</Menu.Item>

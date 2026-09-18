@@ -1035,25 +1035,6 @@ export function t(key: string, values: Record<string, string | number> = {}): st
   );
 }
 
-const GENERATED_NAME_KEYS = new Set([
-  "General Speakers' List",
-  'untitled caucus',
-  'untitled resolution',
-  'undefined question'
-]);
-
-export function localizeGeneratedName(value: string): string {
-  const draftResolution = /^Draft resolution (\d+)\.(\d+)$/.exec(value);
-  if (draftResolution) return t('Draft resolution {session}.{count}', {
-    session: Number(draftResolution[1]), count: Number(draftResolution[2])
-  });
-  const amendment = /^New amendment (\d+)$/.exec(value);
-  if (amendment) return t('New amendment {count}', {count: Number(amendment[1])});
-  const strawpoll = /^New strawpoll (\d+)$/.exec(value);
-  if (strawpoll) return t('New strawpoll {count}', {count: Number(strawpoll[1])});
-  return GENERATED_NAME_KEYS.has(value) ? t(value) : value;
-}
-
 function subscribeLanguage(listener: () => void): () => void {
   listeners.add(listener);
   return () => {listeners.delete(listener);};

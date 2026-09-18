@@ -50,6 +50,8 @@ export interface SpeakerQueueEntry {
 }
 
 export interface SpeakerList {
+  yieldTypes?: string[];
+  customTitle: string | null;
   id: string;
   committeeId: string;
   meetingSessionId: string;
@@ -224,6 +226,7 @@ export interface StrawpollSeatVote {
 }
 
 export interface Strawpoll {
+  ordinal: number;
   id: string;
   committeeId: string;
   meetingSessionId: string;
@@ -297,6 +300,8 @@ export interface DocumentResultDecision {
 }
 
 export interface ProceedingDocument {
+  ordinal: number;
+  customTitle: string | null;
   id: string;
   committeeId: string;
   meetingSessionId: string;

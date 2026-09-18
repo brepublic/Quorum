@@ -555,7 +555,7 @@ export class DelegateFileService {
       rejectionReason: metadata?.rejection_reason ?? null, reviewedAt: metadata?.rejected_at?.toISOString() ?? file.publishedAt};
   }
 
-  private async suggestedNames(committeeId: string, submittedDates: Date[]): Promise<Record<DelegateFileType, string>[]> {
+  private async suggestedNames(committeeId: string, submittedDates: Date[]): Promise<Record<DelegateFileType, {sessionOrdinal: number; ordinal: number}>[]> {
     if (!submittedDates.length) return [];
     const sessions = await this.pool.query<{id: string; ordinal: string; created_at: Date}>(`SELECT id,created_at,
       ordinal::text AS ordinal FROM meeting_sessions WHERE committee_id=$1 ORDER BY created_at,id`, [committeeId]);
@@ -570,12 +570,13 @@ export class DelegateFileService {
       JOIN file_entries e ON e.id=m.file_entry_id WHERE e.committee_id=$1 AND e.published_at IS NOT NULL
       GROUP BY bounds.ordinal,m.file_type`, [committeeId, starts, ends]);
     const totals = new Map(counts.rows.map(row => [`${row.ordinal}:${row.file_type}`, Number(row.count)]));
-    const labels = {WORKING_PAPER:'工作文件',DIRECTIVE_DRAFT:'指令草案',RESOLUTION_DRAFT:'决议草案'};
+    const types: DelegateFileType[] = ['WORKING_PAPER', 'DIRECTIVE_DRAFT', 'RESOLUTION_DRAFT'];
     return submittedDates.map(submittedAt => {
       const session = sessions.rows.filter(row => row.created_at <= submittedAt).at(-1) ?? sessions.rows[0];
-      const ordinal = session?.ordinal ?? '1';
-      return Object.fromEntries(Object.entries(labels).map(([type, label]) => [type,
-        `${label} ${ordinal}.${(totals.get(`${ordinal}:${type}`) ?? 0) + 1}`])) as Record<DelegateFileType, string>;
+      const sessionOrdinal = Number(session?.ordinal ?? 1);
+      const boundsOrdinal = session ? sessions.rows.indexOf(session) + 1 : 1;
+      return Object.fromEntries(types.map(type => [type, {sessionOrdinal,
+        ordinal: (totals.get(`${boundsOrdinal}:${type}`) ?? 0) + 1}])) as Record<DelegateFileType, {sessionOrdinal: number; ordinal: number}>;
     });
   }
 

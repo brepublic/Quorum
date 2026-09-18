@@ -251,6 +251,7 @@ export interface CreateAttendanceEventRequest {
 
 export type PointStatus = 'PENDING' | 'UPHELD' | 'OVERRULED' | 'ANSWERED' | 'RESOLVED' | 'REJECTED';
 export interface CommitteePoint {
+  typeNames: LocalizedNames;
   id: string;
   committeeId: string;
   meetingSessionId: string;
@@ -271,7 +272,7 @@ export interface CommitteePoint {
 }
 
 export type PublicCommitteePoint = Pick<CommitteePoint,
-  'id' | 'committeeId' | 'meetingSessionId' | 'pointTypeId' | 'raisedBySeatId' | 'raisedBySeatDisplayName' |
+  'id' | 'committeeId' | 'meetingSessionId' | 'pointTypeId' | 'typeNames' | 'raisedBySeatId' | 'raisedBySeatDisplayName' |
   'interruptRequested' | 'status' | 'rulePackageVersionId' | 'revision' | 'createdAt' | 'resolvedAt'>;
 
 export interface CreatePointRequest {
@@ -316,7 +317,7 @@ export interface CommitteeWorkspaceSnapshot {
   /** Set by adjournment; cleared when a new session starts. Does not restrict proceedings. */
   meetingEndedAt?: string | null;
   meetingSessions?: MeetingSession[];
-  nextMeetingSessionName?: string;
+  nextMeetingSessionOrdinal?: number;
   rollCall?: RollCall;
   attendance: AttendanceState[];
   points: Array<CommitteePoint | PublicCommitteePoint>;

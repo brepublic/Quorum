@@ -4,7 +4,7 @@ import type {AuthoritativeTimer, BallotChoice, CreatedStrawpoll, FormalBallot, F
   ProceedingDocument, ProceedingDocumentKind, ProceedingDocumentStatus, SpeakerList, SpeakerListKind, SpeakerQueueEntry,
   ResolutionDirectVoteMajority, ResolutionDirectVoteState, SpeakerStance, SpeechRecord, Strawpoll, StrawpollVotingMode,
   TimerOwnerType, YieldType} from '@quorum/contracts';
-import {freezeRuleEvaluation} from '@quorum/contracts';
+import {formatCommitteeContent, type ContentLanguage, freezeRuleEvaluation} from '@quorum/contracts';
 import {AppError} from '../../http/errors.js';
 import type {AuthenticatedSession} from '../identity/store.js';
 import {activeSeat, appendEvent, audit, idempotentTransaction, isChair, lockedCommittee, requireBusinessIdentity,
@@ -25,7 +25,7 @@ interface TimerRow extends QueryResultRow {
 
 interface SpeakerListRow extends QueryResultRow {
   id: string; committee_id: string; meeting_session_id: string; kind: SpeakerListKind; status: 'OPEN' | 'CLOSED';
-  name: string; topic: string; default_speech_ms: string | number; delegates_can_queue: boolean;
+  custom_title: string | null; topic: string; default_speech_ms: string | number; delegates_can_queue: boolean;
   rule_package_version_id: string; current_entry_id: string | null;
   speech_timer_id: string; total_timer_id: string | null; linked_resolution_document_id: string | null;
   revision: number; created_at: Date; closed_at: Date | null;
@@ -71,14 +71,14 @@ function ballotChoices(value: BallotChoice[] | string): BallotChoice[] {
 }
 
 interface StrawpollRow extends QueryResultRow {
-  id: string; committee_id: string; meeting_session_id: string; question: string; voting_mode: StrawpollVotingMode;
+  id: string; committee_id: string; meeting_session_id: string; ordinal: number; question: string; voting_mode: StrawpollVotingMode;
   multiple_choice: boolean; status: Strawpoll['status']; stage: Strawpoll['stage']; medium: Strawpoll['medium'];
   options_are_public: boolean; series_id: string; round_number: number; superseded_by_id: string | null;
   revision: number; created_at: Date; closed_at: Date | null;
 }
 
 interface DocumentRow extends QueryResultRow {
-  id: string; committee_id: string; meeting_session_id: string; kind: ProceedingDocumentKind; title: string;
+  id: string; committee_id: string; meeting_session_id: string; kind: ProceedingDocumentKind; custom_title: string | null; ordinal: number;
   status: ProceedingDocumentStatus; rule_package_version_id: string; current_version_id: string;
   voting_version_id: string | null; is_public: boolean; created_by_user_id: string;
   created_on_behalf_of_seat_id: string | null; revision: number; created_at: Date; updated_at: Date;
@@ -130,7 +130,26 @@ function motionDurationMs(parameters: Record<string, unknown>, durationKey = 'ca
   return milliseconds;
 }
 
+export async function speakerListName(client: PoolClient,
+  row: Pick<SpeakerListRow, 'kind' | 'custom_title' | 'topic' | 'linked_resolution_document_id'>, language: ContentLanguage): Promise<string> {
+  if (row.custom_title !== null) return row.custom_title;
+  if (row.kind === 'GENERAL') return formatCommitteeContent({kind: 'GENERAL_SPEAKERS_LIST'}, language);
+  if (row.linked_resolution_document_id) {
+    const linked = (await client.query<{ordinal: number; custom_title: string | null; session_ordinal: number}>(
+      `SELECT d.ordinal,d.custom_title,s.ordinal AS session_ordinal FROM documents d
+        JOIN meeting_sessions s ON s.id=d.meeting_session_id WHERE d.id=$1`, [row.linked_resolution_document_id])).rows[0];
+    if (linked) return formatCommitteeContent({kind: 'RESOLUTION', ordinal: linked.ordinal,
+      sessionOrdinal: linked.session_ordinal, customTitle: linked.custom_title}, language);
+  }
+  return formatCommitteeContent({kind: 'MODERATED_CAUCUS', topic: row.topic, customTitle: null}, language);
+}
+
 async function speakerListState(client: PoolClient, row: SpeakerListRow): Promise<SpeakerList> {
+  const context = (await client.query<{committee_language: ContentLanguage; definition: {speakerLists?: Array<{id: string; yieldTypes?: string[]}>}}>(
+    'SELECT c.committee_language,v.definition FROM committees c JOIN rule_package_versions v ON v.id=$2 WHERE c.id=$1',
+    [row.committee_id, row.rule_package_version_id])).rows[0]!;
+  const language = context.committee_language;
+  const yieldTypes = context.definition.speakerLists?.find(item => item.id === (row.kind === 'GENERAL' ? 'general-speakers-list' : 'moderated-caucus'))?.yieldTypes;
   const entries = await client.query<SpeakerEntryRow>(`SELECT id,seat_id,seat_display_name,position,status,stance,
     speech_duration_ms,created_at
     FROM speaker_queue_entries WHERE speaker_list_id=$1 ORDER BY position,created_at,id`, [row.id]);
@@ -138,7 +157,7 @@ async function speakerListState(client: PoolClient, row: SpeakerListRow): Promis
   const speechRecords: SpeechRecord[] = [];
   for (const speech of speeches.rows) speechRecords.push(await speechState(client, speech));
   return {id: row.id, committeeId: row.committee_id, meetingSessionId: row.meeting_session_id, kind: row.kind,
-    status: row.status, name: row.name, topic: row.topic, defaultSpeechMs: Number(row.default_speech_ms),
+    status: row.status, yieldTypes, customTitle: row.custom_title, name: await speakerListName(client, row, language), topic: row.topic, defaultSpeechMs: Number(row.default_speech_ms),
     delegatesCanQueue: row.delegates_can_queue,
     rulePackageVersionId: row.rule_package_version_id, currentEntryId: row.current_entry_id,
     speechTimerId: row.speech_timer_id, totalTimerId: row.total_timer_id,
@@ -232,7 +251,7 @@ async function strawpollState(client: PoolClient, row: StrawpollRow): Promise<St
     `SELECT id,seat_id,option_ids,revision,created_at FROM strawpoll_seat_votes
       WHERE strawpoll_id=$1 AND retracted_at IS NULL ORDER BY seat_id`, [row.id]);
   return {id: row.id, committeeId: row.committee_id, meetingSessionId: row.meeting_session_id,
-    question: row.question, votingMode: row.voting_mode, multipleChoice: row.multiple_choice, status: row.status,
+    ordinal: row.ordinal, question: row.question, votingMode: row.voting_mode, multipleChoice: row.multiple_choice, status: row.status,
     stage: row.stage, medium: row.medium, optionsArePublic: row.options_are_public, seriesId: row.series_id,
     roundNumber: row.round_number, supersededById: row.superseded_by_id,
     options: options.rows.map(option => ({id: option.id, label: option.label, sortOrder: option.sort_order,
@@ -247,6 +266,11 @@ function sha256(value: string): Buffer {
 }
 
 async function documentState(client: PoolClient, row: DocumentRow): Promise<ProceedingDocument> {
+  const context = (await client.query<{committee_language: ContentLanguage; ordinal: number}>(
+    `SELECT c.committee_language,s.ordinal FROM committees c JOIN meeting_sessions s ON s.committee_id=c.id
+      WHERE c.id=$1 AND s.id=$2`, [row.committee_id, row.meeting_session_id])).rows[0]!;
+  const title = formatCommitteeContent({kind: row.kind, ordinal: row.ordinal, sessionOrdinal: context.ordinal,
+    customTitle: row.custom_title}, context.committee_language);
   const version = await client.query<{id: string; version_number: number; content: string; content_file_entry_id: string | null;
     logical_name: string | null; original_name: string | null; media_type: string | null;
     file_status: 'UPLOAD_COMPLETE' | 'PENDING_REVIEW' | 'PUBLISHED' | null; created_at: Date}>(
@@ -278,7 +302,7 @@ async function documentState(client: PoolClient, row: DocumentRow): Promise<Proc
     proposerSeatId = amendment.rows[0]?.proposer_seat_id ?? null;
   }
   return {id: row.id, committeeId: row.committee_id, meetingSessionId: row.meeting_session_id, kind: row.kind,
-    resolutionId: row.resolution_document_id, title: row.title, status: row.status,
+    resolutionId: row.resolution_document_id, title, ordinal: row.ordinal, customTitle: row.custom_title, status: row.status,
     rulePackageVersionId: row.rule_package_version_id,
     currentVersion: {id: current.id, versionNumber: current.version_number, content: current.content,
       contentFile: current.content_file_entry_id && current.logical_name && current.original_name && current.media_type
@@ -496,13 +520,13 @@ export class Stage5Service {
   async createSpeakerList(auth: AuthenticatedSession, committeeId: string, input: Record<string, unknown>, key: string,
     context: Stage4Context): Promise<SpeakerList> {
     requireBusinessIdentity(auth);
-    assertExactBody(input, ['meetingSessionId', 'kind', 'name', 'topic', 'defaultSpeechMs', 'totalDurationMs',
+    assertExactBody(input, ['meetingSessionId', 'kind', 'customTitle', 'topic', 'defaultSpeechMs', 'totalDurationMs',
       'delegatesCanQueue']);
     const meetingSessionId = uuid(input.meetingSessionId, 'Meeting session ID'); const kind = input.kind as SpeakerListKind;
     if (!['GENERAL', 'MODERATED_CAUCUS'].includes(kind)) {
       throw new AppError({code: 'VALIDATION_FAILED', message: 'Speaker list kind is invalid.'});
     }
-    const name = text(input.name ?? (kind === 'GENERAL' ? "General Speakers' List" : 'untitled caucus'), 'Name', 200);
+    const customTitle = input.customTitle === undefined || input.customTitle === null ? null : text(input.customTitle, 'Name', 200);
     const topic = text(input.topic ?? '', 'Topic', 500, kind === 'GENERAL');
     const defaultSpeechMs = positiveInteger(input.defaultSpeechMs, 'Speech duration');
     const delegatesCanQueue = input.delegatesCanQueue ?? false;
@@ -535,20 +559,20 @@ export class Stage5Service {
           (id,committee_id,owner_type,owner_id,remaining_at_start_ms,created_by_user_id)
           VALUES ($1,$2,'CAUCUS',$3,$4,$5)`, [totalTimerId, committeeId, caucusId, totalDurationMs, auth.user.id]);
         const inserted = await client.query<SpeakerListRow>(`INSERT INTO speaker_lists
-          (id,committee_id,meeting_session_id,kind,name,topic,default_speech_ms,delegates_can_queue,
+          (id,committee_id,meeting_session_id,kind,custom_title,topic,default_speech_ms,delegates_can_queue,
            rule_package_version_id,speech_timer_id,total_timer_id,created_by_user_id)
           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
-        [listId, committeeId, meetingSessionId, kind, name, topic, defaultSpeechMs, delegatesCanQueue,
+        [listId, committeeId, meetingSessionId, kind, customTitle, topic, defaultSpeechMs, delegatesCanQueue,
           session.rows[0].active_rule_package_version_id, speechTimerId, totalTimerId, auth.user.id]);
         if (totalTimerId) await client.query(`INSERT INTO caucuses
           (id,committee_id,meeting_session_id,speaker_list_id,topic,total_timer_id,speech_timer_id)
           VALUES ($1,$2,$3,$4,$5,$6,$7)`, [caucusId, committeeId, meetingSessionId, listId, topic, totalTimerId, speechTimerId]);
         await appendEvent(client, committee, {type: 'speaker_list.created', resourceType: 'speaker_list', resourceId: listId,
-          revision: 1, payload: {kind, name, topic, defaultSpeechMs, totalDurationMs, delegatesCanQueue,
+          revision: 1, payload: {kind, customTitle, topic, defaultSpeechMs, totalDurationMs, delegatesCanQueue,
             rulePackageVersionId: session.rows[0].active_rule_package_version_id}, audience: 'PUBLIC'});
         await audit(client, context, {committeeId, actorUserId: auth.user.id, capabilities: ['CHAIR'],
           action: 'proceedings.speaker_list_created', resourceType: 'speaker_list', resourceId: listId,
-          after: {kind, name, topic, defaultSpeechMs, totalDurationMs, delegatesCanQueue, revision: 1}});
+          after: {kind, customTitle, topic, defaultSpeechMs, totalDurationMs, delegatesCanQueue, revision: 1}});
         return speakerListState(client, inserted.rows[0] as SpeakerListRow);
       }});
   }
@@ -556,9 +580,9 @@ export class Stage5Service {
   async updateSpeakerList(auth: AuthenticatedSession, listId: string, input: Record<string, unknown>,
     context: Stage4Context): Promise<SpeakerList> {
     requireBusinessIdentity(auth);
-    assertExactBody(input, ['baseRevision', 'name', 'topic', 'defaultSpeechMs', 'delegatesCanQueue']);
+    assertExactBody(input, ['baseRevision', 'customTitle', 'topic', 'defaultSpeechMs', 'delegatesCanQueue']);
     const baseRevision = positiveInteger(input.baseRevision, 'Base revision');
-    if (input.name === undefined && input.topic === undefined && input.defaultSpeechMs === undefined
+    if (input.customTitle === undefined && input.topic === undefined && input.defaultSpeechMs === undefined
       && input.delegatesCanQueue === undefined) {
       throw new AppError({code: 'VALIDATION_FAILED', message: 'A speaker list change is required.'});
     }
@@ -571,7 +595,8 @@ export class Stage5Service {
       const list = found.rows[0] as SpeakerListRow;
       if (list.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT',
         message: 'This speaker list changed since it was loaded.', details: {currentRevision: list.revision}});
-      const name = input.name === undefined ? list.name : text(input.name, 'Name', 200);
+      const customTitle = input.customTitle === undefined ? list.custom_title
+        : input.customTitle === null ? null : text(input.customTitle, 'Name', 200);
       const topic = input.topic === undefined ? list.topic : text(input.topic, 'Topic', 500, true);
       const defaultSpeechMs = input.defaultSpeechMs === undefined ? Number(list.default_speech_ms)
         : positiveInteger(input.defaultSpeechMs, 'Speech duration');
@@ -579,9 +604,9 @@ export class Stage5Service {
       if (typeof delegatesCanQueue !== 'boolean') {
         throw new AppError({code: 'VALIDATION_FAILED', message: 'Delegate queue setting is invalid.'});
       }
-      const updated = await client.query<SpeakerListRow>(`UPDATE speaker_lists SET name=$2,topic=$3,default_speech_ms=$4,
+      const updated = await client.query<SpeakerListRow>(`UPDATE speaker_lists SET custom_title=$2,topic=$3,default_speech_ms=$4,
         delegates_can_queue=$5,revision=revision+1 WHERE id=$1 RETURNING *`,
-      [listId, name, topic, defaultSpeechMs, delegatesCanQueue]);
+      [listId, customTitle, topic, defaultSpeechMs, delegatesCanQueue]);
       if (defaultSpeechMs !== Number(list.default_speech_ms)) {
         await client.query(`UPDATE speaker_queue_entries SET speech_duration_ms=$2 WHERE speaker_list_id=$1
           AND status='QUEUED'`, [listId, defaultSpeechMs]);
@@ -598,13 +623,13 @@ export class Stage5Service {
         await client.query('UPDATE caucuses SET topic=$2,revision=revision+1 WHERE speaker_list_id=$1', [listId, topic]);
       }
       await appendEvent(client, committee, {type: 'speaker_list.changed', resourceType: 'speaker_list', resourceId: listId,
-        revision: list.revision + 1, payload: {command: 'UPDATED', name, topic, defaultSpeechMs, delegatesCanQueue},
+        revision: list.revision + 1, payload: {command: 'UPDATED', customTitle, topic, defaultSpeechMs, delegatesCanQueue},
         audience: 'PUBLIC'});
       await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id, capabilities: ['CHAIR'],
         action: 'proceedings.speaker_list_updated', resourceType: 'speaker_list', resourceId: listId,
-        before: {name: list.name, topic: list.topic, defaultSpeechMs: Number(list.default_speech_ms),
+        before: {customTitle: list.custom_title, topic: list.topic, defaultSpeechMs: Number(list.default_speech_ms),
           delegatesCanQueue: list.delegates_can_queue, revision: list.revision},
-        after: {name, topic, defaultSpeechMs, delegatesCanQueue, revision: list.revision + 1}});
+        after: {customTitle, topic, defaultSpeechMs, delegatesCanQueue, revision: list.revision + 1}});
       return speakerListState(client, updated.rows[0] as SpeakerListRow);
     });
   }
@@ -1618,11 +1643,11 @@ export class Stage5Service {
         seconderSeatId: string; seconderSeatName: string} | null = null;
       if (parameters.resolutionTarget !== undefined) {
         const resolutionId = motionId(parameters, 'resolutionTarget', 'Target resolution ID');
-        const target = await client.query<{id: string; title: string; proposer_seat_id: string | null;
+        const target = await client.query<{id: string; custom_title: string | null; ordinal: number; session_ordinal: number; proposer_seat_id: string | null;
           proposer_seat_name: string | null; seconder_seat_id: string | null; seconder_seat_name: string | null}>(`SELECT
-          d.id,d.title,r.proposer_seat_id,p.display_name AS proposer_seat_name,
+          d.id,d.custom_title,d.ordinal,ms.ordinal AS session_ordinal,r.proposer_seat_id,p.display_name AS proposer_seat_name,
           r.seconder_seat_id,s.display_name AS seconder_seat_name
-          FROM documents d JOIN resolutions r ON r.document_id=d.id
+          FROM documents d JOIN resolutions r ON r.document_id=d.id JOIN meeting_sessions ms ON ms.id=d.meeting_session_id
           LEFT JOIN committee_seats p ON p.id=r.proposer_seat_id
           LEFT JOIN committee_seats s ON s.id=r.seconder_seat_id
           WHERE d.id=$1 AND d.committee_id=$2 AND d.meeting_session_id=$3 AND d.deleted_at IS NULL FOR UPDATE OF d,r`,
@@ -1637,7 +1662,8 @@ export class Stage5Service {
         if (existing.rows[0]) {
           throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The target resolution already has an associated caucus.'});
         }
-        linkedResolution = {id: row.id, title: row.title, proposerSeatId: row.proposer_seat_id,
+        linkedResolution = {id: row.id, title: formatCommitteeContent({kind: 'RESOLUTION', ordinal: row.ordinal,
+          sessionOrdinal: row.session_ordinal, customTitle: row.custom_title}, committee.committee_language), proposerSeatId: row.proposer_seat_id,
           proposerSeatName: row.proposer_seat_name, seconderSeatId: row.seconder_seat_id,
           seconderSeatName: row.seconder_seat_name};
       }
@@ -1649,10 +1675,10 @@ export class Stage5Service {
                ($7,$2,'CAUCUS',$8,$9,$5,$6,$6)`,
       [speechTimerId, committeeId, listId, defaultSpeechMs, actorUserId, now, totalTimerId, caucusId, totalDurationMs]);
       await client.query(`INSERT INTO speaker_lists
-        (id,committee_id,meeting_session_id,kind,name,topic,default_speech_ms,delegates_can_queue,
+        (id,committee_id,meeting_session_id,kind,custom_title,topic,default_speech_ms,delegates_can_queue,
          rule_package_version_id,speech_timer_id,total_timer_id,linked_resolution_document_id,created_by_user_id,created_at)
         VALUES ($1,$2,$3,'MODERATED_CAUCUS',$4,$5,$6,false,$7,$8,$9,$10,$11,$12)`,
-      [listId, committeeId, motion.meeting_session_id, linkedResolution?.title ?? topic, topic, defaultSpeechMs,
+      [listId, committeeId, motion.meeting_session_id, null, topic, defaultSpeechMs,
         motion.rule_package_version_id, speechTimerId, totalTimerId, linkedResolution?.id ?? null, actorUserId, now]);
       await client.query(`INSERT INTO caucuses
         (id,committee_id,meeting_session_id,speaker_list_id,topic,total_timer_id,speech_timer_id,created_at)
@@ -2529,17 +2555,12 @@ export class Stage5Service {
           [meetingSessionId, committeeId]);
         if (!session.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Meeting session not found.'});
         if (session.rows[0].status !== 'OPEN') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Meeting session is closed.'});
-        let question = requestedQuestion;
-        if (!question) {
-          const numbered = await client.query<{next_number: number}>(`SELECT count(*)::int+1 AS next_number
-            FROM strawpolls WHERE committee_id=$1 AND meeting_session_id=$2`, [committeeId, meetingSessionId]);
-          question = `New strawpoll ${numbered.rows[0]?.next_number ?? 1}`;
-        }
+        const question = requestedQuestion;
         const id = randomUUID(); const accessToken = votingMode === 'ANONYMOUS' && medium === 'LINK'
           ? randomBytes(32).toString('base64url') : undefined;
         if (votingMode === 'ANONYMOUS' && medium === 'MANUAL') throw new AppError({code: 'VALIDATION_FAILED',
           message: 'Manual strawpolls do not use anonymous voting.'});
-        const stage: Strawpoll['stage'] = optionLabels.length >= 2 ? 'VOTING' : 'PREPARING';
+        const stage: Strawpoll['stage'] = question.trim() && optionLabels.length >= 2 ? 'VOTING' : 'PREPARING';
         const inserted = await client.query<StrawpollRow>(`INSERT INTO strawpolls
           (id,committee_id,meeting_session_id,question,voting_mode,multiple_choice,anonymous_access_token_hash,
            created_by_user_id,series_id,stage,medium,options_are_public)
@@ -2551,7 +2572,7 @@ export class Stage5Service {
             [randomUUID(), id, label, index]);
         }
         await appendEvent(client, committee, {type: 'strawpoll.created', resourceType: 'strawpoll', resourceId: id,
-          revision: 1, payload: {question, votingMode, multipleChoice: input.multipleChoice, stage, medium,
+          revision: 1, payload: {question, ordinal: inserted.rows[0]!.ordinal, votingMode, multipleChoice: input.multipleChoice, stage, medium,
             options: optionLabels.map((label, index) => ({label, sortOrder: index}))}, audience: 'PUBLIC'});
         await audit(client, context, {committeeId, actorUserId: auth.user.id, capabilities: ['CHAIR'],
           action: 'voting.strawpoll_created', resourceType: 'strawpoll', resourceId: id,
@@ -2690,7 +2711,7 @@ export class Stage5Service {
     requireBusinessIdentity(auth); assertExactBody(input, ['baseRevision', 'question', 'votingMode', 'multipleChoice',
       'options', 'medium', 'optionsArePublic']);
     const baseRevision = positiveInteger(input.baseRevision, 'Base revision');
-    const question = text(input.question, 'Question', 1000); const votingMode = input.votingMode as StrawpollVotingMode;
+    const question = text(input.question, 'Question', 1000, true); const votingMode = input.votingMode as StrawpollVotingMode;
     const medium = input.medium as Strawpoll['medium'];
     if (!['ANONYMOUS', 'SEAT_AUTHENTICATED'].includes(votingMode) || !['LINK', 'MANUAL'].includes(medium)
       || medium === 'MANUAL' && votingMode !== 'SEAT_AUTHENTICATED') throw new AppError({code: 'VALIDATION_FAILED',
@@ -2778,6 +2799,7 @@ export class Stage5Service {
       const expected = action === 'START' ? 'PREPARING' : action === 'VIEW_RESULTS' ? 'VOTING' : 'RESULTS';
       if (poll.stage !== expected) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The strawpoll is in another stage.'});
       if (action === 'START') {
+        if (!poll.question.trim()) throw new AppError({code: 'VALIDATION_FAILED', message: 'Enter a strawpoll question.'});
         const options = await client.query('SELECT 1 FROM strawpoll_options WHERE strawpoll_id=$1', [strawpollId]);
         if (Number(options.rowCount) < 2) throw new AppError({code: 'VALIDATION_FAILED',
           message: 'At least two options are required to start a strawpoll.'});
@@ -2894,10 +2916,10 @@ export class Stage5Service {
     input: Record<string, unknown>, key: string, context: Stage4Context): Promise<ProceedingDocument> {
     requireBusinessIdentity(auth);
     assertExactBody(input, kind === 'RESOLUTION'
-      ? ['meetingSessionId', 'title', 'content', 'onBehalfOfSeatId']
-      : ['meetingSessionId', 'title', 'content', 'onBehalfOfSeatId', 'resolutionId']);
+      ? ['meetingSessionId', 'customTitle', 'content', 'onBehalfOfSeatId']
+      : ['meetingSessionId', 'customTitle', 'content', 'onBehalfOfSeatId', 'resolutionId']);
     const meetingSessionId = uuid(input.meetingSessionId, 'Meeting session ID');
-    const suppliedTitle = text(input.title, 'Title', 500, true).trim();
+    const customTitle = input.customTitle === null ? null : text(input.customTitle, 'Title', 500);
     const content = text(input.content, 'Content', 200_000, true); const resolutionId = kind === 'AMENDMENT'
       ? uuid(input.resolutionId, 'Resolution ID') : null;
     const route = kind === 'RESOLUTION' ? `POST /api/v1/committees/${committeeId}/resolutions`
@@ -2912,20 +2934,6 @@ export class Stage5Service {
       const actor = kind === 'RESOLUTION' && chair && input.onBehalfOfSeatId === undefined
         ? {chair: true, seatId: null as string | null, displayName: ''}
         : await representedDocumentSeat(client, committee, auth, input.onBehalfOfSeatId, meetingSessionId);
-      let title = suppliedTitle;
-      if (kind === 'RESOLUTION' && !title) {
-        const sequence = await client.query<{session_number: number; resolution_number: number}>(`SELECT
-          current.ordinal AS session_number,
-          (SELECT count(*)::int+1 FROM documents
-            WHERE committee_id=$1 AND meeting_session_id=$2 AND kind='RESOLUTION') AS resolution_number
-          FROM meeting_sessions current WHERE current.id=$2`, [committeeId, meetingSessionId]);
-        title = `Draft resolution ${sequence.rows[0]?.session_number ?? 1}.${sequence.rows[0]?.resolution_number ?? 1}`;
-      }
-      if (kind === 'AMENDMENT' && !title) {
-        const sequence = await client.query<{next_number: number}>(`SELECT count(*)::int+1 AS next_number
-          FROM documents WHERE committee_id=$1 AND kind='AMENDMENT'`, [committeeId]);
-        title = `New amendment ${sequence.rows[0]?.next_number ?? 1}`;
-      }
       const isPublic = false;
       if (kind === 'AMENDMENT') {
         const parent = await client.query<DocumentRow>(`SELECT d.*,NULL::uuid AS resolution_document_id FROM documents d
@@ -2939,10 +2947,10 @@ export class Stage5Service {
       }
       const id = randomUUID(); const versionId = randomUUID(); const now = this.now();
       const inserted = await client.query<DocumentRow>(`INSERT INTO documents
-        (id,committee_id,meeting_session_id,kind,title,rule_package_version_id,current_version_id,is_public,
+        (id,committee_id,meeting_session_id,kind,custom_title,rule_package_version_id,current_version_id,is_public,
          created_by_user_id,created_on_behalf_of_seat_id,created_at,updated_at)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11) RETURNING *,NULL::uuid AS resolution_document_id`,
-      [id, committeeId, meetingSessionId, kind, title, session.rows[0].active_rule_package_version_id, versionId,
+      [id, committeeId, meetingSessionId, kind, customTitle, session.rows[0].active_rule_package_version_id, versionId,
         isPublic, auth.user.id, actor.seatId, now]);
       await client.query(`INSERT INTO document_versions
         (id,document_id,version_number,content,created_by_user_id,created_on_behalf_of_seat_id,created_at)
@@ -2953,12 +2961,12 @@ export class Stage5Service {
         VALUES ($1,$2,$3)`, [id, resolutionId, actor.seatId]);
       const eventAudience = isPublic ? 'PUBLIC' : 'MEMBER';
       await appendEvent(client, committee, {type: 'document.created', resourceType: 'document', resourceId: id, revision: 1,
-        payload: {kind, resolutionId, title, status: 'DRAFT', currentVersionId: versionId,
+        payload: {kind, resolutionId, customTitle, ordinal: inserted.rows[0]!.ordinal, status: 'DRAFT', currentVersionId: versionId,
           rulePackageVersionId: session.rows[0].active_rule_package_version_id}, audience: eventAudience});
       await audit(client, context, {committeeId, actorUserId: auth.user.id,
         capabilities: actor.chair ? ['CHAIR'] : ['MEMBER'], ...(actor.seatId ? {onBehalfOfSeatId: actor.seatId} : {}),
         action: 'documents.created', resourceType: 'document', resourceId: id,
-        after: {kind, resolutionId, title, versionId, characterCount: [...content].length, revision: 1}});
+        after: {kind, resolutionId, customTitle, ordinal: inserted.rows[0]!.ordinal, versionId, characterCount: [...content].length, revision: 1}});
       const row = inserted.rows[0] as DocumentRow; row.resolution_document_id = resolutionId;
       return documentState(client, row);
     }});
@@ -2967,8 +2975,9 @@ export class Stage5Service {
   async createDocumentVersion(auth: AuthenticatedSession, documentId: string, input: Record<string, unknown>,
     context: Stage4Context): Promise<ProceedingDocument> {
     requireBusinessIdentity(auth); assertExactBody(input,
-      ['baseRevision', 'title', 'content', 'contentFileEntryId', 'onBehalfOfSeatId']);
-    const baseRevision = positiveInteger(input.baseRevision, 'Base revision'); const title = text(input.title, 'Title', 500);
+      ['baseRevision', 'customTitle', 'content', 'contentFileEntryId', 'onBehalfOfSeatId']);
+    const baseRevision = positiveInteger(input.baseRevision, 'Base revision');
+    const customTitle = input.customTitle === null ? null : text(input.customTitle, 'Title', 500);
     const content = text(input.content, 'Content', 200_000, true);
     const contentFileEntryId = input.contentFileEntryId === undefined || input.contentFileEntryId === null
       ? null : uuid(input.contentFileEntryId, 'Content file entry ID');
@@ -3004,12 +3013,12 @@ export class Stage5Service {
         (id,document_id,version_number,content,content_file_entry_id,created_by_user_id,created_on_behalf_of_seat_id,created_at)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
       [versionId, documentId, versionNumber, content, contentFileEntryId, auth.user.id, actor.seatId, now]);
-      const updated = await client.query<DocumentRow>(`UPDATE documents SET title=$2,current_version_id=$3,
+      const updated = await client.query<DocumentRow>(`UPDATE documents SET custom_title=$2,current_version_id=$3,
         revision=revision+1,updated_at=$4 WHERE id=$1 RETURNING *,
         (SELECT resolution_document_id FROM amendments WHERE document_id=$1) AS resolution_document_id`,
-      [documentId, title, versionId, now]);
+      [documentId, customTitle, versionId, now]);
       await appendEvent(client, committee, {type: 'document.version_created', resourceType: 'document', resourceId: documentId,
-        revision: document.revision + 1, payload: {versionId, versionNumber, title},
+        revision: document.revision + 1, payload: {versionId, versionNumber, customTitle},
         audience: document.is_public ? 'PUBLIC' : 'MEMBER'});
       await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id,
         capabilities: actor.chair ? ['CHAIR'] : ['MEMBER'], onBehalfOfSeatId: actor.seatId,
