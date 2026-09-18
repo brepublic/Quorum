@@ -185,4 +185,4 @@ Web 的共享错误格式化读取 reason/code 和受约束参数；身份、业
 
 原生 Rust/Slint 桌面通过内置目录翻译界面、状态、错误和步骤；Node 桥接传机器状态，文件名与路径原样保留。语言偏好独立存于 XDG_CONFIG_HOME（缺省 ~/.config）下 quorum-agent/desktop-language，不进入 Agent 私有配置、不改变配对或同步身份。切换只更新窗口属性和列表显示；服务器 Agent 协议仍为 2。
 
-本机 schema 55→62 开发切换使用 `server/scripts/localization-rebuild.mjs --local-development-rebuild`，须先停止 app/worker。脚本复用受控委员会清理顺序，在同一事务验证账号、源模板及其成员、全局规则和系统配置未变；随后再应用 migration 56–62。脚本不适用于生产升级，不清理外部主席电脑的本地目录。字段错误通过 `useApiFieldErrors` 对应到输入、展开并聚焦；切换界面语言仅重译提示。历史表决按钮读取该表决的规则版本。
+本机 schema 55→63 开发切换使用 `server/scripts/localization-rebuild.mjs --local-development-rebuild`，须先停止 app/worker。脚本复用受控委员会清理顺序，在同一事务验证账号、源模板及其成员、全局规则和系统配置未变；随后再应用 migration 56–63。脚本不适用于生产升级，不清理外部主席电脑的本地目录。字段错误通过 `useApiFieldErrors` 对应到输入、展开并聚焦；切换界面语言仅重译提示。历史表决按钮读取该表决的规则版本。

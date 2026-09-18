@@ -1,6 +1,7 @@
 // One-time, explicitly destructive LOCAL DEVELOPMENT cutover from schema 55.
 // Run with app/workers stopped. Accounts, source templates and global rules remain.
 import {createHash, randomUUID} from 'node:crypto';
+import {readFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import pg from 'pg';
@@ -18,6 +19,9 @@ try {
   await client.query('LOCK TABLE committees IN ACCESS EXCLUSIVE MODE');
   const version = (await client.query('SELECT max(version)::int AS version FROM quorum_meta.schema_migrations')).rows[0].version;
   if (version !== 55) throw new Error(`Expected schema 55, found ${version}`);
+  // Schema 55 already contains these history tables but lacks their controlled-purge exception.
+  const purgeMigration = await readFile('server/migrations/0063_complete_proceedings_purge.sql', 'utf8');
+  await client.query(purgeMigration.split('-- SCHEMA_VERSION')[0]);
   const preserved = async () => (await client.query(`SELECT
     (SELECT jsonb_agg(to_jsonb(t) ORDER BY id) FROM users t) AS users,
     (SELECT to_jsonb(t) FROM system_settings t) AS settings,

@@ -1,3 +1,4 @@
+import {Stage8DeletionService} from '../operations/deletion-service';
 import {testCommitteeInput} from '../../test/committee-fixture';
 // @vitest-environment node
 
@@ -81,7 +82,7 @@ async function meetingFixture() {
   if (!generalList) throw new Error('Meeting fixture did not create the main speakers list.');
   generalList = await stage5.setSpeakerListStatus(firstChair, generalList.id,
     {baseRevision: generalList.revision, status: 'OPEN'}, context('open-general'));
-  return {committee, session, generalList, firstChair, secondChair, firstDelegate, secondDelegate, sameSeatDelegate, firstSeat, secondSeat};
+  return {owner, committee, session, generalList, firstChair, secondChair, firstDelegate, secondDelegate, sameSeatDelegate, firstSeat, secondSeat};
 }
 
 async function meetingEndFixture() {
@@ -162,6 +163,32 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
       AND status IN ('QUEUED','CURRENT') ORDER BY position`, [list.id]);
     expect(positions?.rows.map(row => row.position)).toEqual([1, 2]);
     expect(positions?.rows.filter(row => row.status === 'CURRENT')).toHaveLength(0);
+  });
+
+  it('purges direct voting histories and linked caucuses without touching another committee', async () => {
+    const f = await meetingFixture(); const other = await meetingFixture();
+    const document = await stage5.createResolution(f.firstChair, f.committee.id,
+      {meetingSessionId: f.session.id, customTitle: null, content: ''}, randomUUID(), context('purge-document'));
+    await stage5.setResolutionDirectVote(f.firstChair, document.id,
+      {seatId: f.firstSeat.id, choice: 'FOR'}, context('purge-resolution-vote'));
+    const motion = await stage5.proposeMotion(f.firstDelegate, f.committee.id,
+      {meetingSessionId: f.session.id, motionTypeId: 'open-unmoderated-caucus',
+        parameters: {caucusDuration: 10, caucusUnit: 'min'}}, randomUUID(), context('purge-motion'));
+    await stage5.setMotionDirectVote(f.firstChair, motion.id,
+      {onBehalfOfSeatId: f.firstSeat.id, choice: 'FOR'}, context('purge-motion-vote'));
+    await pool!.query('UPDATE speaker_lists SET linked_resolution_document_id=$1 WHERE id=$2', [document.id, f.generalList.id]);
+    await expect(pool!.query('DELETE FROM resolution_direct_vote_revisions WHERE committee_id=$1', [f.committee.id]))
+      .rejects.toThrow('append-only');
+    await expect(pool!.query('DELETE FROM motion_direct_vote_revisions WHERE committee_id=$1', [f.committee.id]))
+      .rejects.toThrow('append-only');
+    const revision = (await pool!.query('SELECT revision FROM committees WHERE id=$1', [f.committee.id])).rows[0].revision;
+    const archived = await stage3.archiveCommittee(f.owner, f.committee.id, revision, context('purge-archive'));
+    const deletion = new Stage8DeletionService(pool!);
+    await deletion.requestDeletion(f.owner, f.committee.id,
+      {baseRevision: archived.revision, confirmationName: f.committee.name}, randomUUID(), context('purge'));
+    expect(await deletion.processNext()).toMatchObject({status: 'COMPLETED'});
+    expect((await pool!.query('SELECT id FROM committees WHERE id=$1', [f.committee.id])).rows).toEqual([]);
+    expect((await stage4.snapshot(other.committee.id, other.firstChair)).meetingSession?.id).toBe(other.session.id);
   });
 
   it('reads ballot controls from the original rule version after a new binding', async () => {
