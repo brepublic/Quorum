@@ -342,6 +342,41 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
     expect(commentQueue?.rows[0]?.status).toBe('SKIPPED');
   });
 
+  it.each(['SIMPLE_MAJORITY', 'TWO_THIRDS', 'TWO_THIRDS_NON_ABSTAINING'] as const)(
+    'does not pass a resolution without eligible delegations under %s', async majority => {
+      const f = await meetingFixture();
+      const seats = [f.firstSeat, f.secondSeat];
+      for (let index = 0; index < seats.length; index += 1) {
+        seats[index] = await stage4.updateSeat(f.firstChair, f.committee.id, seats[index].id,
+          {baseRevision: seats[index].revision, patch: {canVote: false}}, context('disable-voting'));
+      }
+      let document = await stage5.createResolution(f.firstChair, f.committee.id,
+        {meetingSessionId: f.session.id, customTitle: null, content: ''}, 'empty-electorate', context('empty-electorate'));
+      expect(document.directVote).toMatchObject({eligibility: [], automaticResult: 'FAILED'});
+      document = await stage5.updateDocumentSettings(f.firstChair, document.id,
+        {baseRevision: document.revision, majority, proposerSeatId: f.firstSeat.id}, context('majority'));
+      expect(document.directVote).toMatchObject({eligibility: [], votes: [], automaticResult: 'FAILED'});
+      const snapshotDocument = async () => (await stage4.snapshot(f.committee.id, f.firstChair))
+        .documents?.find(item => item.id === document.id);
+      expect((await snapshotDocument())?.directVote).toMatchObject({eligibility: [], automaticResult: 'FAILED'});
+      for (let index = 0; index < seats.length; index += 1) {
+        seats[index] = await stage4.updateSeat(f.firstChair, f.committee.id, seats[index].id,
+          {baseRevision: seats[index].revision, patch: {canVote: true}}, context('enable-voting'));
+      }
+      expect((await snapshotDocument())?.directVote?.automaticResult).toBeNull();
+      for (const seat of seats) {
+        document = await stage5.setResolutionDirectVote(f.firstChair, document.id,
+          {seatId: seat.id, choice: 'FOR'}, context('vote-for'));
+      }
+      expect(document.directVote?.automaticResult).toBe('PASSED');
+      expect((await snapshotDocument())?.directVote?.automaticResult).toBe('PASSED');
+      for (const seat of seats) {
+        await stage4.updateSeat(f.firstChair, f.committee.id, seat.id,
+          {baseRevision: seat.revision, patch: {canVote: false}}, context('remove-eligibility'));
+      }
+      expect((await snapshotDocument())?.directVote).toMatchObject({eligibility: [], votes: [], automaticResult: 'FAILED'});
+    });
+
   it.each(['STANDARD', 'NGO', 'OBSERVER'])('freezes independent capabilities for %s and applies changes only to the next ballot', async rank => {
     const f = await meetingFixture();
     let seat = await stage4.updateSeat(f.firstChair, f.committee.id, f.firstSeat.id,

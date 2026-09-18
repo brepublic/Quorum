@@ -948,7 +948,7 @@ export class Stage4Service {
               ? Math.ceil(2 * eligibleCount / 3) : Math.floor(eligibleCount / 2) + 1;
             const remaining = Math.max(0, eligibleCount - castCount);
             if (vetoed) automaticResult = 'VETOED';
-            else if ((!hasVetoSeat || castCount >= eligibleCount) && forCount >= threshold) automaticResult = 'PASSED';
+            else if (eligibleCount > 0 && (!hasVetoSeat || castCount >= eligibleCount) && forCount >= threshold) automaticResult = 'PASSED';
             else if (eligibleCount === 0 || forCount + remaining < threshold) automaticResult = 'FAILED';
           }
           directVote = {majority: resolution.direct_vote_majority,
