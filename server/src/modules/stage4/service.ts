@@ -711,7 +711,17 @@ export class Stage4Service {
         client.query<MeetingSessionRow>('SELECT * FROM meeting_sessions WHERE committee_id=$1 ORDER BY ordinal DESC', [committeeId])
       ]);
       const currentSession = sessionResult.rows[0];
-      let currentRollCall: RollCall | undefined; let attendance: AttendanceState[] = [];
+      let currentRollCall: RollCall | undefined;
+      const attendanceResult = await client.query<{meeting_session_id: string; seat_id: string;
+        state: AttendanceState['state']; last_event_id: string; updated_at: Date}>(
+        `SELECT meeting_session_id,seat_id,state,last_event_id,updated_at FROM current_attendance
+         WHERE committee_id=$1 ORDER BY meeting_session_id,seat_id`, [committeeId]);
+      const attendanceBySession: Record<string, AttendanceState[]> = {};
+      for (const row of attendanceResult.rows) {
+        (attendanceBySession[row.meeting_session_id] ??= []).push({seatId: row.seat_id, state: row.state,
+          lastEventId: row.last_event_id, updatedAt: row.updated_at.toISOString()});
+      }
+      const attendance = currentSession ? attendanceBySession[currentSession.id] ?? [] : [];
       const pointRows = await client.query<PointRow>('SELECT * FROM points WHERE committee_id=$1 ORDER BY created_at,id', [committeeId]);
       const points: Array<CommitteePoint | PublicCommitteePoint> = await Promise.all(viewer.audience === 'PUBLIC'
         ? pointRows.rows.map(async row => ({typeNames: await pointTypeNames(client, row), id: row.id, committeeId: row.committee_id, meetingSessionId: row.meeting_session_id,
@@ -726,10 +736,6 @@ export class Stage4Service {
             ORDER BY (status='IN_PROGRESS') DESC,started_at DESC,id DESC LIMIT 1`, [currentSession.id]);
           if (rollCallResult.rows[0]) currentRollCall = await rollCall(client, rollCallResult.rows[0]);
         }
-        const attendanceResult = await client.query<{seat_id: string; state: AttendanceState['state']; last_event_id: string; updated_at: Date}>(
-          `SELECT seat_id,state,last_event_id,updated_at FROM current_attendance WHERE meeting_session_id=$1 ORDER BY seat_id`, [currentSession.id]);
-        attendance = attendanceResult.rows.map(row => ({seatId: row.seat_id, state: row.state,
-          lastEventId: row.last_event_id, updatedAt: row.updated_at.toISOString()}));
       }
       const summary = committeeSummary(committee); const {ownerUserId: _ownerUserId, ...publicCommittee} = summary;
       const ruleResult = await client.query<{definition: {
@@ -748,7 +754,7 @@ export class Stage4Service {
       const result: CommitteeWorkspaceSnapshot = {schemaVersion: 3,
         committee: viewer.audience === 'OWNER' || viewer.audience === 'CHAIR' ? summary : publicCommittee,
         ...(setupCountryTemplate ? {countryTemplate: setupCountryTemplate} : {}),
-        seats: seats.rows, viewer, attendance, points, notes: [], textPosts: [],
+        seats: seats.rows, viewer, attendance, attendanceBySession, points, notes: [], textPosts: [],
         motionSettings: {delegateMotionProposalsEnabled: committee.delegate_motion_proposals_enabled,
           delegateMotionVotingEnabled: committee.delegate_motion_voting_enabled},
         layoutSettings: {moveQueueUp: committee.move_queue_up,

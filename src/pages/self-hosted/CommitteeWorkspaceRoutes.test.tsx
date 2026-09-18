@@ -552,6 +552,41 @@ describe('committee workspace routes and roles', () => {
     expect(page.querySelector('.current-session-empty')?.textContent).toContain('(No motions)');
   });
 
+  it.each(['PRESENT', 'ABSENT', 'TEMPORARILY_LEFT', undefined] as const)(
+    'uses each motion session attendance when current attendance is %s', async currentState => {
+    const createdAt = '2026-08-14T00:00:00.000Z';
+    const sessions: NonNullable<CommitteeWorkspaceSnapshot['meetingSessions']> = [
+      {id: 'current', committeeId: 'committee', ordinal: 3, name: 'Session 3', phaseId: 'formal-debate',
+        activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1, createdAt, closedAt: null},
+      ...['previous', 'oldest'].map((id, index) => ({id, committeeId: 'committee', ordinal: 2 - index,
+        name: `Session ${2 - index}`, phaseId: 'formal-debate', activeRulePackageVersionId: 'rules',
+        status: 'CLOSED' as const, revision: 2, createdAt, closedAt: createdAt}))
+    ];
+    const attendance = (state: 'PRESENT' | 'ABSENT' | 'TEMPORARILY_LEFT') => ['seat', 'seconder'].map(seatId => ({
+      seatId, state, lastEventId: `${state}-${seatId}`, updatedAt: createdAt}));
+    const motions: ProceedingMotion[] = sessions.map(session => ({id: session.id, committeeId: 'committee',
+      meetingSessionId: session.id, motionTypeId: 'suspend-meeting', proposedBySeatId: 'seat',
+      proposedBySeatDisplayName: 'China', parameters: {}, status: 'PASSED', rulePackageVersionId: 'rules',
+      ruleEvaluation: {schemaVersion: 1, packageVersionId: 'rules', definition: {}, facts: {}, resolvedValues: {},
+        frozenAt: createdAt}, requiredSecondCount: 1,
+      seconds: [{id: `second-${session.id}`, seatId: 'seconder', seatDisplayName: 'Bahrain', createdAt}], revision: 1,
+      directVote: {includeNonVotingSeats: false, startedAt: null, settingsRevision: 1, eligibility: [],
+        choices: ['FOR', 'AGAINST'], threshold: 1, automaticResult: null, votes: []},
+      createdAt, decidedAt: null, destinationPath: null}));
+    const page = await render('CHAIR', '/committees/committee/motions', user, value => ({...value,
+      seats: [...value.seats, {...value.seats[0], id: 'seconder', stableKey: 'bahrain', displayName: 'Bahrain'}],
+      meetingSession: sessions[0], meetingSessions: sessions, motions,
+      attendance: currentState ? attendance(currentState) : [],
+      attendanceBySession: {previous: attendance('PRESENT'), oldest: attendance('ABSENT')}}));
+    const cards = page.querySelectorAll('.motion-card');
+    expect(cards).toHaveLength(3);
+    expect(cards[0].querySelectorAll('.motion-metadata-value .label')).toHaveLength(currentState === 'PRESENT' ? 0 : 2);
+    expect(cards[1].textContent).toContain('China');
+    expect(cards[1].textContent).toContain('Bahrain');
+    expect(cards[1].querySelectorAll('.motion-metadata-value .label')).toHaveLength(0);
+    expect(cards[2].querySelectorAll('.motion-metadata-value .label')).toHaveLength(2);
+  });
+
   it('separates point history at meeting-session boundaries', async () => {
     const sessions: NonNullable<CommitteeWorkspaceSnapshot['meetingSessions']> = [
       {id: 'session-2', committeeId: 'committee', ordinal: 2, name: '第2会期', phaseId: 'formal-debate',

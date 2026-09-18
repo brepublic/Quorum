@@ -320,6 +320,8 @@ export interface CommitteeWorkspaceSnapshot {
   nextMeetingSessionOrdinal?: number;
   rollCall?: RollCall;
   attendance: AttendanceState[];
+  /** Per-session attendance; closed sessions retain their final state. */
+  attendanceBySession?: Record<string, AttendanceState[]>;
   points: Array<CommitteePoint | PublicCommitteePoint>;
   notes: CommitteeNote[];
   textPosts: CommitteeTextPost[];

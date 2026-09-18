@@ -11,9 +11,9 @@ describe('current meeting-session card spacing', () => {
 });
 
 describe('resolution voting grid', () => {
-  it('uses a six-row, column-first layout like roll call', () => {
+  it('uses six growing rows in a column-first layout like roll call', () => {
     const css = readFileSync(resolve(process.cwd(), 'src', 'App.css'), 'utf8');
 
-    expect(css).toMatch(/\.resolution-voting-grid\s*\{[^}]*grid-auto-flow:\s*column;[^}]*grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\);[^}]*grid-template-rows:\s*repeat\(6, 3\.25rem\);[^}]*\}/s);
+    expect(css).toMatch(/\.resolution-voting-grid\s*\{[^}]*grid-auto-flow:\s*column;[^}]*grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\);[^}]*grid-template-rows:\s*repeat\(6, minmax\(3\.25rem, auto\)\);[^}]*\}/s);
   });
 });

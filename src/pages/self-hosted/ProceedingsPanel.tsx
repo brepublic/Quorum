@@ -1125,6 +1125,9 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
     {motionGroups.map(group => <React.Fragment key={group.meetingSessionId}>
       {group.meetingSessionId !== snapshot.meetingSession?.id && <Divider horizontal className="history-session-divider">{sessionNames.get(group.meetingSessionId) ?? t('Meeting session')}</Divider>}
       <Card.Group itemsPerRow={1} className="motion-queue">{group.motions.map(motion => {
+      const motionAttendance = motion.meetingSessionId === snapshot.meetingSession?.id
+        ? snapshot.attendance : snapshot.attendanceBySession?.[motion.meetingSessionId] ?? [];
+      const motionPresentSeatIds = new Set(motionAttendance.filter(item => item.state === 'PRESENT').map(item => item.seatId));
       const type = {id: motion.motionTypeId, names: motion.ruleEvaluation.definition.names as Record<string, string> | undefined};
       const proposer = snapshot.seats.find(seat => seat.id === motion.proposedBySeatId);
       const firstSecond = motion.seconds[0]; const seconder = snapshot.seats.find(seat => seat.id === firstSecond?.seatId);
@@ -1159,13 +1162,13 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
             <Table.Row><Table.Cell className="motion-metadata-key">{t('Proposer')}</Table.Cell><Table.Cell>
               <span className="motion-metadata-value">
                 {proposer && seatOptionContent(proposer)}
-                {!presentSeatIds.has(motion.proposedBySeatId) && <Label basic size="mini">{t('Absent')}</Label>}
+                {!motionPresentSeatIds.has(motion.proposedBySeatId) && <Label basic size="mini">{t('Absent')}</Label>}
               </span>
             </Table.Cell></Table.Row>
             {motion.requiredSecondCount > 0 && <Table.Row><Table.Cell className="motion-metadata-key">
               {t('Seconder')}</Table.Cell><Table.Cell><span className="motion-metadata-value">
                 {seconder ? seatOptionContent(seconder) : <span>—</span>}
-                {seconder && !presentSeatIds.has(seconder.id) && <Label basic size="mini">{t('Absent')}</Label>}
+                {seconder && !motionPresentSeatIds.has(seconder.id) && <Label basic size="mini">{t('Absent')}</Label>}
               </span></Table.Cell></Table.Row>}
             {hasCaucusTarget(motion.motionTypeId) && <Table.Row><Table.Cell className="motion-metadata-key">
               {t('Target caucus')}</Table.Cell><Table.Cell><span className="motion-metadata-value">

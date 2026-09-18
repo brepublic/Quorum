@@ -325,6 +325,49 @@ integration('PostgreSQL stage 4 templates and seat snapshots', () => {
     expect(closed.status).toBe('CLOSED');
   });
 
+  it('preserves session attendance snapshots across new sessions and roll calls', async () => {
+    const owner = await user('attendance-history');
+    const committee = await stage4.createCommittee(owner, await testCommitteeInput(pool!, owner, {
+      name: 'Attendance history', visibility: 'PUBLIC', countryTemplateKey: 'builtin:default'}),
+      randomUUID(), context('attendance-history'));
+    await stage3.setChair(owner, committee.id, owner.user.email, true, 1, context('history-chair'));
+    const first = await stage4.createSeat(owner, committee.id, {stableKey: 'first', sortOrder: 10},
+      randomUUID(), context('history-first'));
+    const second = await stage4.createSeat(owner, committee.id, {stableKey: 'second', sortOrder: 20},
+      randomUUID(), context('history-second'));
+    const oldSession = await stage4.startMeetingSession(owner, committee.id, {}, context('history-start'), randomUUID());
+    await stage4.createAttendanceEvent(owner, committee.id,
+      {meetingSessionId: oldSession.id, seatId: first.id, type: 'PRESENT'}, context('history-present'));
+    await stage4.createAttendanceEvent(owner, committee.id,
+      {meetingSessionId: oldSession.id, seatId: second.id, type: 'ABSENT'}, context('history-absent'));
+    const oldAttendance = (await stage4.snapshot(committee.id, owner)).attendance;
+    await stage4.closeMeetingSession(owner, oldSession.id, {baseRevision: oldSession.revision}, context('history-close'));
+    const newSession = await stage4.startMeetingSession(owner, committee.id, {}, context('history-next'), randomUUID());
+    const beforeRollCall = await stage4.snapshot(committee.id, owner);
+    expect(beforeRollCall.attendance).toEqual([]);
+    expect(beforeRollCall.attendanceBySession?.[oldSession.id]).toEqual(oldAttendance);
+    const roll = await stage4.startRollCall(owner, committee.id, {meetingSessionId: newSession.id},
+      randomUUID(), context('history-roll'));
+    const partial = await stage4.recordRollCallResponse(owner, roll.id,
+      {baseRevision: roll.revision, seatId: first.id, response: 'ABSENT'}, context('history-roll-absent'));
+    expect((await stage4.snapshot(committee.id, owner)).attendanceBySession?.[oldSession.id]).toEqual(oldAttendance);
+    await stage4.recordRollCallResponse(owner, roll.id,
+      {baseRevision: partial.revision, seatId: second.id, response: 'PRESENT'}, context('history-roll-present'));
+    for (const viewer of [owner, undefined]) {
+      const snapshot = await stage4.snapshot(committee.id, viewer);
+      expect(snapshot.attendanceBySession?.[oldSession.id]).toEqual(oldAttendance);
+      expect(snapshot.attendance).toEqual(expect.arrayContaining([
+        expect.objectContaining({seatId: first.id, state: 'ABSENT'}),
+        expect.objectContaining({seatId: second.id, state: 'PRESENT'})
+      ]));
+      expect(snapshot.attendanceBySession?.[newSession.id]).toEqual(snapshot.attendance);
+      expect(Object.keys(snapshot.attendanceBySession ?? {}).sort()).toEqual([oldSession.id, newSession.id].sort());
+    }
+    await expect(stage4.createAttendanceEvent(owner, committee.id,
+      {meetingSessionId: oldSession.id, seatId: first.id, type: 'ABSENT'}, context('history-closed-change')))
+      .rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
+  });
+
   it('sets and corrects frozen roll-call seats out of order without losing response history', async () => {
     const owner = await user('freeorderowner'); const chair = await user('freeorderchair');
     const committee = await stage4.createCommittee(owner, await testCommitteeInput(pool!, owner, {name: 'Free Order Council', visibility: 'PRIVATE',
