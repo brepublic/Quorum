@@ -1,7 +1,9 @@
 import * as React from 'react';
 import { Dropdown, Icon, Menu } from 'semantic-ui-react';
 
-export type Language = 'en' | 'zh-CN';
+import type {ContentLanguage} from '@quorum/contracts';
+
+export type Language = ContentLanguage;
 
 export const LANGUAGE_OPTIONS: ReadonlyArray<{
   key: Language;
@@ -1046,8 +1048,18 @@ export function localizeGeneratedName(value: string): string {
   return GENERATED_NAME_KEYS.has(value) ? t(value) : value;
 }
 
+function subscribeLanguage(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => {listeners.delete(listener);};
+}
+
+/** Re-render consumers without replacing component identity or business connections. */
+export function useLanguage(): Language {
+  return React.useSyncExternalStore(subscribeLanguage, getLanguage, getLanguage);
+}
+
 export function LanguageProvider(props: React.PropsWithChildren) {
-  const [language, updateLanguage] = React.useState<Language>(currentLanguage);
+  const language = useLanguage();
 
   const dropdownComponent = Dropdown as typeof Dropdown & {
     defaultProps?: Record<string, unknown>;
@@ -1059,30 +1071,14 @@ export function LanguageProvider(props: React.PropsWithChildren) {
   };
 
   React.useEffect(() => {
-    const listener = (nextLanguage: Language) => updateLanguage(nextLanguage);
-    listeners.add(listener);
-    return () => {
-      listeners.delete(listener);
-    };
-  }, []);
-
-  React.useEffect(() => {
     document.documentElement.lang = language;
   }, [language]);
 
-  return <React.Fragment key={language}>{props.children}</React.Fragment>;
+  return <>{props.children}</>;
 }
 
 export function LanguageSwitcher() {
-  const [language, updateLanguage] = React.useState<Language>(currentLanguage);
-
-  React.useEffect(() => {
-    const listener = (nextLanguage: Language) => updateLanguage(nextLanguage);
-    listeners.add(listener);
-    return () => {
-      listeners.delete(listener);
-    };
-  }, []);
+  const language = useLanguage();
 
   return (
     <div className="language-switcher">

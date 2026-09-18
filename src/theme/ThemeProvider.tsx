@@ -12,7 +12,7 @@ import {
   Modal,
   Portal
 } from 'semantic-ui-react';
-import {t} from '../i18n';
+import {t, useLanguage} from '../i18n';
 import {getThemeSettings} from '../services/self-hosted-identity';
 import {
   classifyThemeRoute,
@@ -242,6 +242,7 @@ const ThemeFeatureContext = React.createContext({enabled: false, setEnabled: (_e
 export const useThemeFeature = () => React.useContext(ThemeFeatureContext);
 
 export function ThemeProvider(props: React.PropsWithChildren) {
+  useLanguage();
   const location = useLocation();
   const [enabled, setFeatureEnabled] = React.useState(false);
   const settingsGeneration = React.useRef(0);

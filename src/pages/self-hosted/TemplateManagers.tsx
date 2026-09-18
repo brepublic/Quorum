@@ -13,7 +13,7 @@ import {
   Button, Checkbox, Confirm, Container, Dropdown, Form, Grid, Header, Icon, List, Message, Segment, Table
 } from 'semantic-ui-react';
 import {CountryFlagDisplay} from '../../components/CountryFlagDisplay';
-import {getLanguage, LANGUAGE_OPTIONS, type Language, SUPPORTED_LANGUAGES, t} from '../../i18n';
+import {getLanguage, useLanguage, LANGUAGE_OPTIONS, type Language, SUPPORTED_LANGUAGES, t} from '../../i18n';
 import {SelfHostedApiError, type SelfHostedApi} from '../../services/self-hosted-api';
 
 type LocalizedNameDraft = {id: string; language: Language; name: string};
@@ -65,8 +65,16 @@ function localizedDrafts(names: LocalizedNames, displayLanguage: Language): Loca
     .map(language => ({id: draftId('language'), language, name: names[language] as string}));
 }
 
+function draftNameLanguage(names: LocalizedNames, defaultLanguage: string): Language {
+  const language = getLanguage();
+  if (names[language]?.trim()) return language;
+  if (SUPPORTED_LANGUAGES.includes(defaultLanguage as Language) && names[defaultLanguage]?.trim()) return defaultLanguage as Language;
+  return SUPPORTED_LANGUAGES.find(candidate => names[candidate]?.trim()) ?? language;
+}
+
 export function CountryTemplateManager({api}: {api: SelfHostedApi}) {
-  const displayLanguage = getLanguage();
+  useLanguage();
+  const [displayLanguage, setDisplayLanguage] = React.useState<Language>(getLanguage);
   const [templates, setTemplates] = React.useState<CountryTemplate[]>([]); const [selectedId, setSelectedId] = React.useState<string>();
   const [name, setName] = React.useState(''); const [defaultLanguage, setDefaultLanguage] = React.useState<Language>(displayLanguage);
   const [localizedNames, setLocalizedNames] = React.useState<LocalizedNameDraft[]>([]); const [languages, setLanguages] = React.useState<Language[]>([displayLanguage]);
@@ -78,19 +86,22 @@ export function CountryTemplateManager({api}: {api: SelfHostedApi}) {
   React.useEffect(() => { void refresh().catch(caught => setError(errorText(caught))); }, [refresh]);
 
   const load = React.useCallback((template: CountryTemplate) => {
-    setSelectedId(template.id); setName(localizedDisplayName(template.names, template.defaultLanguage));
-    setDefaultLanguage((SUPPORTED_LANGUAGES.includes(template.defaultLanguage as Language) ? template.defaultLanguage : displayLanguage) as Language);
-    setLocalizedNames(localizedDrafts(template.names, displayLanguage));
+    const nextLanguage = draftNameLanguage(template.names, template.defaultLanguage);
+    setDisplayLanguage(nextLanguage);
+    setSelectedId(template.id); setName(template.names[nextLanguage] ?? '');
+    setDefaultLanguage((SUPPORTED_LANGUAGES.includes(template.defaultLanguage as Language) ? template.defaultLanguage : nextLanguage) as Language);
+    setLocalizedNames(localizedDrafts(template.names, nextLanguage));
     const declared = template.countryLanguages.filter(language => SUPPORTED_LANGUAGES.includes(language as Language)) as Language[];
-    setLanguages(declared.length ? declared : [displayLanguage]);
+    setLanguages(declared.length ? declared : [nextLanguage]);
     setCountries(template.countries.map(country => ({id: country.id, stableKey: country.stableKey, names: {...country.names},
       defaultLanguage: country.defaultLanguage, continent: country.continent, sortOrder: country.sortOrder, flag: country.flag,
       flagMode: country.flag.type})));
     setSaved(false); setError(undefined);
-  }, [displayLanguage]);
+  }, []);
 
-  const startNew = () => { setSelectedId(undefined); setName(''); setDefaultLanguage(displayLanguage); setLocalizedNames([]);
-    setLanguages([displayLanguage]); setCountries([]); setSaved(false); setError(undefined); };
+  const startNew = () => { const language = getLanguage(); setDisplayLanguage(language);
+    setSelectedId(undefined); setName(''); setDefaultLanguage(language); setLocalizedNames([]);
+    setLanguages([language]); setCountries([]); setSaved(false); setError(undefined); };
 
   const create = async () => {
     if (!name.trim()) return; setSaving(true); setError(undefined);
@@ -228,7 +239,8 @@ export function CountryTemplateManager({api}: {api: SelfHostedApi}) {
 }
 
 export function CommitteeTemplateManager({api}: {api: SelfHostedApi}) {
-  const displayLanguage = getLanguage(); const [templates, setTemplates] = React.useState<CommitteeTemplate[]>([]);
+  useLanguage();
+  const [displayLanguage, setDisplayLanguage] = React.useState<Language>(getLanguage); const [templates, setTemplates] = React.useState<CommitteeTemplate[]>([]);
   const [countryTemplates, setCountryTemplates] = React.useState<CountryTemplate[]>([]); const [selectedId, setSelectedId] = React.useState<string>();
   const [name, setName] = React.useState(''); const [defaultLanguage, setDefaultLanguage] = React.useState<Language>(displayLanguage);
   const [localizedNames, setLocalizedNames] = React.useState<LocalizedNameDraft[]>([]); const [countryKey, setCountryKey] = React.useState('builtin:default');
@@ -244,11 +256,13 @@ export function CommitteeTemplateManager({api}: {api: SelfHostedApi}) {
     api.listCommitteeTemplates(), api.listCountryTemplates()]); setTemplates(nextTemplates); setCountryTemplates(nextCountries);
     return {nextTemplates, nextCountries}; }, [api]);
   React.useEffect(() => { void refresh().catch(caught => setError(errorText(caught))); }, [refresh]);
-  const startNew = () => {setSelectedId(undefined); setName(''); setDefaultLanguage(displayLanguage); setLocalizedNames([]);
+  const startNew = () => {const language = getLanguage(); setDisplayLanguage(language);
+    setSelectedId(undefined); setName(''); setDefaultLanguage(language); setLocalizedNames([]);
     setCountryKey('builtin:default'); setMembers([]); setSaved(false); setError(undefined);};
-  const load = (template: CommitteeTemplate) => {setSelectedId(template.id); setName(localizedDisplayName(template.names, template.defaultLanguage));
-    setDefaultLanguage((SUPPORTED_LANGUAGES.includes(template.defaultLanguage as Language) ? template.defaultLanguage : displayLanguage) as Language);
-    setLocalizedNames(localizedDrafts(template.names, displayLanguage)); setCountryKey(template.countryTemplateKey);
+  const load = (template: CommitteeTemplate) => {const nextLanguage = draftNameLanguage(template.names, template.defaultLanguage);
+    setDisplayLanguage(nextLanguage); setSelectedId(template.id); setName(template.names[nextLanguage] ?? '');
+    setDefaultLanguage((SUPPORTED_LANGUAGES.includes(template.defaultLanguage as Language) ? template.defaultLanguage : nextLanguage) as Language);
+    setLocalizedNames(localizedDrafts(template.names, nextLanguage)); setCountryKey(template.countryTemplateKey);
     setMembers(template.members.map(member => ({id: member.id, stableKey: member.stableKey, names: {...member.names},
       defaultLanguage: member.defaultLanguage, rank: member.rank, canVote: member.canVote, hasVeto: member.hasVeto,
       mustVote: member.mustVote, sortOrder: member.sortOrder, flag: member.flag}))); setSaved(false); setError(undefined);};

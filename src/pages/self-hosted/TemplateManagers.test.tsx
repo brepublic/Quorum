@@ -4,7 +4,7 @@ import {createRoot, type Root} from 'react-dom/client';
 import {afterEach, describe, expect, it, vi} from 'vitest';
 import type {CountryTemplate, CommitteeTemplate} from '@quorum/contracts';
 import type {SelfHostedApi} from '../../services/self-hosted-api';
-import {getLanguage} from '../../i18n';
+import {getLanguage, setLanguage} from '../../i18n';
 import {CountryTemplateManager, CommitteeTemplateManager} from './TemplateManagers';
 
 (globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT: boolean}).IS_REACT_ACT_ENVIRONMENT = true;
@@ -20,7 +20,7 @@ const custom: CountryTemplate = {id: '10000000-0000-4000-8000-000000000001',
   createdAt: '2026-08-14T00:00:00.000Z', updatedAt: '2026-08-14T00:00:00.000Z'};
 
 let root: Root | undefined; let container: HTMLDivElement | undefined;
-afterEach(() => {if (root) act(() => root?.unmount()); container?.remove(); root = undefined; container = undefined;});
+afterEach(() => {if (root) act(() => root?.unmount()); container?.remove(); root = undefined; container = undefined; setLanguage('en');});
 
 async function render(api: SelfHostedApi) {
   container = document.createElement('div'); document.body.append(container); root = createRoot(container);
@@ -28,6 +28,28 @@ async function render(api: SelfHostedApi) {
 }
 
 describe('self-hosted template managers', () => {
+  it('preserves the draft content language and focus when the interface language changes', async () => {
+    setLanguage('en');
+    const createCountryTemplate = vi.fn(async () => custom);
+    const api = {listCountryTemplates: vi.fn(async () => [builtin]), createCountryTemplate} as unknown as SelfHostedApi;
+    await render(api);
+    const input = container!.querySelector('input')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'Original draft');
+      input.dispatchEvent(new Event('input', {bubbles: true})); input.focus();
+    });
+    act(() => setLanguage('zh-CN'));
+    expect(container!.querySelector('input')).toBe(input);
+    expect(input.value).toBe('Original draft'); expect(document.activeElement).toBe(input);
+    expect(container!.textContent).toContain('创建国家模板');
+    await act(async () => {
+      container!.querySelector('form')!.dispatchEvent(new Event('submit', {bubbles: true, cancelable: true}));
+    });
+    expect(createCountryTemplate).toHaveBeenCalledWith({names: {en: 'Original draft'}, defaultLanguage: 'en',
+      countryLanguages: ['en'], countries: []});
+    expect(api.listCountryTemplates).toHaveBeenCalledTimes(2);
+  });
+
   it('creates an empty country template from its name before showing the legacy table editor', async () => {
     const createCountryTemplate = vi.fn(async () => custom);
     const listCountryTemplates = vi.fn().mockResolvedValueOnce([builtin]).mockResolvedValue([builtin, custom]);
