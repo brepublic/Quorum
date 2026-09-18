@@ -38,6 +38,12 @@ const en: Record<string, string> = {
 };
 
 const zhCN: Record<string, string> = {
+  'Committee language': '委员会语言',
+  'Choose a supported committee language': '请选择支持的委员会语言',
+  'The selected content is missing translations': '所选内容缺少翻译',
+  'The selected source changed; refresh the preview': '所选来源已修改，请刷新预览',
+  'Select a member from the committee directory': '请从委员会固定目录选择成员',
+  'No common language for the selected content': '所选内容没有共同支持的语言',
   'Interface settings': '界面设置',
   'Enable themes (experimental)': '启用主题功能（实验性）',
   'Theme settings are invalid.': '主题设置无效。',

@@ -1,4 +1,5 @@
 import type {
+  CreateCommitteeFromTemplateRequest, ApiErrorReason, ApiErrorParams, ApiFieldError,
   DelegateFileSettings, DefaultFileRejectionSettings,
   CommitteeEventEnvelope,
   AuthoritativeTimer,
@@ -54,11 +55,12 @@ import type {
 import {COMMITTEE_EVENT_DEFINITIONS, type RealtimeSyncState} from '@quorum/contracts';
 
 interface ApiSuccess<T> {data: T; meta: {requestId: string}}
-interface ApiFailure {error: {code: string; message: string; requestId: string; details?: unknown}}
+interface ApiFailure {error: {code: string; message: string; requestId?: string; details?: unknown; reason?: ApiErrorReason; params?: ApiErrorParams; fieldErrors?: ApiFieldError[]}}
 
 export class SelfHostedApiError extends Error {
   constructor(readonly status: number, readonly code: string, message: string,
-    readonly requestId?: string, readonly details?: unknown) {
+    readonly requestId?: string, readonly details?: unknown,
+    readonly localization?: Pick<ApiFailure['error'], 'reason' | 'params' | 'fieldErrors'>) {
     super(message); this.name = 'SelfHostedApiError';
   }
 }
@@ -85,7 +87,7 @@ async function request<T>(path: string, options: {
   if (!response.ok || 'error' in payload) {
     const error = 'error' in payload ? payload.error
       : {code: 'INTERNAL_ERROR', message: 'Request failed.', requestId: undefined, details: undefined};
-    throw new SelfHostedApiError(response.status, error.code, error.message, error.requestId, error.details);
+    throw new SelfHostedApiError(response.status, error.code, error.message, error.requestId, error.details, error);
   }
   return payload.data;
 }
@@ -116,7 +118,7 @@ function uploadContentRequest(uploadId: string, file: File, idempotencyKey: stri
       if (xhr.status < 200 || xhr.status >= 300 || 'error' in payload) {
         const error = 'error' in payload ? payload.error
           : {code: 'INTERNAL_ERROR', message: 'Upload failed.', requestId: undefined, details: undefined};
-        reject(new SelfHostedApiError(xhr.status, error.code, error.message, error.requestId, error.details));
+        reject(new SelfHostedApiError(xhr.status, error.code, error.message, error.requestId, error.details, error));
         return;
       }
       resolve(payload.data);
@@ -145,7 +147,7 @@ async function delegateRequest<T>(path: string, options: {
   if (!response.ok || 'error' in payload) {
     const error = 'error' in payload ? payload.error
       : {code: 'INTERNAL_ERROR', message: 'Request failed.', requestId: undefined, details: undefined};
-    throw new SelfHostedApiError(response.status, error.code, error.message, error.requestId, error.details);
+    throw new SelfHostedApiError(response.status, error.code, error.message, error.requestId, error.details, error);
   }
   return payload.data;
 }
@@ -167,7 +169,7 @@ function delegateUploadContentRequest(uploadId: string, file: File, idempotencyK
       if (xhr.status < 200 || xhr.status >= 300 || 'error' in payload) {
         const error = 'error' in payload ? payload.error
           : {code: 'INTERNAL_ERROR', message: 'Upload failed.', requestId: undefined, details: undefined};
-        reject(new SelfHostedApiError(xhr.status, error.code, error.message, error.requestId, error.details)); return;
+        reject(new SelfHostedApiError(xhr.status, error.code, error.message, error.requestId, error.details, error)); return;
       }
       resolve(payload.data);
     };
@@ -289,7 +291,7 @@ export const selfHostedApi = {
   async listCommittees(): Promise<CommitteeSummary[]> {
     return (await request<{committees: CommitteeSummary[]}>('/api/v1/committees')).committees;
   },
-  createCommittee(input: {name: string; topic?: string; conference?: string; visibility: 'PUBLIC' | 'PRIVATE'; committeeTemplateId?: string; countryTemplateKey?: string}) {
+  createCommittee(input: CreateCommitteeFromTemplateRequest) {
     return request<CommitteeSummary>('/api/v1/committees', {method: 'POST', body: input, idempotencyKey: key()});
   },
   snapshot(id: string) { return request<CommitteeWorkspaceSnapshot>(`/api/v1/committees/${id}/snapshot`); },

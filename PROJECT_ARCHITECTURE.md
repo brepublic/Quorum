@@ -56,7 +56,7 @@ flowchart LR
 
 ## 3. 服务端模块与数据边界
 
-`server/` 是单进程模块化单体。启动时使用 PostgreSQL advisory lock 执行带 SHA-256 校验和的顺序 migration；当前 schema compatibility 为 55。实例级 `system_settings` 保存新委员会的默认运作模式与创建者是否自动获得 Chair；它们只在创建事务中读取，不追溯既有委员会。系统管理员不能创建委员会。数据库版本、连接、存储目录可写性或容量采样不满足要求时 readiness 失败。
+`server/` 是单进程模块化单体。启动时使用 PostgreSQL advisory lock 执行带 SHA-256 校验和的顺序 migration；源码 schema compatibility 为 56（已部署开发实例仍为 55，完整切换待验收）。实例级 `system_settings` 保存新委员会的默认运作模式与创建者是否自动获得 Chair；它们只在创建事务中读取，不追溯既有委员会。系统管理员不能创建委员会。数据库版本、连接、存储目录可写性或容量采样不满足要求时 readiness 失败。
 
 | 模块 | 责任 |
 | --- | --- |
@@ -69,6 +69,10 @@ flowchart LR
 | Operations | 归档导出、委员会删除、账号处置、retention、状态、健康和指标 |
 
 `packages/contracts/` 保存浏览器、后端与 Agent 共用的错误码、事件、审计动作、响应类型和不可变规则快照。`packages/rule-schema/` 保存规则包 v1 的 schema、安全表达式求值和内置 `Quorum Default`/北京学术标准 fixture。`packages/storage-agent/` 保存独立 Chair Agent 客户端、安全目录、扫描、恢复循环和发布入口。
+
+委员会创建必须显式选择内容语言（`zh-CN` 或 `en`）、已发布规则版本及模板 revision。Stage 3 创建入口委托 Stage 4 的同一事务，锁定源模板并检查完整目录、成员和规则的实际翻译，原子保存 `committees.content_snapshot`。语言和固定副本由 migration 56 的触发器禁止修改；席位只能引用副本中的稳定标识，名称与旗帜不可改，权限和排序仍可调整。公开/代表快照不包含私有目录。规则激活及 FUTURE 调整也校验内容语言；已发布旧版本保留，内置 v5 仅补齐缺失动议名称。
+
+这次不兼容变更把 API contract 升为 3、工作区快照升为 3、归档格式升为 2；归档包含完整固定副本与席位旗帜。migration 56 对含旧委员会的数据库明确拒绝升级，不推断旧名称。完整多语言、自动名称编号及受控重建流程仍在实施，详见 `docs/self-hosted/LOCALIZATION_IMPLEMENTATION.md`。
 
 所有业务写入使用表达意图的命令。服务端从 Session 或独立 Agent 凭据推导 actor，在一个 PostgreSQL 事务中完成授权、行锁/revision 检查、状态变化、事件、审计和 durable 幂等结果。系统管理员、Committee Owner、Chair 与代表席位是独立能力；系统管理员不能创建委员会或获得 Chair 学术权限，普通创建者是否自动获得 Chair 由实例级默认设置决定。
 

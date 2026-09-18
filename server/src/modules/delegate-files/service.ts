@@ -491,14 +491,14 @@ export class DelegateFileService {
   }
 
   private async portalSnapshot(client: PoolClient, share: ShareRow, session?: DelegateSessionRow): Promise<DelegatePortalBootstrap> {
-    const committee = (await client.query<{name: string; next_event_sequence: string | number}>(
-      'SELECT name,next_event_sequence FROM committees WHERE id=$1', [share.committee_id])).rows[0];
+    const committee = (await client.query<{committee_language: DelegatePortalBootstrap['committeeLanguage']; name: string; next_event_sequence: string | number}>(
+      'SELECT name,committee_language,next_event_sequence FROM committees WHERE id=$1', [share.committee_id])).rows[0];
     if (!committee) throw new AppError({code: 'NOT_FOUND', message: 'Committee not found.'});
     const eligible = await this.eligibleSeats(client, share.committee_id);
     const settings = await this.readSettings(client, share.committee_id) as DelegateFileSettings;
     const seat = session ? (await client.query('SELECT flag_type,flag_value FROM committee_seats WHERE id=$1 AND committee_id=$2',
       [session.seat_id, share.committee_id])).rows[0] : undefined;
-    return {committeeId: share.committee_id, committeeName: committee.name, shareId: share.id,
+    return {committeeId: share.committee_id, committeeName: committee.name, committeeLanguage: committee.committee_language, shareId: share.id,
       claimedSeat: session ? {id: session.seat_id, displayName: session.seat_display_name,
         flag: seat ? {type: seat.flag_type, value: seat.flag_value} : undefined} : null,
       allowedExtensions: settings.allowedExtensions,

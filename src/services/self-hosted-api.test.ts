@@ -59,6 +59,16 @@ describe('self-hosted stage 4 API client', () => {
     } satisfies Partial<SelfHostedApiError>));
   });
 
+  it('retains structured creation errors without matching server message text', async () => {
+    const fields = [{field: 'countries.0.names.en', reason: 'MISSING_CONTENT_TRANSLATION', params: {language: 'en'}}];
+    vi.stubGlobal('fetch', vi.fn(async () => ({ok: false, status: 422,
+      json: async () => ({error: {code: 'VALIDATION_FAILED', message: 'Server diagnostic', requestId: 'localized',
+        reason: 'MISSING_CONTENT_TRANSLATION', params: {language: 'en'}, fieldErrors: fields}})})));
+    await expect(selfHostedApi.createCommittee({name: 'Test', visibility: 'PRIVATE', committeeLanguage: 'en',
+      countryTemplateRevision: 1, countryTemplateKey: 'builtin:default', activeRulePackageVersionId: 'rules'}))
+      .rejects.toMatchObject({localization: {reason: 'MISSING_CONTENT_TRANSLATION', params: {language: 'en'}, fieldErrors: fields}});
+  });
+
   it('sends a typed point ruling with an optional attendance change', async () => {
     const fetchMock = vi.fn(async () => ({ok: true, status: 200,
       json: async () => ({data: {id: 'point'}, meta: {requestId: 'point'}})}));

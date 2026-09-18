@@ -32,7 +32,9 @@ import type {
   SeatRank,
   Stage4CommitteeSeat
 } from '@quorum/contracts';
-import {localizedDisplayName} from '@quorum/contracts';
+import {localizedDisplayName, isContentLanguage, committeeContentName, templateLanguageAvailability,
+  type CommitteeContentSnapshot} from '@quorum/contracts';
+import {ruleLanguageAvailability, validateRulePackage} from '@quorum/rule-schema';
 import {AppError} from '../../http/errors.js';
 import type {AuthenticatedSession} from '../identity/store.js';
 import {
@@ -131,7 +133,7 @@ type CommitteeListRow = Stage4CommitteeRow & {
 };
 
 function committeeSummary(row: CommitteeListRow): CommitteeSummary {
-  return {id: row.id, ownerUserId: row.owner_user_id, name: row.name, chairLabel: row.chair_label,
+  return {id: row.id, committeeLanguage: row.committee_language, ownerUserId: row.owner_user_id, name: row.name, chairLabel: row.chair_label,
     topic: row.topic, conference: row.conference, visibility: row.visibility, operationMode: row.operation_mode,
     status: row.status, activeRulePackageVersionId: row.active_rule_package_version_id, revision: row.revision,
     ...(row.owner_display_name ? {ownerDisplayName: row.owner_display_name} : {}),
@@ -685,10 +687,7 @@ export class Stage4Service {
         throw new AppError({code: 'NOT_FOUND', message: 'Committee not found.'});
       }
       const setupCountryTemplate = viewer.audience === 'OWNER' || viewer.audience === 'CHAIR'
-        ? committee.country_template_key === 'builtin:default'
-          ? builtinCountryTemplate()
-          : await countryTemplate(client, await countryTemplateById(client, committee.owner_user_id,
-            committee.country_template_key.slice('custom:'.length)))
+        ? committee.content_snapshot.countryTemplate
         : undefined;
       const seats = await client.query<Stage4CommitteeSeat>(`SELECT id,stable_key AS "stableKey",display_name AS "displayName",rank,
         can_vote AS "canVote",has_veto AS "hasVeto",must_vote AS "mustVote",sort_order AS "sortOrder",active,revision,
@@ -736,7 +735,7 @@ export class Stage4Service {
       }}>('SELECT definition FROM rule_package_versions WHERE id=$1', [committee.active_rule_package_version_id]);
       const rules = ruleResult.rows[0]?.definition;
       if (!rules) throw new AppError({code: 'SERVICE_NOT_READY', message: 'Active rules are unavailable.'});
-      const result: CommitteeWorkspaceSnapshot = {schemaVersion: 2,
+      const result: CommitteeWorkspaceSnapshot = {schemaVersion: 3,
         committee: viewer.audience === 'OWNER' || viewer.audience === 'CHAIR' ? summary : publicCommittee,
         ...(setupCountryTemplate ? {countryTemplate: setupCountryTemplate} : {}),
         seats: seats.rows, viewer, attendance, points, notes: [], textPosts: [],
@@ -996,7 +995,13 @@ export class Stage4Service {
     context: Stage4Context): Promise<CommitteeSummary> {
     requireBusinessIdentity(auth);
     if (auth.user.isSystemAdmin) throw new AppError({code: 'FORBIDDEN', message: 'System administrators cannot create committees.'});
-    assertExactBody(input, ['name', 'topic', 'conference', 'visibility', 'operationMode', 'activeRulePackageVersionId', 'committeeTemplateId', 'countryTemplateKey']);
+    assertExactBody(input, ['name', 'topic', 'conference', 'visibility', 'operationMode', 'activeRulePackageVersionId', 'committeeTemplateId', 'countryTemplateKey',
+      'committeeLanguage', 'countryTemplateRevision', 'committeeTemplateRevision']);
+    if (!isContentLanguage(input.committeeLanguage)) throw new AppError({code: 'VALIDATION_FAILED',
+      reason: 'INVALID_COMMITTEE_LANGUAGE', message: 'Choose a supported committee language.',
+      fieldErrors: [{field: 'committeeLanguage', reason: 'INVALID_COMMITTEE_LANGUAGE'}]});
+    const language = input.committeeLanguage;
+    const countryRevision = positiveRevision(input.countryTemplateRevision);
     const name = requiredText(input.name, 'Committee name');
     const topic = optionalText(input.topic, 'Committee topic', 500);
     const conference = optionalText(input.conference, 'Conference name', 200);
@@ -1017,17 +1022,12 @@ export class Stage4Service {
         const defaultBehavior = defaults.rows[0];
         if (!defaultBehavior) throw new Error('system_settings singleton is missing');
         const operationMode = (input.operationMode ?? defaultBehavior.operation_mode) as 'DELEGATE_OPERATED' | 'CHAIR_OPERATED';
-        let versionId = typeof input.activeRulePackageVersionId === 'string' ? input.activeRulePackageVersionId : null;
-        if (!versionId) {
-          const builtin = await client.query<{id: string}>(`SELECT v.id FROM rule_package_versions v JOIN rule_packages p ON p.id=v.package_id
-            WHERE p.stable_key='builtin:quorum-default' AND v.status='PUBLISHED'
-            ORDER BY v.version DESC LIMIT 1`);
-          versionId = builtin.rows[0]?.id ?? null;
-        }
-        if (!versionId) throw new AppError({code: 'SERVICE_NOT_READY', message: 'Built-in rules are not installed.'});
-        const available = await client.query(`SELECT 1 FROM rule_package_versions v JOIN rule_packages p ON p.id=v.package_id
+        const versionId = requiredText(input.activeRulePackageVersionId, 'Rule package version ID');
+        const available = await client.query(`SELECT v.definition FROM rule_package_versions v JOIN rule_packages p ON p.id=v.package_id
           WHERE v.id=$1 AND v.status='PUBLISHED' AND p.scope IN ('BUILTIN','SYSTEM')`, [versionId]);
         if (!available.rowCount) throw new AppError({code: 'VALIDATION_FAILED', message: 'Rule package version is not published.'});
+        const validatedRules = validateRulePackage(available.rows[0].definition);
+        if (!validatedRules.ok) throw new AppError({code: 'VALIDATION_FAILED', message: 'Rule package version is invalid.'});
         let template: CommitteeTemplate | null = null;
         if (committeeTemplateId) {
           const builtin = builtinCommitteeDefinition(committeeTemplateId);
@@ -1035,14 +1035,31 @@ export class Stage4Service {
             await committeeTemplateById(client, auth.user.id, committeeTemplateId, true));
         }
         const countryTemplateKey = template?.countryTemplateKey ?? requestedCountryKey as string;
-        await resolveCountryTemplateReference(client, auth.user.id, countryTemplateKey);
+        const countryId = await resolveCountryTemplateReference(client, auth.user.id, countryTemplateKey);
+        const countries = countryId ? await countryTemplate(client,
+          await countryTemplateById(client, auth.user.id, countryId, true)) : builtinCountryTemplate();
+        if (countries.revision !== countryRevision || (template && template.revision !== input.committeeTemplateRevision)) {
+          throw new AppError({code: 'REVISION_CONFLICT', reason: 'SOURCE_REVISION_CHANGED',
+            message: 'The selected source changed. Refresh the preview.',
+            fieldErrors: [{field: template && template.revision !== input.committeeTemplateRevision
+              ? 'committeeTemplateId' : 'countryTemplateKey', reason: 'SOURCE_REVISION_CHANGED'}]});
+        }
+        const missing = [...templateLanguageAvailability(countries, template?.members).missing,
+          ...ruleLanguageAvailability(validatedRules.value).missing.map(item => ({...item, path: `rules.${item.path}`}))]
+          .filter(item => item.language === language);
+        if (missing.length) throw new AppError({code: 'VALIDATION_FAILED', reason: 'MISSING_CONTENT_TRANSLATION',
+          message: 'The selected content does not support the committee language.', params: {language},
+          fieldErrors: missing.map(item => ({field: item.path, reason: 'MISSING_CONTENT_TRANSLATION', params: {language}}))});
+        const contentSnapshot: CommitteeContentSnapshot = {schemaVersion: 1, countryTemplate: countries,
+          committeeTemplate: template,
+          initialRulePackageVersionId: versionId};
         const id = randomUUID();
         const inserted = await client.query<Stage4CommitteeRow>(`INSERT INTO committees
           (id,owner_user_id,name,topic,conference,visibility,operation_mode,active_rule_package_version_id,
-           source_committee_template_id,country_template_key,temporary_template,next_event_sequence)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,2) RETURNING *`,
+           source_committee_template_id,country_template_key,temporary_template,next_event_sequence,committee_language,content_snapshot)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,2,$12,$13) RETURNING *`,
         [id, auth.user.id, name, topic, conference, input.visibility, operationMode, versionId,
-          template?.builtin ? null : committeeTemplateId, countryTemplateKey, !template]);
+          template?.builtin ? null : committeeTemplateId, countryTemplateKey, !template, language, contentSnapshot]);
         const row = inserted.rows[0] as Stage4CommitteeRow;
       await client.query(`UPDATE committees SET delegate_file_settings=jsonb_set(delegate_file_settings,
         '{rejectionTypes}', (SELECT default_file_rejection_types FROM system_settings WHERE singleton=true)) WHERE id=$1`, [id]);
@@ -1056,20 +1073,20 @@ export class Stage4Service {
         await client.query(`INSERT INTO committee_events
           (committee_id,sequence,event_type,resource_type,resource_id,resource_revision,payload,audience)
           VALUES ($1,1,'committee.created','committee',$1,1,$2,'MEMBER')`,
-        [id, {sourceCommitteeTemplateId: committeeTemplateId, countryTemplateKey, operationMode,
+        [id, {committeeLanguage: language, sourceCommitteeTemplateId: committeeTemplateId, countryTemplateKey, operationMode,
           creatorIsChair: defaultBehavior.creator_is_chair}]);
         if (template) {
           for (const member of template.members) {
             await client.query(`INSERT INTO committee_seats
               (id,committee_id,stable_key,display_name,rank,can_vote,has_veto,must_vote,sort_order,flag_type,flag_value)
               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-            [randomUUID(), id, member.stableKey, localizedDisplayName(member.names, member.defaultLanguage, member.defaultLanguage),
+            [randomUUID(), id, member.stableKey, committeeContentName(member.names, language),
               member.rank, member.canVote, member.hasVeto, member.mustVote, member.sortOrder, member.flag.type, member.flag.value]);
           }
         }
         await audit(client, context, {committeeId: id, actorUserId: auth.user.id, capabilities: ['COMMITTEE_OWNER'],
           action: 'committee.created', resourceType: 'committee', resourceId: id,
-          after: {name, sourceCommitteeTemplateId: committeeTemplateId, countryTemplateKey, seatCount: template?.members.length ?? 0,
+          after: {name, committeeLanguage: language, sourceCommitteeTemplateId: committeeTemplateId, countryTemplateKey, seatCount: template?.members.length ?? 0,
             operationMode, creatorIsChair: defaultBehavior.creator_is_chair}});
         return committeeSummary(row);
       }});
@@ -1078,19 +1095,25 @@ export class Stage4Service {
   async createSeat(auth: AuthenticatedSession, committeeId: string, input: Record<string, unknown>,
     idempotencyKey: string, context: Stage4Context): Promise<Stage4CommitteeSeat> {
     requireBusinessIdentity(auth);
-    assertExactBody(input, ['stableKey', 'displayName', 'rank', 'canVote', 'hasVeto', 'mustVote', 'sortOrder', 'flag']);
+    assertExactBody(input, ['stableKey', 'rank', 'canVote', 'hasVeto', 'mustVote', 'sortOrder']);
     const stableKey = requiredText(input.stableKey, 'Seat stable key', 128);
-    const displayName = requiredText(input.displayName, 'Seat display name');
     const rank = (input.rank ?? 'STANDARD') as SeatRank;
     const canVote = input.canVote ?? true;
     const hasVeto = input.hasVeto ?? false; const mustVote = input.mustVote ?? false;
-    const sortOrder = input.sortOrder ?? 0; const seatFlag = validateFlag(input.flag ?? {type: 'EMOJI', value: '🏳️'});
+    const sortOrder = input.sortOrder ?? 0;
     if (!['STANDARD', 'NGO', 'OBSERVER'].includes(rank) || typeof canVote !== 'boolean'
       || typeof hasVeto !== 'boolean' || typeof mustVote !== 'boolean' || !Number.isSafeInteger(sortOrder)
       || ((hasVeto || mustVote) && !canVote)) throw new AppError({code: 'VALIDATION_FAILED', message: 'Seat properties are invalid.'});
     return idempotentTransaction({pool: this.pool, auth, route: `POST /api/v1/committees/${committeeId}/seats`,
       key: idempotencyKey, request: input, status: 201, work: async client => {
         const row = await lockedCommittee(client, committeeId); await requireChair(client, row, auth.user.id); requireEditable(row);
+        const definition = row.content_snapshot.committeeTemplate?.members.find(item => item.stableKey === stableKey)
+          ?? row.content_snapshot.countryTemplate.countries.find(item => item.stableKey === stableKey);
+        if (!definition) throw new AppError({code: 'VALIDATION_FAILED', reason: 'UNKNOWN_FIXED_MEMBER',
+          message: 'Choose a member from the committee directory.',
+          fieldErrors: [{field: 'stableKey', reason: 'UNKNOWN_FIXED_MEMBER'}]});
+        const displayName = committeeContentName(definition.names, row.committee_language);
+        const seatFlag = definition.flag;
         const id = randomUUID();
         const result = await client.query(`INSERT INTO committee_seats
           (id,committee_id,stable_key,display_name,rank,can_vote,has_veto,must_vote,sort_order,flag_type,flag_value)
@@ -1116,7 +1139,7 @@ export class Stage4Service {
       throw new AppError({code: 'VALIDATION_FAILED', message: 'Seat patch is invalid.'});
     }
     const patch = input.patch as Record<string, unknown>;
-    assertExactBody(patch, ['displayName', 'rank', 'canVote', 'hasVeto', 'mustVote', 'sortOrder', 'flag', 'active'], 'Seat patch');
+    assertExactBody(patch, ['rank', 'canVote', 'hasVeto', 'mustVote', 'sortOrder', 'active'], 'Seat patch');
     if (Object.keys(patch).length === 0) throw new AppError({code: 'VALIDATION_FAILED', message: 'Seat patch is empty.'});
     return transaction(this.pool, async client => {
       const committee = await lockedCommittee(client, committeeId); await requireChair(client, committee, auth.user.id); requireEditable(committee);
@@ -1128,12 +1151,11 @@ export class Stage4Service {
       if (!current) throw new AppError({code: 'NOT_FOUND', message: 'Seat not found.'});
       if (current.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT', message: 'This seat changed since it was loaded.',
         details: {currentRevision: current.revision}});
-      const displayName = patch.displayName === undefined ? current.display_name : requiredText(patch.displayName, 'Seat display name');
+      const displayName = current.display_name;
       const rank = (patch.rank ?? current.rank) as SeatRank;
       const canVote = patch.canVote ?? current.can_vote; const hasVeto = patch.hasVeto ?? current.has_veto;
       const mustVote = patch.mustVote ?? current.must_vote; const sortOrder = patch.sortOrder ?? current.sort_order;
-      const active = patch.active ?? current.active; const seatFlag = patch.flag === undefined
-        ? flag(current.flag_type, current.flag_value) : validateFlag(patch.flag);
+      const active = patch.active ?? current.active; const seatFlag = flag(current.flag_type, current.flag_value);
       if (!['STANDARD', 'NGO', 'OBSERVER'].includes(rank) || typeof canVote !== 'boolean'
         || typeof hasVeto !== 'boolean' || typeof mustVote !== 'boolean' || !Number.isSafeInteger(sortOrder)
         || typeof active !== 'boolean' || ((hasVeto || mustVote) && !canVote)) {

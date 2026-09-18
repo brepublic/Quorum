@@ -1088,10 +1088,7 @@ async function handleStage3Request(options: {
 
   if (method === 'POST' && pathname === '/api/v1/committees') {
     const auth = await write(); const body = await readJson(request);
-    sendJson(response, 201, success(await stage3.createCommittee(auth, {
-      name: body.name, visibility: body.visibility, operationMode: body.operationMode,
-      activeRulePackageVersionId: body.activeRulePackageVersionId
-    }, context), requestId));
+    sendJson(response, 201, success(await stage3.createCommittee(auth, body, context, idempotencyKey(request)), requestId));
     return true;
   }
 
@@ -1158,7 +1155,7 @@ async function handleStage3Request(options: {
   const seats = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/seats$/.exec(pathname);
   if (method === 'POST' && seats) {
     const auth = await write(); const body = await readJson(request);
-    sendJson(response, 201, success(await stage3.createSeat(auth, seats[1] as string, body, context), requestId)); return true;
+    sendJson(response, 201, success(await stage3.createSeat(auth, seats[1] as string, body, context, idempotencyKey(request)), requestId)); return true;
   }
 
   const assignments = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/seat-assignments$/.exec(pathname);

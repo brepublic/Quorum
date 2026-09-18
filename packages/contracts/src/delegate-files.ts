@@ -35,6 +35,7 @@ export interface DelegateReviewFile extends DelegatePublishedFile {
 }
 
 export interface DelegatePortalBootstrap {
+  committeeLanguage: import('./localization.js').ContentLanguage;
   committeeId: string;
   committeeName: string;
   shareId: string;

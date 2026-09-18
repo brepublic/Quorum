@@ -1,5 +1,6 @@
 import {createHash, randomUUID} from 'node:crypto';
 import type {Pool, PoolClient, QueryResultRow} from 'pg';
+import type {ContentLanguage, CommitteeContentSnapshot} from '@quorum/contracts';
 import {AppError} from '../../http/errors.js';
 import type {AuthenticatedSession} from '../identity/store.js';
 
@@ -7,6 +8,8 @@ export type Stage4Context = {requestId: string; sourceIp?: string; userAgent?: s
 
 export interface Stage4CommitteeRow extends QueryResultRow {
   id: string;
+  committee_language: ContentLanguage;
+  content_snapshot: CommitteeContentSnapshot;
   owner_user_id: string;
   name: string;
   chair_label: string;

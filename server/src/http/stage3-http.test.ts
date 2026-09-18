@@ -53,7 +53,7 @@ async function request(stage3: Stage3Service, options: {path: string; method?: s
 
 describe('stage 3 HTTP boundary', () => {
   const protectedHeaders = {origin: 'https://quorum.example.com',
-    cookie: '__Host-quorum_session=session; __Host-quorum_csrf=csrf', 'x-csrf-token': 'csrf'};
+    cookie: '__Host-quorum_session=session; __Host-quorum_csrf=csrf', 'x-csrf-token': 'csrf', 'idempotency-key': 'create-key'};
 
   it('requires Origin, Session, and CSRF before committee writes and derives the actor from the Session', async () => {
     const stage3 = domain();
@@ -61,10 +61,12 @@ describe('stage 3 HTTP boundary', () => {
       headers: {origin: 'https://quorum.example.com'}, body: {name: 'Private', visibility: 'PRIVATE', ownerUserId: 'attacker'}});
     expect(rejected.status).toBe(403);
     const accepted = await request(stage3, {path: '/api/v1/committees', method: 'POST', headers: protectedHeaders,
-      body: {name: 'Private', visibility: 'PRIVATE', ownerUserId: 'attacker'}});
+      body: {name: 'Private', visibility: 'PRIVATE', committeeLanguage: 'en', countryTemplateRevision: 1,
+        countryTemplateKey: 'builtin:default', activeRulePackageVersionId: 'rules'}});
     expect(accepted.status).toBe(201);
     expect(stage3.createCommittee).toHaveBeenCalledWith(authenticated,
-      expect.not.objectContaining({ownerUserId: 'attacker'}), expect.objectContaining({requestId: expect.any(String)}));
+      expect.objectContaining({committeeLanguage: 'en', countryTemplateRevision: 1, activeRulePackageVersionId: 'rules'}),
+      expect.objectContaining({requestId: expect.any(String)}), 'create-key');
   });
 
   it('allows an anonymous public snapshot without exposing identity data', async () => {

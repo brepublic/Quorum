@@ -37,7 +37,7 @@ describe('stage 8 archived committee export', () => {
     const exported = await service.exportCommittee(auth, committeeId); const body = await text(exported.content);
     const records = body.trim().split('\n').map(line => JSON.parse(line));
     expect(exported.fileName).toBe(`quorum-committee-${committeeId}.jsonl`);
-    expect(records[0]).toEqual(expect.objectContaining({type: 'manifest', schemaVersion: 1,
+    expect(records[0]).toEqual(expect.objectContaining({type: 'manifest', schemaVersion: 2,
       committee: expect.objectContaining({status: 'ARCHIVED'})}));
     expect(records).toContainEqual(expect.objectContaining({type: 'record', section: 'file_versions',
       record: expect.objectContaining({sha256: 'abcd'})}));

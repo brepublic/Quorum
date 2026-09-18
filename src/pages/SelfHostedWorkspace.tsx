@@ -1,5 +1,7 @@
 import * as React from 'react';
 import type {
+  ContentLanguage,
+  RulePackageSummary,
   CommitteeNote,
   CommitteePoint,
   AttendanceEventType,
@@ -10,11 +12,12 @@ import type {
   CountryTemplate,
   Stage4CommitteeSeat
 } from '@quorum/contracts';
+import {committeeContentName, templateLanguageAvailability, intersectContentLanguages} from '@quorum/contracts';
 import {Link, Redirect, Route, Switch, useHistory, useLocation, useParams} from 'react-router-dom';
 import {Button, Card, Checkbox, Confirm, Container, Divider, Form, Grid, Header, Icon, Label, List, Menu, Message, Modal, Pagination, Popup, Segment, Table} from 'semantic-ui-react';
 import Loading from '../components/Loading';
 import {CountryFlagDisplay} from '../components/CountryFlagDisplay';
-import {LanguageMenuItem, t} from '../i18n';
+import {LanguageMenuItem, LANGUAGE_OPTIONS, getLanguage, t} from '../i18n';
 import {selfHostedApi, SelfHostedApiError, type SelfHostedApi} from '../services/self-hosted-api';
 import {selfHostedIdentityClient, type SelfHostedIdentityClient, type SelfHostedUser} from '../services/self-hosted-identity';
 import ProceedingsPanel from './self-hosted/ProceedingsPanel';
@@ -31,7 +34,19 @@ import {
   TemplatePreview
 } from './self-hosted/TemplateManagers';
 
-function errorText(error: unknown): string { return error instanceof Error ? error.message : String(error); }
+function errorText(error: unknown): string {
+  if (error instanceof SelfHostedApiError && error.localization?.reason) {
+    const messages = {
+      INVALID_COMMITTEE_LANGUAGE: 'Choose a supported committee language',
+      MISSING_CONTENT_TRANSLATION: 'The selected content is missing translations',
+      SOURCE_REVISION_CHANGED: 'The selected source changed; refresh the preview',
+      UNKNOWN_FIXED_MEMBER: 'Select a member from the committee directory'
+    };
+    const message = messages[error.localization.reason];
+    if (message) return t(message);
+  }
+  return error instanceof Error ? error.message : String(error);
+}
 
 function Flag({seat}: {seat: Pick<Stage4CommitteeSeat, 'flag' | 'displayName'>}) {
   return <CountryFlagDisplay flag={seat.flag} />;
@@ -50,27 +65,49 @@ function CommitteeList({api, user, logout}: {api: SelfHostedApi; user: SelfHoste
   const [deleting, setDeleting] = React.useState(false);
   const [countryTemplates, setCountryTemplates] = React.useState<CountryTemplate[]>([]);
   const [committeeTemplates, setCommitteeTemplates] = React.useState<CommitteeTemplate[]>([]);
+  const [rulePackages, setRulePackages] = React.useState<RulePackageSummary[]>([]);
+  const [ruleVersionId, setRuleVersionId] = React.useState('');
+  const [committeeLanguage, setCommitteeLanguage] = React.useState<ContentLanguage | ''>(getLanguage);
   const [name, setName] = React.useState(''); const [topic, setTopic] = React.useState(''); const [conference, setConference] = React.useState('');
   const [visibility, setVisibility] = React.useState<'PUBLIC' | 'PRIVATE'>('PRIVATE');
   const [templateId, setTemplateId] = React.useState(''); const [countryKey, setCountryKey] = React.useState('builtin:default');
-  const [error, setError] = React.useState<string>(); const [working, setWorking] = React.useState(false);
+  const [error, setError] = React.useState<unknown>(); const [working, setWorking] = React.useState(false);
   const [loading, setLoading] = React.useState(true);
   const refresh = React.useCallback(async () => {
     try {
-      const [nextCommittees, nextCountries, nextTemplates] = await Promise.all([
-        api.listCommittees(), api.listCountryTemplates(), api.listCommitteeTemplates()
+      const [nextCommittees, nextCountries, nextTemplates, nextRules] = await Promise.all([
+        api.listCommittees(), api.listCountryTemplates(), api.listCommitteeTemplates(), api.listRulePackages()
       ]);
       setCommittees(nextCommittees); setCountryTemplates(nextCountries); setCommitteeTemplates(nextTemplates);
-    } catch (caught) { setError(errorText(caught)); } finally { setLoading(false); }
+      setRulePackages(nextRules);
+      setRuleVersionId(current => current || nextRules.find(pkg => pkg.key === 'builtin:quorum-default')?.versions
+        .filter(version => version.status === 'PUBLISHED').at(-1)?.id || '');
+    } catch (caught) { setError(caught); } finally { setLoading(false); }
   }, [api]);
   React.useEffect(() => void refresh(), [refresh]);
+  const selectedTemplate = committeeTemplates.find(item => item.id === templateId);
+  const selectedCountries = countryTemplates.find(item => item.key === (selectedTemplate?.countryTemplateKey ?? countryKey));
+  const ruleOptions = rulePackages.filter(pkg => pkg.scope !== 'COMMITTEE').flatMap(pkg => pkg.versions
+    .filter(version => version.status === 'PUBLISHED').map(version => ({key: version.id, value: version.id,
+      text: `${localizedDisplayName(version.names, 'en')} · ${version.version}`, version})));
+  const selectedRule = ruleOptions.find(item => item.value === ruleVersionId)?.version;
+  const templateAvailability = selectedCountries ? templateLanguageAvailability(selectedCountries, selectedTemplate?.members) : undefined;
+  const supportedLanguages = intersectContentLanguages(templateAvailability?.supportedLanguages ?? [],
+    selectedRule?.languageAvailability.supportedLanguages ?? []);
+  const selectedLanguageValid = committeeLanguage !== '' && supportedLanguages.includes(committeeLanguage);
+  React.useEffect(() => {
+    if (!loading && committeeLanguage && !supportedLanguages.includes(committeeLanguage)) setCommitteeLanguage('');
+  }, [loading, committeeLanguage, supportedLanguages.join(',')]);
   const create = async () => {
+    if (!selectedCountries || !selectedLanguageValid || !committeeLanguage || !selectedRule) return;
     setWorking(true); setError(undefined);
     try {
       const committee = await api.createCommittee({name: name.trim(), topic: topic.trim(), conference: conference.trim(), visibility,
-        ...(templateId ? {committeeTemplateId: templateId} : {countryTemplateKey: countryKey})});
+        committeeLanguage, activeRulePackageVersionId: selectedRule.id, countryTemplateRevision: selectedCountries.revision,
+        ...(selectedTemplate ? {committeeTemplateId: selectedTemplate.id, committeeTemplateRevision: selectedTemplate.revision}
+          : {countryTemplateKey: countryKey})});
       history.push(`/committees/${committee.id}`);
-    } catch (caught) { setError(errorText(caught)); } finally { setWorking(false); }
+    } catch (caught) { setError(caught); } finally { setWorking(false); }
   };
   const remove = async () => {
     if (!deleteTarget) return;
@@ -81,7 +118,7 @@ function CommitteeList({api, user, logout}: {api: SelfHostedApi; user: SelfHoste
       await api.requestCommitteeDeletion(archived.id, archived.revision, archived.name);
       setCommittees(current => current.filter(committee => committee.id !== deleteTarget.id));
       setDeleteTarget(undefined);
-    } catch (caught) { setError(errorText(caught)); } finally { setDeleting(false); }
+    } catch (caught) { setError(caught); } finally { setDeleting(false); }
   };
   const groups = [
     {role: 'OWNER', title: t('My created committees'), showOwner: false},
@@ -108,7 +145,7 @@ function CommitteeList({api, user, logout}: {api: SelfHostedApi; user: SelfHoste
     </section>;
   });
   return <Container className="committee-create-page">
-    <Header as="h1" textAlign="center">Quorum</Header>{error && <Message error content={error} />}
+    <Header as="h1" textAlign="center">Quorum</Header>{error !== undefined && <Message error content={errorText(error)} />}
     <Grid stackable>
       <Grid.Column width={6}><Segment>
         <Header as="h3">{user.displayName}</Header>
@@ -124,13 +161,19 @@ function CommitteeList({api, user, logout}: {api: SelfHostedApi; user: SelfHoste
           onChange={(_, data) => {const nextId = String(data.value ?? ''); const selected = committeeTemplates.find(item => item.id === nextId);
             setTemplateId(nextId); if (selected) {setCountryKey(selected.countryTemplateKey); setName(localizedDisplayName(selected.names, selected.defaultLanguage));}}} />
         <Popup basic pinned hoverable position="bottom left" trigger={<Form.Button type="button" icon="question circle outline" />}>
-          <Popup.Content><TemplatePreview template={committeeTemplates.find(item => item.id === templateId)} /></Popup.Content>
+          <Popup.Content><TemplatePreview template={selectedTemplate} language={selectedLanguageValid ? committeeLanguage || undefined : undefined} /></Popup.Content>
         </Popup>
       </Form.Group>
       <Form.Select className="template-picker-field" label={t('Country template')} required disabled={!!templateId} value={countryKey}
         options={countryTemplates.map(item => ({key: item.key, value: item.key, text: localizedDisplayName(item.names, item.defaultLanguage),
           description: item.builtin ? t('Built-in') : t('My template')}))}
         onChange={(_, data) => setCountryKey(String(data.value))} />
+      <Form.Select label={t('Rules')} required value={ruleVersionId} options={ruleOptions}
+        onChange={(_, data) => setRuleVersionId(String(data.value))} />
+      <Form.Select label={t('Committee language')} required value={committeeLanguage}
+        options={LANGUAGE_OPTIONS.filter(option => supportedLanguages.includes(option.value))}
+        onChange={(_, data) => setCommitteeLanguage(data.value as ContentLanguage)} />
+      {!loading && supportedLanguages.length === 0 && <Message warning content={t('No common language for the selected content')} />}
       <Form.Input label={t('Name')} required fluid value={name} placeholder={t('Committee name')}
         onChange={event => setName(event.currentTarget.value)} />
       <Form.Input label={t('Topic')} fluid value={topic} placeholder={t('Committee topic')}
@@ -140,7 +183,7 @@ function CommitteeList({api, user, logout}: {api: SelfHostedApi; user: SelfHoste
       <Form.Select label={t('Visibility')} value={visibility} options={[
         {key: 'private', value: 'PRIVATE', text: t('Private')}, {key: 'public', value: 'PUBLIC', text: t('Public')}
       ]} onChange={(_, data) => setVisibility(data.value as 'PUBLIC' | 'PRIVATE')} />
-      <Button primary fluid disabled={!name.trim() || (!templateId && !countryKey)}>{t('Create committee')}<Icon name="arrow right" /></Button>
+      <Button primary fluid disabled={!name.trim() || !selectedLanguageValid || !selectedRule || !selectedCountries}>{t('Create committee')}<Icon name="arrow right" /></Button>
     </Form></Segment></Grid.Column>}
     </Grid>
     <Confirm open={Boolean(deleteTarget)} header={t('Delete committee?')}
@@ -380,11 +423,11 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
     const seated = new Set(snapshot.seats.map(seat => seat.stableKey));
     return (snapshot.countryTemplate?.countries ?? []).filter(country => !seated.has(country.stableKey)).map(country => ({
       key: country.stableKey, value: country.stableKey,
-      text: <><Flag seat={{displayName: localizedDisplayName(country.names, country.defaultLanguage), flag: country.flag}} />
-        {localizedDisplayName(country.names, country.defaultLanguage)}</>,
+      text: <><Flag seat={{displayName: committeeContentName(country.names, snapshot.committee.committeeLanguage), flag: country.flag}} />
+        {committeeContentName(country.names, snapshot.committee.committeeLanguage)}</>,
       country
     }));
-  }, [snapshot.countryTemplate, snapshot.seats]);
+  }, [snapshot.countryTemplate, snapshot.seats, snapshot.committee.committeeLanguage]);
   React.useEffect(() => {
     setSelectedCountryStableKey(current => countryOptions.some(option => option.value === current)
       ? current : String(countryOptions[0]?.value ?? ''));
@@ -395,9 +438,7 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
   const displayedSeats = snapshot.seats.map(seat => {
     const patch = queuedVoting?.[seat.id];
     const canVote = patch?.canVote ?? seat.canVote;
-    const country = snapshot.countryTemplate?.countries.find(country => country.stableKey === seat.stableKey);
     return {...seat, ...patch,
-      displayName: country ? localizedDisplayName(country.names, country.defaultLanguage) : seat.displayName,
       canVote, mustVote: canVote && (patch?.mustVote ?? seat.mustVote)};
   });
   const allRank = snapshot.seats.every(seat => seat.rank === snapshot.seats[0]?.rank) ? snapshot.seats[0]?.rank : '';
@@ -476,8 +517,7 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
           loading={pending === 'create-seat'} disabled={Boolean(pending) || !selectedCountry} onClick={() => void (async () => {
             if (!selectedCountry) return;
             await execute('create-seat', () => api.createSeat(snapshot.committee.id, {
-              stableKey: selectedCountry.stableKey, displayName: localizedDisplayName(selectedCountry.names, selectedCountry.defaultLanguage),
-              flag: selectedCountry.flag, rank: seatRank, canVote: seatCanVote, hasVeto: seatHasVeto,
+              stableKey: selectedCountry.stableKey, rank: seatRank, canVote: seatCanVote, hasVeto: seatHasVeto,
               mustVote: seatMustVote, sortOrder: snapshot.seats.length}));
             setSeatRank('STANDARD'); setSeatCanVote(true); setSeatHasVeto(false); setSeatMustVote(false);
           })()} /></Table.HeaderCell></Table.Row>}
@@ -630,7 +670,8 @@ function SettingsPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
       <Button primary loading={pending === 'general-speaker-duration'} disabled={readOnly || generalSpeakerSeconds < 1}>{t('Save changes')}</Button>
     </Form>}
   </Segment></>}
-    <Header as="h2">{t('Committee profile')}</Header>{owner && !readOnly ? <Form onSubmit={() => execute('profile',
+    <Header as="h2">{t('Committee profile')}</Header>
+    <p>{t('Committee language')}: {LANGUAGE_OPTIONS.find(option => option.value === snapshot.committee.committeeLanguage)?.text}</p>{owner && !readOnly ? <Form onSubmit={() => execute('profile',
     () => api.updateCommittee(snapshot.committee.id, snapshot.committee.revision, {name, topic, conference, visibility}))}>
       <Form.Input label={t('Committee name')} value={name} onChange={event => setName(event.currentTarget.value)} />
       <Form.Input label={t('Topic')} value={topic} onChange={event => setTopic(event.currentTarget.value)} />

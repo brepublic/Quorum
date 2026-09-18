@@ -1,0 +1,169 @@
+// @vitest-environment node
+
+import {randomUUID} from 'node:crypto';
+import {resolve} from 'node:path';
+import pg from 'pg';
+import {afterEach, beforeEach, describe, expect, it} from 'vitest';
+import {runMigrations} from '../../db/migrations';
+import {PostgresIdentityStore} from '../identity/postgres';
+import {IdentityService} from '../identity/service';
+import type {AuthenticatedSession} from '../identity/store';
+import {Stage3Service} from '../stage3/service';
+import {Stage8ArchiveService} from '../operations/archive-service';
+import {Stage4Service} from './service';
+
+const {Client, Pool} = pg;
+const adminUrl = process.env.TEST_DATABASE_ADMIN_URL;
+const integration = adminUrl ? describe : describe.skip;
+let databaseName = '';
+let pool: pg.Pool | undefined;
+let identity: IdentityService;
+let stage3: Stage3Service;
+let stage4: Stage4Service;
+let administrator: AuthenticatedSession;
+
+function quoteIdentifier(value: string): string { return `"${value.replaceAll('"', '""')}"`; }
+const context = (name: string) => ({requestId: `stage4-${name}`, sourceIp: '127.0.0.1', userAgent: 'Vitest'});
+
+beforeEach(async () => {
+  if (!adminUrl) return;
+  databaseName = `quorum_content_${randomUUID().replaceAll('-', '')}`;
+  const url = new URL(adminUrl); url.pathname = `/${databaseName}`;
+  const admin = new Client({connectionString: adminUrl}); await admin.connect();
+  try { await admin.query(`CREATE DATABASE ${quoteIdentifier(databaseName)}`); } finally { await admin.end(); }
+  pool = new Pool({connectionString: url.toString()});
+  await runMigrations(pool, resolve('server/migrations'));
+  identity = new IdentityService(new PostgresIdentityStore(pool));
+  stage3 = new Stage3Service(pool); stage4 = new Stage4Service(pool);
+  await stage3.ensureBuiltins();
+  const secret = await identity.ensureBootstrapSecret();
+  const session = await identity.bootstrapAdmin({secret: secret as string, email: 'admin@example.com',
+    displayName: 'System Admin', password: 'admin-password-123'}, context('bootstrap'));
+  administrator = await identity.authenticate(session.sessionToken);
+});
+
+afterEach(async () => {
+  await pool?.end(); pool = undefined;
+  if (!adminUrl || !databaseName) return;
+  const admin = new Client({connectionString: adminUrl}); await admin.connect();
+  try { await admin.query(`DROP DATABASE IF EXISTS ${quoteIdentifier(databaseName)} WITH (FORCE)`); }
+  finally { await admin.end(); databaseName = ''; }
+});
+
+async function user(name: string): Promise<AuthenticatedSession> {
+  const created = await identity.createUser(administrator, {email: `${name}@example.com`, displayName: name}, context(`create-${name}`));
+  const login = await identity.login({email: created.user.email, password: created.temporaryPassword}, context(`login-${name}`));
+  const changed = await identity.changePassword(await identity.authenticate(login.sessionToken), {
+    newPassword: `${name}-permanent-password-123`
+  }, context(`password-${name}`));
+  return identity.authenticate(changed.sessionToken);
+}
+
+const countryTemplate = {names: {en: 'Countries', 'zh-CN': '国家'}, defaultLanguage: 'en', countryLanguages: ['en', 'zh-CN'],
+  countries: [{stableKey: 'china', names: {en: 'China', 'zh-CN': '中国'}, defaultLanguage: 'en', continent: 'Asia', sortOrder: 1,
+    flag: {type: 'STANDARD' as const, value: 'cn'}}]};
+
+const committeeTemplate = (countryTemplateKey: string) => ({names: {en: 'Council'}, defaultLanguage: 'en', countryTemplateKey,
+  members: [{stableKey: 'china', names: {en: 'China', 'zh-CN': '中国'}, defaultLanguage: 'en', rank: 'STANDARD' as const,
+    canVote: true, hasVeto: true, mustVote: false, sortOrder: 1, flag: {type: 'STANDARD' as const, value: 'cn'}}]});
+
+integration('immutable committee content', () => {
+  async function fixture() {
+    const owner = await user('snapshot');
+    const countries = await stage4.createCountryTemplate(owner, countryTemplate, randomUUID(), context('countries'));
+    const template = await stage4.createCommitteeTemplate(owner, committeeTemplate(countries.key), randomUUID(), context('template'));
+    const rules = (await stage3.listRulePackages(owner)).find(item => item.scope === 'BUILTIN')!;
+    const version = rules.versions.at(-1)!;
+    const input = {name: 'Snapshot', visibility: 'PUBLIC', committeeLanguage: 'en',
+      committeeTemplateId: template.id, committeeTemplateRevision: template.revision,
+      countryTemplateRevision: countries.revision, activeRulePackageVersionId: version.id};
+    return {owner, countries, template, input};
+  }
+
+  it('keeps the full directory and initial members after source edits and deletion', async () => {
+    const {owner, countries, template, input} = await fixture();
+    const committee = await stage4.createCommittee(owner, input, randomUUID(), context('create'));
+    expect(committee.committeeLanguage).toBe('en');
+    await stage4.updateCountryTemplate(owner, countries.id, {baseRevision: countries.revision,
+      template: {...countryTemplate, countries: [{...countryTemplate.countries[0], names: {en: 'Changed', 'zh-CN': '改名'}}]}}, context('edit'));
+    await stage4.deleteCommitteeTemplate(owner, template.id, context('delete-template'));
+    await stage4.deleteCountryTemplate(owner, countries.id, context('delete-countries'));
+    const snapshot = await stage4.snapshot(committee.id, owner);
+    expect(snapshot.countryTemplate?.countries[0]?.names.en).toBe('China');
+    expect(snapshot.seats[0]).toMatchObject({displayName: 'China', flag: {type: 'STANDARD', value: 'cn'}});
+    const saved = (await pool!.query('SELECT content_snapshot FROM committees WHERE id=$1', [committee.id])).rows[0].content_snapshot;
+    expect(saved.committeeTemplate.members[0].names.en).toBe('China');
+    expect(saved.initialRulePackageVersionId).toBe(input.activeRulePackageVersionId);
+    expect((await stage4.snapshot(committee.id)).countryTemplate).toBeUndefined();
+    await stage3.archiveCommittee(owner, committee.id, committee.revision, context('archive'));
+    const exported = await new Stage8ArchiveService(pool!).exportCommittee(owner, committee.id);
+    const chunks: string[] = [];
+    for await (const chunk of exported.content) chunks.push(String(chunk));
+    const records = chunks.join('').trim().split('\n').map(line => JSON.parse(line));
+    expect(records[0]).toMatchObject({schemaVersion: 2, committee: {committeeLanguage: 'en', contentSnapshot: saved}});
+    expect(records.find(record => record.section === 'committee_seats').record).toMatchObject({display_name: 'China', flag_value: 'cn'});
+  });
+
+  it('rejects missing translations and stale revisions without partial creation', async () => {
+    const {owner, countries, input} = await fixture();
+    await expect(stage4.createCommittee(owner, {...input, committeeLanguage: 'fr'}, randomUUID(), context('bad')))
+      .rejects.toMatchObject({reason: 'INVALID_COMMITTEE_LANGUAGE'});
+    await expect(stage4.createCommittee(owner, {...input, countryTemplateRevision: 999}, randomUUID(), context('stale')))
+      .rejects.toMatchObject({reason: 'SOURCE_REVISION_CHANGED'});
+    const updated = await stage4.updateCountryTemplate(owner, countries.id, {baseRevision: countries.revision,
+      template: {...countryTemplate, countryLanguages: ['en'], countries: [{...countryTemplate.countries[0], names: {en: 'China'}}]}}, context('edit'));
+    await expect(stage4.createCommittee(owner, {...input, committeeLanguage: 'zh-CN', countryTemplateRevision: updated.revision}, randomUUID(), context('missing')))
+      .rejects.toMatchObject({reason: 'MISSING_CONTENT_TRANSLATION'});
+    expect((await pool!.query('SELECT count(*)::int AS count FROM committees')).rows[0].count).toBe(0);
+  });
+
+  it('creates from the complete fixed directory and rejects incompatible rule activation', async () => {
+    const {owner, input} = await fixture();
+    const {committeeTemplateId, committeeTemplateRevision, ...rest} = input;
+    const countries = (await stage4.listCountryTemplates(owner)).find(item => item.key === 'builtin:default')!;
+    const committee = await stage4.createCommittee(owner, {...rest, committeeLanguage: 'zh-CN',
+      countryTemplateKey: countries.key, countryTemplateRevision: countries.revision}, randomUUID(), context('plain'));
+    const country = countries.countries.find(item => item.flag.value === 'cn')!;
+    const seat = await stage3.createSeat(owner, committee.id, {stableKey: country.stableKey}, context('seat'), randomUUID());
+    expect(seat.displayName).toBe(country.names['zh-CN']);
+    const rules = (await stage3.listRulePackages(owner)).find(pkg => pkg.scope === 'BUILTIN')!;
+    expect(rules.versions.at(-1)?.languageAvailability.supportedLanguages).toEqual(['zh-CN', 'en']);
+    expect(rules.versions[0]?.languageAvailability.supportedLanguages).toEqual([]);
+    expect(rules.versions[0]?.definition).toBeUndefined();
+    await expect(stage3.activateRules(owner, committee.id, rules.versions[0]!.id, committee.revision, context('activate')))
+      .rejects.toMatchObject({reason: 'MISSING_CONTENT_TRANSLATION'});
+  });
+
+  it('keeps a coherent source revision when an edit races creation', async () => {
+    const {owner, countries, input} = await fixture();
+    const [created] = await Promise.allSettled([
+      stage4.createCommittee(owner, input, randomUUID(), context('racing-create')),
+      stage4.updateCountryTemplate(owner, countries.id, {baseRevision: countries.revision,
+        template: {...countryTemplate, countries: [{...countryTemplate.countries[0], names: {en: 'Changed', 'zh-CN': '改名'}}]}}, context('racing-edit'))
+    ]);
+    if (created.status === 'fulfilled') {
+      const directory = (await stage4.snapshot(created.value.id, owner)).countryTemplate!;
+      expect(directory.revision).toBe(countries.revision);
+      expect(directory.countries[0]?.names.en).toBe('China');
+    } else expect(created.reason).toMatchObject({reason: 'SOURCE_REVISION_CHANGED'});
+  });
+
+  it('guards immutable identities in both API and SQL and binds retries to content choices', async () => {
+    const {owner, input} = await fixture();
+    const key = randomUUID();
+    const committee = await stage3.createCommittee(owner, input, context('create'), key);
+    expect(await stage4.createCommittee(owner, input, key, context('retry'))).toEqual(committee);
+    await expect(stage4.createCommittee(owner, {...input, committeeLanguage: 'zh-CN'}, key, context('retry-changed')))
+      .rejects.toMatchObject({code: 'IDEMPOTENCY_CONFLICT'});
+    const seat = (await stage4.snapshot(committee.id, owner)).seats[0]!;
+    await expect(stage4.createSeat(owner, committee.id, {stableKey: 'unknown'}, randomUUID(), context('seat')))
+      .rejects.toMatchObject({reason: 'UNKNOWN_FIXED_MEMBER'});
+    await expect(stage4.createSeat(owner, committee.id, {stableKey: 'china', displayName: 'Renamed'}, randomUUID(), context('seat')))
+      .rejects.toMatchObject({code: 'VALIDATION_FAILED'});
+    await expect(pool!.query("UPDATE committees SET committee_language='zh-CN' WHERE id=$1", [committee.id])).rejects.toMatchObject({code: '23514'});
+    await expect(pool!.query("UPDATE committees SET content_snapshot='{}' WHERE id=$1", [committee.id])).rejects.toMatchObject({code: '23514'});
+    await expect(pool!.query("UPDATE committee_seats SET display_name='Renamed' WHERE id=$1", [seat.id])).rejects.toMatchObject({code: '23514'});
+    await expect(pool!.query("UPDATE committee_seats SET flag_value='us' WHERE id=$1", [seat.id])).rejects.toMatchObject({code: '23514'});
+    await expect(pool!.query("UPDATE committee_seats SET stable_key='other' WHERE id=$1", [seat.id])).rejects.toMatchObject({code: '23514'});
+  });
+});

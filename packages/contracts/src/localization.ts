@@ -1,4 +1,4 @@
-import type {CommitteeTemplateMember, CountryTemplate, LocalizedNames} from './stage4.js';
+import type {CommitteeTemplate, CommitteeTemplateMember, CountryTemplate, LocalizedNames} from './stage4.js';
 
 export const CONTENT_LANGUAGES = ['zh-CN', 'en'] as const;
 export type ContentLanguage = typeof CONTENT_LANGUAGES[number];
@@ -10,11 +10,7 @@ export function isContentLanguage(value: unknown): value is ContentLanguage {
 export interface CommitteeContentSnapshot {
   schemaVersion: 1;
   countryTemplate: CountryTemplate;
-  committeeTemplate: {
-    id: string;
-    revision: number;
-    members: CommitteeTemplateMember[];
-  } | null;
+  committeeTemplate: CommitteeTemplate | null;
   initialRulePackageVersionId: string;
 }
 

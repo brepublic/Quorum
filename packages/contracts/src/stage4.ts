@@ -1,4 +1,5 @@
 import type {
+  CreateCommitteeRequest,
   CommitteeOperationMode,
   CommitteeSeat,
   CommitteeSummary,
@@ -109,15 +110,9 @@ export interface CloneAccountTemplateRequest {
   defaultLanguage?: string;
 }
 
-export interface CreateCommitteeFromTemplateRequest {
-  name: string;
+export interface CreateCommitteeFromTemplateRequest extends CreateCommitteeRequest {
   topic?: string;
   conference?: string;
-  visibility: CommitteeVisibility;
-  operationMode?: CommitteeOperationMode;
-  activeRulePackageVersionId?: string;
-  committeeTemplateId?: string;
-  countryTemplateKey?: string;
 }
 
 export interface Stage4CommitteeSeat extends CommitteeSeat {
@@ -129,7 +124,7 @@ export interface Stage4CommitteeSeat extends CommitteeSeat {
 export interface UpdateSeatRequest {
   baseRevision: number;
   patch: Partial<Pick<Stage4CommitteeSeat,
-    'displayName' | 'rank' | 'canVote' | 'hasVeto' | 'mustVote' | 'sortOrder' | 'flag' | 'active'>>;
+    'rank' | 'canVote' | 'hasVeto' | 'mustVote' | 'sortOrder' | 'active'>>;
 }
 
 export interface CommitteeNote {
@@ -307,9 +302,9 @@ export interface CommitteeRuleReadModel {
 }
 
 export interface CommitteeWorkspaceSnapshot {
-  /** The committee source country template is exposed only to Chairs and Owners for seat creation. */
+  /** The committee fixed country directory is exposed only to Chairs and Owners for seat creation. */
   countryTemplate?: CountryTemplate;
-  schemaVersion: 2;
+  schemaVersion: 3;
   committee: Omit<CommitteeSummary, 'ownerUserId'> & {ownerUserId?: string};
   seats: Stage4CommitteeSeat[];
   viewer: {audience: 'PUBLIC' | 'MEMBER' | 'CHAIR' | 'OWNER'; seatId: string | null};

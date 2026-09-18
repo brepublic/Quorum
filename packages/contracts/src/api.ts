@@ -9,9 +9,17 @@ export interface ApiSuccess<T> {
   meta: ApiMeta;
 }
 
+export type ApiErrorReason = 'INVALID_COMMITTEE_LANGUAGE' | 'MISSING_CONTENT_TRANSLATION'
+  | 'SOURCE_REVISION_CHANGED' | 'UNKNOWN_FIXED_MEMBER';
+export interface ApiErrorParams {language?: 'zh-CN' | 'en'}
+export interface ApiFieldError {field: string; reason: ApiErrorReason; params?: ApiErrorParams}
+
 export interface ApiErrorBody {
   error: {
     code: ApiErrorCode;
+    reason?: ApiErrorReason;
+    params?: ApiErrorParams;
+    fieldErrors?: ApiFieldError[];
     message: string;
     details?: Record<string, unknown>;
     requestId: string;

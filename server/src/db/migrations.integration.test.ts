@@ -121,6 +121,32 @@ integration('PostgreSQL migrations', () => {
     } finally {await pool.end();}
   });
 
+  it('refuses old committee data without partially applying the content migration', async () => {
+    const pool = new Pool({connectionString: databaseUrl});
+    const source = resolve('server/migrations'); const staged = await mkdtemp(join(tmpdir(), 'quorum-migrations-0056-'));
+    temporaryDirectories.push(staged);
+    const files = (await readdir(source)).filter(file => file.endsWith('.sql')).sort();
+    const owner = randomUUID(), committee = randomUUID(), pkg = randomUUID(), version = randomUUID();
+    try {
+      for (const file of files.filter(file => Number(file.slice(0, 4)) <= 55)) await cp(join(source, file), join(staged, file));
+      await runMigrations(pool, staged);
+      await pool.query(`INSERT INTO users (id,email,display_name,status,is_system_admin,must_change_password)
+        VALUES ($1,'content-migration@example.test','Migration','ACTIVE',false,false)`, [owner]);
+      await pool.query(`INSERT INTO rule_packages (id,scope,stable_key) VALUES ($1,'BUILTIN','test:0056')`, [pkg]);
+      await pool.query(`INSERT INTO rule_package_versions (id,package_id,version,status,definition,schema_version,published_at)
+        VALUES ($1,$2,1,'PUBLISHED','{}',1,now())`, [version, pkg]);
+      await pool.query(`INSERT INTO committees (id,owner_user_id,name,visibility,operation_mode,active_rule_package_version_id)
+        VALUES ($1,$2,'Old names','PRIVATE','CHAIR_OPERATED',$3)`, [committee, owner, version]);
+      const file = files.find(file => file.startsWith('0056_'))!;
+      await cp(join(source, file), join(staged, file));
+      await expect(runMigrations(pool, staged)).rejects.toThrow('COMMITTEE_CONTENT_REBUILD_REQUIRED');
+      expect((await pool.query('SELECT name FROM committees WHERE id=$1', [committee])).rows).toEqual([{name: 'Old names'}]);
+      expect((await pool.query(`SELECT column_name FROM information_schema.columns
+        WHERE table_name='committees' AND column_name='committee_language'`)).rowCount).toBe(0);
+      expect((await pool.query('SELECT schema_compatibility FROM quorum_meta.runtime_metadata')).rows[0].schema_compatibility).toBe(55);
+    } finally {await pool.end();}
+  });
+
   it('migrates an empty database and is safe to run again', async () => {
     const pool = new Pool({connectionString: databaseUrl});
     const migrationsDirectory = resolve('server/migrations');
@@ -133,11 +159,11 @@ integration('PostgreSQL migrations', () => {
       );
       const applied = await pool.query('SELECT version FROM quorum_meta.schema_migrations');
 
-      expect(first).toEqual(expect.objectContaining({ready: true, latestAppliedVersion: 55}));
+      expect(first).toEqual(expect.objectContaining({ready: true, latestAppliedVersion: 56}));
       expect(second).toEqual(expect.objectContaining({ready: true, pendingVersions: []}));
       expect(status.ready).toBe(true);
-      expect(runtime.rows[0]?.schema_compatibility).toBe(55);
-      expect(applied.rowCount).toBe(55);
+      expect(runtime.rows[0]?.schema_compatibility).toBe(56);
+      expect(applied.rowCount).toBe(56);
       const stage3Tables = await pool.query<{name: string}>(`SELECT table_name AS name FROM information_schema.tables
         WHERE table_schema='public' AND table_name IN ('committees','committee_memberships','committee_capabilities',
         'committee_seats','seat_assignments','seat_invitations','rule_packages','rule_package_versions',

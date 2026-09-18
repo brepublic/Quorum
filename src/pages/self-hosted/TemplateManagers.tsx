@@ -1,3 +1,4 @@
+import {committeeContentName, type ContentLanguage} from '@quorum/contracts';
 import * as React from 'react';
 import type {
   CommitteeTemplate,
@@ -355,9 +356,9 @@ export function CommitteeTemplateManager({api}: {api: SelfHostedApi}) {
   </Container>;
 }
 
-export function TemplatePreview({template}: {template?: CommitteeTemplate}) {
+export function TemplatePreview({template, language}: {template?: CommitteeTemplate; language?: ContentLanguage}) {
   if (!template) return <p className="template-preview-empty">{t('Select a template to see which members will be added')}</p>;
   return <div className="template-preview">{template.members.map(member => <div className="template-preview-item" key={member.id}>
-    <FlagDisplay flag={member.flag} /><span>{localizedDisplayName(member.names, member.defaultLanguage)}</span>
+    <FlagDisplay flag={member.flag} /><span>{language ? committeeContentName(member.names, language) : localizedDisplayName(member.names, member.defaultLanguage)}</span>
     <span className="template-preview-rank">{t(member.rank)}</span></div>)}</div>;
 }

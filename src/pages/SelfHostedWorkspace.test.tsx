@@ -11,8 +11,8 @@ import type {SelfHostedUser} from '../services/self-hosted-identity';
 (globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT: boolean}).IS_REACT_ACT_ENVIRONMENT = true;
 const user: SelfHostedUser = {id: 'user', email: 'user@example.com', displayName: 'User', status: 'ACTIVE',
   isSystemAdmin: false, sessionVersion: 1, mustChangePassword: false, createdAt: '2026-08-13T00:00:00.000Z', disabledAt: null};
-const snapshot: CommitteeWorkspaceSnapshot = {schemaVersion: 2,
-  committee: {id: 'committee', name: 'Security Council', chairLabel: 'Chair', topic: '', conference: '', visibility: 'PRIVATE',
+const snapshot: CommitteeWorkspaceSnapshot = {schemaVersion: 3,
+  committee: {committeeLanguage: 'en', id: 'committee', name: 'Security Council', chairLabel: 'Chair', topic: '', conference: '', visibility: 'PRIVATE',
     operationMode: 'DELEGATE_OPERATED', status: 'ACTIVE', activeRulePackageVersionId: 'rules', revision: 1},
   seats: [{id: 'seat', stableKey: 'china', displayName: 'China', rank: 'STANDARD', canVote: true, hasVeto: true,
     mustVote: false, sortOrder: 0, active: true, revision: 1, flag: {type: 'STANDARD', value: 'cn'}}],
@@ -33,7 +33,7 @@ afterEach(() => { if (root) act(() => root?.unmount()); container?.remove(); roo
 describe('self-hosted stage 4 workspace', () => {
   it('hides the committee creation form for the system administrator', async () => {
     const api = {listCommittees: vi.fn(async () => []), listCountryTemplates: vi.fn(async () => []),
-      listCommitteeTemplates: vi.fn(async () => [])} as unknown as SelfHostedApi;
+      listRulePackages: vi.fn(async () => []), listCommitteeTemplates: vi.fn(async () => [])} as unknown as SelfHostedApi;
     container = document.createElement('div'); document.body.append(container); root = createRoot(container);
     await act(async () => { root?.render(<MemoryRouter initialEntries={['/committees']}>
       <SelfHostedWorkspace user={{...user, isSystemAdmin: true}} logout={vi.fn()} api={api} />
@@ -51,8 +51,8 @@ describe('self-hosted stage 4 workspace', () => {
       {id: 'managed', ownerUserId: 'owner', ownerDisplayName: 'Committee Owner', viewerRole: 'CHAIR',
         name: 'Managed Committee', status: 'ACTIVE'}]),
       listCountryTemplates: vi.fn(async () => [{key: 'builtin:default', names: {en: 'Default countries'},
-        defaultLanguage: 'en', builtin: true}]),
-      listCommitteeTemplates: vi.fn(async () => []),
+        defaultLanguage: 'en', builtin: true, revision: 1, countries: []}]),
+      listRulePackages: vi.fn(async () => []), listCommitteeTemplates: vi.fn(async () => []),
       archiveCommittee, requestCommitteeDeletion,
     } as unknown as SelfHostedApi;
     container = document.createElement('div'); document.body.append(container); root = createRoot(container);

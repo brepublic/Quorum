@@ -1,14 +1,20 @@
-import {ERROR_HTTP_STATUS, type ApiErrorBody, type ApiErrorCode} from '@quorum/contracts';
+import {ERROR_HTTP_STATUS, type ApiErrorBody, type ApiErrorCode, type ApiErrorReason, type ApiErrorParams, type ApiFieldError} from '@quorum/contracts';
 
 export class AppError extends Error {
   readonly code: ApiErrorCode;
   readonly status: number;
+  readonly reason?: ApiErrorReason;
+  readonly params?: ApiErrorParams;
+  readonly fieldErrors?: ApiFieldError[];
   readonly details?: Record<string, unknown>;
   readonly expose: boolean;
 
   constructor(options: {
     code: ApiErrorCode;
     message: string;
+    reason?: ApiErrorReason;
+    params?: ApiErrorParams;
+    fieldErrors?: ApiFieldError[];
     status?: number;
     details?: Record<string, unknown>;
     expose?: boolean;
@@ -19,6 +25,9 @@ export class AppError extends Error {
     this.code = options.code;
     this.status = options.status ?? ERROR_HTTP_STATUS[options.code];
     this.details = options.details;
+    this.reason = options.reason;
+    this.params = options.params;
+    this.fieldErrors = options.fieldErrors;
     this.expose = options.expose ?? this.status < 500;
   }
 }
@@ -46,6 +55,9 @@ export function normalizeError(error: unknown, requestId: string): NormalizedErr
         code: appError.code,
         message: appError.expose ? appError.message : 'The server could not complete the request.',
         ...(appError.expose && appError.details ? {details: appError.details} : {}),
+        ...(appError.expose && appError.reason ? {reason: appError.reason} : {}),
+        ...(appError.expose && appError.params ? {params: appError.params} : {}),
+        ...(appError.expose && appError.fieldErrors ? {fieldErrors: appError.fieldErrors} : {}),
         requestId
       }
     },

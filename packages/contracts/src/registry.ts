@@ -1,4 +1,4 @@
-export const CONTRACT_VERSION = 2 as const;
+export const CONTRACT_VERSION = 3 as const;
 
 export const ERROR_DEFINITIONS = [
   {code: 'BAD_REQUEST', httpStatus: 400},

@@ -17,7 +17,7 @@ const file: FileEntry = {id: '30000000-0000-4000-8000-000000000001', committeeId
 
 function snapshot(audience: CommitteeWorkspaceSnapshot['viewer']['audience'],
   status: CommitteeWorkspaceSnapshot['committee']['status'] = 'ACTIVE'): CommitteeWorkspaceSnapshot {
-  return {schemaVersion: 2, committee: {id: committeeId, name: '安理会', chairLabel: '主席', topic: '', conference: '',
+  return {schemaVersion: 3, committee: {committeeLanguage: 'en', id: committeeId, name: '安理会', chairLabel: '主席', topic: '', conference: '',
     visibility: audience === 'PUBLIC' ? 'PUBLIC' : 'PRIVATE', operationMode: 'DELEGATE_OPERATED', status,
     activeRulePackageVersionId: 'rules', revision: 2}, seats: [], viewer: {audience, seatId: null}, attendance: [],
   motionSettings: {delegateMotionProposalsEnabled: false, delegateMotionVotingEnabled: false},

@@ -18,11 +18,11 @@ const user: SelfHostedUser = {id: 'user', email: 'user@example.com', displayName
   isSystemAdmin: false, sessionVersion: 1, mustChangePassword: false, createdAt: '2026-08-13T00:00:00.000Z', disabledAt: null};
 
 function snapshot(audience: CommitteeWorkspaceSnapshot['viewer']['audience']): CommitteeWorkspaceSnapshot {
-  return {schemaVersion: 2, ...(audience === 'CHAIR' || audience === 'OWNER' ? {countryTemplate: {
+  return {schemaVersion: 3, ...(audience === 'CHAIR' || audience === 'OWNER' ? {countryTemplate: {
     id: 'builtin:default', key: 'builtin:default', builtin: true, names: {en: 'Default countries'}, defaultLanguage: 'en',
     countryLanguages: ['en'], revision: 1, createdAt: null, updatedAt: null, countries: [{id: 'country-france',
       stableKey: 'france', names: {en: 'France'}, defaultLanguage: 'en', continent: null, sortOrder: 1,
-      flag: {type: 'STANDARD', value: 'fr'}, revision: 1}]}} : {}), committee: {id: 'committee', name: 'Security Council', chairLabel: 'Chair',
+      flag: {type: 'STANDARD', value: 'fr'}, revision: 1}]}} : {}), committee: {committeeLanguage: 'en', id: 'committee', name: 'Security Council', chairLabel: 'Chair',
     topic: 'Climate security', conference: 'Main Hall', visibility: 'PUBLIC', operationMode: 'DELEGATE_OPERATED',
     status: 'ACTIVE', activeRulePackageVersionId: 'rules', revision: 4}, seats: [{id: 'seat', stableKey: 'china',
     displayName: 'China', rank: 'STANDARD', canVote: true, hasVeto: true, mustVote: false, sortOrder: 0, active: true,
@@ -127,14 +127,13 @@ describe('committee workspace routes and roles', () => {
     expect(page.textContent).not.toContain('Grant Chair');
   });
 
-  it('localizes existing seats from their country template and keeps unmatched names', async () => {
+  it('preserves the fixed member name instead of overwriting it from the country directory', async () => {
     const page = await render('CHAIR', '/committees/committee/setup', user, value => ({...value,
-      seats: [...value.seats, {...value.seats[0], id: 'france-seat', stableKey: 'france', displayName: '法国'}]}));
-    expect(page.querySelector('.seat-list-table')?.textContent).toContain('France');
-    expect(page.querySelector('.seat-list-table')?.textContent).not.toContain('法国');
+      seats: [...value.seats, {...value.seats[0], id: 'france-seat', stableKey: 'france', displayName: 'French delegation'}]}));
+    expect(page.querySelector('.seat-list-table')?.textContent).toContain('French delegation');
     expect(page.querySelector('.seat-list-table')?.textContent).toContain('China');
-    expect(page.querySelector('[aria-label="Voting · France"]')).toBeTruthy();
-    expect(page.querySelector('[aria-label="Veto · France"]')).toBeTruthy();
+    expect(page.querySelector('[aria-label="Voting · French delegation"]')).toBeTruthy();
+    expect(page.querySelector('[aria-label="Veto · French delegation"]')).toBeTruthy();
   });
 
   it('lets only Owners manage Chairs', async () => {

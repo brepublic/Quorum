@@ -1,3 +1,6 @@
+import {Stage4Service} from '../stage4/service.js';
+import {ruleLanguageAvailability} from '@quorum/rule-schema';
+import type {ContentLanguage} from '@quorum/contracts';
 import {createHash, randomUUID} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
 import type {Pool, PoolClient, QueryResultRow} from 'pg';
@@ -22,6 +25,7 @@ type Context = {requestId: string; sourceIp?: string; userAgent?: string};
 type Audience = 'PUBLIC' | 'MEMBER' | 'CHAIR' | 'OWNER';
 
 interface CommitteeRow extends QueryResultRow {
+  committee_language: ContentLanguage;
   id: string; owner_user_id: string; name: string; chair_label: string; topic: string; conference: string;
   visibility: CommitteeVisibility; operation_mode: CommitteeOperationMode;
   delegate_motion_proposals_enabled: boolean; delegate_motion_voting_enabled: boolean;
@@ -92,8 +96,21 @@ function builtInVersion4(definition: RulePackageDefinition): RulePackageDefiniti
   return builtInVersion3(definition);
 }
 
+function builtInVersion5(definition: RulePackageDefinition): RulePackageDefinition {
+  const upgraded = builtInVersion4(definition);
+  const names: Record<string, {'zh-CN': string; en: string}> = {
+    'discuss-resolution': {'zh-CN': '讨论决议草案', en: 'Discuss draft resolution'},
+    'postpone-resolution': {'zh-CN': '推迟决议草案', en: 'Postpone draft resolution'},
+    'resume-resolution': {'zh-CN': '恢复决议草案', en: 'Resume draft resolution'},
+    'discuss-amendment': {'zh-CN': '讨论修正案', en: 'Discuss amendment'},
+    'postpone-amendment': {'zh-CN': '推迟修正案', en: 'Postpone amendment'},
+    'resume-amendment': {'zh-CN': '恢复修正案', en: 'Resume amendment'}
+  };
+  return {...upgraded, motions: upgraded.motions.map(item => ({...item, names: item.names ?? names[item.id]}))};
+}
+
 function committee(row: CommitteeRow): CommitteeSummary {
-  return {id: row.id, ownerUserId: row.owner_user_id, name: row.name, chairLabel: row.chair_label,
+  return {id: row.id, committeeLanguage: row.committee_language, ownerUserId: row.owner_user_id, name: row.name, chairLabel: row.chair_label,
     topic: row.topic, conference: row.conference, visibility: row.visibility, operationMode: row.operation_mode,
     status: row.status, activeRulePackageVersionId: row.active_rule_package_version_id, revision: row.revision};
 }
@@ -295,7 +312,7 @@ export class Stage3Service {
           (id, scope, stable_key) VALUES ($1,'BUILTIN',$2)
           ON CONFLICT (scope, stable_key) DO UPDATE SET stable_key=EXCLUDED.stable_key RETURNING id`, [packageId, definition.key]);
         for (const [index, versionDefinition] of [definition, builtInVersion2(definition), builtInVersion3(definition),
-          builtInVersion4(definition)].entries()) {
+          builtInVersion4(definition), builtInVersion5(definition)].entries()) {
           const validated = validateRulePackage(versionDefinition);
           if (!validated.ok) throw new Error(`Invalid built-in rule package: ${definition.key} v${index + 1}: ${JSON.stringify(validated.issues)}`);
           await client.query(`INSERT INTO rule_package_versions
@@ -307,48 +324,9 @@ export class Stage3Service {
     });
   }
 
-  async createCommittee(auth: AuthenticatedSession, input: {
-    name: unknown; visibility: unknown; operationMode?: unknown; activeRulePackageVersionId?: unknown;
-  }, context: Context): Promise<CommitteeSummary> {
-    requireBusinessIdentity(auth);
-    if (auth.user.isSystemAdmin) throw new AppError({code: 'FORBIDDEN', message: 'System administrators cannot create committees.'});
-    if (!['PUBLIC', 'PRIVATE'].includes(input.visibility as string)) {
-      throw new AppError({code: 'VALIDATION_FAILED', message: 'Committee visibility is invalid.'});
-    }
-    const operationMode = input.operationMode ?? 'DELEGATE_OPERATED';
-    if (!['DELEGATE_OPERATED', 'CHAIR_OPERATED'].includes(operationMode as string)) {
-      throw new AppError({code: 'VALIDATION_FAILED', message: 'Committee operation mode is invalid.'});
-    }
-    return transaction(this.pool, async client => {
-      let versionId = typeof input.activeRulePackageVersionId === 'string' ? input.activeRulePackageVersionId : undefined;
-      if (!versionId) {
-        const builtin = await client.query<{id: string}>(`SELECT v.id FROM rule_package_versions v
-          JOIN rule_packages p ON p.id=v.package_id WHERE p.stable_key='builtin:quorum-default' AND v.status='PUBLISHED'
-          ORDER BY v.version DESC LIMIT 1`);
-        versionId = builtin.rows[0]?.id;
-      }
-      if (!versionId) throw new AppError({code: 'SERVICE_NOT_READY', message: 'Built-in rules are not installed.'});
-      const available = await client.query(`SELECT 1 FROM rule_package_versions v JOIN rule_packages p ON p.id=v.package_id
-        WHERE v.id=$1 AND v.status='PUBLISHED' AND p.scope IN ('BUILTIN','SYSTEM')`, [versionId]);
-      if (!available.rowCount) throw new AppError({code: 'VALIDATION_FAILED', message: 'Rule package version is not published.'});
-      const id = randomUUID();
-      const inserted = await client.query<CommitteeRow>(`INSERT INTO committees
-        (id, owner_user_id, name, visibility, operation_mode, active_rule_package_version_id, next_event_sequence)
-        VALUES ($1,$2,$3,$4,$5,$6,2) RETURNING *`,
-      [id, auth.user.id, requiredString(input.name, 'Committee name'), input.visibility, operationMode, versionId]);
-      const row = inserted.rows[0] as CommitteeRow;
-      await client.query(`UPDATE committees SET delegate_file_settings=jsonb_set(delegate_file_settings,
-        '{rejectionTypes}', (SELECT default_file_rejection_types FROM system_settings WHERE singleton=true)) WHERE id=$1`, [id]);
-      await client.query(`INSERT INTO committee_rule_bindings
-        (id, committee_id, package_version_id, effective_from_event_sequence, activated_by_user_id)
-        VALUES ($1,$2,$3,1,$4)`, [randomUUID(), id, versionId, auth.user.id]);
-      await client.query(`INSERT INTO committee_events
-        (committee_id, sequence, event_type, resource_type, resource_id, resource_revision, payload, audience)
-        VALUES ($1,1,'committee.created','committee',$1,1,$2,'MEMBER')`, [id, {created: true}]);
-      await audit(client, context, {committeeId: id, actorUserId: auth.user.id, capabilities: ['COMMITTEE_OWNER'],
-        action: 'committee.created', resourceType: 'committee', resourceId: id, after: committee(row)});
-      return committee(row);
-    });
+  async createCommittee(auth: AuthenticatedSession, input: Record<string, unknown>, context: Context,
+    idempotencyKey: string): Promise<CommitteeSummary> {
+    return new Stage4Service(this.pool).createCommittee(auth, input, idempotencyKey, context);
   }
 
   async snapshot(committeeId: string, auth?: AuthenticatedSession): Promise<CommitteeSnapshot> {
@@ -580,31 +558,9 @@ export class Stage3Service {
     });
   }
 
-  async createSeat(auth: AuthenticatedSession, committeeId: string, input: Record<string, unknown>, context: Context) {
-    requireBusinessIdentity(auth);
-    const rank = input.rank ?? 'STANDARD';
-    if (!['STANDARD', 'NGO', 'OBSERVER'].includes(rank as string)
-      || (input.canVote !== undefined && typeof input.canVote !== 'boolean')
-      || (input.hasVeto !== undefined && typeof input.hasVeto !== 'boolean')
-      || (input.hasVeto === true && input.canVote === false)) {
-      throw new AppError({code: 'VALIDATION_FAILED', message: 'Seat properties are invalid.'});
-    }
-    return transaction(this.pool, async client => {
-      const row = await lockedCommittee(client, committeeId); await requireChair(client, row, auth.user.id); requireEditable(row);
-      const id = randomUUID();
-      const result = await client.query(`INSERT INTO committee_seats
-        (id,committee_id,stable_key,display_name,rank,can_vote,has_veto,sort_order)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id,stable_key AS "stableKey",display_name AS "displayName",rank,
-        can_vote AS "canVote",has_veto AS "hasVeto",sort_order AS "sortOrder",active,revision`,
-      [id, committeeId, requiredString(input.stableKey, 'Seat stable key', 128), requiredString(input.displayName, 'Seat name'),
-        rank, input.canVote !== false, input.hasVeto === true,
-        Number.isSafeInteger(input.sortOrder) ? input.sortOrder : 0]);
-      await appendEvent(client, row, {type: 'seat.created', resourceType: 'seat', resourceId: id, revision: 1,
-        payload: {seatId: id}});
-      await audit(client, context, {committeeId, actorUserId: auth.user.id, capabilities: ['CHAIR'],
-        action: 'committee.seat_created', resourceType: 'seat', resourceId: id, after: result.rows[0]});
-      return result.rows[0];
-    });
+  async createSeat(auth: AuthenticatedSession, committeeId: string, input: Record<string, unknown>, context: Context,
+    idempotencyKey: string) {
+    return new Stage4Service(this.pool).createSeat(auth, committeeId, input, idempotencyKey, context);
   }
 
   async assignSeat(auth: AuthenticatedSession, committeeId: string, input: Record<string, unknown>, context: Context) {
@@ -717,7 +673,7 @@ export class Stage3Service {
     if (auth) requireBusinessIdentity(auth);
     const result = await this.pool.query(`SELECT p.id,p.scope,p.stable_key AS key,p.committee_id AS "committeeId",
       json_agg(json_build_object('id',v.id,'version',v.version,'status',v.status,'schemaVersion',v.schema_version,
-        'publishedAt',v.published_at) ORDER BY v.version) AS versions
+        'publishedAt',v.published_at,'definition',v.definition) ORDER BY v.version) AS versions
       FROM rule_packages p JOIN rule_package_versions v ON v.package_id=p.id
       WHERE (p.scope IN ('BUILTIN','SYSTEM') OR ($1::uuid IS NOT NULL AND EXISTS (
         SELECT 1 FROM committee_capabilities c JOIN users u ON u.id=c.user_id
@@ -726,7 +682,12 @@ export class Stage3Service {
           SELECT 1 FROM committee_capabilities c JOIN users u ON u.id=c.user_id
           WHERE c.committee_id=p.committee_id AND c.user_id=$1 AND c.revoked_at IS NULL AND u.is_system_admin=false)))
       GROUP BY p.id ORDER BY p.scope,p.stable_key`, [auth?.user.id ?? null, auth?.user.isSystemAdmin ?? false]);
-    return result.rows as RulePackageSummary[];
+    return result.rows.map(pkg => ({...pkg, versions: pkg.versions.map((version: RulePackageSummary['versions'][number]) => {
+      const {definition, ...summary} = version;
+      const validated = validateRulePackage(definition);
+      if (!validated.ok) throw new AppError({code: 'INTERNAL_ERROR', message: 'Stored rule package is invalid.'});
+      return {...summary, names: validated.value.metadata.names, languageAvailability: ruleLanguageAvailability(validated.value)};
+    })}));
   }
 
   async importRulePackage(auth: AuthenticatedSession, input: Record<string, unknown>, context: Context,
@@ -755,8 +716,8 @@ export class Stage3Service {
         capabilities: scope === 'SYSTEM' ? ['SYSTEM_ADMIN'] : ['CHAIR'], action: auditAction,
         resourceType: 'rule_package', resourceId: packageId, after: {scope, key: validated.key}});
       return {id: packageId, scope: scope as 'SYSTEM' | 'COMMITTEE', key: validated.key, committeeId,
-        versions: [{id: versionId, version: 1, status: 'PUBLISHED', schemaVersion: RULE_SCHEMA_VERSION,
-          publishedAt: new Date().toISOString()}]};
+        versions: [{id: versionId, version: 1, status: 'PUBLISHED', schemaVersion: RULE_SCHEMA_VERSION, names: validated.metadata.names,
+          publishedAt: new Date().toISOString(), languageAvailability: ruleLanguageAvailability(validated)}]};
     });
   }
 
@@ -795,7 +756,8 @@ export class Stage3Service {
       await audit(client, context, {committeeId: found.committee_id ?? undefined, actorUserId: auth.user.id,
         capabilities: found.scope === 'SYSTEM' ? ['SYSTEM_ADMIN'] : ['CHAIR'], action: 'rules.version_created',
         resourceType: 'rule_package_version', resourceId: id, after: {packageId, version, status}});
-      return {id, version, status, schemaVersion: RULE_SCHEMA_VERSION, publishedAt: status === 'PUBLISHED' ? new Date().toISOString() : null};
+      return {id, version, status, schemaVersion: RULE_SCHEMA_VERSION, names: validated.metadata.names,
+        languageAvailability: ruleLanguageAvailability(validated), publishedAt: status === 'PUBLISHED' ? new Date().toISOString() : null};
     });
   }
 
@@ -824,6 +786,10 @@ export class Stage3Service {
       }
       const validated = validateRulePackage(version.rows[0].definition);
       if (!validated.ok) throw new AppError({code: 'VALIDATION_FAILED', message: 'Rule package version is invalid.', details: {issues: validated.issues}});
+      if (!ruleLanguageAvailability(validated.value).supportedLanguages.includes(row.committee_language)) {
+        throw new AppError({code: 'VALIDATION_FAILED', reason: 'MISSING_CONTENT_TRANSLATION',
+          message: 'The rules do not support the committee language.', params: {language: row.committee_language}});
+      }
       const updated = await client.query<CommitteeRow>(`UPDATE committees SET active_rule_package_version_id=$2,
         revision=revision+1,updated_at=now() WHERE id=$1 RETURNING *`, [committeeId, versionId]);
       const changed = updated.rows[0] as CommitteeRow;
@@ -856,6 +822,10 @@ export class Stage3Service {
         definition.key = `committee:${committeeId}:rules`;
         const valid = validateRulePackage(definition);
         if (!valid.ok) throw new AppError({code: 'VALIDATION_FAILED', message: 'Rule override creates an invalid package.', details: {issues: valid.issues}});
+        if (!ruleLanguageAvailability(valid.value).supportedLanguages.includes(row.committee_language)) {
+          throw new AppError({code: 'VALIDATION_FAILED', reason: 'MISSING_CONTENT_TRANSLATION',
+            message: 'The rules do not support the committee language.', params: {language: row.committee_language}});
+        }
         const packageResult = await client.query<{id: string}>(`INSERT INTO rule_packages
           (id,scope,owner_user_id,committee_id,stable_key) VALUES ($1,'COMMITTEE',$2,$3,$4)
           ON CONFLICT (scope,stable_key) DO UPDATE SET updated_at=now() RETURNING id`,

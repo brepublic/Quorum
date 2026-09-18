@@ -1,3 +1,5 @@
+import type {ContentLanguage, ContentLanguageAvailability} from './localization.js';
+
 export type CommitteeVisibility = 'PUBLIC' | 'PRIVATE';
 export type CommitteeOperationMode = 'DELEGATE_OPERATED' | 'CHAIR_OPERATED';
 export type CommitteeStatus = 'ACTIVE' | 'PAUSED' | 'ARCHIVED' | 'DELETING';
@@ -5,10 +7,15 @@ export type RulePackageScope = 'BUILTIN' | 'SYSTEM' | 'COMMITTEE';
 export type RuleVersionStatus = 'DRAFT' | 'PUBLISHED';
 
 export interface CreateCommitteeRequest {
+  committeeLanguage: ContentLanguage;
+  countryTemplateRevision: number;
+  committeeTemplateRevision?: number;
+  committeeTemplateId?: string;
+  countryTemplateKey?: string;
   name: string;
   visibility: CommitteeVisibility;
   operationMode?: CommitteeOperationMode;
-  activeRulePackageVersionId?: string;
+  activeRulePackageVersionId: string;
 }
 export interface CommitteeRevisionRequest {baseRevision: number}
 export interface UpdateCommitteeRequest extends CommitteeRevisionRequest {
@@ -25,7 +32,7 @@ export interface SetCommitteeMotionSettingsRequest extends CommitteeRevisionRequ
 }
 export interface SetCommitteeStatusRequest extends CommitteeRevisionRequest {status: 'ACTIVE' | 'PAUSED'}
 export interface CreateSeatRequest {
-  stableKey: string; displayName: string; rank?: string; canVote?: boolean; hasVeto?: boolean; sortOrder?: number;
+  stableKey: string; rank?: string; canVote?: boolean; hasVeto?: boolean; sortOrder?: number;
 }
 export type SeatAssignmentRequest = {seatId: string; email: string} | {action: 'END'; assignmentId: string};
 export interface CreateSeatInvitationRequest {seatId: string; maxUses: number; expiresAt: string}
@@ -42,6 +49,7 @@ export type ChairRuleOverrideRequest =
   | {scope: 'FUTURE'; path: string; value: unknown};
 
 export interface CommitteeSummary {
+  committeeLanguage: ContentLanguage;
   id: string;
   ownerUserId?: string;
   ownerDisplayName?: string;
@@ -81,6 +89,8 @@ export interface CommitteeSnapshot {
 }
 
 export interface RulePackageVersionSummary {
+  names: Record<string, string>;
+  languageAvailability: ContentLanguageAvailability;
   id: string;
   version: number;
   status: RuleVersionStatus;
