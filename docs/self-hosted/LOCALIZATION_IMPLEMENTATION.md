@@ -48,7 +48,7 @@
 
 ### 旧数据及迁移边界
 
-新迁移不得修改历史 migration，不推断旧字符串的自动/自定义来源。选择对含旧委员会的数据库明确拒绝升级，并按计划限定重建委员会业务数据；保留账号和无关配置。实际重建脚本、目标 Compose 实例核查、受控删除及新 migration 尚未执行。中间版本不部署。
+新迁移不得修改历史 migration，不推断旧字符串的自动/自定义来源。选择对含旧委员会的数据库明确拒绝升级，并按计划限定重建委员会业务数据；保留账号和无关配置。实际重建脚本、受控删除及新 migration 尚未执行。后续用户明确要求部署当前已提交版本，因此按下面记录更新基础改造；这不代表完整计划切换。
 
 ## 已实施的基础代码
 
@@ -66,7 +66,7 @@
 | P1 | 共享模型与纯函数已实现；SQL、现有请求/响应替换、错误结构、schema/归档版本未完成 |
 | P2–P3 | 未实施 |
 | P4 | 语言订阅及模板草稿语言保留已实现；其余文案与业务接线未实施 |
-| P5–P6 | 未实施；没有部署或数据库重建 |
+| P5–P6 | 完整计划验收未完成；按后续明确指令已部署基础版本，未重建数据库 |
 
 ## 界面订阅基础
 
@@ -76,4 +76,48 @@
 
 `pnpm exec tsc --noEmit`、`pnpm verify:no-legacy-runtime` 通过。首次 `test:self-host` 在受限环境运行，桌面桥接测试出现超时；独立本地监听探针确认沙箱返回 EPERM，因此停止该次测试，并在允许本地监听的环境重跑。重跑结果：85 个文件、627 项全部通过，无跳过。最终小调整后重跑语言/模板相关 3 个文件、11 项及前端类型检查，通过。
 
-尚未执行 PostgreSQL 新约束测试、四种语言组合浏览器验收、Rust/Slint 实际界面验收或部署。数据库与业务 API 未变更；不得将本次 Node 桥接自动测试计为原生桌面验收。
+上一提交尚未部署。当前新增部署及验证如下；PostgreSQL 新约束、四种委员会/界面语言组合、Rust/Slint 实际界面验收仍未完成。数据库与业务 API 未变更；不得将 Node 桥接自动测试计为原生桌面验收。
+
+
+## 2026-09-18 当前基础版本部署与继续验证
+
+用户在基础提交完成后明确要求“请部署并继续验证”。部署源码为 `e963de8`；只更新 `quorum-dev` 的 app、caddy，没有重建数据库、重配 Agent 或处理其他 Compose 项目。部署前核实 `quorum-dev` 运行 3 个服务、`quorum` 停止、独立 `quorum-test-db` 运行，Compose 文件为本仓库 `deploy/compose.yaml`，变量文件为 `deploy/.env`。
+
+执行 `docker compose -p quorum-dev --env-file deploy/.env -f deploy/compose.yaml up -d --build --no-deps --wait app caddy` 成功，镜像构建中执行 `pnpm build:self-host`。app/caddy 启动时间分别为 05:39:12 / 05:39:18 UTC；PostgreSQL 容器未重建。
+
+| 检查 | 结果 |
+| --- | --- |
+| app 运行镜像 | `sha256:0f237bf7ab8347a81769e612664af4f280a9e869a97f6f3df7ce00bc68c649d3` |
+| caddy 运行镜像 | `sha256:ea965516ca45a7fce2b567eca011dc1ccdf458a734f7ea6ad73e2aa117520f81` |
+| HTTPS readiness | 数据库、存储均 ok；migration 55 |
+| `/api/v1/version` | `0.1.0-self-hosted`；contract 2、rule schema 1、database 55 |
+| Caddy 本地 CA | 部署前后 SHA-256 都为 `f81c2cff42a1484d1908efcf5d67f4de5d1ebf1bf0e512371f870f0a91321869` |
+| 静态产物 | HTTPS 获取 `index-DKNqiEmv.js` 与容器 `/srv/assets/` 的 SHA-256 相同：`9f5dbb886aa2fbdefdd61f2e19fc408d3108abbfce059639fdef369196ee1966` |
+| app 内容 | 已包含编译后的 `packages/contracts/dist/localization.js` |
+
+HTTPS 请求显式信任从 Caddy 导出的现有根证书，没有关闭证书校验。内置浏览器直接访问 HTTPS 返回 `ERR_CERT_AUTHORITY_INVALID`；没有绕过警告。以下交互在同一提交的 `http://localhost:5173` Vite 页面执行，API 连接已更新后端，不能计为直接 HTTPS 生产页面浏览器验收。
+
+### 实际浏览器检查
+
+- 创建委员会页填写名称 `Localization deployment draft` 和议题 `未保存主题 verification`，由英文切换中文后，两项未保存值完整保留，按钮/标签更新；没有提交该委员会。
+- 国家模板页在中文界面输入 `语言切换验收 20260918`，切换英文后保留草稿，再点击创建。数据库只读确认 `names={"zh-CN":"语言切换验收 20260918"}`、default_language=zh-CN、country_languages={zh-CN}，没有把草稿误存为英文。
+- 访问模板页与容器重启短暂重叠时出现 JSON 解析错误；部署就绪后保存与列表读取成功。错误本地化仍属未完成范围，未将该瞬时错误掩盖为通过。
+- 在已有开发委员会 BRICS 启动第1会期和自由磋商 10 分钟计时器。界面显示倒计时从 9:33 继续到 9:26，切换英文→中文时未提交的时长输入 17 保留，连接指示为“实时”。
+- 切换前后委员会 revision=1、next_event_sequence=7；计时器 ID、started_at=`2026-09-18 05:41:59.983+00`、remaining_at_start_ms=600000、revision=2、running=true 均相同。切换没有写入业务事件或重置权威计时。
+- 验收后恢复英文界面，恢复时长输入 10 并暂停计时器，界面停在 8:42；保留测试模板与已启动会期以便复查。未恢复或删除会议历史。
+- 当前桌面宽度下英文导航与计时区域无可见重叠。没有验证所有长文案、移动端或输入焦点；焦点/选区证据仍来自前次组件测试。
+
+### PostgreSQL 总测试（未通过）
+
+执行 `source scripts/wsl-env.sh && node server/scripts/test-db.mjs test`，内部运行 `pnpm test:self-host:integration`，使用独立 `quorum-test-db` / 127.0.0.1:55432 创建临时数据库；未针对开发实例业务库运行测试。
+
+结果：8 个文件，3 通过、5 失败；107 项中 62 通过、45 失败，无跳过。失败分类：
+
+- 38 项 `Enter a valid email address.`：例如 storage 的 fixture 将 chair.user.id 传给现已要求 email 的 setChair，assignSeat 也使用旧 userId 字段。
+- 4 项 `Speaker list is closed.`：议事测试的名单状态前置条件不满足。
+- 1 项期待 CHAIR 但实际 OWNER；1 项期待创建席位被拒绝而实际成功；两项与创建者默认同时具有 Chair 的现有行为相关。
+- 1 项主机转移后预期的 PENDING Agent 任务不存在，需独立排查。
+
+已核对本次 `c029462..e963de8` 没有修改上述相关服务、迁移或集成测试；这只是变更范围证据，没有在旧提交重跑全套，因此不能把所有失败宣称为已证明的基线问题。本次未扩大到修复这些测试或修改角色/文件/会议语义。
+
+本次部署成功与部分浏览器验证通过，不代表 P1–P6 或全计划验收通过。
