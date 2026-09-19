@@ -1589,9 +1589,9 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
       <div className="resolution-voting-dashboard"><aside className="resolution-voting-metrics resolution-voting-thresholds">
         <div className="resolution-voting-metric metric-present"><span>{t('Present')}</span><strong>{directEligibility.length}</strong></div>
         <div className="resolution-voting-metric metric-simple"><span>{t('Simple majority')}</span>
-          <strong>{Math.floor(directEligibility.length / 2) + 1}</strong></div>
+          <strong>{directEligibility.length > 0 ? Math.floor(directEligibility.length / 2) + 1 : '—'}</strong></div>
         <div className="resolution-voting-metric metric-two-thirds"><span>{t('Two-thirds majority')}</span>
-          <strong>{Math.ceil(directEligibility.length * 2 / 3)}</strong></div>
+          <strong>{directEligibility.length > 0 ? Math.ceil(directEligibility.length * 2 / 3) : '—'}</strong></div>
       </aside><div className="resolution-voting-matrix-wrap"><div className="resolution-voting-grid">
         {visibleDirectSeats.map(item => {const vote = directVoteBySeat.get(item.seatId); return <button type="button" key={item.seatId}
           className={`resolution-voting-member${vote ? ` vote-${vote.choice === 'ABSTAIN' ? 'abstaining' : vote.choice.toLowerCase()}` : ''}${item.seatId === currentVotingSeatId ? ' is-current' : ''}`}

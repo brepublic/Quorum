@@ -1464,6 +1464,11 @@ describe('committee workspace routes and roles', () => {
     expect(page.textContent).toContain('Voting');
     expect(page.textContent).not.toContain('Feed');
     expect(page.textContent).toContain('Operative text');
+    await act(async () => {page.querySelector<HTMLAnchorElement>('a[href="/committees/committee/resolutions/resolution/voting"]')?.click();});
+    expect(page.textContent).toContain('No eligible delegations');
+    expect(page.querySelector('.metric-simple strong')?.textContent).toBe('—');
+    expect(page.querySelector('.metric-two-thirds strong')?.textContent).toBe('—');
+    expect(page.querySelector('.resolution-result')).toBeNull();
   });
 
   it('restores the legacy amendment cards, immediate plus, and guarded trash action', async () => {

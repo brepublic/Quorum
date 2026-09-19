@@ -936,20 +936,22 @@ export class Stage4Service {
           const vetoed = castCount >= eligibleCount && currentVotes.some(vote => vote.current_choice === 'AGAINST'
             && eligibility.rows.some(item => item.seat_id === vote.seat_id && item.has_veto));
           let threshold: number; let automaticResult: NonNullable<ProceedingDocument['directVote']>['automaticResult'] = null;
-          if (resolution.direct_vote_majority === 'TWO_THIRDS_NON_ABSTAINING') {
+          if (eligibleCount === 0) {
+            threshold = 0;
+          } else if (resolution.direct_vote_majority === 'TWO_THIRDS_NON_ABSTAINING') {
             threshold = Math.ceil(2 * (forCount + againstCount) / 3);
             const remaining = Math.max(0, eligibleCount - castCount); const bestFor = forCount + remaining;
             const bestThreshold = Math.ceil(2 * (forCount + againstCount + remaining) / 3);
             if (vetoed) automaticResult = 'VETOED';
             else if ((!hasVetoSeat || castCount >= eligibleCount) && forCount > 0 && forCount >= threshold) automaticResult = 'PASSED';
-            else if (eligibleCount === 0 || bestFor < bestThreshold) automaticResult = 'FAILED';
+            else if (bestFor < bestThreshold) automaticResult = 'FAILED';
           } else {
             threshold = resolution.direct_vote_majority === 'TWO_THIRDS'
               ? Math.ceil(2 * eligibleCount / 3) : Math.floor(eligibleCount / 2) + 1;
             const remaining = Math.max(0, eligibleCount - castCount);
             if (vetoed) automaticResult = 'VETOED';
-            else if (eligibleCount > 0 && (!hasVetoSeat || castCount >= eligibleCount) && forCount >= threshold) automaticResult = 'PASSED';
-            else if (eligibleCount === 0 || forCount + remaining < threshold) automaticResult = 'FAILED';
+            else if ((!hasVetoSeat || castCount >= eligibleCount) && forCount >= threshold) automaticResult = 'PASSED';
+            else if (forCount + remaining < threshold) automaticResult = 'FAILED';
           }
           directVote = {majority: resolution.direct_vote_majority,
             startedAt: resolution.direct_vote_started_at?.toISOString() ?? null,
