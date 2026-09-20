@@ -174,7 +174,23 @@
 }
 
 .committee-primary-navigation {
-  min-width: max-content;
+  flex-wrap: wrap;
+  min-width: 0;
+  row-gap: 1px;
+}
+
+.committee-primary-navigation > .header.item {
+  max-width: min(24rem, 50vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.committee-primary-navigation > .right.menu {
+  flex-shrink: 0;
+}
+
+.committee-primary-navigation > .item {
+  min-height: 3.2em;
 }
 
 .committee-navigation-mobile,
@@ -971,6 +987,88 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   display: grid;
   grid-template-columns: minmax(12rem, 18rem) minmax(0, 1fr);
   gap: 1rem;
+}
+
+.ui.container.notes-editor {
+  display: grid;
+}
+
+.notes-editor textarea {
+  min-height: 18rem;
+}
+
+.committee-settings-page > .ui.form + .ui.form {
+  margin-top: 2rem;
+}
+
+.committee-layout-toggles {
+  display: grid;
+  gap: 1.25rem;
+  margin-bottom: 1.5rem;
+}
+
+.committee-lifecycle-actions {
+  border-top: 1px solid rgba(34, 36, 38, .15);
+  margin-top: 2rem;
+  padding-top: 1rem;
+}
+
+.committee-lifecycle-actions > .ui.button {
+  margin: 0 .75rem .75rem 0;
+}
+
+.statistics-table-scroll {
+  overflow-x: auto;
+}
+
+.statistics-table-scroll > .ui.table {
+  min-width: 850px;
+}
+
+.statistics-seat {
+  display: inline-flex;
+  align-items: center;
+  gap: .5rem;
+  white-space: nowrap;
+}
+
+.statistics-seat .country-flag-display {
+  flex-shrink: 0;
+}
+
+.strawpoll-result-label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: .5rem;
+}
+
+.strawpoll-result-label > span {
+  flex-shrink: 0;
+}
+
+.localized-file-picker {
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+  flex-wrap: wrap;
+}
+
+.localized-file-picker > input[type="file"] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.localized-file-picker > input:focus-visible + label {
+  outline: 2px solid #2185d0;
+  outline-offset: 2px;
+}
+
+.localized-file-picker > span {
+  overflow-wrap: anywhere;
 }
 
 .proceedings-timers {

@@ -101,7 +101,7 @@ function PrimaryItems({snapshot, onNavigate, onCreateCaucus}: {
     .map(poll => ({id: poll.id, label: formatCommitteeContent({kind: 'STRAWPOLL', ordinal: poll.ordinal, question: poll.question}, snapshot.committee.committeeLanguage)}));
 
   return <>
-    <Menu.Item header as={Link} to={base + '/info'} active={location.pathname === base + '/info'} onClick={onNavigate}>{snapshot.committee.name}</Menu.Item>
+    <Menu.Item header title={snapshot.committee.name} as={Link} to={base + '/info'} active={location.pathname === base + '/info'} onClick={onNavigate}>{snapshot.committee.name}</Menu.Item>
     {item('/setup', 'Setup')}
     {item('/roll-call', 'Roll call')}
     {item('/motions', 'Motions')}

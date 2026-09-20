@@ -311,7 +311,7 @@ function NotesPanel({snapshot, run, api}: {snapshot: CommitteeWorkspaceSnapshot;
     try {await run(() => api.deleteNote(selected.id, selected.revision)); setSelectedId(undefined);}
     finally {setPending(undefined);}
   };
-  return <div className="notes-editor">
+  return <Container className="notes-editor">
     <Menu vertical fluid aria-label={t('Note list')}>
       {snapshot.notes.map(note => <Menu.Item key={note.id} active={note.id === selectedId}
         onClick={() => void selectNote(note.id)}>
@@ -319,13 +319,13 @@ function NotesPanel({snapshot, run, api}: {snapshot: CommitteeWorkspaceSnapshot;
       {canWrite && <Menu.Item active={!selectedId} onClick={() => void selectNote(undefined)}><Icon name="plus" />{t('New note')}</Menu.Item>}
     </Menu>
     <Form>
-      <Form.Input label={t('Title')} value={title} readOnly={!canWrite}
+      <Form.Input id="note-title" label={t('Title')} value={title} readOnly={!canWrite}
         onChange={event => {editVersion.current += 1; setTitle(event.currentTarget.value); setDirty(true);}} />
-      <Form.TextArea label={t('Content')} value={content} readOnly={!canWrite}
+      <Form.TextArea id="note-content" rows={12} label={t('Content')} value={content} readOnly={!canWrite}
         onChange={(_, data) => {editVersion.current += 1; setContent(String(data.value)); setDirty(true);}} />
       {canWrite && selected && <Button type="button" negative loading={pending === 'delete'} onClick={() => void remove()}>{t('Delete')}</Button>}
     </Form>
-  </div>;
+  </Container>;
 }
 
 function LinkResources({snapshot, run, api}: {snapshot: CommitteeWorkspaceSnapshot; run: WorkspaceCommand; api: SelfHostedApi}) {
@@ -359,7 +359,7 @@ function PostsPanel({snapshot, api, userId, tab}: {snapshot: CommitteeWorkspaceS
   const active = tab === 'attachments' || tab === 'storage' || (tab === 'file-settings' && canManageStorage) || (tab === 'share' && delegateFilesEnabled)
     || (tab === 'upload' && delegateFilesEnabled) || (tab === 'review' && delegateFilesEnabled)
     ? tab : delegateFilesEnabled ? 'review' : 'attachments';
-  return <><Menu pointing secondary aria-label={t('Resource sections')}>
+  return <Container className="committee-files-page"><Menu pointing secondary aria-label={t('Resource sections')}>
     {delegateFilesEnabled ? <><Menu.Item as={Link} to={`${base}/review`} active={active === 'review'}>{t('Review')}</Menu.Item>
       <Menu.Item as={Link} to={`${base}/share`} active={active === 'share'}>{t('Share')}</Menu.Item>
       <Menu.Item as={Link} to={`${base}/upload`} active={active === 'upload'}>{t('Upload files')}</Menu.Item></>
@@ -374,7 +374,7 @@ function PostsPanel({snapshot, api, userId, tab}: {snapshot: CommitteeWorkspaceS
     {active === 'attachments' && !delegateFilesEnabled && <FilesPanel section="attachments" snapshot={snapshot} api={api} currentUserId={userId} />}
     {delegateFilesEnabled && <DelegateFilePanels snapshot={snapshot} api={api} tab={active} />}
     {active === 'storage' && canManageStorage && <FilesPanel section="storage" snapshot={snapshot} api={api} currentUserId={userId} />}
-  </>;
+  </Container>;
 }
 
 type WorkspaceCommand = (operation: () => Promise<unknown>) => Promise<void>;
@@ -514,7 +514,7 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
       <Table.HeaderCell>{t('Seat')}</Table.HeaderCell><Table.HeaderCell>{t('Rank')}</Table.HeaderCell>
       <Table.HeaderCell>{t('Voting rights')}</Table.HeaderCell><Table.HeaderCell>{t('Veto power')}</Table.HeaderCell><Table.HeaderCell>{t('No abstention')}</Table.HeaderCell>
       {canChair && !readOnly && <Table.HeaderCell />}</Table.Row>
-      {canChair && !readOnly && <Table.Row className="add-seat-row"><Table.HeaderCell><Form.Select aria-label={t('Seat')} search selection
+      {canChair && !readOnly && <Table.Row className="add-seat-row"><Table.HeaderCell><Form.Select aria-label={t('Seat')} selection
         value={selectedCountryStableKey} options={countryOptions} onChange={(_, data) => setSelectedCountryStableKey(String(data.value ?? ''))} /></Table.HeaderCell>
         <Table.HeaderCell><Form.Select aria-label={t('Rank')} search selection fluid value={seatRank} options={rankOptions}
           onChange={(_, data) => setSeatRank(data.value as typeof seatRank)} /></Table.HeaderCell>
@@ -666,16 +666,16 @@ function SettingsPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
   const execute = async (key: string, operation: () => Promise<unknown>) => {setPending(key); try {await run(operation);} finally {setPending(undefined);}};
   React.useEffect(() => {if (canChair) void api.listRulePackages().then(setRulePackages);}, [api, canChair]);
   const ruleOptions = rulePackages.flatMap(rulePackage => rulePackage.versions.filter(version => version.status === 'PUBLISHED')
-    .map(version => ({key: version.id, value: version.id, text: `${rulePackage.key} · v${version.version}`})));
+    .map(version => ({key: version.id, value: version.id, text: `${localizedDisplayName(version.names, 'en')} · ${version.version}`})));
   const setLayoutSetting = (patch: Partial<CommitteeWorkspaceSnapshot['layoutSettings']>) => execute('layout', () =>
     api.setLayoutSettings(snapshot.committee.id, {...snapshot.layoutSettings, ...patch}, snapshot.committee.revision));
-  return <>{canChair && <><Header as="h3" attached="top">{t('Settings')}</Header><Segment attached="bottom" loading={pending === 'layout'}>
-    <Checkbox slider checked={snapshot.layoutSettings.moveQueueUp} disabled={readOnly}
+  return <Container text className="committee-settings-page">{canChair && <><Header as="h3" attached="top">{t('Settings')}</Header><Segment attached="bottom" loading={pending === 'layout'}>
+    <div className="committee-layout-toggles"><Checkbox toggle aria-label={t("'Queue' should appear above 'Next speaking'")} checked={snapshot.layoutSettings.moveQueueUp} disabled={readOnly}
       onChange={(_, data) => void setLayoutSetting({moveQueueUp: Boolean(data.checked)})}
       label={t("'Queue' should appear above 'Next speaking'")} />
-    <Checkbox slider checked={snapshot.layoutSettings.timersInSeparateColumns} disabled={readOnly}
+    <Checkbox toggle aria-label={t("Alternate arrangement with 'Speaker timer' and 'Caucus timer' in separate columns")} checked={snapshot.layoutSettings.timersInSeparateColumns} disabled={readOnly}
       onChange={(_, data) => void setLayoutSetting({timersInSeparateColumns: Boolean(data.checked)})}
-      label={t("Alternate arrangement with 'Speaker timer' and 'Caucus timer' in separate columns")} />
+      label={t("Alternate arrangement with 'Speaker timer' and 'Caucus timer' in separate columns")} /></div>
     {generalSpeakerList && <Form onSubmit={() => execute('general-speaker-duration', () => api.updateSpeakerList(
       generalSpeakerList.id, generalSpeakerList.revision, {defaultSpeechMs: generalSpeakerSeconds * 1000}))}>
       <Form.Input type="number" min={1} label={t('Speaker time in seconds')} value={generalSpeakerSeconds} disabled={readOnly}
@@ -704,9 +704,11 @@ function SettingsPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
         snapshot.committee.revision))}><Form.Select label={t('Rule version')} value={ruleVersionId} options={ruleOptions}
         onChange={(_, data) => setRuleVersionId(String(data.value))} />
         <Button primary loading={pending === 'rules'} disabled={!ruleVersionId}>{t('Activate rule version')}</Button></Form>
-      <Button loading={pending === 'status'} onClick={() => void execute('status', () => api.setCommitteeStatus(snapshot.committee.id,
+      </>}
+    {(canChair || owner) && <section className="committee-lifecycle-actions"><Header as="h2">{t('Committee status')}</Header>
+      {canChair && <Button loading={pending === 'status'} onClick={() => void execute('status', () => api.setCommitteeStatus(snapshot.committee.id,
         snapshot.committee.status === 'PAUSED' ? 'ACTIVE' : 'PAUSED', snapshot.committee.revision))}>
-        {t(snapshot.committee.status === 'PAUSED' ? 'Resume committee' : 'Pause committee')}</Button></>}
+        {t(snapshot.committee.status === 'PAUSED' ? 'Resume committee' : 'Pause committee')}</Button>}
     {owner && snapshot.committee.status === 'ARCHIVED' && <><Button as="a" href={api.committeeExportUrl(snapshot.committee.id)} download>{t('Export records')}</Button>
       <Form onSubmit={() => run(async () => {await api.requestCommitteeDeletion(snapshot.committee.id,
         snapshot.committee.revision, deleteName); history.replace('/committees');})}>
@@ -717,7 +719,8 @@ function SettingsPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
     {owner && !readOnly && <Button negative loading={pending === 'archive'} onClick={() => {if (window.confirm(t('Archive committee?'))) {
       void execute('archive', () => api.archiveCommittee(snapshot.committee.id, snapshot.committee.revision));
     }}}>{t('Archive committee')}</Button>}
-  </>;
+    </section>}
+  </Container>;
 }
 
 function RollCallPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspaceSnapshot; run(operation: () => Promise<unknown>): Promise<void>;
@@ -847,7 +850,7 @@ function RollCallPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
               disabled={!!pending} onClick={() => setResetOpen(true)} /></>}
         </div>}
       </Segment>
-      {(rollCallFailed || rollCallCompletedWithQuorum) && <Segment className="roll-call-summary"><Header as="h2">{t('Attendance and thresholds')}</Header>
+      {(rollCallFailed || rollCallCompletedWithQuorum) && <Segment className="roll-call-summary">
         <div className="roll-call-summary-highlights">
           <div className="roll-call-summary-highlight highlight-present"><span className="roll-call-summary-label">{t('Present')}</span>
             <strong>{presentSeatIds.size}</strong></div>
@@ -994,22 +997,28 @@ function StatisticsPanel({snapshot}: {snapshot: CommitteeWorkspaceSnapshot}) {
     points: snapshot.points.filter(point => point.raisedBySeatId === seat.id).length,
     documentEntries: (snapshot.documents ?? []).flatMap(document => document.discussion).filter(entry => entry.seatId === seat.id).length
   })).sort((first, second) => second.speeches - first.speeches || first.seat.sortOrder - second.seat.sortOrder);
-  return <Container text className="statistics-page"><Table compact celled definition><Table.Header><Table.Row>
+  return <Container className="statistics-page"><div className="statistics-table-scroll"><Table compact celled definition unstackable><Table.Header><Table.Row>
     <Table.HeaderCell /><Table.HeaderCell textAlign="right">{t('Times spoken')}</Table.HeaderCell>
     <Table.HeaderCell textAlign="right">{t('Total speaking time')}</Table.HeaderCell>
     <Table.HeaderCell textAlign="right">{t('Motion proposals')}</Table.HeaderCell>
     <Table.HeaderCell textAlign="right">{t('Amendment proposals')}</Table.HeaderCell>
     <Table.HeaderCell textAlign="right">{t('Points')}</Table.HeaderCell>
     <Table.HeaderCell textAlign="right">{t('Document discussion entries')}</Table.HeaderCell></Table.Row></Table.Header>
-    <Table.Body>{rows.map(row => <Table.Row key={row.seat.id}><Table.Cell><Flag seat={row.seat} />{row.seat.displayName}</Table.Cell>
+    <Table.Body>{rows.map(row => <Table.Row key={row.seat.id}><Table.Cell><span className="statistics-seat"><Flag seat={row.seat} /><span>{row.seat.displayName}</span></span></Table.Cell>
       <Table.Cell textAlign="right">{row.speeches}</Table.Cell><Table.Cell textAlign="right">{formatDuration(row.duration)}</Table.Cell>
       <Table.Cell textAlign="right">{row.motions}</Table.Cell><Table.Cell textAlign="right">{row.amendments}</Table.Cell>
       <Table.Cell textAlign="right">{row.points}</Table.Cell><Table.Cell textAlign="right">{row.documentEntries}</Table.Cell>
-    </Table.Row>)}</Table.Body></Table></Container>;
+    </Table.Row>)}</Table.Body></Table></div></Container>;
 }
 
-function HelpPanel({snapshot}: {snapshot: CommitteeWorkspaceSnapshot}) {
+function HelpPanel({snapshot, api}: {snapshot: CommitteeWorkspaceSnapshot; api: SelfHostedApi}) {
   useLanguage();
+  const [rulePackages, setRulePackages] = React.useState<RulePackageSummary[]>([]);
+  React.useEffect(() => {let active = true;
+    void api.listRulePackages().then(packages => {if (active) setRulePackages(packages);}).catch(() => undefined);
+    return () => {active = false;};
+  }, [api]);
+  const ruleVersion = rulePackages.flatMap(pkg => pkg.versions).find(version => version.id === snapshot.activeRules.versionId);
   const role = {PUBLIC: 'Public visitor', MEMBER: 'Member', CHAIR: 'Chair', OWNER: 'Owner'}[snapshot.viewer.audience];
   const shortcut = (key: string, label: string) => <List.Item><Button size="mini">Alt</Button>
     <Button size="mini">{key}</Button>{t(label)}</List.Item>;
@@ -1019,7 +1028,7 @@ function HelpPanel({snapshot}: {snapshot: CommitteeWorkspaceSnapshot}) {
     </List></Segment>
     <Header as="h3" attached="top">{t('Permissions')}</Header><Segment attached="bottom"><List>
       <List.Item><List.Header>{t('Current role')}</List.Header>{t(role)}</List.Item>
-      <List.Item><List.Header>{t('Rule version')}</List.Header>{snapshot.activeRules.versionId}</List.Item>
+      <List.Item><List.Header>{t('Rule version')}</List.Header>{ruleVersion ? `${localizedDisplayName(ruleVersion.names, 'en')} · ${ruleVersion.version}` : '—'}</List.Item>
     </List></Segment>
     <Header as="h3" attached="top">{t('Bug reporting & help requests')}</Header><Segment attached="bottom">
       <List ordered><List.Item><a href="https://github.com/brepublic/Quorum/issues">{t('Quorum issue tracking page')}</a></List.Item>
@@ -1035,7 +1044,7 @@ function HelpPanel({snapshot}: {snapshot: CommitteeWorkspaceSnapshot}) {
       <a href="https://github.com/brepublic/Quorum/discussions">{t('Visit the Quorum discussion space')}</a>
     </Segment>
     <Header as="h3" attached="top">{t('Acknowledgements')}</Header><Segment attached="bottom">
-      {t('Quorum is based on')} <a href="https://github.com/MaxwellBo/Muncoordinated-2">Muncoordinated</a>.{' '}
+      {t('Quorum is based on')} <a href="https://github.com/MaxwellBo/Muncoordinated-2">Muncoordinated</a>{getLanguage() === 'zh-CN' ? '。' : '. '}
       {t('Thanks to its original authors and contributors.')}
     </Segment>
   </Container>;
@@ -1101,7 +1110,7 @@ function ModeratedCaucusCreateModal({open, snapshot, run, api, canChair, onClose
       if (event.target === event.currentTarget) setCloseHint(true);
     }}} mountNode={document.body} onClose={onClose} open={open} size="small">
     <Modal.Header className="moderated-caucus-create-header">{t('New caucus')}
-      <Button className="moderated-caucus-create-close" basic circular icon aria-label={t('Close')} onClick={onClose}>
+      <Button className="moderated-caucus-create-close" basic circular icon aria-label={t('Close dialog')} onClick={onClose}>
         <Icon name="close" />
       </Button>
     </Modal.Header>
@@ -1126,7 +1135,7 @@ function ModeratedCaucusCreateModal({open, snapshot, run, api, canChair, onClose
         {validationMessages.length > 0 && <Message error content={validationMessages.join(getLanguage() === 'zh-CN' ? '，' : ' ')} />}
         {closeHint && <Message info content={t('To close the dialog, click "X".')} />}
         <Button primary fluid loading={submitting} disabled={!valid || submitting}>
-          {t('Moderated caucus')}<Icon name="arrow right" />
+          {t('Create caucus')}<Icon name="arrow right" />
         </Button>
       </Form> : <Message content={session ? t('Chair capability is required.') : t('Start a meeting first.')} />}
     </Modal.Content>
@@ -1183,7 +1192,7 @@ function CommitteeWorkspaceContent({id, api, user, logout}: {
             snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} />} />
           <Route path={`${base}/stats`}><StatisticsPanel snapshot={snapshot} /></Route>
           <Route path={`${base}/settings`}><SettingsPanel snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} /></Route>
-          <Route path={`${base}/help`}><HelpPanel snapshot={snapshot} /></Route>
+          <Route path={`${base}/help`}><HelpPanel snapshot={snapshot} api={api} /></Route>
           <Redirect to={base} />
         </Switch>
     </Container>

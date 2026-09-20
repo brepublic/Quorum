@@ -20,6 +20,12 @@ export const SUPPORTED_LANGUAGES: readonly Language[] = LANGUAGE_OPTIONS.map(opt
 const STORAGE_KEY = 'muncoordinated-language';
 
 const en: Record<string, string> = {
+  'Unmod': 'Unmoderated caucus',
+  'Caucuses': 'Moderated caucuses',
+  'Stage': 'Prepare next speaker',
+  'yes': 'Yes',
+  'no': 'No',
+  'abstaining': 'Abstain',
   "General speakers list": "General Speaker's List",
   "General Speakers' List": "General Speaker's List",
   "General speakers list not open": "The General Speaker's List has not been opened yet",
@@ -101,6 +107,17 @@ const en: Record<string, string> = {
 };
 
 const zhCN: Record<string, string> = {
+  'Rules': '议事规则',
+  'Committee status': '委员会状态',
+  'No delegations are marked present. Check roll call.': '尚无代表团被标记为出席，请检查点名。',
+  'Poll question': '投票题目',
+  'Poll option {number}': '投票选项 {number}',
+  'Remove option {number}': '删除选项 {number}',
+  'Add committee member': '添加委员会成员',
+  'No file chosen': '未选择文件',
+  'No amendments': '暂无修正案',
+  'Create caucus': '创建磋商',
+  'Close dialog': '关闭',
   "Review": "审核",
   "Share": "分享",
   "Storage settings": "存储设置",
@@ -531,7 +548,7 @@ const zhCN: Record<string, string> = {
   'Speaker lists / moderated caucuses': '发言名单/有主持核心磋商',
   'General speakers list': '主发言名单',
   'Moderated caucus': '有主持核心磋商',
-  'Unit duration': '单位时长',
+  'Unit duration': '单次发言时长',
   'Total duration': '总时长',
   'To close the dialog, click "X".': '若要关闭弹窗，请点击"X"',
   'Create speaker list': '新建发言名单',
@@ -886,7 +903,7 @@ const zhCN: Record<string, string> = {
   'No abstention': '不得弃权',
   'Add at least one committee member to proceed': '请至少添加一名委员会成员后再继续',
   "General Speakers' List": '主发言名单',
-  'Setup': '设置',
+  'Setup': '席位与权限',
   'Setup committee': '设置委员会',
   'Roll call': '点名',
   'Not called': '未点名',
@@ -1223,7 +1240,7 @@ const zhCN: Record<string, string> = {
   'In the event that a bug or issue crops up, follow these steps:': '如遇错误或其他问题，请按以下步骤操作：',
   'Create an issue on the Quorum issue tracking page. You can also use this for help requests regarding the app.': '在 Quorum 问题跟踪页面新建问题，也可在此提出应用使用方面的求助。',
   'Create an issue on the': '在',
-  'Quorum issue tracking page': 'Quorum 问题跟踪页面新建问题',
+  'Quorum issue tracking page': '前往 Quorum 问题反馈页面',
   'You can also use this for help requests regarding the app.': '也可在此提出应用使用方面的求助。',
   'Describe what you intended to do': '说明您原本希望执行的操作',
   'Describe what happened instead': '说明实际发生的情况',

@@ -1334,7 +1334,7 @@ describe('committee workspace routes and roles', () => {
       await act(async () => {absent?.click(); await Promise.resolve();});
       expect(dropdown?.getAttribute('aria-expanded')).toBe('true');
       const stage = page.querySelector<HTMLElement>('.speaker-absent-action-blocker');
-      expect(stage?.textContent).toContain('Stage');
+      expect(stage?.textContent).toContain('Prepare next speaker');
       await act(async () => {stage?.click(); await Promise.resolve();});
       expect(page.textContent).toContain('Remove the absent delegation before continuing.');
       const unavailableDrag = page.querySelector<HTMLElement>('.speaker-drag-handle-disabled');
@@ -1673,7 +1673,7 @@ describe('committee workspace routes and roles', () => {
     const undo = [...page.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.trim() === 'Undo');
     expect(Boolean(undo)).toBe(automaticResult === null);
     if (automaticResult === null) expect(undo?.disabled).toBe(true);
-    const yes = [...page.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.trim() === 'yes');
+    const yes = [...page.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.trim() === 'Yes');
     await act(async () => {yes?.click(); await Promise.resolve();});
     expect(setResolutionDirectVote).toHaveBeenCalledWith('resolution', 'seat', 'FOR');
     if (automaticResult === null) expect(undo?.disabled).toBe(false);
@@ -1777,6 +1777,54 @@ describe('committee workspace routes and roles', () => {
     await act(async () => {page.querySelector<HTMLAnchorElement>('a[href="/committees/committee/posts/upload"]')?.click(); await Promise.resolve();});
     expect(page.querySelector('.delegate-file-chair-upload')).not.toBeNull();
     expect(page.querySelector('.delegate-file-card-list')).toBeNull();
+  });
+  it.each(['MANUAL', 'LINK'] as const)('keeps draft options through blur and starts %s once', async medium => {
+    let poll: Strawpoll = {id: 'poll', committeeId: 'committee', meetingSessionId: 'meeting', ordinal: 1,
+      question: '', votingMode: 'SEAT_AUTHENTICATED', multipleChoice: true, status: 'OPEN', stage: 'PREPARING',
+      medium: 'LINK', optionsArePublic: false, seriesId: 'poll', roundNumber: 1, supersededById: null,
+      options: [], seatVotes: [], revision: 1, createdAt: '2026-08-16T00:00:00.000Z', closedAt: null};
+    let release!: () => void;
+    const pending = new Promise<void>(resolve => {release = resolve;});
+    const reviseStrawpoll = vi.fn<SelfHostedApi['reviseStrawpoll']>(async (_id, input) => {
+      await pending;
+      poll = {...poll, id: 'next-poll', revision: 1, question: input.question, medium: input.medium,
+        options: input.options.map((label, index) => ({id: `option-${index}`, label, voteCount: 0, sortOrder: index}))};
+      return poll;
+    });
+    const commandStrawpollStage = vi.fn<SelfHostedApi['commandStrawpollStage']>(async () => {
+      poll = {...poll, stage: 'VOTING', revision: 2}; return poll;
+    });
+    const page = await render('CHAIR', '/committees/committee/strawpolls/poll', user,
+      value => ({...value, strawpolls: [poll]}), {reviseStrawpoll, commandStrawpollStage});
+    const input = async (name: string, value: string) => {
+      const element = page.querySelector<HTMLInputElement>(`input[aria-label="${name}"]`)!;
+      expect(element).not.toBeNull();
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(element, value);
+        element.dispatchEvent(new Event('input', {bubbles: true}));
+      });
+      await act(async () => {element.dispatchEvent(new FocusEvent('focusout', {bubbles: true}));});
+    };
+    const button = (text: string) => [...page.querySelectorAll<HTMLButtonElement>('button')]
+      .find(element => element.textContent?.includes(text))!;
+    await input('Poll question', 'Which option?');
+    await act(async () => {button('Add option').click();});
+    await input('Poll option 1', 'Option A');
+    await act(async () => {button('Add option').click();});
+    expect(page.querySelector('input[aria-label="Poll option 2"]')).not.toBeNull();
+    await input('Poll option 2', 'Option B');
+    expect(reviseStrawpoll).not.toHaveBeenCalled();
+    const create = button(medium === 'MANUAL' ? 'Create manual poll' : 'Create shareable poll');
+    await act(async () => {create.click(); create.click();});
+    expect(reviseStrawpoll).toHaveBeenCalledTimes(1);
+    expect(create.disabled).toBe(true);
+    expect(reviseStrawpoll).toHaveBeenCalledWith('poll', expect.objectContaining({
+      baseRevision: 1, question: 'Which option?', options: ['Option A', 'Option B'], medium}));
+    await act(async () => {release(); await pending;});
+    expect(commandStrawpollStage).toHaveBeenCalledTimes(1);
+    expect(commandStrawpollStage).toHaveBeenCalledWith('next-poll', 1, 'START');
+    expect(page.textContent).toContain('View results');
+    expect(page.querySelector('input[aria-label="Poll question"]')).toBeNull();
   });
   it('keeps the strawpoll page mounted while typing a newly added option', async () => { const page = await render('CHAIR', '/committees/committee/strawpolls/poll', user, value => ({...value, strawpolls: [{id: 'poll', committeeId: 'committee', meetingSessionId: 'meeting', ordinal: 1, question: 'Choice?', votingMode: 'SEAT_AUTHENTICATED', multipleChoice: true, status: 'OPEN', stage: 'PREPARING', medium: 'LINK', optionsArePublic: false, seriesId: 'poll', roundNumber: 1, supersededById: null, options: [], seatVotes: [], revision: 1, createdAt: '2026-08-16T00:00:00.000Z', closedAt: null}]})); const add = [...page.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.includes('Add option')); await act(async () => {add?.click(); await Promise.resolve();}); const option = page.querySelectorAll<HTMLInputElement>('.strawpoll-page input')[1]; await act(async () => {Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(option, 'Option A'); option?.dispatchEvent(new Event('input', {bubbles: true})); await Promise.resolve();}); expect(page.querySelector('.strawpoll-page')).not.toBeNull(); expect(page.textContent).toContain('Create manual poll'); });
 });

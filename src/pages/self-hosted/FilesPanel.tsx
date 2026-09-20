@@ -221,10 +221,13 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
     {pendingHostCommits.length > 0 && <Message info header={t("Waiting for the chair computer to save")}
       list={pendingHostCommits.map(item => item.logicalName)} />}
     {canUpload && <Segment loading={working && !progress}><Header as="h3">{t("Upload files")}</Header>
-      <Form onSubmit={() => void upload()}><Form.Input type="file" label={t("Choose file")} input={{
-        onChange: (event: React.ChangeEvent<HTMLInputElement>) => { const file = event.currentTarget.files?.[0];
-          setSelectedFile(file); if (file) setLogicalName(file.name); }, 'aria-label': t("Select a file to upload")
-      }} />
+      <Form onSubmit={() => void upload()}><Form.Field>
+        <div className="localized-file-picker"><input id="committee-upload-file" type="file"
+          aria-label={t('Select a file to upload')} onChange={event => {const file = event.currentTarget.files?.[0];
+            setSelectedFile(file); if (file) setLogicalName(file.name);}} />
+          <label htmlFor="committee-upload-file" className="ui button">{t('Choose file')}</label>
+          <span>{selectedFile?.name ?? t('No file chosen')}</span></div>
+      </Form.Field>
       <Form.Input label={t("File name")} value={logicalName} onChange={event => setLogicalName(event.currentTarget.value)} />
       <Button primary disabled={working || !selectedFile || !logicalName.trim()}>{t("Upload files")}</Button>
       {progress && progress.phase !== 'COMMITTING'

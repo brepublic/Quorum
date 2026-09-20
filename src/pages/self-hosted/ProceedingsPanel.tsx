@@ -1059,7 +1059,8 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
         <Form.Select key="proposer" icon="search" search selection fluid
           className="motion-proposer-field"
           label={t('Proposer')}
-          value={proposerId || false} error={!proposerId || !presentSeatIds.has(proposerId) || identicalSeats}
+          placeholder={t('Select a delegation')}
+          value={proposerId || false} error={Boolean(proposerId) && (!presentSeatIds.has(proposerId) || identicalSeats)}
           options={seatOptions} disabled={!canChair}
           onChange={(_, data) => setProposerId(String(data.value))} />
         {needsSeconder && <Form.Select key="seconder" icon="search" search selection fluid label={t('Seconder')}
@@ -1067,6 +1068,7 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
           options={seatOptions} disabled={!canChair}
           onChange={(_, data) => setSeconderId(String(data.value))} />}
       </Form.Group>
+      {canChair && presentSeats.length === 0 && <Message info content={t('No delegations are marked present. Check roll call.')} />}
       {(hasMotionSpeakers(motionType) || hasMotionDuration(motionType) || hasCaucusTarget(motionType)
         || hasResolutionTarget(motionType) || hasAmendmentTarget(motionType)) && <Form.Group widths="equal"
           className={hasMotionDuration(motionType) && hasMotionSpeakers(motionType) ? 'motion-time-fields' : undefined}>
@@ -1265,6 +1267,8 @@ function StrawpollWorkspace({snapshot, run, api, canChair, resourceId}: CommonPr
   const [manualTallies, setManualTallies] = React.useState<Record<string, string>>(
     Object.fromEntries(poll?.options.map(option => [option.id, String(option.voteCount)]) ?? []));
   const creatingPoll = React.useRef(false);
+  const submittingPoll = React.useRef(false);
+  const [submitting, setSubmitting] = React.useState(false);
   React.useEffect(() => {
     if (resourceId !== 'new' || creatingPoll.current || !canChair || !session) return;
     creatingPoll.current = true;
@@ -1305,14 +1309,15 @@ function StrawpollWorkspace({snapshot, run, api, canChair, resourceId}: CommonPr
     return created;
   };
   const start = async (medium: 'LINK' | 'MANUAL') => {
-    if (!ready) return;
+    if (!ready || submittingPoll.current) return;
+    submittingPoll.current = true; setSubmitting(true);
     let created: Awaited<ReturnType<SelfHostedApi['reviseStrawpoll']>> | undefined;
-    await run(async () => {
+    try {await run(async () => {
       created = await api.reviseStrawpoll(poll.id, {baseRevision: poll.revision, question: question.trim(),
         votingMode: medium === 'MANUAL' ? 'SEAT_AUTHENTICATED' : mode, multipleChoice, options: cleanOptions,
         medium, optionsArePublic});
       if (created) await api.commandStrawpollStage(created.id, created.revision, 'START');
-    });
+    });} finally {submittingPoll.current = false; setSubmitting(false);}
     if (created) {if (created.anonymousAccessToken) setCreatedCode(created.anonymousAccessToken);
       history.replace(`/committees/${snapshot.committee.id}/strawpolls/${created.id}`);}
   };
@@ -1328,35 +1333,35 @@ function StrawpollWorkspace({snapshot, run, api, canChair, resourceId}: CommonPr
     : current.includes(optionId) ? [] : [optionId]);
   const totalVotes = poll.options.reduce((sum, option) => sum + option.voteCount, 0);
   return <Container text className="strawpoll-page" style={{padding: '1em 0'}}>
-    <Header as="h2"><Input value={question} fluid placeholder={t('Type your question here')}
-      disabled={poll.stage !== 'PREPARING' || !canChair} onChange={event => setQuestion(event.currentTarget.value)}
-      onBlur={() => {if (canChair && question.trim() && question !== poll.question) void revise({question: question.trim()});}} /></Header>
+    <Header as="h2">{poll.stage === 'PREPARING' ? <Input value={question} fluid
+      aria-label={t('Poll question')} placeholder={t('Type your question here')}
+      disabled={!canChair || submitting} onChange={event => setQuestion(event.currentTarget.value)} /> : poll.question}</Header>
     {poll.stage === 'PREPARING' && <>
       {canChair && <List><List.Item><Button.Group fluid>
-        <Dropdown basic button className="purple centered" options={[{key: 'many', value: true, text: t('Choose many'), icon: 'check square'},
+        <Dropdown basic button disabled={submitting} className="purple centered" options={[{key: 'many', value: true, text: t('Choose many'), icon: 'check square'},
           {key: 'one', value: false, text: t('Choose one'), icon: 'radio'}]} value={multipleChoice}
-          onChange={(_, data) => {const value = Boolean(data.value); setMultipleChoice(value); void revise({multipleChoice: value});}} />
-        <Dropdown basic button options={[{key: 'seat', value: 'SEAT_AUTHENTICATED', text: t('Seat-authenticated')},
+          onChange={(_, data) => {const value = Boolean(data.value); setMultipleChoice(value);}} />
+        <Dropdown basic button disabled={submitting} options={[{key: 'seat', value: 'SEAT_AUTHENTICATED', text: t('Seat-authenticated')},
           {key: 'anonymous', value: 'ANONYMOUS', text: t('Anonymous')}]} value={mode}
-          onChange={(_, data) => {const value = data.value as typeof mode; setMode(value); void revise({mode: value});}} />
-      </Button.Group></List.Item><List.Item><Checkbox toggle label={t('Delegates can add options')} checked={optionsArePublic}
-        onChange={(_, data) => {const value = Boolean(data.checked); setOptionsArePublic(value); void revise({optionsArePublic: value});}} />
+          onChange={(_, data) => {const value = data.value as typeof mode; setMode(value);}} />
+      </Button.Group></List.Item><List.Item><Checkbox toggle disabled={submitting} label={t('Delegates can add options')} checked={optionsArePublic}
+        onChange={(_, data) => {const value = Boolean(data.checked); setOptionsArePublic(value);}} />
       </List.Item></List>}
       <List>{optionLabels.map((label, index) => <List.Item key={`${poll.id}-${index}`}><Input fluid action value={label}
-        placeholder={t('Enter poll option')} disabled={!canChair}
+        aria-label={t('Poll option {number}', {number: index + 1})}
+        placeholder={t('Enter poll option')} disabled={!canChair || submitting}
         onChange={(_, data) => setOptionLabels(current => current.map((value, item) => item === index
-          ? String(data.value ?? '') : value))}
-        onBlur={() => {const next = optionLabels.map(value => value.trim());
-          if (canChair && next[index] && next.join('\0') !== poll.options.map(option => option.label).join('\0')) void revise({options: next});}}>
-        <input />{canChair && <Button negative basic icon="trash" onClick={() => {const next = optionLabels.filter((_, item) => item !== index);
-          setOptionLabels(next); void revise({options: next.filter(Boolean)});}} />}</Input></List.Item>)}
-        {(canChair || canDelegateAdd) && <List.Item><Button basic fluid onClick={() => {
+          ? String(data.value ?? '') : value))}>
+        <input />{canChair && <Button negative basic icon="trash" disabled={submitting}
+          aria-label={t('Remove option {number}', {number: index + 1})}
+          onClick={() => setOptionLabels(current => current.filter((_, item) => item !== index))} />}</Input></List.Item>)}
+        {(canChair || canDelegateAdd) && <List.Item><Button basic fluid disabled={submitting} onClick={() => {
           if (canDelegateAdd) void revise({options: [...cleanOptions, t('New option')]});
           else setOptionLabels(current => [...current, '']);}}><Icon name="plus" />{t('Add option')}</Button></List.Item>}
       </List>
-      {canChair && <Button.Group fluid><Button primary basic disabled={!ready} onClick={() => void start('LINK')}>
+      {canChair && <Button.Group fluid><Button primary basic loading={submitting} disabled={!ready || submitting} onClick={() => void start('LINK')}>
         {t('Create shareable poll')}<Icon name="arrow right" /></Button><Button.Or text={t('or')} />
-        <Button primary basic disabled={!ready} onClick={() => void start('MANUAL')}>
+        <Button primary basic loading={submitting} disabled={!ready || submitting} onClick={() => void start('MANUAL')}>
           {t('Create manual poll')}<Icon name="arrow right" /></Button></Button.Group>}
     </>}
     {poll.stage === 'VOTING' && <>
@@ -1392,8 +1397,8 @@ function StrawpollWorkspace({snapshot, run, api, canChair, resourceId}: CommonPr
         {t('View results')}<Icon name="arrow right" /></Button></Button.Group>}
     </>}
     {poll.stage === 'RESULTS' && <><List>{poll.options.map(option => <List.Item key={option.id}>
-      <b>{option.label}</b> {t('{count} votes', {count: option.voteCount})}
-      <Progress progress="value" value={option.voteCount} total={totalVotes || 1} /></List.Item>)}</List>
+      <div className="strawpoll-result-label"><strong>{option.label}</strong><span>{t('{count} votes', {count: option.voteCount})}</span></div>
+      <Progress value={option.voteCount} total={totalVotes || 1} aria-label={t('{count} votes', {count: option.voteCount})} /></List.Item>)}</List>
       {canChair && <Button fluid secondary basic
         onClick={() => void run(() => api.commandStrawpollStage(poll.id, poll.revision, 'REOPEN'))}>
         <Icon name="arrow left" />{t('Reopen voting')}</Button>}</>}
@@ -1577,14 +1582,14 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
             <Button type="button" disabled={!selectedExistingFileId}
               onClick={() => void attachExistingFile()}>{t('Attach file')}</Button></>}
         </Form>}</Segment>}</>}
-    {activeTab === 'amendments' && <Card.Group itemsPerRow={1}>
+    {activeTab === 'amendments' && <>{amendments.length === 0 && <Message content={t('No amendments')} />}<Card.Group itemsPerRow={1}>
       {canParticipate && session && ['PUBLISHED', 'POSTPONED'].includes(document.status) && <Card><Button icon="plus"
         primary fluid basic aria-label={t('Create amendment')} onClick={() => void run(() => api.createAmendment(document.id,
           {meetingSessionId: session.id, customTitle: null, content: '', ...represented}))} /></Card>}
       {[...amendments].reverse().map(amendment => <AmendmentCard key={amendment.id} snapshot={snapshot}
         amendment={amendment} run={run} api={api} canChair={canChair} representedSeatId={seatId}
         seatOptions={seatOptions} />)}
-    </Card.Group>}
+    </Card.Group></>}
     {activeTab === 'voting' && <>{directVote && <Segment className="resolution-voting-board">
       <div className="resolution-voting-dashboard"><aside className="resolution-voting-metrics resolution-voting-thresholds">
         <div className="resolution-voting-metric metric-present"><span>{t('Present')}</span><strong>{directEligibility.length}</strong></div>
