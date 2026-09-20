@@ -147,6 +147,12 @@ async function command(input: Record<string, unknown>) {
     }
     return;
   }
+  if (action === 'unpair-local') {
+    if (!config) throw new Error('CONFIG_REQUIRED');
+    config = undefined; draft = undefined; draftSource = ''; configPath = '';
+    send({event: 'unpaired', preserveSettings: true});
+    return;
+  }
   if (action === 'unpair') {
     if (!config) throw new Error('CONFIG_REQUIRED');
     stage = 'revoke';
@@ -317,7 +323,7 @@ input.on('line', line => {
     let operation = 'unknown';
     try {
       const input = JSON.parse(line);
-      if (['load','save','save-as','pair','unpair','start','stop','restart'].includes(input.command)) operation = input.command;
+      if (['load','save','save-as','pair','unpair','unpair-local','start','stop','restart'].includes(input.command)) operation = input.command;
       await command(input); send({event:'completed',operation});
     } catch (error) {
       send({event:'error',code:safeError(error),operation,stage});

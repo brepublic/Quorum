@@ -18,6 +18,7 @@ export const ERROR_TEXT = {
   REVISION_CONFLICT: {en: "The state changed. Reload and try again.", 'zh-CN': "状态已更新，请重新载入后重试。"},
   IDEMPOTENCY_CONFLICT: {en: "This request key was used for different content. Retry the action.", 'zh-CN': "请求标识已用于其他内容，请重新操作。"},
   RESOURCE_CONFLICT: {en: "The current state does not allow this action.", 'zh-CN': "当前状态不允许此操作。"},
+  SPEAKER_ALREADY_QUEUED: {en: "This seat is already on the speaker list and cannot be added again.", 'zh-CN': "该席位已在发言名单中，不能重复加入。"},
   STALE_STORAGE_LEASE: {en: "Storage changed. Reload and try again.", 'zh-CN': "存储已变更，请重新载入后重试。"},
   CURSOR_EXPIRED: {en: "The update history expired. Reload to reconnect.", 'zh-CN': "更新记录已过期，请重新载入以连接。"},
   LINK_EXPIRED: {en: "This link has expired.", 'zh-CN': "链接已失效。"},

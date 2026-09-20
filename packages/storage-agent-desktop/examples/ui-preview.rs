@@ -14,7 +14,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let settings = std::env::args().any(|arg| arg == "--settings");
     window.set_loaded(!settings || std::env::args().any(|arg| arg == "--paired"));
     window.set_confirm_unpair(std::env::args().any(|arg| arg == "--confirm-unpair"));
+    if std::env::args().any(|arg| arg == "--unpair-failed") {
+        window.set_unpair_failed(true);
+        window.set_error_stage("revoke".into());
+        window.set_error_code("AUTHENTICATION_REQUIRED".into());
+    }
     window.set_running(!settings);
+    if settings { window.set_status("STOPPED".into()); }
     window.set_files(ModelRc::new(VecModel::from(vec![
         FileRow {
             name: "决议草案 - 中文显示测试.pdf".into(),

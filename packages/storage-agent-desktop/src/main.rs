@@ -135,8 +135,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             input_action.lock().unwrap().take(); return;
         }
         let action = if action == "discard-load" {ui.set_confirm_discard("".into()); "load"} else {action};
-        if matches!(action,"start"|"restart"|"unpair") && (dirty || ui.get_config_path() != ui.get_saved_config_path()) {
+        if matches!(action,"start"|"restart"|"unpair"|"unpair-local"|"confirm-unpair") && (dirty || ui.get_config_path() != ui.get_saved_config_path()) {
             ui.set_error_code("Settings changed. Save them first, or import the original configuration again.".into()); return;
+        }
+        if action == "confirm-unpair" {
+            ui.set_unpair_failed(false); ui.set_confirm_unpair(true); return;
         }
         if action == "open-root" || action == "open-web" {
             let target = if action == "open-root" {ui.get_root_path()} else {ui.get_committee_url()};
@@ -253,16 +256,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "unpaired" => {
                         ui.set_loaded(false);
                         ui.set_confirm_unpair(false);
-                        ui.set_config_path("".into());
-                        ui.set_root_path("".into());
-                        ui.set_server_url("https://localhost".into());
-                        ui.set_certificate("".into());
+                        if value["preserveSettings"] != true {
+                            ui.set_config_path("".into());
+                            ui.set_root_path("".into());
+                            ui.set_server_url("https://localhost".into());
+                            ui.set_certificate("".into());
+                        }
                         ui.set_committee_url("".into());
                         ui.set_pairing_code("".into());
                         ui.set_last_connection("".into());
                         ui.set_observed("".into());
                         ui.set_status("UNPAIRED".into());
-                        ui.set_saved_config_path("".into());
+                        ui.set_saved_config_path(ui.get_config_path());
                         *saved_form.borrow_mut() = form_state(&ui);
                         rows.borrow_mut().clear();
                         redraw = true;
@@ -332,6 +337,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 "load" => "Configuration imported",
                                 "pair" => "Pairing completed",
                                 "unpair" => "Authorization revoked",
+                                "unpair-local" => "Unpaired locally; server authorization has not been confirmed revoked",
                                 _ => "",
                             }
                             .into(),
@@ -341,6 +347,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                     "error" => {
+                        if text(&value, "operation") == "unpair" { ui.set_unpair_failed(true); }
                         let code = text(&value, "code");
                         let stage = text(&value, "stage");
                         ui.set_error_stage(stage.into());

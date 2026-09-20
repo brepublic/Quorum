@@ -11,7 +11,7 @@ import {lockAgentRoot} from './runtime-lock';
 
 const cleanup: (()=>Promise<unknown>)[]=[];
 afterEach(async()=>{for(const fn of cleanup.splice(0).reverse()) await fn();});
-async function fixture(pairStatus = 200) {
+async function fixture(pairStatus = 200, revokeStatus = 200) {
   const root=await mkdtemp(join(tmpdir(),'quorum-desktop-'));cleanup.push(()=>rm(root,{recursive:true,force:true}));
   const key=join(root,'key.pem'),crt=join(root,'ca.pem');
   execFileSync('openssl',['req','-x509','-newkey','rsa:2048','-nodes','-days','1','-keyout',key,'-out',crt,
@@ -22,6 +22,7 @@ async function fixture(pairStatus = 200) {
     requests.push({url:req.url!,authorization:req.headers.authorization,body});
     if(req.url==='/api/v1/storage-agent/events'){res.writeHead(200,{'content-type':'text/event-stream'});res.write(': ready\n\n');return;}
     if(req.url==='/api/v1/storage-agent/pair' && pairStatus !== 200){res.writeHead(pairStatus,{'content-type':'application/json'});res.end(JSON.stringify({error:{code:'LINK_EXPIRED'}}));return;}
+    if(req.url==='/api/v1/storage-agent/revoke' && revokeStatus !== 200){res.writeHead(revokeStatus,{'content-type':'application/json'});res.end(JSON.stringify({error:{code:revokeStatus === 401 ? 'AUTHENTICATION_REQUIRED' : 'NOT_FOUND'}}));return;}
     const data=req.url==='/api/v1/storage-agent/revoke'?{revoked:true}:req.url==='/api/v1/storage-agent/pair'?{credential:'qsa1.20000000-0000-4000-8000-000000000001.'+'a'.repeat(43),
       host:{committeeId:'10000000-0000-4000-8000-000000000001',deviceId:'20000000-0000-4000-8000-000000000001',leaseGeneration:1}}
       :req.url?.includes('file-status')?{files:[],nextId:null,observedAt:new Date().toISOString()}
@@ -149,6 +150,32 @@ describe('desktop bridge process lifecycle',()=>{
     expect(events.some(e=>e.event==='error')).toBe(true);
     expect(events.some(e=>e.event==='unpaired')).toBe(false);
     expect(await f.command('save',{...f.settings,serverUrl:saved.serverUrl})).toContainEqual(expect.objectContaining({event:'config'}));
+    await rm(f.settings.rootPath,{recursive:true,force:true});
+    await rm(f.settings.caCertificatePath);
+    expect(await f.command('unpair-local')).toContainEqual({event:'unpaired',preserveSettings:true});
+    expect(await f.command('start')).toContainEqual(expect.objectContaining({code:'CONFIG_REQUIRED'}));
+  },30000);
+  it.each([401,404,503])('allows explicit local unpair after revocation fails with HTTP %s', async status => {
+    const f = await fixture(200, status); await f.command('pair', f.settings);
+    const original = await readFile(f.settings.configPath, 'utf8');
+    const localFile = join(f.settings.rootPath, 'notes.txt');
+    await writeFile(localFile, 'committee notes');
+    const failed = await f.command('unpair');
+    expect(failed.some(e=>e.event==='error')).toBe(true);
+    expect(failed.some(e=>e.event==='unpaired')).toBe(false);
+    const count = f.requests.length;
+    expect(await f.command('unpair-local')).toContainEqual({event:'unpaired',preserveSettings:true});
+    expect(f.requests).toHaveLength(count);
+    expect(await f.command('start')).toContainEqual(expect.objectContaining({code:'CONFIG_REQUIRED'}));
+    expect(await readFile(f.settings.configPath,'utf8')).toBe(original);
+    expect(await readFile(localFile,'utf8')).toBe('committee notes');
+  },30000);
+  it('rejects local unpair while the Agent is running', async () => {
+    const f = await fixture(); await f.command('pair',f.settings);
+    await f.command('start'); await f.wait(e=>e.event==='snapshot'&&e.connected===true);
+    expect(await f.command('unpair-local')).toContainEqual(expect.objectContaining({code:'STOP_FIRST'}));
+    await f.command('stop');
+    expect(await f.command('unpair-local')).toContainEqual({event:'unpaired',preserveSettings:true});
   },30000);
   it('preserves existing config on repeated pairing and rejects another directory identity',async()=>{
     const f=await fixture();await f.command('pair',f.settings);

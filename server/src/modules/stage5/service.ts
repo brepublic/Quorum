@@ -752,7 +752,8 @@ export class Stage5Service {
         if (!seat.rows[0]) throw new AppError({code: 'VALIDATION_FAILED', message: 'Only a present active seat may join the queue.'});
         const duplicate = await client.query(`SELECT 1 FROM speaker_queue_entries WHERE speaker_list_id=$1 AND seat_id=$2
           AND status IN ('QUEUED','CURRENT')`, [listId, seatId]);
-        if (duplicate.rowCount) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The seat is already in the queue.'});
+        if (duplicate.rowCount) throw new AppError({code: 'RESOURCE_CONFLICT', reason: 'SPEAKER_ALREADY_QUEUED',
+          message: 'The seat is already in the queue.'});
         const position = await client.query<{next: number}>(`SELECT coalesce(max(position),0)+1 AS next FROM speaker_queue_entries
           WHERE speaker_list_id=$1 AND status IN ('QUEUED','CURRENT')`, [listId]);
         const entryId = randomUUID(); await client.query(`INSERT INTO speaker_queue_entries
