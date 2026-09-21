@@ -174,9 +174,8 @@
 }
 
 .committee-primary-navigation {
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   min-width: 0;
-  row-gap: 1px;
 }
 
 .committee-primary-navigation > .header.item {
@@ -190,6 +189,7 @@
 }
 
 .committee-primary-navigation > .item {
+  flex-shrink: 0;
   min-height: 3.2em;
 }
 
@@ -309,34 +309,104 @@
   cursor: default !important;
 }
 
-@media only screen and (max-width: 991px) {
-  .committee-navigation-desktop {
-    display: none !important;
-  }
-
-  .committee-navigation-mobile {
-    display: flex !important;
-    margin-bottom: 0 !important;
-  }
-
-  .committee-navigation-pushable.ui.pushable {
-    min-height: 100vh;
-    overflow: hidden;
-  }
-
-  .committee-navigation-mobile > .header.item {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .committee-mobile-sidebar {
-    display: flex !important;
-    max-height: 100vh;
-    overflow-y: auto;
-  }
+/* Navigation switches only when the measured remaining items no longer fit. */
+.committee-navigation-desktop[data-navigation-mode="sidebar"] {
+  display: none !important;
 }
+
+.committee-navigation-pushable[data-navigation-mode="sidebar"] .committee-navigation-mobile {
+  display: flex !important;
+  margin-bottom: 0 !important;
+}
+
+.committee-navigation-pushable.ui.pushable[data-navigation-mode="sidebar"] {
+  min-height: 100vh;
+  overflow: hidden;
+}
+
+.ui.menu.committee-navigation-mobile > .header.item {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.committee-navigation-mobile .account-menu > .text {
+  max-width: 25vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.committee-navigation-pushable[data-navigation-mode="sidebar"] .committee-mobile-sidebar {
+  display: flex !important;
+  width: min(24rem, 90vw);
+  max-height: 100vh;
+  overflow-y: auto;
+}
+
+.committee-mobile-sidebar.ui.vertical.menu .ui.dropdown > .menu {
+  position: static;
+  min-width: 0;
+  max-width: 100%;
+  box-shadow: none;
+}
+
+.committee-mobile-sidebar.ui.vertical.menu .dropdown .menu > .item {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.committee-navigation-measurement {
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.committee-navigation-measurement > .ui.menu {
+  width: max-content;
+  margin: 0;
+}
+
+.committee-navigation-more-wrapper {
+  display: contents;
+}
+
+.committee-primary-navigation.ui.menu .committee-navigation-more {
+  flex-shrink: 0;
+  min-height: 3.2em;
+}
+
+.committee-primary-navigation.ui.menu .committee-navigation-more > .icon {
+  margin: 0;
+}
+
+.committee-primary-navigation.ui.menu .committee-navigation-more > .menu {
+  width: max-content;
+  min-width: 11rem;
+  left: auto !important;
+  right: 0 !important;
+}
+
+.committee-primary-navigation .committee-overflow-poll > .menu {
+  width: max-content;
+  max-width: min(24rem, 45vw);
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.committee-primary-navigation.ui.menu .committee-overflow-poll > .left.menu {
+  left: auto !important;
+  right: 100% !important;
+}
+
+.committee-primary-navigation .committee-overflow-poll > .menu > .item {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .language-switcher {
   align-items: center;
   display: flex;

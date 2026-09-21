@@ -40,6 +40,7 @@ let container: HTMLDivElement | undefined;
 afterEach(() => {
   if (root) act(() => root?.unmount());
   container?.remove(); root = undefined; container = undefined; setLanguage('en');
+  vi.restoreAllMocks(); vi.unstubAllGlobals();
 });
 
 function render(node: React.ReactNode, path = '/') {
@@ -49,6 +50,61 @@ function render(node: React.ReactNode, path = '/') {
 }
 
 describe('self-hosted workspace navigation', () => {
+  it('folds only as much as needed, restores items, and preserves the workspace', () => {
+    let available = 1800;
+    let resize = () => {};
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: () => void) { resize = callback; }
+      observe() {} disconnect() {}
+    });
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function(this: Element) {
+      const width = this.classList.contains('committee-navigation-measurement') ? available
+        : this.classList.contains('committee-navigation-more') ? 50
+        : this.classList.contains('realtime-status-label') ? 30
+        : this.classList.contains('right') ? 200 : 100;
+      return {width, height: 48, x: 0, y: 0, top: 0, left: 0, right: width, bottom: 48, toJSON: () => ({})};
+    });
+    const page = render(<CommitteeNavigation snapshot={snapshot} user={user} logout={() => undefined}>
+      <input defaultValue="unsaved draft" />
+    </CommitteeNavigation>, '/committees/committee/strawpolls/poll');
+    const nav = page.querySelector('.committee-navigation-desktop')!;
+    const draft = page.querySelector('input')!;
+    const assertLevel = (width: number, level: number) => {
+      available = width;
+      act(() => resize());
+      expect(nav.getAttribute('data-collapse-level')).toBe(String(level));
+      expect(page.querySelector('input')).toBe(draft);
+      expect(draft.value).toBe('unsaved draft');
+    };
+    for (const [width, level] of [[1800, 0], [1680, 1], [1600, 2], [1500, 3], [1400, 4], [1300, 5], [1200, 6]]) {
+      assertLevel(width, level);
+      expect(Boolean(nav.querySelector('.realtime-status-label'))).toBe(level === 0);
+      for (const [path, minimum] of [['/settings', 2], ['/help', 2], ['/stats', 3], ['/posts', 4], ['/notes', 5], ['/strawpolls', 6]] as const) {
+        expect(Boolean(nav.querySelector(`.committee-primary-navigation > [data-navigation-key="${path}"]`))).toBe(level < minimum);
+      }
+    }
+    expect(nav.querySelector('.committee-navigation-more.active')).not.toBeNull();
+    const more = nav.querySelector<HTMLElement>('.committee-navigation-more')!;
+    act(() => more.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true})));
+    expect(more.classList.contains('visible')).toBe(true);
+    act(() => more.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true})));
+    expect(more.classList.contains('visible')).toBe(false);
+    act(() => more.click());
+    const poll = more.querySelector<HTMLElement>('.committee-overflow-poll')!;
+    act(() => poll.click());
+    expect(poll.querySelector('.visible.menu a[href="/committees/committee/strawpolls/new"]')).not.toBeNull();
+    expect(poll.querySelector('a.active')?.getAttribute('href')).toBe('/committees/committee/strawpolls/poll');
+    act(() => poll.querySelector<HTMLElement>('a.active')?.click());
+    expect(more.classList.contains('visible')).toBe(false);
+    assertLevel(1000, 7);
+    expect(nav.getAttribute('data-navigation-mode')).toBe('sidebar');
+    for (const [width, level] of [[1200, 6], [1300, 5], [1400, 4], [1500, 3], [1600, 2], [1680, 1], [1800, 0]]) assertLevel(width, level);
+    expect(page.querySelector('.committee-navigation-measurement')?.hasAttribute('inert')).toBe(true);
+    expect(nav.querySelector('a[href="/committees/committee/setup"]')?.textContent).toBe('Seats');
+    act(() => setLanguage('zh-CN'));
+    expect(nav.querySelector('a[href="/committees/committee/setup"]')?.textContent).toBe('席位');
+  });
+
   it('uses route links and highlights a dynamic committee resource', () => {
     const page = render(<CommitteeNavigation snapshot={snapshot} user={user} logout={() => undefined} />,
       '/committees/committee/caucuses/mod');

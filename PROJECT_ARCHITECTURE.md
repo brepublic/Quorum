@@ -33,7 +33,7 @@ flowchart LR
 
 `src/index.tsx` 初始化浏览器 history、语言、主题、Semantic UI、Sentry 与 Google Analytics，再挂载 `src/App.tsx`。`App` 无运行模式分支，始终进入 `SelfHostedIdentity`。浏览器身份使用 Secure、HttpOnly、SameSite=Lax Session Cookie；客户端只通过 `src/services/self-hosted-identity.ts` 和 `self-hosted-api.ts` 请求同源 `/api/v1`。
 
-`SelfHostedIdentity` 覆盖首次管理员初始化、登录、基于已认证 Session 的临时密码强制修改、匿名公开委员会入口、退出和系统管理员账号管理。`SelfHostedWorkspace` 使用基于 URL 的响应式会议导航：桌面端为横向菜单，移动端沿用迁移前的 `Pushable/Pusher`、内容遮罩点击关闭和 `uncover` 侧栏；模板、系统运维、语言、主题和退出入口集中在账户菜单。它提供：
+`SelfHostedIdentity` 覆盖首次管理员初始化、登录、基于已认证 Session 的临时密码强制修改、匿名公开委员会入口、退出和系统管理员账号管理。`SelfHostedWorkspace` 使用基于 URL 的响应式会议导航：桌面端按实际菜单宽度依次隐藏实时状态文字、合并设置与帮助、折叠统计、文件、笔记和意向性投票；折叠项集中在更多菜单，意向性投票保留按可用空间向左或向右展开的子菜单。剩余入口仍放不下时沿用迁移前的 `Pushable/Pusher`、内容遮罩点击关闭和 `uncover` 侧栏；模板、系统运维、语言、主题和退出入口集中在账户菜单。它提供：
 
 - `/committees`：公开/私有委员会列表与创建；
 - `/countries`、`/templates`：沿用迁移前的表格编辑交互管理账号级国家模板和委员会模板；国家模板先按名称创建空模板再编辑国家，内置国家模板可查看和克隆，委员会创建器提供内置委员会模板；

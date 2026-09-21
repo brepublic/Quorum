@@ -297,7 +297,7 @@ describe('committee workspace routes and roles', () => {
     const page = await render('CHAIR', '/committees/committee/roll-call', user, value => value,
       {startMeetingSession, startRollCall});
 
-    await act(async () => {page.querySelector<HTMLButtonElement>('button')?.click(); await Promise.resolve(); await Promise.resolve();});
+    await act(async () => {[...page.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Start meeting')?.click(); await Promise.resolve(); await Promise.resolve();});
 
     expect(startMeetingSession).toHaveBeenCalledWith('committee');
     expect(startRollCall).toHaveBeenCalledWith('committee', 'meeting');
