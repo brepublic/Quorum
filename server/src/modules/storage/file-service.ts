@@ -336,8 +336,11 @@ export class Stage6FileService {
     const id = uuid(fileId, 'File ID');
     return idempotentTransaction({pool: this.pool, auth, route: `/api/v1/files/${id}/${next === 'PUBLISHED'
       ? 'publish' : 'submit-review'}`, key: idempotencyKey, request: body, status: 200, work: async client => {
+      const located = (await client.query<{committee_id: string}>(
+        'SELECT committee_id FROM file_entries WHERE id=$1', [id])).rows[0];
+      if (!located) throw new AppError({code: 'NOT_FOUND', message: 'File not found.'});
+      const committee = await lockedCommittee(client, located.committee_id);
       const entry = await this.entryForUpdate(client, id);
-      const committee = await lockedCommittee(client, entry.committee_id);
       requireProceedingsActive(committee);
       if (entry.revision !== baseRevision) {
         throw new AppError({code: 'REVISION_CONFLICT', message: 'This file changed since it was loaded.',

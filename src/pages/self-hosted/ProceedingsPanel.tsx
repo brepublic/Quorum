@@ -1,5 +1,5 @@
 import {apiErrorText} from '../../i18n';
-import {motionContentName, type ContentLanguage} from '@quorum/contracts';
+import {delegateFileTypeName, motionContentName, type ContentLanguage} from '@quorum/contracts';
 import * as React from 'react';
 import {createPortal} from 'react-dom';
 import type {
@@ -20,7 +20,6 @@ import {CountryFlagDisplay} from '../../components/CountryFlagDisplay';
 import Loading from '../../components/Loading';
 import {getLanguage, t} from "../../i18n";
 import {newIdempotencyKey, type SelfHostedApi} from '../../services/self-hosted-api';
-import {sha256File} from '../../services/sha256';
 import {localizedDisplayName} from './TemplateManagers';
 
 type Run = (operation: () => Promise<unknown>) => Promise<void>;
@@ -138,7 +137,7 @@ const statusLabels: Record<string, string> = {
   PENDING: 'Pending second', SECONDED: 'Seconded', VOTING: 'Voting', PASSED: 'Passed', FAILED: 'Failed', VETOED: 'Vetoed',
   WITHDRAWN: 'Withdrawn', SUPERSEDED: 'Superseded', OPEN: 'Open', CLOSED: 'Closed', PUBLISHED: 'Published',
   DRAFT: 'Draft', POSTPONED: 'Postponed', INCORPORATED: 'Incorporated', REJECTED: 'Rejected',
-  UPLOAD_COMPLETE: 'Upload complete', PENDING_REVIEW: 'Pending review'
+  UPLOAD_COMPLETE: 'Upload complete', PENDING_REVIEW: 'Pending review', DELETED: 'Deleted'
 };
 
 function statusLabel(value: string): string { return t(statusLabels[value] ?? value); }
@@ -715,13 +714,22 @@ function AmendmentCard({snapshot, amendment, run, api, canChair, representedSeat
   const [fileId, setFileId] = React.useState(amendment.currentVersion.contentFile?.id ?? '');
   const [files, setFiles] = React.useState<FileEntry[]>([]);
   const [selectedFileId, setSelectedFileId] = React.useState('');
-  const [upload, setUpload] = React.useState<File>();
-  const [uploadPercent, setUploadPercent] = React.useState<number>();
+  const [filesLoading, setFilesLoading] = React.useState(true);
+  const [bodyDirty, setBodyDirty] = React.useState(false);
+  const [downloadFailure, setDownloadFailure] = React.useState<unknown>();
+  const [fileSaving, setFileSaving] = React.useState(false);
+  const savingFile = React.useRef(false);
+  const [preparingDownload, setPreparingDownload] = React.useState(false);
+  const downloadingFile = React.useRef(false);
+  const downloadGeneration = React.useRef(0);
+  React.useEffect(() => () => {downloadGeneration.current += 1;}, []);
+  const [filesRetry, setFilesRetry] = React.useState(0);
   const [fileFailure, setFileError] = React.useState<unknown>();
   const fileError = fileFailure ? apiErrorText(fileFailure) : undefined;
   const [ballotThreshold, setBallotThreshold] = React.useState<'SIMPLE_MAJORITY' | 'TWO_THIRDS'>('SIMPLE_MAJORITY');
   const represented = canChair && representedSeatId ? {onBehalfOfSeatId: representedSeatId} : {};
-  const editable = snapshot.committee.status === 'ACTIVE' && (canChair || amendment.proposerSeatId === snapshot.viewer.seatId)
+  const editable = snapshot.viewer.audience !== 'PUBLIC' && snapshot.committee.status === 'ACTIVE'
+    && (canChair || Boolean(snapshot.viewer.seatId) && amendment.proposerSeatId === snapshot.viewer.seatId)
     && !['VOTING', 'INCORPORATED', 'REJECTED'].includes(amendment.status);
   const amendmentBallots = (snapshot.ballots ?? []).filter(ballot => ballot.subjectType === 'AMENDMENT'
     && ballot.subjectId === amendment.id);
@@ -729,19 +737,25 @@ function AmendmentCard({snapshot, amendment, run, api, canChair, representedSeat
   const deletable = editable && !hasBallot && !amendment.votingVersionId
     && !['VOTING', 'INCORPORATED', 'REJECTED'].includes(amendment.status);
   React.useEffect(() => {
-    setTitle(amendment.title); setTitleDirty(false); setContent(amendment.currentVersion.content);
+    setTitle(amendment.title); setTitleDirty(false); setBodyDirty(false); setContent(amendment.currentVersion.content);
     setSource(amendment.currentVersion.contentFile ? 'FILE' : 'TEXT');
     setFileId(amendment.currentVersion.contentFile?.id ?? '');
   }, [amendment.id, amendment.revision]);
   React.useEffect(() => {
     if (source !== 'FILE') return;
-    let active = true; setFileError(undefined);
+    let active = true; setFileError(undefined); setFilesLoading(true);
     void api.listFiles(snapshot.committee.id).then(items => {
-      if (active) setFiles(items.filter(file => file.status !== 'DELETED'));
-    }).catch(caught => {if (active) setFileError(caught);});
+      if (!active) return;
+      const published = items.filter(file => file.committeeId === snapshot.committee.id && file.status === 'PUBLISHED');
+      setFiles(published);
+      setSelectedFileId(current => published.some(file => file.id === current) ? current : '');
+    }).catch(caught => {if (active) {setFileError(caught); setFiles([]);}})
+      .finally(() => {if (active) setFilesLoading(false);});
     return () => {active = false;};
-  }, [api, snapshot.committee.id, snapshot.sync.committeeEventSequence, source]);
-  const save = (nextSource = source, nextFileId = fileId) => {
+  }, [api, snapshot.committee.id, snapshot.sync.committeeEventSequence, source, filesRetry]);
+  const save = (requestedSource?: 'TEXT' | 'FILE', nextFileId = fileId) => {
+    if (!requestedSource && !bodyDirty && !titleDirty) return;
+    const nextSource = requestedSource ?? (bodyDirty ? source : amendment.currentVersion.contentFile ? 'FILE' : 'TEXT');
     const nextContent = nextSource === 'TEXT' ? content : '';
     const contentFileEntryId = nextSource === 'FILE' ? nextFileId : null;
     if (!editable || nextSource === 'TEXT' && !nextContent.trim()
@@ -751,31 +765,30 @@ function AmendmentCard({snapshot, amendment, run, api, canChair, representedSeat
     return run(() => api.createDocumentVersion(amendment.id, {baseRevision: amendment.revision,
       customTitle: titleDirty ? title.trim() || null : amendment.customTitle, content: nextContent, contentFileEntryId, ...represented}));
   };
-  const uploadFile = async () => {
-    if (!upload) return;
-    let attached = false; setFileError(undefined); setUploadPercent(0);
-    try {
-      await run(async () => {
-        const sha256 = await sha256File(upload, {onProgress: (processed, total) =>
-          setUploadPercent(total ? Math.round(processed / total * 20) : 0)});
-        const created = await api.createFileUpload(snapshot.committee.id, {logicalName: upload.name,
-          originalName: upload.name, mediaType: upload.type || 'application/octet-stream',
-          expectedSizeBytes: upload.size, sha256}, newIdempotencyKey());
-        await api.uploadFileContent(created.id, upload, newIdempotencyKey(), {onProgress: (processed, total) =>
-          setUploadPercent(total ? 20 + Math.round(processed / total * 70) : 20)});
-        const committed = await api.commitFileUpload(created.id, newIdempotencyKey());
-        if ('kind' in committed) throw Object.assign(new Error(), {code: 'CHAIR_COMMIT_PENDING'});
-        setUploadPercent(95);
-        await api.createDocumentVersion(amendment.id, {baseRevision: amendment.revision, customTitle: titleDirty ? title.trim() || null : amendment.customTitle,
-          content: '', contentFileEntryId: committed.id, ...represented});
-        attached = true; setUploadPercent(100);
-      });
-    } finally {
-      if (attached) setUpload(undefined);
-      setUploadPercent(undefined);
-    }
+  const useFile = async () => {
+    if (savingFile.current || filesLoading || !files.some(file => file.id === selectedFileId)) return;
+    savingFile.current = true; setFileSaving(true);
+    try {await save('FILE', selectedFileId);}
+    finally {savingFile.current = false; setFileSaving(false);}
   };
-  const attachedFile = files.find(file => file.id === amendment.currentVersion.contentFile?.id);
+  const downloadFile = async () => {
+    const id = amendment.currentVersion.contentFile?.id;
+    if (!id || downloadingFile.current) return;
+    const generation = downloadGeneration.current;
+    downloadingFile.current = true; setPreparingDownload(true); setDownloadFailure(undefined);
+    try {
+      let readiness = await api.prepareFileDownload(id);
+      while (readiness.status === 'PREPARING' && generation === downloadGeneration.current) {
+        await new Promise(resolve => window.setTimeout(resolve, (readiness.retryAfterSeconds ?? 2) * 1000));
+        if (generation !== downloadGeneration.current) return;
+        readiness = await api.fileDownloadReadiness(id);
+      }
+      if (generation !== downloadGeneration.current) return;
+      if (readiness.status !== 'READY') throw Object.assign(new Error(), {code: readiness.code ?? 'NOT_FOUND'});
+      window.location.assign(api.fileDownloadUrl(id));
+    } catch (caught) {if (generation === downloadGeneration.current) setDownloadFailure(caught);}
+    finally {downloadingFile.current = false; if (generation === downloadGeneration.current) setPreparingDownload(false);}
+  };
   const proposed = !['INCORPORATED', 'REJECTED'].includes(amendment.status);
   const setResult = async (outcome: 'INCORPORATED' | 'REJECTED') => {
     let reason: string | undefined;
@@ -805,28 +818,36 @@ function AmendmentCard({snapshot, amendment, run, api, canChair, representedSeat
     onClick={() => setSource('TEXT')}>{t('Text')}</Button><Button active={source === 'FILE'}
     onClick={() => setSource('FILE')}>{t('File')}</Button></Button.Group><Divider hidden />
   {source === 'TEXT' ? <Form><TextArea rows={3} value={content} disabled={!editable} placeholder={t('Amendment body')}
-    onChange={(_, data) => setContent(String(data.value))} onBlur={() => void save()} /></Form>
-    : <Segment>{fileError && <Message error content={fileError} />}
+    onChange={(_, data) => {setContent(String(data.value)); setBodyDirty(true);}} onBlur={() => void save()} /></Form>
+    : <Segment className="resolution-file-body">
+      {fileError && <Message error content={fileError} />}
+      {Boolean(downloadFailure) && <Message error content={apiErrorText(downloadFailure)} />}
       {amendment.currentVersion.contentFile && <><Header as="h4">{amendment.currentVersion.contentFile.logicalName}</Header>
+        {amendment.currentVersion.contentFile.fileType && <Label>{delegateFileTypeName(amendment.currentVersion.contentFile.fileType!, getLanguage())}</Label>}
         <Label>{statusLabel(amendment.currentVersion.contentFile.status)}</Label>
-        <Button as="a" href={api.fileDownloadUrl(amendment.currentVersion.contentFile.id)} download>{t('Download')}</Button>
-        {editable && amendment.currentVersion.contentFile.status === 'UPLOAD_COMPLETE' && <Button disabled={!attachedFile}
-          onClick={() => void run(() => api.submitFileForReview(amendment.currentVersion.contentFile!.id,
-            attachedFile!.revision))}>{t('Submit for review')}</Button>}
-        {canChair && amendment.currentVersion.contentFile.status === 'PENDING_REVIEW' && <Button primary disabled={!attachedFile}
-          onClick={() => void run(() => api.publishFile(amendment.currentVersion.contentFile!.id,
-            attachedFile!.revision))}>{t('Publish file')}</Button>}<Divider /></>}
-      {editable && <Form onSubmit={() => void uploadFile()}><Form.Input type="file" label={t('Choose file')}
-        input={{'aria-label': t('Amendment file'), onChange: (event: React.ChangeEvent<HTMLInputElement>) =>
-          setUpload(event.currentTarget.files?.[0])}} /><Button primary disabled={!upload}>{t('Upload file')}</Button>
-        {uploadPercent !== undefined && <Progress percent={uploadPercent} progress />}
-        {files.length > 0 && <><Divider horizontal>{t('Existing file')}</Divider><Form.Select search selection fluid
-          value={selectedFileId || false} options={files.map(file => ({key: file.id, value: file.id,
-            text: `${file.logicalName} · ${statusLabel(file.status)}`}))}
-          onChange={(_, data) => setSelectedFileId(String(data.value))} />
-          <Button type="button" disabled={!selectedFileId} onClick={() => {setFileId(selectedFileId);
-            void save('FILE', selectedFileId);}}>{t('Attach file')}</Button></>}
-      </Form>}</Segment>}
+        {amendment.currentVersion.contentFile.status === 'PUBLISHED'
+          ? <Button type="button" primary fluid loading={preparingDownload} disabled={preparingDownload}
+            onClick={() => void downloadFile()}>{t('Download')} <Icon name="arrow down" /></Button>
+          : <Message content={t('The referenced file is unavailable.')} />}
+        {canChair && amendment.currentVersion.contentFile.status !== 'PUBLISHED'
+          && amendment.currentVersion.contentFile.status !== 'DELETED'
+          && <Button as={Link} to={`/committees/${snapshot.committee.id}/posts/review`}>{t('Review files')}</Button>}
+        <Divider /></>}
+      {editable && <>
+        {filesLoading ? <Loading /> : fileError ? <Button type="button" onClick={() => setFilesRetry(value => value + 1)}>{t('Retry')}</Button>
+          : files.length === 0 ? <><Message content={t('No published files')} />
+            <Button as={Link} to={`/committees/${snapshot.committee.id}/posts`}>{t('Files')}</Button></>
+          : <Form onSubmit={() => void useFile()}>
+            <Form.Select label={t('Published file')} selection fluid search={files.length > 10}
+              value={selectedFileId || false} disabled={fileSaving}
+              options={files.map(file => ({key: file.id, value: file.id,
+                text: file.logicalName, description: file.fileType ? delegateFileTypeName(file.fileType, getLanguage()) : undefined}))}
+              onChange={(_, data) => setSelectedFileId(String(data.value))} />
+            <Button primary loading={fileSaving} disabled={fileSaving || !selectedFileId || !files.some(file => file.id === selectedFileId)}
+              >{t('Use this file')}</Button>
+          </Form>}
+      </>}
+    </Segment>}
   </Card.Content>
   {canChair && amendment.status === 'VOTING' && !hasBallot && snapshot.meetingSession?.status === 'OPEN'
     && <Card.Content extra><Form.Group widths="equal"><Form.Select value={ballotThreshold}
@@ -1417,8 +1438,16 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
   const [versionFileId, setVersionFileId] = React.useState(selectedDocument?.currentVersion.contentFile?.id ?? '');
   const [availableFiles, setAvailableFiles] = React.useState<FileEntry[]>([]);
   const [selectedExistingFileId, setSelectedExistingFileId] = React.useState('');
-  const [resolutionUpload, setResolutionUpload] = React.useState<File>();
-  const [resolutionUploadPercent, setResolutionUploadPercent] = React.useState<number>();
+  const [filesLoading, setFilesLoading] = React.useState(true);
+  const [bodyDirty, setBodyDirty] = React.useState(false);
+  const [downloadFailure, setDownloadFailure] = React.useState<unknown>();
+  const [fileSaving, setFileSaving] = React.useState(false);
+  const savingFile = React.useRef(false);
+  const [preparingDownload, setPreparingDownload] = React.useState(false);
+  const downloadingFile = React.useRef(false);
+  const downloadGeneration = React.useRef(0);
+  React.useEffect(() => () => {downloadGeneration.current += 1;}, []);
+  const [filesRetry, setFilesRetry] = React.useState(0);
   const [fileFailure, setFileError] = React.useState<unknown>();
   const fileError = fileFailure ? apiErrorText(fileFailure) : undefined;
   const [seatId, setSeatId] = React.useState(snapshot.viewer.seatId ?? snapshot.seats[0]?.id ?? '');
@@ -1441,18 +1470,22 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
   }, [api, canParticipate, history, resourceId, run, session, snapshot.committee.id]);
   React.useEffect(() => {
     if (!selectedDocument) return;
-    setVersionTitle(selectedDocument.title); setVersionTitleDirty(false); setVersionContent(selectedDocument.currentVersion.content);
+    setVersionTitle(selectedDocument.title); setVersionTitleDirty(false); setBodyDirty(false); setVersionContent(selectedDocument.currentVersion.content);
     setContentSource(selectedDocument.currentVersion.contentFile ? 'FILE' : 'TEXT');
     setVersionFileId(selectedDocument.currentVersion.contentFile?.id ?? '');
   }, [selectedDocument?.id, selectedDocument?.revision]);
   React.useEffect(() => {
     if (contentSource !== 'FILE') return;
-    let active = true; setFileError(undefined);
-    void api.listFiles(snapshot.committee.id).then(files => {
-      if (active) setAvailableFiles(files.filter(file => file.status !== 'DELETED'));
-    }).catch(caught => { if (active) setFileError(caught); });
-    return () => { active = false; };
-  }, [api, contentSource, snapshot.committee.id, snapshot.sync.committeeEventSequence]);
+    let active = true; setFileError(undefined); setFilesLoading(true);
+    void api.listFiles(snapshot.committee.id).then(items => {
+      if (!active) return;
+      const published = items.filter(file => file.committeeId === snapshot.committee.id && file.status === 'PUBLISHED');
+      setAvailableFiles(published);
+      setSelectedExistingFileId(current => published.some(file => file.id === current) ? current : '');
+    }).catch(caught => {if (active) {setFileError(caught); setAvailableFiles([]);}})
+      .finally(() => {if (active) setFilesLoading(false);});
+    return () => {active = false;};
+  }, [api, snapshot.committee.id, snapshot.sync.committeeEventSequence, contentSource, filesRetry]);
   React.useEffect(() => {
     setVotingPage(0); setVotingHistory([]);
     setCurrentVotingSeatId(selectedDocument?.directVote?.eligibility[0]?.seatId ?? '');
@@ -1466,7 +1499,9 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
     ?? (tab && ['text', 'amendments', 'voting'].includes(tab) ? tab : 'text')) as 'text' | 'amendments' | 'voting';
   const base = `/committees/${snapshot.committee.id}/resolutions/${document.id}`;
   const editable = canParticipate && !['VOTING', 'PASSED', 'FAILED'].includes(document.status);
-  const saveVersion = (nextSource = contentSource, nextFileId = versionFileId) => {
+  const saveVersion = (requestedSource?: 'TEXT' | 'FILE', nextFileId = versionFileId) => {
+    if (!requestedSource && !bodyDirty && !versionTitleDirty) return;
+    const nextSource = requestedSource ?? (bodyDirty ? contentSource : document.currentVersion.contentFile ? 'FILE' : 'TEXT');
     const nextContent = nextSource === 'TEXT' ? versionContent : '';
     const contentFileEntryId = nextSource === 'FILE' ? nextFileId : null;
     if (!editable || nextSource === 'FILE' && !contentFileEntryId
@@ -1475,37 +1510,31 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
     return run(() => api.createDocumentVersion(document.id, {baseRevision: document.revision,
       customTitle: versionTitleDirty ? versionTitle.trim() || null : document.customTitle, content: nextContent, contentFileEntryId, ...represented}));
   };
-  const attachExistingFile = async () => {
-    if (!selectedExistingFileId) return;
-    setVersionFileId(selectedExistingFileId);
-    await saveVersion('FILE', selectedExistingFileId);
+  const useFile = async () => {
+    if (savingFile.current || filesLoading || !availableFiles.some(file => file.id === selectedExistingFileId)) return;
+    savingFile.current = true; setFileSaving(true);
+    try {await saveVersion('FILE', selectedExistingFileId);}
+    finally {savingFile.current = false; setFileSaving(false);}
   };
-  const uploadResolutionFile = async () => {
-    if (!resolutionUpload) return;
-    let attached = false; setFileError(undefined); setResolutionUploadPercent(0);
+  const downloadFile = async () => {
+    const id = document.currentVersion.contentFile?.id;
+    if (!id || downloadingFile.current) return;
+    const generation = downloadGeneration.current;
+    downloadingFile.current = true; setPreparingDownload(true); setDownloadFailure(undefined);
     try {
-      await run(async () => {
-        const sha256 = await sha256File(resolutionUpload, {onProgress: (processed, total) =>
-          setResolutionUploadPercent(total ? Math.round(processed / total * 20) : 0)});
-        const upload = await api.createFileUpload(snapshot.committee.id, {logicalName: resolutionUpload.name,
-          originalName: resolutionUpload.name, mediaType: resolutionUpload.type || 'application/octet-stream',
-          expectedSizeBytes: resolutionUpload.size, sha256}, newIdempotencyKey());
-        await api.uploadFileContent(upload.id, resolutionUpload, newIdempotencyKey(), {onProgress: (processed, total) =>
-          setResolutionUploadPercent(total ? 20 + Math.round(processed / total * 70) : 20)});
-        const committed = await api.commitFileUpload(upload.id, newIdempotencyKey());
-        if ('kind' in committed) throw Object.assign(new Error(), {code: 'CHAIR_COMMIT_PENDING'});
-        setResolutionUploadPercent(95);
-        await api.createDocumentVersion(document.id, {baseRevision: document.revision, customTitle: versionTitleDirty ? versionTitle.trim() || null : document.customTitle,
-          content: '', contentFileEntryId: committed.id, ...represented});
-        attached = true; setResolutionUploadPercent(100);
-      });
-    } finally {
-      if (attached) setResolutionUpload(undefined);
-      setResolutionUploadPercent(undefined);
-    }
+      let readiness = await api.prepareFileDownload(id);
+      while (readiness.status === 'PREPARING' && generation === downloadGeneration.current) {
+        await new Promise(resolve => window.setTimeout(resolve, (readiness.retryAfterSeconds ?? 2) * 1000));
+        if (generation !== downloadGeneration.current) return;
+        readiness = await api.fileDownloadReadiness(id);
+      }
+      if (generation !== downloadGeneration.current) return;
+      if (readiness.status !== 'READY') throw Object.assign(new Error(), {code: readiness.code ?? 'NOT_FOUND'});
+      window.location.assign(api.fileDownloadUrl(id));
+    } catch (caught) {if (generation === downloadGeneration.current) setDownloadFailure(caught);}
+    finally {downloadingFile.current = false; if (generation === downloadGeneration.current) setPreparingDownload(false);}
   };
   const presentSeatIds = new Set(snapshot.attendance.filter(item => item.state === 'PRESENT').map(item => item.seatId));
-  const attachedFile = availableFiles.find(file => file.id === document.currentVersion.contentFile?.id);
   const seatOptions = snapshot.seats.map(seat => ({key: seat.id, value: seat.id, text: seat.displayName,
     disabled: !presentSeatIds.has(seat.id)}));
   const directVote = document.directVote;
@@ -1552,36 +1581,36 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
       <Button active={contentSource === 'FILE'} onClick={() => setContentSource('FILE')}>{t('File')}</Button>
     </Button.Group><Divider hidden />
     {contentSource === 'TEXT' ? <Form><TextArea value={versionContent} rows={3} placeholder={t('Resolution text')}
-      disabled={!editable} onChange={(_, data) => setVersionContent(String(data.value))} onBlur={() => void saveVersion()} /></Form>
-      : <Segment className="resolution-file-body">{fileError && <Message error content={fileError} />}
-        {document.currentVersion.contentFile && <><Header as="h4">{document.currentVersion.contentFile.logicalName}</Header>
-          <Label>{statusLabel(document.currentVersion.contentFile.status)}</Label>
-          <Button as="a" href={api.fileDownloadUrl(document.currentVersion.contentFile.id)} download>
-            {t('Download')}</Button>
-          {editable && document.currentVersion.contentFile.status === 'UPLOAD_COMPLETE' && <Button
-            disabled={!attachedFile}
-            onClick={() => void run(() => api.submitFileForReview(document.currentVersion.contentFile!.id,
-              attachedFile!.revision))}>
-            {t('Submit for review')}</Button>}
-          {canChair && document.currentVersion.contentFile.status === 'PENDING_REVIEW' && <Button primary
-            disabled={!attachedFile}
-            onClick={() => void run(() => api.publishFile(document.currentVersion.contentFile!.id,
-              attachedFile!.revision))}>
-            {t('Publish file')}</Button>}<Divider />
-        </>}
-        {editable && <Form onSubmit={() => void uploadResolutionFile()}>
-          <Form.Input type="file" label={t('Choose file')} input={{'aria-label': t('Resolution file'),
-            onChange: (event: React.ChangeEvent<HTMLInputElement>) => setResolutionUpload(event.currentTarget.files?.[0])}} />
-          <Button primary disabled={!resolutionUpload}>{t('Upload file')}</Button>
-          {resolutionUploadPercent !== undefined && <Progress percent={resolutionUploadPercent} progress />}
-          {availableFiles.length > 0 && <><Divider horizontal>{t('Existing file')}</Divider>
-            <Form.Select search selection fluid value={selectedExistingFileId || false}
+      disabled={!editable} onChange={(_, data) => {setVersionContent(String(data.value)); setBodyDirty(true);}} onBlur={() => void saveVersion()} /></Form>
+    : <Segment className="resolution-file-body">
+      {fileError && <Message error content={fileError} />}
+      {Boolean(downloadFailure) && <Message error content={apiErrorText(downloadFailure)} />}
+      {document.currentVersion.contentFile && <><Header as="h4">{document.currentVersion.contentFile.logicalName}</Header>
+        {document.currentVersion.contentFile.fileType && <Label>{delegateFileTypeName(document.currentVersion.contentFile.fileType!, getLanguage())}</Label>}
+        <Label>{statusLabel(document.currentVersion.contentFile.status)}</Label>
+        {document.currentVersion.contentFile.status === 'PUBLISHED'
+          ? <Button type="button" primary fluid loading={preparingDownload} disabled={preparingDownload}
+            onClick={() => void downloadFile()}>{t('Download')} <Icon name="arrow down" /></Button>
+          : <Message content={t('The referenced file is unavailable.')} />}
+        {canChair && document.currentVersion.contentFile.status !== 'PUBLISHED'
+          && document.currentVersion.contentFile.status !== 'DELETED'
+          && <Button as={Link} to={`/committees/${snapshot.committee.id}/posts/review`}>{t('Review files')}</Button>}
+        <Divider /></>}
+      {editable && <>
+        {filesLoading ? <Loading /> : fileError ? <Button type="button" onClick={() => setFilesRetry(value => value + 1)}>{t('Retry')}</Button>
+          : availableFiles.length === 0 ? <><Message content={t('No published files')} />
+            <Button as={Link} to={`/committees/${snapshot.committee.id}/posts`}>{t('Files')}</Button></>
+          : <Form onSubmit={() => void useFile()}>
+            <Form.Select label={t('Published file')} selection fluid search={availableFiles.length > 10}
+              value={selectedExistingFileId || false} disabled={fileSaving}
               options={availableFiles.map(file => ({key: file.id, value: file.id,
-                text: `${file.logicalName} · ${statusLabel(file.status)}`}))}
+                text: file.logicalName, description: file.fileType ? delegateFileTypeName(file.fileType, getLanguage()) : undefined}))}
               onChange={(_, data) => setSelectedExistingFileId(String(data.value))} />
-            <Button type="button" disabled={!selectedExistingFileId}
-              onClick={() => void attachExistingFile()}>{t('Attach file')}</Button></>}
-        </Form>}</Segment>}</>}
+            <Button primary loading={fileSaving} disabled={fileSaving || !selectedExistingFileId || !availableFiles.some(file => file.id === selectedExistingFileId)}
+              >{t('Use this file')}</Button>
+          </Form>}
+      </>}
+    </Segment>}</>}
     {activeTab === 'amendments' && <>{amendments.length === 0 && <Message content={t('No amendments')} />}<Card.Group itemsPerRow={1}>
       {canParticipate && session && ['PUBLISHED', 'POSTPONED'].includes(document.status) && <Card><Button icon="plus"
         primary fluid basic aria-label={t('Create amendment')} onClick={() => void run(() => api.createAmendment(document.id,

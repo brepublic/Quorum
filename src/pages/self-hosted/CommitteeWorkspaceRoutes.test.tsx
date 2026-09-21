@@ -1570,15 +1570,15 @@ describe('committee workspace routes and roles', () => {
     expect(createResolution).toHaveBeenCalledWith('committee', {meetingSessionId: 'meeting', customTitle: null, content: ''});
   });
 
-  it('uploads a resolution body file and attaches it as the new document version', async () => {
-    const document: ProceedingDocument = {id: 'resolution', committeeId: 'committee', meetingSessionId: 'meeting',
-      kind: 'RESOLUTION', resolutionId: null, ordinal: 1, customTitle: null, title: 'New draft resolution 1', status: 'DRAFT',
+  it.each(['RESOLUTION', 'AMENDMENT'] as const)('selects only published files and binds without uploading for %s', async kind => {
+    const document: ProceedingDocument = {id: kind === 'RESOLUTION' ? 'resolution' : 'amendment', committeeId: 'committee', meetingSessionId: 'meeting',
+      kind, resolutionId: kind === 'AMENDMENT' ? 'resolution' : null, ordinal: 1, customTitle: null, title: 'New draft resolution 1', status: 'DRAFT',
       rulePackageVersionId: 'rules', currentVersion: {id: 'version', versionNumber: 1, content: '', contentFile: null,
         createdAt: '2026-08-14T00:00:00.000Z'}, votingVersionId: null, public: false, proposerSeatId: null,
       seconderSeatId: null, delegatesCanAmend: false, directVote: null, resultDecisions: [], revision: 1,
       discussion: [], createdAt: '2026-08-14T00:00:00.000Z', updatedAt: '2026-08-14T00:00:00.000Z'};
     const uploadedFile = {id: 'file', committeeId: 'committee', logicalName: 'draft.pdf', mediaType: 'application/pdf',
-      status: 'UPLOAD_COMPLETE' as const, syncState: 'SYNCED' as const, createdByUserId: 'user',
+      status: 'PUBLISHED' as const, syncState: 'SYNCED' as const, createdByUserId: 'user',
       currentVersion: {id: 'file-version', versionNumber: 1, originalName: 'draft.pdf', mediaType: 'application/pdf',
         sizeBytes: 4, sha256: 'a'.repeat(64), blobId: 'blob', createdAt: '2026-08-14T00:00:00.000Z'},
       revision: 1, submittedAt: null, publishedAt: null, createdAt: '2026-08-14T00:00:00.000Z',
@@ -1586,33 +1586,40 @@ describe('committee workspace routes and roles', () => {
     const createFileUpload = vi.fn(async () => ({id: 'upload'} as never));
     const uploadFileContent = vi.fn(async () => ({id: 'upload'} as never));
     const commitFileUpload = vi.fn(async () => uploadedFile);
-    const createDocumentVersion = vi.fn(async () => document);
-    const page = await render('CHAIR', '/committees/committee/resolutions/resolution/text', user,
-      value => ({...value, documents: [document]}), {listFiles: vi.fn(async () => []), createFileUpload,
+    const createDocumentVersion = vi.fn(async () => document).mockRejectedValueOnce(new Error('Save failed'));
+    const page = await render('CHAIR', `/committees/committee/resolutions/resolution/${kind === 'RESOLUTION' ? 'text' : 'amendments'}`, user,
+      value => ({...value, documents: kind === 'RESOLUTION' ? [document] : [{...document, id: 'resolution', kind: 'RESOLUTION', resolutionId: null, status: 'PUBLISHED'}, document]}), {listFiles: vi.fn(async () => [uploadedFile, ...(['PENDING_REVIEW', 'REJECTED', 'DELETED'] as const).map(status => ({...uploadedFile, id: status, logicalName: status, status})), {...uploadedFile, id: 'foreign', logicalName: 'foreign', committeeId: 'other'}]), createFileUpload,
         uploadFileContent, commitFileUpload, createDocumentVersion});
 
-    const fileMode = page.querySelectorAll<HTMLButtonElement>('.resolution-content-source button')[1];
+    const fileMode = kind === 'RESOLUTION' ? page.querySelectorAll<HTMLButtonElement>('.resolution-content-source button')[1]
+      : [...page.querySelectorAll<HTMLButtonElement>('.amendment-card button')].find(button => button.textContent === 'File');
     await act(async () => {fileMode?.click(); await Promise.resolve();});
-    const input = page.querySelector<HTMLInputElement>('input[aria-label="Resolution file"]');
-    const body = new File(['body'], 'draft.pdf', {type: 'application/pdf'});
-    await act(async () => {
-      Object.defineProperty(input, 'files', {configurable: true, value: [body]});
-      input?.dispatchEvent(new Event('change', {bubbles: true})); await Promise.resolve();
-    });
-    const upload = [...page.querySelectorAll<HTMLButtonElement>('button')]
-      .find(button => button.textContent?.trim() === 'Upload file');
-    await act(async () => {upload?.click(); for (let index = 0; index < 8; index += 1) await Promise.resolve();});
-
-    expect(createFileUpload).toHaveBeenCalledWith('committee', expect.objectContaining({logicalName: 'draft.pdf',
-      originalName: 'draft.pdf', mediaType: 'application/pdf', expectedSizeBytes: 4, sha256: 'a'.repeat(64)}),
-    expect.any(String));
-    expect(uploadFileContent).toHaveBeenCalledWith('upload', body, expect.any(String), expect.any(Object));
-    expect(commitFileUpload).toHaveBeenCalledWith('upload', expect.any(String));
-    expect(createDocumentVersion).toHaveBeenCalledWith('resolution', {baseRevision: 1,
+    expect(page.querySelector('input[type="file"]')).toBeNull();
+    const selector = page.querySelector<HTMLElement>('.resolution-file-body .ui.dropdown');
+    expect(selector?.textContent).toContain('draft.pdf');
+    for (const name of ['PENDING_REVIEW', 'REJECTED', 'DELETED', 'foreign']) expect(selector?.textContent).not.toContain(name);
+    let attach = [...page.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.trim() === 'Use this file');
+    expect(attach?.disabled).toBe(true);
+    await act(async () => {selector?.click(); await Promise.resolve();});
+    await act(async () => {selector?.querySelector<HTMLElement>('.menu .item')?.click(); await Promise.resolve();});
+    attach = [...page.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.trim() === 'Use this file');
+    await act(async () => {attach?.click(); attach?.click(); for (let index = 0; index < 8; index += 1) await Promise.resolve();});
+    expect(createFileUpload).not.toHaveBeenCalled();
+    expect(uploadFileContent).not.toHaveBeenCalled();
+    expect(commitFileUpload).not.toHaveBeenCalled();
+    expect(createDocumentVersion).toHaveBeenCalledTimes(1);
+    expect(createDocumentVersion).toHaveBeenCalledWith(document.id, {baseRevision: 1,
       customTitle: null, content: '', contentFileEntryId: 'file', onBehalfOfSeatId: 'seat'});
+    // A failed save retains the selection and permits an explicit retry.
+    expect(page.querySelector('.resolution-file-body .ui.dropdown .text')?.textContent).toBe('draft.pdf');
+    attach = [...page.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.trim() === 'Use this file');
+    expect(attach?.disabled).toBe(false);
+    await act(async () => {attach?.click(); for (let index = 0; index < 8; index += 1) await Promise.resolve();});
+    expect(createDocumentVersion).toHaveBeenCalledTimes(2);
+
   });
 
-  it('publishes an attached resolution file through the existing review workflow', async () => {
+  it.each(['PENDING_REVIEW', 'DELETED'] as const)('keeps %s references without publishing in the document page', async status => {
     const file = {id: 'file', committeeId: 'committee', logicalName: 'draft.pdf', mediaType: 'application/pdf',
       status: 'PENDING_REVIEW' as const, syncState: 'SYNCED' as const, createdByUserId: 'user',
       currentVersion: {id: 'file-version', versionNumber: 1, originalName: 'draft.pdf', mediaType: 'application/pdf',
@@ -1623,7 +1630,7 @@ describe('committee workspace routes and roles', () => {
       kind: 'RESOLUTION', resolutionId: null, ordinal: 1, customTitle: null, title: 'New draft resolution 1', status: 'DRAFT',
       rulePackageVersionId: 'rules', currentVersion: {id: 'version', versionNumber: 2, content: '', contentFile: {
         id: 'file', logicalName: 'draft.pdf', originalName: 'draft.pdf', mediaType: 'application/pdf',
-        status: 'PENDING_REVIEW'}, createdAt: '2026-08-14T00:01:00.000Z'}, votingVersionId: null, public: false,
+        status, fileType: null}, createdAt: '2026-08-14T00:01:00.000Z'}, votingVersionId: null, public: false,
       proposerSeatId: null, seconderSeatId: null, delegatesCanAmend: false, directVote: null, resultDecisions: [],
       revision: 2, discussion: [], createdAt: '2026-08-14T00:00:00.000Z', updatedAt: '2026-08-14T00:01:00.000Z'};
     const publishFile = vi.fn(async () => ({...file, status: 'PUBLISHED' as const, revision: 3,
@@ -1633,9 +1640,11 @@ describe('committee workspace routes and roles', () => {
     await act(async () => {await Promise.resolve(); await Promise.resolve();});
     const publish = [...page.querySelectorAll<HTMLButtonElement>('button')]
       .find(button => button.textContent?.trim() === 'Publish file');
-    expect(publish?.disabled).toBe(false);
-    await act(async () => {publish?.click(); await Promise.resolve();});
-    expect(publishFile).toHaveBeenCalledWith('file', 2);
+    expect(publish).toBeUndefined();
+    expect(page.textContent).toContain('The referenced file is unavailable.');
+    expect(Boolean(page.querySelector('a[href="/committees/committee/posts/review"]'))).toBe(status === 'PENDING_REVIEW');
+    expect(page.querySelector('input[type="file"]')).toBeNull();
+    expect(publishFile).not.toHaveBeenCalled();
   });
 
   it('does not save untouched automatic titles or text when focus moves away', async () => {

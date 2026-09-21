@@ -265,7 +265,8 @@ export interface ProceedingDocumentVersion {
     logicalName: string;
     originalName: string;
     mediaType: string;
-    status: 'UPLOAD_COMPLETE' | 'PENDING_REVIEW' | 'PUBLISHED';
+    status: 'UPLOAD_COMPLETE' | 'PENDING_REVIEW' | 'PUBLISHED' | 'REJECTED' | 'DELETED';
+    fileType: import('./delegate-files.js').DelegateFileType | null;
   } | null;
   createdAt: string;
 }

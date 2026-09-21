@@ -13,6 +13,7 @@ import type {AuthenticatedSession} from '../identity/store';
 import {Stage3Service} from '../stage3/service';
 import {Stage4Service} from '../stage4/service';
 import {Stage5Service} from './service';
+import {Stage6StorageService} from '../storage/service';
 
 const {Client, Pool} = pg;
 const adminUrl = process.env.TEST_DATABASE_ADMIN_URL;
@@ -741,14 +742,35 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
     let draft = await stage5.createResolution(fixture.firstChair, fixture.committee.id,
       {meetingSessionId: fixture.session.id, customTitle: null, content: ''},
       'file-resolution-draft', context('file-resolution-draft'));
+    await expect(stage5.createDocumentVersion(fixture.firstChair, draft.id,
+      {baseRevision: draft.revision, customTitle: draft.customTitle, content: '', contentFileEntryId: fileId,
+        onBehalfOfSeatId: fixture.firstSeat.id},
+      context('reject-unpublished-file'))).rejects.toMatchObject({code: 'RESOURCE_CONFLICT',
+        details: {reason: 'DOCUMENT_FILE_NOT_PUBLISHED'}});
+    await pool?.query(`UPDATE file_entries SET status='PUBLISHED',submitted_at=now(),published_at=now(),published_by_user_id=$2 WHERE id=$1`,
+      [fileId, fixture.firstChair.user.id]);
     draft = await stage5.createDocumentVersion(fixture.firstChair, draft.id,
       {baseRevision: draft.revision, customTitle: draft.customTitle, content: '', contentFileEntryId: fileId,
         onBehalfOfSeatId: fixture.firstSeat.id},
       context('attach-resolution-file'));
-    expect(draft.currentVersion.contentFile).toMatchObject({id: fileId, status: 'UPLOAD_COMPLETE', originalName: 'draft.pdf'});
+    expect(draft.currentVersion.contentFile).toMatchObject({id: fileId, status: 'PUBLISHED', originalName: 'draft.pdf'});
     const workspace = await stage4.snapshot(fixture.committee.id, fixture.firstChair);
     expect(workspace.documents?.find(document => document.id === draft.id)?.currentVersion.contentFile)
-      .toMatchObject({id: fileId, logicalName: 'Draft body', originalName: 'draft.pdf', status: 'UPLOAD_COMPLETE'});
+      .toMatchObject({id: fileId, logicalName: 'Draft body', originalName: 'draft.pdf', status: 'PUBLISHED'});
+    const changedFileVersionId = randomUUID();
+    const versionClient = await pool!.connect();
+    try {
+      await versionClient.query('BEGIN');
+      await versionClient.query(`UPDATE file_entries SET status='PENDING_REVIEW',current_version_id=$2,
+        published_at=NULL,published_by_user_id=NULL,revision=revision+1 WHERE id=$1`, [fileId, changedFileVersionId]);
+      await versionClient.query(`INSERT INTO file_versions
+        (id,committee_id,file_entry_id,version_number,blob_id,original_name,media_type,size_bytes,sha256,created_by_user_id)
+        SELECT $2,committee_id,file_entry_id,2,blob_id,'updated.pdf',media_type,size_bytes,sha256,created_by_user_id
+          FROM file_versions WHERE id=$1`, [fileVersionId, changedFileVersionId]);
+      await versionClient.query('COMMIT');
+    } catch (caught) {await versionClient.query('ROLLBACK'); throw caught;}
+    finally {versionClient.release();}
+
     const motion = await stage5.proposeMotion(fixture.firstChair, fixture.committee.id,
       {meetingSessionId: fixture.session.id, motionTypeId: 'introduce-draft-resolution',
         onBehalfOfSeatId: fixture.firstSeat.id, secondedBySeatId: fixture.secondSeat.id,
@@ -784,6 +806,29 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
       `/committees/${fixture.committee.id}/resolutions/${draft.id}/amendments`});
     expect((await pool?.query('SELECT status,is_public FROM documents WHERE id=$1', [amendment.id]))?.rows[0])
       .toEqual({status: 'PUBLISHED', is_public: true});
+    await expect(stage5.createDocumentVersion(fixture.secondDelegate, amendment.id,
+      {baseRevision: amendment.revision + 1, customTitle: null, content: '', contentFileEntryId: fileId},
+      context('reject-other-proposer'))).rejects.toMatchObject({code: 'FORBIDDEN'});
+    // Both operations take the committee lock before a file lock; either serialized outcome is valid.
+    const fileRevision = (await pool!.query('SELECT revision FROM file_entries WHERE id=$1', [fileId])).rows[0].revision;
+    const binding = stage5.createDocumentVersion(fixture.firstDelegate, amendment.id,
+      {baseRevision: amendment.revision + 1, customTitle: null, content: '', contentFileEntryId: fileId},
+      context('concurrent-file-binding'));
+    const deletion = new Stage6StorageService(pool!).deleteFile(fixture.firstChair, fileId,
+      {baseRevision: fileRevision}, 'concurrent-file-deletion', context('concurrent-file-deletion'));
+    const [bound, removed] = await Promise.allSettled([binding, deletion]);
+    expect(removed.status).toBe('fulfilled');
+    if (bound.status === 'rejected') expect(bound.reason).toMatchObject({code: 'RESOURCE_CONFLICT',
+      details: {reason: 'DOCUMENT_FILE_NOT_PUBLISHED'}});
+    const latestRevision = (await pool!.query('SELECT revision FROM documents WHERE id=$1', [amendment.id])).rows[0].revision;
+    const deletedSnapshot = await stage4.snapshot(fixture.committee.id, fixture.firstChair);
+    for (const id of [draft.id, amendment.id]) expect(deletedSnapshot.documents?.find(item => item.id === id)?.currentVersion)
+      .toMatchObject({content: '', contentFile: {id: fileId, status: 'DELETED', logicalName: 'Draft body'}});
+    await expect(stage5.createDocumentVersion(fixture.firstDelegate, amendment.id,
+      {baseRevision: latestRevision, customTitle: null, content: '', contentFileEntryId: fileId},
+      context('reject-deleted-file'))).rejects.toMatchObject({code: 'RESOURCE_CONFLICT',
+        details: {reason: 'DOCUMENT_FILE_NOT_PUBLISHED'}});
+
   });
 
   it('lets the Chair reject an unseconded motion but not pass it', async () => {

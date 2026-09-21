@@ -277,10 +277,12 @@ async function documentState(client: PoolClient, row: DocumentRow): Promise<Proc
     customTitle: row.custom_title}, context.committee_language);
   const version = await client.query<{id: string; version_number: number; content: string; content_file_entry_id: string | null;
     logical_name: string | null; original_name: string | null; media_type: string | null;
-    file_status: 'UPLOAD_COMPLETE' | 'PENDING_REVIEW' | 'PUBLISHED' | null; created_at: Date}>(
+    file_status: 'UPLOAD_COMPLETE' | 'PENDING_REVIEW' | 'PUBLISHED' | 'REJECTED' | 'DELETED' | null;
+    file_type: import('@quorum/contracts').DelegateFileType | null; created_at: Date}>(
   `SELECT v.id,v.version_number,v.content,v.content_file_entry_id,e.logical_name,f.original_name,f.media_type,
-    CASE WHEN e.status='DELETED' THEN NULL ELSE e.status END AS file_status,v.created_at
+    e.status AS file_status,m.file_type,v.created_at
     FROM document_versions v LEFT JOIN file_entries e ON e.id=v.content_file_entry_id
+    LEFT JOIN delegate_file_metadata m ON m.file_entry_id=e.id
     LEFT JOIN file_versions f ON f.id=e.current_version_id WHERE v.document_id=$1 AND v.id=$2`,
   [row.id, row.current_version_id]);
   const discussion = await client.query<{id: string; seat_id: string; seat_display_name: string; content: string;
@@ -309,9 +311,10 @@ async function documentState(client: PoolClient, row: DocumentRow): Promise<Proc
     resolutionId: row.resolution_document_id, title, ordinal: row.ordinal, customTitle: row.custom_title, status: row.status,
     rulePackageVersionId: row.rule_package_version_id,
     currentVersion: {id: current.id, versionNumber: current.version_number, content: current.content,
-      contentFile: current.content_file_entry_id && current.logical_name && current.original_name && current.media_type
-        && current.file_status ? {id: current.content_file_entry_id, logicalName: current.logical_name,
-          originalName: current.original_name, mediaType: current.media_type, status: current.file_status} : null,
+      contentFile: current.content_file_entry_id ? {id: current.content_file_entry_id,
+        logicalName: current.logical_name ?? current.content_file_entry_id,
+        originalName: current.original_name ?? '', mediaType: current.media_type ?? '',
+        status: current.file_status ?? 'DELETED', fileType: current.file_type ?? null} : null,
       createdAt: current.created_at.toISOString()}, votingVersionId: row.voting_version_id, public: row.is_public,
     proposerSeatId, seconderSeatId, delegatesCanAmend, directVote,
     resultDecisions: resultDecisions.rows.map(item => ({id: item.id, previousStatus: item.previous_status,
@@ -2998,11 +3001,6 @@ export class Stage5Service {
       const document = found.rows[0]; if (!document) throw new AppError({code: 'NOT_FOUND', message: 'Document not found.'});
       if (contentFileEntryId && content) throw new AppError({code: 'VALIDATION_FAILED',
         message: 'A document body must use either text or a file.'});
-      if (contentFileEntryId) {
-        const file = await client.query<{id: string}>(`SELECT id FROM file_entries
-          WHERE id=$1 AND committee_id=$2 AND status<>'DELETED' FOR KEY SHARE`, [contentFileEntryId, committee.id]);
-        if (!file.rows[0]) throw new AppError({code: 'VALIDATION_FAILED', message: 'Content file is unavailable.'});
-      }
       if (document.kind === 'AMENDMENT' && !content.trim() && !contentFileEntryId) throw new AppError({code: 'VALIDATION_FAILED',
         message: 'Amendment content is invalid.'});
       if (document.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT',
@@ -3013,6 +3011,12 @@ export class Stage5Service {
       const actor = await representedDocumentSeat(client, committee, auth, input.onBehalfOfSeatId, document.meeting_session_id);
       if (!actor.chair && actor.seatId !== document.created_on_behalf_of_seat_id) throw new AppError({code: 'FORBIDDEN',
         message: 'Only the proposer or a Chair may create a new version.'});
+      if (contentFileEntryId) {
+        const file = await client.query<{id: string; status: string}>(`SELECT id,status FROM file_entries
+          WHERE id=$1 AND committee_id=$2 FOR UPDATE`, [contentFileEntryId, committee.id]);
+        if (!file.rows[0] || file.rows[0].status !== 'PUBLISHED') throw new AppError({code: 'RESOURCE_CONFLICT',
+          message: 'Choose a published file from this committee.', details: {reason: 'DOCUMENT_FILE_NOT_PUBLISHED'}});
+      }
       const next = await client.query<{version_number: number}>(
         'SELECT coalesce(max(version_number),0)+1 AS version_number FROM document_versions WHERE document_id=$1', [documentId]);
       const versionNumber = next.rows[0]?.version_number ?? 1; const versionId = randomUUID(); const now = this.now();

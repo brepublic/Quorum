@@ -282,10 +282,13 @@ export class DelegateFileService {
     const fileId = uuid(fileIdValue, 'File ID'); const revision = positiveRevision(body.baseRevision);
     const logicalName = bounded(body.logicalName, 'File name', 500); const type = fileType(body.fileType);
     await transaction(this.pool, async client => {
+      const located = (await client.query<{committee_id: string}>(
+        'SELECT committee_id FROM file_entries WHERE id=$1', [fileId])).rows[0];
+      if (!located) throw new AppError({code: 'NOT_FOUND', message: 'File not found.'});
+      const committee = await this.requireManager(client, located.committee_id, auth.user.id, true);
       const entry = (await client.query<{id: string; committee_id: string; created_by_user_id: string; status: string;
         revision: number; submitted_at: Date | null; created_at: Date}>(`SELECT * FROM file_entries WHERE id=$1 FOR UPDATE`, [fileId])).rows[0];
       if (!entry || entry.status === 'DELETED') throw new AppError({code: 'NOT_FOUND', message: 'File not found.'});
-      const committee = await this.requireManager(client, entry.committee_id, auth.user.id, true);
       if (entry.revision !== revision) throw new AppError({code: 'REVISION_CONFLICT', message: 'This file changed since it was loaded.',
         details: {currentRevision: entry.revision}});
       if (!['UPLOAD_COMPLETE', 'PENDING_REVIEW'].includes(entry.status)) throw new AppError({code: 'RESOURCE_CONFLICT',
@@ -324,10 +327,13 @@ export class DelegateFileService {
     const logicalName = bounded(body.logicalName, 'File name', 500); const type = fileType(body.fileType);
     return idempotentTransaction({pool: this.pool, auth, route: `/api/v1/files/${fileId}/delegate-reject`,
       key, request: body, status: 200, work: async client => {
+        const located = (await client.query<{committee_id: string}>(
+          'SELECT committee_id FROM file_entries WHERE id=$1', [fileId])).rows[0];
+        if (!located) throw new AppError({code: 'NOT_FOUND', message: 'File not found.'});
+        const committee = await this.requireManager(client, located.committee_id, auth.user.id, true);
         const entry = (await client.query<{committee_id: string; status: string; revision: number; created_at: Date}>(
           'SELECT * FROM file_entries WHERE id=$1 FOR UPDATE', [fileId])).rows[0];
         if (!entry) throw new AppError({code: 'NOT_FOUND', message: 'File not found.'});
-        const committee = await this.requireManager(client, entry.committee_id, auth.user.id, true);
         if (entry.revision !== revision) throw new AppError({code: 'REVISION_CONFLICT', message: 'This file changed since it was loaded.'});
         if (!['UPLOAD_COMPLETE', 'PENDING_REVIEW'].includes(entry.status)) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'File status does not allow rejection.'});
         const settings = await this.readSettings(client, committee.id);

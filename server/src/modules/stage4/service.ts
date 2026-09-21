@@ -894,10 +894,12 @@ export class Stage4Service {
         const [version, discussion, decisions] = await Promise.all([
           client.query<{id: string; version_number: number; content: string; content_file_entry_id: string | null;
             logical_name: string | null; original_name: string | null; media_type: string | null;
-            file_status: 'UPLOAD_COMPLETE' | 'PENDING_REVIEW' | 'PUBLISHED' | null; created_at: Date}>(`SELECT
+            file_status: 'UPLOAD_COMPLETE' | 'PENDING_REVIEW' | 'PUBLISHED' | 'REJECTED' | 'DELETED' | null;
+            file_type: import('@quorum/contracts').DelegateFileType | null; created_at: Date}>(`SELECT
             v.id,v.version_number,v.content,v.content_file_entry_id,e.logical_name,f.original_name,f.media_type,
-            CASE WHEN e.status='DELETED' THEN NULL ELSE e.status END AS file_status,v.created_at
+            e.status AS file_status,m.file_type,v.created_at
             FROM document_versions v LEFT JOIN file_entries e ON e.id=v.content_file_entry_id
+            LEFT JOIN delegate_file_metadata m ON m.file_entry_id=e.id
             LEFT JOIN file_versions f ON f.id=e.current_version_id WHERE v.document_id=$1 AND v.id=$2`,
           [row.id, row.current_version_id]),
           client.query<{id: string; seat_id: string; seat_display_name: string; content: string; rule_stable_id: string;
@@ -970,9 +972,10 @@ export class Stage4Service {
             sessionOrdinal: meetingSessionsResult.rows.find(session => session.id === row.meeting_session_id)!.ordinal}, committee.committee_language), status: row.status,
           rulePackageVersionId: row.rule_package_version_id,
           currentVersion: {id: current.id, versionNumber: current.version_number, content: current.content,
-            contentFile: current.content_file_entry_id && current.logical_name && current.original_name && current.media_type
-              && current.file_status ? {id: current.content_file_entry_id, logicalName: current.logical_name,
-                originalName: current.original_name, mediaType: current.media_type, status: current.file_status} : null,
+            contentFile: current.content_file_entry_id ? {id: current.content_file_entry_id,
+              logicalName: current.logical_name ?? current.content_file_entry_id,
+              originalName: current.original_name ?? '', mediaType: current.media_type ?? '',
+              status: current.file_status ?? 'DELETED', fileType: current.file_type ?? null} : null,
             createdAt: current.created_at.toISOString()}, votingVersionId: row.voting_version_id, public: row.is_public,
           proposerSeatId, seconderSeatId, delegatesCanAmend, directVote,
           resultDecisions: decisions.rows.map(item => ({id: item.id, previousStatus: item.previous_status,

@@ -1,6 +1,7 @@
 import type {ContentLanguage} from './localization.js';
 
 export const ERROR_TEXT = {
+  DOCUMENT_FILE_NOT_PUBLISHED: {en: "This file is unavailable. Choose a published file from this committee.", 'zh-CN': "此文件不可用，请选择本委员会已发布的文件。"},
   SAVE_TIMEOUT: {en: "Saving timed out. Try again.", "zh-CN": "保存超时，请重试。"},
   IMAGE_REQUIRED: {en: "Please choose an image file", "zh-CN": "请选择图片文件"},
   FLAG_TOO_LARGE: {en: "Flag images must be smaller than 5 MB", "zh-CN": "旗帜图片必须小于 5 MB"},

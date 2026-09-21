@@ -484,10 +484,13 @@ export class Stage6StorageService {
     const id = uuid(fileEntryId, 'File ID');
     return idempotentTransaction({pool: this.pool, auth, route: `/api/v1/files/${id}`, key: idempotencyKey,
       request: body, status: 200, work: async client => {
+      const located = (await client.query<{committee_id: string}>(
+        'SELECT committee_id FROM file_entries WHERE id=$1', [id])).rows[0];
+      if (!located) throw new AppError({code: 'NOT_FOUND', message: 'File not found.'});
+      const committee = await lockedCommittee(client, located.committee_id);
       const entry = (await client.query<FileEntryRow>('SELECT * FROM file_entries WHERE id=$1 FOR UPDATE',
         [id])).rows[0];
       if (!entry || entry.status === 'DELETED') throw new AppError({code: 'NOT_FOUND', message: 'File not found.'});
-      const committee = await lockedCommittee(client, entry.committee_id);
       requireProceedingsActive(committee);
       requireFileRevision(entry, request.baseRevision);
       const chair = await isChair(client, committee.id, auth.user.id);
