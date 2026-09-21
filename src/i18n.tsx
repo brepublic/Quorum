@@ -166,6 +166,7 @@ const zhCN: Record<string, string> = {
   "End sharing": "结束分享",
   "File name": "文件名称",
   "Submitted by": "提交国",
+  "File source": "来源",
   "File type": "文件类型",
   "Submitted at": "提交时间",
   "Original file": "原始文件",

@@ -83,15 +83,17 @@ export class Stage6S3CommitService {
     const id = uuid(uploadId, 'Upload ID');
     const claim = await this.claim(auth, id, idempotencyKey);
     if (claim.kind === 'REPLAY') return claim.file;
-    const providerConfig = await this.configs.providerForBinding(claim.providerConfigId);
-    const store = this.storeFactory(providerConfig);
     let provider: {storageKey: string; sizeBytes: number; sha256: string};
     try {
+      const providerConfig = await this.configs.providerForBinding(claim.providerConfigId);
+      const store = this.storeFactory(providerConfig);
       provider = await store.commitFromStaging({blobId: claim.upload.provider_blob_id as string,
         staging: this.staging, stagingKey: claim.upload.staging_key,
         expectedSizeBytes: Number(claim.upload.expected_size_bytes),
         expectedSha256: claim.upload.expected_sha256_hex});
     } catch (error) {
+      await this.pool.query(`UPDATE file_uploads SET provider_commit_failed=true,updated_at=now()
+        WHERE id=$1 AND status='STAGED'`, [id]);
       if (error instanceof ProviderStorageError) throw new AppError({code: error.apiCode, message: error.message});
       throw error;
     }
@@ -119,7 +121,7 @@ export class Stage6S3CommitService {
           logicalName: current.logical_name, originalName: current.original_name, mediaType: current.media_type,
           sizeBytes: provider.sizeBytes, sha256: provider.sha256, storageKey: provider.storageKey
         }, context, current.id);
-        const committed = await client.query<{revision: number}>(`UPDATE file_uploads SET status='COMMITTED',
+        const committed = await client.query<{revision: number}>(`UPDATE file_uploads SET status='COMMITTED',provider_commit_failed=false,
           committed_at=now(),committed_blob_id=$2,committed_file_entry_id=$3,committed_file_version_id=$4,
           revision=revision+1,updated_at=now() WHERE id=$1 RETURNING revision`,
         [current.id, current.provider_blob_id, file.id, file.currentVersion.id]);
@@ -176,6 +178,7 @@ export class Stage6S3CommitService {
       } else if (upload.provider_storage_key !== s3ObjectKey(binding.key_prefix, upload.provider_blob_id)) {
         throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Upload provider target is invalid.'});
       }
+      await client.query('UPDATE file_uploads SET provider_commit_failed=false WHERE id=$1', [upload.id]);
       return {kind: 'COMMIT', upload, providerConfigId: binding.provider_config_id};
     });
   }

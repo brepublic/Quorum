@@ -203,7 +203,7 @@ function DelegateFileReviewPanel({snapshot, api, files, refresh}: {
       <Card.Content><div className="motion-heading delegate-file-heading"><Card.Header><Form.Input aria-label={t("File name")} value={nameFor(file)}
         onChange={event => { const value = event.currentTarget.value; setNames(current => ({...current, [file.id]: value})); }} /></Card.Header></div>
         <Card.Meta><Table compact celled className="motion-metadata-table delegate-file-metadata"><Table.Body>
-          <Table.Row><Table.Cell className="motion-metadata-key">{t("Submitted by")}</Table.Cell><Table.Cell>{file.submissionSource === 'CHAIR' ? t('Chair') : file.submitterDisplayName ?? '—'}</Table.Cell></Table.Row>
+          <Table.Row><Table.Cell className="motion-metadata-key">{t("File source")}</Table.Cell><Table.Cell>{file.submissionSource === 'CHAIR' ? t('Chair') : file.submitterDisplayName ?? '—'}</Table.Cell></Table.Row>
           <Table.Row><Table.Cell className="motion-metadata-key">{t("File type")}</Table.Cell><Table.Cell><Form.Select compact options={FILE_TYPES.map(item => ({...item, text: delegateFileTypeName(item.value, snapshot.committee.committeeLanguage)}))}
             value={types[file.id]} onChange={(_, data) => setTypes(current => ({...current,
               [file.id]: data.value as DelegateFileType}))} /></Table.Cell></Table.Row>

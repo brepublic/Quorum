@@ -6,7 +6,7 @@ import {link, lstat, mkdir, mkdtemp, open, realpath, rm, unlink} from 'node:fs/p
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
 import pg from 'pg';
-import {afterEach, beforeEach, describe, expect, it} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {runMigrations} from '../../db/migrations';
 import {PostgresIdentityStore} from '../identity/postgres';
 import {IdentityService} from '../identity/service';
@@ -16,7 +16,7 @@ import {Stage4Service} from '../stage4/service';
 import {Stage6StorageService} from './service';
 import {DurableStagingStore, type StagingOperations} from './staging';
 import {Stage6UploadService} from './upload-service';
-import {ServerVolumeStore} from './server-volume';
+import {ProviderStorageError, ServerVolumeStore} from './server-volume';
 import {Stage6ServerVolumeService} from './server-volume-service';
 import {StorageCredentialCipher} from './credential-crypto';
 import {Stage6S3ConfigService} from './s3-config-service';
@@ -242,7 +242,20 @@ integration('PostgreSQL stage 6 file metadata', () => {
         .rejects.toMatchObject({code: 'IDEMPOTENCY_CONFLICT'});
       expect((await portal.bootstrap(capability, claimed.sessionToken)).submissions).not.toContainEqual(expect.objectContaining({id: up.id}));
       await portal.receiveContent(claimed.sessionToken, up.id, (async function* () {yield content;})(), `${key}-bytes`, content.length, context('bytes'));
+      if (key === 'first') {
+        transport.failPut = true;
+        const volumeFailure = provider === 'SERVER_VOLUME' ? vi.spyOn(volume, 'commitFromStaging')
+          .mockRejectedValueOnce(new ProviderStorageError('PROVIDER_IO_FAILED', 'SERVICE_NOT_READY', 'Injected disk failure')) : undefined;
+        await expect(portal.commitUpload(claimed.sessionToken, up.id, `${key}-commit`, context('failed-copy'))).rejects.toBeDefined();
+        const failed = await portal.bootstrap(capability, claimed.sessionToken);
+        expect(failed.pendingUploads).toContainEqual(expect.objectContaining({id: up.id, status: 'FAILED'}));
+        expect(failed.submissions).toEqual([]);
+        expect(await portal.listReview(fixture.chair, fixture.committee.id)).toEqual([]);
+        transport.failPut = false;
+        volumeFailure?.mockRestore();
+      }
       const result = await portal.commitUpload(claimed.sessionToken, up.id, `${key}-commit`, context('commit'));
+      expect((await portal.bootstrap(capability, claimed.sessionToken)).pendingUploads).not.toContainEqual(expect.objectContaining({id: up.id}));
       if ('kind' in result) throw new Error('Volume/S3 saves must finish before returning a file');
       expect(result.status).toBe('PENDING_REVIEW');
       expect(await portal.commitUpload(claimed.sessionToken, up.id, `${key}-commit`, context('replay'))).toEqual(result);
@@ -277,6 +290,32 @@ integration('PostgreSQL stage 6 file metadata', () => {
     expect((await portal.bootstrap(capability, claimed.sessionToken)).storageAvailable).toBe(false);
     await pool!.query('UPDATE committees SET active_storage_binding_id=$2 WHERE id=$1', [fixture.committee.id, fixture.binding.id]);
     expect((await portal.bootstrap(capability, claimed.sessionToken)).files.map(file => file.id)).toEqual([approved.id]);
+    // Historical published entries without metadata stay published and retain unknown source/type.
+    await pool!.query('DELETE FROM delegate_file_metadata WHERE file_entry_id=$1', [approved.id]);
+    expect((await portal.bootstrap(capability, claimed.sessionToken)).files[0]).toMatchObject({
+      id: approved.id, submissionSource: 'LEGACY', submitterDisplayName: null, fileType: null
+    });
+    expect((await reader.get(fixture.chair, approved.id)).status).toBe('PUBLISHED');
+    if (provider === 'SERVER_VOLUME') {
+      const config = await createMigrationS3Config('Shared Migration');
+      const migrations = new Stage6MigrationService(pool!, staging, volume, configs,
+        config => new S3CompatibleStore(config, transport, 20 * 1024 * 1024));
+      const migration = await migrations.create(fixture.chair, fixture.committee.id, {
+        baseRevision: await revision(), targetProviderType: 'S3_COMPATIBLE', targetProviderConfigId: config.id
+      }, 'shared-migration', context('shared-migration'));
+      while (await migrations.processNextCopyItem()) { /* Copy all three retained files. */ }
+      const ready = (await migrations.list(fixture.chair, fixture.committee.id))[0]!;
+      await migrations.confirm(fixture.chair, migration.id, {baseRevision: ready.revision},
+        'confirm-shared-migration', context('confirm-shared-migration'));
+      const afterMigration = await portal.bootstrap(capability, claimed.sessionToken);
+      expect(afterMigration.storageAvailable).toBe(true);
+      expect(afterMigration.files.map(file => file.id)).toEqual([approved.id]);
+      expect(afterMigration.submissions).toContainEqual(expect.objectContaining({id: rejected.id, status: 'REJECTED'}));
+      expect((await reader.get(fixture.chair, chairFile.id)).status).toBe('PENDING_REVIEW');
+      const migratedDownload = await portal.download(claimed.sessionToken, approved.id);
+      const migratedChunks = []; for await (const chunk of migratedDownload.content) migratedChunks.push(chunk);
+      expect(Buffer.concat(migratedChunks).toString()).toBe(content);
+    }
     await portal.endShare(fixture.chair, fixture.committee.id, share.revision, context('end'));
     await expect(portal.authenticate(claimed.sessionToken)).rejects.toMatchObject({code: 'AUTHENTICATION_REQUIRED'});
     await expect(portal.bootstrap(capability)).rejects.toMatchObject({code: 'LINK_EXPIRED'});

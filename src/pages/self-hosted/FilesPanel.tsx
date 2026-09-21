@@ -259,7 +259,7 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
             </Label></>}
           </Card.Meta>
           <Card.Description>{file.currentVersion.originalName}
-            <div>{t('Submitted by')}: {file.submissionSource === 'CHAIR' ? t('Chair') : file.submitterDisplayName ?? '—'}</div>
+            <div>{t('File source')}: {file.submissionSource === 'CHAIR' ? t('Chair') : file.submitterDisplayName ?? '—'}</div>
             <div>{t('File type')}: {file.fileType ? delegateFileTypeName(file.fileType, snapshot.committee.committeeLanguage) : '—'}</div>
             <div>{t('Submitted at')}: {file.submittedAt ? new Date(file.submittedAt).toLocaleString(getLanguage()) : '—'}</div>
             {file.rejectionReason && <div>{file.rejectionReason}</div>}

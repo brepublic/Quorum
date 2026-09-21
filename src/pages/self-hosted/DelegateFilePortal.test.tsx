@@ -29,6 +29,22 @@ afterEach(async () => {await act(async () => root.unmount()); host.remove(); vi.
 function client(overrides: Partial<SelfHostedApi>): SelfHostedApi {return overrides as SelfHostedApi;}
 
 describe('delegate file portal', () => {
+  it('keeps unsaved and failed uploads out of the reviewed file history', async () => {
+    await act(async () => root.render(<DelegateFilePortal api={client({bootstrapDelegatePortal: async () => ({
+      committeeId: 'committee', committeeLanguage: 'zh-CN' as const, committeeName: '委员会', shareId: 'share',
+      claimedSeat: {id: 'seat', displayName: '中国'}, eligibleSeats: [], mayUpload: true, storageAvailable: false,
+      eventSequence: 0, files: [], submissions: [], maxUploadSizeBytes: 20 * 1024 * 1024,
+      pendingUploads: [{id: 'saving', logicalName: '保存中.txt', status: 'SAVING'},
+        {id: 'failed', logicalName: '失败.txt', status: 'FAILED'}]
+    })})} />));
+    await act(async () => (Array.from(host.querySelectorAll('a')).find(item => item.textContent === '上传文件') as HTMLElement).click());
+    expect(host.textContent).toContain('正在保存');
+    expect(host.textContent).toContain('保存失败');
+    expect(host.textContent).toContain('文件存储暂不可用');
+    expect(host.textContent).not.toContain('等待审核');
+    expect(host.querySelectorAll('.delegate-file-card-list .card')).toHaveLength(0);
+  });
+
   it('blocks oversized files before hashing or upload and allows a replacement exactly at the runtime limit', async () => {
     const limit = 32 * 1024 * 1024;
     const hash = vi.spyOn(hashing, 'sha256File').mockResolvedValue('a'.repeat(64));

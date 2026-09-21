@@ -22,7 +22,7 @@ function portalError(error: unknown): string {
   if (error.localization?.reason) return apiErrorText(error);
   return ({LINK_EXPIRED: t("The sharing link has expired."), RESOURCE_CONFLICT: t("The current state does not allow this action."),
     AUTHENTICATION_REQUIRED: t("Your delegate session has expired. Reopen the sharing link."), FORBIDDEN: t("This delegation cannot upload files."),
-    PAYLOAD_TOO_LARGE: t("The file is too large. Choose a smaller file."), SERVICE_NOT_READY: t("The chair computer is unavailable."),
+    PAYLOAD_TOO_LARGE: t("The file is too large. Choose a smaller file."), SERVICE_NOT_READY: t("File storage unavailable"),
     VALIDATION_FAILED: t("Invalid file information.")} as Record<string, string>)[error.code] ?? apiErrorText(error);
 }
 function fileSizeMiB(bytes: number | null | undefined): string {
@@ -40,7 +40,7 @@ function PublishedCard({file, committeeLanguage, preparing, onDownload}: {
     <div className="motion-heading delegate-file-heading"><Card.Header>{file.logicalName}</Card.Header>
       <span className="motion-decision motion-decision-passed">{t("Approved point")}</span></div>
     <Card.Meta><Table compact celled className="motion-metadata-table delegate-file-metadata"><Table.Body>
-      <Table.Row><Table.Cell className="motion-metadata-key">{t("Submitted by")}</Table.Cell><Table.Cell>{file.submissionSource === 'CHAIR' ? t('Chair') : file.submitterDisplayName ?? '—'}</Table.Cell></Table.Row>
+      <Table.Row><Table.Cell className="motion-metadata-key">{t("File source")}</Table.Cell><Table.Cell>{file.submissionSource === 'CHAIR' ? t('Chair') : file.submitterDisplayName ?? '—'}</Table.Cell></Table.Row>
       <Table.Row><Table.Cell className="motion-metadata-key">{t("File type")}</Table.Cell><Table.Cell>{file.fileType ? delegateFileTypeName(file.fileType, committeeLanguage) : '—'}</Table.Cell></Table.Row>
       <Table.Row><Table.Cell className="motion-metadata-key">{t("Submitted at")}</Table.Cell><Table.Cell>{dateTime(file.submittedAt)}</Table.Cell></Table.Row>
       <Table.Row><Table.Cell className="motion-metadata-key">{t("Reviewed at")}</Table.Cell><Table.Cell>{dateTime(file.publishedAt)}</Table.Cell></Table.Row>
@@ -211,7 +211,7 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
             <span className={`motion-decision ${item.status === 'PUBLISHED' ? 'motion-decision-passed' : item.status === 'REJECTED' ? 'motion-decision-failed' : ''}`}>
               {({UPLOAD_COMPLETE:t("Upload complete"),PENDING_REVIEW:t("Pending review"),PUBLISHED:t("Approved point"),REJECTED:t("File status: Rejected"),DELETED:t("Deleted")})[item.status]}</span></div>
           <Card.Meta><Table compact celled className="motion-metadata-table delegate-file-metadata"><Table.Body>
-            <Table.Row><Table.Cell className="motion-metadata-key">{t("Submitted by")}</Table.Cell><Table.Cell>{item.submissionSource === 'CHAIR' ? t('Chair') : item.submitterDisplayName ?? '—'}</Table.Cell></Table.Row>
+            <Table.Row><Table.Cell className="motion-metadata-key">{t("File source")}</Table.Cell><Table.Cell>{item.submissionSource === 'CHAIR' ? t('Chair') : item.submitterDisplayName ?? '—'}</Table.Cell></Table.Row>
             <Table.Row><Table.Cell className="motion-metadata-key">{t("File type")}</Table.Cell><Table.Cell>{item.fileType ? delegateFileTypeName(item.fileType, portal.committeeLanguage) : '—'}</Table.Cell></Table.Row>
             <Table.Row><Table.Cell className="motion-metadata-key">{t("Submitted at")}</Table.Cell><Table.Cell>{dateTime(item.submittedAt)}</Table.Cell></Table.Row>
             {item.reviewedAt && <Table.Row><Table.Cell className="motion-metadata-key">{t("Reviewed at")}</Table.Cell><Table.Cell>{dateTime(item.reviewedAt)}</Table.Cell></Table.Row>}
