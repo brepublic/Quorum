@@ -36,6 +36,8 @@ interface FileEntryRow extends QueryResultRow {
   id: string;
   committee_id: string;
   logical_name: string;
+  formal_name: string | null;
+  merged_into_file_entry_id: string | null;
   media_type: string;
   status: FileEntryStatus;
   sync_state: FileEntry['syncState'];
@@ -393,6 +395,8 @@ export class Stage6StorageService {
       if (!entry || entry.committee_id !== committee.id || entry.status === 'DELETED') {
         throw new AppError({code: 'NOT_FOUND', message: 'File not found.'});
       }
+      if (entry.formal_name || entry.merged_into_file_entry_id) throw new AppError({code: 'RESOURCE_CONFLICT',
+        message: 'Upload a new submission and approve it through review.', details: {reason: 'FILE_UPDATE_REQUIRES_REVIEW'}});
       requireFileRevision(entry, input.baseRevision);
       if (entry.created_by_user_id !== auth.user.id && committee.owner_user_id !== auth.user.id
         && !(await isChair(client, committee.id, auth.user.id))) {
@@ -490,13 +494,14 @@ export class Stage6StorageService {
       const committee = await lockedCommittee(client, located.committee_id);
       const entry = (await client.query<FileEntryRow>('SELECT * FROM file_entries WHERE id=$1 FOR UPDATE',
         [id])).rows[0];
-      if (!entry || entry.status === 'DELETED') throw new AppError({code: 'NOT_FOUND', message: 'File not found.'});
+      if (!entry || entry.status === 'DELETED' || entry.merged_into_file_entry_id) throw new AppError({code: 'NOT_FOUND', message: 'File not found.'});
       requireProceedingsActive(committee);
       requireFileRevision(entry, request.baseRevision);
       const chair = await isChair(client, committee.id, auth.user.id);
       if (!chair && committee.owner_user_id !== auth.user.id && entry.created_by_user_id !== auth.user.id) {
         throw new AppError({code: 'FORBIDDEN', message: 'Only the file owner or Chair may delete this file.'});
       }
+      const mergedIds = await deleteMergedFileSubmissions(client, committee.id, entry.id, auth.user.id);
       const tombstoneId = randomUUID();
       const deleted = await client.query<{deleted_at: Date}>(`UPDATE file_entries SET status='DELETED',
         current_version_id=NULL,revision=revision+1,updated_at=now(),deleted_at=now()
@@ -506,11 +511,11 @@ export class Stage6StorageService {
         VALUES ($1,$2,$3,$4,$5,$6)`,
       [tombstoneId, committee.id, entry.id, entry.revision, auth.user.id, deleted.rows[0]?.deleted_at]);
       const contentBlobs = await client.query<{blob_id: string}>(
-        'SELECT blob_id FROM file_versions WHERE file_entry_id=$1', [entry.id]);
+        'SELECT DISTINCT blob_id FROM file_versions WHERE file_entry_id=ANY($1::uuid[])', [[entry.id, ...mergedIds]]);
       const contentIds = contentBlobs.rows.map(row => row.blob_id);
       const deleteBlobs = await client.query<{blob_id: string}>(`SELECT blob_id FROM file_versions
-        WHERE file_entry_id=$1 UNION SELECT c.copy_blob_id FROM file_blob_copies c
-        WHERE c.content_blob_id=ANY($2::uuid[])`, [entry.id, contentIds]);
+        WHERE file_entry_id=ANY($1::uuid[]) UNION SELECT c.copy_blob_id FROM file_blob_copies c
+        WHERE c.content_blob_id=ANY($2::uuid[])`, [[entry.id, ...mergedIds], contentIds]);
       await client.query(`DELETE FROM file_blob_copies WHERE content_blob_id=ANY($1::uuid[])`, [contentIds]);
       await client.query(`UPDATE file_blobs SET durability_state='DELETE_PENDING',updated_at=now()
         WHERE id=ANY($1::uuid[]) AND durability_state='COMMITTED'`, [deleteBlobs.rows.map(row => row.blob_id)]);
@@ -546,4 +551,18 @@ export class Stage6StorageService {
         lastContentRevision: entry.revision, deletedAt: (deleted.rows[0]?.deleted_at as Date).toISOString()};
     }});
   }
+}
+
+// Merged entries are retained submission history, not separately deletable business files.
+export async function deleteMergedFileSubmissions(client: PoolClient, committeeId: string, targetId: string,
+  actorId: string): Promise<string[]> {
+  const sources = await client.query(`SELECT id,revision FROM file_entries WHERE committee_id=$1
+    AND merged_into_file_entry_id=$2 AND status<>'DELETED' ORDER BY id FOR UPDATE`, [committeeId, targetId]);
+  for (const source of sources.rows) {
+    await client.query(`UPDATE file_entries SET status='DELETED',current_version_id=NULL,deleted_at=now(),
+      revision=revision+1,updated_at=now() WHERE id=$1`, [source.id]);
+    await client.query(`INSERT INTO file_tombstones(id,committee_id,file_entry_id,last_content_revision,deleted_by_user_id)
+      VALUES($1,$2,$3,$4,$5)`, [randomUUID(),committeeId,source.id,source.revision,actorId]);
+  }
+  return sources.rows.map(source => source.id as string);
 }

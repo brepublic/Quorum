@@ -747,29 +747,17 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
         onBehalfOfSeatId: fixture.firstSeat.id},
       context('reject-unpublished-file'))).rejects.toMatchObject({code: 'RESOURCE_CONFLICT',
         details: {reason: 'DOCUMENT_FILE_NOT_PUBLISHED'}});
-    await pool?.query(`UPDATE file_entries SET status='PUBLISHED',submitted_at=now(),published_at=now(),published_by_user_id=$2 WHERE id=$1`,
-      [fileId, fixture.firstChair.user.id]);
-    draft = await stage5.createDocumentVersion(fixture.firstChair, draft.id,
-      {baseRevision: draft.revision, customTitle: draft.customTitle, content: '', contentFileEntryId: fileId,
-        onBehalfOfSeatId: fixture.firstSeat.id},
-      context('attach-resolution-file'));
-    expect(draft.currentVersion.contentFile).toMatchObject({id: fileId, status: 'PUBLISHED', originalName: 'draft.pdf'});
+    // A pre-migration document may already reference a submission awaiting review.
+    await pool!.query(`WITH legacy AS (INSERT INTO document_versions
+      (id,document_id,version_number,content,content_file_entry_id,created_by_user_id,created_on_behalf_of_seat_id)
+      SELECT $3,document_id,version_number+1,'',$2,created_by_user_id,created_on_behalf_of_seat_id
+        FROM document_versions WHERE id=$1 RETURNING id,document_id)
+      UPDATE documents SET current_version_id=legacy.id,revision=revision+1 FROM legacy WHERE documents.id=legacy.document_id`,
+      [draft.currentVersion.id,fileId,randomUUID()]);
+    draft = {...draft,revision:draft.revision+1};
     const workspace = await stage4.snapshot(fixture.committee.id, fixture.firstChair);
     expect(workspace.documents?.find(document => document.id === draft.id)?.currentVersion.contentFile)
-      .toMatchObject({id: fileId, logicalName: 'Draft body', originalName: 'draft.pdf', status: 'PUBLISHED'});
-    const changedFileVersionId = randomUUID();
-    const versionClient = await pool!.connect();
-    try {
-      await versionClient.query('BEGIN');
-      await versionClient.query(`UPDATE file_entries SET status='PENDING_REVIEW',current_version_id=$2,
-        published_at=NULL,published_by_user_id=NULL,revision=revision+1 WHERE id=$1`, [fileId, changedFileVersionId]);
-      await versionClient.query(`INSERT INTO file_versions
-        (id,committee_id,file_entry_id,version_number,blob_id,original_name,media_type,size_bytes,sha256,created_by_user_id)
-        SELECT $2,committee_id,file_entry_id,2,blob_id,'updated.pdf',media_type,size_bytes,sha256,created_by_user_id
-          FROM file_versions WHERE id=$1`, [fileVersionId, changedFileVersionId]);
-      await versionClient.query('COMMIT');
-    } catch (caught) {await versionClient.query('ROLLBACK'); throw caught;}
-    finally {versionClient.release();}
+      .toMatchObject({id: fileId, logicalName: 'Draft body', originalName: 'draft.pdf', status: 'UPLOAD_COMPLETE'});
 
     const motion = await stage5.proposeMotion(fixture.firstChair, fixture.committee.id,
       {meetingSessionId: fixture.session.id, motionTypeId: 'introduce-draft-resolution',
@@ -821,6 +809,9 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
     if (bound.status === 'rejected') expect(bound.reason).toMatchObject({code: 'RESOURCE_CONFLICT',
       details: {reason: 'DOCUMENT_FILE_NOT_PUBLISHED'}});
     const latestRevision = (await pool!.query('SELECT revision FROM documents WHERE id=$1', [amendment.id])).rows[0].revision;
+    await expect(stage5.setResolutionDirectVote(fixture.firstChair,draft.id,
+      {seatId:fixture.firstSeat.id,choice:'FOR'},context('deleted-direct-vote')))
+      .rejects.toMatchObject({code:'RESOURCE_CONFLICT',details:{reason:'DOCUMENT_FILE_NOT_PUBLISHED'}});
     const deletedSnapshot = await stage4.snapshot(fixture.committee.id, fixture.firstChair);
     for (const id of [draft.id, amendment.id]) expect(deletedSnapshot.documents?.find(item => item.id === id)?.currentVersion)
       .toMatchObject({content: '', contentFile: {id: fileId, status: 'DELETED', logicalName: 'Draft body'}});

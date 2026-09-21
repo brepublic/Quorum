@@ -80,7 +80,7 @@ export interface StorageAgentTaskCompletionFinalizer {
 
 const TASK_SELECT = `SELECT task.*,encode(task.expected_sha256,'hex') AS expected_sha256_hex,
   encode(task.actual_sha256,'hex') AS actual_sha256_hex,
-  upload.logical_name AS source_upload_logical_name
+  coalesce(upload.agent_relative_path,upload.logical_name) AS source_upload_logical_name
   FROM storage_agent_tasks task LEFT JOIN file_uploads upload ON upload.id=task.source_upload_id`;
 
 function positiveInteger(value: unknown, name: string): number {
@@ -212,7 +212,7 @@ export class Stage7StorageTaskService {
         LEFT JOIN LATERAL (SELECT blob_id,size_bytes FROM file_versions
           WHERE file_entry_id=e.id AND (id=e.current_version_id OR e.status='DELETED') ORDER BY version_number DESC LIMIT 1) v ON true
         LEFT JOIN storage_cache_entries c ON c.blob_id=v.blob_id AND c.committee_id=e.committee_id
-        WHERE e.committee_id=$1 AND ($2::uuid IS NULL OR e.id>$2::uuid)
+        WHERE e.committee_id=$1 AND e.merged_into_file_entry_id IS NULL AND ($2::uuid IS NULL OR e.id>$2::uuid)
         ORDER BY e.id LIMIT 201`, [lease.committeeId, after || null]);
       const rows = result.rows.slice(0, 200);
       return {files: rows.map(row => ({fileEntryId: row.id, logicalName: row.logical_name,
@@ -275,7 +275,7 @@ export class Stage7StorageTaskService {
         failure_code=NULL,failure_reason=NULL,updated_at=now() WHERE id=$1
         RETURNING *,encode(expected_sha256,'hex') AS expected_sha256_hex,
           encode(actual_sha256,'hex') AS actual_sha256_hex,
-          (SELECT logical_name FROM file_uploads upload
+          (SELECT coalesce(agent_relative_path,logical_name) FROM file_uploads upload
             WHERE upload.id=storage_agent_tasks.source_upload_id) AS source_upload_logical_name`,
         [row.id, requestId, randomUUID()]);
       return task(updated.rows[0] as TaskRow);

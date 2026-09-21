@@ -1,4 +1,4 @@
-import {randomUUID} from 'node:crypto';
+import {createHash, randomUUID} from 'node:crypto';
 import type {Pool, PoolClient, QueryResultRow} from 'pg';
 import type {
   DelegateFileShare,
@@ -13,6 +13,7 @@ import type {
   PendingHostCommit
 } from '@quorum/contracts';
 import {committeeContentName, isAllowedDelegateFile, type DelegateFileSettings, type DefaultFileRejectionSettings} from '@quorum/contracts';
+import {assertExactBody} from '../stage4/validation.js';
 import {rejectionTypes, allowedExtensions} from './settings.js';
 import {AppError} from '../../http/errors.js';
 import type {AuthenticatedSession, IdentityUser} from '../identity/store.js';
@@ -276,47 +277,104 @@ export class DelegateFileService {
     return [...reviewed, ...deleted];
   }
 
+  private async approvalState(client: PoolClient, auth: AuthenticatedSession, fileId: string,
+    body: Record<string, unknown>) {
+    const revision = positiveRevision(body.baseRevision);
+    const logicalName = bounded(body.logicalName, 'File name', 500); const type = fileType(body.fileType);
+    const located = (await client.query<{committee_id: string}>(
+      'SELECT committee_id FROM file_entries WHERE id=$1', [fileId])).rows[0];
+    if (!located) throw new AppError({code: 'NOT_FOUND', message: 'File not found.'});
+    const committee = await this.requireManager(client, located.committee_id, auth.user.id, true);
+    const entry = (await client.query(`SELECT * FROM file_entries WHERE id=$1 FOR UPDATE`, [fileId])).rows[0];
+    if (!entry || entry.status === 'DELETED' || entry.merged_into_file_entry_id)
+      throw new AppError({code: 'NOT_FOUND', message: 'File not found.'});
+    if (entry.revision !== revision) throw new AppError({code: 'REVISION_CONFLICT',
+      message: 'This file changed since it was loaded.', details: {currentRevision: entry.revision}});
+    if (!['UPLOAD_COMPLETE','PENDING_REVIEW'].includes(entry.status)) throw new AppError({code: 'RESOURCE_CONFLICT',
+      message: 'File status does not allow approval.'});
+    const version = (await client.query(`SELECT v.*,encode(v.sha256,'hex') AS hash FROM file_versions v
+      JOIN file_blobs b ON b.id=v.blob_id AND b.durability_state='COMMITTED' WHERE v.id=$1`, [entry.current_version_id])).rows[0];
+    if (!version) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'File content is unavailable.'});
+    const target = (await client.query(`SELECT * FROM file_entries WHERE committee_id=$1 AND formal_name=$2 COLLATE "C"
+      AND status<>'DELETED' AND id<>$3 FOR UPDATE`, [committee.id, logicalName, fileId])).rows[0];
+    const token = target ? createHash('sha256').update(JSON.stringify([fileId, revision, entry.current_version_id,
+      version.hash, logicalName, type, target.id, target.revision, target.current_version_id])).digest('hex') : null;
+    return {committee, entry, version, target, token, logicalName, type};
+  }
+
+  async previewApproval(auth: AuthenticatedSession, fileIdValue: string, body: Record<string, unknown>) {
+    requireBusinessIdentity(auth); assertExactBody(body, ['baseRevision','logicalName','fileType']);
+    return transaction(this.pool, async client => {
+      const state = await this.approvalState(client, auth, uuid(fileIdValue, 'File ID'), body);
+      return {logicalName: state.logicalName, confirmationToken: state.token,
+        target: state.target ? {id: state.target.id as string, revision: state.target.revision as number,
+          logicalName: state.target.logical_name as string} : null};
+    });
+  }
+
   async approve(auth: AuthenticatedSession, fileIdValue: string, body: Record<string, unknown>,
     context: Stage4Context): Promise<DelegateReviewFile> {
-    requireBusinessIdentity(auth);
-    const fileId = uuid(fileIdValue, 'File ID'); const revision = positiveRevision(body.baseRevision);
-    const logicalName = bounded(body.logicalName, 'File name', 500); const type = fileType(body.fileType);
-    await transaction(this.pool, async client => {
-      const located = (await client.query<{committee_id: string}>(
-        'SELECT committee_id FROM file_entries WHERE id=$1', [fileId])).rows[0];
-      if (!located) throw new AppError({code: 'NOT_FOUND', message: 'File not found.'});
-      const committee = await this.requireManager(client, located.committee_id, auth.user.id, true);
-      const entry = (await client.query<{id: string; committee_id: string; created_by_user_id: string; status: string;
-        revision: number; submitted_at: Date | null; created_at: Date}>(`SELECT * FROM file_entries WHERE id=$1 FOR UPDATE`, [fileId])).rows[0];
-      if (!entry || entry.status === 'DELETED') throw new AppError({code: 'NOT_FOUND', message: 'File not found.'});
-      if (entry.revision !== revision) throw new AppError({code: 'REVISION_CONFLICT', message: 'This file changed since it was loaded.',
-        details: {currentRevision: entry.revision}});
-      if (!['UPLOAD_COMPLETE', 'PENDING_REVIEW'].includes(entry.status)) throw new AppError({code: 'RESOURCE_CONFLICT',
-        message: 'File status does not allow approval.'});
+    requireBusinessIdentity(auth); assertExactBody(body, ['baseRevision','logicalName','fileType','confirmationToken']);
+    const fileId = uuid(fileIdValue, 'File ID');
+    const resultId = await transaction(this.pool, async client => {
+      const {committee, entry, version, target, token, logicalName, type} = await this.approvalState(client, auth, fileId, body);
+      if (target && target.status !== 'PUBLISHED') throw new AppError({code: 'RESOURCE_CONFLICT',
+        message: 'The formal file is not published.', details: {reason: 'FILE_REPLACEMENT_CHANGED'}});
+      if ((target || body.confirmationToken !== undefined) && body.confirmationToken !== token)
+        throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Confirm this replacement after refreshing its preview.',
+          details: {reason: body.confirmationToken ? 'FILE_REPLACEMENT_CHANGED' : 'FILE_REPLACEMENT_CONFIRMATION_REQUIRED'}});
       const existing = (await client.query<MetadataRow>('SELECT * FROM delegate_file_metadata WHERE file_entry_id=$1', [fileId])).rows[0];
-      const source = existing?.submission_source ?? 'LEGACY';
-      const submitter = existing?.submitter_display_name ?? null;
-      const seatId = existing?.submitted_by_seat_id ?? null;
-      const now = new Date();
+      const source = existing?.submission_source ?? 'LEGACY'; const submitter = existing?.submitter_display_name ?? null;
+      const now = new Date(); const resultId = target?.id ?? fileId;
       await client.query(`INSERT INTO delegate_file_metadata
-        (file_entry_id,submission_source,submitted_by_seat_id,submitter_display_name,file_type,submitted_at)
-        VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (file_entry_id) DO UPDATE SET file_type=EXCLUDED.file_type`,
-      [fileId, source, seatId, submitter, type, existing?.submitted_at ?? entry.submitted_at ?? entry.created_at]);
+        (file_entry_id,submission_source,submitted_by_seat_id,submitter_display_name,file_type,submitted_at,
+         approved_at,approved_by_user_id,approved_name)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT (file_entry_id) DO UPDATE SET
+          file_type=EXCLUDED.file_type,approved_at=EXCLUDED.approved_at,approved_by_user_id=EXCLUDED.approved_by_user_id,
+          approved_name=EXCLUDED.approved_name`,
+      [fileId, source, existing?.submitted_by_seat_id ?? null, submitter, type,
+        existing?.submitted_at ?? entry.submitted_at ?? entry.created_at, now, auth.user.id, logicalName]);
       await client.query(`UPDATE file_entries SET logical_name=$2,status='PUBLISHED',submitted_at=COALESCE(submitted_at,$3),
-        published_at=$3,published_by_user_id=$4,revision=revision+1,updated_at=$3 WHERE id=$1`,
-      [fileId, logicalName, now, auth.user.id]);
+        published_at=$3,published_by_user_id=$4,merged_into_file_entry_id=$5,revision=revision+1,updated_at=$3 WHERE id=$1`,
+      [fileId, logicalName, now, auth.user.id, target?.id ?? null]);
+      if (target) {
+        const versionId = randomUUID();
+        await client.query(`INSERT INTO file_versions
+          (id,committee_id,file_entry_id,version_number,blob_id,original_name,media_type,size_bytes,sha256,created_by_user_id,source_file_entry_id)
+          SELECT $1,$2,$3,coalesce(max(version_number),0)+1,$4,$5,$6,$7,$8,$9,$10 FROM file_versions WHERE file_entry_id=$3`,
+        [versionId, committee.id, target.id, version.blob_id, version.original_name, version.media_type,
+          version.size_bytes, version.sha256, version.created_by_user_id, fileId]);
+        await client.query(`UPDATE file_entries SET current_version_id=$2,media_type=$3,published_at=$4,
+          published_by_user_id=$5,submitted_at=$6,revision=revision+1,updated_at=$4 WHERE id=$1`,
+        [target.id, versionId, version.media_type, now, auth.user.id, existing?.submitted_at ?? entry.submitted_at ?? entry.created_at]);
+        const sequence = (await client.query(`UPDATE committees SET next_storage_manifest_sequence=next_storage_manifest_sequence+1,
+          file_manifest_revision=file_manifest_revision+1 WHERE id=$1 RETURNING next_storage_manifest_sequence-1 AS sequence`, [committee.id])).rows[0].sequence;
+        await client.query(`INSERT INTO storage_manifest_events
+          (committee_id,sequence,kind,file_entry_id,file_revision,version_id,blob_id,logical_name,original_name,media_type,size_bytes,sha256)
+          VALUES ($1,$2,'UPSERT',$3,$4,$5,$6,coalesce((SELECT logical_name FROM storage_manifest_events WHERE file_entry_id=$3 ORDER BY sequence DESC LIMIT 1),file_agent_path($3,$7)),$8,$9,$10,$11)`,
+        [committee.id, sequence, target.id, target.revision + 1, versionId, version.blob_id, logicalName,
+          version.original_name, version.media_type, version.size_bytes, version.sha256]);
+        const migrations = await client.query(`UPDATE storage_migrations SET status='FAILED',ready_at=NULL,revision=revision+1,
+          failure_code='MANIFEST_CHANGED',failure_reason='The file manifest changed during review.',updated_at=now()
+          WHERE committee_id=$1 AND status IN ('COPYING','READY_TO_CONFIRM') RETURNING id,revision`, [committee.id]);
+        for (const migration of migrations.rows) await appendEvent(client, committee, {type: 'storage.migration_failed',
+          resourceType: 'storage_migration',resourceId: migration.id,revision: migration.revision,audience: 'CHAIR',
+          payload: {status: 'FAILED',failureCode: 'MANIFEST_CHANGED'}});
+      }
       await client.query(`UPDATE storage_cache_entries SET state='READY',state_changed_at=now(),updated_at=now()
         WHERE file_entry_id=$1 AND state='REVIEW_PINNED'`, [fileId]);
-      await appendEvent(client, committee, {type: 'file.published', resourceType: 'file_entry', resourceId: fileId,
-        revision: entry.revision + 1, audience: 'PUBLIC', payload: {status: 'PUBLISHED', logicalName,
+      await appendEvent(client, committee, {type: 'file.published', resourceType: 'file_entry', resourceId: resultId,
+        revision: (target?.revision ?? entry.revision) + 1, audience: 'PUBLIC', payload: {status: 'PUBLISHED', logicalName,
           fileType: type, submissionSource: source, submitterDisplayName: submitter, publishedAt: now.toISOString()}});
       await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id,
         capabilities: committee.owner_user_id === auth.user.id ? ['OWNER'] : ['CHAIR'],
         action: 'storage.file_published', resourceType: 'file_entry', resourceId: fileId,
-        before: {status: entry.status, revision: entry.revision},
-        after: {status: 'PUBLISHED', revision: entry.revision + 1, logicalName, fileType: type}});
+        before: {status: entry.status, revision: entry.revision, targetRevision: target?.revision},
+        after: {status: 'PUBLISHED', revision: entry.revision + 1, logicalName, fileType: type,
+          publishedFileId: resultId, sourceVersionId: version.id}});
+      return resultId as string;
     });
-    return (await this.listReview(auth, (await this.files.get(auth, fileId)).committeeId)).find(item => item.id === fileId) as DelegateReviewFile;
+    return this.reviewFile(await this.files.get(auth, resultId));
   }
 
   async reject(auth: AuthenticatedSession, fileIdValue: string, body: Record<string, unknown>, key: string,
@@ -556,10 +614,10 @@ export class DelegateFileService {
   }
 
   private reviewFile(file: FileEntry, metadata?: MetadataRow): DelegateReviewFile {
-    return {id: file.id, logicalName: file.logicalName, submitterDisplayName: metadata?.submitter_display_name ?? null,
-      fileType: metadata?.file_type ?? null, submittedAt: metadata?.submitted_at?.toISOString() ?? file.submittedAt,
+    return {id: file.id, logicalName: file.logicalName, submitterDisplayName: file.submitterDisplayName ?? null,
+      fileType: file.fileType ?? null, submittedAt: file.submittedAt ?? metadata?.submitted_at?.toISOString() ?? null,
       publishedAt: file.publishedAt ?? '', revision: file.revision,
-      status: file.status as DelegateReviewFile['status'], submissionSource: metadata?.submission_source ?? 'LEGACY',
+      status: file.status as DelegateReviewFile['status'], submissionSource: file.submissionSource ?? 'LEGACY',
       originalName: file.currentVersion.originalName, sizeBytes: file.currentVersion.sizeBytes,
       rejectionReason: metadata?.rejection_reason ?? null, reviewedAt: metadata?.rejected_at?.toISOString() ?? file.publishedAt};
   }
@@ -590,17 +648,17 @@ export class DelegateFileService {
   }
 
   private async history(committeeId: string, seatId?: string, deletedOnly = false): Promise<DelegateReviewFile[]> {
-    const result = await this.pool.query(`SELECT e.id,e.logical_name,e.status,e.revision,e.published_at,m.*,
+    const result = await this.pool.query(`SELECT e.id,e.logical_name,e.status,e.revision,e.published_at,e.merged_into_file_entry_id,m.*,
       v.original_name,v.size_bytes FROM file_entries e JOIN delegate_file_metadata m ON m.file_entry_id=e.id
-      JOIN LATERAL (SELECT original_name,size_bytes FROM file_versions WHERE file_entry_id=e.id ORDER BY version_number DESC LIMIT 1) v ON true WHERE e.committee_id=$1
+      JOIN LATERAL (SELECT original_name,size_bytes FROM file_versions WHERE file_entry_id=e.id AND source_file_entry_id IS NULL ORDER BY version_number DESC LIMIT 1) v ON true WHERE e.committee_id=$1
       AND ($2::uuid IS NULL OR (m.submission_source='DELEGATE_PORTAL' AND m.submitted_by_seat_id=$2))
-      AND ($3::boolean=false OR (e.status='DELETED' AND m.rejected_at IS NOT NULL)) ORDER BY m.submitted_at DESC,e.id`,
+      AND ($3::boolean=false OR ((e.status='DELETED' AND m.rejected_at IS NOT NULL) OR e.merged_into_file_entry_id IS NOT NULL)) ORDER BY m.submitted_at DESC,e.id`,
       [committeeId,seatId ?? null,deletedOnly]);
-    return result.rows.map(row => ({id:row.id,logicalName:row.logical_name,status:row.rejected_at ? 'REJECTED' : row.status,
+    return result.rows.map(row => ({id:row.id,logicalName:row.approved_name ?? row.logical_name,publishedFileId:row.merged_into_file_entry_id ?? row.id,status:row.rejected_at ? 'REJECTED' : row.status,
       revision:row.revision,submitterDisplayName:row.submitter_display_name,fileType:row.file_type,
-      submittedAt:row.submitted_at?.toISOString() ?? null,publishedAt:row.published_at?.toISOString() ?? '',
+      submittedAt:row.submitted_at?.toISOString() ?? null,publishedAt:(row.approved_at ?? row.published_at)?.toISOString() ?? '',
       submissionSource:row.submission_source,originalName:row.original_name,sizeBytes:Number(row.size_bytes),
-      rejectionReason:row.rejection_reason,reviewedAt:(row.rejected_at ?? row.published_at)?.toISOString() ?? null,deleted:row.status==='DELETED'}));
+      rejectionReason:row.rejection_reason,reviewedAt:(row.rejected_at ?? row.approved_at ?? row.published_at)?.toISOString() ?? null,deleted:row.status==='DELETED'}));
   }
 
   private async publishedForSession(session: DelegateSessionRow): Promise<DelegatePublishedFile[]> {
@@ -608,8 +666,8 @@ export class DelegateFileService {
       .filter(item => item.status === 'PUBLISHED');
     const metadata = await this.metadata(entries.map(item => item.id));
     return entries.map(file => { const item = metadata.get(file.id); return {
-      id: file.id, logicalName: file.logicalName, submissionSource: item?.submission_source ?? 'LEGACY', submitterDisplayName: item?.submitter_display_name ?? null,
-      fileType: item?.file_type ?? null, submittedAt: item?.submitted_at?.toISOString() ?? file.submittedAt,
+      id: file.id, logicalName: file.logicalName, submissionSource: file.submissionSource ?? 'LEGACY', submitterDisplayName: file.submitterDisplayName ?? null,
+      fileType: file.fileType ?? null, submittedAt: file.submittedAt,
       publishedAt: file.publishedAt as string, revision: file.revision
     }; }).sort((a, b) => b.publishedAt.localeCompare(a.publishedAt));
   }

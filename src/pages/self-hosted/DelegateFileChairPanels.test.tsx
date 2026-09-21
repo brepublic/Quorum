@@ -22,6 +22,42 @@ beforeEach(() => {setLanguage('zh-CN');host = document.createElement('div'); doc
 afterEach(async () => {await act(async () => root.unmount()); host.remove();});
 
 describe('delegate file chair review', () => {
+  it.each(['en','zh-CN'] as const)('confirms a replacement in a centered dialog and retains the submission on cancel in %s', async language => {
+    setLanguage(language);
+    const pending = {...reviewFile, logicalName: publishedFile.logicalName};
+    const approveDelegateFile = vi.fn(async () => publishedFile);
+    const previewFileApproval = vi.fn(async () => ({logicalName: publishedFile.logicalName,
+      target: {id: publishedFile.id,revision: publishedFile.revision,logicalName:publishedFile.logicalName},confirmationToken:'bound-token'}));
+    const api = {getDelegateFileShare: async()=>null,listDelegateReviewFiles:async()=>[pending,publishedFile],
+      approveDelegateFile,previewFileApproval} as unknown as SelfHostedApi;
+    await act(async()=>root.render(<DelegateFilePanels tab="review" snapshot={snapshot} api={api}/>));
+    const hint=language==='en'?'This name already exists. Approval will update the existing file.':'该名称已存在，批准后将更新已有文件。';
+    expect(host.textContent).toContain(hint);
+    const input=host.querySelector('input')!;
+    await act(async()=>{Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')!.set!.call(input,'New name');
+      input.dispatchEvent(new Event('input',{bubbles:true}));});
+    expect(host.textContent).not.toContain(hint);
+    await act(async()=>{Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')!.set!.call(input,publishedFile.logicalName);
+      input.dispatchEvent(new Event('input',{bubbles:true}));});
+    expect(host.textContent).toContain(hint);
+    const approve=()=>[...host.querySelectorAll('button')].find(button=>button.textContent===(language==='en'?'Approve file':'批准'))!;
+    await act(async()=>{approve().click();await Promise.resolve();});
+    expect(approveDelegateFile).not.toHaveBeenCalled();
+    const dialog=document.body.querySelector('.ui.modal')!;
+    expect(dialog.textContent).toContain(publishedFile.logicalName);
+    expect(dialog.classList.contains('top')).toBe(false);
+    const cancel=[...dialog.querySelectorAll('button')].find(button=>button.textContent===(language==='en'?'Cancel':'取消'))!;
+    await act(async()=>cancel.click());
+    expect(approveDelegateFile).not.toHaveBeenCalled();
+    expect((host.querySelector('input') as HTMLInputElement).value).toBe(publishedFile.logicalName);
+    await act(async()=>{approve().click();await Promise.resolve();});
+    const confirm=[...document.body.querySelectorAll<HTMLButtonElement>('.ui.modal button')].find(button=>button.textContent===
+      (language==='en'?'Confirm replacement and publish':'确认替换并发布'))!;
+    await act(async()=>{confirm.click();confirm.click();await Promise.resolve();});
+    expect(approveDelegateFile).toHaveBeenCalledTimes(1);
+    expect(approveDelegateFile).toHaveBeenCalledWith(pending.id,pending.revision,publishedFile.logicalName,'WORKING_PAPER','bound-token');
+  });
+
   it('keeps the upload component separate from review cards', async () => {
     const api = {listPendingHostCommits: async () => [], createFileUpload: vi.fn(), uploadFileContent: vi.fn(), commitFileUpload: vi.fn()} as unknown as SelfHostedApi;
     await act(async () => root.render(<DelegateFileUploadPanel snapshot={snapshot} api={api} />));

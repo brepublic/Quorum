@@ -156,6 +156,55 @@ async function stagedUpload(owner: AuthenticatedSession, committeeId: string, na
 }
 
 integration('PostgreSQL stage 7 storage Agent identity', () => {
+  it('retains Chair replacement sources for online refill and offline cache without allowing local overwrite', async () => {
+    const value=await fixture();const chair=await chairStorage(value.owner,value.committee.id);
+    const refill=new StorageCacheRefillService(pool!,cache);
+    const reader=new Stage6FileService(pool!,{} as never,{} as never,()=>{throw new Error('Unexpected S3');},staging,staging,refill);
+    const review=new DelegateFileService(pool!,uploads,{} as never,reader,storage,cache);
+    const paths:string[]=[];
+    const commit=async()=>{
+      const source=await stagedUpload(value.owner,value.committee.id,'same-name.txt');
+      const pending=await chairProvider.queueUpload(value.owner,source.staged.id,{},randomUUID(),context('replacement-queue'));
+      const claimed=await tasks.claim(chair.paired.credential,pending.taskId,{leaseGeneration:pending.leaseGeneration,fileRevision:1,requestId:randomUUID()});
+      paths.push(claimed.logicalName!);
+      await tasks.complete(chair.paired.credential,pending.taskId,{leaseGeneration:pending.leaseGeneration,fileRevision:1,
+        claimToken:claimed.claimToken,requestId:randomUUID()},context('replacement-commit'));
+      const file=(await pool!.query('SELECT committed_file_entry_id AS id FROM file_uploads WHERE id=$1',[source.staged.id])).rows[0];
+      return {file:await reader.get(value.owner,file.id),source};
+    };
+    const first=await commit();const next=await commit();expect(new Set(paths).size).toBe(2);
+    const input=(file:typeof first.file)=>({baseRevision:file.revision,logicalName:'Official',fileType:'WORKING_PAPER'});
+    await review.approve(value.owner,first.file.id,input(first.file),context('chair-first-approve'));
+    const preview=await review.previewApproval(value.owner,next.file.id,input(next.file));
+    await review.approve(value.owner,next.file.id,{...input(next.file),confirmationToken:preview.confirmationToken},context('chair-replace'));
+    const current=await reader.get(value.owner,first.file.id);expect(current.currentVersion.blobId).toBe(next.file.currentVersion.blobId);
+    await pool!.query("UPDATE storage_hosts SET status='DEGRADED' WHERE id=$1",[chair.paired.host.id]);
+    await expect(reader.prepareDownload(value.owner,current.id)).resolves.toMatchObject({status:'READY'});
+    await staging.remove(cacheStorageKey(current.currentVersion.blobId));
+    await pool!.query("UPDATE storage_cache_entries SET state='MISSING',storage_key=NULL,cached_at=NULL WHERE blob_id=$1",[current.currentVersion.blobId]);
+    await expect(reader.prepareDownload(value.owner,current.id)).resolves.toMatchObject({status:'UNAVAILABLE'});
+    await agent.heartbeat(chair.paired.credential,{leaseGeneration:chair.paired.host.leaseGeneration,agentProtocolVersion:2,capabilities:['SSE_WAKE','CACHE_REFILL']});
+    await expect(reader.prepareDownload(value.owner,current.id)).resolves.toMatchObject({status:'PREPARING'});
+    const refillTask=(await tasks.tasks(chair.paired.credential,chair.paired.host.leaseGeneration)).tasks.find(task=>task.type==='FETCH_BLOB_TO_CACHE')!;
+    expect(refillTask.fileEntryId).toBe(next.file.id);
+    const claimed=await tasks.claim(chair.paired.credential,refillTask.id,{leaseGeneration:refillTask.leaseGeneration,
+      fileRevision:refillTask.fileRevision,requestId:randomUUID()});
+    await tasks.receiveContent(chair.paired.credential,{taskId:refillTask.id,leaseGeneration:claimed.leaseGeneration,
+      fileRevision:claimed.fileRevision,claimToken:claimed.claimToken as string,expectedSha256:next.source.sha256,
+      contentLength:next.source.content.length,source:(async function*(){yield next.source.content;})(),context:context('replacement-refill-content')});
+    await tasks.complete(chair.paired.credential,claimed.id,{leaseGeneration:claimed.leaseGeneration,fileRevision:claimed.fileRevision,
+      claimToken:claimed.claimToken,requestId:randomUUID()},context('replacement-refill'));
+    await expect(reader.downloadReadiness(value.owner,current.id)).resolves.toMatchObject({status:'READY'});
+    const manifest=await tasks.manifest(chair.paired.credential,chair.paired.host.leaseGeneration);
+    await expect(localChanges.submit(chair.paired.credential,{leaseGeneration:chair.paired.host.leaseGeneration,requestId:randomUUID(),
+      manifestSequence:manifest.nextSequence,change:{kind:'RENAME',fileEntryId:current.id,baseRevision:current.revision,logicalName:'bypass'}},context('local-bypass')))
+      .rejects.toMatchObject({code:'CHAIR_DECISION_REQUIRED',details:{reasonCode:'REVIEW_REQUIRED'}});
+    const conflict=(await conflicts.list(value.owner,value.committee.id)).find(item=>item.reasonCode==='REVIEW_REQUIRED')!;
+    await expect(conflicts.resolve(value.owner,value.committee.id,conflict.id,{baseRevision:conflict.revision,
+      leaseGeneration:chair.paired.host.leaseGeneration,fileRevision:current.revision,action:'ACCEPT_LOCAL'},randomUUID(),context('resolve-bypass')))
+      .rejects.toMatchObject({details:{reason:'FILE_UPDATE_REQUIRES_REVIEW'}});
+  });
+
   it('self revocation fences the device without changing another committee', async () => {
     const a = await fixture(); const b = await fixture();
     const first = (await pairInitial(a.owner,a.committee.id)).paired;
@@ -555,12 +604,12 @@ integration('PostgreSQL stage 7 storage Agent identity', () => {
       status: 'STAGED', agentCommitState: 'PENDING_HOST_COMMIT'}});
     const queued = await tasks.tasks(chair.paired.credential, pending.leaseGeneration, 0, 100);
     expect(queued.tasks).toEqual([expect.objectContaining({id: pending.taskId, type: 'HOST_COMMIT_BLOB',
-      logicalName: source.staged.logicalName})]);
+      logicalName: expect.stringMatching(/^submissions\/[0-9a-f-]+\/content$/)})]);
     await expect(uploads.listPendingHostCommits(value.owner, value.committee.id))
       .resolves.toEqual([expect.objectContaining({id: source.staged.id})]);
     const claimed = await tasks.claim(chair.paired.credential, pending.taskId, {
       leaseGeneration: pending.leaseGeneration, fileRevision: 1, requestId: randomUUID()});
-    expect(claimed).toMatchObject({type: 'HOST_COMMIT_BLOB', logicalName: source.staged.logicalName});
+    expect(claimed).toMatchObject({type: 'HOST_COMMIT_BLOB', logicalName: expect.stringMatching(/^submissions\/[0-9a-f-]+\/content$/)});
     const chunks: Buffer[] = [];
     await tasks.streamBlob(chair.paired.credential, {taskId: pending.taskId, blobId: claimed.blobId as string,
       leaseGeneration: pending.leaseGeneration, fileRevision: 1, claimToken: claimed.claimToken as string}, {

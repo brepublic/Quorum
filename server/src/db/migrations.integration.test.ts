@@ -51,6 +51,50 @@ afterEach(async () => {
 });
 
 integration('PostgreSQL migrations', () => {
+  it('stops the formal-name upgrade with conflicting file IDs instead of merging them', async () => {
+    const pool = new Pool({connectionString: databaseUrl});
+    const source = resolve('server/migrations');
+    const staged = await mkdtemp(join(tmpdir(), 'quorum-migrations-0066-')); temporaryDirectories.push(staged);
+    const userId=randomUUID(), committeeId=randomUUID(), packageId=randomUUID(), ruleId=randomUUID(), bindingId=randomUUID();
+    const fileIds=[randomUUID(),randomUUID()];
+    try {
+      for (const file of (await readdir(source)).filter(file=>file.endsWith('.sql') && Number(file.slice(0,4))<=65))
+        await cp(join(source,file),join(staged,file));
+      await runMigrations(pool,staged);
+      const client=await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query(`INSERT INTO users(id,email,display_name,status,is_system_admin,must_change_password)
+          VALUES($1,'formal@example.test','Formal','ACTIVE',false,false)`,[userId]);
+        await client.query("INSERT INTO rule_packages(id,scope,stable_key) VALUES($1,'BUILTIN','formal-test')",[packageId]);
+        await client.query(`INSERT INTO rule_package_versions(id,package_id,version,status,definition,schema_version,published_at)
+          VALUES($1,$2,1,'PUBLISHED','{}',1,now())`,[ruleId,packageId]);
+        await client.query(`INSERT INTO committees(id,owner_user_id,name,visibility,operation_mode,active_rule_package_version_id,content_snapshot,committee_language)
+          VALUES($1,$2,'Formal','PRIVATE','CHAIR_OPERATED',$3,$4,'en')`,[committeeId,userId,ruleId,
+            {schemaVersion:1,countryTemplate:{countries:[]},committeeTemplate:null,initialRulePackageVersionId:ruleId}]);
+        await client.query(`INSERT INTO storage_bindings(id,committee_id,provider_type,status,created_by_user_id)
+          VALUES($1,$2,'SERVER_VOLUME','ACTIVE',$3)`,[bindingId,committeeId,userId]);
+        for (const [index,fileId] of fileIds.entries()) {
+          const versionId=randomUUID(),blobId=randomUUID();
+          await client.query(`INSERT INTO file_blobs(id,committee_id,storage_binding_id,storage_key,size_bytes,sha256,durability_state)
+            VALUES($1,$2,$3,$4,1,$5,'COMMITTED')`,[blobId,committeeId,bindingId,`blobs/${blobId}`,Buffer.alloc(32,1)]);
+          await client.query(`INSERT INTO file_entries(id,committee_id,logical_name,media_type,status,current_version_id,created_by_user_id,published_at,submitted_at,published_by_user_id)
+            VALUES($1,$2,$3,'text/plain','PUBLISHED',$4,$5,now(),now(),$5)`,[fileId,committeeId,index?'\u3000Official\u00a0':'Official',versionId,userId]);
+          await client.query(`INSERT INTO file_versions(id,committee_id,file_entry_id,version_number,blob_id,original_name,media_type,size_bytes,sha256,created_by_user_id)
+            VALUES($1,$2,$3,1,$4,'source.txt','text/plain',1,$5,$6)`,[versionId,committeeId,fileId,blobId,Buffer.alloc(32,1),userId]);
+        }
+        await client.query('COMMIT');
+      } finally {client.release();}
+      await cp(join(source,'0066_formal_file_names.sql'),join(staged,'0066_formal_file_names.sql'));
+      let failure:unknown;try {await runMigrations(pool,staged);} catch(error) {failure=error;}
+      expect(String(failure)).toContain('Formal file name conflicts require review');
+      for(const id of fileIds) expect(String(failure)).toContain(id);
+      expect((await pool.query('SELECT count(*)::int AS count FROM file_entries')).rows[0].count).toBe(2);
+      expect((await migrationStatus(pool,staged)).latestAppliedVersion).toBe(65);
+    } finally {await pool.end();}
+  });
+
+
   it('upgrades schema 42 with default committee behavior values and formal-debate baseline', async () => {
     const pool = new Pool({connectionString: databaseUrl});
     const source = resolve('server/migrations'); const staged = await mkdtemp(join(tmpdir(), 'quorum-migrations-0043-'));
@@ -169,11 +213,11 @@ integration('PostgreSQL migrations', () => {
       );
       const applied = await pool.query('SELECT version FROM quorum_meta.schema_migrations');
 
-      expect(first).toEqual(expect.objectContaining({ready: true, latestAppliedVersion: 65}));
+      expect(first).toEqual(expect.objectContaining({ready: true, latestAppliedVersion: 66}));
       expect(second).toEqual(expect.objectContaining({ready: true, pendingVersions: []}));
       expect(status.ready).toBe(true);
-      expect(runtime.rows[0]?.schema_compatibility).toBe(65);
-      expect(applied.rowCount).toBe(65);
+      expect(runtime.rows[0]?.schema_compatibility).toBe(66);
+      expect(applied.rowCount).toBe(66);
       const stage3Tables = await pool.query<{name: string}>(`SELECT table_name AS name FROM information_schema.tables
         WHERE table_schema='public' AND table_name IN ('committees','committee_memberships','committee_capabilities',
         'committee_seats','seat_assignments','seat_invitations','rule_packages','rule_package_versions',

@@ -857,6 +857,12 @@ async function handleDelegateFileRequest(options: {
     sendJson(response, 200, success(await service.listReview(await authenticatedRead(request, identity),
       review[1] as string), requestId)); return true;
   }
+  const preview = /^\/api\/v1\/files\/([0-9a-f-]{36})\/approval-preview$/.exec(pathname);
+  if (preview && method === 'POST') {
+    requireOrigin(request, allowedOrigins); const auth = await authenticatedWrite(request, identity);
+    sendJson(response, 200, success(await service.previewApproval(auth, preview[1] as string, await readJson(request)), requestId));
+    return true;
+  }
   const decision = /^\/api\/v1\/files\/([0-9a-f-]{36})\/delegate-(approve|reject)$/.exec(pathname);
   if (decision && method === 'POST') {
     requireOrigin(request, allowedOrigins); const auth = await authenticatedWrite(request, identity); const body = await readJson(request);

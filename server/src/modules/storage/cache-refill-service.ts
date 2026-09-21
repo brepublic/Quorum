@@ -30,10 +30,10 @@ export class StorageCacheRefillService {
         AND status IN ('PENDING','IN_PROGRESS','RETRY')`, [host.id, host.lease_generation, input.blobId])).rowCount;
       if (!active) {
         const taskId = randomUUID();
-        const sourceRevision = (await client.query<{file_revision: number}>(`SELECT file_revision
-          FROM storage_manifest_events WHERE committee_id=$1 AND file_entry_id=$2 AND kind='UPSERT' AND blob_id=$3
-          ORDER BY sequence DESC LIMIT 1`, [input.committeeId, input.fileEntryId, input.blobId])).rows[0]?.file_revision;
-        if (!sourceRevision) return {status: 'UNAVAILABLE', code: 'STORAGE_AGENT_SOURCE_MISSING'};
+        const source = (await client.query<{file_revision: number; file_entry_id: string}>(`SELECT file_revision,file_entry_id
+          FROM storage_manifest_events WHERE committee_id=$1 AND file_entry_id=coalesce((SELECT source_file_entry_id FROM file_versions WHERE id=$4),$2) AND kind='UPSERT' AND blob_id=$3
+          ORDER BY sequence DESC LIMIT 1`, [input.committeeId, input.fileEntryId, input.blobId, input.fileVersionId])).rows[0];
+        if (!source) return {status: 'UNAVAILABLE', code: 'STORAGE_AGENT_SOURCE_MISSING'};
         const sequence = (await client.query<{sequence: string | number}>(`UPDATE committees
           SET next_storage_agent_task_sequence=next_storage_agent_task_sequence+1 WHERE id=$1
           RETURNING next_storage_agent_task_sequence-1 AS sequence`, [input.committeeId])).rows[0]?.sequence;
@@ -41,8 +41,8 @@ export class StorageCacheRefillService {
           (id,committee_id,host_id,lease_generation,sequence,task_type,file_entry_id,file_revision,blob_id,
            expected_size_bytes,expected_sha256,content_staging_key)
           VALUES ($1,$2,$3,$4,$5,'FETCH_BLOB_TO_CACHE',$6,$7,$8,$9,decode($10,'hex'),$11)`,
-        [taskId, input.committeeId, host.id, host.lease_generation, sequence, input.fileEntryId,
-          sourceRevision, input.blobId, input.sizeBytes, input.sha256, `agent-cache/${taskId}`]);
+        [taskId, input.committeeId, host.id, host.lease_generation, sequence, source.file_entry_id,
+          source.file_revision, input.blobId, input.sizeBytes, input.sha256, `agent-cache/${taskId}`]);
       }
       await client.query(`INSERT INTO storage_cache_entries
         (id,committee_id,file_entry_id,file_version_id,blob_id,state,size_bytes)

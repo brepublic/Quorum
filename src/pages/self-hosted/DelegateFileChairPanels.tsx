@@ -3,7 +3,7 @@ import {delegateFileTypeName, committeeContentName, formatCommitteeContent} from
 import * as React from 'react';
 import type {CommitteeWorkspaceSnapshot, DelegateFileType, DelegateReviewFile, DelegateFileSettings} from '@quorum/contracts';
 import QRCode from 'qrcode';
-import {Button, Card, Form, Icon, Image, Message, Modal, Progress, Segment, Table} from 'semantic-ui-react';
+import {Button, Card, Form, Header, Icon, Image, Message, Modal, Progress, Segment, Table} from 'semantic-ui-react';
 import {newIdempotencyKey, SelfHostedApiError, type SelfHostedApi} from '../../services/self-hosted-api';
 import {sha256File} from '../../services/sha256';
 import {storageErrorText} from './FilesPanel';
@@ -159,6 +159,9 @@ function DelegateFileReviewPanel({snapshot, api, files, refresh}: {
 }) {
   useLanguage();
   const [names, setNames] = React.useState<Record<string, string>>({});
+  const [replacing, setReplacing] = React.useState<{fileId: string; revision: number; logicalName: string;
+    fileType: DelegateFileType; confirmationToken: string}>();
+  const running = React.useRef(false);
   const [rejecting, setRejecting] = React.useState<DelegateReviewFile>();
   const [reason, setReason] = React.useState('');
   const [settings, setSettings] = React.useState<DelegateFileSettings>();
@@ -172,14 +175,24 @@ function DelegateFileReviewPanel({snapshot, api, files, refresh}: {
   React.useEffect(() => {
     setTypes(current => Object.fromEntries(files.map(item => [item.id, current[item.id] ?? item.fileType ?? 'WORKING_PAPER'])));
   }, [files]);
-  const run = async (operation: () => Promise<unknown>) => {setWorking(true); setError(undefined); try {await operation(); await refresh();}
-    catch (caught) {setError(caught);} finally {setWorking(false);}};
+  const run = async (operation: () => Promise<unknown>) => {if (running.current) return; running.current = true; setWorking(true); setError(undefined); try {await operation(); await refresh();}
+    catch (caught) {setError(caught); await refresh().catch(() => {});} finally {running.current = false; setWorking(false);}};
   const nameFor = (file: DelegateReviewFile) => {
     const fileType = types[file.id] ?? file.fileType ?? 'WORKING_PAPER';
     const suggestion = file.suggestedNames?.[fileType];
     return names[file.id] ?? (suggestion ? formatCommitteeContent({kind: 'FILE', fileType, ...suggestion},
       snapshot.committee.committeeLanguage) : file.logicalName);
   };
+  const approve = (file: DelegateReviewFile) => run(async () => {
+    const logicalName = nameFor(file).trim(); const fileType = types[file.id] ?? file.fileType ?? 'WORKING_PAPER';
+    const preview = await api.previewFileApproval(file.id, file.revision, logicalName, fileType);
+    if (preview.target && preview.confirmationToken) {
+      setReplacing({fileId: file.id, revision: file.revision, logicalName, fileType, confirmationToken: preview.confirmationToken});
+    } else await api.approveDelegateFile(file.id, file.revision, logicalName, fileType);
+  });
+  React.useEffect(() => {
+    if (replacing && !files.some(file => file.id === replacing.fileId && file.revision === replacing.revision)) setReplacing(undefined);
+  }, [files, replacing]);
   const [downloading, setDownloading] = React.useState<string>();
   const download = async (id: string) => {
     setDownloading(id); setError(undefined);
@@ -200,12 +213,14 @@ function DelegateFileReviewPanel({snapshot, api, files, refresh}: {
   return <div className="delegate-file-review-panel">
     {error && <Message error content={error} />}
     <div className="delegate-file-card-list">{pendingFiles.length ? pendingFiles.map(file => <Card fluid key={file.id} className="delegate-file-card motion-card">
-      <Card.Content><div className="motion-heading delegate-file-heading"><Card.Header><Form.Input aria-label={t("File name")} value={nameFor(file)}
-        onChange={event => { const value = event.currentTarget.value; setNames(current => ({...current, [file.id]: value})); }} /></Card.Header></div>
+      <Card.Content><div className="motion-heading delegate-file-heading"><Card.Header><Form.Input aria-label={t("File name")} disabled={working || Boolean(replacing)} value={nameFor(file)}
+        onChange={event => { const value = event.currentTarget.value; setNames(current => ({...current, [file.id]: value})); setReplacing(undefined); }} />
+        {files.some(existing => existing.id !== file.id && existing.status === 'PUBLISHED' && !existing.publishedFileId
+          && existing.logicalName === nameFor(file).trim()) && <div className="file-name-conflict-hint">{t("This name already exists. Approval will update the existing file.")}</div>}</Card.Header></div>
         <Card.Meta><Table compact celled className="motion-metadata-table delegate-file-metadata"><Table.Body>
           <Table.Row><Table.Cell className="motion-metadata-key">{t("File source")}</Table.Cell><Table.Cell>{file.submissionSource === 'CHAIR' ? t('Chair') : file.submitterDisplayName ?? '—'}</Table.Cell></Table.Row>
           <Table.Row><Table.Cell className="motion-metadata-key">{t("File type")}</Table.Cell><Table.Cell><Form.Select compact options={FILE_TYPES.map(item => ({...item, text: delegateFileTypeName(item.value, snapshot.committee.committeeLanguage)}))}
-            value={types[file.id]} onChange={(_, data) => setTypes(current => ({...current,
+            disabled={working || Boolean(replacing)} value={types[file.id]} onChange={(_, data) => setTypes(current => ({...current,
               [file.id]: data.value as DelegateFileType}))} /></Table.Cell></Table.Row>
           <Table.Row><Table.Cell className="motion-metadata-key">{t("Submitted at")}</Table.Cell><Table.Cell>{dateTime(file.submittedAt)}</Table.Cell></Table.Row>
           <Table.Row><Table.Cell className="motion-metadata-key">{t("Original file")}</Table.Cell><Table.Cell>{file.originalName}</Table.Cell></Table.Row>
@@ -213,12 +228,29 @@ function DelegateFileReviewPanel({snapshot, api, files, refresh}: {
       </Card.Content><Card.Content extra className="delegate-file-review-actions">
         <Button loading={downloading === file.id} disabled={Boolean(downloading)}
           onClick={() => void download(file.id)}>{t('Download file')}</Button>
-        <Button primary disabled={working || readOnly || !nameFor(file).trim()} onClick={() => void run(() => api.approveDelegateFile(
-          file.id, file.revision, nameFor(file), types[file.id] as DelegateFileType))}>{t("Approve point")}</Button>
+        <Button primary disabled={working || readOnly || !nameFor(file).trim()} onClick={() => void approve(file)}>{t("Approve file")}</Button>
         <Button negative disabled={working || readOnly} onClick={() => {setRejecting(file); setReason(''); setSettings(undefined); setRejectionTypeId(''); setError(undefined);
           void api.getDelegateFileSettings(snapshot.committee.id).then(next => {setSettings(next); setRejectionTypeId(next.rejectionTypes[0]?.id ?? '');})
             .catch(caught => setError(caught));}}>{t("OVERRULED")}</Button>
       </Card.Content></Card>) : <Message content={t("No files awaiting review")} />}</div>
+    <Modal size="tiny" open={Boolean(replacing)} closeOnDimmerClick={!working} closeOnEscape={!working}
+      onClose={() => {if (!working) setReplacing(undefined);}}>
+      <Modal.Header>{t('Replace and publish file')}</Modal.Header>
+      <Modal.Content><Header as="h4" style={{overflowWrap: 'anywhere'}}>{replacing?.logicalName}</Header>
+        <p>{t('This will replace the current version. Resolutions and amendments that reference this file will use the new version.')}</p>
+        {error && <Message error content={error} />}
+      </Modal.Content>
+      <Modal.Actions><Button disabled={working} onClick={() => setReplacing(undefined)}>{t('Cancel')}</Button>
+        <Button primary loading={working} disabled={working} onClick={() => {
+          const confirmed = replacing; if (!confirmed) return;
+          void run(async () => {
+            try {await api.approveDelegateFile(confirmed.fileId, confirmed.revision, confirmed.logicalName,
+              confirmed.fileType, confirmed.confirmationToken); setReplacing(undefined);}
+            catch (caught) {setReplacing(undefined); throw caught;}
+          });
+        }}>{t('Confirm replacement and publish')}</Button>
+      </Modal.Actions>
+    </Modal>
     <Modal size="tiny" open={Boolean(rejecting)} closeOnDimmerClick={!working} closeOnEscape={!working}
       onClose={() => {if (!working) setRejecting(undefined);}}>
       <Modal.Header>{t("Reject file")}</Modal.Header><Modal.Content>

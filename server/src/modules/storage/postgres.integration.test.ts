@@ -13,6 +13,7 @@ import {IdentityService} from '../identity/service';
 import type {AuthenticatedSession} from '../identity/store';
 import {Stage3Service} from '../stage3/service';
 import {Stage4Service} from '../stage4/service';
+import {Stage5Service} from '../stage5/service';
 import {Stage6StorageService} from './service';
 import {DurableStagingStore, type StagingOperations} from './staging';
 import {Stage6UploadService} from './upload-service';
@@ -207,6 +208,105 @@ async function committedServerFile(fixture: Awaited<ReturnType<typeof storageFix
 }
 
 integration('PostgreSQL stage 6 file metadata', () => {
+  it.each(['SERVER_VOLUME','S3_COMPATIBLE'] as const)('confirms formal-name replacement atomically without copying stored bytes on %s', async provider => {
+    const fixture = provider === 'SERVER_VOLUME' ? await storageFixture() : await s3Fixture();
+    const transport = new IntegrationS3Transport();
+    const configs = 'configs' in fixture ? fixture.configs : fileS3Configs;
+    const s3 = new Stage6S3CommitService(pool!, storage, staging, configs,
+      config => new S3CompatibleStore(config, transport, 20 * 1024 * 1024));
+    const reader = new Stage6FileService(pool!, volume, configs,
+      config => new S3CompatibleStore(config, transport, 20 * 1024 * 1024));
+    const commits = new Stage6ProviderCommitService(pool!, serverVolume, s3);
+    const review = new DelegateFileService(pool!, uploads, commits, reader, storage);
+    const submit = async (key: string) => {
+      const up = await uploads.createUpload(fixture.chair, fixture.committee.id, {logicalName: 'same-original.txt',
+        originalName: 'same-original.txt',mediaType: 'text/plain',expectedSizeBytes: key.length,sha256: digest(key)}, key, context(key));
+      await uploads.receiveContent(fixture.chair, up.id, (async function* () {yield key;})(), `${key}-bytes`,key.length,context(key));
+      const committed = await commits.commitUpload(fixture.chair, up.id, {}, `${key}-commit`,context(key));
+      if ('kind' in committed) throw new Error('Unexpected pending host commit');
+      return committed;
+    };
+    const first = await submit('original'); const second = await submit('replacement');
+    const input = (file: typeof first, logicalName='Resolution 1') => ({baseRevision:file.revision,logicalName,fileType:'RESOLUTION_DRAFT'});
+    const approved = await review.approve(fixture.chair, first.id,input(first,'\u00a0Resolution 1\u3000'),context('first-review'));
+    expect(approved.logicalName).toBe('Resolution 1');
+    const firstVersion = (await reader.get(fixture.chair,first.id)).currentVersion.id;
+    const session = await stage4.startMeetingSession(fixture.chair,fixture.committee.id,{},context('replacement-session'),randomUUID());
+    const seat = (await pool!.query('SELECT id FROM committee_seats WHERE committee_id=$1 ORDER BY id LIMIT 1',[fixture.committee.id])).rows[0];
+    await stage4.createAttendanceEvent(fixture.chair,fixture.committee.id,{meetingSessionId:session.id,seatId:seat.id,type:'PRESENT'},context('replacement-attendance'));
+    const proceedings = new Stage5Service(pool!);
+    let document = await proceedings.createResolution(fixture.chair,fixture.committee.id,
+      {meetingSessionId:session.id,customTitle:null,content:'',onBehalfOfSeatId:seat.id},randomUUID(),context('replacement-document'));
+    document = await proceedings.createDocumentVersion(fixture.chair,document.id,
+      {baseRevision:document.revision,customTitle:null,content:'',contentFileEntryId:first.id,onBehalfOfSeatId:seat.id},context('replacement-binding'));
+    await pool!.query("UPDATE documents SET status='PASSED',is_public=true WHERE id=$1",[document.id]);
+    const frozenBefore = (await pool!.query('SELECT * FROM documents WHERE id=$1',[document.id])).rows[0];
+    await expect(proceedings.createDocumentVersion(fixture.chair,document.id,
+      {baseRevision:document.revision,customTitle:null,content:'',contentFileEntryId:first.id,onBehalfOfSeatId:seat.id},context('frozen-binding')))
+      .rejects.toMatchObject({code:'RESOURCE_CONFLICT',message:'The document version is frozen.'});
+
+    await expect(review.previewApproval(fixture.member, second.id,input(second))).rejects.toMatchObject({code:'FORBIDDEN'});
+    await expect(review.approve(fixture.chair, second.id,input(second),context('unconfirmed')))
+      .rejects.toMatchObject({details:{reason:'FILE_REPLACEMENT_CONFIRMATION_REQUIRED'}});
+    await pool!.query('UPDATE file_entries SET logical_name=$2 WHERE id=$1',[second.id,'Resolution 1']);
+    await expect(reader.publish(fixture.chair,second.id,{baseRevision:second.revision},'old-publish',context('old-publish')))
+      .rejects.toMatchObject({details:{reason:'FILE_REPLACEMENT_CONFIRMATION_REQUIRED'}});
+    const preview = await review.previewApproval(fixture.chair,second.id,input(second));
+    expect(preview.target).toMatchObject({id:first.id,logicalName:'Resolution 1'});
+    await expect(review.approve(fixture.chair,second.id,{...input(second,'Renamed'),confirmationToken:preview.confirmationToken},context('renamed')))
+      .rejects.toMatchObject({details:{reason:'FILE_REPLACEMENT_CHANGED'}});
+    await expect(review.approve(fixture.chair,second.id,{...input(second),fileType:'WORKING_PAPER',confirmationToken:preview.confirmationToken},context('type-changed')))
+      .rejects.toMatchObject({details:{reason:'FILE_REPLACEMENT_CHANGED'}});
+    await pool!.query(`CREATE FUNCTION fail_replacement_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+      IF NEW.action='storage.file_published' THEN RAISE EXCEPTION 'injected failure'; END IF; RETURN NEW; END $$;
+      CREATE TRIGGER fail_replacement_audit BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION fail_replacement_audit()`);
+    await expect(review.approve(fixture.chair,second.id,{...input(second),confirmationToken:preview.confirmationToken},context('rollback'))).rejects.toThrow();
+    expect((await reader.get(fixture.chair,first.id)).currentVersion.id).toBe(firstVersion);
+    expect((await reader.get(fixture.chair,second.id)).status).toBe('PENDING_REVIEW');
+    await pool!.query('DROP TRIGGER fail_replacement_audit ON audit_log');
+    const result = await review.approve(fixture.chair,second.id,{...input(second),confirmationToken:preview.confirmationToken},context('replace'));
+    expect(result.id).toBe(first.id);
+    const current = await reader.get(fixture.chair,first.id);
+    expect(current.currentVersion.blobId).toBe(second.currentVersion.blobId);
+    expect(current.currentVersion.versionNumber).toBe(2);
+    expect((await pool!.query('SELECT * FROM documents WHERE id=$1',[document.id])).rows[0]).toEqual(frozenBefore);
+    const snapshot=await stage4.snapshot(fixture.committee.id,fixture.chair);
+    expect(snapshot.documents?.find(item=>item.id===document.id)?.currentVersion.contentFile)
+      .toMatchObject({id:first.id,originalName:current.currentVersion.originalName,status:'PUBLISHED'});
+
+    expect((await reader.list(fixture.chair,fixture.committee.id)).map(file=>file.id)).toEqual([first.id]);
+    expect((await pool!.query('SELECT count(*)::int AS count FROM file_blobs WHERE committee_id=$1',[fixture.committee.id])).rows[0].count).toBe(2);
+    expect((await review.listReview(fixture.chair,fixture.committee.id)).find(file=>file.id===second.id))
+      .toMatchObject({status:'PUBLISHED',publishedFileId:first.id,originalName:'same-original.txt'});
+    const downloaded = await reader.download(fixture.chair,first.id);
+    let bytes=''; for await (const chunk of downloaded.content) bytes+=chunk.toString(); expect(bytes).toBe('replacement');
+    await expect(storage.deleteFile(fixture.chair,second.id,{baseRevision:second.revision+1},'delete-source',context('delete-source')))
+      .rejects.toMatchObject({code:'NOT_FOUND'});
+    const third = await submit('third'); const stale = await review.previewApproval(fixture.chair,third.id,input(third));
+    const fourth = await submit('fourth'); const fresh = await review.previewApproval(fixture.chair,fourth.id,input(fourth));
+    await review.approve(fixture.chair,fourth.id,{...input(fourth),confirmationToken:fresh.confirmationToken},context('fourth'));
+    await expect(review.approve(fixture.chair,third.id,{...input(third),confirmationToken:stale.confirmationToken},context('stale')))
+      .rejects.toMatchObject({details:{reason:'FILE_REPLACEMENT_CHANGED'}});
+    const a=await submit('parallel-a');const b=await submit('parallel-b');
+    const parallel=await Promise.allSettled([review.approve(fixture.chair,a.id,input(a,'Concurrent'),context('concurrent-a')),
+      review.approve(fixture.chair,b.id,input(b,'Concurrent'),context('concurrent-b'))]);
+    expect(parallel.filter(item=>item.status==='fulfilled')).toHaveLength(1);
+    expect(parallel.find(item=>item.status==='rejected')).toMatchObject({reason:{details:{reason:'FILE_REPLACEMENT_CONFIRMATION_REQUIRED'}}});
+    // Exact case-sensitive names stay distinct.
+    await review.approve(fixture.chair,third.id,input(third,'resolution 1'),context('different-case'));
+    const last=await reader.get(fixture.chair,first.id);
+    await storage.deleteFile(fixture.chair,first.id,{baseRevision:last.revision},'delete-formal',context('delete-formal'));
+    await expect(reader.get(fixture.chair,first.id)).rejects.toMatchObject({code:'NOT_FOUND'});
+    expect((await pool!.query('SELECT status FROM file_entries WHERE id=ANY($1::uuid[])',[[second.id,fourth.id]])).rows)
+      .toEqual([{status:'DELETED'},{status:'DELETED'}]);
+    const reused=await submit('reused');
+    expect((await review.previewApproval(fixture.chair,reused.id,input(reused))).target).toBeNull();
+    expect((await review.approve(fixture.chair,reused.id,input(reused),context('reuse'))).id).toBe(reused.id);
+    const jobs=await pool!.query('SELECT blob_id FROM file_blob_delete_jobs WHERE committee_id=$1',[fixture.committee.id]);
+    expect(jobs.rows.map(row=>row.blob_id)).toEqual(expect.arrayContaining([first.currentVersion.blobId,second.currentVersion.blobId,fourth.currentVersion.blobId]));
+    expect(jobs.rows.map(row=>row.blob_id)).not.toContain(reused.currentVersion.blobId);
+  });
+
   it.each(['SERVER_VOLUME', 'S3_COMPATIBLE'] as const)('uses the same private submission, review and share lifecycle on %s', async provider => {
     const fixture = provider === 'SERVER_VOLUME' ? await storageFixture('PRIVATE') : await s3Fixture();
     await pool!.query(`UPDATE committees SET visibility='PRIVATE',operation_mode='CHAIR_OPERATED' WHERE id=$1`, [fixture.committee.id]);

@@ -117,10 +117,10 @@ export class Stage7ChairAgentProviderService implements StorageAgentTaskCompleti
           RETURNING next_storage_agent_task_sequence-1 AS sequence`, [committee.id]);
         const updated = await client.query<AgentUploadRow>(`UPDATE file_uploads SET provider_blob_id=$2,
           provider_storage_key=$3,agent_commit_state='PENDING_HOST_COMMIT',agent_task_id=$4,
-          agent_host_id=$5,agent_lease_generation=$6,revision=revision+1,updated_at=now() WHERE id=$1
+          agent_host_id=$5,agent_lease_generation=$6,agent_relative_path=$7,revision=revision+1,updated_at=now() WHERE id=$1
           RETURNING *,encode(expected_sha256,'hex') AS expected_sha256_hex,
             encode(actual_sha256,'hex') AS actual_sha256_hex`,
-        [current.id, blobId, storageKey, taskId, active.id, active.lease_generation]);
+        [current.id, blobId, storageKey, taskId, active.id, active.lease_generation, `submissions/${fileEntryId}/content`]);
         await client.query(`INSERT INTO storage_agent_tasks
           (id,committee_id,host_id,lease_generation,sequence,task_type,file_entry_id,file_revision,blob_id,
            expected_size_bytes,expected_sha256,source_upload_id)

@@ -18,7 +18,7 @@ describe('stage 7 Agent contracts', () => {
 
   it('freezes explicit Agent conflict reasons and Chair resolutions', () => {
     expect(STORAGE_AGENT_CONFLICT_REASONS).toEqual([
-      'MANIFEST_STALE', 'FILE_DELETED', 'REVISION_CONFLICT', 'NAME_CONFLICT', 'HOST_TRANSFERRED'
+      'MANIFEST_STALE', 'FILE_DELETED', 'REVISION_CONFLICT', 'NAME_CONFLICT', 'HOST_TRANSFERRED', 'REVIEW_REQUIRED'
     ]);
     expect(STORAGE_AGENT_CONFLICT_RESOLUTIONS).toEqual(['KEEP_SERVER', 'ACCEPT_LOCAL', 'SAVE_AS_NEW']);
   });

@@ -898,9 +898,10 @@ export class Stage4Service {
             file_type: import('@quorum/contracts').DelegateFileType | null; created_at: Date}>(`SELECT
             v.id,v.version_number,v.content,v.content_file_entry_id,e.logical_name,f.original_name,f.media_type,
             e.status AS file_status,m.file_type,v.created_at
-            FROM document_versions v LEFT JOIN file_entries e ON e.id=v.content_file_entry_id
-            LEFT JOIN delegate_file_metadata m ON m.file_entry_id=e.id
-            LEFT JOIN file_versions f ON f.id=e.current_version_id WHERE v.document_id=$1 AND v.id=$2`,
+            FROM document_versions v LEFT JOIN file_entries linked ON linked.id=v.content_file_entry_id
+            LEFT JOIN file_entries e ON e.id=coalesce(linked.merged_into_file_entry_id,linked.id)
+            LEFT JOIN file_versions f ON f.id=e.current_version_id
+            LEFT JOIN delegate_file_metadata m ON m.file_entry_id=coalesce(f.source_file_entry_id,e.id) WHERE v.document_id=$1 AND v.id=$2`,
           [row.id, row.current_version_id]),
           client.query<{id: string; seat_id: string; seat_display_name: string; content: string; rule_stable_id: string;
             created_at: Date}>(`SELECT id,seat_id,seat_display_name,content,rule_stable_id,created_at FROM discussion_entries

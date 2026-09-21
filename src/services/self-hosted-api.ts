@@ -754,9 +754,13 @@ export const selfHostedApi = {
   listDelegateReviewFiles(committeeId: string) {
     return request<DelegateReviewFile[]>(`/api/v1/committees/${committeeId}/delegate-file-review`);
   },
-  approveDelegateFile(fileId: string, baseRevision: number, logicalName: string, fileType: DelegateFileType) {
-    return request<DelegateReviewFile>(`/api/v1/files/${fileId}/delegate-approve`,
+  previewFileApproval(fileId: string, baseRevision: number, logicalName: string, fileType: DelegateFileType) {
+    return request<import('@quorum/contracts').FileApprovalPreview>(`/api/v1/files/${fileId}/approval-preview`,
       {method: 'POST', body: {baseRevision, logicalName, fileType}});
+  },
+  approveDelegateFile(fileId: string, baseRevision: number, logicalName: string, fileType: DelegateFileType, confirmationToken?: string) {
+    return request<DelegateReviewFile>(`/api/v1/files/${fileId}/delegate-approve`,
+      {method: 'POST', body: {baseRevision, logicalName, fileType, ...(confirmationToken ? {confirmationToken} : {})}});
   },
   rejectDelegateFile(fileId: string, baseRevision: number, logicalName: string, fileType: DelegateFileType, reason?: string, rejectionTypeId?: string) {
     return request<{id: string; fileEntryId: string}>(`/api/v1/files/${fileId}/delegate-reject`,

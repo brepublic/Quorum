@@ -18,7 +18,7 @@ const MIGRATION_STATUS: Record<StorageMigration['status'], string> = {
 const HOST_STATUS = {ACTIVE: "Online", DEGRADED: "Offline", REVOKED: "Revoked"} as const;
 const CONFLICT_REASON: Record<StorageAgentConflict['reasonCode'], string> = {
   MANIFEST_STALE: "Sync state changed", FILE_DELETED: "File deleted", REVISION_CONFLICT: "A newer file version exists",
-  NAME_CONFLICT: "File name conflict", HOST_TRANSFERRED: "Chair computer transferred"
+  NAME_CONFLICT: "File name conflict", HOST_TRANSFERRED: "Chair computer transferred", REVIEW_REQUIRED: "Upload and review this file on the web."
 };
 
 function migrationFailureText(code: string): string {
@@ -329,10 +329,10 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
 
               {t("Keep server version")}
             </Button>
-            {!['FILE_DELETED', 'HOST_TRANSFERRED'].includes(item.reasonCode) && <Button primary size="small"
+            {!['FILE_DELETED', 'HOST_TRANSFERRED', 'REVIEW_REQUIRED'].includes(item.reasonCode) && <Button primary size="small"
               disabled={item.reasonCode === 'NAME_CONFLICT' && !conflictNames[item.id]?.trim()}
               onClick={() => void run(() => resolveConflict(item, 'ACCEPT_LOCAL'))}>{t("Use local version")}</Button>}
-            {item.change.kind === 'UPSERT' && item.reasonCode !== 'HOST_TRANSFERRED' && <Button size="small"
+            {item.change.kind === 'UPSERT' && !['HOST_TRANSFERRED', 'REVIEW_REQUIRED'].includes(item.reasonCode) && <Button size="small"
               disabled={!conflictNames[item.id]?.trim()}
               onClick={() => void run(() => resolveConflict(item, 'SAVE_AS_NEW'))}>{t("Save as a new file")}</Button>}
           </Card.Content></Card>)}

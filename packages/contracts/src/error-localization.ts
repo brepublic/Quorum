@@ -1,6 +1,9 @@
 import type {ContentLanguage} from './localization.js';
 
 export const ERROR_TEXT = {
+  FILE_REPLACEMENT_CONFIRMATION_REQUIRED: {en: "This name already exists. Open file review to confirm the replacement.", 'zh-CN': "该名称已存在，请在文件审核中确认替换。"},
+  FILE_REPLACEMENT_CHANGED: {en: "The file changed. Refresh and confirm the replacement again.", 'zh-CN': "文件已变化，请刷新后重新确认替换。"},
+  FILE_UPDATE_REQUIRES_REVIEW: {en: "Upload a new submission on the web and approve it to update this file.", 'zh-CN': "请通过网页上传新提交，并审核批准以更新此文件。"},
   DOCUMENT_FILE_NOT_PUBLISHED: {en: "This file is unavailable. Choose a published file from this committee.", 'zh-CN': "此文件不可用，请选择本委员会已发布的文件。"},
   SAVE_TIMEOUT: {en: "Saving timed out. Try again.", "zh-CN": "保存超时，请重试。"},
   IMAGE_REQUIRED: {en: "Please choose an image file", "zh-CN": "请选择图片文件"},

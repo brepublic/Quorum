@@ -269,6 +269,14 @@ function sha256(value: string): Buffer {
   return createHash('sha256').update(value).digest();
 }
 
+async function requirePublishedDocumentFile(client: PoolClient, versionId: string): Promise<void> {
+  const source = (await client.query(`SELECT v.content_file_entry_id,e.status FROM document_versions v
+    LEFT JOIN file_entries linked ON linked.id=v.content_file_entry_id
+    LEFT JOIN file_entries e ON e.id=coalesce(linked.merged_into_file_entry_id,linked.id) WHERE v.id=$1`, [versionId])).rows[0];
+  if (source?.content_file_entry_id && source.status !== 'PUBLISHED') throw new AppError({code: 'RESOURCE_CONFLICT',
+    message: 'Publish the document content file before continuing.', details: {reason: 'DOCUMENT_FILE_NOT_PUBLISHED'}});
+}
+
 async function documentState(client: PoolClient, row: DocumentRow): Promise<ProceedingDocument> {
   const context = (await client.query<{committee_language: ContentLanguage; ordinal: number}>(
     `SELECT c.committee_language,s.ordinal FROM committees c JOIN meeting_sessions s ON s.committee_id=c.id
@@ -281,9 +289,10 @@ async function documentState(client: PoolClient, row: DocumentRow): Promise<Proc
     file_type: import('@quorum/contracts').DelegateFileType | null; created_at: Date}>(
   `SELECT v.id,v.version_number,v.content,v.content_file_entry_id,e.logical_name,f.original_name,f.media_type,
     e.status AS file_status,m.file_type,v.created_at
-    FROM document_versions v LEFT JOIN file_entries e ON e.id=v.content_file_entry_id
-    LEFT JOIN delegate_file_metadata m ON m.file_entry_id=e.id
-    LEFT JOIN file_versions f ON f.id=e.current_version_id WHERE v.document_id=$1 AND v.id=$2`,
+    FROM document_versions v LEFT JOIN file_entries linked ON linked.id=v.content_file_entry_id
+            LEFT JOIN file_entries e ON e.id=coalesce(linked.merged_into_file_entry_id,linked.id)
+    LEFT JOIN file_versions f ON f.id=e.current_version_id
+    LEFT JOIN delegate_file_metadata m ON m.file_entry_id=coalesce(f.source_file_entry_id,e.id) WHERE v.document_id=$1 AND v.id=$2`,
   [row.id, row.current_version_id]);
   const discussion = await client.query<{id: string; seat_id: string; seat_display_name: string; content: string;
     rule_stable_id: string; created_at: Date}>(`SELECT id,seat_id,seat_display_name,content,rule_stable_id,created_at
@@ -1827,7 +1836,8 @@ export class Stage5Service {
         message: 'Only an unintroduced draft resolution can be introduced.'});
       const contentSource = await client.query<{content_file_entry_id: string | null; file_status: string | null}>(
         `SELECT v.content_file_entry_id,e.status AS file_status FROM document_versions v
-          LEFT JOIN file_entries e ON e.id=v.content_file_entry_id
+          LEFT JOIN file_entries linked ON linked.id=v.content_file_entry_id
+          LEFT JOIN file_entries e ON e.id=coalesce(linked.merged_into_file_entry_id,linked.id)
           WHERE v.document_id=$1 AND v.id=$2`, [documentId, document.current_version_id]);
       const source = contentSource.rows[0];
       if (source?.content_file_entry_id && source.file_status !== 'PUBLISHED') {
@@ -1879,7 +1889,8 @@ export class Stage5Service {
         message: 'Only a draft amendment can be introduced.'});
       const contentSource = await client.query<{content: string; content_file_entry_id: string | null;
         file_status: string | null}>(`SELECT v.content,v.content_file_entry_id,e.status AS file_status
-        FROM document_versions v LEFT JOIN file_entries e ON e.id=v.content_file_entry_id
+        FROM document_versions v LEFT JOIN file_entries linked ON linked.id=v.content_file_entry_id
+            LEFT JOIN file_entries e ON e.id=coalesce(linked.merged_into_file_entry_id,linked.id)
         WHERE v.document_id=$1 AND v.id=$2`, [documentId, document.current_version_id]);
       const source = contentSource.rows[0];
       if (!source || !source.content.trim() && !source.content_file_entry_id) throw new AppError({code: 'RESOURCE_CONFLICT',
@@ -1920,6 +1931,7 @@ export class Stage5Service {
       }
       if (document.status !== 'PUBLISHED') throw new AppError({code: 'RESOURCE_CONFLICT',
         message: 'Only an introduced amendment can enter voting.'});
+      await requirePublishedDocumentFile(client, document.current_version_id);
       await client.query(`UPDATE documents SET status='VOTING',voting_version_id=current_version_id,
         revision=revision+1,updated_at=$2 WHERE id=$1`, [documentId, now]);
       await client.query(`INSERT INTO document_actions
@@ -1949,6 +1961,7 @@ export class Stage5Service {
       }
       if (document.status !== 'PUBLISHED') throw new AppError({code: 'RESOURCE_CONFLICT',
         message: 'Only an introduced resolution can enter voting.'});
+      await requirePublishedDocumentFile(client, document.current_version_id);
       await client.query(`UPDATE documents SET status='VOTING',voting_version_id=current_version_id,
         revision=revision+1,updated_at=$2 WHERE id=$1`, [resolutionId, now]);
       await client.query(`INSERT INTO document_actions
@@ -2222,6 +2235,7 @@ export class Stage5Service {
           if (document.rows[0].status !== 'VOTING' || !document.rows[0].voting_version_id) throw new AppError({
             code: 'RESOURCE_CONFLICT', message: 'The document has not entered formal voting.'});
           subjectVersionId = document.rows[0].voting_version_id;
+          await requirePublishedDocumentFile(client, subjectVersionId);
         }
         const eligible = await client.query<{seat_id: string; display_name: string; must_vote: boolean; has_veto: boolean}>(`SELECT
           s.id AS seat_id,s.display_name,s.must_vote,s.has_veto FROM committee_seats s JOIN current_attendance a
@@ -3013,7 +3027,7 @@ export class Stage5Service {
         message: 'Only the proposer or a Chair may create a new version.'});
       if (contentFileEntryId) {
         const file = await client.query<{id: string; status: string}>(`SELECT id,status FROM file_entries
-          WHERE id=$1 AND committee_id=$2 FOR UPDATE`, [contentFileEntryId, committee.id]);
+          WHERE id=$1 AND committee_id=$2 AND merged_into_file_entry_id IS NULL FOR UPDATE`, [contentFileEntryId, committee.id]);
         if (!file.rows[0] || file.rows[0].status !== 'PUBLISHED') throw new AppError({code: 'RESOURCE_CONFLICT',
           message: 'Choose a published file from this committee.', details: {reason: 'DOCUMENT_FILE_NOT_PUBLISHED'}});
       }
@@ -3068,6 +3082,7 @@ export class Stage5Service {
         RESUME: 'PUBLISHED', RECOMMEND_BALLOT: 'VOTING'};
       if (document.status !== expectedFrom[action]) throw new AppError({code: 'RESOURCE_CONFLICT',
         message: 'The document is not in the required state.'});
+      if (action !== 'POSTPONE') await requirePublishedDocumentFile(client, document.current_version_id);
       const now = this.now(); const evaluation = await frozenDocumentRule(client, document, ruleStableId,
         documentRuleIds[document.kind][action], now); const status = nextStatus[action];
       const updated = await client.query<DocumentRow>(`UPDATE documents SET status=$2::proceeding_document_status,is_public=true,
@@ -3189,6 +3204,7 @@ export class Stage5Service {
       const found = await client.query<DocumentRow>(`SELECT d.*,NULL::uuid AS resolution_document_id FROM documents d
         WHERE d.id=$1 AND d.kind='RESOLUTION' AND d.deleted_at IS NULL FOR UPDATE`, [documentId]);
       const document = found.rows[0] as DocumentRow;
+      if (choice !== null) await requirePublishedDocumentFile(client, document.current_version_id);
       const eligible = await client.query<{display_name: string; must_vote: boolean}>(`SELECT s.display_name,s.must_vote
         FROM committee_seats s JOIN current_attendance a ON a.seat_id=s.id AND a.meeting_session_id=$3 AND a.state='PRESENT'
         WHERE s.id=$1 AND s.committee_id=$2 AND s.active=true AND s.can_vote=true`,

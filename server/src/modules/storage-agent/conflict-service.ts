@@ -164,6 +164,8 @@ export class Stage7ConflictService {
         if (actualFileRevision !== fileRevision) {
           throw new AppError({code: 'REVISION_CONFLICT', message: 'File changed since this conflict was loaded.'});
         }
+        if (row.reason_code === 'REVIEW_REQUIRED' && action !== 'KEEP_SERVER') throw new AppError({code: 'RESOURCE_CONFLICT',
+          message: 'Upload and review the file on the web.', details: {reason: 'FILE_UPDATE_REQUIRES_REVIEW'}});
         if (row.reason_code === 'HOST_TRANSFERRED' && action !== 'KEEP_SERVER') {
           throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Content on a revoked host cannot be accepted.'});
         }

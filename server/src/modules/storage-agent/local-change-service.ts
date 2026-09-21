@@ -1,3 +1,4 @@
+import {deleteMergedFileSubmissions} from '../storage/service.js';
 import {randomUUID} from 'node:crypto';
 import type {PoolClient, QueryResultRow} from 'pg';
 import type {StorageAgentLocalChange, StorageAgentLocalChangeResult, StorageAgentTask} from '@quorum/contracts';
@@ -8,7 +9,7 @@ import type {Stage7StorageAgentService} from './service.js';
 
 interface EntryRow extends QueryResultRow {
   id: string; committee_id: string; logical_name: string; status: string; current_version_id: string | null;
-  revision: number; created_by_user_id: string;
+  revision: number; created_by_user_id: string; formal_name: string | null; merged_into_file_entry_id: string | null;
 }
 
 function integer(value: unknown, name: string, allowZero = false): number {
@@ -184,9 +185,13 @@ export class Stage7LocalChangeService {
             'REVISION_CONFLICT', entry.revision, context);
         }
       }
+      if (entry?.merged_into_file_entry_id || entry?.formal_name && local.kind !== 'DELETE') {
+        return this.conflict(client, lease.hostId, committee, requestId, manifestSequence, local,
+          'REVIEW_REQUIRED', entry.revision, context);
+      }
       if (local.kind !== 'DELETE') {
         const named = await client.query(`SELECT 1 FROM file_entries WHERE committee_id=$1 AND status<>'DELETED'
-          AND lower(logical_name)=lower($2) AND ($3::uuid IS NULL OR id<>$3)`,
+          AND merged_into_file_entry_id IS NULL AND logical_name=$2 COLLATE "C" AND ($3::uuid IS NULL OR id<>$3)`,
         [committee.id, local.logicalName, local.fileEntryId ?? null]);
         if (named.rowCount) return this.conflict(client, lease.hostId, committee, requestId, manifestSequence,
           local, 'NAME_CONFLICT', entry?.revision ?? null, context);
@@ -292,6 +297,7 @@ export class Stage7LocalChangeService {
     entry: EntryRow, context: Stage4Context): Promise<StorageAgentLocalChangeResult> {
     const id = randomUUID(); const tombstoneId = randomUUID();
     const actor = await client.query<{paired_by_user_id: string}>('SELECT paired_by_user_id FROM storage_hosts WHERE id=$1', [hostId]);
+    const mergedIds = await deleteMergedFileSubmissions(client, committee.id, entry.id, actor.rows[0]!.paired_by_user_id);
     const deleted = await client.query<{revision: number; deleted_at: Date}>(`UPDATE file_entries SET status='DELETED',
       current_version_id=NULL,revision=revision+1,updated_at=now(),deleted_at=now() WHERE id=$1
       RETURNING revision,deleted_at`, [entry.id]);
@@ -299,7 +305,7 @@ export class Stage7LocalChangeService {
       (id,committee_id,file_entry_id,last_content_revision,deleted_by_user_id,deleted_at)
       VALUES ($1,$2,$3,$4,$5,$6)`, [tombstoneId, committee.id, entry.id, entry.revision,
       actor.rows[0]?.paired_by_user_id, deleted.rows[0]?.deleted_at]);
-    const blobs = await client.query<{blob_id: string}>('SELECT blob_id FROM file_versions WHERE file_entry_id=$1', [entry.id]);
+    const blobs = await client.query<{blob_id: string}>('SELECT DISTINCT blob_id FROM file_versions WHERE file_entry_id=ANY($1::uuid[])', [[entry.id, ...mergedIds]]);
     const ids = blobs.rows.map(row => row.blob_id);
     await client.query(`UPDATE file_blobs SET durability_state='DELETE_PENDING',updated_at=now()
       WHERE id=ANY($1::uuid[]) AND durability_state='COMMITTED'`, [ids]);

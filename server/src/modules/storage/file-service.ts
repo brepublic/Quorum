@@ -82,9 +82,11 @@ const FILE_SELECT = `SELECT e.id,e.committee_id,e.logical_name,e.media_type AS e
   v.size_bytes,encode(v.sha256,'hex') AS sha256_hex,v.blob_id,v.created_at AS version_created_at,
   metadata.submission_source,metadata.submitter_display_name,metadata.file_type,metadata.rejection_reason,
   b.storage_key,sb.provider_type,sb.provider_config_id,agent_upload.staging_key AS agent_staging_key
-  FROM file_entries e LEFT JOIN delegate_file_metadata metadata ON metadata.file_entry_id=e.id
+  FROM file_entries e
   JOIN committees committee ON committee.id=e.committee_id
-  JOIN file_versions v ON v.id=e.current_version_id JOIN file_blobs content ON content.id=v.blob_id
+  JOIN file_versions v ON v.id=e.current_version_id
+  LEFT JOIN delegate_file_metadata metadata ON metadata.file_entry_id=coalesce(v.source_file_entry_id,e.id)
+  JOIN file_blobs content ON content.id=v.blob_id
   LEFT JOIN file_blob_copies location ON location.content_blob_id=content.id
     AND location.storage_binding_id=committee.active_storage_binding_id
   LEFT JOIN file_blobs replica ON replica.id=location.copy_blob_id AND replica.durability_state='COMMITTED'
@@ -169,7 +171,7 @@ export class Stage6FileService {
     return transaction(this.pool, async client => {
       const committee = await this.committee(client, uuid(committeeId, 'Committee ID'));
       const viewer = await audience(client, committee, auth);
-      const result = await client.query<FileRow>(`${FILE_SELECT} WHERE e.committee_id=$1 AND e.status<>'DELETED'
+      const result = await client.query<FileRow>(`${FILE_SELECT} WHERE e.committee_id=$1 AND e.status<>'DELETED' AND e.merged_into_file_entry_id IS NULL
         AND ($2::boolean=false OR e.status='PUBLISHED') ORDER BY e.created_at,e.id`,
       [committee.id, viewer === 'PUBLIC']);
       return result.rows.map(mapFile);
@@ -358,6 +360,11 @@ export class Stage6FileService {
       if (entry.status !== expected) {
         throw new AppError({code: 'RESOURCE_CONFLICT', message: 'File status does not allow this action.'});
       }
+      if (next === 'PUBLISHED' && (await client.query(`SELECT 1 FROM file_entries target JOIN file_entries source ON source.id=$1
+        WHERE target.committee_id=source.committee_id AND target.status<>'DELETED' AND target.id<>source.id
+          AND target.formal_name=formal_file_name(source.logical_name) COLLATE "C"`, [entry.id])).rowCount)
+        throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Approve this file through the review page.',
+          details: {reason: 'FILE_REPLACEMENT_CONFIRMATION_REQUIRED'}});
       const updated = await client.query<EntryRow>(`UPDATE file_entries SET status=$2::file_entry_status,
         submitted_at=CASE WHEN $2::file_entry_status='PENDING_REVIEW'::file_entry_status THEN now() ELSE submitted_at END,
         published_at=CASE WHEN $2::file_entry_status='PUBLISHED'::file_entry_status THEN now() ELSE NULL END,
@@ -370,6 +377,11 @@ export class Stage6FileService {
         capabilities: chair ? ['CHAIR'] : owner ? ['OWNER'] : ['MEMBER'], action: auditAction,
         resourceType: 'file_entry', resourceId: entry.id,
         before: {status: expected, revision: entry.revision}, after: {status: next, revision: current.revision}});
+      if (next === 'PUBLISHED') await client.query(`INSERT INTO delegate_file_metadata
+        (file_entry_id,submission_source,submitted_at,approved_at,approved_by_user_id,approved_name)
+        SELECT id,'LEGACY',submitted_at,published_at,published_by_user_id,logical_name FROM file_entries WHERE id=$1
+        ON CONFLICT (file_entry_id) DO UPDATE SET approved_at=EXCLUDED.approved_at,
+          approved_by_user_id=EXCLUDED.approved_by_user_id,approved_name=EXCLUDED.approved_name`, [entry.id]);
       if (next === 'PUBLISHED') await client.query(`UPDATE storage_cache_entries SET state='READY',
         state_changed_at=now(),updated_at=now() WHERE file_entry_id=$1 AND state='REVIEW_PINNED'`, [entry.id]);
       const row = await client.query<FileRow>(`${FILE_SELECT} WHERE e.id=$1`, [entry.id]);
@@ -379,7 +391,7 @@ export class Stage6FileService {
 
   private async visibleRow(auth: AuthenticatedSession | undefined, fileId: string): Promise<FileRow> {
     return transaction(this.pool, async client => {
-      const result = await client.query<FileRow>(`${FILE_SELECT} WHERE e.id=$1 AND e.status<>'DELETED'`, [fileId]);
+      const result = await client.query<FileRow>(`${FILE_SELECT} WHERE e.id=(SELECT coalesce(merged_into_file_entry_id,id) FROM file_entries WHERE id=$1) AND e.status<>'DELETED'`, [fileId]);
       const row = result.rows[0];
       if (!row) throw new AppError({code: 'NOT_FOUND', message: 'File not found.'});
       const committee = await this.committee(client, row.committee_id);
@@ -410,7 +422,7 @@ export class Stage6FileService {
   }
 
   private async entryForUpdate(client: PoolClient, id: string): Promise<EntryRow> {
-    const result = await client.query<EntryRow>('SELECT * FROM file_entries WHERE id=$1 FOR UPDATE', [id]);
+    const result = await client.query<EntryRow>('SELECT * FROM file_entries WHERE id=$1 AND merged_into_file_entry_id IS NULL FOR UPDATE', [id]);
     if (!result.rows[0] || result.rows[0].status === 'DELETED') {
       throw new AppError({code: 'NOT_FOUND', message: 'File not found.'});
     }

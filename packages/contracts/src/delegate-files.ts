@@ -26,6 +26,7 @@ export interface DelegatePublishedFile {
 
 export interface DelegateReviewFile extends DelegatePublishedFile {
   status: 'UPLOAD_COMPLETE' | 'PENDING_REVIEW' | 'PUBLISHED' | 'REJECTED' | 'DELETED';
+  publishedFileId?: string;
   rejectionReason?: string | null;
   reviewedAt?: string | null;
   deleted?: boolean;
@@ -64,6 +65,7 @@ export interface DelegateFileAvailableEvent {
   logicalName: string;
   publishedAt: string;
   kind?: 'available' | 'rejected';
+  publishedFileId?: string;
   rejectionReason?: string | null;
 }
 
@@ -86,4 +88,10 @@ export interface DefaultFileRejectionSettings {
 export function isAllowedDelegateFile(name: string, extensions: readonly string[]): boolean {
   const match = /\.([a-z0-9]+)$/i.exec(name);
   return Boolean(match && extensions.includes(match[1]!.toLowerCase()));
+}
+
+export interface FileApprovalPreview {
+  logicalName: string;
+  confirmationToken: string | null;
+  target: {id: string; revision: number; logicalName: string} | null;
 }
