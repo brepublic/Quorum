@@ -3,7 +3,7 @@
 import {spawn, execFileSync, type ChildProcessWithoutNullStreams} from 'node:child_process';
 import {createServer, type Server} from 'node:https';
 import {createInterface} from 'node:readline';
-import {mkdtemp, readFile, rm, mkdir, writeFile, stat} from 'node:fs/promises';
+import {mkdtemp, readFile, rm, mkdir, writeFile, stat, symlink} from 'node:fs/promises';
 import {join, resolve} from 'node:path';
 import {tmpdir} from 'node:os';
 import {afterEach, describe, expect, it} from 'vitest';
@@ -152,7 +152,7 @@ describe('desktop bridge process lifecycle',()=>{
     expect(await f.command('save',{...f.settings,serverUrl:saved.serverUrl})).toContainEqual(expect.objectContaining({event:'config'}));
     await rm(f.settings.rootPath,{recursive:true,force:true});
     await rm(f.settings.caCertificatePath);
-    expect(await f.command('unpair-local')).toContainEqual({event:'unpaired',preserveSettings:true});
+    expect(await f.command('unpair-local')).toContainEqual({event:'unpaired'});
     expect(await f.command('start')).toContainEqual(expect.objectContaining({code:'CONFIG_REQUIRED'}));
   },30000);
   it.each([401,404,503])('allows explicit local unpair after revocation fails with HTTP %s', async status => {
@@ -164,7 +164,7 @@ describe('desktop bridge process lifecycle',()=>{
     expect(failed.some(e=>e.event==='error')).toBe(true);
     expect(failed.some(e=>e.event==='unpaired')).toBe(false);
     const count = f.requests.length;
-    expect(await f.command('unpair-local')).toContainEqual({event:'unpaired',preserveSettings:true});
+    expect(await f.command('unpair-local')).toContainEqual({event:'unpaired'});
     expect(f.requests).toHaveLength(count);
     expect(await f.command('start')).toContainEqual(expect.objectContaining({code:'CONFIG_REQUIRED'}));
     expect(await readFile(f.settings.configPath,'utf8')).toBe(original);
@@ -175,7 +175,47 @@ describe('desktop bridge process lifecycle',()=>{
     await f.command('start'); await f.wait(e=>e.event==='snapshot'&&e.connected===true);
     expect(await f.command('unpair-local')).toContainEqual(expect.objectContaining({code:'STOP_FIRST'}));
     await f.command('stop');
-    expect(await f.command('unpair-local')).toContainEqual({event:'unpaired',preserveSettings:true});
+    expect(await f.command('unpair-local')).toContainEqual({event:'unpaired'});
+  },30000);
+  it('overwrites a draft or private copy only after explicit confirmation', async () => {
+    const f = await fixture();
+    await writeFile(f.settings.configPath, 'original', {mode:0o600});
+    expect(await f.command('save',f.settings)).toContainEqual(expect.objectContaining({code:'EEXIST'}));
+    expect(await readFile(f.settings.configPath,'utf8')).toBe('original');
+    expect(await f.command('save',{...f.settings,overwrite:true})).toContainEqual(expect.objectContaining({paired:false}));
+    expect(JSON.parse(await readFile(f.settings.configPath,'utf8')).kind).toBe('unpaired');
+    await f.command('pair',{...f.settings,overwrite:true});
+    const copy = join(f.root,'existing-copy.json');
+    await writeFile(copy,'keep until confirmed',{mode:0o600});
+    expect(await f.command('save-as',{...f.settings,savePath:copy})).toContainEqual(expect.objectContaining({code:'EEXIST'}));
+    expect(await readFile(copy,'utf8')).toBe('keep until confirmed');
+    expect(await f.command('save-as',{...f.settings,savePath:copy,overwrite:true})).toContainEqual(expect.objectContaining({paired:true,configPath:copy}));
+    expect(JSON.parse(await readFile(copy,'utf8')).credential).toMatch(/^qsa1/);
+    expect((await stat(copy)).mode & 0o777).toBe(0o600);
+  },30000);
+  it.each([200,400])('preserves the old config until confirmed pairing succeeds (%s)', async status => {
+    const f = await fixture(status);
+    await writeFile(f.settings.configPath,'old configuration',{mode:0o600});
+    expect(await f.command('pair',f.settings)).toContainEqual(expect.objectContaining({code:'CONFIG_EXISTS'}));
+    expect(f.requests).toHaveLength(0);
+    const result = await f.command('pair',{...f.settings,overwrite:true});
+    if (status === 200) {
+      expect(result).toContainEqual(expect.objectContaining({paired:true}));
+      expect(JSON.parse(await readFile(f.settings.configPath,'utf8')).credential).toMatch(/^qsa1/);
+    } else {
+      expect(result).toContainEqual(expect.objectContaining({code:'LINK_EXPIRED'}));
+      expect(await readFile(f.settings.configPath,'utf8')).toBe('old configuration');
+    }
+  },30000);
+  it('rejects overwriting a symbolic link even after confirmation', async () => {
+    const f = await fixture();
+    const target = join(f.root,'target.json');
+    await writeFile(target,'keep',{mode:0o600});
+    await symlink(target,f.settings.configPath);
+    expect(await f.command('save',{...f.settings,overwrite:true})).toContainEqual(expect.objectContaining({code:'UNSAFE_PATH'}));
+    expect(await f.command('pair',{...f.settings,overwrite:true})).toContainEqual(expect.objectContaining({code:'UNSAFE_PATH'}));
+    expect(await readFile(target,'utf8')).toBe('keep');
+    expect(f.requests).toHaveLength(0);
   },30000);
   it('preserves existing config on repeated pairing and rejects another directory identity',async()=>{
     const f=await fixture();await f.command('pair',f.settings);

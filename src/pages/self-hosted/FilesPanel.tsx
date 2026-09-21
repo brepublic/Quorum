@@ -289,6 +289,7 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
           </Button>
         </span>
       </Message>}
+      <div className="self-hosted-storage-host-actions">
       {!pairing && <Button type="button" size="small" disabled={working}
         onClick={() => void createPairing(activeHost ? 'TRANSFER' : 'INITIAL')}>
         {activeHost ? t("Transfer to another computer") : t("Pair chair computer")}
@@ -299,6 +300,7 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
           void run(() => api.revokeStorageHost(committeeId, activeHost.id, snapshot.committee.revision));
         }
       }}>{t("Revoke chair computer")}</Button>}
+      </div>
       {conflicts.some(item => item.status === 'PENDING') && <div className="self-hosted-storage-conflicts">
         <Header as="h4">{t("Sync conflicts")}</Header>
         {conflicts.filter(item => item.status === 'PENDING').map(item => <Card key={item.id} fluid>

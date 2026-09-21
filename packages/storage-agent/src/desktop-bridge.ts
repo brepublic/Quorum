@@ -42,6 +42,21 @@ async function checkDraftDestination(path: string, value: DraftConfig) {
 async function unchangedDraft(path: string) {
   if (!draft || path !== configPath || await readPrivateAgentFile(path) !== draftSource) throw new Error('CONFIG_EXISTS');
 }
+async function checkOverwriteTarget(path: string) {
+  try {
+    const info = await lstat(path);
+    if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1) throw new Error('UNSAFE_PATH');
+  } catch (error) {if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;}
+}
+async function writeDesktopConfig(path: string, source: string, overwrite: boolean) {
+  if (!overwrite) {await writeFile(path, source, {flag:'wx',mode:0o600}); return;}
+  await checkOverwriteTarget(path);
+  const temporary = path + '.' + randomUUID() + '.tmp';
+  try {
+    await writeFile(temporary, source, {flag:'wx',mode:0o600});
+    await rename(temporary, path);
+  } finally {await rm(temporary,{force:true});}
+}
 let stage = 'settings';
 const safeError = agentErrorCode;
 async function cert(path: string) {if (!path) return;
@@ -150,7 +165,7 @@ async function command(input: Record<string, unknown>) {
   if (action === 'unpair-local') {
     if (!config) throw new Error('CONFIG_REQUIRED');
     config = undefined; draft = undefined; draftSource = ''; configPath = '';
-    send({event: 'unpaired', preserveSettings: true});
+    send({event: 'unpaired'});
     return;
   }
   if (action === 'unpair') {
@@ -200,12 +215,12 @@ async function command(input: Record<string, unknown>) {
       const source = JSON.stringify(next, null, 2) + '\n';
       stage = 'config-write';
       await mkdir(dirname(destination), {recursive: true, mode: 0o700});
-      if (action === 'save' && draft) {
+      if (action === 'save' && draft && input.overwrite !== true) {
         await unchangedDraft(destination);
         const temporary = destination + '.' + randomUUID() + '.tmp';
         try {await writeFile(temporary, source, {flag:'wx',mode:0o600}); await rename(temporary,destination);}
         finally {await rm(temporary,{force:true});}
-      } else await writeFile(destination, source, {flag:'wx',mode:0o600});
+      } else await writeDesktopConfig(destination, source, input.overwrite === true);
       draft = next; draftSource = source; configPath = destination; publicDraft(); return;
     }
     if (!config) throw new Error('CONFIG_REQUIRED');
@@ -250,8 +265,8 @@ async function command(input: Record<string, unknown>) {
         stage = 'config-write';
       await mkdir(dirname(destination), {recursive: true, mode: 0o700});
         outside(root, join(await realpath(dirname(destination)), basename(destination)));
-        await writeFile(destination, JSON.stringify(updated, null, 2) + '\n', {flag: 'wx', mode: 0o600});
-      } else await writeAgentConfig(destination, updated);
+        await writeDesktopConfig(destination, JSON.stringify(updated, null, 2) + '\n', input.overwrite === true);
+      } else {await checkOverwriteTarget(destination); await writeAgentConfig(destination, updated); }
       configPath = destination; config = updated; publicConfig();
     } finally {await unlock?.(); await oldUnlock?.();}
     return;
@@ -265,7 +280,8 @@ async function command(input: Record<string, unknown>) {
     if (!String(input.configPath ?? '').trim()) throw new Error('CONFIG_PATH_REQUIRED');
     const path = resolve(String(input.configPath));
     const replacingDraft = !!draft && path === configPath;
-    if (replacingDraft) await unchangedDraft(path);
+    if (input.overwrite === true) await checkOverwriteTarget(path);
+    else if (replacingDraft) await unchangedDraft(path);
     else try {await lstat(path); throw new Error('CONFIG_EXISTS');} catch(e) {if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;}
     stage = 'storage-directory';
     await mkdir(next.rootPath, {recursive: true, mode: 0o700});
@@ -277,7 +293,7 @@ async function command(input: Record<string, unknown>) {
     outside(root, join(await realpath(dirname(path)), basename(path)));
     await fingerprint(next.serverUrl, next.caCertificatePath);
     const codePath = join(dirname(path), `.pairing-${randomUUID()}`);
-    const pairedPath = replacingDraft ? join(dirname(path), `.paired-${randomUUID()}.json`) : path;
+    const pairedPath = (replacingDraft || input.overwrite === true) ? join(dirname(path), `.paired-${randomUUID()}.json`) : path;
     stage = 'local-state';
     const unlock = await lockAgentRoot(root);
     try {
@@ -308,7 +324,8 @@ async function command(input: Record<string, unknown>) {
       });
       stage = 'config-write';
       const paired = {...await readAgentConfig(pairedPath), ...next};
-      if (replacingDraft) await unchangedDraft(path);
+      if (input.overwrite === true) await checkOverwriteTarget(path);
+      else if (replacingDraft) await unchangedDraft(path);
       await writeAgentConfig(path, paired);
       config = paired; draft = undefined; draftSource = ''; configPath = path; publicConfig();
     } finally {await unlock(); await rm(codePath, {force: true}); if (pairedPath !== path) await rm(pairedPath,{force:true});}

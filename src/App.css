@@ -686,6 +686,17 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   margin-top: 1.5rem !important;
 }
 
+.self-hosted-storage-host-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+
+.self-hosted-storage-host-actions > .ui.button {
+  margin: 0;
+}
+
 @media (max-width: 767px) {
   .self-hosted-files .ui.form .fields,
   .self-hosted-storage-admin .ui.form .fields {

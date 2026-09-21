@@ -188,7 +188,7 @@ export component MainWindow inherits Window {
                     Text { text: root.translate("Revoke this device's authorization? This device will no longer provide access to the committee's local files.", root.language); wrap: word-wrap; color: #18273c; }
                     if root.unpair-failed: Text { text: root.error-text; wrap: word-wrap; color: #9a3028; }
                     if root.unpair-failed: Text { text: root.translate("You can unpair locally. Server authorization has not been confirmed revoked; saved configurations may still connect.", root.language); wrap: word-wrap; color: #18273c; }
-                    Text { text: root.translate("Configuration and local files will be kept. Use a new configuration path and directory to pair again.", root.language); wrap: word-wrap; color: #536176; }
+                    Text { text: root.translate("Configuration and local files will be kept. Use a new storage directory to pair again.", root.language); wrap: word-wrap; color: #536176; }
                     HorizontalBox { padding: 0px; spacing: 8px;
                         Button { text: root.translate("Cancel", root.language); enabled: !root.busy; clicked => {root.confirm-unpair = false;} }
                         if root.unpair-failed: Button { text: root.translate("Unpair locally", root.language); enabled: !root.busy && !root.running; clicked => {root.action("unpair-local");} }

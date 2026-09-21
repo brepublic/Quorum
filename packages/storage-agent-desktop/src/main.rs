@@ -162,14 +162,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "rootPath":ui.get_root_path().as_str(),"caCertificatePath":ui.get_certificate().as_str(),"scanSeconds":ui.get_scan_seconds().as_str(),
             "pairingCode":ui.get_pairing_code().as_str(),"deviceLabel":ui.get_device_label().as_str()});
         ui.set_error_code("".into()); ui.set_error_stage("".into()); ui.set_feedback("".into()); ui.set_busy(true);
-        if action == "save-as" || (action == "save" && ui.get_config_path().trim().is_empty()) {
-            value["command"] = json!("save-as");
+        if matches!(action, "save" | "save-as" | "pair") {
+            let choose_path = action == "save-as" || (action == "save" && ui.get_config_path().trim().is_empty());
+            if choose_path { value["command"] = json!("save-as"); }
+            let language = ui.get_language().to_string();
             let input = input_action.clone();
             let weak = ui.as_weak();
             thread::spawn(move || {
-                let path = rfd::FileDialog::new().set_file_name("agent-config.json").save_file();
+                let path = if choose_path {
+                    rfd::FileDialog::new().set_file_name("agent-config.json").save_file()
+                } else { Some(PathBuf::from(text(&value, "configPath"))) };
                 if let Some(path) = path {
-                    value["savePath"] = json!(path.to_string_lossy());
+                    if choose_path { value["savePath"] = json!(path.to_string_lossy()); }
+                    if path.symlink_metadata().is_ok() {
+                        let replace = translate("Overwrite", &language);
+                        let result = rfd::MessageDialog::new()
+                            .set_title(translate("Overwrite configuration?", &language))
+                            .set_description(format!("{}\n\n{}", translate("This file already exists. Replace its contents?", &language), path.display()))
+                            .set_level(rfd::MessageLevel::Warning)
+                            .set_buttons(rfd::MessageButtons::OkCancelCustom(replace.into(), translate("Cancel", &language).into()))
+                            .show();
+                        if result != rfd::MessageDialogResult::Custom(replace.into()) && result != rfd::MessageDialogResult::Ok {
+                            let _ = weak.upgrade_in_event_loop(|ui| ui.set_busy(false));
+                            return;
+                        }
+                        value["overwrite"] = json!(true);
+                    }
                     let sent = input.lock().unwrap().as_mut()
                         .is_some_and(|stdin| writeln!(stdin, "{value}").is_ok());
                     if !sent {let _ = weak.upgrade_in_event_loop(|ui| {
@@ -256,12 +274,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "unpaired" => {
                         ui.set_loaded(false);
                         ui.set_confirm_unpair(false);
-                        if value["preserveSettings"] != true {
-                            ui.set_config_path("".into());
-                            ui.set_root_path("".into());
-                            ui.set_server_url("https://localhost".into());
-                            ui.set_certificate("".into());
-                        }
                         ui.set_committee_url("".into());
                         ui.set_pairing_code("".into());
                         ui.set_last_connection("".into());
