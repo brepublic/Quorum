@@ -51,6 +51,11 @@ async function render(audience: CommitteeWorkspaceSnapshot['viewer']['audience']
   const api = {snapshot: vi.fn(async () => customize(snapshot(audience))), openCommitteeEvents: vi.fn(() => () => undefined),
     committeeExportUrl: vi.fn(() => '/api/v1/committees/committee/export'), listRulePackages: vi.fn(async () => []),
     fileDownloadUrl: vi.fn((fileId: string) => `/api/v1/files/${fileId}/download`),
+    listStorageBindings: vi.fn(async () => []), listFiles: vi.fn(async () => []),
+    listPendingHostCommits: vi.fn(async () => []), listS3ProviderConfigs: vi.fn(async () => []),
+    listStorageMigrations: vi.fn(async () => []), listStorageHosts: vi.fn(async () => []),
+    listStorageAgentConflicts: vi.fn(async () => []), getDelegateFileShare: vi.fn(async () => null),
+    listDelegateReviewFiles: vi.fn(async () => []),
     ...apiOverrides} as unknown as SelfHostedApi;
   container = document.createElement('div'); document.body.append(container); root = createRoot(container);
   await act(async () => {root?.render(<MemoryRouter initialEntries={[path]}><SelfHostedWorkspace user={currentUser}
@@ -1687,7 +1692,7 @@ describe('committee workspace routes and roles', () => {
     const memberPage = await render('MEMBER', '/committees/committee/posts', user, value => value, apiOverrides);
     expect(memberPage.textContent).not.toContain('Text resources');
     expect(memberPage.textContent).not.toContain('Link resources');
-    expect(memberPage.textContent).toContain('Attachments');
+    expect(memberPage.textContent).toContain('File overview');
     expect(memberPage.querySelector('a[href="/committees/committee/posts/storage"]')).toBeNull();
     expect(memberPage.querySelector('.ui.negative.message')).toBeNull();
     act(() => root?.unmount()); root = undefined; container?.remove(); container = undefined;
@@ -1724,12 +1729,12 @@ describe('committee workspace routes and roles', () => {
     expect(stats).toContain('Document discussion entries');
     expect(stats).toContain('China');
   });
-  it('redirects hidden resource routes to attachments', async () => { const page = await render('CHAIR', '/committees/committee/posts/links', user, value => ({...value, textPosts: [{id: 'link', title: 'Research', content: 'link:https://example.test/research', sortOrder: 0, revision: 1, authorSeatId: 'seat', authorDisplayName: 'China', actorUserId: 'chair', createdAt: '2026-08-16T00:00:00.000Z', updatedAt: '2026-08-16T00:00:00.000Z', deletedAt: null}]})); expect(page.textContent).toContain('Attachments'); expect(page.textContent).not.toContain('Link resources'); expect(page.textContent).not.toContain('Publisher: China'); expect(page.querySelector('a[href="https://example.test/research"]')).toBeNull(); });
+  it('redirects hidden resource routes to attachments', async () => { const page = await render('CHAIR', '/committees/committee/posts/links', user, value => ({...value, textPosts: [{id: 'link', title: 'Research', content: 'link:https://example.test/research', sortOrder: 0, revision: 1, authorSeatId: 'seat', authorDisplayName: 'China', actorUserId: 'chair', createdAt: '2026-08-16T00:00:00.000Z', updatedAt: '2026-08-16T00:00:00.000Z', deletedAt: null}]})); expect(page.textContent).toContain('File overview'); expect(page.textContent).not.toContain('Link resources'); expect(page.textContent).not.toContain('Publisher: China'); expect(page.querySelector('a[href="https://example.test/research"]')).toBeNull(); });
   it('retains prefetched file data across routes and clears it when access becomes read-only', async () => {
     const share = {id: 'share', url: 'https://example.test/delegate-files#test', revision: 1};
     const getDelegateFileShare = vi.fn().mockResolvedValueOnce(share).mockImplementation(() => new Promise(() => {}));
     const listDelegateReviewFiles = vi.fn().mockResolvedValueOnce([{
-      id: 'reviewed', logicalName: 'cached.pdf', originalName: 'cached.pdf', status: 'PUBLISHED',
+      id: 'reviewed', logicalName: 'cached.pdf', originalName: 'cached.pdf', status: 'PENDING_REVIEW',
       submittedAt: '2026-09-01T00:00:00Z', publishedAt: '2026-09-01T00:00:00Z'
     }]).mockImplementation(() => new Promise(() => {}));
     let disconnect: (() => void) | undefined;
@@ -1759,23 +1764,24 @@ describe('committee workspace routes and roles', () => {
     expect(page.textContent).not.toContain('cached.pdf');
     expect(page.querySelector('a[href="/committees/committee/posts/share"]')).toBeNull();
   });
-  it('separates Chair file upload from review', async () => {
+  it.each(['SERVER_VOLUME', 'CHAIR_AGENT', 'S3_COMPATIBLE', 'UNCONFIGURED'])('keeps the same file menu for %s', async providerType => {
     const page = await render('CHAIR', '/committees/committee/posts/attachments', user, value => ({...value,
       committee: {...value.committee, operationMode: 'CHAIR_OPERATED'}}), {
-      listStorageBindings: vi.fn(async () => [{id: 'binding', committeeId: 'committee', providerType: 'CHAIR_AGENT',
+      listStorageBindings: vi.fn(async () => providerType === 'UNCONFIGURED' ? [] : [{id: 'binding', committeeId: 'committee', providerType: providerType as 'CHAIR_AGENT',
         providerConfigId: null, storageHostId: 'host', status: 'ACTIVE', revision: 1,
         createdAt: '2026-09-01T00:00:00.000Z'}] as Awaited<ReturnType<SelfHostedApi['listStorageBindings']>>),
       getDelegateFileShare: vi.fn(async () => null),
       listDelegateReviewFiles: vi.fn(async () => [])
     });
     await act(async () => {await Promise.resolve(); await Promise.resolve();});
-    expect(page.querySelector('a[href="/committees/committee/posts/attachments"]')).toBeNull();
+    expect(page.querySelector('a[href="/committees/committee/posts/attachments"]')).not.toBeNull();
     const resourceLinks = Array.from(page.querySelectorAll<HTMLAnchorElement>('[aria-label="Resource sections"] a'))
       .map(link => link.textContent?.trim());
-    expect(resourceLinks).toEqual(['Review', 'Share', 'Upload files', 'Storage settings', 'File settings']);
+    expect(resourceLinks).toEqual(['File overview', 'File review', 'Share', 'Upload files', 'Storage settings', 'File settings']);
     expect(page.querySelector('.delegate-file-chair-upload')).toBeNull();
     await act(async () => {page.querySelector<HTMLAnchorElement>('a[href="/committees/committee/posts/upload"]')?.click(); await Promise.resolve();});
-    expect(page.querySelector('.delegate-file-chair-upload')).not.toBeNull();
+    if (providerType === 'UNCONFIGURED') expect(page.textContent).toContain('Configure storage before uploading or sharing files.');
+    else expect(page.querySelector('.delegate-file-chair-upload')).not.toBeNull();
     expect(page.querySelector('.delegate-file-card-list')).toBeNull();
   });
   it.each(['MANUAL', 'LINK'] as const)('keeps draft options through blur and starts %s once', async medium => {

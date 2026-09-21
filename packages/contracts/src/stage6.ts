@@ -53,6 +53,10 @@ export interface FileVersion {
 }
 
 export interface FileEntry {
+  submissionSource?: 'DELEGATE_PORTAL' | 'CHAIR' | 'ACCOUNT' | 'LEGACY';
+  submitterDisplayName?: string | null;
+  fileType?: import('./delegate-files.js').DelegateFileType | null;
+  rejectionReason?: string | null;
   id: string;
   committeeId: string;
   logicalName: string;

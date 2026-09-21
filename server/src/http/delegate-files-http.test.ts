@@ -34,7 +34,7 @@ async function send(service: DelegateFileService, options: {path: string; method
 }
 
 const snapshot = {committeeId: '20000000-0000-4000-8000-000000000001', committeeName: '委员会', shareId: 'share',
-  claimedSeat: null, eligibleSeats: [], mayUpload: false, chairHostHealthy: true, eventSequence: 4, files: []};
+  claimedSeat: null, eligibleSeats: [], mayUpload: false, storageAvailable: true, eventSequence: 4, files: []};
 
 describe('delegate file HTTP boundary', () => {
   it('bootstraps a capability link without an account session', async () => {

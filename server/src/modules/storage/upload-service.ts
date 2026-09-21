@@ -170,17 +170,20 @@ export class Stage6UploadService {
       const committee = await lockedCommittee(client, uuid(committeeId, 'Committee ID'));
       await requireContributor(client, committee, auth.user.id);
       const manager = committee.owner_user_id === auth.user.id || await isChair(client, committee.id, auth.user.id);
-      const result = await client.query<UploadRow>(`SELECT *,encode(expected_sha256,'hex') AS expected_sha256_hex,
-        CASE WHEN actual_sha256 IS NULL THEN NULL ELSE encode(actual_sha256,'hex') END AS actual_sha256_hex
-        FROM file_uploads WHERE committee_id=$1 AND agent_commit_state='PENDING_HOST_COMMIT'
-          AND ($2::boolean OR created_by_user_id=$3) ORDER BY created_at,id`,
+      const result = await client.query<UploadRow>(`SELECT u.*,encode(u.expected_sha256,'hex') AS expected_sha256_hex,
+        CASE WHEN u.actual_sha256 IS NULL THEN NULL ELSE encode(u.actual_sha256,'hex') END AS actual_sha256_hex,
+        COALESCE(u.failure_code,task.failure_code) AS failure_code
+        FROM file_uploads u LEFT JOIN storage_agent_tasks task ON task.id=u.agent_task_id
+        WHERE u.committee_id=$1 AND u.agent_commit_state IN ('PENDING_HOST_COMMIT','CONFLICT')
+          AND ($2::boolean OR u.created_by_user_id=$3) ORDER BY u.created_at,u.id`,
       [committee.id, manager, auth.user.id]);
       return result.rows.map(uploadState);
     });
   }
 
   async createUpload(auth: AuthenticatedSession, committeeId: string, body: unknown,
-    idempotencyKey: string, context: Stage4Context): Promise<FileUpload> {
+    idempotencyKey: string, context: Stage4Context,
+    submission?: {sessionId: string; seatId: string; displayName: string; fileType: string}): Promise<FileUpload> {
     requireBusinessIdentity(auth);
     assertExactBody(body as Record<string, unknown>,
       ['logicalName', 'originalName', 'mediaType', 'expectedSizeBytes', 'sha256']);
@@ -198,7 +201,7 @@ export class Stage6UploadService {
       auth,
       route: `/api/v1/committees/${committeeId}/file-uploads`,
       key: idempotencyKey,
-      request: body,
+      request: submission ? {body, submission} : body,
       status: 201,
       work: async client => {
         await this.capacity?.assertWriteAllowed();
@@ -222,6 +225,16 @@ export class Stage6UploadService {
         [id, committee.id, activeBinding.rows[0].id, auth.user.id, logicalName, originalName, mediaType,
           expectedSizeBytes, expectedSha256, stagingKey(id), expiresAt]);
         const row = created.rows[0] as UploadRow;
+        if (submission) {
+          const active = await client.query(`SELECT 1 FROM delegate_file_sessions s
+            JOIN delegate_file_shares sh ON sh.id=s.share_id WHERE s.id=$1 AND s.seat_id=$2
+            AND sh.committee_id=$3 AND sh.status='ACTIVE' AND s.revoked_at IS NULL AND s.expires_at>now()`,
+          [submission.sessionId, submission.seatId, committee.id]);
+          if (!active.rowCount) throw new AppError({code: 'AUTHENTICATION_REQUIRED', message: 'Delegate file session expired.'});
+          await client.query(`INSERT INTO delegate_file_upload_contexts
+            (upload_id,delegate_session_id,seat_id,seat_display_name,file_type) VALUES ($1,$2,$3,$4,$5)`,
+          [id, submission.sessionId, submission.seatId, submission.displayName, submission.fileType]);
+        }
         await appendEvent(client, committee, {type: 'file.upload_created', resourceType: 'file_upload',
           resourceId: id, revision: row.revision, payload: {status: 'CREATED', expectedSizeBytes}});
         await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id,

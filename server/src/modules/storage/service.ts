@@ -129,6 +129,8 @@ async function fileState(client: PoolClient, row: FileEntryRow): Promise<FileEnt
   const result = await client.query<FileVersionRow>(`SELECT id,version_number,original_name,media_type,size_bytes,
     encode(sha256,'hex') AS sha256_hex,blob_id,created_at FROM file_versions
     WHERE committee_id=$1 AND file_entry_id=$2 AND id=$3`, [row.committee_id, row.id, row.current_version_id]);
+  const metadata = (await client.query(`SELECT submission_source,submitter_display_name,file_type,rejection_reason
+    FROM delegate_file_metadata WHERE file_entry_id=$1`, [row.id])).rows[0];
   const version = result.rows[0];
   if (!version) throw new AppError({code: 'INTERNAL_ERROR', message: 'File version is unavailable.'});
   return {
@@ -139,6 +141,8 @@ async function fileState(client: PoolClient, row: FileEntryRow): Promise<FileEnt
     status: row.status,
     syncState: row.sync_state,
     createdByUserId: row.created_by_user_id,
+    submissionSource: metadata?.submission_source ?? 'LEGACY', submitterDisplayName: metadata?.submitter_display_name ?? null,
+    fileType: metadata?.file_type ?? null, rejectionReason: metadata?.rejection_reason ?? null,
     currentVersion: {
       id: version.id,
       versionNumber: version.version_number,
@@ -356,7 +360,7 @@ export class Stage6StorageService {
   }
 
   async recordProviderCommitInTransaction(client: PoolClient, auth: AuthenticatedSession, committeeId: string,
-    input: ProviderCommitInput, context: Stage4Context): Promise<FileEntry> {
+    input: ProviderCommitInput, context: Stage4Context, uploadId?: string): Promise<FileEntry> {
     requireBusinessIdentity(auth);
     assertExactBody(input as unknown as Record<string, unknown>, ['bindingId', 'blobId', 'fileEntryId', 'targetFileEntryId', 'baseRevision',
       'logicalName', 'originalName', 'mediaType', 'sizeBytes', 'sha256', 'storageKey']);
@@ -411,14 +415,14 @@ export class Stage6StorageService {
     [blobId, committee.id, bindingId, storageKey, verifiedSize, verifiedHash]);
     if (entry) {
       const updated = await client.query<FileEntryRow>(`UPDATE file_entries SET logical_name=$2,media_type=$3,
-        status='UPLOAD_COMPLETE',current_version_id=$4,submitted_at=NULL,published_at=NULL,published_by_user_id=NULL,
+        status='PENDING_REVIEW',current_version_id=$4,submitted_at=now(),published_at=NULL,published_by_user_id=NULL,
         revision=revision+1,updated_at=now()
         WHERE id=$1 RETURNING *`, [entry.id, logicalName, mediaType, versionId]);
       entry = updated.rows[0];
     } else {
       const created = await client.query<FileEntryRow>(`INSERT INTO file_entries
-        (id,committee_id,logical_name,media_type,status,current_version_id,created_by_user_id)
-        VALUES ($1,$2,$3,$4,'UPLOAD_COMPLETE',$5,$6) RETURNING *`,
+        (id,committee_id,logical_name,media_type,status,current_version_id,created_by_user_id,submitted_at)
+        VALUES ($1,$2,$3,$4,'PENDING_REVIEW',$5,$6,now()) RETURNING *`,
       [id, committee.id, logicalName, mediaType, versionId, auth.user.id]);
       entry = created.rows[0];
     }
@@ -428,13 +432,36 @@ export class Stage6StorageService {
     [versionId, committee.id, id, versionNumber, blobId, originalName, mediaType, verifiedSize, verifiedHash, auth.user.id]);
     await appendEvent(client, committee, {type: versionNumber === 1 ? 'file.created' : 'file.sync_state_changed',
       resourceType: 'file_entry', resourceId: id, revision: entry?.revision ?? 1,
-      payload: {status: 'UPLOAD_COMPLETE', versionNumber, sizeBytes: verifiedSize}});
+      payload: {status: 'PENDING_REVIEW', versionNumber, sizeBytes: verifiedSize}});
     await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id,
       capabilities: await isChair(client, committee.id, auth.user.id) ? ['CHAIR'] : ['MEMBER'],
       action: 'storage.file_version_recorded', resourceType: 'file_entry', resourceId: id,
       before: versionNumber === 1 ? null : {revision: (entry?.revision ?? 2) - 1},
-      after: {status: 'UPLOAD_COMPLETE', revision: entry?.revision ?? 1, versionNumber,
+      after: {status: 'PENDING_REVIEW', revision: entry?.revision ?? 1, versionNumber,
         sizeBytes: verifiedSize, sha256: verifiedHash}});
+    // Every provider reaches this boundary only after durable, verified storage.
+    const submission = uploadId ? (await client.query<{seat_id: string; seat_display_name: string;
+      file_type: string; submitted_at: Date}>(`SELECT * FROM delegate_file_upload_contexts WHERE upload_id=$1`,
+    [uploadId])).rows[0] : undefined;
+    const chair = committee.owner_user_id === auth.user.id || await isChair(client, committee.id, auth.user.id);
+    const submittedAt = submission?.submitted_at ?? new Date();
+    const source = submission ? 'DELEGATE_PORTAL' : chair ? 'CHAIR' : 'ACCOUNT';
+    await client.query(`INSERT INTO delegate_file_metadata
+      (file_entry_id,submission_source,submitted_by_seat_id,submitter_display_name,file_type,submitted_at)
+      VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (file_entry_id) DO UPDATE SET
+        submission_source=EXCLUDED.submission_source,submitted_by_seat_id=EXCLUDED.submitted_by_seat_id,
+        submitter_display_name=EXCLUDED.submitter_display_name,file_type=EXCLUDED.file_type,
+        submitted_at=EXCLUDED.submitted_at,rejection_reason=NULL,rejected_at=NULL`,
+    [id, source, submission?.seat_id ?? null, submission?.seat_display_name ?? (chair ? null : auth.user.displayName),
+      submission?.file_type ?? null, submittedAt]);
+    entry = (await client.query<FileEntryRow>(`UPDATE file_entries SET submitted_at=$2,updated_at=now() WHERE id=$1 RETURNING *`, [id, submittedAt])).rows[0];
+    await appendEvent(client, committee, {type: 'file.review_requested', resourceType: 'file_entry',
+      resourceId: id, revision: entry!.revision, payload: {status: 'PENDING_REVIEW', submissionSource: source,
+        submitterDisplayName: submission?.seat_display_name ?? (chair ? null : auth.user.displayName)}});
+    await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id,
+      capabilities: chair ? ['CHAIR'] : ['MEMBER'], action: 'storage.file_review_requested',
+      resourceType: 'file_entry', resourceId: id, before: null,
+      after: {status: 'PENDING_REVIEW', revision: entry!.revision}});
     await client.query('UPDATE committees SET file_manifest_revision=file_manifest_revision+1 WHERE id=$1',
       [committee.id]);
     const migrations = await client.query<{id: string; revision: number}>(`UPDATE storage_migrations

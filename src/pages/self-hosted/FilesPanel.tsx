@@ -5,6 +5,8 @@ import type {CommitteeWorkspaceSnapshot, FileEntry, FileUpload, StorageMigration
   StorageAgentConflict, StorageAgentConflictResolution, StoragePairingCode, StorageProviderType} from '@quorum/contracts';
 import {Button, Card, Form, Header, Label, Message, Progress, Segment} from 'semantic-ui-react';
 import {SelfHostedApiError, newIdempotencyKey, type SelfHostedApi} from '../../services/self-hosted-api';
+import {delegateFileTypeName} from '@quorum/contracts';
+import {Link} from 'react-router-dom';
 import {sha256File} from '../../services/sha256';
 
 const FILE_STATUS: Record<FileEntry['status'], string> = {
@@ -54,13 +56,14 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
   snapshot: CommitteeWorkspaceSnapshot;
   api: SelfHostedApi;
   currentUserId?: string;
-  section?: 'attachments' | 'storage' | 'all';
+  section?: 'attachments' | 'overview' | 'storage' | 'all';
 }) {
   useLanguage();
   const committeeId = snapshot.committee.id;
   const readOnly = snapshot.committee.status === 'ARCHIVED' || snapshot.committee.status === 'DELETING';
   const canManage = !readOnly && (snapshot.viewer.audience === 'CHAIR' || snapshot.viewer.audience === 'OWNER');
   const canUpload = !readOnly && snapshot.viewer.audience !== 'PUBLIC';
+  const [statusFilter, setStatusFilter] = React.useState('ALL');
   const [files, setFiles] = React.useState<FileEntry[]>([]);
   const [pendingHostCommits, setPendingHostCommits] = React.useState<FileUpload[]>([]);
   const [bindings, setBindings] = React.useState<Awaited<ReturnType<SelfHostedApi['listStorageBindings']>>>([]);
@@ -218,9 +221,10 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
   return <div className="self-hosted-files">
     {error && <Message error role="alert" content={error} />}
     {section !== 'storage' && <>
-    {pendingHostCommits.length > 0 && <Message info header={t("Waiting for the chair computer to save")}
-      list={pendingHostCommits.map(item => item.logicalName)} />}
-    {canUpload && <Segment loading={working && !progress}><Header as="h3">{t("Upload files")}</Header>
+    {pendingHostCommits.map(item => <Message key={item.id} header={item.logicalName}
+      warning={Boolean(item.failureCode || item.agentCommitState === 'CONFLICT')}
+      content={item.failureCode || item.agentCommitState === 'CONFLICT' ? t('Save unavailable. Check storage and retry.') : t('Saving files')} />)}
+    {canUpload && section !== 'overview' && <Segment loading={working && !progress}><Header as="h3">{t("Upload files")}</Header>
       <Form onSubmit={() => void upload()}><Form.Field>
         <div className="localized-file-picker"><input id="committee-upload-file" type="file"
           aria-label={t('Select a file to upload')} onChange={event => {const file = event.currentTarget.files?.[0];
@@ -240,8 +244,11 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
     </Segment>}
 
     <Header as="h3">{t("File")}</Header>
-    {files.length === 0 ? <Message content={t("No files")} /> : <Card.Group itemsPerRow={3} stackable>
-      {files.map(file => {
+    <Form.Select aria-label={t('File status')} value={statusFilter} onChange={(_, data) => setStatusFilter(String(data.value))}
+      options={['ALL', 'PUBLISHED', 'PENDING_REVIEW', 'REJECTED', 'UPLOAD_COMPLETE'].map(value => ({key: value, value,
+        text: value === 'ALL' ? t('All files') : t(FILE_STATUS[value as FileEntry['status']])}))} />
+    {files.filter(file => statusFilter === 'ALL' || file.status === statusFilter).length === 0 ? <Message content={t("No files")} /> : <Card.Group itemsPerRow={3} stackable>
+      {files.filter(file => statusFilter === 'ALL' || file.status === statusFilter).map(file => {
         const ownsFile = currentUserId === file.createdByUserId;
         const canChange = !readOnly && (canManage || ownsFile);
         return <Card key={file.id} className="self-hosted-file-card"><Card.Content>
@@ -251,7 +258,12 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
               {file.syncState === 'PENDING_HOST_COMMIT' ? t("Waiting for the chair computer to save") : t("Waiting for chair computer sync")}
             </Label></>}
           </Card.Meta>
-          <Card.Description>{file.currentVersion.originalName}</Card.Description>
+          <Card.Description>{file.currentVersion.originalName}
+            <div>{t('Submitted by')}: {file.submissionSource === 'CHAIR' ? t('Chair') : file.submitterDisplayName ?? '—'}</div>
+            <div>{t('File type')}: {file.fileType ? delegateFileTypeName(file.fileType, snapshot.committee.committeeLanguage) : '—'}</div>
+            <div>{t('Submitted at')}: {file.submittedAt ? new Date(file.submittedAt).toLocaleString(getLanguage()) : '—'}</div>
+            {file.rejectionReason && <div>{file.rejectionReason}</div>}
+          </Card.Description>
         </Card.Content><Card.Content extra className="self-hosted-file-actions">
           <Button as="a" size="small" href={api.fileDownloadUrl(file.id)} download
             loading={preparingDownloads.has(file.id)} disabled={preparingDownloads.has(file.id)}
@@ -259,8 +271,8 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
             {preparingDownloads.has(file.id) ? t("Preparing the file from the chair computer") : t("Download file")}</Button>
           {canChange && file.status === 'UPLOAD_COMPLETE' && <Button size="small"
             onClick={() => void run(() => api.submitFileForReview(file.id, file.revision))}>{t("Submit for review")}</Button>}
-          {canManage && file.status === 'PENDING_REVIEW' && <Button primary size="small"
-            onClick={() => void run(() => api.publishFile(file.id, file.revision))}>{t("Publish file")}</Button>}
+          {canManage && ['PENDING_REVIEW', 'UPLOAD_COMPLETE'].includes(file.status) && <Button as={Link} primary size="small"
+            to={`/committees/${committeeId}/posts/review`}>{t("File review")}</Button>}
           {canChange && <Button negative size="small" onClick={() => {
             if (window.confirm(t('Permanently delete “{name}”? The file will become unavailable and cannot be recovered.', {name: file.logicalName}))) {
               void run(() => api.deleteFile(file.id, file.revision));
@@ -270,7 +282,7 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
       })}
     </Card.Group>}</>}
 
-    {section !== 'attachments' && canManage && <Segment loading={working && !progress} className="self-hosted-storage-panel">
+    {(section === 'storage' || section === 'all') && canManage && <Segment loading={working && !progress} className="self-hosted-storage-panel">
       <Header as="h3">{t("File storage")}</Header>
       <Header as="h4">{t("Chair computer")}</Header>
       {activeHost ? <p>{activeHost.deviceLabel} · {t(HOST_STATUS[activeHost.status])}

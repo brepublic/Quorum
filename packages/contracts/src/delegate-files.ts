@@ -43,11 +43,12 @@ export interface DelegatePortalBootstrap {
   claimedSeat: {id: string; displayName: string; flag?: FlagSnapshot} | null;
   eligibleSeats: Array<{id: string; displayName: string; flag: FlagSnapshot}>;
   mayUpload: boolean;
-  chairHostHealthy: boolean;
+  storageAvailable: boolean;
   eventSequence: number;
   files: DelegatePublishedFile[];
   maxUploadSizeBytes: number;
   submissions?: DelegateReviewFile[];
+  pendingUploads?: Array<{id: string; logicalName: string; status: 'SAVING' | 'FAILED'}>;
   allowedExtensions?: Record<DelegateFileType, string[]>;
 }
 

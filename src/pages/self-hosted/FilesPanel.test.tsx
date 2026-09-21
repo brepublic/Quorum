@@ -6,6 +6,7 @@ import {beforeEach, afterEach, describe, expect, it, vi} from 'vitest';
 import type {CommitteeWorkspaceSnapshot, FileEntry, StorageHost, StorageMigration} from '@quorum/contracts';
 import type {SelfHostedApi} from '../../services/self-hosted-api';
 import {SelfHostedApiError} from '../../services/self-hosted-api';
+import {MemoryRouter} from 'react-router-dom';
 import FilesPanel, {storageErrorText} from './FilesPanel';
 
 beforeEach(() => setLanguage('zh-CN'));
@@ -44,8 +45,8 @@ let root: Root | undefined; let container: HTMLDivElement | undefined;
 async function render(audience: CommitteeWorkspaceSnapshot['viewer']['audience'], client: SelfHostedApi,
   currentUserId?: string, status: CommitteeWorkspaceSnapshot['committee']['status'] = 'ACTIVE'): Promise<HTMLDivElement> {
   container = document.createElement('div'); document.body.append(container); root = createRoot(container);
-  await act(async () => {root?.render(<FilesPanel snapshot={snapshot(audience, status)} api={client}
-    currentUserId={currentUserId} />); await new Promise(resolve => setTimeout(resolve, 0));});
+  await act(async () => {root?.render(<MemoryRouter><FilesPanel snapshot={snapshot(audience, status)} api={client}
+    currentUserId={currentUserId} /></MemoryRouter>); await new Promise(resolve => setTimeout(resolve, 0));});
   return container;
 }
 function button(label: string): HTMLButtonElement | undefined {
@@ -144,7 +145,7 @@ describe('self-hosted stage 6 file panel', () => {
       updatedAt: '2026-08-13T00:00:00.000Z'} as const;
     const view = await render('MEMBER', api({listFiles: vi.fn(async () => []),
       listPendingHostCommits: vi.fn(async () => [pending])}), 'member');
-    expect(view.textContent).toContain('等待主席电脑保存');
+    expect(view.textContent).toContain('正在保存');
     expect(view.textContent).toContain('离线文件');
     expect(view.textContent).toContain('暂无文件');
   });
@@ -292,18 +293,17 @@ describe('self-hosted stage 6 file panel', () => {
     expect(button('确认切换')).toBeTruthy();
   });
 
-  it('publishes with the loaded revision and removes a permanently deleted file after refresh', async () => {
+  it('routes pending files to review and deletes with the loaded revision', async () => {
     let current: FileEntry[] = [{...file, status: 'PENDING_REVIEW', revision: 2}];
     const publishFile = vi.fn(async () => {current = [{...file, status: 'PUBLISHED', revision: 3}]; return current[0];});
     const deleteFile = vi.fn(async () => {current = []; return {id: 'tombstone', fileEntryId: file.id};});
     const client = api({listFiles: vi.fn(async () => current), publishFile, deleteFile});
     const view = await render('CHAIR', client, 'chair');
-    await act(async () => {button('发布文件')?.click(); await new Promise(resolve => setTimeout(resolve, 0));});
-    expect(publishFile).toHaveBeenCalledWith(file.id, 2);
-    expect(view.textContent).toContain('已发布');
+    expect(view.querySelector('a[href$="/posts/review"]')?.textContent).toBe('文件审核');
+    expect(publishFile).not.toHaveBeenCalled();
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     await act(async () => {button('永久删除')?.click(); await new Promise(resolve => setTimeout(resolve, 0));});
-    expect(deleteFile).toHaveBeenCalledWith(file.id, 3);
+    expect(deleteFile).toHaveBeenCalledWith(file.id, 2);
     expect(view.textContent).not.toContain('工作文件一');
   });
 });

@@ -34,8 +34,8 @@ export async function streamDelegateFileEvents(input: {
   };
   await send();
   poll = setInterval(() => { void send().catch(close); }, 1_000);
-  heartbeat = setInterval(() => { if (closed) return; void service.chairHostHealthy(credential).then(healthy => {
-    response.write(`event: portal.status\ndata: ${JSON.stringify({chairHostHealthy: healthy})}\n\n`);
+  heartbeat = setInterval(() => { if (closed) return; void service.storageAvailable(credential).then(healthy => {
+    response.write(`event: portal.status\ndata: ${JSON.stringify({storageAvailable: healthy})}\n\n`);
   }).catch(close); }, 15_000);
   poll.unref(); heartbeat.unref(); request.once('close', close);
 }

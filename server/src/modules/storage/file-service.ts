@@ -18,6 +18,10 @@ export class DownloadPreparingError extends Error {
 }
 
 interface FileRow extends QueryResultRow {
+  submission_source: FileEntry['submissionSource'];
+  submitter_display_name: string | null;
+  file_type: FileEntry['fileType'];
+  rejection_reason: string | null;
   id: string;
   committee_id: string;
   logical_name: string;
@@ -76,8 +80,10 @@ const FILE_SELECT = `SELECT e.id,e.committee_id,e.logical_name,e.media_type AS e
   e.created_at AS entry_created_at,e.updated_at AS entry_updated_at,
   v.id AS version_id,v.version_number,v.original_name,v.media_type AS version_media_type,
   v.size_bytes,encode(v.sha256,'hex') AS sha256_hex,v.blob_id,v.created_at AS version_created_at,
+  metadata.submission_source,metadata.submitter_display_name,metadata.file_type,metadata.rejection_reason,
   b.storage_key,sb.provider_type,sb.provider_config_id,agent_upload.staging_key AS agent_staging_key
-  FROM file_entries e JOIN committees committee ON committee.id=e.committee_id
+  FROM file_entries e LEFT JOIN delegate_file_metadata metadata ON metadata.file_entry_id=e.id
+  JOIN committees committee ON committee.id=e.committee_id
   JOIN file_versions v ON v.id=e.current_version_id JOIN file_blobs content ON content.id=v.blob_id
   LEFT JOIN file_blob_copies location ON location.content_blob_id=content.id
     AND location.storage_binding_id=committee.active_storage_binding_id
@@ -91,7 +97,8 @@ const FILE_SELECT = `SELECT e.id,e.committee_id,e.logical_name,e.media_type AS e
 function mapFile(row: FileRow): FileEntry {
   return {id: row.id, committeeId: row.committee_id, logicalName: row.logical_name,
     mediaType: row.entry_media_type, status: row.status, syncState: row.sync_state,
-    createdByUserId: row.created_by_user_id,
+    createdByUserId: row.created_by_user_id, submissionSource: row.submission_source ?? 'LEGACY',
+    submitterDisplayName: row.submitter_display_name, fileType: row.file_type, rejectionReason: row.rejection_reason,
     currentVersion: {id: row.version_id, versionNumber: row.version_number, originalName: row.original_name,
       mediaType: row.version_media_type, sizeBytes: Number(row.size_bytes), sha256: row.sha256_hex,
       blobId: row.blob_id, createdAt: row.version_created_at.toISOString()},
@@ -360,6 +367,8 @@ export class Stage6FileService {
         capabilities: chair ? ['CHAIR'] : owner ? ['OWNER'] : ['MEMBER'], action: auditAction,
         resourceType: 'file_entry', resourceId: entry.id,
         before: {status: expected, revision: entry.revision}, after: {status: next, revision: current.revision}});
+      if (next === 'PUBLISHED') await client.query(`UPDATE storage_cache_entries SET state='READY',
+        state_changed_at=now(),updated_at=now() WHERE file_entry_id=$1 AND state='REVIEW_PINNED'`, [entry.id]);
       const row = await client.query<FileRow>(`${FILE_SELECT} WHERE e.id=$1`, [entry.id]);
       return mapFile(row.rows[0] as FileRow);
     }});

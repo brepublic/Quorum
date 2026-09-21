@@ -14,7 +14,7 @@ const reviewFile: DelegateReviewFile = {id: 'file', logicalName: '原文件.md',
   submittedAt: '2026-08-28T00:00:00.000Z', publishedAt: '', revision: 1};
 const publishedFile: DelegateReviewFile = {...reviewFile, id: 'published-file', logicalName: 'approved-file.pdf',
   originalName: 'approved.pdf', status: 'PUBLISHED', publishedAt: '2026-08-28T01:00:00.000Z', revision: 2};
-const snapshot = {committee: {id: 'committee', committeeLanguage: 'zh-CN'}, sync: {committeeEventSequence: 1}} as CommitteeWorkspaceSnapshot;
+const snapshot = {committee: {id: 'committee', status: 'ACTIVE', committeeLanguage: 'zh-CN'}, sync: {committeeEventSequence: 1}} as CommitteeWorkspaceSnapshot;
 
 let host: HTMLDivElement; let root: Root;
 beforeEach(() => {setLanguage('zh-CN');host = document.createElement('div'); document.body.append(host); root = createRoot(host);
@@ -23,7 +23,7 @@ afterEach(async () => {await act(async () => root.unmount()); host.remove();});
 
 describe('delegate file chair review', () => {
   it('keeps the upload component separate from review cards', async () => {
-    const api = {createFileUpload: vi.fn(), uploadFileContent: vi.fn(), commitFileUpload: vi.fn()} as unknown as SelfHostedApi;
+    const api = {listPendingHostCommits: async () => [], createFileUpload: vi.fn(), uploadFileContent: vi.fn(), commitFileUpload: vi.fn()} as unknown as SelfHostedApi;
     await act(async () => root.render(<DelegateFileUploadPanel snapshot={snapshot} api={api} />));
     expect(host.querySelector('.delegate-file-chair-upload')).not.toBeNull();
     expect(host.querySelector('.delegate-file-card-list')).toBeNull();
@@ -78,12 +78,12 @@ describe('delegate file chair review', () => {
     expect(host.textContent).toContain('批准');
     expect(host.textContent).not.toContain('待审核文件');
     expect(host.textContent).not.toContain('已审核文件');
-    expect(host.querySelector('.delegate-file-review-divider')).not.toBeNull();
-    expect(host.textContent).toContain('approved-file.pdf');
+    expect(host.querySelector('.delegate-file-review-divider')).toBeNull();
+    expect(host.textContent).not.toContain('approved-file.pdf');
     expect(host.textContent).not.toContain('审核结果');
-    expect(host.textContent).toContain('已批准');
-    expect(host.querySelector('.motion-decision-passed')).not.toBeNull();
-    expect(host.querySelectorAll('.motion-metadata-table .motion-metadata-key')).toHaveLength(9);
+    expect(host.textContent).not.toContain('已批准');
+    expect(host.querySelector('.motion-decision-passed')).toBeNull();
+    expect(host.querySelectorAll('.motion-metadata-table .motion-metadata-key')).toHaveLength(4);
   });
 
   it('sorts 待审核文件按提交时间从早到晚', async () => {
@@ -101,7 +101,7 @@ describe('delegate file chair review', () => {
     expect(names).toEqual(['最早文件.md', '中间文件.md', '最新文件.md']);
   });
 
-  it('sorts 已审核文件按提交时间从晚到早', async () => {
+  it('excludes published and rejected files from the review queue', async () => {
     const latest = {...publishedFile, id: 'reviewed-latest', logicalName: '最新审核文件.pdf', submittedAt: '2026-09-03T00:00:00.000Z'};
     const middle = {...publishedFile, id: 'reviewed-middle', logicalName: '中间审核文件.pdf', submittedAt: '2026-09-02T00:00:00.000Z', status:'REJECTED' as const};
     const earliest = {...publishedFile, id: 'reviewed-earliest', logicalName: '最早审核文件.pdf', submittedAt: '2026-09-01T00:00:00.000Z'};
@@ -113,7 +113,8 @@ describe('delegate file chair review', () => {
       const header = card.querySelector('.motion-heading .header') as HTMLElement | null;
       return header?.textContent?.trim();
     }).filter(Boolean) as string[];
-    expect(names).toEqual(['最新审核文件.pdf', '中间审核文件.pdf', '最早审核文件.pdf']);
+    expect(names).toEqual([]);
+    expect(host.textContent).toContain('暂无待审核文件');
   });
 });
 
@@ -129,7 +130,7 @@ describe('prefetched chair file data', () => {
   it('loads both resources before either tab is opened and keeps content during refresh', async () => {
     const nextShare = deferred<typeof activeShare>(); const nextFiles = deferred<DelegateReviewFile[]>();
     const getDelegateFileShare = vi.fn().mockResolvedValueOnce(activeShare).mockReturnValue(nextShare.promise);
-    const listDelegateReviewFiles = vi.fn().mockResolvedValueOnce([publishedFile]).mockReturnValue(nextFiles.promise);
+    const listDelegateReviewFiles = vi.fn().mockResolvedValueOnce([{...reviewFile, originalName: reviewFile.logicalName}]).mockReturnValue(nextFiles.promise);
     const api = {getDelegateFileShare, listDelegateReviewFiles} as unknown as SelfHostedApi;
     await act(async () => root.render(<DelegateFilePanels snapshot={snapshot} api={api} tab="upload" />));
     expect(getDelegateFileShare).toHaveBeenCalledTimes(1);
@@ -141,11 +142,11 @@ describe('prefetched chair file data', () => {
     expect(host.textContent).not.toContain('开始分享');
     expect(getDelegateFileShare).toHaveBeenCalledTimes(2);
     await act(async () => root.render(<DelegateFilePanels snapshot={snapshot} api={api} tab="review" />));
-    expect(host.textContent).toContain(publishedFile.logicalName);
-    expect(host.textContent).not.toContain('暂无已审核文件');
+    expect(host.textContent).toContain(reviewFile.logicalName);
+    expect(host.textContent).not.toContain('暂无待审核文件');
     expect(listDelegateReviewFiles).toHaveBeenCalledTimes(2);
     await act(async () => nextFiles.resolve([]));
-    expect(host.textContent).toContain('暂无已审核文件');
+    expect(host.textContent).toContain('暂无待审核文件');
   });
 
   it.each(['share', 'review'])('does not render false empty state while %s is loading or failed', async tab => {
@@ -160,26 +161,26 @@ describe('prefetched chair file data', () => {
   });
 
   it('retains loaded content on a refresh failure and retries', async () => {
-    const listDelegateReviewFiles = vi.fn().mockResolvedValueOnce([publishedFile])
+    const listDelegateReviewFiles = vi.fn().mockResolvedValueOnce([{...reviewFile, originalName: reviewFile.logicalName}])
       .mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce([]);
     const api = {getDelegateFileShare: async () => null, listDelegateReviewFiles} as unknown as SelfHostedApi;
     await act(async () => root.render(<DelegateFilePanels snapshot={snapshot} api={api} tab="review" />));
     await act(async () => root.render(<DelegateFilePanels snapshot={{...snapshot, sync: {...snapshot.sync, committeeEventSequence: 2}}} api={api} tab="review" />));
-    expect(host.textContent).toContain(publishedFile.logicalName);
+    expect(host.textContent).toContain(reviewFile.logicalName);
     expect(host.textContent).toContain('请求失败，请稍后重试。');
     await act(async () => (Array.from(host.querySelectorAll('button')).find(button => button.textContent === '重试') as HTMLButtonElement).click());
-    expect(host.textContent).toContain('暂无已审核文件');
+    expect(host.textContent).toContain('暂无待审核文件');
     expect(host.textContent).not.toContain('请求失败，请稍后重试。');
   });
 
   it('ignores an older response after a realtime refresh', async () => {
     const old = deferred<DelegateReviewFile[]>();
-    const listDelegateReviewFiles = vi.fn().mockReturnValueOnce(old.promise).mockResolvedValueOnce([publishedFile]);
+    const listDelegateReviewFiles = vi.fn().mockReturnValueOnce(old.promise).mockResolvedValueOnce([{...reviewFile, originalName: reviewFile.logicalName}]);
     const api = {getDelegateFileShare: async () => null, listDelegateReviewFiles} as unknown as SelfHostedApi;
     await act(async () => root.render(<DelegateFilePanels snapshot={snapshot} api={api} tab="review" />));
     await act(async () => root.render(<DelegateFilePanels snapshot={{...snapshot, sync: {...snapshot.sync, committeeEventSequence: 2}}} api={api} tab="review" />));
     await act(async () => old.resolve([]));
-    expect(host.textContent).toContain(publishedFile.logicalName);
+    expect(host.textContent).toContain(reviewFile.logicalName);
   });
 
   it('does not restore a share from a pending read after ending it', async () => {

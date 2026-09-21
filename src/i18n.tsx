@@ -107,6 +107,15 @@ const en: Record<string, string> = {
 };
 
 const zhCN: Record<string, string> = {
+  'File overview': '文件总览',
+  'File review': '文件审核',
+  'File status': '文件状态',
+  'All files': '全部文件',
+  'Configure storage before uploading or sharing files.': '请先配置存储，再上传或分享文件。',
+  'Save unavailable. Check storage and retry.': '暂时无法保存，请检查存储后重试。',
+  'Saving files': '正在保存',
+  'File storage unavailable': '文件存储暂不可用',
+  'Save failed. Upload the file again.': '保存失败，请重新上传文件。',
   'Rules': '议事规则',
   'Committee status': '委员会状态',
   'No delegations are marked present. Check roll call.': '尚无代表团被标记为出席，请检查点名。',

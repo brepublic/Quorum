@@ -174,7 +174,7 @@ integration('PostgreSQL stage 7 storage Agent identity', () => {
     const {paired} = await pairInitial(a.owner, a.committee.id);
     const first = await tasks.fileStatus(paired.credential, paired.host.leaseGeneration);
     expect(first.files).toHaveLength(1);
-    expect(first.files[0]).toMatchObject({fileEntryId:file.id,logicalName:file.logicalName,status:'UPLOAD_COMPLETE',cacheState:null});
+    expect(first.files[0]).toMatchObject({fileEntryId:file.id,logicalName:file.logicalName,status:'PENDING_REVIEW',cacheState:null});
     expect(JSON.stringify(first)).not.toContain('storage_key');
     expect(JSON.stringify(first)).not.toContain(paired.credential);
     await pool?.query(`INSERT INTO storage_cache_entries(id,committee_id,file_entry_id,file_version_id,blob_id,state,size_bytes)
@@ -217,7 +217,7 @@ integration('PostgreSQL stage 7 storage Agent identity', () => {
           [file.id, item.published ? 'PUBLISHED' : 'PENDING_REVIEW', item.date,
             item.published ? item.date : null, item.published ? value.chair.user.id : null]);
         await pool!.query(`INSERT INTO delegate_file_metadata(file_entry_id,submission_source,file_type,submitted_at)
-          VALUES ($1,'LEGACY',$2,$3)`, [file.id, item.type, item.date]);
+          VALUES ($1,'LEGACY',$2,$3) ON CONFLICT (file_entry_id) DO UPDATE SET file_type=$2,submitted_at=$3`, [file.id, item.type, item.date]);
       }
       query.mockClear();
       const noSessions = await service.listReview(value.chair, value.committee.id);
@@ -291,7 +291,7 @@ integration('PostgreSQL stage 7 storage Agent identity', () => {
       (SELECT state::text FROM storage_cache_entries WHERE file_entry_id=e.id) AS cache_state
       FROM file_entries e JOIN delegate_file_metadata m ON m.file_entry_id=e.id
       JOIN file_uploads u ON u.committed_file_entry_id=e.id WHERE u.id=$1`, [upload.id]);
-    expect(submitted?.rows[0]).toEqual({status: 'PENDING_REVIEW', revision: 2, event_revision: 2,
+    expect(submitted?.rows[0]).toEqual({status: 'PENDING_REVIEW', revision: 1, event_revision: 1,
       submission_source: 'DELEGATE_PORTAL', submitter_display_name: '中国', file_type: 'WORKING_PAPER',
       cache_state: 'REVIEW_PINNED'});
 
@@ -588,7 +588,7 @@ integration('PostgreSQL stage 7 storage Agent identity', () => {
       (SELECT count(*)::int FROM audit_log WHERE committee_id=$2 AND action='storage.upload_host_committed') AS audits`,
       [source.staged.id, value.committee.id, pending.taskId]);
     expect(state?.rows[0]).toEqual({upload_status: 'COMMITTED', agent_state: 'HOST_COMMITTED', files: 1, versions: 1,
-      manifest_events: 1, host_commit_tasks: 1, cache_state: 'READY', events: 1, audits: 1});
+      manifest_events: 1, host_commit_tasks: 1, cache_state: 'REVIEW_PINNED', events: 1, audits: 1});
   });
 
   it('coalesces cache misses and restores verified bytes from a capable Chair Agent', async () => {
@@ -678,6 +678,9 @@ integration('PostgreSQL stage 7 storage Agent identity', () => {
       fileRevision: 1, requestId: randomUUID()});
     await tasks.complete(chair.paired.credential, pending.taskId, {leaseGeneration: pending.leaseGeneration,
       fileRevision: 1, claimToken: claimed.claimToken, requestId: randomUUID()}, context('lru-complete'));
+    const fileService = new Stage6FileService(pool!, {} as never, {} as never);
+    const [saved] = await fileService.list(value.owner, value.committee.id);
+    await fileService.publish(value.owner, saved!.id, {baseRevision: saved!.revision}, randomUUID(), context('lru-publish'));
     const policy = {hardLimits: {publishedCacheMaxBytes: 0, pendingReviewMaxBytes: 1024,
       pendingReviewCommitteeMaxBytes: 1024, storageMinFreeBytes: 0, storageMinFreePercent: 0},
     effective: async () => ({publishedCacheMaxBytes: 0, pendingReviewMaxBytes: 1024,

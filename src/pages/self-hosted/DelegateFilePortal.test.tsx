@@ -37,7 +37,7 @@ describe('delegate file portal', () => {
     const commitDelegateFileUpload = vi.fn(async () => ({}));
     await act(async () => root.render(<DelegateFilePortal api={client({
       bootstrapDelegatePortal:async () => ({committeeId:'committee',committeeLanguage: 'zh-CN' as const, committeeName:'委员会',shareId:'share',
-        claimedSeat:{id:'seat',displayName:'中国'},eligibleSeats:[],mayUpload:true,chairHostHealthy:true,
+        claimedSeat:{id:'seat',displayName:'中国'},eligibleSeats:[],mayUpload:true,storageAvailable:true,
         eventSequence:0,files:[],maxUploadSizeBytes:limit}),
       createDelegateFileUpload,uploadDelegateFileContent,commitDelegateFileUpload
     } as unknown as Partial<SelfHostedApi>)} />));
@@ -68,11 +68,11 @@ describe('delegate file portal', () => {
 
   it('requires a second confirmation before binding the browser to a delegation', async () => {
     const claimDelegatePortal = vi.fn(async () => ({committeeId: 'committee', committeeLanguage: 'zh-CN' as const, committeeName: '裁军委员会', shareId: 'share',
-      claimedSeat: {id: 'seat', displayName: '中国'}, eligibleSeats: [], mayUpload: true, chairHostHealthy: true,
+      claimedSeat: {id: 'seat', displayName: '中国'}, eligibleSeats: [], mayUpload: true, storageAvailable: true,
       eventSequence: 0, files: [], maxUploadSizeBytes: 20 * 1024 * 1024}));
     await act(async () => root.render(<DelegateFilePortal api={client({bootstrapDelegatePortal: async () => ({
       committeeId: 'committee', committeeLanguage: 'zh-CN' as const, committeeName: '裁军委员会', shareId: 'share', claimedSeat: null,
-      eligibleSeats: [{id: 'seat', displayName: '中国', flag: {type: 'STANDARD', value: 'cn'}}], mayUpload: false, chairHostHealthy: true,
+      eligibleSeats: [{id: 'seat', displayName: '中国', flag: {type: 'STANDARD', value: 'cn'}}], mayUpload: false, storageAvailable: true,
       eventSequence: 0, files: [], maxUploadSizeBytes: 20 * 1024 * 1024}), claimDelegatePortal})} />));
     const select = host.querySelector('[role="listbox"]') as HTMLElement;
     await act(async () => select.dispatchEvent(new MouseEvent('click', {bubbles: true})));
@@ -95,7 +95,7 @@ describe('delegate file portal', () => {
       rejectionReason:'请补充签署国',reviewedAt:'2026-09-06T01:00:00Z'};
     await act(async () => root.render(<DelegateFilePortal api={client({bootstrapDelegatePortal:async () => ({
       committeeId:'committee',committeeLanguage: 'zh-CN' as const, committeeName:'委员会',shareId:'share',claimedSeat:{id:'seat',displayName:'新加坡'},
-      eligibleSeats:[],mayUpload:true,chairHostHealthy:true,eventSequence:9,files:[],submissions:[submission],maxUploadSizeBytes:32*1024*1024})})} />));
+      eligibleSeats:[],mayUpload:true,storageAvailable:true,eventSequence:9,files:[],submissions:[submission],maxUploadSizeBytes:32*1024*1024})})} />));
     await act(async () => FakeEventSource.latest?.onopen?.());
     expect(host.querySelector('.right.menu')?.textContent).toMatch(/实时.*新加坡/);
     await act(async () => (Array.from(host.querySelectorAll('a')).find(item => item.textContent === '上传文件') as HTMLElement).click());
@@ -113,7 +113,7 @@ describe('delegate file portal', () => {
       submittedAt: '2026-08-27T10:00:00.000Z', publishedAt: '2026-08-27T10:01:00.000Z', revision: 2};
     await act(async () => root.render(<DelegateFilePortal api={client({bootstrapDelegatePortal: async () => ({
       committeeId: 'committee', committeeLanguage: 'zh-CN' as const, committeeName: '裁军委员会', shareId: 'share', claimedSeat: {id: 'seat', displayName: '法国'},
-      eligibleSeats: [], mayUpload: true, chairHostHealthy: true, eventSequence: 9, files: [file], maxUploadSizeBytes: 20 * 1024 * 1024}),
+      eligibleSeats: [], mayUpload: true, storageAvailable: true, eventSequence: 9, files: [file], maxUploadSizeBytes: 20 * 1024 * 1024}),
       listDelegatePublishedFiles: async () => [file]})} />));
     await act(async () => (Array.from(host.querySelectorAll('a')).find(item => item.textContent === '上传文件') as HTMLElement).click());
     expect(host.textContent).toContain('文件大小上限为 20 MiB');

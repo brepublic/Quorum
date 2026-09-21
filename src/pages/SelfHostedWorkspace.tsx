@@ -334,45 +334,40 @@ function PostsPanel({snapshot, api, userId, tab}: {snapshot: CommitteeWorkspaceS
   api: SelfHostedApi; userId?: string; tab?: string}) {
   useLanguage();
   const canManageStorage = snapshot.viewer.audience === 'CHAIR' || snapshot.viewer.audience === 'OWNER';
-  const [delegateFilesEnabled, setDelegateFilesEnabled] = React.useState<boolean>();
+  const canShare = canManageStorage && snapshot.committee.operationMode === 'CHAIR_OPERATED';
+  const canUpload = snapshot.viewer.audience !== 'PUBLIC';
+  const [storageConfigured, setStorageConfigured] = React.useState<boolean>();
   const [bindingError, setBindingError] = React.useState<string>();
   const [bindingReload, setBindingReload] = React.useState(0);
   React.useEffect(() => {
     let active = true;
-    setBindingError(undefined);
-    if (!canManageStorage || snapshot.committee.operationMode !== 'CHAIR_OPERATED') {setDelegateFilesEnabled(false); return;}
+    if (!canManageStorage) return;
     void api.listStorageBindings(snapshot.committee.id).then(bindings => {
-      if (active) setDelegateFilesEnabled(bindings.some(binding => binding.status === 'ACTIVE' && binding.providerType === 'CHAIR_AGENT'));
-    }).catch(caught => {if (active) {
-      if (caught instanceof SelfHostedApiError && [401, 403, 404].includes(caught.status)) setDelegateFilesEnabled(undefined);
-      setBindingError(errorText(caught));
-    }});
+      if (active) {setStorageConfigured(bindings.some(binding => binding.status === 'ACTIVE')); setBindingError(undefined);}
+    }).catch(caught => {if (active) setBindingError(errorText(caught));});
     return () => {active = false;};
-  }, [api, canManageStorage, snapshot.committee.id, snapshot.committee.operationMode,
-    snapshot.sync.committeeEventSequence, bindingReload]);
-  if (canManageStorage && snapshot.committee.operationMode === 'CHAIR_OPERATED' && delegateFilesEnabled === undefined) {
-    return bindingError ? <Message error><p>{bindingError}</p><Button onClick={() => setBindingReload(value => value + 1)}>{t('Retry')}</Button></Message> : <Segment basic loading style={{minHeight: 120}} role="status" aria-label={t('Loading')} />;
-  }
+  }, [api, canManageStorage, snapshot.committee.id, snapshot.sync.committeeEventSequence, bindingReload]);
   const base = `/committees/${snapshot.committee.id}/posts`;
   if (tab === undefined || tab === 'text' || tab === 'links') return <Redirect to={`${base}/attachments`} />;
-  if (delegateFilesEnabled && tab === 'attachments') return <Redirect to={`${base}/review`} />;
-  const active = tab === 'attachments' || tab === 'storage' || (tab === 'file-settings' && canManageStorage) || (tab === 'share' && delegateFilesEnabled)
-    || (tab === 'upload' && delegateFilesEnabled) || (tab === 'review' && delegateFilesEnabled)
-    ? tab : delegateFilesEnabled ? 'review' : 'attachments';
+  const active = tab === 'attachments' || (tab === 'storage' && canManageStorage)
+    || (tab === 'file-settings' && canManageStorage) || (tab === 'share' && canShare)
+    || (tab === 'upload' && canUpload) || (tab === 'review' && canManageStorage) ? tab : 'attachments';
+  const needsStorage = (active === 'upload' || active === 'share') && canManageStorage && storageConfigured === false;
   return <Container className="committee-files-page"><Menu pointing secondary aria-label={t('Resource sections')}>
-    {delegateFilesEnabled ? <><Menu.Item as={Link} to={`${base}/review`} active={active === 'review'}>{t('Review')}</Menu.Item>
-      <Menu.Item as={Link} to={`${base}/share`} active={active === 'share'}>{t('Share')}</Menu.Item>
-      <Menu.Item as={Link} to={`${base}/upload`} active={active === 'upload'}>{t('Upload files')}</Menu.Item></>
-      : <Menu.Item as={Link} to={`${base}/attachments`} active={active === 'attachments'}>{t('Attachments')}</Menu.Item>}
+    <Menu.Item as={Link} to={`${base}/attachments`} active={active === 'attachments'}>{t('File overview')}</Menu.Item>
+    {canManageStorage && <Menu.Item as={Link} to={`${base}/review`} active={active === 'review'}>{t('File review')}</Menu.Item>}
+    {canShare && <Menu.Item as={Link} to={`${base}/share`} active={active === 'share'}>{t('Share')}</Menu.Item>}
+    {canUpload && <Menu.Item as={Link} to={`${base}/upload`} active={active === 'upload'}>{t('Upload files')}</Menu.Item>}
     {canManageStorage && <Menu.Item as={Link} to={`${base}/storage`} active={active === 'storage'}>{t('Storage settings')}</Menu.Item>}
     {canManageStorage && <Menu.Item as={Link} to={`${base}/file-settings`} active={active === 'file-settings'}>{t('File settings')}</Menu.Item>}
   </Menu>
     {bindingError && <Message error><p>{bindingError}</p><Button onClick={() => setBindingReload(value => value + 1)}>{t('Retry')}</Button></Message>}
+    {needsStorage && <Message warning><Link to={`${base}/storage`}>{t('Configure storage before uploading or sharing files.')}</Link></Message>}
     {active === 'file-settings' && canManageStorage && <DelegateFileSettingsPanel committeeLanguage={snapshot.committee.committeeLanguage} key={snapshot.committee.id} committeeId={snapshot.committee.id} api={api}
       readOnly={!['ACTIVE', 'PAUSED'].includes(snapshot.committee.status)} />}
-    {active === 'upload' && delegateFilesEnabled && <DelegateFileUploadPanel snapshot={snapshot} api={api} />}
-    {active === 'attachments' && !delegateFilesEnabled && <FilesPanel section="attachments" snapshot={snapshot} api={api} currentUserId={userId} />}
-    {delegateFilesEnabled && <DelegateFilePanels snapshot={snapshot} api={api} tab={active} />}
+    {active === 'upload' && canUpload && !needsStorage && <DelegateFileUploadPanel snapshot={snapshot} api={api} />}
+    {active === 'attachments' && <FilesPanel section="overview" snapshot={snapshot} api={api} currentUserId={userId} />}
+    {canManageStorage && <DelegateFilePanels snapshot={snapshot} api={api} tab={needsStorage ? '' : active} />}
     {active === 'storage' && canManageStorage && <FilesPanel section="storage" snapshot={snapshot} api={api} currentUserId={userId} />}
   </Container>;
 }

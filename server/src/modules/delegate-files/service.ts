@@ -17,7 +17,7 @@ import {rejectionTypes, allowedExtensions} from './settings.js';
 import {AppError} from '../../http/errors.js';
 import type {AuthenticatedSession, IdentityUser} from '../identity/store.js';
 import {createOpaqueToken, hashOpaqueToken} from '../identity/tokens.js';
-import {appendEvent, audit, idempotentTransaction, isChair, lockedCommittee, requireBusinessIdentity, transaction,
+import {appendEvent, audit, idempotentTransaction, isChair, lockedCommittee, requireBusinessIdentity, requireProceedingsActive, transaction,
   type Stage4Context} from '../stage4/database.js';
 import type {Stage6UploadService} from '../storage/upload-service.js';
 import type {Stage6ProviderCommitService} from '../storage/provider-commit-service.js';
@@ -148,9 +148,13 @@ export class DelegateFileService {
     origin: string, context: Stage4Context): Promise<DelegateFileShare> {
     requireBusinessIdentity(auth);
     return transaction(this.pool, async client => {
-      const committee = await this.requireManager(client, uuid(committeeId, 'Committee ID'), auth.user.id, true);
+      const committee = await this.requireManager(client, uuid(committeeId, 'Committee ID'), auth.user.id, false);
       if (committee.revision !== positiveRevision(baseRevision)) throw new AppError({code: 'REVISION_CONFLICT',
         message: 'This committee changed since it was loaded.', details: {currentRevision: committee.revision}});
+      await this.assertAvailable(client, committee.id, committee.operation_mode, committee.status);
+      const binding = await client.query(`SELECT 1 FROM storage_bindings WHERE id=$1 AND status='ACTIVE'`,
+        [committee.active_storage_binding_id]);
+      if (!binding.rowCount) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The committee has no active storage.'});
       const started = await client.query(`SELECT 1 FROM meeting_sessions WHERE committee_id=$1 AND status='OPEN'`,
         [committee.id]);
       if (!started.rowCount) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Open the first meeting session before sharing files.'});
@@ -231,7 +235,6 @@ export class DelegateFileService {
     context: Stage4Context): Promise<FileUpload> {
     const session = await this.authenticate(credential);
     await this.assertMayUpload(session);
-    await this.cache?.assertPendingCapacity(session.committee_id, Number(body.expectedSizeBytes));
     const type = fileType(body.fileType); const uploadBody = {...body}; delete uploadBody.fileType;
     const settings = (await this.pool.query('SELECT delegate_file_settings FROM committees WHERE id=$1', [session.committee_id])).rows[0].delegate_file_settings as DelegateFileSettings;
     const extensions = settings.allowedExtensions[type];
@@ -241,12 +244,8 @@ export class DelegateFileService {
     }
     const auth = await this.custodian(session.created_by_user_id);
     const scopedKey = `${session.id}.${key}`;
-    const upload = await this.uploads.createUpload(auth, session.committee_id, uploadBody, scopedKey, context);
-    await this.pool.query(`INSERT INTO delegate_file_upload_contexts
-      (upload_id,delegate_session_id,seat_id,seat_display_name,file_type)
-      VALUES ($1,$2,$3,$4,$5) ON CONFLICT (upload_id) DO NOTHING`,
-    [upload.id, session.id, session.seat_id, session.seat_display_name, type]);
-    return upload;
+    return this.uploads.createUpload(auth, session.committee_id, uploadBody, scopedKey, context,
+      {sessionId: session.id, seatId: session.seat_id, displayName: session.seat_display_name, fileType: type});
   }
 
   async receiveContent(credential: string | undefined, uploadIdValue: string, source: AsyncIterable<Uint8Array | string>,
@@ -292,19 +291,9 @@ export class DelegateFileService {
       if (!['UPLOAD_COMPLETE', 'PENDING_REVIEW'].includes(entry.status)) throw new AppError({code: 'RESOURCE_CONFLICT',
         message: 'File status does not allow approval.'});
       const existing = (await client.query<MetadataRow>('SELECT * FROM delegate_file_metadata WHERE file_entry_id=$1', [fileId])).rows[0];
-      let source: DelegateReviewFile['submissionSource'] = existing?.submission_source ?? 'ACCOUNT';
-      let submitter = existing?.submitter_display_name ?? null; let seatId = existing?.submitted_by_seat_id ?? null;
-      if (!existing) {
-        const chair = entry.created_by_user_id === committee.owner_user_id || await isChair(client, committee.id, entry.created_by_user_id);
-        if (chair) { source = 'CHAIR'; submitter = null; }
-        else {
-          const seat = (await client.query<{id: string; display_name: string}>(`SELECT s.id,s.display_name FROM seat_assignments a
-            JOIN committee_seats s ON s.id=a.seat_id WHERE a.committee_id=$1 AND a.user_id=$2 AND a.status='ACTIVE'`,
-          [committee.id, entry.created_by_user_id])).rows[0];
-          if (seat) { seatId = seat.id; submitter = seat.display_name; }
-          else { source = 'LEGACY'; }
-        }
-      }
+      const source = existing?.submission_source ?? 'LEGACY';
+      const submitter = existing?.submitter_display_name ?? null;
+      const seatId = existing?.submitted_by_seat_id ?? null;
       const now = new Date();
       await client.query(`INSERT INTO delegate_file_metadata
         (file_entry_id,submission_source,submitted_by_seat_id,submitter_display_name,file_type,submitted_at)
@@ -413,9 +402,9 @@ export class DelegateFileService {
         publishedAt: typeof row.payload.publishedAt === 'string' ? row.payload.publishedAt : row.created_at.toISOString()}))};
   }
 
-  async chairHostHealthy(credential: string | undefined): Promise<boolean> {
+  async storageAvailable(credential: string | undefined): Promise<boolean> {
     const session = await this.authenticate(credential);
-    return this.hostHealthy(session.committee_id);
+    return this.storageHealthy(session.committee_id);
   }
 
   private share(row: ShareRow, origin: string): DelegateFileShare {
@@ -430,15 +419,12 @@ export class DelegateFileService {
     if (committee.owner_user_id !== userId && !(await isChair(client, committee.id, userId))) {
       throw new AppError({code: 'FORBIDDEN', message: 'Chair or committee owner access is required.'});
     }
-    if (requireAvailable) await this.assertAvailable(client, committee.id, committee.operation_mode, committee.status,
-      committee.active_storage_binding_id);
+    if (requireAvailable) requireProceedingsActive(committee);
     return committee;
   }
 
-  private async assertAvailable(client: PoolClient, committeeId: string, mode: string, status: string, bindingId: string | null) {
-    const binding = bindingId ? await client.query(`SELECT 1 FROM storage_bindings WHERE id=$1 AND committee_id=$2
-      AND status='ACTIVE' AND provider_type='CHAIR_AGENT'`, [bindingId, committeeId]) : {rowCount: 0};
-    if (mode !== 'CHAIR_OPERATED' || !['ACTIVE', 'PAUSED'].includes(status) || !binding.rowCount) {
+  private async assertAvailable(_client: PoolClient, _committeeId: string, mode: string, status: string) {
+    if (mode !== 'CHAIR_OPERATED' || !['ACTIVE', 'PAUSED'].includes(status)) {
       throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Delegate file sharing is unavailable.'});
     }
   }
@@ -449,7 +435,7 @@ export class DelegateFileService {
       AND status='ACTIVE'${lock ? ' FOR UPDATE' : ''}`, [capability])).rows[0];
     if (!row) throw new AppError({code: 'LINK_EXPIRED', message: 'This file share has ended.'});
     const committee = await lockedCommittee(client, row.committee_id);
-    await this.assertAvailable(client, committee.id, committee.operation_mode, committee.status, committee.active_storage_binding_id);
+    await this.assertAvailable(client, committee.id, committee.operation_mode, committee.status);
     return row;
   }
 
@@ -469,6 +455,10 @@ export class DelegateFileService {
       JOIN committees c ON c.id=sh.committee_id WHERE s.credential_hash=$1 AND s.revoked_at IS NULL
         AND s.expires_at>now() AND sh.status='ACTIVE'`, [hashOpaqueToken(credential)])).rows[0];
     if (!row && !optional) throw new AppError({code: 'AUTHENTICATION_REQUIRED', message: 'Delegate file session expired.'});
+    if (row) {
+      const committee = await lockedCommittee(client, row.committee_id);
+      await this.assertAvailable(client, committee.id, committee.operation_mode, committee.status);
+    }
     if (row) await client.query(`UPDATE delegate_file_sessions SET last_seen_at=now()
       WHERE id=$1 AND last_seen_at < now()-interval '1 minute'`, [row.id]);
     return row;
@@ -505,19 +495,31 @@ export class DelegateFileService {
       allowedExtensions: settings.allowedExtensions,
       eligibleSeats: session ? [] : eligible,
       mayUpload: Boolean(session && eligible.some(item => item.id === session.seat_id)),
-      chairHostHealthy: await this.hostHealthy(share.committee_id, client),
+      storageAvailable: await this.storageHealthy(share.committee_id, client),
       eventSequence: Number(committee.next_event_sequence) - 1,
       files: session ? await this.publishedForSession(session) : [],
       maxUploadSizeBytes: this.uploads.staging.maxFileBytes,
+      pendingUploads: session ? (await client.query<{id: string; logical_name: string; status: string;
+        agent_commit_state: string | null; task_status: string | null}>(`SELECT u.id,u.logical_name,u.status,u.agent_commit_state,task.status AS task_status
+        FROM file_uploads u LEFT JOIN storage_agent_tasks task ON task.id=u.agent_task_id
+        JOIN delegate_file_upload_contexts d ON d.upload_id=u.id
+        JOIN delegate_file_sessions ds ON ds.id=d.delegate_session_id
+        JOIN delegate_file_shares sh ON sh.id=ds.share_id
+        WHERE sh.committee_id=$1 AND d.seat_id=$2 AND u.status NOT IN ('COMMITTED','CANCELLED')
+        ORDER BY d.submitted_at DESC`, [share.committee_id, session.seat_id])).rows.map(row => ({
+          id: row.id, logicalName: row.logical_name,
+          status: row.status === 'FAILED' || row.agent_commit_state === 'CONFLICT' || ['FAILED','CANCELLED','RETRY'].includes(row.task_status ?? '') ? 'FAILED' as const : 'SAVING' as const
+        })) : [],
       submissions: session ? await this.history(share.committee_id, session.seat_id) : []};
   }
 
-  private async hostHealthy(committeeId: string, client?: PoolClient): Promise<boolean> {
+  private async storageHealthy(committeeId: string, client?: PoolClient): Promise<boolean> {
     const executor = client ?? this.pool;
     const result = await executor.query(`SELECT 1 FROM committees c JOIN storage_bindings b
-      ON b.id=c.active_storage_binding_id AND b.provider_type='CHAIR_AGENT' AND b.status='ACTIVE'
-      JOIN storage_hosts h ON h.id=b.storage_host_id AND h.status='ACTIVE'
-      WHERE c.id=$1`, [committeeId]);
+      ON b.id=c.active_storage_binding_id AND b.status='ACTIVE'
+      LEFT JOIN storage_hosts h ON h.id=b.storage_host_id
+      WHERE c.id=$1 AND (b.provider_type<>'CHAIR_AGENT' OR
+        (h.status='ACTIVE' AND h.lease_generation=c.storage_lease_generation))`, [committeeId]);
     return Boolean(result.rowCount);
   }
 

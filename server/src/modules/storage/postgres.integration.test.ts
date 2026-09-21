@@ -25,6 +25,8 @@ import {S3CompatibleStore, type S3Request, type S3Response, type S3Transport} fr
 import {Stage6FileService} from './file-service';
 import {Stage6MigrationService} from './migration-service';
 import {Stage6MaintenanceService} from './maintenance-service';
+import {DelegateFileService} from '../delegate-files/service';
+import {Stage6ProviderCommitService} from './provider-commit-service';
 import {createLogger} from '../../logger';
 
 const {Client, Pool} = pg;
@@ -205,6 +207,81 @@ async function committedServerFile(fixture: Awaited<ReturnType<typeof storageFix
 }
 
 integration('PostgreSQL stage 6 file metadata', () => {
+  it.each(['SERVER_VOLUME', 'S3_COMPATIBLE'] as const)('uses the same private submission, review and share lifecycle on %s', async provider => {
+    const fixture = provider === 'SERVER_VOLUME' ? await storageFixture('PRIVATE') : await s3Fixture();
+    await pool!.query(`UPDATE committees SET visibility='PRIVATE',operation_mode='CHAIR_OPERATED' WHERE id=$1`, [fixture.committee.id]);
+    const transport = new IntegrationS3Transport();
+    const configs = 'configs' in fixture ? fixture.configs : fileS3Configs;
+    const s3 = new Stage6S3CommitService(pool!, storage, staging, configs,
+      config => new S3CompatibleStore(config, transport, 20 * 1024 * 1024));
+    const reader = new Stage6FileService(pool!, volume, configs,
+      config => new S3CompatibleStore(config, transport, 20 * 1024 * 1024));
+    const commits = new Stage6ProviderCommitService(pool!, serverVolume, s3);
+    // A zero-sized Chair cache must have no effect on durable volume/S3 submissions.
+    const cache = {assertPendingCapacity: async () => {throw new Error('Chair cache must not be consulted');}};
+    const portal = new DelegateFileService(pool!, uploads, commits, reader, storage, cache as never);
+    const session = await stage4.startMeetingSession(fixture.chair, fixture.committee.id, {}, context('open'), randomUUID());
+    const seats = (await pool!.query('SELECT id FROM committee_seats WHERE committee_id=$1 ORDER BY sort_order', [fixture.committee.id])).rows;
+    const seat = seats[0]!;
+    await stage4.createAttendanceEvent(fixture.chair, fixture.committee.id,
+      {meetingSessionId: session.id, seatId: seat.id, type: 'PRESENT'}, context('present'));
+    const revision = async () => (await pool!.query('SELECT revision FROM committees WHERE id=$1', [fixture.committee.id])).rows[0].revision;
+    await expect(portal.startShare(fixture.member, fixture.committee.id, await revision(), 'https://localhost', context('forbidden')))
+      .rejects.toMatchObject({code: 'FORBIDDEN'});
+    const share = await portal.startShare(fixture.chair, fixture.committee.id, await revision(), 'https://localhost', context('share'));
+    const capability = share.url.split('#')[1]!;
+    const claimed = await portal.claim(capability, seat.id, context('claim'));
+    expect(claimed.storageAvailable).toBe(true);
+    const content = 'verified delegate content';
+    const body = {logicalName: 'delegate.txt', originalName: 'delegate.txt', mediaType: 'text/plain',
+      expectedSizeBytes: Buffer.byteLength(content), sha256: digest(content), fileType: 'WORKING_PAPER'};
+    const submit = async (key: string) => {
+      const up = await portal.createUpload(claimed.sessionToken, body, key, context(key));
+      expect(await portal.createUpload(claimed.sessionToken, body, key, context('repeat'))).toEqual(up);
+      await expect(portal.createUpload(claimed.sessionToken, {...body, fileType: 'DIRECTIVE_DRAFT'}, key, context('changed-type')))
+        .rejects.toMatchObject({code: 'IDEMPOTENCY_CONFLICT'});
+      expect((await portal.bootstrap(capability, claimed.sessionToken)).submissions).not.toContainEqual(expect.objectContaining({id: up.id}));
+      await portal.receiveContent(claimed.sessionToken, up.id, (async function* () {yield content;})(), `${key}-bytes`, content.length, context('bytes'));
+      const result = await portal.commitUpload(claimed.sessionToken, up.id, `${key}-commit`, context('commit'));
+      if ('kind' in result) throw new Error('Volume/S3 saves must finish before returning a file');
+      expect(result.status).toBe('PENDING_REVIEW');
+      expect(await portal.commitUpload(claimed.sessionToken, up.id, `${key}-commit`, context('replay'))).toEqual(result);
+      return result;
+    };
+    const pending = await submit('first');
+    expect((await portal.bootstrap(capability, claimed.sessionToken)).files).toEqual([]);
+    await expect(portal.download(claimed.sessionToken, pending.id)).rejects.toMatchObject({code: 'NOT_FOUND'});
+    await expect(portal.approve(fixture.member, pending.id, {baseRevision: pending.revision, logicalName: 'Approved', fileType: 'WORKING_PAPER'}, context('forbidden')))
+      .rejects.toMatchObject({code: 'FORBIDDEN'});
+    const approved = await portal.approve(fixture.chair, pending.id,
+      {baseRevision: pending.revision, logicalName: 'Approved', fileType: 'WORKING_PAPER'}, context('approve'));
+    expect(approved).toMatchObject({status: 'PUBLISHED', submissionSource: 'DELEGATE_PORTAL', fileType: 'WORKING_PAPER'});
+    await expect(reader.download(undefined, approved.id)).rejects.toMatchObject({code: 'NOT_FOUND'});
+    const download = await portal.download(claimed.sessionToken, approved.id);
+    const chunks = []; for await (const chunk of download.content) chunks.push(chunk);
+    expect(Buffer.concat(chunks).toString()).toBe(content);
+    const rejected = await submit('reject');
+    const settings = await portal.getSettings(fixture.chair, fixture.committee.id);
+    await portal.reject(fixture.chair, rejected.id, {baseRevision: rejected.revision, logicalName: 'Rejected',
+      fileType: 'WORKING_PAPER', rejectionTypeId: settings.rejectionTypes[0]!.id, reason: 'Revise this file'}, 'reject', context('reject'));
+    const history = await portal.bootstrap(capability, claimed.sessionToken);
+    expect(history.files.map(file => file.id)).toEqual([approved.id]);
+    expect(history.submissions).toContainEqual(expect.objectContaining({id: rejected.id, status: 'REJECTED', rejectionReason: expect.any(String)}));
+    const {fileType: _, ...chairBody} = body;
+    const chairUpload = await uploads.createUpload(fixture.chair, fixture.committee.id, chairBody, 'chair', context('chair'));
+    await uploads.receiveContent(fixture.chair, chairUpload.id, (async function* () {yield content;})(), 'chair-bytes', content.length, context('chair-bytes'));
+    const chairFile = await commits.commitUpload(fixture.chair, chairUpload.id, {}, 'chair-commit', context('chair-commit'));
+    expect(chairFile).toMatchObject({status: 'PENDING_REVIEW', submissionSource: 'CHAIR', fileType: null});
+    // Storage outages do not revoke a valid share or credential.
+    await pool!.query('UPDATE committees SET active_storage_binding_id=NULL WHERE id=$1', [fixture.committee.id]);
+    expect((await portal.bootstrap(capability, claimed.sessionToken)).storageAvailable).toBe(false);
+    await pool!.query('UPDATE committees SET active_storage_binding_id=$2 WHERE id=$1', [fixture.committee.id, fixture.binding.id]);
+    expect((await portal.bootstrap(capability, claimed.sessionToken)).files.map(file => file.id)).toEqual([approved.id]);
+    await portal.endShare(fixture.chair, fixture.committee.id, share.revision, context('end'));
+    await expect(portal.authenticate(claimed.sessionToken)).rejects.toMatchObject({code: 'AUTHENTICATION_REQUIRED'});
+    await expect(portal.bootstrap(capability)).rejects.toMatchObject({code: 'LINK_EXPIRED'});
+  });
+
   it('lists storage binding state only for the committee Owner or Chair', async () => {
     const fixture = await storageFixture();
     await expect(storage.listBindings(fixture.owner, fixture.committee.id)).resolves.toEqual([fixture.binding]);
@@ -234,7 +311,7 @@ integration('PostgreSQL stage 6 file metadata', () => {
       storageKey: blobKey()
     }, 'first-version', context('first-version'));
     expect(file.currentVersion.versionNumber).toBe(1);
-    expect(file.status).toBe('UPLOAD_COMPLETE');
+    expect(file.status).toBe('PENDING_REVIEW');
 
     const secondContent = 'second durable content';
     file = await storage.recordProviderCommit(fixture.member, fixture.committee.id, {
@@ -707,15 +784,11 @@ integration('PostgreSQL stage 6 file metadata', () => {
     await expect(files.publish(fixture.member, created.id, {baseRevision: created.revision}, 'member-publish',
       context('member-publish'))).rejects.toMatchObject({code: 'FORBIDDEN'});
 
-    const pending = await files.submitForReview(fixture.member, created.id, {baseRevision: created.revision},
-      'submit-review', context('submit-review'));
-    expect(pending).toEqual(expect.objectContaining({status: 'PENDING_REVIEW', revision: created.revision + 1,
-      submittedAt: expect.any(String), publishedAt: null}));
-    expect(await files.submitForReview(fixture.member, created.id, {baseRevision: created.revision},
-      'submit-review', context('submit-review-replay'))).toEqual(pending);
-    await expect(files.submitForReview(fixture.member, created.id, {baseRevision: pending.revision},
-      'submit-review', context('submit-review-conflict'))).rejects.toMatchObject({code: 'IDEMPOTENCY_CONFLICT'});
-    await expect(files.publish(fixture.chair, created.id, {baseRevision: created.revision}, 'stale-publish',
+    const pending = created;
+    expect(pending).toMatchObject({status: 'PENDING_REVIEW', submittedAt: expect.any(String), publishedAt: null});
+    await expect(files.submitForReview(fixture.member, created.id, {baseRevision: created.revision},
+      'submit-review', context('submit-review'))).rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
+    await expect(files.publish(fixture.chair, created.id, {baseRevision: created.revision + 1}, 'stale-publish',
       context('stale-publish'))).rejects.toMatchObject({code: 'REVISION_CONFLICT'});
     const paused = await stage3.setCommitteeStatus(fixture.chair, fixture.committee.id, 'PAUSED',
       fixture.committee.revision + 1, context('pause-review'));
@@ -755,8 +828,7 @@ integration('PostgreSQL stage 6 file metadata', () => {
   it('rolls back review state and its event when audit persistence fails', async () => {
     const fixture = await storageFixture();
     const created = await committedServerFile(fixture, 'review atomicity', 'review-atomicity');
-    const pending = await files.submitForReview(fixture.member, created.id, {baseRevision: created.revision},
-      'atomic-submit', context('atomic-submit'));
+    const pending = created;
     await pool?.query(`CREATE FUNCTION fail_stage6_publish_audit() RETURNS trigger LANGUAGE plpgsql AS $$
       BEGIN
         IF NEW.action='storage.file_published' THEN RAISE EXCEPTION 'injected publish audit failure'; END IF;
@@ -795,7 +867,7 @@ integration('PostgreSQL stage 6 file metadata', () => {
       (SELECT count(*)::int FROM committee_events WHERE resource_id=e.id AND event_type='file.deleted') AS events,
       (SELECT count(*)::int FROM idempotency_keys WHERE key='atomic-delete') AS idempotency
       FROM file_entries e WHERE e.id=$1`, [created.id]);
-    expect(state?.rows[0]).toEqual({status: 'UPLOAD_COMPLETE', revision: created.revision,
+    expect(state?.rows[0]).toEqual({status: 'PENDING_REVIEW', revision: created.revision,
       tombstones: 0, jobs: 0, committed: 1, events: 0, idempotency: 0});
   });
 
@@ -889,8 +961,7 @@ integration('PostgreSQL stage 6 file metadata', () => {
       context('s3-review-commit'));
     const s3Files = new Stage6FileService(pool as pg.Pool, volume, fixture.configs,
       config => new S3CompatibleStore(config, transport, 20 * 1024 * 1024));
-    const pending = await s3Files.submitForReview(fixture.member, created.id, {baseRevision: created.revision},
-      's3-submit', context('s3-submit'));
+    const pending = created;
     const published = await s3Files.publish(fixture.chair, created.id, {baseRevision: pending.revision},
       's3-publish', context('s3-publish'));
     await pool?.query("UPDATE storage_provider_configs SET status='DISABLED' WHERE id=$1", [fixture.config.id]);

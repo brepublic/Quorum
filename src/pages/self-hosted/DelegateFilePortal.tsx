@@ -65,6 +65,7 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
   const [notices, setNotices] = React.useState<Array<DelegateFileAvailableEvent & {expiresAt: number}>>([]);
   const [file, setFile] = React.useState<File>(); const [fileType, setFileType] = React.useState<DelegateFileType>('WORKING_PAPER');
   const [progress, setProgress] = React.useState<number>(); const [submitted, setSubmitted] = React.useState(false);
+  const [awaitingSave, setAwaitingSave] = React.useState(false);
   const [preparingDownload, setPreparingDownload] = React.useState<string>();
 
   const load = React.useCallback(async () => {
@@ -89,8 +90,8 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
         {...item, expiresAt: Date.now() + 60_000}]); void refreshFiles();
     };
     const status = (event: MessageEvent<string>) => {
-      const value = JSON.parse(event.data) as {chairHostHealthy: boolean};
-      setPortal(current => current ? {...current, chairHostHealthy: value.chairHostHealthy} : current);
+      const value = JSON.parse(event.data) as {storageAvailable: boolean};
+      setPortal(current => current ? {...current, storageAvailable: value.storageAvailable} : current);
     };
     stream.addEventListener('file.available', available as EventListener);
     stream.addEventListener('file.rejected', available as EventListener);
@@ -114,7 +115,7 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
     && portal.maxUploadSizeBytes > 0 && file.size > portal.maxUploadSizeBytes
     ? t('Choose a file no larger than {size} MiB.', {size: fileSizeMiB(portal.maxUploadSizeBytes)}) : undefined;
   const upload = async () => {
-    if (!file || uploadSizeError) return;
+    if (!file || uploadSizeError || working) return;
     const extensions = portal?.allowedExtensions?.[fileType];
     if (extensions && !isAllowedDelegateFile(file.name, extensions)) {setError({code: 'INVALID_FILE_EXTENSION', params: {formats: extensions.map(ext => '.' + ext).join(', ')}}); return;}
     setWorking(true); setSubmitted(false); setError(undefined); setProgress(0);
@@ -123,7 +124,7 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
       const created = await api.createDelegateFileUpload({logicalName: file.name, originalName: file.name,
         mediaType: file.type || 'application/octet-stream', expectedSizeBytes: file.size, sha256, fileType});
       await api.uploadDelegateFileContent(created.id, file, (done, total) => setProgress(20 + (total ? done / total * 75 : 0)));
-      setProgress(98); await api.commitDelegateFileUpload(created.id); setProgress(100); setSubmitted(true); setFile(undefined); await refreshFiles();
+      setProgress(98); const result = await api.commitDelegateFileUpload(created.id); setAwaitingSave('kind' in result); setProgress(100); setSubmitted(true); setFile(undefined); await refreshFiles();
     } catch (caught) { setProgress(undefined); setError(caught); }
     finally { setWorking(false); }
   };
@@ -157,8 +158,8 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
       </Modal.Actions></Modal>
   </Container>;
 
-  const isLive = portal.chairHostHealthy && connection === 'LIVE';
-  const status = isLive ? t("Live") : !portal.chairHostHealthy ? t("Chair computer unavailable") : t("Offline");
+  const isLive = portal.storageAvailable && connection === 'LIVE';
+  const status = isLive ? t("Live") : !portal.storageAvailable ? t("File storage unavailable") : t("Offline");
   const maxUploadSizeMiB = fileSizeMiB(portal.maxUploadSizeBytes);
   return <div className="delegate-file-portal">
     <Menu className="delegate-file-menu"><Menu.Item header className="delegate-file-committee-name">{portal.committeeName}</Menu.Item>
@@ -197,16 +198,18 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
         {!submitted && progress === undefined && <Button primary fluid disabled={!file || working || !portal.mayUpload || Boolean(uploadSizeError)}>
 
           {t("Submit")} <Icon name="arrow up" /></Button>}
-        {progress !== undefined && !submitted && <Progress percent={Math.round(progress)} progress color="blue" />}
-        {submitted && <div className="delegate-file-upload-success">{t("✔ Submitted, awaiting review")}</div>}
+        {progress !== undefined && !submitted && <Progress percent={Math.round(progress)} progress color="blue">{progress >= 98 ? t("Saving files") : t("Uploading")}</Progress>}
+        {submitted && !awaitingSave && <div className="delegate-file-upload-success">{t("✔ Submitted, awaiting review")}</div>}
         </Form>
       </Card.Content></Card>
+      {portal.pendingUploads?.map(item => <Message key={item.id} warning={item.status === 'FAILED'} info={item.status === 'SAVING'}
+        header={item.logicalName} content={item.status === 'FAILED' ? t('Save failed. Upload the file again.') : t('Saving files')} />)}
       <Divider className="delegate-file-review-divider" />
       <div className="delegate-file-card-list">{portal.submissions?.length ? portal.submissions.map(item =>
         <Card fluid key={item.id} className="delegate-file-card motion-card"><Card.Content>
           <div className="motion-heading delegate-file-heading"><Card.Header>{item.logicalName}</Card.Header>
             <span className={`motion-decision ${item.status === 'PUBLISHED' ? 'motion-decision-passed' : item.status === 'REJECTED' ? 'motion-decision-failed' : ''}`}>
-              {({UPLOAD_COMPLETE:t("Awaiting save"),PENDING_REVIEW:t("Pending review"),PUBLISHED:t("Approved point"),REJECTED:t("File status: Rejected"),DELETED:t("Deleted")})[item.status]}</span></div>
+              {({UPLOAD_COMPLETE:t("Upload complete"),PENDING_REVIEW:t("Pending review"),PUBLISHED:t("Approved point"),REJECTED:t("File status: Rejected"),DELETED:t("Deleted")})[item.status]}</span></div>
           <Card.Meta><Table compact celled className="motion-metadata-table delegate-file-metadata"><Table.Body>
             <Table.Row><Table.Cell className="motion-metadata-key">{t("Submitted by")}</Table.Cell><Table.Cell>{item.submissionSource === 'CHAIR' ? t('Chair') : item.submitterDisplayName ?? '—'}</Table.Cell></Table.Row>
             <Table.Row><Table.Cell className="motion-metadata-key">{t("File type")}</Table.Cell><Table.Cell>{item.fileType ? delegateFileTypeName(item.fileType, portal.committeeLanguage) : '—'}</Table.Cell></Table.Row>

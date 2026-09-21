@@ -141,7 +141,7 @@ export class Stage6ServerVolumeService {
           sizeBytes: provider.sizeBytes,
           sha256: provider.sha256,
           storageKey: provider.storageKey
-        }, context);
+        }, context, current.id);
         const committed = await client.query<{revision: number}>(`UPDATE file_uploads SET status='COMMITTED',
           committed_at=now(),committed_blob_id=$2,committed_file_entry_id=$3,committed_file_version_id=$4,
           revision=revision+1,updated_at=now() WHERE id=$1 RETURNING revision`,
