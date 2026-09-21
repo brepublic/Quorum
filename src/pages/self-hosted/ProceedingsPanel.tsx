@@ -823,7 +823,7 @@ function AmendmentCard({snapshot, amendment, run, api, canChair, representedSeat
       {fileError && <Message error content={fileError} />}
       {Boolean(downloadFailure) && <Message error content={apiErrorText(downloadFailure)} />}
       {amendment.currentVersion.contentFile && <><Header as="h4">{amendment.currentVersion.contentFile.logicalName}</Header>
-        {amendment.currentVersion.contentFile.fileType && <Label>{delegateFileTypeName(amendment.currentVersion.contentFile.fileType!, getLanguage())}</Label>}
+        {amendment.currentVersion.contentFile.fileType && <Label>{delegateFileTypeName(amendment.currentVersion.contentFile.fileType!, snapshot.committee.committeeLanguage)}</Label>}
         <Label>{statusLabel(amendment.currentVersion.contentFile.status)}</Label>
         {amendment.currentVersion.contentFile.status === 'PUBLISHED'
           ? <Button type="button" primary fluid loading={preparingDownload} disabled={preparingDownload}
@@ -841,7 +841,7 @@ function AmendmentCard({snapshot, amendment, run, api, canChair, representedSeat
             <Form.Select label={t('Published file')} selection fluid search={files.length > 10}
               value={selectedFileId || false} disabled={fileSaving}
               options={files.map(file => ({key: file.id, value: file.id,
-                text: file.logicalName, description: file.fileType ? delegateFileTypeName(file.fileType, getLanguage()) : undefined}))}
+                text: file.logicalName, description: file.fileType ? delegateFileTypeName(file.fileType, snapshot.committee.committeeLanguage) : undefined}))}
               onChange={(_, data) => setSelectedFileId(String(data.value))} />
             <Button primary loading={fileSaving} disabled={fileSaving || !selectedFileId || !files.some(file => file.id === selectedFileId)}
               >{t('Use this file')}</Button>
@@ -1586,7 +1586,7 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
       {fileError && <Message error content={fileError} />}
       {Boolean(downloadFailure) && <Message error content={apiErrorText(downloadFailure)} />}
       {document.currentVersion.contentFile && <><Header as="h4">{document.currentVersion.contentFile.logicalName}</Header>
-        {document.currentVersion.contentFile.fileType && <Label>{delegateFileTypeName(document.currentVersion.contentFile.fileType!, getLanguage())}</Label>}
+        {document.currentVersion.contentFile.fileType && <Label>{delegateFileTypeName(document.currentVersion.contentFile.fileType!, snapshot.committee.committeeLanguage)}</Label>}
         <Label>{statusLabel(document.currentVersion.contentFile.status)}</Label>
         {document.currentVersion.contentFile.status === 'PUBLISHED'
           ? <Button type="button" primary fluid loading={preparingDownload} disabled={preparingDownload}
@@ -1604,7 +1604,7 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
             <Form.Select label={t('Published file')} selection fluid search={availableFiles.length > 10}
               value={selectedExistingFileId || false} disabled={fileSaving}
               options={availableFiles.map(file => ({key: file.id, value: file.id,
-                text: file.logicalName, description: file.fileType ? delegateFileTypeName(file.fileType, getLanguage()) : undefined}))}
+                text: file.logicalName, description: file.fileType ? delegateFileTypeName(file.fileType, snapshot.committee.committeeLanguage) : undefined}))}
               onChange={(_, data) => setSelectedExistingFileId(String(data.value))} />
             <Button primary loading={fileSaving} disabled={fileSaving || !selectedExistingFileId || !availableFiles.some(file => file.id === selectedExistingFileId)}
               >{t('Use this file')}</Button>

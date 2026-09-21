@@ -291,7 +291,8 @@ async function documentState(client: PoolClient, row: DocumentRow): Promise<Proc
     e.status AS file_status,m.file_type,v.created_at
     FROM document_versions v LEFT JOIN file_entries linked ON linked.id=v.content_file_entry_id
             LEFT JOIN file_entries e ON e.id=coalesce(linked.merged_into_file_entry_id,linked.id)
-    LEFT JOIN file_versions f ON f.id=e.current_version_id
+    LEFT JOIN file_versions f ON f.id=coalesce(e.current_version_id,
+              (SELECT id FROM file_versions WHERE file_entry_id=e.id AND e.status='DELETED' ORDER BY version_number DESC LIMIT 1))
     LEFT JOIN delegate_file_metadata m ON m.file_entry_id=coalesce(f.source_file_entry_id,e.id) WHERE v.document_id=$1 AND v.id=$2`,
   [row.id, row.current_version_id]);
   const discussion = await client.query<{id: string; seat_id: string; seat_display_name: string; content: string;

@@ -227,7 +227,7 @@ integration('PostgreSQL stage 6 file metadata', () => {
       return committed;
     };
     const first = await submit('original'); const second = await submit('replacement');
-    const input = (file: typeof first, logicalName='Resolution 1') => ({baseRevision:file.revision,logicalName,fileType:'RESOLUTION_DRAFT'});
+    const input = (file: typeof first, logicalName='Resolution 1') => ({baseRevision:file.revision,logicalName,fileType:file.id===first.id?'RESOLUTION_DRAFT':'WORKING_PAPER'});
     const approved = await review.approve(fixture.chair, first.id,input(first,'\u00a0Resolution 1\u3000'),context('first-review'));
     expect(approved.logicalName).toBe('Resolution 1');
     const firstVersion = (await reader.get(fixture.chair,first.id)).currentVersion.id;
@@ -255,7 +255,7 @@ integration('PostgreSQL stage 6 file metadata', () => {
     expect(preview.target).toMatchObject({id:first.id,logicalName:'Resolution 1'});
     await expect(review.approve(fixture.chair,second.id,{...input(second,'Renamed'),confirmationToken:preview.confirmationToken},context('renamed')))
       .rejects.toMatchObject({details:{reason:'FILE_REPLACEMENT_CHANGED'}});
-    await expect(review.approve(fixture.chair,second.id,{...input(second),fileType:'WORKING_PAPER',confirmationToken:preview.confirmationToken},context('type-changed')))
+    await expect(review.approve(fixture.chair,second.id,{...input(second),fileType:'DIRECTIVE_DRAFT',confirmationToken:preview.confirmationToken},context('type-changed')))
       .rejects.toMatchObject({details:{reason:'FILE_REPLACEMENT_CHANGED'}});
     await pool!.query(`CREATE FUNCTION fail_replacement_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
       IF NEW.action='storage.file_published' THEN RAISE EXCEPTION 'injected failure'; END IF; RETURN NEW; END $$;
@@ -272,7 +272,7 @@ integration('PostgreSQL stage 6 file metadata', () => {
     expect((await pool!.query('SELECT * FROM documents WHERE id=$1',[document.id])).rows[0]).toEqual(frozenBefore);
     const snapshot=await stage4.snapshot(fixture.committee.id,fixture.chair);
     expect(snapshot.documents?.find(item=>item.id===document.id)?.currentVersion.contentFile)
-      .toMatchObject({id:first.id,originalName:current.currentVersion.originalName,status:'PUBLISHED'});
+      .toMatchObject({id:first.id,originalName:current.currentVersion.originalName,status:'PUBLISHED',fileType:'WORKING_PAPER'});
 
     expect((await reader.list(fixture.chair,fixture.committee.id)).map(file=>file.id)).toEqual([first.id]);
     expect((await pool!.query('SELECT count(*)::int AS count FROM file_blobs WHERE committee_id=$1',[fixture.committee.id])).rows[0].count).toBe(2);
@@ -297,6 +297,8 @@ integration('PostgreSQL stage 6 file metadata', () => {
     const last=await reader.get(fixture.chair,first.id);
     await storage.deleteFile(fixture.chair,first.id,{baseRevision:last.revision},'delete-formal',context('delete-formal'));
     await expect(reader.get(fixture.chair,first.id)).rejects.toMatchObject({code:'NOT_FOUND'});
+    expect((await stage4.snapshot(fixture.committee.id,fixture.chair)).documents?.find(item=>item.id===document.id)?.currentVersion.contentFile)
+      .toMatchObject({id:first.id,status:'DELETED',originalName:'same-original.txt',fileType:'WORKING_PAPER'});
     expect((await pool!.query('SELECT status FROM file_entries WHERE id=ANY($1::uuid[])',[[second.id,fourth.id]])).rows)
       .toEqual([{status:'DELETED'},{status:'DELETED'}]);
     const reused=await submit('reused');
