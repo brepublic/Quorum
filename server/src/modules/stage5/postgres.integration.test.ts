@@ -773,6 +773,16 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
     await pool?.query("UPDATE file_entries SET status='PENDING_REVIEW',submitted_at=now(),revision=revision+1 WHERE id=$1", [fileId]);
     await pool?.query(`UPDATE file_entries SET status='PUBLISHED',published_at=now(),published_by_user_id=$2,
       revision=revision+1 WHERE id=$1`, [fileId, fixture.firstChair.user.id]);
+    const other = await meetingFixture();
+    const otherDraft = await stage5.createResolution(other.firstChair, other.committee.id,
+      {meetingSessionId:other.session.id,customTitle:null,content:'',onBehalfOfSeatId:other.firstSeat.id},
+      'cross-file-document',context('cross-file-document'));
+    await expect(stage5.createDocumentVersion(other.firstChair,otherDraft.id,
+      {baseRevision:otherDraft.revision,customTitle:null,content:'',contentFileEntryId:fileId,onBehalfOfSeatId:other.firstSeat.id},
+      context('cross-committee-file'))).rejects.toMatchObject({code:'RESOURCE_CONFLICT',details:{reason:'DOCUMENT_FILE_NOT_PUBLISHED'}});
+    await expect(stage5.createDocumentVersion(fixture.firstChair,draft.id,
+      {baseRevision:draft.revision-1,customTitle:null,content:'',contentFileEntryId:fileId,onBehalfOfSeatId:fixture.firstSeat.id},
+      context('stale-document-file'))).rejects.toMatchObject({code:'REVISION_CONFLICT'});
     const passed = await stage5.decideMotion(fixture.firstChair, motion.id,
       {baseRevision: motion.revision, result: 'PASSED'}, context('published-file-introduction'));
     expect(passed).toMatchObject({status: 'PASSED', destinationPath:

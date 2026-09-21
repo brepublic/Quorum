@@ -40,7 +40,7 @@
 
 - `pnpm test:self-host --maxWorkers=2 --minWorkers=1 --testTimeout=30000`：88 个文件、664 项全部通过。此前固定冲突类型列表缺少新枚举的失败已修正；源码测试不是实际设备证据。
 - `pnpm test:self-host:integration --maxWorkers=2 --minWorkers=1 --testTimeout=30000 --hookTimeout=30000`：9 个文件、131 项全部通过。使用 PostgreSQL 16 随机临时数据库。默认五秒时限曾因本机负载产生无关超时，最终运行使用上述时限。
-- 最后补充删除引用读取最新原始名称/类型后，数据库定向回归 3 项通过；文件类型语言统一后，页面路由 86 项通过。
+- 最后补充删除引用读取最新原始名称/类型，以及跨委员会拒绝、过期文书 revision、绑定与批准覆盖并发后，数据库定向回归 3 项通过；文件类型语言统一后，页面路由 86 项通过。
 - 完整 self-host 构建通过；最终部署构建及健康记录见下。
 - 静态核对：两处正文页没有本地文件输入、上传、提交审核或发布文件调用。
 
@@ -67,4 +67,11 @@
 
 使用 `docker compose -p quorum-dev --env-file deploy/.env -f deploy/compose.yaml build app caddy` 构建，并使用 `up -d --no-deps app caddy` 替换运行容器。数据库与存储卷保留。已确认新实例 `/health/ready` 返回 HTTP 200，数据库 migrationVersion 为 66，存储健康。
 
-最终浏览器收尾时补充的文件类型语言与删除引用元数据修正继续构建、更新同一实例；最终镜像及健康核验随收尾提交记录。
+最终文件类型语言与删除引用元数据修正已重新完整构建，并更新同一实例。运行容器与镜像 ID 一致：
+
+- app：`sha256:4b0733301b8bd15a2ba13925a7667b3872b933b40e1d3a0f49ae352896d8d2cd`，状态 healthy。
+- caddy：`sha256:0e979175ac3a5a0545c5f8bf87f9993b85d8dec6815405f93968b9511c5d3be2`，正在运行。
+- 最终 `/health/ready`：HTTP 200，migrationVersion 66，database/storage 均为 ok。
+- 更新实例后重新加载真实页面，中文删除引用提示仍可见。截图：`/tmp/quorum-file-acceptance/screenshots/deleted-reference-zh.png`。
+
+阶段代码提交：`8b5c2ee`、`c237d5d`、`a0871a4`。最后收尾提交仅补充测试与本记录，不影响已部署运行代码。工作区原有其他按钮/布局修改继续保留，未混入本次提交。

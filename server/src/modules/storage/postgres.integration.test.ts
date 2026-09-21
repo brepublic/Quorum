@@ -264,7 +264,14 @@ integration('PostgreSQL stage 6 file metadata', () => {
     expect((await reader.get(fixture.chair,first.id)).currentVersion.id).toBe(firstVersion);
     expect((await reader.get(fixture.chair,second.id)).status).toBe('PENDING_REVIEW');
     await pool!.query('DROP TRIGGER fail_replacement_audit ON audit_log');
-    const result = await review.approve(fixture.chair,second.id,{...input(second),confirmationToken:preview.confirmationToken},context('replace'));
+    const liveDocument=await proceedings.createResolution(fixture.chair,fixture.committee.id,
+      {meetingSessionId:session.id,customTitle:null,content:'',onBehalfOfSeatId:seat.id},randomUUID(),context('live-replacement-document'));
+    const [result,bound]=await Promise.all([
+      review.approve(fixture.chair,second.id,{...input(second),confirmationToken:preview.confirmationToken},context('replace')),
+      proceedings.createDocumentVersion(fixture.chair,liveDocument.id,
+        {baseRevision:liveDocument.revision,customTitle:null,content:'',contentFileEntryId:first.id,onBehalfOfSeatId:seat.id},context('concurrent-replacement-binding'))
+    ]);
+    expect(bound.currentVersion.contentFile).toMatchObject({id:first.id,status:'PUBLISHED'});
     expect(result.id).toBe(first.id);
     const current = await reader.get(fixture.chair,first.id);
     expect(current.currentVersion.blobId).toBe(second.currentVersion.blobId);
