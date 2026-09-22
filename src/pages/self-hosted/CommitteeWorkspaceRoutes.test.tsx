@@ -1761,7 +1761,7 @@ describe('committee workspace routes and roles', () => {
     await act(async () => page.querySelector<HTMLAnchorElement>('a[href="/committees/committee/posts/share"]')!.click());
     expect(page.querySelector<HTMLInputElement>('.delegate-file-share-panel input')?.value).toBe(share.url);
     expect(page.textContent).not.toContain('开始分享');
-    await act(async () => page.querySelector<HTMLAnchorElement>('a[href="/committees/committee/posts/review"]')!.click());
+    await act(async () => page.querySelector<HTMLAnchorElement>('a[href="/committees/committee/posts/attachments"]')!.click());
     expect(page.textContent).toContain('cached.pdf');
     expect(page.textContent).not.toContain('暂无已审核文件');
     sequence = 2;
@@ -1786,7 +1786,7 @@ describe('committee workspace routes and roles', () => {
     expect(page.querySelector('a[href="/committees/committee/posts/attachments"]')).not.toBeNull();
     const resourceLinks = Array.from(page.querySelectorAll<HTMLAnchorElement>('[aria-label="Resource sections"] a'))
       .map(link => link.textContent?.trim());
-    expect(resourceLinks).toEqual(['File overview', 'File review', 'Share', 'Upload files', 'Storage settings', 'File settings']);
+    expect(resourceLinks).toEqual(['File overview', 'Share', 'Upload files', 'Storage settings', 'File settings']);
     expect(page.querySelector('.delegate-file-chair-upload')).toBeNull();
     await act(async () => {page.querySelector<HTMLAnchorElement>('a[href="/committees/committee/posts/upload"]')?.click(); await Promise.resolve();});
     if (providerType === 'UNCONFIGURED') expect(page.textContent).toContain('Configure storage before uploading or sharing files.');

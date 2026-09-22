@@ -293,6 +293,38 @@ describe('self-hosted stage 6 file panel', () => {
     expect(button('确认切换')).toBeTruthy();
   });
 
+  it('groups the review queue separately and sorts both reviewed filters by review time', async () => {
+    const entries: FileEntry[] = [
+      {...file, id: 'published-old', logicalName: 'Earlier approval', status: 'PUBLISHED', submittedAt: '2026-09-20T00:00:00Z'},
+      {...file, id: 'rejected-old', logicalName: 'Earlier rejection', status: 'REJECTED', submittedAt: '2026-09-20T00:00:00Z', rejectionReason: 'Change the format'},
+      {...file, id: 'pending', logicalName: 'Pending source', status: 'PENDING_REVIEW'},
+      {...file, id: 'published-new', logicalName: 'Later approval', status: 'PUBLISHED', submittedAt: '2026-09-01T00:00:00Z'},
+      {...file, id: 'rejected-new', logicalName: 'Later rejection', status: 'REJECTED', submittedAt: '2026-09-01T00:00:00Z'}
+    ];
+    const reviewFiles = entries.map(entry => ({...entry, originalName: 'draft.svg', sizeBytes: 3,
+      submissionSource: 'CHAIR', submitterDisplayName: null, fileType: 'WORKING_PAPER', publishedAt: '',
+      reviewedAt: entry.id.endsWith('new') ? '2026-09-22T00:00:00Z' : '2026-09-21T00:00:00Z'})) as import('@quorum/contracts').DelegateReviewFile[];
+    const client = api({listFiles: vi.fn(async () => entries)});
+    const view = await render('CHAIR', client, 'chair');
+    await act(async () => root!.render(<MemoryRouter><FilesPanel snapshot={snapshot('CHAIR')} api={client}
+      section="overview" reviewFiles={reviewFiles} reviewPanel={<div className="test-review-queue">Review queue</div>} /></MemoryRouter>));
+    const names = () => [...view.querySelectorAll('.self-hosted-file-heading > .header')].map(node => node.textContent);
+    expect(names()).toEqual(['Later approval', 'Earlier approval']);
+    expect(view.querySelector('.test-review-queue')).not.toBeNull();
+    expect(view.querySelectorAll('.delegate-file-review-divider')).toHaveLength(1);
+    expect(view.textContent).not.toContain('Pending source');
+    expect(view.querySelector('.self-hosted-file-toolbar h3')).toBeNull();
+    await act(async () => view.querySelector<HTMLElement>('[aria-label="文件状态"]')!.click());
+    const options = [...view.querySelectorAll<HTMLElement>('[role="option"]')];
+    expect(options.map(option => option.textContent)).toEqual(['待审核与已发布', '已驳回']);
+    await act(async () => options.find(option => option.textContent === '已驳回')!.click());
+    expect(names()).toEqual(['Later rejection', 'Earlier rejection']);
+    expect(view.querySelector('.test-review-queue')).toBeNull();
+    expect(view.querySelector('.delegate-file-review-divider')).toBeNull();
+    expect(view.querySelector('.self-hosted-file-rejection')?.textContent).toContain('Change the format');
+    expect(view.querySelector('.self-hosted-file-rejection')?.classList.contains('negative')).toBe(false);
+  });
+
   it('routes pending files to review and deletes with the loaded revision', async () => {
     let current: FileEntry[] = [{...file, status: 'PENDING_REVIEW', revision: 2}];
     const publishFile = vi.fn(async () => {current = [{...file, status: 'PUBLISHED', revision: 3}]; return current[0];});

@@ -192,7 +192,7 @@ function CommitteeList({api, user, logout}: {api: SelfHostedApi; user: SelfHoste
     </Grid>
     <Confirm open={Boolean(deleteTarget)} header={t('Delete committee?')}
       content={t('This permanently deletes the committee and all of its records and uploaded files.')}
-      cancelButton={t('Cancel')} confirmButton={{content: t('Delete committee'), loading: deleting, disabled: deleting}}
+      cancelButton={t('Cancel')} confirmButton={{content: t('Delete committee'), primary: false, negative: true, loading: deleting, disabled: deleting}}
       onCancel={() => setDeleteTarget(undefined)}
       onConfirm={() => void remove()} />
   </Container>;
@@ -257,7 +257,7 @@ function TextResources({kind, snapshot, run, api}: {kind: 'notes' | 'posts'; sna
       {editingId === resource.id ? <Form onSubmit={() => edit(resource)}><Form.Input label={t('Title')} value={editTitle}
         onChange={event => setEditTitle(event.currentTarget.value)} /><Form.TextArea label={t('Content')} value={editContent}
         onChange={(_, data) => setEditContent(String(data.value))} /><Button primary size="mini" loading={pending === `edit:${resource.id}`}
-        disabled={!editContent.trim()}>{t('Save changes')}</Button><Button type="button" size="mini" onClick={() => setEditingId(undefined)}>
+        disabled={!editContent.trim()}><Icon name="save" />{t('Save changes')}</Button><Button type="button" size="mini" onClick={() => setEditingId(undefined)}>
           {t('Cancel')}</Button></Form> : <><List.Header>{resource.title || t('Untitled')}</List.Header>
         <List.Description style={{whiteSpace: 'pre-wrap'}}>{resource.content}</List.Description></>}
     </List.Item>)}</List></>;
@@ -348,14 +348,13 @@ function PostsPanel({snapshot, api, userId, tab}: {snapshot: CommitteeWorkspaceS
     return () => {active = false;};
   }, [api, canManageStorage, snapshot.committee.id, snapshot.sync.committeeEventSequence, bindingReload]);
   const base = `/committees/${snapshot.committee.id}/posts`;
-  if (tab === undefined || tab === 'text' || tab === 'links') return <Redirect to={`${base}/attachments`} />;
+  if (tab === undefined || tab === 'text' || tab === 'links' || tab === 'review') return <Redirect to={`${base}/attachments`} />;
   const active = tab === 'attachments' || (tab === 'storage' && canManageStorage)
     || (tab === 'file-settings' && canManageStorage) || (tab === 'share' && canShare)
-    || (tab === 'upload' && canUpload) || (tab === 'review' && canManageStorage) ? tab : 'attachments';
+    || (tab === 'upload' && canUpload) ? tab : 'attachments';
   const needsStorage = (active === 'upload' || active === 'share') && canManageStorage && storageConfigured === false;
   return <Container className="committee-files-page"><Menu pointing secondary aria-label={t('Resource sections')}>
     <Menu.Item as={Link} to={`${base}/attachments`} active={active === 'attachments'}>{t('File overview')}</Menu.Item>
-    {canManageStorage && <Menu.Item as={Link} to={`${base}/review`} active={active === 'review'}>{t('File review')}</Menu.Item>}
     {canShare && <Menu.Item as={Link} to={`${base}/share`} active={active === 'share'}>{t('Share')}</Menu.Item>}
     {canUpload && <Menu.Item as={Link} to={`${base}/upload`} active={active === 'upload'}>{t('Upload files')}</Menu.Item>}
     {canManageStorage && <Menu.Item as={Link} to={`${base}/storage`} active={active === 'storage'}>{t('Storage settings')}</Menu.Item>}
@@ -366,8 +365,8 @@ function PostsPanel({snapshot, api, userId, tab}: {snapshot: CommitteeWorkspaceS
     {active === 'file-settings' && canManageStorage && <DelegateFileSettingsPanel committeeLanguage={snapshot.committee.committeeLanguage} key={snapshot.committee.id} committeeId={snapshot.committee.id} api={api}
       readOnly={!['ACTIVE', 'PAUSED'].includes(snapshot.committee.status)} />}
     {active === 'upload' && canUpload && !needsStorage && <DelegateFileUploadPanel snapshot={snapshot} api={api} />}
-    {active === 'attachments' && <FilesPanel section="overview" snapshot={snapshot} api={api} currentUserId={userId} />}
-    {canManageStorage && <DelegateFilePanels snapshot={snapshot} api={api} tab={needsStorage ? '' : active} />}
+    {active === 'attachments' && !canManageStorage && <FilesPanel section="overview" snapshot={snapshot} api={api} currentUserId={userId} />}
+    {canManageStorage && <DelegateFilePanels snapshot={snapshot} api={api} currentUserId={userId} tab={needsStorage ? '' : active} />}
     {active === 'storage' && canManageStorage && <FilesPanel section="storage" snapshot={snapshot} api={api} currentUserId={userId} />}
   </Container>;
 }
@@ -675,7 +674,7 @@ function SettingsPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
       generalSpeakerList.id, generalSpeakerList.revision, {defaultSpeechMs: generalSpeakerSeconds * 1000}))}>
       <Form.Input type="number" min={1} label={t('Speaker time in seconds')} value={generalSpeakerSeconds} disabled={readOnly}
         onChange={event => setGeneralSpeakerSeconds(Number(event.currentTarget.value))} />
-      <Button primary loading={pending === 'general-speaker-duration'} disabled={readOnly || generalSpeakerSeconds < 1}>{t('Save changes')}</Button>
+      <Button primary loading={pending === 'general-speaker-duration'} disabled={readOnly || generalSpeakerSeconds < 1}><Icon name="save" />{t('Save changes')}</Button>
     </Form>}
   </Segment></>}
     <Header as="h2">{t('Committee profile')}</Header>
@@ -686,7 +685,7 @@ function SettingsPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
       <Form.Input label={t('Conference')} value={conference} onChange={event => setConference(event.currentTarget.value)} />
       <Form.Select label={t('Visibility')} value={visibility} options={['PRIVATE', 'PUBLIC'].map(value => ({key: value, value, text: t(value)}))}
         onChange={(_, data) => setVisibility(data.value as 'PRIVATE' | 'PUBLIC')} />
-      <Button primary loading={pending === 'profile'}>{t('Save changes')}</Button>
+      <Button primary loading={pending === 'profile'}><Icon name="save" />{t('Save changes')}</Button>
     </Form> : <List><List.Item>{snapshot.committee.name}</List.Item><List.Item>{snapshot.committee.topic}</List.Item>
       <List.Item>{snapshot.committee.conference}</List.Item></List>}
     {canChair && <><Header as="h2">{t('Committee operation')}</Header>
@@ -694,7 +693,7 @@ function SettingsPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
         snapshot.committee.revision))}><Form.Select label={t('Operation mode')} value={operationMode}
         options={(['DELEGATE_OPERATED', 'CHAIR_OPERATED'] as const).map(value => ({key: value, value, text: t(value)}))}
         onChange={(_, data) => setOperationMode(data.value as typeof operationMode)} />
-        <Button primary loading={pending === 'operation-mode'}>{t('Save operation mode')}</Button></Form>
+        <Button primary loading={pending === 'operation-mode'}><Icon name="save" />{t('Save operation mode')}</Button></Form>
       <Form onSubmit={() => execute('rules', () => api.activateRules(snapshot.committee.id, ruleVersionId,
         snapshot.committee.revision))}><Form.Select label={t('Rule version')} value={ruleVersionId} options={ruleOptions}
         onChange={(_, data) => setRuleVersionId(String(data.value))} />

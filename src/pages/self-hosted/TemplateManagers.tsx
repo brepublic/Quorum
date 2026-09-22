@@ -240,7 +240,7 @@ export function CountryTemplateManager({api}: {api: SelfHostedApi}) {
       </Segment></Grid.Column>
     </Grid>
     <Confirm open={deleteOpen} header={t('Delete country template?')} content={t('Are you sure that you want to delete this country template?')}
-      cancelButton={t('Cancel')} confirmButton={t('Delete')} onCancel={() => setDeleteOpen(false)} onConfirm={() => void remove()} />
+      cancelButton={t('Cancel')} confirmButton={{content: t('Delete'), primary: false, negative: true}} onCancel={() => setDeleteOpen(false)} onConfirm={() => void remove()} />
   </Container>;
 }
 
@@ -366,7 +366,7 @@ export function CommitteeTemplateManager({api}: {api: SelfHostedApi}) {
           {selectedId && <Button type="button" negative basic floated="right" onClick={() => setDeleteOpen(true)}><Icon name="trash" />{t('Delete template')}</Button>}
         </Form></Segment></Grid.Column></Grid>
     <Confirm open={deleteOpen} header={t('Delete template?')} content={t('Are you sure that you want to delete this template?')}
-      cancelButton={t('Cancel')} confirmButton={t('Delete')} onCancel={() => setDeleteOpen(false)} onConfirm={() => void remove()} />
+      cancelButton={t('Cancel')} confirmButton={{content: t('Delete'), primary: false, negative: true}} onCancel={() => setDeleteOpen(false)} onConfirm={() => void remove()} />
   </Container>;
 }
 

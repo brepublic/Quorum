@@ -1,17 +1,24 @@
 import {apiErrorText} from '../../i18n';
 import {t, useLanguage, getLanguage} from '../../i18n';
 import * as React from 'react';
-import type {CommitteeWorkspaceSnapshot, FileEntry, FileUpload, StorageMigration,
+import type {CommitteeWorkspaceSnapshot, FileEntry, FileUpload, StorageMigration, DelegateReviewFile,
   StorageAgentConflict, StorageAgentConflictResolution, StoragePairingCode, StorageProviderType} from '@quorum/contracts';
-import {Button, Card, Form, Header, Label, Message, Progress, Segment} from 'semantic-ui-react';
+import {Button, Card, Divider, Form, Header, Icon, Label, Message, Progress, Segment, Table} from 'semantic-ui-react';
 import {SelfHostedApiError, newIdempotencyKey, type SelfHostedApi} from '../../services/self-hosted-api';
 import {delegateFileTypeName} from '@quorum/contracts';
 import {Link} from 'react-router-dom';
 import {sha256File} from '../../services/sha256';
 
 const FILE_STATUS: Record<FileEntry['status'], string> = {
-  UPLOAD_COMPLETE: "Upload complete", PENDING_REVIEW: "Pending review", PUBLISHED: "Published", REJECTED: "File status: Rejected", DELETED: "Deleted"
+  UPLOAD_COMPLETE: "Pending review", PENDING_REVIEW: "Pending review", PUBLISHED: "Published", REJECTED: "File status: Rejected", DELETED: "Deleted"
 };
+const FILE_STATUS_APPEARANCE = {
+  UPLOAD_COMPLETE: {color: 'blue', icon: 'clock outline'},
+  PENDING_REVIEW: {color: 'blue', icon: 'clock outline'},
+  PUBLISHED: {color: 'green', icon: 'check circle'},
+  REJECTED: {color: 'red', icon: 'times circle'},
+  DELETED: {color: 'grey', icon: 'trash alternate outline'}
+} as const;
 const MIGRATION_STATUS: Record<StorageMigration['status'], string> = {
   COPYING: "Copying", READY_TO_CONFIRM: "Awaiting confirmation", FAILED: "Migration failed", COMPLETED: "Migration completed", CANCELLED: "Cancelled"
 };
@@ -52,18 +59,20 @@ function formatBytes(bytes: number): string {
 
 type UploadProgress = {phase: 'HASHING' | 'UPLOADING' | 'COMMITTING'; processed: number; total: number};
 
-export default function FilesPanel({snapshot, api, currentUserId, section = 'all'}: {
+export default function FilesPanel({snapshot, api, currentUserId, section = 'all', reviewFiles, reviewPanel}: {
   snapshot: CommitteeWorkspaceSnapshot;
   api: SelfHostedApi;
   currentUserId?: string;
   section?: 'attachments' | 'overview' | 'storage' | 'all';
+  reviewFiles?: DelegateReviewFile[];
+  reviewPanel?: React.ReactNode;
 }) {
   useLanguage();
   const committeeId = snapshot.committee.id;
   const readOnly = snapshot.committee.status === 'ARCHIVED' || snapshot.committee.status === 'DELETING';
   const canManage = !readOnly && (snapshot.viewer.audience === 'CHAIR' || snapshot.viewer.audience === 'OWNER');
   const canUpload = !readOnly && snapshot.viewer.audience !== 'PUBLIC';
-  const [statusFilter, setStatusFilter] = React.useState('ALL');
+  const [statusFilter, setStatusFilter] = React.useState('ACTIVE');
   const [files, setFiles] = React.useState<FileEntry[]>([]);
   const [pendingHostCommits, setPendingHostCommits] = React.useState<FileUpload[]>([]);
   const [bindings, setBindings] = React.useState<Awaited<ReturnType<SelfHostedApi['listStorageBindings']>>>([]);
@@ -140,7 +149,7 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
     } catch (caught) { setError(caught); }
   }, [api, canManage, canUpload, committeeId]);
 
-  React.useEffect(() => { void refresh(); }, [refresh, snapshot.sync.committeeEventSequence]);
+  React.useEffect(() => { void refresh(); }, [refresh, snapshot.sync.committeeEventSequence, reviewFiles]);
   React.useEffect(() => () => uploadController.current?.abort(), []);
 
   const run = React.useCallback(async (operation: () => Promise<unknown>) => {
@@ -218,6 +227,15 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
   const progressPercent = progress && progress.total > 0
     ? Math.min(100, Math.round(progress.processed / progress.total * 100)) : 0;
 
+  const isPending = (file: FileEntry) => ['UPLOAD_COMPLETE', 'PENDING_REVIEW'].includes(file.status);
+  const reviewTimes = new Map(reviewFiles?.map(file => [file.id, file.reviewedAt]));
+  const timestamp = (value?: string | null) => value ? Date.parse(value) || 0 : 0;
+  const visibleFiles = files.filter(file => statusFilter === 'REJECTED' ? file.status === 'REJECTED'
+    : file.status === 'PUBLISHED' || (!reviewPanel && isPending(file)))
+    .sort((first, second) => Number(isPending(second)) - Number(isPending(first))
+      || (isPending(first) ? timestamp(first.submittedAt) - timestamp(second.submittedAt)
+        : timestamp(reviewTimes.get(second.id) ?? second.publishedAt) - timestamp(reviewTimes.get(first.id) ?? first.publishedAt)));
+
   return <div className="self-hosted-files">
     {error && <Message error role="alert" content={error} />}
     {section !== 'storage' && <>
@@ -233,7 +251,7 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
           <span>{selectedFile?.name ?? t('No file chosen')}</span></div>
       </Form.Field>
       <Form.Input label={t("File name")} value={logicalName} onChange={event => setLogicalName(event.currentTarget.value)} />
-      <Button primary disabled={working || !selectedFile || !logicalName.trim()}>{t("Upload files")}</Button>
+      <Button primary disabled={working || !selectedFile || !logicalName.trim()}>{t("Upload files")} <Icon name="arrow up" /></Button>
       {progress && progress.phase !== 'COMMITTING'
         && <Button type="button" onClick={() => uploadController.current?.abort()}>{t("Cancel upload")}</Button>}
       </Form>
@@ -243,44 +261,53 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
       </Progress>}
     </Segment>}
 
-    <Header as="h3">{t("File")}</Header>
+    <div className="self-hosted-file-overview">
+    <div className="self-hosted-file-toolbar">
     <Form.Select aria-label={t('File status')} value={statusFilter} onChange={(_, data) => setStatusFilter(String(data.value))}
-      options={['ALL', 'PUBLISHED', 'PENDING_REVIEW', 'REJECTED', 'UPLOAD_COMPLETE'].map(value => ({key: value, value,
-        text: value === 'ALL' ? t('All files') : t(FILE_STATUS[value as FileEntry['status']])}))} />
-    {files.filter(file => statusFilter === 'ALL' || file.status === statusFilter).length === 0 ? <Message content={t("No files")} /> : <Card.Group itemsPerRow={3} stackable>
-      {files.filter(file => statusFilter === 'ALL' || file.status === statusFilter).map(file => {
+      options={[{key: 'ACTIVE', value: 'ACTIVE', text: t('Pending and published')},
+        {key: 'REJECTED', value: 'REJECTED', text: t('File status: Rejected')}]} /></div>
+    {statusFilter === 'ACTIVE' && reviewPanel}
+    {statusFilter === 'ACTIVE' && reviewPanel && visibleFiles.length > 0 && <Divider className="delegate-file-review-divider" />}
+    {visibleFiles.length === 0 ? (!reviewPanel || statusFilter === 'REJECTED') && <Message content={t("No files")} /> : <div className="self-hosted-file-list">
+      {visibleFiles.map((file, index) => {
         const ownsFile = currentUserId === file.createdByUserId;
         const canChange = !readOnly && (canManage || ownsFile);
-        return <Card key={file.id} className="self-hosted-file-card"><Card.Content>
-          <Card.Header>{file.logicalName}</Card.Header>
-          <Card.Meta>{formatBytes(file.currentVersion.sizeBytes)} · <Label size="tiny">{t(FILE_STATUS[file.status])}</Label>
-            {file.syncState !== 'SYNCED' && <> · <Label size="tiny" color="orange">
-              {file.syncState === 'PENDING_HOST_COMMIT' ? t("Waiting for the chair computer to save") : t("Waiting for chair computer sync")}
-            </Label></>}
-          </Card.Meta>
-          <Card.Description>{file.currentVersion.originalName}
-            <div>{t('File source')}: {file.submissionSource === 'CHAIR' ? t('Chair') : file.submitterDisplayName ?? '—'}</div>
-            <div>{t('File type')}: {file.fileType ? delegateFileTypeName(file.fileType, snapshot.committee.committeeLanguage) : '—'}</div>
-            <div>{t('Submitted at')}: {file.submittedAt ? new Date(file.submittedAt).toLocaleString(getLanguage()) : '—'}</div>
-            {file.rejectionReason && <div>{file.rejectionReason}</div>}
-          </Card.Description>
+        return <React.Fragment key={file.id}>
+          {index > 0 && isPending(visibleFiles[index - 1]) && !isPending(file) && <Divider className="delegate-file-review-divider" />}
+          <Card fluid className="self-hosted-file-card motion-card"><Card.Content>
+          <div className="motion-heading self-hosted-file-heading"><Card.Header>{file.logicalName}</Card.Header>
+            <Label basic className="self-hosted-file-status" {...FILE_STATUS_APPEARANCE[file.status]} content={t(FILE_STATUS[file.status])} />
+          </div>
+          {file.syncState !== 'SYNCED' && <div className="self-hosted-file-sync"><Label color="orange" icon="sync"
+            content={file.syncState === 'PENDING_HOST_COMMIT' ? t("Waiting for the chair computer to save") : t("Waiting for chair computer sync")} /></div>}
+          <Table compact celled unstackable className="motion-metadata-table self-hosted-file-metadata"><Table.Body>
+            <Table.Row><Table.Cell className="motion-metadata-key">{t('File source')}</Table.Cell><Table.Cell>{file.submissionSource === 'CHAIR' ? t('Chair') : file.submitterDisplayName ?? '—'}</Table.Cell></Table.Row>
+            <Table.Row><Table.Cell className="motion-metadata-key">{t('File type')}</Table.Cell><Table.Cell>{file.fileType ? delegateFileTypeName(file.fileType, snapshot.committee.committeeLanguage) : '—'}</Table.Cell></Table.Row>
+            <Table.Row><Table.Cell className="motion-metadata-key">{t('Submitted at')}</Table.Cell><Table.Cell>{file.submittedAt ? new Date(file.submittedAt).toLocaleString(getLanguage()) : '—'}</Table.Cell></Table.Row>
+            <Table.Row><Table.Cell className="motion-metadata-key">{t('Original file')}</Table.Cell><Table.Cell>
+              {file.currentVersion.originalName}<span className="self-hosted-file-size">{formatBytes(file.currentVersion.sizeBytes)}</span>
+            </Table.Cell></Table.Row>
+          </Table.Body></Table>
+          {file.rejectionReason && <div className="self-hosted-file-rejection">
+            <strong>{t('Rejection reason')}</strong><p>{file.rejectionReason}</p>
+          </div>}
         </Card.Content><Card.Content extra className="self-hosted-file-actions">
-          <Button as="a" size="small" href={api.fileDownloadUrl(file.id)} download
+          <Button as="a" primary fluid href={api.fileDownloadUrl(file.id)} download
             loading={preparingDownloads.has(file.id)} disabled={preparingDownloads.has(file.id)}
             onClick={(event: React.MouseEvent) => {event.preventDefault(); void downloadFile(file.id);}}>
-            {preparingDownloads.has(file.id) ? t("Preparing the file from the chair computer") : t("Download file")}</Button>
+            {preparingDownloads.has(file.id) ? t("Preparing the file from the chair computer") : <>{t("Download file")} <Icon name="arrow down" /></>}</Button>
           {canChange && file.status === 'UPLOAD_COMPLETE' && <Button size="small"
             onClick={() => void run(() => api.submitFileForReview(file.id, file.revision))}>{t("Submit for review")}</Button>}
           {canManage && ['PENDING_REVIEW', 'UPLOAD_COMPLETE'].includes(file.status) && <Button as={Link} primary size="small"
             to={`/committees/${committeeId}/posts/review`}>{t("File review")}</Button>}
-          {canChange && <Button negative size="small" onClick={() => {
+          {canChange && <Button negative fluid disabled={working} onClick={() => {
             if (window.confirm(t('Permanently delete “{name}”? The file will become unavailable and cannot be recovered.', {name: file.logicalName}))) {
               void run(() => api.deleteFile(file.id, file.revision));
             }
-          }}>{t("Delete permanently")}</Button>}
-        </Card.Content></Card>;
+          }}>{t("Delete permanently")} <Icon name="trash alternate outline" /></Button>}
+        </Card.Content></Card></React.Fragment>;
       })}
-    </Card.Group>}</>}
+    </div>}</div></>}
 
     {(section === 'storage' || section === 'all') && canManage && <Segment loading={working && !progress} className="self-hosted-storage-panel">
       <Header as="h3">{t("File storage")}</Header>
@@ -295,9 +322,9 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
           {t("· Expires at")} {new Date(pairing.expiresAt).toLocaleTimeString(getLanguage())}
         </span>
         <span className="self-hosted-pairing-code-actions">
-          <Button type="button" size="small" onClick={() => void navigator.clipboard?.writeText(pairing.code)}>
+          <Button type="button" basic size="small" onClick={() => void navigator.clipboard?.writeText(pairing.code)}>
 
-            {t("Copy pairing code")}
+            <Icon name="copy" />{t("Copy pairing code")}
           </Button>
         </span>
       </Message>}

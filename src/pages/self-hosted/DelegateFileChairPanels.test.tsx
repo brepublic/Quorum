@@ -1,3 +1,4 @@
+import {MemoryRouter} from 'react-router-dom';
 import {setLanguage} from '../../i18n';
 import * as React from 'react';
 import {act} from 'react';
@@ -58,6 +59,29 @@ describe('delegate file chair review', () => {
     expect(approveDelegateFile).toHaveBeenCalledWith(pending.id,pending.revision,publishedFile.logicalName,'WORKING_PAPER','bound-token');
   });
 
+  it.each([false, true])('shows a named upload receipt only after durable save (pending host commit: %s)', async pendingHostCommit => {
+    const selected = new File(['abc'], 'review-upload.txt', {type: 'text/plain'});
+    Object.defineProperty(selected, 'arrayBuffer', {value: async () => new TextEncoder().encode('abc').buffer});
+    const api = {listPendingHostCommits: async () => [], createFileUpload: vi.fn(async () => ({id: 'upload'})),
+      uploadFileContent: vi.fn(async () => ({})), commitFileUpload: vi.fn(async () => pendingHostCommit
+        ? {kind: 'PENDING_HOST_COMMIT'} : {id: 'saved-file'})} as unknown as SelfHostedApi;
+    await act(async () => root.render(<MemoryRouter><DelegateFileUploadPanel snapshot={snapshot} api={api} /></MemoryRouter>));
+    const input = host.querySelector<HTMLInputElement>('input[type="file"]')!;
+    Object.defineProperty(input, 'files', {value: [selected], configurable: true});
+    await act(async () => input.dispatchEvent(new Event('change', {bubbles: true})));
+    await act(async () => {host.querySelector('form')!.dispatchEvent(new Event('submit', {bubbles: true, cancelable: true}));
+      await new Promise(resolve => setTimeout(resolve, 30));});
+    expect(api.commitFileUpload).toHaveBeenCalledWith('upload');
+    const receipt = host.querySelector('.delegate-file-upload-result');
+    if (pendingHostCommit) expect(receipt).toBeNull();
+    else {
+      expect(receipt?.textContent).toContain('review-upload.txt');
+      expect(receipt?.textContent).toContain('文件已提交，等待审核');
+      expect(receipt?.querySelector('a')?.getAttribute('href')).toBe('/committees/committee/posts/attachments');
+      expect(input.value).toBe('');
+    }
+  });
+
   it('keeps the upload component separate from review cards', async () => {
     const api = {listPendingHostCommits: async () => [], createFileUpload: vi.fn(), uploadFileContent: vi.fn(), commitFileUpload: vi.fn()} as unknown as SelfHostedApi;
     await act(async () => root.render(<DelegateFileUploadPanel snapshot={snapshot} api={api} />));
@@ -83,7 +107,7 @@ describe('delegate file chair review', () => {
     expect(input.value).toBe(committeeLanguage === 'en' ? 'Working paper 2.3' : '工作文件 2.3');
   });
 
-  it('suggests names, offers preset rejection messages, and defaults to keeping bytes', async () => {
+  it('suggests names and retains rejected files without a deletion prompt', async () => {
     const pending = {...reviewFile,suggestedNames:{WORKING_PAPER:{sessionOrdinal:1,ordinal:2},DIRECTIVE_DRAFT:{sessionOrdinal:1,ordinal:1},RESOLUTION_DRAFT:{sessionOrdinal:1,ordinal:1}}};
     const rejectDelegateFile = vi.fn(async () => ({})); const deleteFile = vi.fn();
     const api = {getDelegateFileShare: async () => null, listDelegateReviewFiles:async () => [pending],rejectDelegateFile,deleteFile,
@@ -95,9 +119,9 @@ describe('delegate file chair review', () => {
     expect(document.body.textContent).toContain('文件内容格式不合要求，请参阅《学术指引》修改后重新提交。');
     await act(async () => (Array.from(document.body.querySelectorAll('button')).find(x => x.textContent==='确认驳回') as HTMLElement).click());
     expect(rejectDelegateFile).toHaveBeenCalledWith('file',1,'工作文件 1.2','WORKING_PAPER',undefined,'format');
-    expect(document.body.textContent).toContain('是否删除被驳回的文件？');
-    expect(deleteFile).not.toHaveBeenCalled();
-    await act(async () => (Array.from(document.body.querySelectorAll('button')).find(x => x.textContent==='保留文件') as HTMLElement).click());
+    expect(document.body.textContent).not.toContain('是否删除被驳回的文件？');
+    expect(document.body.textContent).not.toContain('保留文件');
+    expect(document.body.querySelector('.ui.modal')).toBeNull();
     expect(deleteFile).not.toHaveBeenCalled();
   });
 

@@ -2,7 +2,7 @@ import {apiErrorText} from '../../i18n';
 import {t, useLanguage, getLanguage} from '../../i18n';
 import * as React from 'react';
 import {Prompt} from 'react-router-dom';
-import {Button, Form, Header, Select, Message, Segment} from 'semantic-ui-react';
+import {Button, Form, Header, Icon, Select, Message, Segment} from 'semantic-ui-react';
 import type {SelfHostedApi} from '../../services/self-hosted-api';
 
 type Config = Awaited<ReturnType<SelfHostedApi['storageCacheStatus']>>['config'];
@@ -126,7 +126,7 @@ export default function StorageCacheSettingsPanel({api}: {api: SelfHostedApi}) {
             value={config.storageMinFreePercent} onChange={(_, data) => {setConfig({...config, storageMinFreePercent: Number(data.value)}); setDirty(true); setSaved(false);}} />
         </Form.Group>
       </Segment>
-      <Button primary disabled={saving || !dirty || Object.values(invalid).some(value => value)}>{t("Save cache configuration")}</Button>
+      <Button primary disabled={saving || !dirty || Object.values(invalid).some(value => value)}><Icon name="save" />{t("Save cache configuration")}</Button>
     </Form>}
   </div>;
 }

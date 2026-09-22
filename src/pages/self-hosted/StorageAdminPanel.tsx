@@ -1,7 +1,7 @@
 import {t, useLanguage, getLanguage} from '../../i18n';
 import * as React from 'react';
 import type {S3ProviderConfigSummary} from '@quorum/contracts';
-import {Button, Card, Form, Header, Message, Segment} from 'semantic-ui-react';
+import {Button, Card, Form, Header, Icon, Message, Segment} from 'semantic-ui-react';
 import {storageErrorText} from './FilesPanel';
 import type {S3ProviderConfigInput, SelfHostedApi} from '../../services/self-hosted-api';
 
@@ -86,7 +86,7 @@ export default function StorageAdminPanel({api}: {api: SelfHostedApi}) {
           {key: 'active', value: 'ACTIVE', text: t("Enabled")}, {key: 'disabled', value: 'DISABLED', text: t("Deactivate")}
         ]} onChange={(_, data) => setForm({...form, status: data.value as 'ACTIVE' | 'DISABLED'})} />}
       </Form.Group>
-      <Button primary disabled={!valid}>{editing ? t("Save configuration") : t("Create configuration")}</Button>
+      <Button primary disabled={!valid}>{editing && <Icon name="save" />}{editing ? t("Save configuration") : t("Create configuration")}</Button>
       {editing && <Button type="button" onClick={() => {setEditing(undefined); setForm(EMPTY_FORM);}}>{t("Cancel editing")}</Button>}
     </Form></Segment>
     <Segment>

@@ -1,7 +1,7 @@
 import {useLanguage} from '../../i18n';
 import {apiErrorText} from '../../i18n';
 import * as React from 'react';
-import {Button, Checkbox, Form, Header, Message, Segment} from 'semantic-ui-react';
+import {Button, Checkbox, Form, Header, Icon, Message, Segment} from 'semantic-ui-react';
 import {t} from '../../i18n';
 import {getThemeSettings, updateThemeSettings, ThemeSettings} from '../../services/self-hosted-identity';
 import {useThemeFeature} from '../../theme/ThemeProvider';
@@ -34,7 +34,7 @@ export default function ThemeSettingsPanel() {
     {settings && <Form onSubmit={save}>
       <Form.Field><Checkbox label={t('Enable themes (experimental)')} checked={settings.enabled} disabled={saving}
         onChange={(_, data) => setSettings({...settings, enabled: Boolean(data.checked)})} /></Form.Field>
-      <Button primary disabled={saving}>{t('Save changes')}</Button>
+      <Button primary disabled={saving}><Icon name="save" />{t('Save changes')}</Button>
     </Form>}
   </Segment>;
 }

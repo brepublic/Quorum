@@ -615,7 +615,7 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   max-width: 13rem;
 }
 
-.self-hosted-files .button,
+.self-hosted-files .button:not([download]),
 .self-hosted-storage-admin .button {
   min-height: 44px;
 }
@@ -672,6 +672,14 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   margin-top: 0.125rem;
 }
 
+.delegate-file-review-panel .delegate-file-heading > .header {
+  flex: 1 1 20rem;
+}
+
+.delegate-file-review-panel .delegate-file-heading .field {
+  margin: 0;
+}
+
 .delegate-file-card .delegate-file-heading > .header,
 .delegate-file-card .delegate-file-heading .ui.input > input {
   font-weight: 700;
@@ -686,10 +694,50 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   width: 100%;
 }
 
+.delegate-file-review-panel .delegate-file-metadata .ui.dropdown {
+  min-width: 0;
+}
+
+.delegate-file-review-panel .delegate-file-metadata.ui.table {
+  table-layout: fixed;
+}
+
+.delegate-file-review-panel .delegate-file-metadata.ui.table td {
+  overflow-wrap: anywhere;
+}
+
+.delegate-file-review-panel .delegate-file-metadata.ui.table td.motion-metadata-key {
+  width: 8rem;
+}
+
 .delegate-file-review-actions {
   display: flex;
+  flex-wrap: wrap;
   justify-content: center;
   gap: .75rem;
+}
+
+.delegate-file-review-actions > .ui.button {
+  margin: 0 !important;
+  min-height: 1em;
+}
+
+.delegate-file-decisions.ui.buttons {
+  margin: 0;
+}
+
+.delegate-file-decisions.ui.buttons > .button {
+  width: 50%;
+  margin: 0;
+  min-height: 1em;
+}
+
+.delegate-file-upload-result.ui.segment {
+  width: min(100%, 760px);
+  margin: 1.5rem auto;
+  padding: 1.5rem;
+  text-align: center;
+  overflow-wrap: anywhere;
 }
 
 .delegate-file-upload-card {
@@ -727,14 +775,115 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   overflow-wrap: anywhere;
 }
 
+.self-hosted-file-overview {
+  width: min(100%, 760px);
+  margin: 0 auto;
+}
+
+.self-hosted-file-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 1rem;
+  margin: 1.5rem 0;
+}
+
+.self-hosted-file-toolbar > .ui.header,
+.self-hosted-file-toolbar > .field {
+  margin: 0;
+}
+
+.self-hosted-file-list > .self-hosted-file-card.ui.card {
+  margin: 0 0 1.5rem;
+}
+
+.self-hosted-file-heading > .header {
+  flex: 1 1 12rem;
+  font-size: 1.28571429em;
+  font-weight: 700;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.self-hosted-file-status.ui.label {
+  flex: 0 0 auto;
+  margin: 0;
+  font-size: 1rem;
+  border: 0 !important;
+  box-shadow: none !important;
+  padding: 0;
+  background: #fff !important;
+}
+
+.self-hosted-file-status.ui.label > .icon {
+  margin-right: .3em;
+}
+
+.self-hosted-file-overview .delegate-file-card-list {
+  padding: 0;
+}
+
+.self-hosted-file-overview .delegate-file-card-list > .delegate-file-card:last-child {
+  margin-bottom: 0 !important;
+}
+
+.self-hosted-file-overview .delegate-file-review-divider.ui.divider {
+  margin: 1.5rem 0;
+}
+
+.self-hosted-file-metadata.ui.table {
+  table-layout: fixed;
+}
+
+.self-hosted-file-card .self-hosted-file-metadata.ui.table td.motion-metadata-key {
+  width: 8rem;
+}
+
+.self-hosted-file-metadata.ui.table td,
+.self-hosted-file-rejection {
+  overflow-wrap: anywhere;
+}
+
+.self-hosted-file-rejection {
+  margin-top: 1rem;
+  padding: .9rem 1rem;
+  background: #f6f7f8;
+  border-radius: .28571429rem;
+  color: #454545;
+}
+
+.self-hosted-file-rejection p {
+  margin: .4rem 0 0;
+  white-space: pre-wrap;
+}
+
+.self-hosted-file-size {
+  display: inline-block;
+  margin-left: 0.75rem;
+  color: #767676;
+}
+
+.self-hosted-file-sync {
+  margin-top: 1rem;
+}
+
 .self-hosted-file-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
+  justify-content: center;
+  gap: 0.75rem;
 }
 
-.self-hosted-file-actions .button {
+.self-hosted-file-actions .ui.button {
   margin: 0 !important;
+  max-width: 100%;
+  min-height: 1em;
+}
+
+.self-hosted-file-actions .ui.button > .icon:last-child,
+.delegate-file-review-actions > .ui.button > .icon:last-child {
+  margin: 0 0 0 .5em !important;
 }
 
 .self-hosted-pairing-code-actions,

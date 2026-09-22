@@ -275,9 +275,9 @@ function AccountManager({client, currentUser, onLogout}: {
         <Table.Body>{users.map(account => <Table.Row key={account.id} disabled={account.status !== 'ACTIVE'}>
           <Table.Cell data-label={t('Email')}>{account.email || t('Anonymous account')}</Table.Cell>
           <Table.Cell data-label={t('Display name')}>{account.status === 'ANONYMIZED' ? t('Anonymized account') : account.displayName}</Table.Cell>
-          <Table.Cell data-label={t('Account ID')}><div className="account-admin-id"><code>{account.id}</code><Button basic size="mini" type="button"
+          <Table.Cell data-label={t('Account ID')}><div className="account-admin-id"><code>{account.id}</code><Button basic size="small" type="button"
             aria-label={`${t('Copy')} ${t('Account ID')} · ${account.email || (account.status === 'ANONYMIZED' ? t('Anonymized account') : account.displayName)}`}
-            onClick={() => void navigator.clipboard?.writeText(account.id)}>{t('Copy')}</Button></div></Table.Cell>
+            onClick={() => void navigator.clipboard?.writeText(account.id)}><Icon name="copy" />{t('Copy')}</Button></div></Table.Cell>
           <Table.Cell data-label={t('Status')}>{t(account.status)}</Table.Cell>
           <Table.Cell data-label={t('Actions')}><div className="account-admin-actions">
             <Button size="small" disabled={account.status !== 'ACTIVE'}

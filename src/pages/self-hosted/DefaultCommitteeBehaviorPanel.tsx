@@ -1,7 +1,7 @@
 import {useLanguage} from '../../i18n';
 import {apiErrorText} from '../../i18n';
 import * as React from 'react';
-import {Button, Checkbox, Form, Header, Message, Segment} from 'semantic-ui-react';
+import {Button, Checkbox, Form, Header, Icon, Message, Segment} from 'semantic-ui-react';
 import {t} from '../../i18n';
 import type {DefaultCommitteeBehavior, SelfHostedIdentityClient} from '../../services/self-hosted-identity';
 
@@ -36,7 +36,7 @@ export default function DefaultCommitteeBehaviorPanel({client}: {client: SelfHos
         {key: 'delegate', value: 'DELEGATE_OPERATED', text: t('Delegate operated')}
       ]} onChange={(_, data) => setSettings(current => current && {...current,
         operationMode: data.value as DefaultCommitteeBehavior['operationMode']})} />
-      <Button primary disabled={saving}>{t('Save changes')}</Button>
+      <Button primary disabled={saving}><Icon name="save" />{t('Save changes')}</Button>
     </Form>}
   </Segment>;
 }

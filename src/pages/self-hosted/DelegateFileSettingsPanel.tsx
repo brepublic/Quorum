@@ -6,7 +6,7 @@ import {getLanguage, LANGUAGE_OPTIONS} from '../../i18n';
 import * as React from 'react';
 import {Prompt} from 'react-router-dom';
 import type {DefaultFileRejectionSettings, DelegateFileSettings, DelegateFileType} from '@quorum/contracts';
-import {Button, Form, Header, Message, Modal, Segment} from 'semantic-ui-react';
+import {Button, Form, Header, Icon, Message, Modal, Segment} from 'semantic-ui-react';
 import {selfHostedApi, SelfHostedApiError, type SelfHostedApi} from '../../services/self-hosted-api';
 
 const FILE_TYPES: Array<[DelegateFileType, string]> = [
@@ -99,7 +99,7 @@ export function DelegateFileSettingsPanel({committeeId, committeeLanguage, api =
           disabled={readOnly} required placeholder="docx, doc, pdf" onChange={(_, data) => {changed(); setExtensions({...extensions, [type]: data.value});}} />)}
       </>}
       <div className="delegate-file-settings-actions">
-        {!readOnly && <Button primary disabled={working || !dirty}>{t("Save settings")}</Button>}
+        {!readOnly && <Button primary disabled={working || !dirty}><Icon name="save" />{t("Save settings")}</Button>}
         <Button type="button" disabled={working} onClick={() => dirty ? setReload(true) : void load()}>{t("Reload")}</Button>
       </div>
     </Form>}

@@ -108,6 +108,9 @@ const en: Record<string, string> = {
 
 const zhCN: Record<string, string> = {
   'File overview': '文件总览',
+  'Pending and published': '待审核与已发布',
+  'File submitted for review': '文件已提交，等待审核',
+  'View files': '查看文件',
   'File review': '文件审核',
   'File status': '文件状态',
   'All files': '全部文件',
