@@ -2,11 +2,14 @@ import {createHash, randomUUID} from 'node:crypto';
 import {constants as fsConstants, type Stats} from 'node:fs';
 import {link, lstat, mkdir, open, realpath, unlink, type FileHandle} from 'node:fs/promises';
 import {dirname, relative, resolve, sep} from 'node:path';
-import type {ApiErrorCode} from '@quorum/contracts';
+import {ERROR_TEXT, type ApiErrorReason, type ApiErrorCode} from '@quorum/contracts';
 import {resolveInternalStoragePath, validateInternalStorageKey} from './paths.js';
 import type {DurableStagingStore} from './staging.js';
 
 export class ProviderStorageError extends Error {
+  get reason(): ApiErrorReason {
+    return Object.hasOwn(ERROR_TEXT, this.failureCode) ? this.failureCode as ApiErrorReason : this.apiCode;
+  }
   constructor(readonly failureCode: string, readonly apiCode: ApiErrorCode, message: string,
     readonly cause?: unknown) {
     super(message);

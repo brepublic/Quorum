@@ -1468,6 +1468,8 @@ describe('committee workspace routes and roles', () => {
     expect(page.textContent).toContain('Amendments');
     expect(page.textContent).toContain('Voting');
     expect(page.textContent).not.toContain('Feed');
+    expect(page.querySelector('.resolution-content-source .active.button')?.textContent).toBe('File');
+    await act(async () => {page.querySelectorAll<HTMLButtonElement>('.resolution-content-source button')[1].click();});
     expect(page.textContent).toContain('Operative text');
     await act(async () => {page.querySelector<HTMLAnchorElement>('a[href="/committees/committee/resolutions/resolution/voting"]')?.click();});
     expect(page.textContent).toContain('No eligible delegations');
@@ -1591,7 +1593,7 @@ describe('committee workspace routes and roles', () => {
       value => ({...value, documents: kind === 'RESOLUTION' ? [document] : [{...document, id: 'resolution', kind: 'RESOLUTION', resolutionId: null, status: 'PUBLISHED'}, document]}), {listFiles: vi.fn(async () => [uploadedFile, ...(['PENDING_REVIEW', 'REJECTED', 'DELETED'] as const).map(status => ({...uploadedFile, id: status, logicalName: status, status})), {...uploadedFile, id: 'foreign', logicalName: 'foreign', committeeId: 'other'}]), createFileUpload,
         uploadFileContent, commitFileUpload, createDocumentVersion});
 
-    const fileMode = kind === 'RESOLUTION' ? page.querySelectorAll<HTMLButtonElement>('.resolution-content-source button')[1]
+    const fileMode = kind === 'RESOLUTION' ? page.querySelectorAll<HTMLButtonElement>('.resolution-content-source button')[0]
       : [...page.querySelectorAll<HTMLButtonElement>('.amendment-card button')].find(button => button.textContent === 'File');
     await act(async () => {fileMode?.click(); await Promise.resolve();});
     expect(page.querySelector('input[type="file"]')).toBeNull();
@@ -1662,6 +1664,59 @@ describe('committee workspace routes and roles', () => {
       page.querySelector('textarea')?.dispatchEvent(new FocusEvent('focusout', {bubbles: true}));
     });
     expect(createDocumentVersion).not.toHaveBeenCalled();
+  });
+
+  it('serializes rapid resolution votes and changes the cursor and undo history only after success', async () => {
+    let document: ProceedingDocument = {id: 'resolution', committeeId: 'committee', meetingSessionId: 'meeting',
+      kind: 'RESOLUTION', resolutionId: null, ordinal: 1, customTitle: null, title: 'A/RES/1', status: 'PUBLISHED',
+      rulePackageVersionId: 'rules', currentVersion: {id: 'version', versionNumber: 1, content: 'Text', contentFile: null,
+        createdAt: '2026-08-14T00:00:00.000Z'}, votingVersionId: null, public: true, proposerSeatId: 'seat',
+      seconderSeatId: null, delegatesCanAmend: false, directVote: {majority: 'SIMPLE_MAJORITY', startedAt: null,
+        settingsRevision: 1, eligibility: [{seatId: 'seat', seatDisplayName: 'China', mustVote: false, hasVeto: false},
+          {seatId: 'second', seatDisplayName: 'France', mustVote: false, hasVeto: false}], threshold: 2,
+        automaticResult: null, votes: []}, resultDecisions: [], revision: 2, discussion: [],
+      createdAt: '2026-08-14T00:00:00.000Z', updatedAt: '2026-08-14T00:00:00.000Z'};
+    let finish: () => void = () => undefined;
+    let fail: () => void = () => undefined;
+    const setResolutionDirectVote = vi.fn((_id: string, seatId: string, choice: 'FOR' | 'AGAINST' | 'ABSTAIN' | null) =>
+      new Promise<ProceedingDocument>((resolve, reject) => {
+        finish = () => {
+          const votes = document.directVote!.votes.filter(vote => vote.seatId !== seatId);
+          if (choice !== null) votes.push({id: 'vote', castAt: '2026-09-22T00:00:00Z', seatId, choice, seatDisplayName: seatId === 'seat' ? 'China' : 'France', revision: 1});
+          document = {...document, directVote: {...document.directVote!, votes}};
+          resolve(document);
+        };
+        fail = () => reject(new Error('connection lost'));
+      }));
+    const page = await render('CHAIR', '/committees/committee/resolutions/resolution/voting', user,
+      value => ({...value, documents: [document]}), {setResolutionDirectVote});
+    const button = (label: string) => [...page.querySelectorAll<HTMLButtonElement>('button')]
+      .find(item => item.textContent?.trim() === label)!;
+    const currentSeat = () => page.querySelector('.resolution-voting-current .header')?.textContent;
+    await act(async () => {button('Yes').click(); button('Yes').click(); button('No').click();});
+    expect(setResolutionDirectVote).toHaveBeenCalledTimes(1);
+    expect(currentSeat()).toBe('China');
+    expect(button('Yes').disabled).toBe(true);
+    expect(button('Undo').disabled).toBe(true);
+    await act(async () => finish());
+    expect(currentSeat()).toBe('France');
+    expect(button('Undo').disabled).toBe(false);
+    await act(async () => {button('No').click();});
+    await act(async () => fail());
+    expect(currentSeat()).toBe('France');
+    expect(button('Undo').disabled).toBe(false);
+    await act(async () => {button('Undo').click(); button('Undo').click();});
+    expect(setResolutionDirectVote).toHaveBeenCalledTimes(3);
+    expect(setResolutionDirectVote).toHaveBeenLastCalledWith('resolution', 'seat', null);
+    await act(async () => fail());
+    expect(currentSeat()).toBe('France');
+    expect(button('Undo').disabled).toBe(false);
+    await act(async () => {button('Undo').click();});
+    expect(setResolutionDirectVote).toHaveBeenLastCalledWith('resolution', 'seat', null);
+    await act(async () => finish());
+    expect(currentSeat()).toBe('China');
+    expect(document.directVote?.votes).toHaveLength(0);
+    expect(button('Undo').disabled).toBe(true);
   });
 
   it.each([null, 'PASSED', 'FAILED', 'VETOED'] as const)(

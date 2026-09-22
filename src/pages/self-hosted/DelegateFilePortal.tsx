@@ -20,7 +20,7 @@ function portalError(error: unknown): string {
   if (!(error instanceof SelfHostedApiError)) return apiErrorText(error);
   if (error.localization?.reason && error.localization.reason !== error.code) return apiErrorText(error);
   if (error.localization?.reason) return apiErrorText(error);
-  return ({LINK_EXPIRED: t("The sharing link has expired."), RESOURCE_CONFLICT: t("The current state does not allow this action."),
+  return ({LINK_EXPIRED: t("The sharing link has expired."),
     AUTHENTICATION_REQUIRED: t("Your delegate session has expired. Reopen the sharing link."), FORBIDDEN: t("This delegation cannot upload files."),
     PAYLOAD_TOO_LARGE: t("The file is too large. Choose a smaller file."), SERVICE_NOT_READY: t("File storage unavailable"),
     VALIDATION_FAILED: t("Invalid file information.")} as Record<string, string>)[error.code] ?? apiErrorText(error);
@@ -136,7 +136,7 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
         await new Promise(resolve => window.setTimeout(resolve, (readiness.retryAfterSeconds ?? 2) * 1000));
         readiness = await api.delegateFileDownloadReadiness(id);
       }
-      if (readiness.status !== 'READY') throw new Error(readiness.code ?? 'File is unavailable.');
+      if (readiness.status !== 'READY') throw Object.assign(new Error(), {code: readiness.code ?? 'FILE_CONTENT_UNAVAILABLE'});
       window.location.assign(api.delegateFileDownloadUrl(id));
     } catch (caught) { setError(caught); }
     finally { setPreparingDownload(undefined); }

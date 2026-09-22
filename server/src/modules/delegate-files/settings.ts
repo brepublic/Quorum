@@ -1,22 +1,24 @@
-import {CONTENT_LANGUAGES, type ContentLanguage, type LocalizedNames, DELEGATE_FILE_TYPES, type DelegateFileSettings, type FileRejectionType} from '@quorum/contracts';
+import {CONTENT_LANGUAGES, type ContentLanguage, type ApiErrorReason, type ApiErrorParams, type LocalizedNames, DELEGATE_FILE_TYPES, type DelegateFileSettings, type FileRejectionType} from '@quorum/contracts';
 import {AppError} from '../../http/errors.js';
 
-function invalid(message: string, field?: string): never { throw new AppError({code: 'VALIDATION_FAILED', reason: 'INVALID_FIELD', message,
-  ...(field ? {fieldErrors: [{field, reason: 'INVALID_FIELD'}]} : {})}); }
+function invalid(reason: ApiErrorReason, message: string, field?: string, params?: ApiErrorParams): never {
+  throw new AppError({code: 'VALIDATION_FAILED', reason, message, params,
+    ...(field ? {fieldErrors: [{field, reason, params}]} : {})});
+}
 export function rejectionTypes(value: unknown, language?: ContentLanguage): FileRejectionType[] {
-  if (!Array.isArray(value) || !value.length || value.length > 30) return invalid('Set 1–30 rejection types.');
+  if (!Array.isArray(value) || !value.length || value.length > 30) return invalid('INVALID_REJECTION_COUNT', 'Set 1–30 rejection types.');
   const ids = new Set<string>();
   const labels = new Map(CONTENT_LANGUAGES.map(item => [item, new Set<string>()]));
   const translations = (value: unknown, limit: number, field: string, required: boolean): LocalizedNames => {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return invalid('Invalid rejection translations.', field);
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return invalid('INVALID_REJECTION_TRANSLATIONS', 'Invalid rejection translations.', field, {max: limit});
     const result: LocalizedNames = {};
     for (const [key, text] of Object.entries(value)) {
       if (!CONTENT_LANGUAGES.includes(key as ContentLanguage) || typeof text !== 'string' || text.trim().length > limit) {
-        return invalid('Invalid rejection translations.', field);
+        return invalid('INVALID_REJECTION_TRANSLATIONS', 'Invalid rejection translations.', field, {max: limit});
       }
       if (text.trim()) result[key] = text.trim();
     }
-    if (required && !Object.keys(result).length) return invalid('Enter a rejection label and message.', field);
+    if (required && !Object.keys(result).length) return invalid('REJECTION_TEXT_REQUIRED', 'Enter a rejection label and message.', field);
     if (required && language && !result[language]) throw new AppError({code: 'VALIDATION_FAILED',
       reason: 'MISSING_CONTENT_TRANSLATION', message: 'Rejection settings are missing a committee translation.',
       params: {language}, fieldErrors: [{field, reason: 'MISSING_CONTENT_TRANSLATION', params: {language}}]});
@@ -24,26 +26,26 @@ export function rejectionTypes(value: unknown, language?: ContentLanguage): File
   };
   return value.map((item, index) => {
     if (!item || typeof item !== 'object' || typeof item.id !== 'string' || !/^[a-zA-Z0-9_-]{1,80}$/.test(item.id)
-      || typeof item.custom !== 'boolean') return invalid('Invalid rejection type.');
-    if (ids.has(item.id)) return invalid('Rejection types must be unique.');
+      || typeof item.custom !== 'boolean') return invalid('INVALID_REJECTION_TYPE', 'Invalid rejection type.');
+    if (ids.has(item.id)) return invalid('DUPLICATE_REJECTION_TYPE', 'Rejection types must be unique.');
     ids.add(item.id);
     const label = translations(item.label, 100, `rejectionTypes.${index}.label`, true);
     const message = item.custom ? {} : translations(item.message, 2000, `rejectionTypes.${index}.message`, true);
     for (const language of CONTENT_LANGUAGES) {
       const text = label[language];
-      if (text && labels.get(language)!.has(text)) return invalid('Rejection types must be unique.', `rejectionTypes.${index}.label`);
+      if (text && labels.get(language)!.has(text)) return invalid('DUPLICATE_REJECTION_TYPE', 'Rejection types must be unique.', `rejectionTypes.${index}.label`);
       if (text) labels.get(language)!.add(text);
     }
     return {id: item.id, label, message, custom: item.custom};
   });
 }
 export function allowedExtensions(value: unknown): DelegateFileSettings['allowedExtensions'] {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return invalid('请设置每种文件类型允许的后缀名。');
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return invalid('FILE_EXTENSIONS_REQUIRED', '请设置每种文件类型允许的后缀名。');
   return Object.fromEntries(DELEGATE_FILE_TYPES.map(type => {
     const list = (value as Record<string, unknown>)[type];
     if (!Array.isArray(list) || !list.length || list.length > 50
       || list.some(ext => typeof ext !== 'string' || !/^[a-z0-9]{1,16}$/.test(ext))) {
-      return invalid('Enter one or more extensions using letters and numbers.', `allowedExtensions.${type}`);
+      return invalid('INVALID_EXTENSION_SETTINGS', 'Enter one or more extensions using letters and numbers.', `allowedExtensions.${type}`);
     }
     return [type, [...new Set(list)]];
   })) as DelegateFileSettings['allowedExtensions'];

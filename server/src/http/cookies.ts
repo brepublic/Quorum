@@ -40,11 +40,11 @@ export function delegateFileCookies(token: string, csrf: string, maxAgeSeconds: 
 
 export function verifyCsrf(cookieToken: string | undefined, headerToken: string | undefined): void {
   if (!cookieToken || !headerToken) {
-    throw new AppError({code: 'FORBIDDEN', message: 'CSRF validation failed.'});
+    throw new AppError({reason: 'CSRF_EXPIRED', code: 'FORBIDDEN', message: 'CSRF validation failed.'});
   }
   const cookie = Buffer.from(cookieToken);
   const header = Buffer.from(headerToken);
   if (cookie.length !== header.length || !timingSafeEqual(cookie, header)) {
-    throw new AppError({code: 'FORBIDDEN', message: 'CSRF validation failed.'});
+    throw new AppError({reason: 'CSRF_EXPIRED', code: 'FORBIDDEN', message: 'CSRF validation failed.'});
   }
 }

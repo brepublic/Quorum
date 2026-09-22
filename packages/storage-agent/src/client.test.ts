@@ -70,6 +70,26 @@ describe('Chair Agent HTTP client', () => {
       fileEntryId: '30000000-0000-4000-8000-000000000001', baseRevision: 1})).resolves.toEqual(details);
   });
 
+  it.each(['not-json', '{}', 'null'])('classifies malformed responses as server response errors: %s', async body => {
+    const fetcher = vi.fn(async () => new Response(body, {status: 200}));
+    const client = new StorageAgentHttpClient('https://quorum.example.com', credential, fetcher as typeof fetch);
+    await expect(client.manifest(7)).rejects.toMatchObject({code: 'INVALID_RESPONSE'});
+    await expect(StorageAgentHttpClient.pair('https://quorum.example.com',
+      {pairingCode: 'code', deviceLabel: 'Chair', devicePublicKey: 'key'}, fetcher as typeof fetch))
+      .rejects.toMatchObject({code: 'INVALID_RESPONSE'});
+  });
+
+  it('preserves structured server reasons and network causes', async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({error: {code: 'RESOURCE_CONFLICT',
+      reason: 'CHAIR_HOST_ALREADY_PAIRED', message: 'Already paired.'}}), {status: 409}));
+    const client = new StorageAgentHttpClient('https://quorum.example.com', credential, fetcher as typeof fetch);
+    await expect(client.manifest(7)).rejects.toMatchObject({code: 'RESOURCE_CONFLICT',
+      localization: {reason: 'CHAIR_HOST_ALREADY_PAIRED'}});
+    const cause = Object.assign(new Error('private diagnostic'), {code: 'ECONNREFUSED'});
+    fetcher.mockRejectedValueOnce(cause);
+    await expect(client.manifest(7)).rejects.toMatchObject({code: 'NETWORK_ERROR', cause});
+  });
+
   it('requires HTTPS except for an explicit loopback development endpoint', () => {
     expect(() => new StorageAgentHttpClient('http://quorum.example.com', credential)).toThrow();
     expect(() => new StorageAgentHttpClient('https://user:secret@quorum.example.com', credential)).toThrow();

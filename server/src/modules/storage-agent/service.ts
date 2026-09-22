@@ -73,46 +73,46 @@ const DEFAULT_OFFLINE_GRACE_MS = 45_000;
 
 function uuid(value: unknown, name: string): string {
   if (typeof value !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
+    throw new AppError({reason: 'INVALID_REFERENCE', code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
   }
   return value;
 }
 
 function revision(value: unknown): number {
   if (!Number.isSafeInteger(value) || Number(value) < 1) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: 'Revision is invalid.'});
+    throw new AppError({reason: 'INVALID_REVISION', code: 'VALIDATION_FAILED', message: 'Revision is invalid.'});
   }
   return Number(value);
 }
 
 function generation(value: unknown): number {
   if (!Number.isSafeInteger(value) || Number(value) < 1) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: 'Lease generation is invalid.'});
+    throw new AppError({reason: 'CLIENT_REQUEST_INVALID', code: 'VALIDATION_FAILED', message: 'Lease generation is invalid.'});
   }
   return Number(value);
 }
 
 function pairingPurpose(value: unknown): StoragePairingPurpose {
   if (value !== 'INITIAL' && value !== 'TRANSFER') {
-    throw new AppError({code: 'VALIDATION_FAILED', message: 'Pairing purpose is invalid.'});
+    throw new AppError({reason: 'INVALID_PAIRING_PURPOSE', code: 'VALIDATION_FAILED', message: 'Pairing purpose is invalid.'});
   }
   return value;
 }
 
 function deviceLabel(value: unknown): string {
   if (typeof value !== 'string' || !value.trim() || value.trim().length > 120) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: 'Device label is invalid.'});
+    throw new AppError({reason: 'INVALID_DEVICE_LABEL', code: 'VALIDATION_FAILED', message: 'Device label is invalid.'});
   }
   return value.trim();
 }
 
 function devicePublicKey(value: unknown): Buffer {
   if (typeof value !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(value)) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: 'Device public key is invalid.'});
+    throw new AppError({reason: 'INVALID_DEVICE_KEY', code: 'VALIDATION_FAILED', message: 'Device public key is invalid.'});
   }
   const decoded = Buffer.from(value, 'base64url');
   if (decoded.length !== 32 || decoded.toString('base64url') !== value) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: 'Device public key is invalid.'});
+    throw new AppError({reason: 'INVALID_DEVICE_KEY', code: 'VALIDATION_FAILED', message: 'Device public key is invalid.'});
   }
   return decoded;
 }
@@ -136,7 +136,7 @@ function host(row: HostRow): StorageHost {
 
 async function requireStorageManager(client: PoolClient, committee: Stage4CommitteeRow, userId: string): Promise<void> {
   if (committee.owner_user_id !== userId && !(await isChair(client, committee.id, userId))) {
-    throw new AppError({code: 'FORBIDDEN', message: 'Chair or committee owner access is required.'});
+    throw new AppError({reason: 'CHAIR_OR_OWNER_REQUIRED', code: 'FORBIDDEN', message: 'Chair or committee owner access is required.'});
   }
 }
 
@@ -200,10 +200,10 @@ export class Stage7StorageAgentService {
       }
       const active = await currentHost(client, committee.id, true);
       if (purpose === 'INITIAL' && active) {
-        throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The committee already has a storage host.'});
+        throw new AppError({reason: 'CHAIR_HOST_ALREADY_PAIRED', code: 'RESOURCE_CONFLICT', message: 'The committee already has a storage host.'});
       }
       if (purpose === 'TRANSFER' && !active) {
-        throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The committee has no storage host to transfer.'});
+        throw new AppError({reason: 'CHAIR_HOST_REQUIRED', code: 'RESOURCE_CONFLICT', message: 'The committee has no storage host to transfer.'});
       }
       await client.query(`UPDATE storage_pairing_codes SET revoked_at=$2
         WHERE committee_id=$1 AND used_at IS NULL AND revoked_at IS NULL`, [committee.id, now]);
@@ -252,7 +252,7 @@ export class Stage7StorageAgentService {
       }
       const active = await currentHost(client, committee.id, true);
       if ((pairing.purpose === 'INITIAL' && active) || (pairing.purpose === 'TRANSFER' && !active)) {
-        throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Storage host state changed before pairing completed.'});
+        throw new AppError({reason: 'CHAIR_PAIRING_STATE_CHANGED', code: 'RESOURCE_CONFLICT', message: 'Storage host state changed before pairing completed.'});
       }
       const updated = await client.query<{storage_lease_generation: string | number; revision: number}>(`UPDATE committees
         SET storage_lease_generation=storage_lease_generation+1,revision=revision+1,updated_at=$2
@@ -377,7 +377,7 @@ export class Stage7StorageAgentService {
       }
       const active = await currentHost(client, committee.id, true);
       if (!active || active.id !== uuid(hostId, 'Storage host ID')) {
-        throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Storage host is no longer active.'});
+        throw new AppError({reason: 'CHAIR_HOST_REVOKED', code: 'RESOURCE_CONFLICT', message: 'Storage host is no longer active.'});
       }
       const updated = await client.query<{storage_lease_generation: string | number; revision: number}>(`UPDATE committees
         SET storage_lease_generation=storage_lease_generation+1,revision=revision+1,updated_at=$2
@@ -509,7 +509,7 @@ export class Stage7StorageAgentService {
     if (heartbeat.capabilities !== undefined && (!Array.isArray(heartbeat.capabilities)
       || heartbeat.capabilities.some(value => value !== 'SSE_WAKE' && value !== 'CACHE_REFILL')
       || new Set(heartbeat.capabilities).size !== heartbeat.capabilities.length)) {
-      throw new AppError({code: 'VALIDATION_FAILED', message: 'Agent capabilities are invalid.'});
+      throw new AppError({reason: 'AGENT_UPGRADE_REQUIRED', code: 'VALIDATION_FAILED', message: 'Agent capabilities are invalid.'});
     }
     const capabilities = (heartbeat.capabilities ?? []) as string[];
     const parsed = parseDeviceCredential(credential);

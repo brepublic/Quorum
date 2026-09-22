@@ -15,3 +15,10 @@ describe('desktop error redaction', () => {
     expect(agentErrorCode(new Error('private-key-secret'))).toBe('OPERATION_FAILED');
   });
 });
+
+it('preserves known operation reasons without interpreting every conflict as a pairing failure', () => {
+  expect(agentErrorCode(new AgentApiError(409, 'RESOURCE_CONFLICT', '/private/server', undefined,
+    {reason: 'CHAIR_HOST_REVOKED'}))).toBe('CHAIR_HOST_REVOKED');
+  expect(agentErrorCode(new AgentApiError(409, 'RESOURCE_CONFLICT', '/private/server', undefined,
+    {reason: '/private/server' as never}))).toBe('RESOURCE_CONFLICT');
+});

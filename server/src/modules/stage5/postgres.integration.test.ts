@@ -166,6 +166,28 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
     expect(positions?.rows.filter(row => row.status === 'CURRENT')).toHaveLength(0);
   });
 
+  it('records one vote under concurrent submissions and returns precise duplicate and undo reasons', async () => {
+    const f = await meetingFixture();
+    const document = await stage5.createResolution(f.firstChair, f.committee.id,
+      {meetingSessionId: f.session.id, customTitle: null, content: ''}, randomUUID(), context('rapid-document'));
+    const raced = await Promise.allSettled([
+      stage5.setResolutionDirectVote(f.firstChair, document.id,
+        {seatId: f.firstSeat.id, choice: 'FOR'}, context('rapid-one')),
+      stage5.setResolutionDirectVote(f.secondChair, document.id,
+        {seatId: f.firstSeat.id, choice: 'FOR'}, context('rapid-two'))
+    ]);
+    expect(raced.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+    expect(raced.find(result => result.status === 'rejected')).toMatchObject({status: 'rejected',
+      reason: {code: 'RESOURCE_CONFLICT', reason: 'VOTE_ALREADY_RECORDED'}});
+    const history = await pool!.query('SELECT new_choice FROM resolution_direct_vote_revisions WHERE resolution_document_id=$1', [document.id]);
+    expect(history.rows).toEqual([{new_choice: 'FOR'}]);
+    await stage5.setResolutionDirectVote(f.firstChair, document.id,
+      {seatId: f.firstSeat.id, choice: null}, context('rapid-undo'));
+    await expect(stage5.setResolutionDirectVote(f.firstChair, document.id,
+      {seatId: f.firstSeat.id, choice: null}, context('rapid-undo-again')))
+      .rejects.toMatchObject({code: 'RESOURCE_CONFLICT', reason: 'NO_VOTE_TO_UNDO'});
+  });
+
   it('purges direct voting histories and linked caucuses without touching another committee', async () => {
     const f = await meetingFixture(); const other = await meetingFixture();
     const document = await stage5.createResolution(f.firstChair, f.committee.id,

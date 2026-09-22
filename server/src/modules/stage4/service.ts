@@ -146,14 +146,14 @@ function flag(type: FlagSnapshot['type'], value: string): FlagSnapshot { return 
 
 function positiveRevision(value: unknown): number {
   if (!Number.isSafeInteger(value) || Number(value) < 1) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: 'Base revision is invalid.'});
+    throw new AppError({reason: 'INVALID_REVISION', code: 'VALIDATION_FAILED', message: 'Base revision is invalid.'});
   }
   return Number(value);
 }
 
 function requiredText(value: unknown, name: string, max = 200): string {
   if (typeof value !== 'string' || !value.trim() || value.trim().length > max) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
+    throw new AppError({reason: 'REQUIRED_TEXT', params: {max: max}, code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
   }
   return value.trim();
 }
@@ -161,21 +161,21 @@ function requiredText(value: unknown, name: string, max = 200): string {
 function optionalText(value: unknown, name: string, max: number): string {
   if (value === undefined) return '';
   if (typeof value !== 'string' || value.length > max) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
+    throw new AppError({reason: 'INVALID_TEXT', params: {max: max}, code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
   }
   return value;
 }
 
 function textContent(value: unknown, max: number): string {
   if (typeof value !== 'string' || value.length > max) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: 'Content is invalid.'});
+    throw new AppError({reason: 'INVALID_CONTENT', code: 'VALIDATION_FAILED', message: 'Content is invalid.'});
   }
   return value;
 }
 
 function sortOrder(value: unknown): number {
   if (value === undefined) return 0;
-  if (!Number.isSafeInteger(value)) throw new AppError({code: 'VALIDATION_FAILED', message: 'Sort order is invalid.'});
+  if (!Number.isSafeInteger(value)) throw new AppError({reason: 'INVALID_SORT_ORDER', code: 'VALIDATION_FAILED', message: 'Sort order is invalid.'});
   return Number(value);
 }
 
@@ -376,7 +376,7 @@ async function pointTypeNames(client: PoolClient, row: PointRow): Promise<Locali
   const result = await client.query<{definition: {points?: Array<{id: string; names?: LocalizedNames}>}}>(
     'SELECT definition FROM rule_package_versions WHERE id=$1', [row.rule_package_version_id]);
   const names = result.rows[0]?.definition.points?.find(item => item.id === row.point_type_id)?.names;
-  if (!names) throw new AppError({code: 'SERVICE_NOT_READY', message: 'Point rule definition is unavailable.'});
+  if (!names) throw new AppError({reason: 'POINT_RULE_UNAVAILABLE', expose: true, code: 'SERVICE_NOT_READY', message: 'Point rule definition is unavailable.'});
   return names;
 }
 
@@ -429,7 +429,7 @@ async function committeeTemplate(client: PoolClient, row: CommitteeTemplateRow):
 async function resolveCountryTemplateReference(client: PoolClient, ownerId: string, key: string): Promise<string | null> {
   if (key === 'builtin:default') return null;
   const match = /^custom:([0-9a-f-]{36})$/.exec(key);
-  if (!match) throw new AppError({code: 'VALIDATION_FAILED', message: 'Country template key is invalid.'});
+  if (!match) throw new AppError({reason: 'INVALID_COUNTRY_TEMPLATE', code: 'VALIDATION_FAILED', message: 'Country template key is invalid.'});
   await countryTemplateById(client, ownerId, match[1] as string);
   return match[1] as string;
 }
@@ -538,12 +538,12 @@ export class Stage4Service {
 
   async deleteCountryTemplate(auth: AuthenticatedSession, id: string, context: Stage4Context): Promise<void> {
     requireBusinessIdentity(auth);
-    if (id === 'builtin:default') throw new AppError({code: 'FORBIDDEN', message: 'Built-in templates cannot be deleted.'});
+    if (id === 'builtin:default') throw new AppError({reason: 'BUILTIN_TEMPLATE_IMMUTABLE', code: 'FORBIDDEN', message: 'Built-in templates cannot be deleted.'});
     await transaction(this.pool, async client => {
       const current = await countryTemplateById(client, auth.user.id, id, true);
       const used = await client.query<{id: string; names: LocalizedNames; default_language: string}>(`SELECT id,names,default_language
         FROM committee_templates WHERE owner_user_id=$1 AND country_template_id=$2 ORDER BY created_at,id`, [auth.user.id, id]);
-      if (used.rowCount) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'This country template is still in use.',
+      if (used.rowCount) throw new AppError({reason: 'COUNTRY_TEMPLATE_IN_USE', code: 'RESOURCE_CONFLICT', message: 'This country template is still in use.',
         details: {templates: used.rows.map(item => ({id: item.id, name: localizedDisplayName(item.names, item.default_language, item.default_language)}))}});
       await client.query('DELETE FROM country_template_countries WHERE country_template_id=$1', [id]);
       await client.query('DELETE FROM country_templates WHERE id=$1', [id]);
@@ -594,7 +594,7 @@ export class Stage4Service {
     context: Stage4Context): Promise<CommitteeTemplate> {
     requireBusinessIdentity(auth); assertExactBody(input, ['baseRevision', 'template']);
     if (builtinCommitteeDefinition(id)) {
-      throw new AppError({code: 'FORBIDDEN', message: 'Built-in templates cannot be changed.'});
+      throw new AppError({reason: 'BUILTIN_TEMPLATE_IMMUTABLE', code: 'FORBIDDEN', message: 'Built-in templates cannot be changed.'});
     }
     const baseRevision = positiveRevision(input.baseRevision); const value = validateCommitteeTemplate(input.template);
     return transaction(this.pool, async client => {
@@ -644,7 +644,7 @@ export class Stage4Service {
   async deleteCommitteeTemplate(auth: AuthenticatedSession, id: string, context: Stage4Context): Promise<void> {
     requireBusinessIdentity(auth);
     if (builtinCommitteeDefinition(id)) {
-      throw new AppError({code: 'FORBIDDEN', message: 'Built-in templates cannot be deleted.'});
+      throw new AppError({reason: 'BUILTIN_TEMPLATE_IMMUTABLE', code: 'FORBIDDEN', message: 'Built-in templates cannot be deleted.'});
     }
     await transaction(this.pool, async client => {
       const current = await committeeTemplateById(client, auth.user.id, id, true);
@@ -750,7 +750,7 @@ export class Stage4Service {
         documents?: {amendmentsPublicByDefault?: boolean};
       }}>('SELECT definition FROM rule_package_versions WHERE id=$1', [committee.active_rule_package_version_id]);
       const rules = ruleResult.rows[0]?.definition;
-      if (!rules) throw new AppError({code: 'SERVICE_NOT_READY', message: 'Active rules are unavailable.'});
+      if (!rules) throw new AppError({reason: 'ACTIVE_RULES_UNAVAILABLE', expose: true, code: 'SERVICE_NOT_READY', message: 'Active rules are unavailable.'});
       const result: CommitteeWorkspaceSnapshot = {schemaVersion: 3,
         committee: viewer.audience === 'OWNER' || viewer.audience === 'CHAIR' ? summary : publicCommittee,
         ...(setupCountryTemplate ? {countryTemplate: setupCountryTemplate} : {}),
@@ -1024,7 +1024,7 @@ export class Stage4Service {
   async createCommittee(auth: AuthenticatedSession, input: Record<string, unknown>, idempotencyKey: string,
     context: Stage4Context): Promise<CommitteeSummary> {
     requireBusinessIdentity(auth);
-    if (auth.user.isSystemAdmin) throw new AppError({code: 'FORBIDDEN', message: 'System administrators cannot create committees.'});
+    if (auth.user.isSystemAdmin) throw new AppError({reason: 'ADMIN_CANNOT_CREATE_COMMITTEE', code: 'FORBIDDEN', message: 'System administrators cannot create committees.'});
     assertExactBody(input, ['name', 'topic', 'conference', 'visibility', 'operationMode', 'activeRulePackageVersionId', 'committeeTemplateId', 'countryTemplateKey',
       'committeeLanguage', 'countryTemplateRevision', 'committeeTemplateRevision']);
     if (!isContentLanguage(input.committeeLanguage)) throw new AppError({code: 'VALIDATION_FAILED',
@@ -1035,14 +1035,14 @@ export class Stage4Service {
     const name = requiredText(input.name, 'Committee name');
     const topic = optionalText(input.topic, 'Committee topic', 500);
     const conference = optionalText(input.conference, 'Conference name', 200);
-    if (!['PUBLIC', 'PRIVATE'].includes(input.visibility as string)) throw new AppError({code: 'VALIDATION_FAILED', message: 'Committee visibility is invalid.'});
+    if (!['PUBLIC', 'PRIVATE'].includes(input.visibility as string)) throw new AppError({reason: 'INVALID_VISIBILITY', code: 'VALIDATION_FAILED', message: 'Committee visibility is invalid.'});
     if (input.operationMode !== undefined && !['DELEGATE_OPERATED', 'CHAIR_OPERATED'].includes(input.operationMode as string)) {
-      throw new AppError({code: 'VALIDATION_FAILED', message: 'Committee operation mode is invalid.'});
+      throw new AppError({reason: 'INVALID_OPERATION_MODE', code: 'VALIDATION_FAILED', message: 'Committee operation mode is invalid.'});
     }
     const committeeTemplateId = input.committeeTemplateId == null ? null : requiredText(input.committeeTemplateId, 'Committee template ID');
     const requestedCountryKey = input.countryTemplateKey == null ? null : requiredText(input.countryTemplateKey, 'Country template key');
     if ((committeeTemplateId === null) === (requestedCountryKey === null)) {
-      throw new AppError({code: 'VALIDATION_FAILED', message: 'Choose one committee template or one country template.'});
+      throw new AppError({reason: 'TEMPLATE_SELECTION_REQUIRED', code: 'VALIDATION_FAILED', message: 'Choose one committee template or one country template.'});
     }
     return idempotentTransaction({pool: this.pool, auth, route: 'POST /api/v1/committees', key: idempotencyKey,
       request: input, status: 201, work: async client => {
@@ -1055,9 +1055,9 @@ export class Stage4Service {
         const versionId = requiredText(input.activeRulePackageVersionId, 'Rule package version ID');
         const available = await client.query(`SELECT v.definition FROM rule_package_versions v JOIN rule_packages p ON p.id=v.package_id
           WHERE v.id=$1 AND v.status='PUBLISHED' AND p.scope IN ('BUILTIN','SYSTEM')`, [versionId]);
-        if (!available.rowCount) throw new AppError({code: 'VALIDATION_FAILED', message: 'Rule package version is not published.'});
+        if (!available.rowCount) throw new AppError({reason: 'RULE_VERSION_NOT_PUBLISHED', code: 'VALIDATION_FAILED', message: 'Rule package version is not published.'});
         const validatedRules = validateRulePackage(available.rows[0].definition);
-        if (!validatedRules.ok) throw new AppError({code: 'VALIDATION_FAILED', message: 'Rule package version is invalid.'});
+        if (!validatedRules.ok) throw new AppError({reason: 'INVALID_RULE_VERSION', code: 'VALIDATION_FAILED', message: 'Rule package version is invalid.'});
         let template: CommitteeTemplate | null = null;
         if (committeeTemplateId) {
           const builtin = builtinCommitteeDefinition(committeeTemplateId);
@@ -1134,7 +1134,7 @@ export class Stage4Service {
     const sortOrder = input.sortOrder ?? 0;
     if (!['STANDARD', 'NGO', 'OBSERVER'].includes(rank) || typeof canVote !== 'boolean'
       || typeof hasVeto !== 'boolean' || typeof mustVote !== 'boolean' || !Number.isSafeInteger(sortOrder)
-      || ((hasVeto || mustVote) && !canVote)) throw new AppError({code: 'VALIDATION_FAILED', message: 'Seat properties are invalid.'});
+      || ((hasVeto || mustVote) && !canVote)) throw new AppError({reason: 'INVALID_SEAT_PROPERTIES', code: 'VALIDATION_FAILED', message: 'Seat properties are invalid.'});
     return idempotentTransaction({pool: this.pool, auth, route: `POST /api/v1/committees/${committeeId}/seats`,
       key: idempotencyKey, request: input, status: 201, work: async client => {
         const row = await lockedCommittee(client, committeeId); await requireChair(client, row, auth.user.id); requireEditable(row);
@@ -1167,11 +1167,11 @@ export class Stage4Service {
     requireBusinessIdentity(auth); assertExactBody(input, ['baseRevision', 'patch']);
     const baseRevision = positiveRevision(input.baseRevision);
     if (!input.patch || typeof input.patch !== 'object' || Array.isArray(input.patch)) {
-      throw new AppError({code: 'VALIDATION_FAILED', message: 'Seat patch is invalid.'});
+      throw new AppError({reason: 'INVALID_SEAT_PROPERTIES', code: 'VALIDATION_FAILED', message: 'Seat patch is invalid.'});
     }
     const patch = input.patch as Record<string, unknown>;
     assertExactBody(patch, ['rank', 'canVote', 'hasVeto', 'mustVote', 'sortOrder', 'active'], 'Seat patch');
-    if (Object.keys(patch).length === 0) throw new AppError({code: 'VALIDATION_FAILED', message: 'Seat patch is empty.'});
+    if (Object.keys(patch).length === 0) throw new AppError({reason: 'SEAT_PATCH_EMPTY', code: 'VALIDATION_FAILED', message: 'Seat patch is empty.'});
     return transaction(this.pool, async client => {
       const committee = await lockedCommittee(client, committeeId); await requireChair(client, committee, auth.user.id); requireEditable(committee);
       const found = await client.query<{
@@ -1190,7 +1190,7 @@ export class Stage4Service {
       if (!['STANDARD', 'NGO', 'OBSERVER'].includes(rank) || typeof canVote !== 'boolean'
         || typeof hasVeto !== 'boolean' || typeof mustVote !== 'boolean' || !Number.isSafeInteger(sortOrder)
         || typeof active !== 'boolean' || ((hasVeto || mustVote) && !canVote)) {
-        throw new AppError({code: 'VALIDATION_FAILED', message: 'Seat properties are invalid.'});
+        throw new AppError({reason: 'INVALID_SEAT_PROPERTIES', code: 'VALIDATION_FAILED', message: 'Seat properties are invalid.'});
       }
       const result = await client.query(`UPDATE committee_seats SET display_name=$3,rank=$4,can_vote=$5,has_veto=$6,
         must_vote=$7,sort_order=$8,flag_type=$9,flag_value=$10,active=$11,revision=revision+1,updated_at=now()
@@ -1285,13 +1285,13 @@ export class Stage4Service {
         const access = await committeeAccess(client, committee, auth.user.id);
         let authorSeatId = access.seatId; let authorDisplayName = auth.user.displayName;
         if (input.onBehalfOfSeatId !== undefined) {
-          if (access.audience !== 'CHAIR') throw new AppError({code: 'FORBIDDEN', message: 'Chair capability is required.'});
+          if (access.audience !== 'CHAIR') throw new AppError({reason: 'CHAIR_REQUIRED', code: 'FORBIDDEN', message: 'Chair capability is required.'});
           authorSeatId = requiredText(input.onBehalfOfSeatId, 'Seat ID');
         }
         if (authorSeatId) {
           const seat = await client.query<{display_name: string}>(`SELECT display_name FROM committee_seats
             WHERE id=$1 AND committee_id=$2 AND active=true`, [authorSeatId, committeeId]);
-          if (!seat.rows[0]) throw new AppError({code: 'VALIDATION_FAILED', message: 'Seat is invalid.'});
+          if (!seat.rows[0]) throw new AppError({reason: 'INVALID_SEAT_REFERENCE', code: 'VALIDATION_FAILED', message: 'Seat is invalid.'});
           authorDisplayName = seat.rows[0].display_name;
         }
         const id = randomUUID(); const result = await client.query<TextPostRow>(`INSERT INTO committee_text_posts
@@ -1319,7 +1319,7 @@ export class Stage4Service {
       const committee = await lockedCommittee(client, current.committee_id); requireEditable(committee);
       const access = await committeeAccess(client, committee, auth.user.id);
       if (access.audience === 'MEMBER' && current.actor_user_id !== auth.user.id) {
-        throw new AppError({code: 'FORBIDDEN', message: 'You can only edit your own text posts.'});
+        throw new AppError({reason: 'OWN_TEXT_POST_ONLY', code: 'FORBIDDEN', message: 'You can only edit your own text posts.'});
       }
       if (current.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT', message: 'This text post changed since it was loaded.',
         details: {currentRevision: current.revision}});
@@ -1346,7 +1346,7 @@ export class Stage4Service {
       const committee = await lockedCommittee(client, current.committee_id); requireEditable(committee);
       const access = await committeeAccess(client, committee, auth.user.id);
       if (access.audience === 'MEMBER' && current.actor_user_id !== auth.user.id) {
-        throw new AppError({code: 'FORBIDDEN', message: 'You can only delete your own text posts.'});
+        throw new AppError({reason: 'OWN_TEXT_POST_ONLY', code: 'FORBIDDEN', message: 'You can only delete your own text posts.'});
       }
       if (current.revision !== revision) throw new AppError({code: 'REVISION_CONFLICT', message: 'This text post changed since it was loaded.',
         details: {currentRevision: current.revision}});
@@ -1371,21 +1371,21 @@ export class Stage4Service {
         WHERE id=$1 AND status='PUBLISHED'`, [committee.active_rule_package_version_id]);
       const phases = definition.rows[0]?.definition.phases;
       if (!definition.rows[0] || !Array.isArray(phases)) {
-        throw new AppError({code: 'VALIDATION_FAILED', message: 'The active rule package has invalid phases.'});
+        throw new AppError({reason: 'INVALID_RULE_PHASES', code: 'VALIDATION_FAILED', message: 'The active rule package has invalid phases.'});
       }
       const phaseIds = phases.map(item => item && typeof item === 'object' ? (item as {id?: unknown}).id : undefined)
         .filter((value): value is string => typeof value === 'string' && Boolean(value));
       const phaseId = input.phaseId === undefined ? phaseIds[0] ?? 'open-debate' : requiredText(input.phaseId, 'Phase ID', 128);
       const replacementRequested = input.missingGeneralListAction === 'CREATE_REPLACEMENT';
       if (input.missingGeneralListAction !== undefined && !replacementRequested) {
-        throw new AppError({code: 'VALIDATION_FAILED', message: 'Missing general list action is invalid.'});
+        throw new AppError({reason: 'INVALID_GENERAL_LIST_ACTION', code: 'VALIDATION_FAILED', message: 'Missing general list action is invalid.'});
       }
       if (phaseIds.length > 0 && !phaseIds.includes(phaseId)) {
-        throw new AppError({code: 'VALIDATION_FAILED', message: 'Phase is not defined by the active rule package.'});
+        throw new AppError({reason: 'RULE_PHASE_UNAVAILABLE', code: 'VALIDATION_FAILED', message: 'Phase is not defined by the active rule package.'});
       }
       const pending = await client.query<MeetingSessionRow>(`SELECT * FROM meeting_sessions
         WHERE committee_id=$1 AND status='PENDING' FOR UPDATE`, [committeeId]);
-      if ((pending.rowCount ?? 0) > 1) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'More than one meeting session is pending.'});
+      if ((pending.rowCount ?? 0) > 1) throw new AppError({reason: 'MULTIPLE_PENDING_MEETINGS', code: 'RESOURCE_CONFLICT', message: 'More than one meeting session is pending.'});
       const pendingSession = pending.rows[0]; const id = pendingSession?.id ?? randomUUID();
       const inserted = pending.rows[0]
         ? await client.query<MeetingSessionRow>(`UPDATE meeting_sessions SET status='OPEN',phase_id=$2,revision=revision+1
@@ -1413,7 +1413,7 @@ export class Stage4Service {
             speakerListId = priorList.rows[0].id;
             await client.query('UPDATE speaker_lists SET meeting_session_id=$2 WHERE id=$1', [speakerListId, id]);
           } else {
-            if (!replacementRequested) throw new AppError({code: 'RESOURCE_CONFLICT',
+            if (!replacementRequested) throw new AppError({reason: 'GENERAL_SPEAKER_LIST_MISSING', code: 'RESOURCE_CONFLICT',
               message: 'The previous general speakers list is missing.',
               details: {reason: 'GENERAL_SPEAKER_LIST_MISSING', allowCreateReplacement: true}});
             speakerListId = randomUUID(); createdReplacement = true;
@@ -1472,11 +1472,11 @@ export class Stage4Service {
       const found = await client.query<MeetingSessionRow>('SELECT * FROM meeting_sessions WHERE id=$1 FOR UPDATE', [sessionId]);
       const current = found.rows[0]; if (!current) throw new AppError({code: 'NOT_FOUND', message: 'Meeting session not found.'});
       requireProceedingsActive(committee);
-      if (current.status !== 'OPEN') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Meeting session is already closed.'});
+      if (current.status !== 'OPEN') throw new AppError({reason: 'MEETING_ALREADY_CLOSED', code: 'RESOURCE_CONFLICT', message: 'Meeting session is already closed.'});
       if (current.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT', message: 'This meeting session changed since it was loaded.',
         details: {currentRevision: current.revision}});
       const activeRollCall = await client.query(`SELECT 1 FROM roll_calls WHERE meeting_session_id=$1 AND status='IN_PROGRESS'`, [sessionId]);
-      if (activeRollCall.rowCount) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Complete or reset the active roll call first.'});
+      if (activeRollCall.rowCount) throw new AppError({reason: 'ROLL_CALL_MUST_FINISH', code: 'RESOURCE_CONFLICT', message: 'Complete or reset the active roll call first.'});
       const updated = await client.query<MeetingSessionRow>(`UPDATE meeting_sessions SET status='CLOSED',revision=revision+1,
         closed_at=now() WHERE id=$1 RETURNING *`, [sessionId]);
       await appendEvent(client, committee, {type: 'meeting_session.closed', resourceType: 'meeting_session',
@@ -1500,7 +1500,7 @@ export class Stage4Service {
           WHERE id=$1 AND committee_id=$2 FOR UPDATE`, [meetingSessionId, committeeId]);
         const session = sessionResult.rows[0];
         if (!session) throw new AppError({code: 'NOT_FOUND', message: 'Meeting session not found.'});
-        if (session.status !== 'OPEN') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Meeting session is closed.'});
+        if (session.status !== 'OPEN') throw new AppError({reason: 'MEETING_CLOSED', code: 'RESOURCE_CONFLICT', message: 'Meeting session is closed.'});
         const version = await client.query<{definition: {attendance?: {responses?: unknown}}}>(`SELECT definition
           FROM rule_package_versions WHERE id=$1 AND status='PUBLISHED'`, [session.active_rule_package_version_id]);
         const rawResponses = version.rows[0]?.definition.attendance?.responses;
@@ -1508,11 +1508,11 @@ export class Stage4Service {
         const allowedValues = new Set(['PRESENT', 'PRESENT_AND_VOTING', 'ABSENT']);
         if (responses.length === 0 || responses.some(value => typeof value !== 'string' || !allowedValues.has(value))
           || new Set(responses).size !== responses.length) {
-          throw new AppError({code: 'VALIDATION_FAILED', message: 'The rule package has invalid roll-call responses.'});
+          throw new AppError({reason: 'INVALID_ROLL_CALL_RULES', code: 'VALIDATION_FAILED', message: 'The rule package has invalid roll-call responses.'});
         }
         const seats = await client.query<{id: string; display_name: string}>(`SELECT id,display_name FROM committee_seats
           WHERE committee_id=$1 AND active=true ORDER BY sort_order,stable_key,id`, [committeeId]);
-        if (seats.rows.length === 0) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The committee has no active seats.'});
+        if (seats.rows.length === 0) throw new AppError({reason: 'NO_ACTIVE_SEATS', code: 'RESOURCE_CONFLICT', message: 'The committee has no active seats.'});
         const id = randomUUID(); const inserted = await client.query<RollCallRow>(`INSERT INTO roll_calls
           (id,committee_id,meeting_session_id,current_seat_id,rule_package_version_id,allowed_responses,started_by_user_id)
           VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
@@ -1542,14 +1542,14 @@ export class Stage4Service {
       const current = found.rows[0]; if (!current) throw new AppError({code: 'NOT_FOUND', message: 'Roll call not found.'});
       const committee = await lockedCommittee(client, current.committee_id); await requireChair(client, committee, auth.user.id);
       requireProceedingsActive(committee);
-      if (current.status !== 'IN_PROGRESS') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Roll call is not in progress.'});
+      if (current.status !== 'IN_PROGRESS') throw new AppError({reason: 'ROLL_CALL_NOT_ACTIVE', code: 'RESOURCE_CONFLICT', message: 'Roll call is not in progress.'});
       if (current.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT', message: 'This roll call changed since it was loaded.',
         details: {currentRevision: current.revision}});
-      if (current.current_seat_id !== seatId) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Record the current seat first.'});
-      if (!current.allowed_responses.includes(response)) throw new AppError({code: 'VALIDATION_FAILED', message: 'Roll-call response is not allowed.'});
+      if (current.current_seat_id !== seatId) throw new AppError({reason: 'ROLL_CALL_RESPONSE_REQUIRED', code: 'RESOURCE_CONFLICT', message: 'Record the current seat first.'});
+      if (!current.allowed_responses.includes(response)) throw new AppError({reason: 'INVALID_ROLL_CALL_RESPONSE', code: 'VALIDATION_FAILED', message: 'Roll-call response is not allowed.'});
       const frozen = await client.query<{seat_display_name: string; sort_order: number}>(`SELECT seat_display_name,sort_order
         FROM roll_call_seats WHERE roll_call_id=$1 AND seat_id=$2`, [rollCallId, seatId]);
-      if (!frozen.rows[0]) throw new AppError({code: 'VALIDATION_FAILED', message: 'Seat is not part of this roll call.'});
+      if (!frozen.rows[0]) throw new AppError({reason: 'SEAT_NOT_IN_ROLL_CALL', code: 'VALIDATION_FAILED', message: 'Seat is not part of this roll call.'});
       const entryId = randomUUID();
       await client.query(`INSERT INTO roll_call_entries
         (id,committee_id,roll_call_id,seat_id,seat_display_name,response,actor_user_id,on_behalf_of_seat_id,rule_package_version_id)
@@ -1602,15 +1602,15 @@ export class Stage4Service {
       const current = found.rows[0]; if (!current) throw new AppError({code: 'NOT_FOUND', message: 'Roll call not found.'});
       const committee = await lockedCommittee(client, current.committee_id); await requireChair(client, committee, auth.user.id);
       requireProceedingsActive(committee);
-      if (current.status === 'ABANDONED') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Roll call is not active.'});
+      if (current.status === 'ABANDONED') throw new AppError({reason: 'ROLL_CALL_NOT_ACTIVE', code: 'RESOURCE_CONFLICT', message: 'Roll call is not active.'});
       if (current.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT',
         message: 'This roll call changed since it was loaded.', details: {currentRevision: current.revision}});
-      if (!current.allowed_responses.includes(response)) throw new AppError({code: 'VALIDATION_FAILED',
+      if (!current.allowed_responses.includes(response)) throw new AppError({reason: 'INVALID_ROLL_CALL_RESPONSE', code: 'VALIDATION_FAILED',
         message: 'Roll-call response is not allowed.'});
       const frozen = await client.query<{seat_display_name: string; sort_order: number}>(`SELECT seat_display_name,sort_order
         FROM roll_call_seats WHERE roll_call_id=$1 AND seat_id=$2`, [rollCallId, seatId]);
       const frozenSeat = frozen.rows[0];
-      if (!frozenSeat) throw new AppError({code: 'VALIDATION_FAILED', message: 'Seat is not part of this roll call.'});
+      if (!frozenSeat) throw new AppError({reason: 'SEAT_NOT_IN_ROLL_CALL', code: 'VALIDATION_FAILED', message: 'Seat is not part of this roll call.'});
       const previous = await client.query<RollCallEntryRow>(`SELECT * FROM roll_call_entries
         WHERE roll_call_id=$1 AND seat_id=$2 AND undone_at IS NULL FOR UPDATE`, [rollCallId, seatId]);
       const previousEntry = previous.rows[0];
@@ -1684,12 +1684,12 @@ export class Stage4Service {
       const current = found.rows[0]; if (!current) throw new AppError({code: 'NOT_FOUND', message: 'Roll call not found.'});
       const committee = await lockedCommittee(client, current.committee_id); await requireChair(client, committee, auth.user.id);
       requireProceedingsActive(committee);
-      if (current.status !== 'IN_PROGRESS') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Only an active roll call can be undone.'});
+      if (current.status !== 'IN_PROGRESS') throw new AppError({reason: 'ROLL_CALL_NOT_ACTIVE', code: 'RESOURCE_CONFLICT', message: 'Only an active roll call can be undone.'});
       if (current.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT', message: 'This roll call changed since it was loaded.',
         details: {currentRevision: current.revision}});
       const last = await client.query<RollCallEntryRow>(`SELECT * FROM roll_call_entries WHERE roll_call_id=$1 AND undone_at IS NULL
         ORDER BY recorded_at DESC,id DESC LIMIT 1 FOR UPDATE`, [rollCallId]);
-      const entry = last.rows[0]; if (!entry) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Roll call has no response to undo.'});
+      const entry = last.rows[0]; if (!entry) throw new AppError({reason: 'ROLL_CALL_NOTHING_TO_UNDO', code: 'RESOURCE_CONFLICT', message: 'Roll call has no response to undo.'});
       await client.query('UPDATE roll_call_entries SET undone_at=now() WHERE id=$1', [entry.id]);
       const updated = await client.query<RollCallRow>(`UPDATE roll_calls SET current_seat_id=$2,revision=revision+1
         WHERE id=$1 RETURNING *`, [rollCallId, entry.seat_id]);
@@ -1710,7 +1710,7 @@ export class Stage4Service {
       const current = found.rows[0]; if (!current) throw new AppError({code: 'NOT_FOUND', message: 'Roll call not found.'});
       const committee = await lockedCommittee(client, current.committee_id); await requireChair(client, committee, auth.user.id);
       requireProceedingsActive(committee);
-      if (current.status === 'ABANDONED') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Roll call is not active.'});
+      if (current.status === 'ABANDONED') throw new AppError({reason: 'ROLL_CALL_NOT_ACTIVE', code: 'RESOURCE_CONFLICT', message: 'Roll call is not active.'});
       if (current.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT', message: 'This roll call changed since it was loaded.',
         details: {currentRevision: current.revision}});
       const seats = await client.query<{seat_id: string; seat_display_name: string; sort_order: number}>(`SELECT * FROM roll_call_seats
@@ -1743,7 +1743,7 @@ export class Stage4Service {
     const sessionId = requiredText(input.meetingSessionId, 'Meeting session ID'); const seatId = requiredText(input.seatId, 'Seat ID');
     const type = input.type as AttendanceEventType;
     if (!['PRESENT', 'TEMPORARILY_LEFT', 'RETURNED', 'ABSENT'].includes(type)) {
-      throw new AppError({code: 'VALIDATION_FAILED', message: 'Attendance event type is invalid.'});
+      throw new AppError({reason: 'INVALID_ATTENDANCE_EVENT', code: 'VALIDATION_FAILED', message: 'Attendance event type is invalid.'});
     }
     return transaction(this.pool, async client => {
       const committee = await lockedCommittee(client, committeeId); await requireChair(client, committee, auth.user.id);
@@ -1751,10 +1751,10 @@ export class Stage4Service {
       const session = await client.query<MeetingSessionRow>(`SELECT * FROM meeting_sessions WHERE id=$1 AND committee_id=$2`,
         [sessionId, committeeId]);
       if (!session.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Meeting session not found.'});
-      if (session.rows[0].status !== 'OPEN') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Meeting session is closed.'});
+      if (session.rows[0].status !== 'OPEN') throw new AppError({reason: 'MEETING_CLOSED', code: 'RESOURCE_CONFLICT', message: 'Meeting session is closed.'});
       const seat = await client.query<{display_name: string}>(`SELECT display_name FROM committee_seats
         WHERE id=$1 AND committee_id=$2 AND active=true`, [seatId, committeeId]);
-      if (!seat.rows[0]) throw new AppError({code: 'VALIDATION_FAILED', message: 'Seat is invalid.'});
+      if (!seat.rows[0]) throw new AppError({reason: 'INVALID_SEAT_REFERENCE', code: 'VALIDATION_FAILED', message: 'Seat is invalid.'});
       const event = await insertAttendanceEvent(client, {committeeId, meetingSessionId: sessionId, seatId,
         seatDisplayName: seat.rows[0].display_name, type, actorUserId: auth.user.id});
       await appendEvent(client, committee, {type: 'attendance.changed', resourceType: 'attendance', resourceId: event.id,
@@ -1781,33 +1781,33 @@ export class Stage4Service {
         const requestedSeatId = input.onBehalfOfSeatId === undefined ? null : requiredText(input.onBehalfOfSeatId, 'Seat ID');
         let seatId: string | null = null; let actedOnBehalf = false;
         if (committee.operation_mode === 'CHAIR_OPERATED') {
-          if (!chair) throw new AppError({code: 'FORBIDDEN', message: 'Chair capability is required.'});
-          if (!requestedSeatId) throw new AppError({code: 'VALIDATION_FAILED', message: 'A represented seat is required.'});
+          if (!chair) throw new AppError({reason: 'CHAIR_REQUIRED', code: 'FORBIDDEN', message: 'Chair capability is required.'});
+          if (!requestedSeatId) throw new AppError({reason: 'REPRESENTED_SEAT_REQUIRED', code: 'VALIDATION_FAILED', message: 'A represented seat is required.'});
           seatId = requestedSeatId; actedOnBehalf = true;
         } else if (requestedSeatId) {
-          if (!chair) throw new AppError({code: 'FORBIDDEN', message: 'Only a Chair can act for another seat.'});
+          if (!chair) throw new AppError({reason: 'CHAIR_REQUIRED', code: 'FORBIDDEN', message: 'Only a Chair can act for another seat.'});
           seatId = requestedSeatId; actedOnBehalf = true;
         } else {
           seatId = access.seatId ?? await activeSeat(client, committeeId, auth.user.id);
-          if (!seatId) throw new AppError({code: 'FORBIDDEN', message: 'An active seat assignment is required.'});
+          if (!seatId) throw new AppError({reason: 'ACTIVE_SEAT_REQUIRED', code: 'FORBIDDEN', message: 'An active seat assignment is required.'});
         }
         const session = await client.query<MeetingSessionRow>(`SELECT * FROM meeting_sessions
           WHERE id=$1 AND committee_id=$2`, [meetingSessionId, committeeId]);
         const meeting = session.rows[0];
         if (!meeting) throw new AppError({code: 'NOT_FOUND', message: 'Meeting session not found.'});
-        if (meeting.status !== 'OPEN') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Meeting session is closed.'});
+        if (meeting.status !== 'OPEN') throw new AppError({reason: 'MEETING_CLOSED', code: 'RESOURCE_CONFLICT', message: 'Meeting session is closed.'});
         const seat = await client.query<{display_name: string}>(`SELECT display_name FROM committee_seats
           WHERE id=$1 AND committee_id=$2 AND active=true`, [seatId, committeeId]);
-        if (!seat.rows[0]) throw new AppError({code: 'VALIDATION_FAILED', message: 'Seat is invalid.'});
+        if (!seat.rows[0]) throw new AppError({reason: 'INVALID_SEAT_REFERENCE', code: 'VALIDATION_FAILED', message: 'Seat is invalid.'});
         const version = await client.query<{definition: {points?: unknown}}>(`SELECT definition FROM rule_package_versions
           WHERE id=$1 AND status='PUBLISHED'`, [meeting.active_rule_package_version_id]);
         const rawPoints = version.rows[0]?.definition.points;
-        if (!Array.isArray(rawPoints)) throw new AppError({code: 'VALIDATION_FAILED', message: 'The rule package has invalid point types.'});
+        if (!Array.isArray(rawPoints)) throw new AppError({reason: 'INVALID_POINT_RULES', code: 'VALIDATION_FAILED', message: 'The rule package has invalid point types.'});
         const matching = rawPoints.filter(item => item && typeof item === 'object' && (item as {id?: unknown}).id === pointTypeId);
         const definition = matching[0] as {id?: unknown; interruptRequested?: unknown; enabled?: unknown} | undefined;
         if (matching.length !== 1 || !definition || typeof definition.interruptRequested !== 'boolean'
           || definition.enabled === false) {
-          throw new AppError({code: 'VALIDATION_FAILED', message: 'Point type is not active in the meeting rule package.'});
+          throw new AppError({reason: 'POINT_TYPE_UNAVAILABLE', code: 'VALIDATION_FAILED', message: 'Point type is not active in the meeting rule package.'});
         }
         const id = randomUUID(); const result = await client.query<PointRow>(`INSERT INTO points
           (id,committee_id,meeting_session_id,point_type_id,content,raised_by_seat_id,raised_by_seat_display_name,
@@ -1835,18 +1835,18 @@ export class Stage4Service {
     const baseRevision = positiveRevision(input.baseRevision);
     const status = input.status as Exclude<PointStatus, 'PENDING'>;
     if (!['UPHELD', 'OVERRULED', 'ANSWERED', 'RESOLVED', 'REJECTED'].includes(status)) {
-      throw new AppError({code: 'VALIDATION_FAILED', message: 'Point resolution status is invalid.'});
+      throw new AppError({reason: 'INVALID_POINT_RESULT', code: 'VALIDATION_FAILED', message: 'Point resolution status is invalid.'});
     }
     const chairResponse = optionalText(input.chairResponse, 'Chair response', 4000);
     let attendanceType: AttendanceEventType | undefined;
     if (input.attendanceChange !== undefined) {
       if (!input.attendanceChange || typeof input.attendanceChange !== 'object' || Array.isArray(input.attendanceChange)) {
-        throw new AppError({code: 'VALIDATION_FAILED', message: 'Attendance change is invalid.'});
+        throw new AppError({reason: 'INVALID_ATTENDANCE_EVENT', code: 'VALIDATION_FAILED', message: 'Attendance change is invalid.'});
       }
       const change = input.attendanceChange as Record<string, unknown>; assertExactBody(change, ['type'], 'Attendance change');
       attendanceType = change.type as AttendanceEventType;
       if (!['PRESENT', 'TEMPORARILY_LEFT', 'RETURNED', 'ABSENT'].includes(attendanceType)) {
-        throw new AppError({code: 'VALIDATION_FAILED', message: 'Attendance event type is invalid.'});
+        throw new AppError({reason: 'INVALID_ATTENDANCE_EVENT', code: 'VALIDATION_FAILED', message: 'Attendance event type is invalid.'});
       }
     }
     return transaction(this.pool, async client => {
@@ -1854,11 +1854,11 @@ export class Stage4Service {
       const current = found.rows[0]; if (!current) throw new AppError({code: 'NOT_FOUND', message: 'Point not found.'});
       const committee = await lockedCommittee(client, current.committee_id); await requireChair(client, committee, auth.user.id);
       requireProceedingsActive(committee);
-      if (current.status !== 'PENDING') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Point has already been resolved.'});
+      if (current.status !== 'PENDING') throw new AppError({reason: 'POINT_ALREADY_RESOLVED', code: 'RESOURCE_CONFLICT', message: 'Point has already been resolved.'});
       if (current.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT', message: 'This point changed since it was loaded.',
         details: {currentRevision: current.revision}});
       if (attendanceType && current.point_type_id !== 'point-of-personal-privilege') {
-        throw new AppError({code: 'VALIDATION_FAILED', message: 'Only a personal privilege point can change attendance.'});
+        throw new AppError({reason: 'ATTENDANCE_POINT_REQUIRED', code: 'VALIDATION_FAILED', message: 'Only a personal privilege point can change attendance.'});
       }
       const updated = await client.query<PointRow>(`UPDATE points SET status=$2,chair_response=$3,resolved_by_user_id=$4,
         resolved_at=now(),revision=revision+1 WHERE id=$1 RETURNING *`, [pointId, status, chairResponse, auth.user.id]);
@@ -1889,10 +1889,10 @@ export class Stage4Service {
 
   private textPatch(value: unknown, contentLimit: number): {title?: string; content?: string; sortOrder?: number} {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
-      throw new AppError({code: 'VALIDATION_FAILED', message: 'Text resource patch is invalid.'});
+      throw new AppError({reason: 'INVALID_TEXT_PATCH', code: 'VALIDATION_FAILED', message: 'Text resource patch is invalid.'});
     }
     const patch = value as Record<string, unknown>; assertExactBody(patch, ['title', 'content', 'sortOrder'], 'Text resource patch');
-    if (Object.keys(patch).length === 0) throw new AppError({code: 'VALIDATION_FAILED', message: 'Text resource patch is empty.'});
+    if (Object.keys(patch).length === 0) throw new AppError({reason: 'TEXT_PATCH_EMPTY', code: 'VALIDATION_FAILED', message: 'Text resource patch is empty.'});
     return {title: patch.title === undefined ? undefined : optionalText(patch.title, 'Title', 200),
       content: patch.content === undefined ? undefined : textContent(patch.content, contentLimit),
       sortOrder: patch.sortOrder === undefined ? undefined : sortOrder(patch.sortOrder)};

@@ -81,10 +81,10 @@ export class StorageCapacityMonitor implements StorageCapacityGuard {
     try {
       snapshot = await this.sample();
     } catch {
-      throw new AppError({code: 'SERVICE_NOT_READY', message: 'Storage capacity is unavailable.'});
+      throw new AppError({reason: 'STORAGE_CAPACITY_UNAVAILABLE', expose: true, code: 'SERVICE_NOT_READY', message: 'Storage capacity is unavailable.'});
     }
     if (snapshot.state === 'critical') {
-      throw new AppError({code: 'SERVICE_NOT_READY', message: 'Storage capacity is critically low.',
+      throw new AppError({reason: 'STORAGE_CAPACITY_LOW', code: 'SERVICE_NOT_READY', message: 'Storage capacity is critically low.',
         details: {storageState: snapshot.state}, expose: true});
     }
     return snapshot;

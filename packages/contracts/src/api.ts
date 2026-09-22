@@ -10,7 +10,7 @@ export interface ApiSuccess<T> {
 }
 
 export type ApiErrorReason = import('./error-localization.js').LocalizedErrorReason;
-export interface ApiErrorParams {language?: 'zh-CN' | 'en'; formats?: string}
+export interface ApiErrorParams {language?: 'zh-CN' | 'en'; formats?: string; max?: number}
 export interface ApiFieldError {field: string; reason: ApiErrorReason; params?: ApiErrorParams}
 
 export interface ApiErrorBody {

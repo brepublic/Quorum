@@ -1,3 +1,4 @@
+import {ERROR_TEXT} from '@quorum/contracts';
 import {randomUUID} from 'node:crypto';
 import type {Pool, PoolClient, QueryResultRow} from 'pg';
 import type {FileEntry} from '@quorum/contracts';
@@ -45,13 +46,13 @@ export type S3StoreFactory = (config: S3ProviderConfig) => S3CompatibleStore;
 
 function uuid(value: unknown, name: string): string {
   if (typeof value !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
+    throw new AppError({reason: 'INVALID_REFERENCE', code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
   }
   return value;
 }
 
 function validateKey(key: string): void {
-  if (!key || key.length > 200) throw new AppError({code: 'BAD_REQUEST', message: 'Idempotency-Key is required.'});
+  if (!key || key.length > 200) throw new AppError({reason: 'CLIENT_REQUEST_INVALID', code: 'BAD_REQUEST', message: 'Idempotency-Key is required.'});
 }
 
 async function uploadForUpdate(client: PoolClient, uploadId: string): Promise<S3UploadRow> {
@@ -67,7 +68,7 @@ async function requireContributor(client: PoolClient, committee: {id: string; ow
   if (committee.owner_user_id === userId || await isChair(client, committee.id, userId)) return;
   const membership = await client.query(`SELECT 1 FROM committee_memberships
     WHERE committee_id=$1 AND user_id=$2 AND status='ACTIVE'`, [committee.id, userId]);
-  if (!membership.rowCount) throw new AppError({code: 'FORBIDDEN', message: 'Committee membership is required.'});
+  if (!membership.rowCount) throw new AppError({reason: 'COMMITTEE_MEMBER_REQUIRED', code: 'FORBIDDEN', message: 'Committee membership is required.'});
 }
 
 export class Stage6S3CommitService {
@@ -94,7 +95,8 @@ export class Stage6S3CommitService {
     } catch (error) {
       await this.pool.query(`UPDATE file_uploads SET provider_commit_failed=true,updated_at=now()
         WHERE id=$1 AND status='STAGED'`, [id]);
-      if (error instanceof ProviderStorageError) throw new AppError({code: error.apiCode, message: error.message});
+      if (error instanceof ProviderStorageError) throw new AppError({code: error.apiCode, reason: error.reason,
+        expose: error.reason !== error.apiCode, message: ERROR_TEXT[error.reason].en, cause: error});
       throw error;
     }
     return idempotentTransaction({pool: this.pool, auth, route: `/api/v1/file-uploads/${id}/commit`,
@@ -103,18 +105,18 @@ export class Stage6S3CommitService {
         const committee = await lockedCommittee(client, current.committee_id);
         requireProceedingsActive(committee);
         if (current.created_by_user_id !== auth.user.id) {
-          throw new AppError({code: 'FORBIDDEN', message: 'Only the upload creator may commit it.'});
+          throw new AppError({reason: 'UPLOAD_CREATOR_REQUIRED', code: 'FORBIDDEN', message: 'Only the upload creator may commit it.'});
         }
         await requireContributor(client, committee, auth.user.id);
         if (current.status !== 'STAGED' || current.provider_blob_id !== claim.upload.provider_blob_id
           || current.provider_storage_key !== provider.storageKey
           || current.actual_sha256_hex !== current.expected_sha256_hex
           || Number(current.received_size_bytes) !== Number(current.expected_size_bytes)) {
-          throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Upload is not ready for provider commit.'});
+          throw new AppError({reason: 'UPLOAD_NOT_READY', code: 'RESOURCE_CONFLICT', message: 'Upload is not ready for provider commit.'});
         }
         const binding = await this.requireS3Binding(client, current, committee.active_storage_binding_id);
         if (binding.provider_config_id !== claim.providerConfigId) {
-          throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The S3 provider config changed.'});
+          throw new AppError({reason: 'S3_CONFIG_CHANGED', code: 'RESOURCE_CONFLICT', message: 'The S3 provider config changed.'});
         }
         const file = await this.metadata.recordProviderCommitInTransaction(client, auth, committee.id, {
           bindingId: current.storage_binding_id, blobId: current.provider_blob_id as string,
@@ -158,12 +160,12 @@ export class Stage6S3CommitService {
       const committee = await lockedCommittee(client, upload.committee_id);
       requireProceedingsActive(committee);
       if (upload.created_by_user_id !== auth.user.id) {
-        throw new AppError({code: 'FORBIDDEN', message: 'Only the upload creator may commit it.'});
+        throw new AppError({reason: 'UPLOAD_CREATOR_REQUIRED', code: 'FORBIDDEN', message: 'Only the upload creator may commit it.'});
       }
       await requireContributor(client, committee, auth.user.id);
       if (upload.status !== 'STAGED' || upload.actual_sha256_hex !== upload.expected_sha256_hex
         || Number(upload.received_size_bytes) !== Number(upload.expected_size_bytes)) {
-        throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Upload is not ready for provider commit.'});
+        throw new AppError({reason: 'UPLOAD_NOT_READY', code: 'RESOURCE_CONFLICT', message: 'Upload is not ready for provider commit.'});
       }
       const binding = await this.requireS3Binding(client, upload, committee.active_storage_binding_id);
       if (!upload.provider_blob_id) {
@@ -176,7 +178,7 @@ export class Stage6S3CommitService {
         [upload.id, blobId, storageKey]);
         upload = claimed.rows[0] as S3UploadRow;
       } else if (upload.provider_storage_key !== s3ObjectKey(binding.key_prefix, upload.provider_blob_id)) {
-        throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Upload provider target is invalid.'});
+        throw new AppError({reason: 'INVALID_UPLOAD_TARGET', code: 'RESOURCE_CONFLICT', message: 'Upload provider target is invalid.'});
       }
       await client.query('UPDATE file_uploads SET provider_commit_failed=false WHERE id=$1', [upload.id]);
       return {kind: 'COMMIT', upload, providerConfigId: binding.provider_config_id};
@@ -190,7 +192,7 @@ export class Stage6S3CommitService {
       WHERE b.id=$1 AND b.committee_id=$2 AND b.status='ACTIVE' AND b.provider_type='S3_COMPATIBLE'
         AND c.status='ACTIVE' FOR SHARE OF b,c`, [upload.storage_binding_id, upload.committee_id]);
     if (!result.rows[0] || result.rows[0].id !== activeBindingId) {
-      throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The active storage provider is not S3 compatible.'});
+      throw new AppError({reason: 'STORAGE_PROVIDER_CHANGED', code: 'RESOURCE_CONFLICT', message: 'The active storage provider is not S3 compatible.'});
     }
     return result.rows[0];
   }

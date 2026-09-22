@@ -111,14 +111,14 @@ function mapFile(row: FileRow): FileEntry {
 
 function uuid(value: unknown, name: string): string {
   if (typeof value !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
+    throw new AppError({reason: 'INVALID_REFERENCE', code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
   }
   return value;
 }
 
 function revision(value: unknown): number {
   if (!Number.isSafeInteger(value) || Number(value) < 1) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: 'Revision is invalid.'});
+    throw new AppError({reason: 'INVALID_REVISION', code: 'VALIDATION_FAILED', message: 'Revision is invalid.'});
   }
   return Number(value);
 }
@@ -203,7 +203,7 @@ export class Stage6FileService {
       if (!this.staging || !row.agent_staging_key || !await this.staging.exists(row.agent_staging_key)) {
         if (this.cacheStats) this.cacheStats.misses += 1;
         if (this.refill) throw new DownloadPreparingError(await this.prepareRow(row));
-        throw new AppError({code: 'SERVICE_NOT_READY', message: 'The file is currently available only on the Chair computer.'});
+        throw new AppError({reason: 'CHAIR_FILE_ONLY', expose: true, code: 'SERVICE_NOT_READY', message: 'The file is currently available only on the Chair computer.'});
       }
       await this.staging.verify(row.agent_staging_key, Number(row.size_bytes), row.sha256_hex);
       return {file, headers: safeDownloadHeaders(file),
@@ -254,7 +254,7 @@ export class Stage6FileService {
           content: this.cache.read(cached.rows[0].storage_key, Number(row.size_bytes), row.sha256_hex)};
       }
       if (!this.staging || !row.agent_staging_key || !await this.staging.exists(row.agent_staging_key)) {
-        throw new AppError({code: 'SERVICE_NOT_READY', message: 'The blob is currently available only on the Chair computer.'});
+        throw new AppError({reason: 'CHAIR_FILE_ONLY', expose: true, code: 'SERVICE_NOT_READY', message: 'The blob is currently available only on the Chair computer.'});
       }
       await this.staging.verify(row.agent_staging_key, Number(row.size_bytes), row.sha256_hex);
       return {sizeBytes: Number(row.size_bytes), sha256: row.sha256_hex,
@@ -352,18 +352,18 @@ export class Stage6FileService {
       const owner = committee.owner_user_id === auth.user.id;
       if (next === 'PENDING_REVIEW') {
         if (!chair && !owner && entry.created_by_user_id !== auth.user.id) {
-          throw new AppError({code: 'FORBIDDEN', message: 'Only the file owner or Chair may submit this file.'});
+          throw new AppError({reason: 'FILE_OWNER_OR_CHAIR_REQUIRED', code: 'FORBIDDEN', message: 'Only the file owner or Chair may submit this file.'});
         }
       } else if (!chair && !owner) {
-        throw new AppError({code: 'FORBIDDEN', message: 'Chair or committee owner access is required.'});
+        throw new AppError({reason: 'CHAIR_OR_OWNER_REQUIRED', code: 'FORBIDDEN', message: 'Chair or committee owner access is required.'});
       }
       if (entry.status !== expected) {
-        throw new AppError({code: 'RESOURCE_CONFLICT', message: 'File status does not allow this action.'});
+        throw new AppError({reason: 'FILE_STATE_CHANGED', code: 'RESOURCE_CONFLICT', message: 'File status does not allow this action.'});
       }
       if (next === 'PUBLISHED' && (await client.query(`SELECT 1 FROM file_entries target JOIN file_entries source ON source.id=$1
         WHERE target.committee_id=source.committee_id AND target.status<>'DELETED' AND target.id<>source.id
           AND target.formal_name=formal_file_name(source.logical_name) COLLATE "C"`, [entry.id])).rowCount)
-        throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Approve this file through the review page.',
+        throw new AppError({reason: 'FILE_REVIEW_REQUIRED', code: 'RESOURCE_CONFLICT', message: 'Approve this file through the review page.',
           details: {reason: 'FILE_REPLACEMENT_CONFIRMATION_REQUIRED'}});
       const updated = await client.query<EntryRow>(`UPDATE file_entries SET status=$2::file_entry_status,
         submitted_at=CASE WHEN $2::file_entry_status='PENDING_REVIEW'::file_entry_status THEN now() ELSE submitted_at END,
@@ -406,9 +406,9 @@ export class Stage6FileService {
   private async store(provider: 'SERVER_VOLUME' | 'CHAIR_AGENT' | 'S3_COMPATIBLE', configId: string | null): Promise<Store> {
     if (provider === 'SERVER_VOLUME') return this.serverVolume;
     if (provider === 'CHAIR_AGENT') {
-      throw new AppError({code: 'SERVICE_NOT_READY', message: 'Chair Agent content is not available on the server.'});
+      throw new AppError({reason: 'CHAIR_FILE_ONLY', expose: true, code: 'SERVICE_NOT_READY', message: 'Chair Agent content is not available on the server.'});
     }
-    if (!configId) throw new AppError({code: 'SERVICE_NOT_READY', message: 'S3 provider config is unavailable.'});
+    if (!configId) throw new AppError({reason: 'S3_CONFIG_UNAVAILABLE', expose: true, code: 'SERVICE_NOT_READY', message: 'S3 provider config is unavailable.'});
     return this.s3Factory(await this.s3Configs.providerForStoredBlob(configId));
   }
 

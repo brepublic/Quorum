@@ -42,10 +42,10 @@ export async function transaction<T>(pool: Pool, work: (client: PoolClient) => P
   } catch (error) {
     await client.query('ROLLBACK');
     if ((error as {code?: string}).code === '23505') {
-      throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The requested resource already exists.'});
+      throw new AppError({reason: 'RESOURCE_ALREADY_EXISTS', code: 'RESOURCE_CONFLICT', message: 'The requested resource already exists.'});
     }
     if (['23503', '23514', '22P02'].includes((error as {code?: string}).code ?? '')) {
-      throw new AppError({code: 'VALIDATION_FAILED', message: 'The request contains an invalid reference or value.'});
+      throw new AppError({reason: 'INVALID_REFERENCE', code: 'VALIDATION_FAILED', message: 'The request contains an invalid reference or value.'});
     }
     throw error;
   } finally {
@@ -79,7 +79,7 @@ export async function idempotentTransaction<T>(input: {
   work: (client: PoolClient) => Promise<T>;
 }): Promise<T> {
   if (!input.key || input.key.length > 200) {
-    throw new AppError({code: 'BAD_REQUEST', message: 'Idempotency-Key is required.'});
+    throw new AppError({reason: 'CLIENT_REQUEST_INVALID', code: 'BAD_REQUEST', message: 'Idempotency-Key is required.'});
   }
   const hash = requestHash(input.request);
   return transaction(input.pool, async client => {
@@ -105,7 +105,7 @@ export async function idempotentTransaction<T>(input: {
 
 export function requireBusinessIdentity(auth: AuthenticatedSession): void {
   if (auth.user.mustChangePassword) {
-    throw new AppError({code: 'FORBIDDEN', message: 'Change the temporary password first.'});
+    throw new AppError({reason: 'PASSWORD_CHANGE_REQUIRED', code: 'FORBIDDEN', message: 'Change the temporary password first.'});
   }
 }
 
@@ -118,14 +118,14 @@ export async function lockedCommittee(client: PoolClient, committeeId: string): 
 
 export function requireEditable(row: Stage4CommitteeRow): void {
   if (row.status === 'ARCHIVED' || row.status === 'DELETING') {
-    throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The committee is read-only.'});
+    throw new AppError({reason: 'COMMITTEE_READ_ONLY', code: 'RESOURCE_CONFLICT', message: 'The committee is read-only.'});
   }
 }
 
 export function requireProceedingsActive(row: Stage4CommitteeRow): void {
   requireEditable(row);
   if (row.status === 'PAUSED') {
-    throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The committee is paused.'});
+    throw new AppError({reason: 'COMMITTEE_PAUSED', code: 'RESOURCE_CONFLICT', message: 'The committee is paused.'});
   }
 }
 
@@ -138,7 +138,7 @@ export async function isChair(client: PoolClient, committeeId: string, userId: s
 
 export async function requireChair(client: PoolClient, row: Stage4CommitteeRow, userId: string): Promise<void> {
   if (!(await isChair(client, row.id, userId))) {
-    throw new AppError({code: 'FORBIDDEN', message: 'Chair capability is required.'});
+    throw new AppError({reason: 'CHAIR_REQUIRED', code: 'FORBIDDEN', message: 'Chair capability is required.'});
   }
 }
 

@@ -34,7 +34,7 @@ function privateIpv6(address: string): boolean {
 export function assertS3NetworkAddress(address: string, allowPrivateNetwork: boolean): void {
   const family = isIP(address);
   if (!family || (!allowPrivateNetwork && (family === 4 ? privateIpv4(address) : privateIpv6(address)))) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: 'S3 endpoint resolves to a disallowed network address.'});
+    throw new AppError({reason: 'S3_ADDRESS_BLOCKED', code: 'VALIDATION_FAILED', message: 'S3 endpoint resolves to a disallowed network address.'});
   }
 }
 
@@ -43,27 +43,27 @@ export function validateS3Endpoint(input: S3EndpointOptions): S3EndpointOptions 
   try {
     endpoint = new URL(input.endpoint);
   } catch {
-    throw new AppError({code: 'VALIDATION_FAILED', message: 'S3 endpoint is invalid.'});
+    throw new AppError({reason: 'INVALID_S3_ENDPOINT', code: 'VALIDATION_FAILED', message: 'S3 endpoint is invalid.'});
   }
   if (endpoint.protocol !== 'https:' || endpoint.username || endpoint.password || endpoint.search || endpoint.hash
     || !endpoint.hostname || endpoint.pathname.includes('..')) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: 'S3 endpoint must be an HTTPS URL without credentials, query, or fragment.'});
+    throw new AppError({reason: 'INVALID_S3_ENDPOINT_FORMAT', code: 'VALIDATION_FAILED', message: 'S3 endpoint must be an HTTPS URL without credentials, query, or fragment.'});
   }
   const hostname = endpoint.hostname.toLowerCase();
   if (hostname === 'localhost' || hostname.endsWith('.localhost') || hostname.endsWith('.local')) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: 'S3 endpoint hostname is not allowed.'});
+    throw new AppError({reason: 'S3_ADDRESS_BLOCKED', code: 'VALIDATION_FAILED', message: 'S3 endpoint hostname is not allowed.'});
   }
   if (isIP(hostname)) assertS3NetworkAddress(hostname, input.allowPrivateNetwork);
   if (!/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(input.bucket)
     || input.bucket.includes('..') || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(input.bucket.replaceAll('.', '-'))) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: 'S3 bucket is invalid.'});
+    throw new AppError({reason: 'INVALID_S3_BUCKET', code: 'VALIDATION_FAILED', message: 'S3 bucket is invalid.'});
   }
   if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(input.region)) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: 'S3 region is invalid.'});
+    throw new AppError({reason: 'INVALID_S3_REGION', code: 'VALIDATION_FAILED', message: 'S3 region is invalid.'});
   }
   if (input.prefix && (!/^[a-z0-9](?:[a-z0-9/_-]*[a-z0-9_-])?$/.test(input.prefix)
     || input.prefix.startsWith('/') || input.prefix.endsWith('/') || input.prefix.split('/').includes('..'))) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: 'S3 key prefix is invalid.'});
+    throw new AppError({reason: 'INVALID_S3_PREFIX', code: 'VALIDATION_FAILED', message: 'S3 key prefix is invalid.'});
   }
   endpoint.pathname = endpoint.pathname.replace(/\/+$/, '');
   return {...input, endpoint: endpoint.toString().replace(/\/$/, '')};
@@ -71,7 +71,7 @@ export function validateS3Endpoint(input: S3EndpointOptions): S3EndpointOptions 
 
 export function s3ObjectKey(prefix: string, blobId: string): string {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(blobId)) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: 'Blob ID is invalid.'});
+    throw new AppError({reason: 'INVALID_REFERENCE', code: 'VALIDATION_FAILED', message: 'Blob ID is invalid.'});
   }
   const compact = blobId.replaceAll('-', '').toLowerCase();
   return [prefix, 'blobs', compact.slice(0, 2), compact].filter(Boolean).join('/');

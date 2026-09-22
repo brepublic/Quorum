@@ -81,15 +81,35 @@ async function request<T>(path: string, options: {
     const csrf = cookie('__Host-quorum_csrf'); if (csrf) headers['x-csrf-token'] = csrf;
   }
   if (options.idempotencyKey) headers['idempotency-key'] = options.idempotencyKey;
-  const response = await fetch(path, {method, credentials: 'same-origin', headers, signal: options.signal,
-    ...(options.body ? {body: JSON.stringify(options.body)} : {})});
-  const payload = await response.json() as ApiSuccess<T> | ApiFailure;
-  if (!response.ok || 'error' in payload) {
-    const error = 'error' in payload ? payload.error
-      : {code: 'INTERNAL_ERROR', message: 'Request failed.', requestId: undefined, details: undefined};
-    throw new SelfHostedApiError(response.status, error.code, error.message, error.requestId, error.details, error);
+  let response: Response;
+  try {
+    response = await fetch(path, {method, credentials: 'same-origin', headers, signal: options.signal,
+      ...(options.body ? {body: JSON.stringify(options.body)} : {})});
+  } catch (error) {
+    if (options.signal?.aborted || error instanceof DOMException && error.name === 'AbortError') throw error;
+    throw new SelfHostedApiError(0, 'NETWORK_ERROR', 'Unable to connect to the server.');
   }
-  return payload.data;
+  let payload: unknown;
+  try {payload = await response.json();}
+  catch (error) {
+    if (options.signal?.aborted || error instanceof DOMException && error.name === 'AbortError') throw error;
+    throw new SelfHostedApiError(response.status, 'INVALID_RESPONSE', 'The server response was invalid.');
+  }
+  return responseData<T>(payload, response.status);
+}
+
+function responseData<T>(payload: unknown, status: number): T {
+  if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+    if ('error' in payload) {
+      const error = (payload as ApiFailure).error;
+      if (error && typeof error.code === 'string' && typeof error.message === 'string') {
+        throw new SelfHostedApiError(status, error.code, error.message, error.requestId, error.details, error);
+      }
+    } else if (status >= 200 && status < 300 && 'data' in payload) {
+      return (payload as ApiSuccess<T>).data;
+    }
+  }
+  throw new SelfHostedApiError(status, 'INVALID_RESPONSE', 'The server response was invalid.');
 }
 
 function key(): string { return crypto.randomUUID(); }
@@ -112,18 +132,13 @@ function uploadContentRequest(uploadId: string, file: File, idempotencyKey: stri
     xhr.upload.onprogress = event => options.onProgress?.(event.loaded, event.lengthComputable ? event.total : file.size);
     xhr.onload = () => {
       finish();
-      let payload: ApiSuccess<FileUpload> | ApiFailure;
-      try { payload = JSON.parse(xhr.responseText) as ApiSuccess<FileUpload> | ApiFailure; }
-      catch { reject(new SelfHostedApiError(xhr.status, 'INTERNAL_ERROR', 'Upload response was invalid.')); return; }
-      if (xhr.status < 200 || xhr.status >= 300 || 'error' in payload) {
-        const error = 'error' in payload ? payload.error
-          : {code: 'INTERNAL_ERROR', message: 'Upload failed.', requestId: undefined, details: undefined};
-        reject(new SelfHostedApiError(xhr.status, error.code, error.message, error.requestId, error.details, error));
-        return;
-      }
-      resolve(payload.data);
+      let payload: unknown;
+      try {payload = JSON.parse(xhr.responseText);}
+      catch {reject(new SelfHostedApiError(xhr.status, 'INVALID_RESPONSE', 'Upload response was invalid.')); return;}
+      try {resolve(responseData<FileUpload>(payload, xhr.status));}
+      catch (error) {reject(error);}
     };
-    xhr.onerror = () => { finish(); reject(new SelfHostedApiError(0, 'INTERNAL_ERROR', 'Upload connection was interrupted.')); };
+    xhr.onerror = () => { finish(); reject(new SelfHostedApiError(0, 'NETWORK_ERROR', 'Upload connection was interrupted.')); };
     xhr.onabort = () => { finish(); reject(new DOMException('Upload cancelled.', 'AbortError')); };
     if (options.signal?.aborted) { reject(new DOMException('Upload cancelled.', 'AbortError')); return; }
     options.signal?.addEventListener('abort', abort, {once: true});
@@ -141,15 +156,18 @@ async function delegateRequest<T>(path: string, options: {
     const csrf = cookie('__Host-quorum_delegate_files_csrf'); if (csrf) headers['x-csrf-token'] = csrf;
   }
   if (options.idempotencyKey) headers['idempotency-key'] = options.idempotencyKey;
-  const response = await fetch(path, {method, credentials: 'same-origin', headers,
-    ...(options.body ? {body: JSON.stringify(options.body)} : {})});
-  const payload = await response.json() as ApiSuccess<T> | ApiFailure;
-  if (!response.ok || 'error' in payload) {
-    const error = 'error' in payload ? payload.error
-      : {code: 'INTERNAL_ERROR', message: 'Request failed.', requestId: undefined, details: undefined};
-    throw new SelfHostedApiError(response.status, error.code, error.message, error.requestId, error.details, error);
+  let response: Response;
+  try {
+    response = await fetch(path, {method, credentials: 'same-origin', headers,
+      ...(options.body ? {body: JSON.stringify(options.body)} : {})});
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') throw error;
+    throw new SelfHostedApiError(0, 'NETWORK_ERROR', 'Unable to connect to the server.');
   }
-  return payload.data;
+  let payload: unknown;
+  try {payload = await response.json();}
+  catch {throw new SelfHostedApiError(response.status, 'INVALID_RESPONSE', 'The server response was invalid.');}
+  return responseData<T>(payload, response.status);
 }
 
 function delegateUploadContentRequest(uploadId: string, file: File, idempotencyKey: string,
@@ -163,17 +181,13 @@ function delegateUploadContentRequest(uploadId: string, file: File, idempotencyK
     xhr.setRequestHeader('idempotency-key', idempotencyKey);
     xhr.upload.onprogress = event => onProgress(event.loaded, event.lengthComputable ? event.total : file.size);
     xhr.onload = () => {
-      let payload: ApiSuccess<FileUpload> | ApiFailure;
-      try { payload = JSON.parse(xhr.responseText) as ApiSuccess<FileUpload> | ApiFailure; }
-      catch { reject(new SelfHostedApiError(xhr.status, 'INTERNAL_ERROR', 'Upload response was invalid.')); return; }
-      if (xhr.status < 200 || xhr.status >= 300 || 'error' in payload) {
-        const error = 'error' in payload ? payload.error
-          : {code: 'INTERNAL_ERROR', message: 'Upload failed.', requestId: undefined, details: undefined};
-        reject(new SelfHostedApiError(xhr.status, error.code, error.message, error.requestId, error.details, error)); return;
-      }
-      resolve(payload.data);
+      let payload: unknown;
+      try {payload = JSON.parse(xhr.responseText);}
+      catch {reject(new SelfHostedApiError(xhr.status, 'INVALID_RESPONSE', 'Upload response was invalid.')); return;}
+      try {resolve(responseData<FileUpload>(payload, xhr.status));}
+      catch (error) {reject(error);}
     };
-    xhr.onerror = () => reject(new SelfHostedApiError(0, 'INTERNAL_ERROR', 'Upload connection was interrupted.'));
+    xhr.onerror = () => reject(new SelfHostedApiError(0, 'NETWORK_ERROR', 'Upload connection was interrupted.'));
     onProgress(0, file.size); xhr.send(file);
   });
 }

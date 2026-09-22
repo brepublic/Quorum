@@ -21,8 +21,8 @@ async function fixture(pairStatus = 200, revokeStatus = 200) {
     let body='';for await(const chunk of req)body+=chunk;
     requests.push({url:req.url!,authorization:req.headers.authorization,body});
     if(req.url==='/api/v1/storage-agent/events'){res.writeHead(200,{'content-type':'text/event-stream'});res.write(': ready\n\n');return;}
-    if(req.url==='/api/v1/storage-agent/pair' && pairStatus !== 200){res.writeHead(pairStatus,{'content-type':'application/json'});res.end(JSON.stringify({error:{code:'LINK_EXPIRED'}}));return;}
-    if(req.url==='/api/v1/storage-agent/revoke' && revokeStatus !== 200){res.writeHead(revokeStatus,{'content-type':'application/json'});res.end(JSON.stringify({error:{code:revokeStatus === 401 ? 'AUTHENTICATION_REQUIRED' : 'NOT_FOUND'}}));return;}
+    if(req.url==='/api/v1/storage-agent/pair' && pairStatus !== 200){res.writeHead(pairStatus,{'content-type':'application/json'});res.end(JSON.stringify({error:{code:'LINK_EXPIRED',message:'Pairing code expired.'}}));return;}
+    if(req.url==='/api/v1/storage-agent/revoke' && revokeStatus !== 200){res.writeHead(revokeStatus,{'content-type':'application/json'});res.end(JSON.stringify({error:{code:revokeStatus === 401 ? 'AUTHENTICATION_REQUIRED' : 'NOT_FOUND',message:'Revoke failed.'}}));return;}
     const data=req.url==='/api/v1/storage-agent/revoke'?{revoked:true}:req.url==='/api/v1/storage-agent/pair'?{credential:'qsa1.20000000-0000-4000-8000-000000000001.'+'a'.repeat(43),
       host:{committeeId:'10000000-0000-4000-8000-000000000001',deviceId:'20000000-0000-4000-8000-000000000001',leaseGeneration:1}}
       :req.url?.includes('file-status')?{files:[],nextId:null,observedAt:new Date().toISOString()}

@@ -29,14 +29,14 @@ const SELECT_CONFLICT = `SELECT conflict.*,change.kind,change.file_entry_id AS c
 function uuid(value: unknown, name: string): string {
   if (typeof value !== 'string'
     || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
+    throw new AppError({reason: 'INVALID_REFERENCE', code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
   }
   return value;
 }
 
 function positive(value: unknown, name: string): number {
   if (!Number.isSafeInteger(value) || Number(value) < 1) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
+    throw new AppError({reason: 'POSITIVE_INTEGER_REQUIRED', code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
   }
   return Number(value);
 }
@@ -47,7 +47,7 @@ function optionalPositive(value: unknown, name: string): number | null {
 
 function resolution(value: unknown): StorageAgentConflictResolution {
   if (!['KEEP_SERVER', 'ACCEPT_LOCAL', 'SAVE_AS_NEW'].includes(String(value))) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: 'Conflict resolution is invalid.'});
+    throw new AppError({reason: 'INVALID_CONFLICT_CHOICE', code: 'VALIDATION_FAILED', message: 'Conflict resolution is invalid.'});
   }
   return value as StorageAgentConflictResolution;
 }
@@ -55,7 +55,7 @@ function resolution(value: unknown): StorageAgentConflictResolution {
 function logicalName(value: unknown, required: boolean): string | null {
   if (!required && value === undefined) return null;
   if (typeof value !== 'string' || !value.trim() || value.trim().length > 500) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: 'Logical name is invalid.'});
+    throw new AppError({reason: 'INVALID_FILE_NAME', code: 'VALIDATION_FAILED', message: 'Logical name is invalid.'});
   }
   const normalized = value.trim().replaceAll('\\', '/');
   const parts = normalized.split('/');
@@ -64,7 +64,7 @@ function logicalName(value: unknown, required: boolean): string | null {
     || parts.some(part => !part || part === '.' || part === '..' || windowsReserved.test(part)
       || part.endsWith('.') || part.endsWith(' ') || part.includes(':'))
     || ['.quorum-agent.json', '.quorum-tmp'].includes(parts[0]!.toLowerCase())) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: 'Logical name is not a safe portable path.'});
+    throw new AppError({reason: 'UNSAFE_FILE_NAME', code: 'VALIDATION_FAILED', message: 'Logical name is not a safe portable path.'});
   }
   return normalized;
 }
@@ -99,7 +99,7 @@ function browserConflict(row: ConflictRow): StorageAgentConflict {
 
 async function requireManager(client: PoolClient, committee: Stage4CommitteeRow, userId: string): Promise<void> {
   if (committee.owner_user_id !== userId && !(await isChair(client, committee.id, userId))) {
-    throw new AppError({code: 'FORBIDDEN', message: 'Chair or committee owner access is required.'});
+    throw new AppError({reason: 'CHAIR_OR_OWNER_REQUIRED', code: 'FORBIDDEN', message: 'Chair or committee owner access is required.'});
   }
 }
 
@@ -164,16 +164,16 @@ export class Stage7ConflictService {
         if (actualFileRevision !== fileRevision) {
           throw new AppError({code: 'REVISION_CONFLICT', message: 'File changed since this conflict was loaded.'});
         }
-        if (row.reason_code === 'REVIEW_REQUIRED' && action !== 'KEEP_SERVER') throw new AppError({code: 'RESOURCE_CONFLICT',
+        if (row.reason_code === 'REVIEW_REQUIRED' && action !== 'KEEP_SERVER') throw new AppError({reason: 'FILE_UPDATE_REQUIRES_REVIEW', code: 'RESOURCE_CONFLICT',
           message: 'Upload and review the file on the web.', details: {reason: 'FILE_UPDATE_REQUIRES_REVIEW'}});
         if (row.reason_code === 'HOST_TRANSFERRED' && action !== 'KEEP_SERVER') {
-          throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Content on a revoked host cannot be accepted.'});
+          throw new AppError({reason: 'REVOKED_HOST_CONTENT', code: 'RESOURCE_CONFLICT', message: 'Content on a revoked host cannot be accepted.'});
         }
         if ((row.reason_code === 'FILE_DELETED' || entry?.status === 'DELETED') && action === 'ACCEPT_LOCAL') {
-          throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Deleted content must be saved as a new file.'});
+          throw new AppError({reason: 'DELETED_FILE_REQUIRES_NEW', code: 'RESOURCE_CONFLICT', message: 'Deleted content must be saved as a new file.'});
         }
         if (action === 'SAVE_AS_NEW' && row.kind !== 'UPSERT') {
-          throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Only local content can be saved as a new file.'});
+          throw new AppError({reason: 'LOCAL_COPY_REQUIRED', code: 'RESOURCE_CONFLICT', message: 'Only local content can be saved as a new file.'});
         }
         const requestedLogicalName = logicalName(input.logicalName, action === 'SAVE_AS_NEW'
           || (action === 'ACCEPT_LOCAL' && row.reason_code === 'NAME_CONFLICT'));

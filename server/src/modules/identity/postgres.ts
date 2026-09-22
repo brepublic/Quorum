@@ -123,10 +123,10 @@ export class PostgresIdentityStore implements IdentityStore {
       const settings = result.rows[0];
       if (!settings) throw new Error('system_settings singleton is missing');
       if (settings.initialized_at) {
-        throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The instance is already initialized.'});
+        throw new AppError({reason: 'INSTANCE_ALREADY_INITIALIZED', code: 'RESOURCE_CONFLICT', message: 'The instance is already initialized.'});
       }
       if (!settings.bootstrap_secret_hash || !secretMatches(settings.bootstrap_secret_hash, input.secretHash)) {
-        throw new AppError({code: 'FORBIDDEN', message: 'Initialization credentials are invalid.'});
+        throw new AppError({reason: 'INVALID_BOOTSTRAP_SECRET', code: 'FORBIDDEN', message: 'Initialization credentials are invalid.'});
       }
 
       const inserted = await client.query<UserRow>(

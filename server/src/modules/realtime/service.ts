@@ -39,7 +39,7 @@ export function selectEventCursor(input: {
     .filter((value): value is number => value !== undefined);
   if (supplied.length === 0) {
     if (input.after !== undefined || input.lastEventId !== undefined) {
-      throw new AppError({code: 'BAD_REQUEST', message: 'The event cursor is invalid.'});
+      throw new AppError({reason: 'CLIENT_REQUEST_INVALID', code: 'BAD_REQUEST', message: 'The event cursor is invalid.'});
     }
     return input.latestSequence;
   }
@@ -49,7 +49,7 @@ export function selectEventCursor(input: {
     throw new AppError({code: 'CURSOR_EXPIRED', message: 'The event cursor expired. Reload the committee snapshot.',
       details: {retainedFromSequence: input.retainedFromSequence}});
   }
-  throw new AppError({code: 'BAD_REQUEST', message: 'The event cursor is ahead of the committee.'});
+  throw new AppError({reason: 'EVENT_CURSOR_AHEAD', code: 'BAD_REQUEST', message: 'The event cursor is ahead of the committee.'});
 }
 
 function mayReceive(viewer: RealtimeAudience, event: EventAudience): boolean {

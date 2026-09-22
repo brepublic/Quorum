@@ -5,7 +5,7 @@ import type {CommitteeWorkspaceSnapshot, FileEntry, FileUpload, StorageMigration
   StorageAgentConflict, StorageAgentConflictResolution, StoragePairingCode, StorageProviderType} from '@quorum/contracts';
 import {Button, Card, Divider, Form, Header, Icon, Label, Message, Progress, Segment, Table} from 'semantic-ui-react';
 import {SelfHostedApiError, newIdempotencyKey, type SelfHostedApi} from '../../services/self-hosted-api';
-import {delegateFileTypeName} from '@quorum/contracts';
+import {delegateFileTypeName, ERROR_TEXT} from '@quorum/contracts';
 import {Link} from 'react-router-dom';
 import {sha256File} from '../../services/sha256';
 
@@ -29,6 +29,7 @@ const CONFLICT_REASON: Record<StorageAgentConflict['reasonCode'], string> = {
 };
 
 function migrationFailureText(code: string): string {
+  if (Object.hasOwn(ERROR_TEXT, code)) return apiErrorText({code});
   if (code === 'MANIFEST_CHANGED') return t("The file list changed. Retry the migration.");
   return t("Copy failed. Check the storage service and retry.");
 }
@@ -41,7 +42,6 @@ export function storageErrorText(error: unknown): string {
     PAYLOAD_TOO_LARGE: t("The file is too large. Choose a smaller file."),
     REVISION_CONFLICT: t("The state changed. Try again."),
     IDEMPOTENCY_CONFLICT: t("The request changed. Try again."),
-    RESOURCE_CONFLICT: t("The current state does not allow this action."),
     SERVICE_NOT_READY: t("Storage is unavailable. Check capacity and the storage service, then retry."),
     FORBIDDEN: t("You do not have permission for this action."),
     AUTHENTICATION_REQUIRED: t("Your session expired. Sign in again."),
@@ -101,7 +101,7 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
         await new Promise(resolve => window.setTimeout(resolve, (readiness.retryAfterSeconds ?? 2) * 1000));
         readiness = await api.fileDownloadReadiness(fileId);
       }
-      if (readiness.status !== 'READY') throw new Error(readiness.code ?? 'File is unavailable.');
+      if (readiness.status !== 'READY') throw Object.assign(new Error(), {code: readiness.code ?? 'FILE_CONTENT_UNAVAILABLE'});
       window.location.assign(api.fileDownloadUrl(fileId));
     } catch (caught) { setError(caught); }
     finally { setPreparingDownloads(current => { const next = new Set(current); next.delete(fileId); return next; }); }
@@ -241,7 +241,9 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
     {section !== 'storage' && <>
     {pendingHostCommits.map(item => <Message key={item.id} header={item.logicalName}
       warning={Boolean(item.failureCode || item.agentCommitState === 'CONFLICT')}
-      content={item.failureCode || item.agentCommitState === 'CONFLICT' ? t('Save unavailable. Check storage and retry.') : t('Saving files')} />)}
+      content={item.failureCode && Object.hasOwn(ERROR_TEXT, item.failureCode) ? apiErrorText({code: item.failureCode})
+        : item.agentCommitState === 'CONFLICT' ? apiErrorText({code: 'LOCAL_FILE_CONFLICT'})
+        : item.failureCode ? t('Save unavailable. Check storage and retry.') : t('Saving files')} />)}
     {canUpload && section !== 'overview' && <Segment loading={working && !progress}><Header as="h3">{t("Upload files")}</Header>
       <Form onSubmit={() => void upload()}><Form.Field>
         <div className="localized-file-picker"><input id="committee-upload-file" type="file"

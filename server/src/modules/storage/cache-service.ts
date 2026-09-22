@@ -8,7 +8,7 @@ import type {StorageCachePolicyService} from './cache-policy-service.js';
 export function cacheStorageKey(blobId: string): string {
   const normalized = blobId.toLowerCase();
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(normalized)) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: 'Blob ID is invalid.'});
+    throw new AppError({reason: 'INVALID_REFERENCE', code: 'VALIDATION_FAILED', message: 'Blob ID is invalid.'});
   }
   return `cache/${normalized.slice(0, 2)}/${normalized}`;
 }
@@ -54,7 +54,7 @@ export class StorageCacheService {
     const usage = await this.pool.query<{used: string | number}>(`SELECT COALESCE(sum(size_bytes),0) AS used
       FROM storage_cache_entries WHERE state='READY'`);
     if (Number(usage.rows[0]?.used ?? 0) + sizeBytes > config.publishedCacheMaxBytes) {
-      throw new AppError({code: 'SERVICE_NOT_READY', message: 'Published cache is full.'});
+      throw new AppError({reason: 'CACHE_FULL', expose: true, code: 'SERVICE_NOT_READY', message: 'Published cache is full.'});
     }
     await this.assertDiskReserve(sizeBytes, config);
   }
@@ -68,7 +68,7 @@ export class StorageCacheService {
     const row = usage.rows[0];
     if (Number(row?.global_bytes ?? 0) + sizeBytes > config.pendingReviewMaxBytes
       || Number(row?.committee_bytes ?? 0) + sizeBytes > config.pendingReviewCommitteeMaxBytes) {
-      throw new AppError({code: 'SERVICE_NOT_READY', message: 'Pending review storage is full.'});
+      throw new AppError({reason: 'REVIEW_STORAGE_FULL', expose: true, code: 'SERVICE_NOT_READY', message: 'Pending review storage is full.'});
     }
   }
 
@@ -79,7 +79,7 @@ export class StorageCacheService {
     const total = Number(sample.blocks) * Number(sample.bsize);
     const minimum = Math.max(config.storageMinFreeBytes, Math.ceil(total * config.storageMinFreePercent / 100));
     if (available - sizeBytes < minimum) {
-      throw new AppError({code: 'SERVICE_NOT_READY', message: 'Storage reserve would be exceeded.'});
+      throw new AppError({reason: 'STORAGE_RESERVE_REQUIRED', expose: true, code: 'SERVICE_NOT_READY', message: 'Storage reserve would be exceeded.'});
     }
   }
 

@@ -19,10 +19,31 @@ function serverUrl(value: string): URL {
 }
 
 async function error(response: Response): Promise<AgentApiError> {
-  let body: ErrorEnvelope = {};
-  try { body = await response.json() as ErrorEnvelope; } catch { /* bounded generic error */ }
-  return new AgentApiError(response.status, body.error?.code ?? 'HTTP_ERROR',
-    body.error?.message ?? 'Storage Agent request failed.', body.error?.details, body.error);
+  let body: ErrorEnvelope | null = null;
+  try {body = await response.json() as ErrorEnvelope;} catch { /* no raw response text */ }
+  if (!body?.error || typeof body.error.code !== 'string' || typeof body.error.message !== 'string') {
+    return new AgentApiError(response.status, 'INVALID_RESPONSE', 'The server response was invalid.');
+  }
+  return new AgentApiError(response.status, body.error.code, body.error.message, body.error.details, body.error);
+}
+
+async function responseData<T>(response: Response): Promise<T> {
+  if (!response.ok) throw await error(response);
+  let body: unknown;
+  try {body = await response.json();}
+  catch {throw new AgentApiError(response.status, 'INVALID_RESPONSE', 'The server response was invalid.');}
+  if (!body || typeof body !== 'object' || Array.isArray(body) || !('data' in body)) {
+    throw new AgentApiError(response.status, 'INVALID_RESPONSE', 'The server response was invalid.');
+  }
+  return (body as SuccessEnvelope<T>).data;
+}
+
+async function connect(fetcher: Fetch, input: Parameters<Fetch>[0], init: Parameters<Fetch>[1]): Promise<Response> {
+  try {return await fetcher(input, init);}
+  catch (cause) {
+    if (init?.signal?.aborted && init.signal.reason?.name === 'AbortError') throw cause;
+    throw Object.assign(new Error('Unable to connect to the server.', {cause}), {code: 'NETWORK_ERROR'});
+  }
 }
 
 export class StorageAgentHttpClient {
@@ -31,7 +52,7 @@ export class StorageAgentHttpClient {
 
   constructor(baseUrl: string, private readonly credential: string, fetcher: Fetch = fetch,
     signal?: AbortSignal) {
-    this.fetcher = (input, init) => fetcher(input, {...init, redirect: 'error',
+    this.fetcher = (input, init) => connect(fetcher, input, {...init, redirect: 'error',
       signal: init?.signal ?? signal});
     this.base = serverUrl(baseUrl);
     if (!/^qsa1\.[0-9a-f-]{36}\.[A-Za-z0-9_-]{43}$/.test(credential)) {
@@ -42,11 +63,10 @@ export class StorageAgentHttpClient {
   static async pair(baseUrl: string, body: {pairingCode: string; deviceLabel: string; devicePublicKey: string},
     fetcher: Fetch = fetch): Promise<StorageAgentPairingResult> {
     const base = serverUrl(baseUrl);
-    const response = await fetcher(new URL('/api/v1/storage-agent/pair', base), {method: 'POST',
+    const response = await connect(fetcher, new URL('/api/v1/storage-agent/pair', base), {method: 'POST',
       redirect: 'error', signal: AbortSignal.timeout(30000),
       headers: {'content-type': 'application/json'}, body: JSON.stringify(body)});
-    if (!response.ok) throw await error(response);
-    return (await response.json() as SuccessEnvelope<StorageAgentPairingResult>).data;
+    return responseData<StorageAgentPairingResult>(response);
   }
 
   heartbeat(leaseGeneration: number): Promise<unknown> {
@@ -150,8 +170,7 @@ export class StorageAgentHttpClient {
         sent += chunk.length; progress?.(sent); yield chunk;
       }})() as unknown as BodyInit, duplex: 'half'
     } as RequestInit & {duplex: 'half'});
-    if (!response.ok) throw await error(response);
-    return (await response.json() as SuccessEnvelope<StorageAgentTask>).data;
+    return responseData<StorageAgentTask>(response);
   }
 
   private headers(extra: Record<string, string> = {}): Record<string, string> {
@@ -163,7 +182,6 @@ export class StorageAgentHttpClient {
     const response = await this.fetcher(new URL(path, this.base), {method: options.method,
       headers: this.headers({...options.headers, ...(options.body === undefined ? {} : {'content-type': 'application/json'})}),
       ...(options.body === undefined ? {} : {body: JSON.stringify(options.body)})});
-    if (!response.ok) throw await error(response);
-    return (await response.json() as SuccessEnvelope<T>).data;
+    return responseData<T>(response);
   }
 }

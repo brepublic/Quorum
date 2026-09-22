@@ -78,35 +78,35 @@ export interface ProviderCommitInput {
 
 function positiveRevision(value: unknown): number {
   if (!Number.isSafeInteger(value) || Number(value) < 1) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: 'Revision is invalid.'});
+    throw new AppError({reason: 'INVALID_REVISION', code: 'VALIDATION_FAILED', message: 'Revision is invalid.'});
   }
   return Number(value);
 }
 
 function boundedText(value: unknown, name: string, max: number): string {
   if (typeof value !== 'string' || !value.trim() || value.length > max) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
+    throw new AppError({reason: 'REQUIRED_TEXT', params: {max: max}, code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
   }
   return value.trim();
 }
 
 function uuid(value: unknown, name: string): string {
   if (typeof value !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
+    throw new AppError({reason: 'INVALID_REFERENCE', code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
   }
   return value;
 }
 
 export function normalizeSha256(value: unknown): string {
   if (typeof value !== 'string' || !/^[a-f0-9]{64}$/i.test(value)) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: 'SHA-256 is invalid.'});
+    throw new AppError({reason: 'INVALID_CHECKSUM', code: 'VALIDATION_FAILED', message: 'SHA-256 is invalid.'});
   }
   return value.toLowerCase();
 }
 
 function sizeBytes(value: unknown): number {
   if (!Number.isSafeInteger(value) || Number(value) < 0) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: 'File size is invalid.'});
+    throw new AppError({reason: 'INVALID_FILE_SIZE', code: 'VALIDATION_FAILED', message: 'File size is invalid.'});
   }
   return Number(value);
 }
@@ -165,7 +165,7 @@ async function fileState(client: PoolClient, row: FileEntryRow): Promise<FileEnt
 
 async function requireStorageManager(client: PoolClient, committee: Stage4CommitteeRow, userId: string): Promise<void> {
   if (committee.owner_user_id !== userId && !(await isChair(client, committee.id, userId))) {
-    throw new AppError({code: 'FORBIDDEN', message: 'Chair or committee owner access is required.'});
+    throw new AppError({reason: 'CHAIR_OR_OWNER_REQUIRED', code: 'FORBIDDEN', message: 'Chair or committee owner access is required.'});
   }
 }
 
@@ -178,7 +178,7 @@ async function canContribute(client: PoolClient, committee: Stage4CommitteeRow, 
 
 async function requireContributor(client: PoolClient, committee: Stage4CommitteeRow, userId: string): Promise<void> {
   if (!(await canContribute(client, committee, userId))) {
-    throw new AppError({code: 'FORBIDDEN', message: 'Committee membership is required.'});
+    throw new AppError({reason: 'COMMITTEE_MEMBER_REQUIRED', code: 'FORBIDDEN', message: 'Committee membership is required.'});
   }
 }
 
@@ -236,7 +236,7 @@ export class Stage6StorageService {
         requireCommitteeRevision(committee, request.baseRevision);
         if (await client.query('SELECT 1 FROM storage_bindings WHERE committee_id=$1 AND status=$2',
           [committee.id, 'ACTIVE']).then(result => Boolean(result.rowCount))) {
-          throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The committee already has active storage.'});
+          throw new AppError({reason: 'STORAGE_ALREADY_ACTIVE', code: 'RESOURCE_CONFLICT', message: 'The committee already has active storage.'});
         }
         const id = randomUUID();
         const created = await client.query<StorageBindingRow>(`INSERT INTO storage_bindings
@@ -282,7 +282,7 @@ export class Stage6StorageService {
         }
         if (await client.query('SELECT 1 FROM storage_bindings WHERE committee_id=$1 AND status=$2',
           [committee.id, 'ACTIVE']).then(result => Boolean(result.rowCount))) {
-          throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The committee already has active storage.'});
+          throw new AppError({reason: 'STORAGE_ALREADY_ACTIVE', code: 'RESOURCE_CONFLICT', message: 'The committee already has active storage.'});
         }
         const id = randomUUID();
         const created = await client.query<StorageBindingRow>(`INSERT INTO storage_bindings
@@ -317,13 +317,13 @@ export class Stage6StorageService {
         await requireStorageManager(client, committee, auth.user.id);
         requireCommitteeRevision(committee, request.baseRevision);
         if (committee.active_storage_binding_id) {
-          throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The committee already has active storage.'});
+          throw new AppError({reason: 'STORAGE_ALREADY_ACTIVE', code: 'RESOURCE_CONFLICT', message: 'The committee already has active storage.'});
         }
         const current = await client.query<{id: string; lease_generation: string | number}>(`SELECT id,lease_generation
           FROM storage_hosts WHERE committee_id=$1 AND status IN ('ACTIVE','DEGRADED') FOR UPDATE`, [committee.id]);
         const host = current.rows[0];
         if (!host || Number(host.lease_generation) !== Number(committee.storage_lease_generation)) {
-          throw new AppError({code: 'SERVICE_NOT_READY', message: 'The committee has no current storage host.'});
+          throw new AppError({reason: 'CHAIR_HOST_REQUIRED', expose: true, code: 'SERVICE_NOT_READY', message: 'The committee has no current storage host.'});
         }
         const id = randomUUID();
         const created = await client.query<StorageBindingRow>(`INSERT INTO storage_bindings
@@ -372,7 +372,7 @@ export class Stage6StorageService {
     const targetFileEntryId = input.targetFileEntryId === undefined
       ? undefined : uuid(input.targetFileEntryId, 'Target file ID');
     if (fileEntryId && targetFileEntryId) {
-      throw new AppError({code: 'VALIDATION_FAILED', message: 'Target file ID is only valid for a new file.'});
+      throw new AppError({reason: 'INVALID_UPLOAD_TARGET', code: 'VALIDATION_FAILED', message: 'Target file ID is only valid for a new file.'});
     }
     const logicalName = boundedText(input.logicalName, 'Logical name', 500);
     const originalName = boundedText(input.originalName, 'Original name', 500);
@@ -386,7 +386,7 @@ export class Stage6StorageService {
     const activeBinding = await client.query<StorageBindingRow>(`SELECT * FROM storage_bindings
       WHERE id=$1 AND committee_id=$2 AND status='ACTIVE' FOR UPDATE`, [bindingId, committee.id]);
     if (!activeBinding.rows[0] || committee.active_storage_binding_id !== bindingId) {
-      throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The storage binding is not active.'});
+      throw new AppError({reason: 'STORAGE_BINDING_UNAVAILABLE', code: 'RESOURCE_CONFLICT', message: 'The storage binding is not active.'});
     }
 
     let entry: FileEntryRow | undefined;
@@ -395,15 +395,15 @@ export class Stage6StorageService {
       if (!entry || entry.committee_id !== committee.id || entry.status === 'DELETED') {
         throw new AppError({code: 'NOT_FOUND', message: 'File not found.'});
       }
-      if (entry.formal_name || entry.merged_into_file_entry_id) throw new AppError({code: 'RESOURCE_CONFLICT',
+      if (entry.formal_name || entry.merged_into_file_entry_id) throw new AppError({reason: 'FILE_UPDATE_REQUIRES_REVIEW', code: 'RESOURCE_CONFLICT',
         message: 'Upload a new submission and approve it through review.', details: {reason: 'FILE_UPDATE_REQUIRES_REVIEW'}});
       requireFileRevision(entry, input.baseRevision);
       if (entry.created_by_user_id !== auth.user.id && committee.owner_user_id !== auth.user.id
         && !(await isChair(client, committee.id, auth.user.id))) {
-        throw new AppError({code: 'FORBIDDEN', message: 'Only the file owner or Chair may add a version.'});
+        throw new AppError({reason: 'FILE_OWNER_OR_CHAIR_REQUIRED', code: 'FORBIDDEN', message: 'Only the file owner or Chair may add a version.'});
       }
     } else if (input.baseRevision !== undefined) {
-      throw new AppError({code: 'VALIDATION_FAILED', message: 'Revision is only valid for an existing file.'});
+      throw new AppError({reason: 'INVALID_UPLOAD_TARGET', code: 'VALIDATION_FAILED', message: 'Revision is only valid for an existing file.'});
     }
 
     const id = entry?.id ?? targetFileEntryId ?? randomUUID();
@@ -499,7 +499,7 @@ export class Stage6StorageService {
       requireFileRevision(entry, request.baseRevision);
       const chair = await isChair(client, committee.id, auth.user.id);
       if (!chair && committee.owner_user_id !== auth.user.id && entry.created_by_user_id !== auth.user.id) {
-        throw new AppError({code: 'FORBIDDEN', message: 'Only the file owner or Chair may delete this file.'});
+        throw new AppError({reason: 'FILE_OWNER_OR_CHAIR_REQUIRED', code: 'FORBIDDEN', message: 'Only the file owner or Chair may delete this file.'});
       }
       const mergedIds = await deleteMergedFileSubmissions(client, committee.id, entry.id, auth.user.id);
       const tombstoneId = randomUUID();

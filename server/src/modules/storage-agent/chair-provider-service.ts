@@ -30,7 +30,7 @@ interface UserRow extends QueryResultRow {
 function uuid(value: unknown, name: string): string {
   if (typeof value !== 'string'
     || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
+    throw new AppError({reason: 'INVALID_REFERENCE', code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
   }
   return value;
 }
@@ -79,11 +79,11 @@ export class Stage7ChairAgentProviderService implements StorageAgentTaskCompleti
         const committee = await lockedCommittee(client, current.committee_id);
         requireProceedingsActive(committee);
         if (current.created_by_user_id !== auth.user.id) {
-          throw new AppError({code: 'FORBIDDEN', message: 'Only the upload creator may commit it.'});
+          throw new AppError({reason: 'UPLOAD_CREATOR_REQUIRED', code: 'FORBIDDEN', message: 'Only the upload creator may commit it.'});
         }
         if (current.status !== 'STAGED' || current.actual_sha256_hex !== current.expected_sha256_hex
           || Number(current.received_size_bytes) !== Number(current.expected_size_bytes)) {
-          throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Upload is not ready for host commit.'});
+          throw new AppError({reason: 'UPLOAD_NOT_READY', code: 'RESOURCE_CONFLICT', message: 'Upload is not ready for host commit.'});
         }
         if (current.agent_commit_state === 'PENDING_HOST_COMMIT' && current.agent_task_id
           && current.agent_lease_generation !== null) {
@@ -91,7 +91,7 @@ export class Stage7ChairAgentProviderService implements StorageAgentTaskCompleti
             leaseGeneration: Number(current.agent_lease_generation)};
         }
         if (current.agent_commit_state !== null) {
-          throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Upload host commit is already terminal.'});
+          throw new AppError({reason: 'UPLOAD_STATE_CHANGED', code: 'RESOURCE_CONFLICT', message: 'Upload host commit is already terminal.'});
         }
         const binding = await client.query<{storage_host_id: string; provider_type: string; status: string}>(`SELECT
           storage_host_id,provider_type,status FROM storage_bindings WHERE id=$1 AND committee_id=$2 FOR UPDATE`,
@@ -99,7 +99,7 @@ export class Stage7ChairAgentProviderService implements StorageAgentTaskCompleti
         const target = binding.rows[0];
         if (!target || target.provider_type !== 'CHAIR_AGENT' || target.status !== 'ACTIVE'
           || committee.active_storage_binding_id !== current.storage_binding_id) {
-          throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Chair Agent storage is not active.'});
+          throw new AppError({reason: 'CHAIR_STORAGE_UNAVAILABLE', code: 'RESOURCE_CONFLICT', message: 'Chair Agent storage is not active.'});
         }
         const host = await client.query<{id: string; lease_generation: string | number; status: string}>(`SELECT
           id,lease_generation,status FROM storage_hosts WHERE id=$1 AND committee_id=$2 FOR UPDATE`,
@@ -107,7 +107,7 @@ export class Stage7ChairAgentProviderService implements StorageAgentTaskCompleti
         const active = host.rows[0];
         if (!active || !['ACTIVE', 'DEGRADED'].includes(active.status)
           || Number(active.lease_generation) !== Number(committee.storage_lease_generation)) {
-          throw new AppError({code: 'SERVICE_NOT_READY', message: 'The current storage host is unavailable.'});
+          throw new AppError({reason: 'CHAIR_STORAGE_UNAVAILABLE', expose: true, code: 'SERVICE_NOT_READY', message: 'The current storage host is unavailable.'});
         }
         await this.cache?.assertPendingCapacity(committee.id, Number(current.expected_size_bytes));
         const taskId = randomUUID(); const blobId = current.provider_blob_id ?? randomUUID();
@@ -146,7 +146,7 @@ export class Stage7ChairAgentProviderService implements StorageAgentTaskCompleti
     if (task.resolutionConflictId) return;
     if (task.type === 'FETCH_BLOB_TO_CACHE') {
       if (!this.cache || !task.blobId || !task.contentStagingKey || task.expectedSizeBytes === null
-        || !task.expectedSha256) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Cache refill is incomplete.'});
+        || !task.expectedSha256) throw new AppError({reason: 'CACHE_REFILL_INCOMPLETE', code: 'RESOURCE_CONFLICT', message: 'Cache refill is incomplete.'});
       const version = (await client.query<{id: string}>(`SELECT v.id FROM file_entries e JOIN file_versions v
         ON v.id=e.current_version_id WHERE e.id=$1 AND e.committee_id=$2
           AND v.blob_id=$3 AND e.status<>'DELETED' FOR UPDATE OF e`,
@@ -211,7 +211,7 @@ export class Stage7ChairAgentProviderService implements StorageAgentTaskCompleti
       || Number(current.agent_lease_generation) !== task.leaseGeneration
       || current.provider_blob_id !== task.blobId || Number(current.expected_size_bytes) !== task.expectedSizeBytes
       || current.expected_sha256_hex !== task.expectedSha256 || current.actual_sha256_hex !== task.expectedSha256) {
-      throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Host commit no longer matches its upload.'});
+      throw new AppError({reason: 'UPLOAD_STATE_CHANGED', code: 'RESOURCE_CONFLICT', message: 'Host commit no longer matches its upload.'});
     }
     const binding = await client.query<{provider_type: string; storage_host_id: string; status: string}>(`SELECT
       provider_type,storage_host_id,status FROM storage_bindings WHERE id=$1 FOR UPDATE`, [current.storage_binding_id]);
@@ -222,7 +222,7 @@ export class Stage7ChairAgentProviderService implements StorageAgentTaskCompleti
     }
     const user = await client.query<UserRow>('SELECT * FROM users WHERE id=$1 AND status=$2',
       [current.created_by_user_id, 'ACTIVE']);
-    if (!user.rows[0]) throw new AppError({code: 'FORBIDDEN', message: 'Upload creator is no longer active.'});
+    if (!user.rows[0]) throw new AppError({reason: 'UPLOAD_ACCOUNT_INACTIVE', code: 'FORBIDDEN', message: 'Upload creator is no longer active.'});
     const actor = authFrom(user.rows[0]);
     const file = await this.metadata.recordProviderCommitInTransaction(client, actor, committee.id, {
       bindingId: current.storage_binding_id, blobId: task.blobId,

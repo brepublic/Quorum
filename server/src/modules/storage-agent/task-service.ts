@@ -1,3 +1,4 @@
+import {ERROR_TEXT} from '@quorum/contracts';
 import {randomUUID} from 'node:crypto';
 import type {PoolClient, QueryResultRow} from 'pg';
 import type {
@@ -85,14 +86,14 @@ const TASK_SELECT = `SELECT task.*,encode(task.expected_sha256,'hex') AS expecte
 
 function positiveInteger(value: unknown, name: string): number {
   if (!Number.isSafeInteger(value) || Number(value) < 1) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
+    throw new AppError({reason: 'POSITIVE_INTEGER_REQUIRED', code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
   }
   return Number(value);
 }
 
 function cursor(value: unknown): number {
   if (!Number.isSafeInteger(value) || Number(value) < 0) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: 'Cursor is invalid.'});
+    throw new AppError({reason: 'CLIENT_REQUEST_INVALID', code: 'VALIDATION_FAILED', message: 'Cursor is invalid.'});
   }
   return Number(value);
 }
@@ -100,21 +101,21 @@ function cursor(value: unknown): number {
 function uuid(value: unknown, name: string): string {
   if (typeof value !== 'string'
     || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
+    throw new AppError({reason: 'INVALID_REFERENCE', code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
   }
   return value;
 }
 
 function hash(value: unknown): string {
   if (typeof value !== 'string' || !/^[0-9a-f]{64}$/.test(value)) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: 'SHA-256 is invalid.'});
+    throw new AppError({reason: 'INVALID_CHECKSUM', code: 'VALIDATION_FAILED', message: 'SHA-256 is invalid.'});
   }
   return value;
 }
 
 function failureCode(value: unknown): string {
   if (typeof value !== 'string' || !/^[A-Z][A-Z0-9_]{0,79}$/.test(value)) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: 'Failure code is invalid.'});
+    throw new AppError({reason: 'CLIENT_REQUEST_INVALID', code: 'VALIDATION_FAILED', message: 'Failure code is invalid.'});
   }
   return value;
 }
@@ -122,7 +123,7 @@ function failureCode(value: unknown): string {
 function failureReason(value: unknown): string | null {
   if (value === undefined) return null;
   if (typeof value !== 'string' || !value.trim() || value.trim().length > 240) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: 'Failure reason is invalid.'});
+    throw new AppError({reason: 'CLIENT_REQUEST_INVALID', code: 'VALIDATION_FAILED', message: 'Failure reason is invalid.'});
   }
   return value.trim();
 }
@@ -189,7 +190,7 @@ function requireOwnedTask(row: TaskRow | undefined, lease: CurrentStorageAgentLe
 
 function requireClaim(row: TaskRow, claimToken: string): void {
   if (row.status !== 'IN_PROGRESS' || row.claim_token !== claimToken) {
-    throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Storage Agent task is not held by this claim.'});
+    throw new AppError({reason: 'AGENT_TASK_CLAIM_LOST', code: 'RESOURCE_CONFLICT', message: 'Storage Agent task is not held by this claim.'});
   }
 }
 
@@ -264,11 +265,11 @@ export class Stage7StorageTaskService {
       if (row.status === 'IN_PROGRESS' && row.claim_request_id === requestId) return task(row);
       if (row.status === 'IN_PROGRESS' && row.claimed_at
         && row.claimed_at > new Date(Date.now() - 5 * 60_000)) {
-        throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Storage Agent task is already claimed.'});
+        throw new AppError({reason: 'AGENT_TASK_ALREADY_CLAIMED', code: 'RESOURCE_CONFLICT', message: 'Storage Agent task is already claimed.'});
       }
       if (!['PENDING', 'RETRY', 'IN_PROGRESS'].includes(row.status)
         || (row.status === 'RETRY' && row.next_attempt_at > new Date())) {
-        throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Storage Agent task cannot be claimed.'});
+        throw new AppError({reason: 'AGENT_TASK_NOT_AVAILABLE', code: 'RESOURCE_CONFLICT', message: 'Storage Agent task cannot be claimed.'});
       }
       const updated = await client.query<TaskRow>(`UPDATE storage_agent_tasks SET status='IN_PROGRESS',
         revision=revision+1,attempts=attempts+1,claimed_at=now(),claim_request_id=$2,claim_token=$3,
@@ -298,7 +299,7 @@ export class Stage7StorageTaskService {
       requireClaim(row, claimToken);
       if (!['UPLOAD_BLOB', 'FETCH_BLOB_TO_CACHE'].includes(row.task_type) || !row.content_staging_key || row.file_revision !== fileRevision
         || row.expected_sha256_hex !== expectedHash) {
-        throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Storage Agent content does not match its task.'});
+        throw new AppError({reason: 'AGENT_TASK_CONTENT_MISMATCH', code: 'RESOURCE_CONFLICT', message: 'Storage Agent content does not match its task.'});
       }
       if (row.content_state === 'STAGED') return {row, staged: true as const};
       if (row.content_state === 'NONE') {
@@ -331,7 +332,7 @@ export class Stage7StorageTaskService {
         requireClaim(row, claimToken);
         if (row.file_revision !== fileRevision || row.content_state !== 'RECEIVING'
           || row.expected_sha256_hex !== expectedHash) {
-          throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Storage Agent content is no longer expected.'});
+          throw new AppError({reason: 'AGENT_TASK_CONTENT_UNEXPECTED', code: 'RESOURCE_CONFLICT', message: 'Storage Agent content is no longer expected.'});
         }
         const updated = await client.query<TaskRow>(`UPDATE storage_agent_tasks SET content_state='STAGED',
           received_size_bytes=$2,actual_sha256=decode($3,'hex'),revision=revision+1,updated_at=now()
@@ -350,7 +351,8 @@ export class Stage7StorageTaskService {
     } catch (error) {
       if (!(error instanceof UploadStreamError)) throw error;
       await this.markStreamFailure(credential, generation, id, claimToken, error, input.context).catch(() => undefined);
-      throw new AppError({code: error.apiCode, message: error.message});
+      throw new AppError({code: error.apiCode, reason: error.reason,
+        expose: error.reason !== error.apiCode, message: ERROR_TEXT[error.reason].en, cause: error});
     }
   }
 
@@ -366,14 +368,14 @@ export class Stage7StorageTaskService {
       requireClaim(row, claimToken);
       if (!['STORE_BLOB', 'HOST_COMMIT_BLOB'].includes(row.task_type) || row.blob_id !== blobId
         || row.file_revision !== fileRevision) {
-        throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Blob does not match its storage Agent task.'});
+        throw new AppError({reason: 'AGENT_TASK_CONTENT_MISMATCH', code: 'RESOURCE_CONFLICT', message: 'Blob does not match its storage Agent task.'});
       }
       let stagingKey: string | null = null;
       if (row.source_upload_id) {
         const upload = await client.query<{staging_key: string; status: string; agent_task_id: string}>(`SELECT
           staging_key,status,agent_task_id FROM file_uploads WHERE id=$1 FOR SHARE`, [row.source_upload_id]);
         if (!upload.rows[0] || upload.rows[0].status !== 'STAGED' || upload.rows[0].agent_task_id !== row.id) {
-          throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Source upload is not ready for its storage Agent task.'});
+          throw new AppError({reason: 'UPLOAD_NOT_READY', code: 'RESOURCE_CONFLICT', message: 'Source upload is not ready for its storage Agent task.'});
         }
         stagingKey = upload.rows[0].staging_key;
       }
@@ -390,7 +392,7 @@ export class Stage7StorageTaskService {
     }
     const stored = await this.files.readStoredBlob(authorized.committeeId, blobId);
     if (stored.sizeBytes !== authorized.sizeBytes || stored.sha256 !== authorized.sha256) {
-      throw new AppError({code: 'SERVICE_NOT_READY', message: 'Stored blob integrity does not match its task.'});
+      throw new AppError({reason: 'FILE_INTEGRITY_FAILED', expose: true, code: 'SERVICE_NOT_READY', message: 'Stored blob integrity does not match its task.'});
     }
     destination.start({sizeBytes: stored.sizeBytes, sha256: stored.sha256});
     for await (const chunk of stored.content) await destination.write(chunk);
@@ -430,10 +432,10 @@ export class Stage7StorageTaskService {
       }
       if (outcome === 'COMPLETED' && ['UPLOAD_BLOB', 'FETCH_BLOB_TO_CACHE'].includes(row.task_type)
         && row.content_state !== 'STAGED') {
-        throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Storage Agent content is not staged.'});
+        throw new AppError({reason: 'AGENT_CONTENT_NOT_STAGED', code: 'RESOURCE_CONFLICT', message: 'Storage Agent content is not staged.'});
       }
       if (outcome === 'FAILED' && row.content_state === 'STAGED') {
-        throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Verified staged content cannot be failed.'});
+        throw new AppError({reason: 'AGENT_CONTENT_ALREADY_VERIFIED', code: 'RESOURCE_CONFLICT', message: 'Verified staged content cannot be failed.'});
       }
       if (outcome === 'FAILED' && row.task_type === 'FETCH_BLOB_TO_CACHE') {
         await client.query(`UPDATE storage_cache_entries SET state='FAILED',storage_key=NULL,cached_at=NULL,

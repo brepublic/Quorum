@@ -2186,6 +2186,11 @@ html[lang='zh-CN'] .ui {
   margin-top: 0.75rem;
 }
 
+.committee-navigation-pushable.pushable:has(.resolution-page),
+.committee-navigation-pushable.pushable > .pusher:has(.resolution-page) {
+  overflow: visible;
+}
+
 .ui.fluid.container.resolution-page {
   box-sizing: border-box;
   margin: 0 !important;

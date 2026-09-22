@@ -15,14 +15,14 @@ export interface EncryptedCredentials {
 
 function credentials(value: unknown): S3Credentials {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: 'S3 credentials are invalid.'});
+    throw new AppError({reason: 'INVALID_S3_CREDENTIALS', code: 'VALIDATION_FAILED', message: 'S3 credentials are invalid.'});
   }
   const record = value as Record<string, unknown>;
   if (Object.keys(record).some(key => !['accessKeyId', 'secretAccessKey'].includes(key))
     || typeof record.accessKeyId !== 'string' || record.accessKeyId.length < 1 || record.accessKeyId.length > 256
     || typeof record.secretAccessKey !== 'string' || record.secretAccessKey.length < 1
     || record.secretAccessKey.length > 512) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: 'S3 credentials are invalid.'});
+    throw new AppError({reason: 'INVALID_S3_CREDENTIALS', code: 'VALIDATION_FAILED', message: 'S3 credentials are invalid.'});
   }
   return {accessKeyId: record.accessKeyId, secretAccessKey: record.secretAccessKey};
 }
@@ -41,7 +41,7 @@ export class StorageCredentialCipher {
   }
 
   encrypt(configId: string, value: unknown): EncryptedCredentials {
-    if (!this.key) throw new AppError({code: 'SERVICE_NOT_READY', message: 'Storage credential encryption is not configured.'});
+    if (!this.key) throw new AppError({reason: 'STORAGE_ENCRYPTION_NOT_CONFIGURED', expose: true, code: 'SERVICE_NOT_READY', message: 'Storage credential encryption is not configured.'});
     const nonce = randomBytes(12);
     const cipher = createCipheriv('aes-256-gcm', this.key, nonce);
     cipher.setAAD(aad(configId, this.keyVersion));
@@ -51,7 +51,7 @@ export class StorageCredentialCipher {
 
   decrypt(configId: string, encrypted: EncryptedCredentials): S3Credentials {
     if (!this.key || encrypted.keyVersion !== this.keyVersion) {
-      throw new AppError({code: 'SERVICE_NOT_READY', message: 'Storage credentials cannot be decrypted.'});
+      throw new AppError({reason: 'STORAGE_CREDENTIALS_UNREADABLE', expose: true, code: 'SERVICE_NOT_READY', message: 'Storage credentials cannot be decrypted.'});
     }
     try {
       const decipher = createDecipheriv('aes-256-gcm', this.key, encrypted.nonce);
@@ -61,7 +61,7 @@ export class StorageCredentialCipher {
       return credentials(JSON.parse(plaintext));
     } catch (error) {
       if (error instanceof AppError) throw error;
-      throw new AppError({code: 'SERVICE_NOT_READY', message: 'Storage credentials cannot be decrypted.'});
+      throw new AppError({reason: 'STORAGE_CREDENTIALS_UNREADABLE', expose: true, code: 'SERVICE_NOT_READY', message: 'Storage credentials cannot be decrypted.'});
     }
   }
 }

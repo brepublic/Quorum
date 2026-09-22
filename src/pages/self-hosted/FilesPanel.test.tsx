@@ -59,7 +59,7 @@ describe('self-hosted stage 6 file panel', () => {
   it.each([
     ['SERVICE_NOT_READY', '存储暂不可用'], ['REVISION_CONFLICT', '状态已更新'],
     ['IDEMPOTENCY_CONFLICT', '请求内容已变更'], ['FORBIDDEN', '没有权限'],
-    ['PAYLOAD_TOO_LARGE', '文件过大'], ['RESOURCE_CONFLICT', '当前状态不允许']
+    ['PAYLOAD_TOO_LARGE', '文件过大'], ['RESOURCE_CONFLICT', '操作与最新记录冲突']
   ])('maps %s to a short recovery message', (code, expected) => {
     expect(storageErrorText(new SelfHostedApiError(409, code, 'internal message'))).toContain(expected);
   });

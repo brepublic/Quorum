@@ -1,3 +1,4 @@
+import {ERROR_TEXT} from '@quorum/contracts';
 import {randomUUID} from 'node:crypto';
 import type {Pool, PoolClient, QueryResultRow} from 'pg';
 import {ERROR_HTTP_STATUS, type ApiErrorCode, type FileUpload, type FileUploadStatus} from '@quorum/contracts';
@@ -56,6 +57,7 @@ interface StoredAttempt {
   upload?: FileUpload;
   code?: ApiErrorCode;
   message?: string;
+  reason?: import('@quorum/contracts').ApiErrorReason;
 }
 
 type Claim = {kind: 'WRITE' | 'RECOVER'; upload: UploadRow} | {kind: 'REPLAY'; attempt: StoredAttempt};
@@ -70,21 +72,21 @@ export interface CreateUploadInput {
 
 function uuid(value: unknown, name: string): string {
   if (typeof value !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
+    throw new AppError({reason: 'INVALID_REFERENCE', code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
   }
   return value;
 }
 
 function boundedText(value: unknown, name: string, maximum: number): string {
   if (typeof value !== 'string' || !value.trim() || value.length > maximum) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
+    throw new AppError({reason: 'REQUIRED_TEXT', params: {max: maximum}, code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
   }
   return value.trim();
 }
 
 function byteCount(value: unknown): number {
   if (!Number.isSafeInteger(value) || Number(value) < 0) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: 'File size is invalid.'});
+    throw new AppError({reason: 'INVALID_FILE_SIZE', code: 'VALIDATION_FAILED', message: 'File size is invalid.'});
   }
   return Number(value);
 }
@@ -123,7 +125,7 @@ async function requireContributor(client: PoolClient, committee: Stage4Committee
   const membership = await client.query(`SELECT 1 FROM committee_memberships
     WHERE committee_id=$1 AND user_id=$2 AND status='ACTIVE'`, [committee.id, userId]);
   if (!membership.rowCount) {
-    throw new AppError({code: 'FORBIDDEN', message: 'Committee membership is required.'});
+    throw new AppError({reason: 'COMMITTEE_MEMBER_REQUIRED', code: 'FORBIDDEN', message: 'Committee membership is required.'});
   }
 }
 
@@ -138,7 +140,7 @@ async function uploadForUpdate(client: PoolClient, uploadId: string): Promise<Up
 
 function validateIdempotencyKey(key: string): void {
   if (!key || key.length > 200) {
-    throw new AppError({code: 'BAD_REQUEST', message: 'Idempotency-Key is required.'});
+    throw new AppError({reason: 'CLIENT_REQUEST_INVALID', code: 'BAD_REQUEST', message: 'Idempotency-Key is required.'});
   }
 }
 
@@ -146,6 +148,8 @@ function replay(attempt: StoredAttempt): FileUpload {
   if (attempt.ok && attempt.upload) return attempt.upload;
   throw new AppError({
     code: attempt.code ?? 'INTERNAL_ERROR',
+    reason: attempt.reason,
+    expose: Boolean(attempt.reason && attempt.reason !== attempt.code),
     message: attempt.message ?? 'The server could not complete the request.'
   });
 }
@@ -193,7 +197,7 @@ export class Stage6UploadService {
     const mediaType = boundedText(input.mediaType, 'Media type', 255).toLowerCase();
     const expectedSizeBytes = byteCount(input.expectedSizeBytes);
     if (expectedSizeBytes > this.staging.maxFileBytes || expectedSizeBytes > this.staging.maxRequestBytes) {
-      throw new AppError({code: 'PAYLOAD_TOO_LARGE', message: 'Upload exceeds the configured limit.'});
+      throw new AppError({reason: 'PAYLOAD_TOO_LARGE', code: 'PAYLOAD_TOO_LARGE', message: 'Upload exceeds the configured limit.'});
     }
     const expectedSha256 = normalizeSha256(input.sha256);
     return idempotentTransaction({
@@ -212,7 +216,7 @@ export class Stage6UploadService {
           WHERE committee_id=$1 AND id=$2 AND status='ACTIVE' FOR SHARE`,
         [committee.id, committee.active_storage_binding_id]);
         if (!activeBinding.rows[0]) {
-          throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The committee has no active storage.'});
+          throw new AppError({reason: 'STORAGE_NOT_CONFIGURED', code: 'RESOURCE_CONFLICT', message: 'The committee has no active storage.'});
         }
         const id = randomUUID();
         const expiresAt = new Date(this.now().getTime() + this.uploadTtlMs);
@@ -275,7 +279,8 @@ export class Stage6UploadService {
     } catch (error) {
       if (!(error instanceof UploadStreamError)) throw error;
       await this.fail(auth, claim.upload, idempotencyKey, error, context);
-      throw new AppError({code: error.apiCode, message: error.message});
+      throw new AppError({code: error.apiCode, reason: error.reason,
+        expose: error.reason !== error.apiCode, message: ERROR_TEXT[error.reason].en, cause: error});
     }
   }
 
@@ -298,7 +303,7 @@ export class Stage6UploadService {
       const committee = await lockedCommittee(client, upload.committee_id);
       requireProceedingsActive(committee);
       if (upload.created_by_user_id !== auth.user.id) {
-        throw new AppError({code: 'FORBIDDEN', message: 'Only the upload creator may send its content.'});
+        throw new AppError({reason: 'UPLOAD_CREATOR_REQUIRED', code: 'FORBIDDEN', message: 'Only the upload creator may send its content.'});
       }
       if (upload.status === 'RECEIVING' && upload.content_idempotency_key === key
         && await this.staging.exists(upload.staging_key)) {
@@ -306,7 +311,7 @@ export class Stage6UploadService {
       }
       if (upload.status === 'CREATED' && capacityError) throw capacityError;
       if (upload.status !== 'CREATED') {
-        throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Upload content is not expected in its current state.'});
+        throw new AppError({reason: 'UPLOAD_STATE_CHANGED', code: 'RESOURCE_CONFLICT', message: 'Upload content is not expected in its current state.'});
       }
       const claimed = await client.query<UploadRow>(`UPDATE file_uploads SET status='RECEIVING',revision=revision+1,
         content_idempotency_key=$2,receiving_started_at=now(),updated_at=now()
@@ -329,7 +334,7 @@ export class Stage6UploadService {
       requireProceedingsActive(committee);
       if (upload.created_by_user_id !== auth.user.id || upload.status !== 'RECEIVING'
         || upload.content_idempotency_key !== key) {
-        throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Upload content is not expected in its current state.'});
+        throw new AppError({reason: 'UPLOAD_STATE_CHANGED', code: 'RESOURCE_CONFLICT', message: 'Upload content is not expected in its current state.'});
       }
       const completed = await client.query<UploadRow>(`UPDATE file_uploads SET status='STAGED',
         received_size_bytes=$2,actual_sha256=decode($3,'hex'),staged_at=now(),revision=revision+1,updated_at=now()
@@ -365,7 +370,7 @@ export class Stage6UploadService {
       const committee = await lockedCommittee(client, upload.committee_id);
       if (upload.created_by_user_id !== auth.user.id || upload.status !== 'RECEIVING'
         || upload.content_idempotency_key !== key) {
-        throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Upload content is not expected in its current state.'});
+        throw new AppError({reason: 'UPLOAD_STATE_CHANGED', code: 'RESOURCE_CONFLICT', message: 'Upload content is not expected in its current state.'});
       }
       const failed = await client.query<UploadRow>(`UPDATE file_uploads SET status='FAILED',
         received_size_bytes=$2,failure_code=$3,failure_reason=$4,failed_at=now(),revision=revision+1,updated_at=now()
@@ -382,7 +387,7 @@ export class Stage6UploadService {
         before: {status: 'RECEIVING', revision: upload.revision},
         after: {status: 'FAILED', revision: row.revision, failureCode: failure.failureCode,
           receivedSizeBytes: failure.receivedSizeBytes}});
-      const attempt: StoredAttempt = {ok: false, code: failure.apiCode, message: failure.message};
+      const attempt: StoredAttempt = {ok: false, code: failure.apiCode, reason: failure.reason, message: ERROR_TEXT[failure.reason].en};
       await client.query(`INSERT INTO idempotency_keys
         (user_id,route,key,request_hash,response_status,response_body,expires_at)
         VALUES ($1,$2,$3,$4,$5,$6,now()+interval '24 hours')`,

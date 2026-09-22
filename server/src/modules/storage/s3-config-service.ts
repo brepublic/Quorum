@@ -35,27 +35,27 @@ export type S3TransportFactory = (config: S3ProviderConfig) => S3Transport;
 function requireAdministrator(auth: AuthenticatedSession): void {
   requireBusinessIdentity(auth);
   if (!auth.user.isSystemAdmin) {
-    throw new AppError({code: 'FORBIDDEN', message: 'System administrator access is required.'});
+    throw new AppError({reason: 'SYSTEM_ADMIN_REQUIRED', code: 'FORBIDDEN', message: 'System administrator access is required.'});
   }
 }
 
 function text(value: unknown, name: string, max: number): string {
   if (typeof value !== 'string' || !value.trim() || value.trim().length > max) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
+    throw new AppError({reason: 'REQUIRED_TEXT', params: {max: max}, code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
   }
   return value.trim();
 }
 
 function revision(value: unknown): number {
   if (!Number.isSafeInteger(value) || Number(value) < 1) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: 'Revision is invalid.'});
+    throw new AppError({reason: 'INVALID_REVISION', code: 'VALIDATION_FAILED', message: 'Revision is invalid.'});
   }
   return Number(value);
 }
 
 function uuid(value: unknown, name: string): string {
   if (typeof value !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
+    throw new AppError({reason: 'INVALID_REFERENCE', code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
   }
   return value;
 }
@@ -84,7 +84,7 @@ function configInput(body: unknown): Omit<S3ProviderConfig, 'credentials'> & {di
     'forcePathStyle', 'allowPrivateNetwork', 'credentials']);
   const value = body as Record<string, unknown>;
   if (typeof value.forcePathStyle !== 'boolean' || typeof value.allowPrivateNetwork !== 'boolean') {
-    throw new AppError({code: 'VALIDATION_FAILED', message: 'S3 provider options are invalid.'});
+    throw new AppError({reason: 'INVALID_S3_OPTIONS', code: 'VALIDATION_FAILED', message: 'S3 provider options are invalid.'});
   }
   const validated = validateS3Endpoint({endpoint: text(value.endpoint, 'Endpoint', 2048),
     region: text(value.region, 'Region', 63).toLowerCase(), bucket: text(value.bucket, 'Bucket', 63).toLowerCase(),
@@ -136,7 +136,7 @@ export class Stage6S3ConfigService {
     const id = uuid(configId, 'Provider config ID');
     const baseRevision = revision(value.baseRevision);
     if (!['ACTIVE', 'DISABLED'].includes(value.status as string)) {
-      throw new AppError({code: 'VALIDATION_FAILED', message: 'Provider config status is invalid.'});
+      throw new AppError({reason: 'INVALID_PROVIDER_STATUS', code: 'VALIDATION_FAILED', message: 'Provider config status is invalid.'});
     }
     const input = configInput({displayName: value.displayName, endpoint: value.endpoint, region: value.region,
       bucket: value.bucket, prefix: value.prefix, forcePathStyle: value.forcePathStyle,
@@ -175,7 +175,7 @@ export class Stage6S3ConfigService {
     const transport = this.transportFactory(this.provider(row));
     const response = await transport.request({method: 'HEAD', key: ''});
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw new AppError({code: 'SERVICE_NOT_READY', message: 'S3 provider verification failed.'});
+      throw new AppError({reason: 'S3_VERIFICATION_FAILED', expose: true, code: 'SERVICE_NOT_READY', message: 'S3 provider verification failed.'});
     }
     return idempotentTransaction({pool: this.pool, auth,
       route: `/api/v1/admin/storage-provider-configs/${id}/verify`, key: idempotencyKey,

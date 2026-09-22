@@ -117,13 +117,13 @@ function map(row: DeletionRow): CommitteeDeletionJob {
 
 function body(value: unknown): {baseRevision: number; confirmationName: string} {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: 'Deletion confirmation is invalid.'});
+    throw new AppError({reason: 'INVALID_DELETION_CONFIRMATION', code: 'VALIDATION_FAILED', message: 'Deletion confirmation is invalid.'});
   }
   const raw = value as Record<string, unknown>;
   assertExactBody(raw, ['baseRevision', 'confirmationName'], 'Deletion request');
   if (!Number.isSafeInteger(raw.baseRevision) || Number(raw.baseRevision) < 1
     || typeof raw.confirmationName !== 'string' || raw.confirmationName.length > 200) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: 'Deletion confirmation is invalid.'});
+    throw new AppError({reason: 'INVALID_DELETION_CONFIRMATION', code: 'VALIDATION_FAILED', message: 'Deletion confirmation is invalid.'});
   }
   return {baseRevision: Number(raw.baseRevision), confirmationName: raw.confirmationName};
 }
@@ -142,14 +142,14 @@ export class Stage8DeletionService {
           throw new AppError({code: 'NOT_FOUND', message: 'Committee not found.'});
         }
         if (committee.status !== 'ARCHIVED') {
-          throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Archive the committee before deleting it.'});
+          throw new AppError({reason: 'ARCHIVE_BEFORE_DELETE', code: 'RESOURCE_CONFLICT', message: 'Archive the committee before deleting it.'});
         }
         if (committee.revision !== request.baseRevision) {
           throw new AppError({code: 'REVISION_CONFLICT', message: 'This committee changed since it was loaded.',
             details: {currentRevision: committee.revision}});
         }
         if (request.confirmationName !== committee.name) {
-          throw new AppError({code: 'VALIDATION_FAILED', message: 'Committee name does not match.'});
+          throw new AppError({reason: 'COMMITTEE_NAME_MISMATCH', code: 'VALIDATION_FAILED', message: 'Committee name does not match.'});
         }
         const unavailableChairStorage = await client.query(`SELECT 1 FROM file_blobs blob
           JOIN storage_bindings binding ON binding.id=blob.storage_binding_id
@@ -158,7 +158,7 @@ export class Stage8DeletionService {
             AND (binding.id IS DISTINCT FROM $2 OR host.status NOT IN ('ACTIVE','DEGRADED')) LIMIT 1`,
         [committee.id, committee.active_storage_binding_id]);
         if (unavailableChairStorage.rowCount) {
-          throw new AppError({code: 'SERVICE_NOT_READY',
+          throw new AppError({reason: 'CHAIR_RECONNECT_BEFORE_DELETE', expose: true, code: 'SERVICE_NOT_READY',
             message: 'Reconnect the current Chair storage computer before deleting this committee.'});
         }
 
@@ -261,7 +261,7 @@ export class Stage8DeletionService {
       WHERE blob.committee_id=$1 AND blob.durability_state<>'DELETED'
         AND NOT EXISTS (SELECT 1 FROM file_blob_delete_jobs job WHERE job.blob_id=blob.id) LIMIT 1`, [committeeId]);
     if (orphan.rowCount) {
-      throw new AppError({code: 'SERVICE_NOT_READY', message: 'Stored file cleanup metadata is incomplete.'});
+      throw new AppError({reason: 'FILE_CLEANUP_METADATA_MISSING', expose: true, code: 'SERVICE_NOT_READY', message: 'Stored file cleanup metadata is incomplete.'});
     }
   }
 

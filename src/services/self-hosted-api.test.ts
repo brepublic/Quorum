@@ -289,3 +289,49 @@ describe('self-hosted stage 4 API client', () => {
     expect(progress.mock.calls).toEqual([[0, 3], [3, 3]]);
   });
 });
+
+it.each(['normal', 'delegate'] as const)('distinguishes network and invalid response errors for %s requests', async mode => {
+  const request = () => mode === 'normal' ? selfHostedApi.listFiles('committee') : selfHostedApi.bootstrapDelegatePortal('test-link');
+  vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('fetch failed with private details')));
+  await expect(request()).rejects.toMatchObject({code: 'NETWORK_ERROR'});
+  for (const payload of [null, [], {}, 'private proxy error', {error: null}, {error: {code: 123}}]) {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ok: true, status: 200, json: async () => payload})));
+    await expect(request()).rejects.toMatchObject({code: 'INVALID_RESPONSE'});
+  }
+  vi.stubGlobal('fetch', vi.fn(async () => ({ok: false, status: 502, json: async () => {throw new SyntaxError('HTML');}})));
+  await expect(request()).rejects.toMatchObject({code: 'INVALID_RESPONSE', status: 502});
+});
+
+it.each(['normal', 'delegate'] as const)('retains upload failure categories for %s uploads', async mode => {
+  let outcome = 'network';
+  class Request {
+    upload = {};
+    status = 502;
+    responseText = '';
+    onerror?: () => void;
+    onload?: () => void;
+    onabort?: () => void;
+    open() {}
+    setRequestHeader() {}
+    abort() {this.onabort?.();}
+    send() {
+      if (outcome === 'network') this.onerror?.();
+      else if (outcome === 'abort') this.onabort?.();
+      else {this.responseText = outcome; this.onload?.();}
+    }
+  }
+  vi.stubGlobal('XMLHttpRequest', Request);
+  const file = new File(['abc'], 'paper.txt');
+  const upload = () => mode === 'normal' ? selfHostedApi.uploadFileContent('upload', file, 'key')
+    : selfHostedApi.uploadDelegateFileContent('upload', file, () => undefined);
+  await expect(upload()).rejects.toMatchObject({code: 'NETWORK_ERROR'});
+  for (outcome of ['<html>proxy failure</html>', 'null', '{}']) {
+    await expect(upload()).rejects.toMatchObject({code: 'INVALID_RESPONSE'});
+  }
+  outcome = JSON.stringify({error: {code: 'SERVICE_NOT_READY', reason: 'REVIEW_STORAGE_FULL', message: 'diagnostic', requestId: 'upload-1'}});
+  await expect(upload()).rejects.toMatchObject({code: 'SERVICE_NOT_READY', localization: {reason: 'REVIEW_STORAGE_FULL'}, requestId: 'upload-1'});
+  if (mode === 'normal') {
+    outcome = 'abort';
+    await expect(upload()).rejects.toMatchObject({name: 'AbortError'});
+  }
+});

@@ -1,3 +1,4 @@
+import {ERROR_TEXT} from '@quorum/contracts';
 import {randomUUID} from 'node:crypto';
 import type {Pool, PoolClient, QueryResultRow} from 'pg';
 import type {StorageMigration, StorageMigrationItem} from '@quorum/contracts';
@@ -58,14 +59,14 @@ const MIGRATION_SELECT = `SELECT m.*,
 
 function uuid(value: unknown, name: string): string {
   if (typeof value !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
+    throw new AppError({reason: 'INVALID_REFERENCE', code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
   }
   return value;
 }
 
 function revision(value: unknown): number {
   if (!Number.isSafeInteger(value) || Number(value) < 1) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: 'Revision is invalid.'});
+    throw new AppError({reason: 'INVALID_REVISION', code: 'VALIDATION_FAILED', message: 'Revision is invalid.'});
   }
   return Number(value);
 }
@@ -125,12 +126,12 @@ export class Stage6MigrationService {
     const input = body as {baseRevision?: unknown; targetProviderType?: unknown; targetProviderConfigId?: unknown};
     const targetType = input.targetProviderType;
     if (targetType !== 'SERVER_VOLUME' && targetType !== 'S3_COMPATIBLE') {
-      throw new AppError({code: 'VALIDATION_FAILED', message: 'Target provider type is invalid.'});
+      throw new AppError({reason: 'INVALID_STORAGE_PROVIDER', code: 'VALIDATION_FAILED', message: 'Target provider type is invalid.'});
     }
     const targetConfigId = targetType === 'S3_COMPATIBLE'
       ? uuid(input.targetProviderConfigId, 'Target provider config ID') : null;
     if (targetType === 'SERVER_VOLUME' && input.targetProviderConfigId !== undefined) {
-      throw new AppError({code: 'VALIDATION_FAILED', message: 'SERVER_VOLUME does not use a provider config.'});
+      throw new AppError({reason: 'SERVER_STORAGE_CONFIG_UNEXPECTED', code: 'VALIDATION_FAILED', message: 'SERVER_VOLUME does not use a provider config.'});
     }
     const migrationId = randomUUID();
     const targetBindingId = randomUUID();
@@ -147,7 +148,7 @@ export class Stage6MigrationService {
         }
         const source = await this.bindingForUpdate(client, committee.active_storage_binding_id);
         if (!source || source.status !== 'ACTIVE') {
-          throw new AppError({code: 'SERVICE_NOT_READY', message: 'The active storage binding is unavailable.'});
+          throw new AppError({reason: 'STORAGE_BINDING_UNAVAILABLE', expose: true, code: 'SERVICE_NOT_READY', message: 'The active storage binding is unavailable.'});
         }
         await this.validateTarget(client, source, targetType, targetConfigId);
         await client.query(`INSERT INTO storage_bindings
@@ -161,7 +162,7 @@ export class Stage6MigrationService {
         const contents = await this.contentLocations(client, committee.id, source.id);
         for (const content of contents) {
           if (!content.source_blob_id) {
-            throw new AppError({code: 'SERVICE_NOT_READY', message: 'A source blob is unavailable.'});
+            throw new AppError({reason: 'FILE_CONTENT_UNAVAILABLE', expose: true, code: 'SERVICE_NOT_READY', message: 'A source blob is unavailable.'});
           }
           await this.insertItem(client, migrationId, committee.id, content);
         }
@@ -186,11 +187,11 @@ export class Stage6MigrationService {
     context: Stage4Context): Promise<StorageMigration> {
     return this.command(auth, migrationId, body, idempotencyKey, 'retry', context, async (client, committee, row) => {
       if (row.status !== 'FAILED') {
-        throw new AppError({code: 'RESOURCE_CONFLICT', message: 'This storage migration cannot be retried.'});
+        throw new AppError({reason: 'MIGRATION_NOT_RETRYABLE', code: 'RESOURCE_CONFLICT', message: 'This storage migration cannot be retried.'});
       }
       const target = await this.bindingForUpdate(client, row.target_binding_id);
       if (!target || target.status !== 'MIGRATING') {
-        throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The target storage binding is unavailable.'});
+        throw new AppError({reason: 'MIGRATION_TARGET_UNAVAILABLE', code: 'RESOURCE_CONFLICT', message: 'The target storage binding is unavailable.'});
       }
       if (target.provider_type === 'S3_COMPATIBLE') {
         await this.activeS3Config(client, target.provider_config_id as string);
@@ -198,7 +199,7 @@ export class Stage6MigrationService {
       const contents = await this.contentLocations(client, committee.id, row.source_binding_id);
       const contentIds = new Set(contents.map(item => item.content_blob_id));
       for (const content of contents) {
-        if (!content.source_blob_id) throw new AppError({code: 'SERVICE_NOT_READY', message: 'A source blob is unavailable.'});
+        if (!content.source_blob_id) throw new AppError({reason: 'FILE_CONTENT_UNAVAILABLE', expose: true, code: 'SERVICE_NOT_READY', message: 'A source blob is unavailable.'});
         const existing = await client.query('SELECT 1 FROM storage_migration_items WHERE migration_id=$1 AND content_blob_id=$2',
           [row.id, content.content_blob_id]);
         if (!existing.rowCount) await this.insertItem(client, row.id, committee.id, content);
@@ -251,7 +252,8 @@ export class Stage6MigrationService {
           .verify(target.storage_key, Number(target.size_bytes), target.sha256_hex);
       } catch (error) {
         if (error instanceof ProviderStorageError) {
-          throw new AppError({code: error.apiCode, message: error.message});
+          throw new AppError({code: error.apiCode, reason: error.reason,
+            expose: error.reason !== error.apiCode, message: ERROR_TEXT[error.reason].en, cause: error});
         }
         throw error;
       }
@@ -265,7 +267,7 @@ export class Stage6MigrationService {
       const target = await this.bindingForUpdate(client, row.target_binding_id);
       if (!source || !target || source.status !== 'ACTIVE' || target.status !== 'MIGRATING'
         || committee.active_storage_binding_id !== source.id) {
-        throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Storage bindings changed during migration.'});
+        throw new AppError({reason: 'MIGRATION_STORAGE_CHANGED', code: 'RESOURCE_CONFLICT', message: 'Storage bindings changed during migration.'});
       }
       if (target.provider_type === 'S3_COMPATIBLE') {
         await this.activeS3Config(client, target.provider_config_id as string);
@@ -279,7 +281,7 @@ export class Stage6MigrationService {
           AND c.storage_binding_id=$3 AND c.copy_blob_id=i.target_blob_id
         WHERE i.id IS NULL OR c.copy_blob_id IS NULL LIMIT 1`, [committee.id, row.id, target.id]);
       if (missing.rowCount) {
-        throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Target storage is not fully verified.'});
+        throw new AppError({reason: 'MIGRATION_NOT_VERIFIED', code: 'RESOURCE_CONFLICT', message: 'Target storage is not fully verified.'});
       }
       await client.query("UPDATE storage_bindings SET status='RETIRED',revision=revision+1,updated_at=now() WHERE id=$1",
         [source.id]);
@@ -301,7 +303,7 @@ export class Stage6MigrationService {
     context: Stage4Context): Promise<StorageMigration> {
     return this.command(auth, migrationId, body, idempotencyKey, 'cancel', context, async (client, committee, row) => {
       if (!['COPYING', 'READY_TO_CONFIRM', 'FAILED'].includes(row.status)) {
-        throw new AppError({code: 'RESOURCE_CONFLICT', message: 'This storage migration cannot be cancelled.'});
+        throw new AppError({reason: 'MIGRATION_NOT_CANCELLABLE', code: 'RESOURCE_CONFLICT', message: 'This storage migration cannot be cancelled.'});
       }
       const items = await client.query<{id: string; content_blob_id: string}>(
         'SELECT id,content_blob_id FROM storage_migration_items WHERE migration_id=$1 FOR UPDATE', [row.id]);
@@ -480,7 +482,7 @@ export class Stage6MigrationService {
     if (!stored || stored.storage_binding_id !== migration.target_binding_id || stored.storage_key !== storageKey
       || Number(stored.size_bytes) !== Number(item.size_bytes) || stored.sha256_hex !== item.sha256_hex
       || stored.durability_state !== 'COMMITTED') {
-      throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Target blob metadata conflicts with this copy.'});
+      throw new AppError({reason: 'MIGRATION_COPY_CONFLICT', code: 'RESOURCE_CONFLICT', message: 'Target blob metadata conflicts with this copy.'});
     }
     await client.query(`INSERT INTO file_blob_copies
       (committee_id,content_blob_id,copy_blob_id,storage_binding_id,migration_id)
@@ -489,7 +491,7 @@ export class Stage6MigrationService {
     const copy = await client.query<{copy_blob_id: string}>(`SELECT copy_blob_id FROM file_blob_copies
       WHERE content_blob_id=$1 AND storage_binding_id=$2`, [item.content_blob_id, migration.target_binding_id]);
     if (copy.rows[0]?.copy_blob_id !== item.target_blob_id) {
-      throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Target blob copy conflicts with this migration.'});
+      throw new AppError({reason: 'MIGRATION_COPY_CONFLICT', code: 'RESOURCE_CONFLICT', message: 'Target blob copy conflicts with this migration.'});
     }
   }
 
@@ -533,7 +535,7 @@ export class Stage6MigrationService {
     targetConfigId: string | null): Promise<void> {
     if (targetType === 'S3_COMPATIBLE') await this.activeS3Config(client, targetConfigId as string);
     if (source.provider_type === targetType && source.provider_config_id === targetConfigId) {
-      throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The target provider is already active.'});
+      throw new AppError({reason: 'STORAGE_ALREADY_ACTIVE', code: 'RESOURCE_CONFLICT', message: 'The target provider is already active.'});
     }
   }
 
@@ -546,7 +548,7 @@ export class Stage6MigrationService {
 
   private async store(type: ProviderType, configId: string | null, target: boolean): Promise<ProviderStore> {
     if (type === 'SERVER_VOLUME') return this.serverVolume;
-    if (!configId) throw new AppError({code: 'SERVICE_NOT_READY', message: 'S3 provider config is unavailable.'});
+    if (!configId) throw new AppError({reason: 'S3_CONFIG_UNAVAILABLE', expose: true, code: 'SERVICE_NOT_READY', message: 'S3 provider config is unavailable.'});
     const config = target ? await this.s3Configs.providerForMigrationTarget(configId)
       : await this.s3Configs.providerForStoredBlob(configId);
     return this.s3Factory(config);
@@ -554,7 +556,7 @@ export class Stage6MigrationService {
 
   private async requireOwnerOrChair(client: PoolClient, committee: Stage4CommitteeRow, userId: string): Promise<void> {
     if (committee.owner_user_id !== userId && !(await isChair(client, committee.id, userId))) {
-      throw new AppError({code: 'FORBIDDEN', message: 'Chair or committee owner access is required.'});
+      throw new AppError({reason: 'CHAIR_OR_OWNER_REQUIRED', code: 'FORBIDDEN', message: 'Chair or committee owner access is required.'});
     }
   }
 

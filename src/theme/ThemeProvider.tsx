@@ -12,7 +12,7 @@ import {
   Modal,
   Portal
 } from 'semantic-ui-react';
-import {t, useLanguage} from '../i18n';
+import {apiErrorText, t, useLanguage} from '../i18n';
 import {getThemeSettings} from '../services/self-hosted-identity';
 import {
   classifyThemeRoute,
@@ -139,7 +139,7 @@ function ThemeManager(props: {
       setNotice({text: t('Imported and applied theme {name}.', {name: theme.manifest.name})});
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      setNotice({error: true, text: t(message)});
+      setNotice({error: true, text: error && typeof error === 'object' && 'code' in error ? apiErrorText(error) : t(message)});
     }
   };
 
@@ -155,7 +155,7 @@ function ThemeManager(props: {
       setNotice({text: t('Theme removed. The default theme is now active.')});
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      setNotice({error: true, text: t(message)});
+      setNotice({error: true, text: error && typeof error === 'object' && 'code' in error ? apiErrorText(error) : t(message)});
     }
   };
 

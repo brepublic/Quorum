@@ -196,7 +196,7 @@ export class IdentityService {
     this.requireAdministrator(auth);
     if (Object.keys(input).length !== 2 || typeof input.enabled !== 'boolean'
       || !Number.isInteger(input.baseRevision) || (input.baseRevision as number) < 1) {
-      throw new AppError({code: 'VALIDATION_FAILED', message: 'Theme settings are invalid.'});
+      throw new AppError({reason: 'INVALID_THEME_SETTINGS', code: 'VALIDATION_FAILED', message: 'Theme settings are invalid.'});
     }
     const result = await this.store.updateThemeSettings({actor: auth, enabled: input.enabled,
       baseRevision: input.baseRevision as number, audit: this.audit(context)});
@@ -215,7 +215,7 @@ export class IdentityService {
     if (Object.keys(input).length !== 3 || typeof input.creatorIsChair !== 'boolean'
       || !['DELEGATE_OPERATED', 'CHAIR_OPERATED'].includes(input.operationMode as string)
       || !Number.isInteger(input.baseRevision) || (input.baseRevision as number) < 1) {
-      throw new AppError({code: 'VALIDATION_FAILED', message: 'Default committee behavior is invalid.'});
+      throw new AppError({reason: 'INVALID_COMMITTEE_DEFAULTS', code: 'VALIDATION_FAILED', message: 'Default committee behavior is invalid.'});
     }
     const result = await this.store.updateDefaultCommitteeBehavior({actor: auth, creatorIsChair: input.creatorIsChair,
       operationMode: input.operationMode as DefaultCommitteeBehavior['operationMode'], baseRevision: input.baseRevision as number,
@@ -288,7 +288,7 @@ export class IdentityService {
   }, idempotencyKey: string, context: RequestIdentityContext) {
     this.requireAdministrator(auth);
     if (!idempotencyKey || idempotencyKey.length > 200) {
-      throw new AppError({code: 'BAD_REQUEST', message: 'Idempotency-Key is required.'});
+      throw new AppError({reason: 'CLIENT_REQUEST_INVALID', code: 'BAD_REQUEST', message: 'Idempotency-Key is required.'});
     }
     const confirmationEmail = input.confirmationEmail.trim().toLowerCase();
     const requestHash = createHash('sha256').update(JSON.stringify({

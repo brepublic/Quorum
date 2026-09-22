@@ -110,7 +110,7 @@ async function readJson(request: IncomingMessage): Promise<Record<string, unknow
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     length += buffer.length;
     if (length > MAX_JSON_BODY_BYTES) {
-      throw new AppError({code: 'PAYLOAD_TOO_LARGE', message: 'Request body is too large.'});
+      throw new AppError({reason: 'REQUEST_TOO_LARGE', code: 'PAYLOAD_TOO_LARGE', message: 'Request body is too large.'});
     }
     chunks.push(buffer);
   }
@@ -119,7 +119,7 @@ async function readJson(request: IncomingMessage): Promise<Record<string, unknow
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('not an object');
     return value as Record<string, unknown>;
   } catch {
-    throw new AppError({code: 'BAD_REQUEST', message: 'Request body must be a JSON object.'});
+    throw new AppError({reason: 'INVALID_REQUEST_BODY', code: 'BAD_REQUEST', message: 'Request body must be a JSON object.'});
   }
 }
 
@@ -127,7 +127,7 @@ function stringField(body: Record<string, unknown>, name: string, optional = fal
   const value = body[name];
   if (optional && value === undefined) return undefined;
   if (typeof value !== 'string') {
-    throw new AppError({code: 'BAD_REQUEST', message: `Field ${name} must be a string.`});
+    throw new AppError({reason: 'CLIENT_REQUEST_INVALID', code: 'BAD_REQUEST', message: `Field ${name} must be a string.`});
   }
   return value;
 }
@@ -138,14 +138,14 @@ function singleHeader(value: string | string[] | undefined): string | undefined 
 
 function idempotencyKey(request: IncomingMessage): string {
   const value = singleHeader(request.headers['idempotency-key']);
-  if (!value) throw new AppError({code: 'BAD_REQUEST', message: 'Idempotency-Key is required.'});
+  if (!value) throw new AppError({reason: 'CLIENT_REQUEST_INVALID', code: 'BAD_REQUEST', message: 'Idempotency-Key is required.'});
   return value;
 }
 
 function requireOrigin(request: IncomingMessage, allowedOrigins: readonly string[]): void {
   const origin = singleHeader(request.headers.origin);
   if (!origin || !allowedOrigins.includes(origin)) {
-    throw new AppError({code: 'FORBIDDEN', message: 'Request origin is not allowed.'});
+    throw new AppError({reason: 'ORIGIN_NOT_ALLOWED', code: 'FORBIDDEN', message: 'Request origin is not allowed.'});
   }
 }
 
@@ -192,7 +192,7 @@ async function authenticatedRead(request: IncomingMessage, identity: IdentitySer
 function integerField(body: Record<string, unknown>, name: string): number {
   const value = body[name];
   if (!Number.isSafeInteger(value) || Number(value) < 1) {
-    throw new AppError({code: 'BAD_REQUEST', message: `Field ${name} must be a positive integer.`});
+    throw new AppError({reason: 'CLIENT_REQUEST_INVALID', code: 'BAD_REQUEST', message: `Field ${name} must be a positive integer.`});
   }
   return Number(value);
 }
@@ -201,11 +201,11 @@ function requestContentLength(request: IncomingMessage): number | undefined {
   const value = singleHeader(request.headers['content-length']);
   if (value === undefined) return undefined;
   if (!/^(0|[1-9][0-9]*)$/.test(value)) {
-    throw new AppError({code: 'BAD_REQUEST', message: 'Content-Length is invalid.'});
+    throw new AppError({reason: 'CLIENT_REQUEST_INVALID', code: 'BAD_REQUEST', message: 'Content-Length is invalid.'});
   }
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed)) {
-    throw new AppError({code: 'PAYLOAD_TOO_LARGE', message: 'Request body is too large.'});
+    throw new AppError({reason: 'REQUEST_TOO_LARGE', code: 'PAYLOAD_TOO_LARGE', message: 'Request body is too large.'});
   }
   return parsed;
 }
@@ -231,14 +231,14 @@ function storageAgentCredential(request: IncomingMessage): string {
 function positiveHeader(request: IncomingMessage, name: string): number {
   const value = singleHeader(request.headers[name]);
   if (!value || !/^[1-9][0-9]*$/.test(value) || !Number.isSafeInteger(Number(value))) {
-    throw new AppError({code: 'BAD_REQUEST', message: `Header ${name} must be a positive integer.`});
+    throw new AppError({reason: 'CLIENT_REQUEST_INVALID', code: 'BAD_REQUEST', message: `Header ${name} must be a positive integer.`});
   }
   return Number(value);
 }
 
 function requiredHeader(request: IncomingMessage, name: string): string {
   const value = singleHeader(request.headers[name]);
-  if (!value) throw new AppError({code: 'BAD_REQUEST', message: `Header ${name} is required.`});
+  if (!value) throw new AppError({reason: 'CLIENT_REQUEST_INVALID', code: 'BAD_REQUEST', message: `Header ${name} is required.`});
   return value;
 }
 
@@ -762,7 +762,7 @@ async function handleDelegateFileRequest(options: {
   if (method === 'POST' && pathname === '/api/v1/delegate-files/claim') {
     requireOrigin(request, allowedOrigins); const body = await readJson(request);
     const existing = await service.bootstrap(stringField(body, 'capability') as string, credential);
-    if (existing.claimedSeat) throw new AppError({code: 'RESOURCE_CONFLICT',
+    if (existing.claimedSeat) throw new AppError({reason: 'DELEGATION_ALREADY_SELECTED', code: 'RESOURCE_CONFLICT',
       message: 'This browser has already selected a delegation.'});
     const result = await service.claim(stringField(body, 'capability') as string, body.seatId, context);
     const {sessionToken, csrfToken, ...portal} = result;
@@ -1507,7 +1507,7 @@ export function createRequestHandler(dependencies: AppDependencies): RequestList
         if (pathname === '/health/ready') {
           const result = await dependencies.health.ready();
           if (!result.ready) {
-            throw new AppError({
+            throw new AppError({reason: 'SERVICE_NOT_READY',
               code: 'SERVICE_NOT_READY',
               message: 'Service is not ready.',
               details: {checks: result.checks},

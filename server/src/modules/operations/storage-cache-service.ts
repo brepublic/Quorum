@@ -15,13 +15,13 @@ export class StorageCacheRuntimeStats {
 
 function admin(auth: AuthenticatedSession): void {
   if (auth.user.mustChangePassword || !auth.user.isSystemAdmin) {
-    throw new AppError({code: 'FORBIDDEN', message: 'System administrator access is required.'});
+    throw new AppError({reason: 'SYSTEM_ADMIN_REQUIRED', code: 'FORBIDDEN', message: 'System administrator access is required.'});
   }
 }
 
 function integer(value: unknown, name: string, maximum: number): number {
   if (!Number.isSafeInteger(value) || Number(value) < 0 || Number(value) > maximum) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: `${name} is outside the deployment boundary.`});
+    throw new AppError({reason: 'NUMBER_OUT_OF_RANGE', params: {max: maximum}, code: 'VALIDATION_FAILED', message: `${name} is outside the deployment boundary.`});
   }
   return Number(value);
 }
@@ -63,7 +63,7 @@ export class StorageCacheOperationsService {
     if (requested.pendingReviewCommitteeMaxBytes > requested.pendingReviewMaxBytes
       || requested.storageMinFreeBytes < hard.storageMinFreeBytes
       || requested.storageMinFreePercent < hard.storageMinFreePercent) {
-      throw new AppError({code: 'VALIDATION_FAILED', message: 'Storage cache configuration violates deployment boundaries.'});
+      throw new AppError({reason: 'CACHE_LIMIT_INVALID', code: 'VALIDATION_FAILED', message: 'Storage cache configuration violates deployment boundaries.'});
     }
     await transaction(this.pool, async client => {
       const current = (await client.query<{storage_cache_config_revision: number}>(

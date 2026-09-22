@@ -17,7 +17,7 @@ export class Stage8OperationsStatusService {
 
   async status(auth: AuthenticatedSession): Promise<OperationsStatus> {
     if (auth.user.mustChangePassword || !auth.user.isSystemAdmin) {
-      throw new AppError({code: 'FORBIDDEN', message: 'System administrator access is required.'});
+      throw new AppError({reason: 'SYSTEM_ADMIN_REQUIRED', code: 'FORBIDDEN', message: 'System administrator access is required.'});
     }
     const [summary, storage] = await Promise.all([
       this.pool.query<{
@@ -41,7 +41,7 @@ export class Stage8OperationsStatusService {
       this.capacity.sample()
     ]);
     const row = summary.rows[0];
-    if (!row) throw new AppError({code: 'SERVICE_NOT_READY', message: 'Operations status is unavailable.'});
+    if (!row) throw new AppError({reason: 'OPERATIONS_UNAVAILABLE', expose: true, code: 'SERVICE_NOT_READY', message: 'Operations status is unavailable.'});
     return {
       database: {schemaCompatibility: row.schema_compatibility, serverTime: row.server_time.toISOString()},
       storage: {state: storage.state, usageRatio: storage.usageRatio, availableBytes: storage.availableBytes},

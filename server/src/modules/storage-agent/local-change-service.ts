@@ -14,7 +14,7 @@ interface EntryRow extends QueryResultRow {
 
 function integer(value: unknown, name: string, allowZero = false): number {
   if (!Number.isSafeInteger(value) || Number(value) < (allowZero ? 0 : 1)) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
+    throw new AppError({reason: allowZero ? 'NON_NEGATIVE_INTEGER_REQUIRED' : 'POSITIVE_INTEGER_REQUIRED', code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
   }
   return Number(value);
 }
@@ -22,28 +22,28 @@ function integer(value: unknown, name: string, allowZero = false): number {
 function uuid(value: unknown, name: string): string {
   if (typeof value !== 'string'
     || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
+    throw new AppError({reason: 'INVALID_REFERENCE', code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
   }
   return value;
 }
 
 function text(value: unknown, name: string, maximum: number): string {
   if (typeof value !== 'string' || !value.trim() || value.trim().length > maximum) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
+    throw new AppError({reason: 'REQUIRED_TEXT', params: {max: maximum}, code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
   }
   return value.trim();
 }
 
 function sha256(value: unknown): string {
   if (typeof value !== 'string' || !/^[a-f0-9]{64}$/.test(value)) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: 'SHA-256 is invalid.'});
+    throw new AppError({reason: 'INVALID_CHECKSUM', code: 'VALIDATION_FAILED', message: 'SHA-256 is invalid.'});
   }
   return value;
 }
 
 function change(value: unknown): StorageAgentLocalChange {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: 'Local change is invalid.'});
+    throw new AppError({reason: 'CLIENT_REQUEST_INVALID', code: 'VALIDATION_FAILED', message: 'Local change is invalid.'});
   }
   const input = value as Record<string, unknown>;
   if (input.kind === 'UPSERT') {
@@ -51,7 +51,7 @@ function change(value: unknown): StorageAgentLocalChange {
     const fileEntryId = input.fileEntryId === undefined ? undefined : uuid(input.fileEntryId, 'File ID');
     const baseRevision = input.baseRevision === undefined ? undefined : integer(input.baseRevision, 'Revision');
     if (Boolean(fileEntryId) !== Boolean(baseRevision)) {
-      throw new AppError({code: 'VALIDATION_FAILED', message: 'Existing file ID and revision must be provided together.'});
+      throw new AppError({reason: 'CLIENT_REQUEST_INVALID', code: 'VALIDATION_FAILED', message: 'Existing file ID and revision must be provided together.'});
     }
     return {kind: 'UPSERT', fileEntryId, baseRevision, logicalName: text(input.logicalName, 'Logical name', 500),
       originalName: text(input.originalName, 'Original name', 500), mediaType: text(input.mediaType, 'Media type', 255),
@@ -67,7 +67,7 @@ function change(value: unknown): StorageAgentLocalChange {
     return {kind: 'DELETE', fileEntryId: uuid(input.fileEntryId, 'File ID'),
       baseRevision: integer(input.baseRevision, 'Revision')};
   }
-  throw new AppError({code: 'VALIDATION_FAILED', message: 'Local change kind is invalid.'});
+  throw new AppError({reason: 'CLIENT_REQUEST_INVALID', code: 'VALIDATION_FAILED', message: 'Local change kind is invalid.'});
 }
 
 function task(row: QueryResultRow): StorageAgentTask {
@@ -155,7 +155,7 @@ export class Stage7LocalChangeService {
           fileRevision: approved.resolution_file_revision, logicalName: approved.resolution_logical_name};
         manifestSequence = latestManifest;
         if (approved.resolution_action === 'SAVE_AS_NEW') {
-          if (local.kind !== 'UPSERT') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Resolution content is invalid.'});
+          if (local.kind !== 'UPSERT') throw new AppError({reason: 'INVALID_CONFLICT_CONTENT', code: 'RESOURCE_CONFLICT', message: 'Resolution content is invalid.'});
           local = {...local, fileEntryId: undefined, baseRevision: undefined,
             logicalName: approved.resolution_logical_name};
         } else if (approved.resolution_logical_name && local.kind !== 'DELETE') {
@@ -208,7 +208,7 @@ export class Stage7LocalChangeService {
         entry as EntryRow, context);
     });
     if (result.status === 'CONFLICT') {
-      throw new AppError({code: 'CHAIR_DECISION_REQUIRED',
+      throw new AppError({reason: 'LOCAL_FILE_CONFLICT', code: 'CHAIR_DECISION_REQUIRED',
         message: 'This local file change conflicts with the server state.', details: result});
     }
     return result;

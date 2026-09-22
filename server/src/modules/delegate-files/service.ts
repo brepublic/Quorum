@@ -46,25 +46,25 @@ interface MetadataRow extends QueryResultRow {
 
 function uuid(value: unknown, name: string): string {
   if (typeof value !== 'string' || !/^[0-9a-f-]{36}$/i.test(value)) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
+    throw new AppError({reason: 'INVALID_REFERENCE', code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
   }
   return value;
 }
 function positiveRevision(value: unknown): number {
   if (!Number.isSafeInteger(value) || Number(value) < 1) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: 'Revision is invalid.'});
+    throw new AppError({reason: 'INVALID_REVISION', code: 'VALIDATION_FAILED', message: 'Revision is invalid.'});
   }
   return Number(value);
 }
 function bounded(value: unknown, name: string, maximum: number): string {
   if (typeof value !== 'string' || !value.trim() || Array.from(value.trim()).length > maximum) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
+    throw new AppError({reason: 'REQUIRED_TEXT', params: {max: maximum}, code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
   }
   return value.trim();
 }
 function fileType(value: unknown): DelegateFileType {
   if (!FILE_TYPES.has(value as DelegateFileType)) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: 'File type is invalid.'});
+    throw new AppError({reason: 'INVALID_FILE_TYPE', code: 'VALIDATION_FAILED', message: 'File type is invalid.'});
   }
   return value as DelegateFileType;
 }
@@ -116,12 +116,12 @@ export class DelegateFileService {
 
   private async authorizeSettings(client: PoolClient, auth: AuthenticatedSession, committeeId?: string, write = false) {
     if (!committeeId) {
-      if (!auth.user.isSystemAdmin) throw new AppError({code: 'FORBIDDEN', message: 'System administrator access is required.'});
+      if (!auth.user.isSystemAdmin) throw new AppError({reason: 'SYSTEM_ADMIN_REQUIRED', code: 'FORBIDDEN', message: 'System administrator access is required.'});
       return;
     }
     requireBusinessIdentity(auth);
     const committee = await this.requireManager(client, uuid(committeeId, 'Committee ID'), auth.user.id, false);
-    if (write && !['ACTIVE', 'PAUSED'].includes(committee.status)) throw new AppError({code: 'RESOURCE_CONFLICT',
+    if (write && !['ACTIVE', 'PAUSED'].includes(committee.status)) throw new AppError({reason: 'COMMITTEE_READ_ONLY', code: 'RESOURCE_CONFLICT',
       message: '当前委员会状态不允许修改设置。'});
   }
 
@@ -155,10 +155,10 @@ export class DelegateFileService {
       await this.assertAvailable(client, committee.id, committee.operation_mode, committee.status);
       const binding = await client.query(`SELECT 1 FROM storage_bindings WHERE id=$1 AND status='ACTIVE'`,
         [committee.active_storage_binding_id]);
-      if (!binding.rowCount) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The committee has no active storage.'});
+      if (!binding.rowCount) throw new AppError({reason: 'STORAGE_NOT_CONFIGURED', code: 'RESOURCE_CONFLICT', message: 'The committee has no active storage.'});
       const started = await client.query(`SELECT 1 FROM meeting_sessions WHERE committee_id=$1 AND status='OPEN'`,
         [committee.id]);
-      if (!started.rowCount) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Open the first meeting session before sharing files.'});
+      if (!started.rowCount) throw new AppError({reason: 'MEETING_REQUIRED_FOR_SHARING', code: 'RESOURCE_CONFLICT', message: 'Open the first meeting session before sharing files.'});
       const existing = (await client.query<ShareRow>(`SELECT * FROM delegate_file_shares
         WHERE committee_id=$1 AND status='ACTIVE' FOR UPDATE`, [committee.id])).rows[0];
       if (existing) return this.share(existing, origin);
@@ -209,7 +209,7 @@ export class DelegateFileService {
       const seatId = uuid(seatIdValue, 'Seat ID');
       const eligible = await this.eligibleSeats(client, share.committee_id);
       const seat = eligible.find(item => item.id === seatId);
-      if (!seat) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'This delegation is not currently eligible.'});
+      if (!seat) throw new AppError({reason: 'DELEGATION_NOT_PRESENT', code: 'RESOURCE_CONFLICT', message: 'This delegation is not currently eligible.'});
       const sessionToken = createOpaqueToken(); const csrfToken = createOpaqueToken(); const id = randomUUID();
       await client.query(`INSERT INTO delegate_file_sessions
         (id,share_id,seat_id,seat_display_name,credential_hash,expires_at)
@@ -290,11 +290,11 @@ export class DelegateFileService {
       throw new AppError({code: 'NOT_FOUND', message: 'File not found.'});
     if (entry.revision !== revision) throw new AppError({code: 'REVISION_CONFLICT',
       message: 'This file changed since it was loaded.', details: {currentRevision: entry.revision}});
-    if (!['UPLOAD_COMPLETE','PENDING_REVIEW'].includes(entry.status)) throw new AppError({code: 'RESOURCE_CONFLICT',
+    if (!['UPLOAD_COMPLETE','PENDING_REVIEW'].includes(entry.status)) throw new AppError({reason: 'FILE_NOT_PENDING_REVIEW', code: 'RESOURCE_CONFLICT',
       message: 'File status does not allow approval.'});
     const version = (await client.query(`SELECT v.*,encode(v.sha256,'hex') AS hash FROM file_versions v
       JOIN file_blobs b ON b.id=v.blob_id AND b.durability_state='COMMITTED' WHERE v.id=$1`, [entry.current_version_id])).rows[0];
-    if (!version) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'File content is unavailable.'});
+    if (!version) throw new AppError({reason: 'FILE_CONTENT_UNAVAILABLE', code: 'RESOURCE_CONFLICT', message: 'File content is unavailable.'});
     const target = (await client.query(`SELECT * FROM file_entries WHERE committee_id=$1 AND formal_name=$2 COLLATE "C"
       AND status<>'DELETED' AND id<>$3 FOR UPDATE`, [committee.id, logicalName, fileId])).rows[0];
     const token = target ? createHash('sha256').update(JSON.stringify([fileId, revision, entry.current_version_id,
@@ -318,10 +318,10 @@ export class DelegateFileService {
     const fileId = uuid(fileIdValue, 'File ID');
     const resultId = await transaction(this.pool, async client => {
       const {committee, entry, version, target, token, logicalName, type} = await this.approvalState(client, auth, fileId, body);
-      if (target && target.status !== 'PUBLISHED') throw new AppError({code: 'RESOURCE_CONFLICT',
+      if (target && target.status !== 'PUBLISHED') throw new AppError({reason: 'DOCUMENT_FILE_NOT_PUBLISHED', code: 'RESOURCE_CONFLICT',
         message: 'The formal file is not published.', details: {reason: 'FILE_REPLACEMENT_CHANGED'}});
       if ((target || body.confirmationToken !== undefined) && body.confirmationToken !== token)
-        throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Confirm this replacement after refreshing its preview.',
+        throw new AppError({reason: 'FILE_REPLACEMENT_CHANGED', code: 'RESOURCE_CONFLICT', message: 'Confirm this replacement after refreshing its preview.',
           details: {reason: body.confirmationToken ? 'FILE_REPLACEMENT_CHANGED' : 'FILE_REPLACEMENT_CONFIRMATION_REQUIRED'}});
       const existing = (await client.query<MetadataRow>('SELECT * FROM delegate_file_metadata WHERE file_entry_id=$1', [fileId])).rows[0];
       const source = existing?.submission_source ?? 'LEGACY'; const submitter = existing?.submitter_display_name ?? null;
@@ -393,10 +393,10 @@ export class DelegateFileService {
           'SELECT * FROM file_entries WHERE id=$1 FOR UPDATE', [fileId])).rows[0];
         if (!entry) throw new AppError({code: 'NOT_FOUND', message: 'File not found.'});
         if (entry.revision !== revision) throw new AppError({code: 'REVISION_CONFLICT', message: 'This file changed since it was loaded.'});
-        if (!['UPLOAD_COMPLETE', 'PENDING_REVIEW'].includes(entry.status)) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'File status does not allow rejection.'});
+        if (!['UPLOAD_COMPLETE', 'PENDING_REVIEW'].includes(entry.status)) throw new AppError({reason: 'FILE_NOT_PENDING_REVIEW', code: 'RESOURCE_CONFLICT', message: 'File status does not allow rejection.'});
         const settings = await this.readSettings(client, committee.id);
         const rejection = settings.rejectionTypes.find(item => item.id === body.rejectionTypeId);
-        if (!rejection) throw new AppError({code: 'VALIDATION_FAILED', message: '请选择有效的驳回类型。'});
+        if (!rejection) throw new AppError({reason: 'INVALID_REJECTION_TYPE', code: 'VALIDATION_FAILED', message: '请选择有效的驳回类型。'});
         const reason = rejection.custom ? bounded(body.reason, 'Rejection reason', 2000) : committeeContentName(rejection.message, committee.committee_language);
         const now = new Date();
         await client.query(`INSERT INTO delegate_file_metadata
@@ -481,7 +481,7 @@ export class DelegateFileService {
   private async requireManager(client: PoolClient, committeeId: string, userId: string, requireAvailable: boolean) {
     const committee = await lockedCommittee(client, committeeId);
     if (committee.owner_user_id !== userId && !(await isChair(client, committee.id, userId))) {
-      throw new AppError({code: 'FORBIDDEN', message: 'Chair or committee owner access is required.'});
+      throw new AppError({reason: 'CHAIR_OR_OWNER_REQUIRED', code: 'FORBIDDEN', message: 'Chair or committee owner access is required.'});
     }
     if (requireAvailable) requireProceedingsActive(committee);
     return committee;
@@ -489,7 +489,7 @@ export class DelegateFileService {
 
   private async assertAvailable(_client: PoolClient, _committeeId: string, mode: string, status: string) {
     if (mode !== 'CHAIR_OPERATED' || !['ACTIVE', 'PAUSED'].includes(status)) {
-      throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Delegate file sharing is unavailable.'});
+      throw new AppError({reason: 'FILE_SHARING_UNAVAILABLE', code: 'RESOURCE_CONFLICT', message: 'Delegate file sharing is unavailable.'});
     }
   }
 
@@ -589,7 +589,7 @@ export class DelegateFileService {
 
   private async assertMayUpload(session: DelegateSessionRow): Promise<void> {
     const eligible = await transaction(this.pool, client => this.eligibleSeats(client, session.committee_id));
-    if (!eligible.some(item => item.id === session.seat_id)) throw new AppError({code: 'FORBIDDEN',
+    if (!eligible.some(item => item.id === session.seat_id)) throw new AppError({reason: 'DELEGATION_NOT_PRESENT', code: 'FORBIDDEN',
       message: 'This delegation is not currently eligible to upload.'});
   }
 
@@ -603,7 +603,7 @@ export class DelegateFileService {
 
   private async custodian(userId: string): Promise<AuthenticatedSession> {
     const row = (await this.pool.query(`SELECT * FROM users WHERE id=$1 AND status='ACTIVE'`, [userId])).rows[0];
-    if (!row) throw new AppError({code: 'SERVICE_NOT_READY', message: 'The file share custodian is unavailable.'});
+    if (!row) throw new AppError({reason: 'FILE_SHARE_CUSTODIAN_UNAVAILABLE', expose: true, code: 'SERVICE_NOT_READY', message: 'The file share custodian is unavailable.'});
     return userAuth(row);
   }
 

@@ -1433,8 +1433,7 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
   const [versionTitle, setVersionTitle] = React.useState(selectedDocument?.title ?? '');
   const [versionTitleDirty, setVersionTitleDirty] = React.useState(false);
   const [versionContent, setVersionContent] = React.useState(selectedDocument?.currentVersion.content ?? '');
-  const [contentSource, setContentSource] = React.useState<'TEXT' | 'FILE'>(
-    selectedDocument?.currentVersion.contentFile ? 'FILE' : 'TEXT');
+  const [contentSource, setContentSource] = React.useState<'TEXT' | 'FILE'>('FILE');
   const [versionFileId, setVersionFileId] = React.useState(selectedDocument?.currentVersion.contentFile?.id ?? '');
   const [availableFiles, setAvailableFiles] = React.useState<FileEntry[]>([]);
   const [selectedExistingFileId, setSelectedExistingFileId] = React.useState('');
@@ -1454,6 +1453,8 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
   const [votingPage, setVotingPage] = React.useState(0);
   const [currentVotingSeatId, setCurrentVotingSeatId] = React.useState(selectedDocument?.directVote?.eligibility[0]?.seatId ?? '');
   const [votingHistory, setVotingHistory] = React.useState<Array<{seatId: string; previousChoice: 'FOR' | 'AGAINST' | 'ABSTAIN' | null}>>([]);
+  const submittingVote = React.useRef(false);
+  const [voteSaving, setVoteSaving] = React.useState(false);
   const creatingDraft = React.useRef(false);
   const represented = canChair && seatId ? {onBehalfOfSeatId: seatId} : {};
   const canParticipate = snapshot.viewer.audience !== 'PUBLIC' && snapshot.committee.status === 'ACTIVE';
@@ -1471,9 +1472,9 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
   React.useEffect(() => {
     if (!selectedDocument) return;
     setVersionTitle(selectedDocument.title); setVersionTitleDirty(false); setBodyDirty(false); setVersionContent(selectedDocument.currentVersion.content);
-    setContentSource(selectedDocument.currentVersion.contentFile ? 'FILE' : 'TEXT');
     setVersionFileId(selectedDocument.currentVersion.contentFile?.id ?? '');
   }, [selectedDocument?.id, selectedDocument?.revision]);
+  React.useEffect(() => {setContentSource('FILE');}, [selectedDocument?.id]);
   React.useEffect(() => {
     if (contentSource !== 'FILE') return;
     let active = true; setFileError(undefined); setFilesLoading(true);
@@ -1550,22 +1551,30 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
     ABSTAIN: directVotes.filter(vote => vote.choice === 'ABSTAIN').length};
   const setDirectResolutionVote = async (choice: 'FOR' | 'AGAINST' | 'ABSTAIN' | null,
     targetSeatId = currentVotingSeatId, recordHistory = true) => {
-    if (!canChair || !targetSeatId) return;
+    if (!canChair || !targetSeatId || submittingVote.current) return;
     const previousChoice = directVoteBySeat.get(targetSeatId)?.choice ?? null;
     if (previousChoice === choice) return;
-    if (recordHistory) setVotingHistory(current => [...current, {seatId: targetSeatId, previousChoice}]);
-    await run(() => api.setResolutionDirectVote(document.id, targetSeatId, choice));
-    const index = directEligibility.findIndex(item => item.seatId === targetSeatId);
-    const next = directEligibility.slice(index + 1).find(item => !directVoteBySeat.has(item.seatId));
-    if (next) {
-      setCurrentVotingSeatId(next.seatId); setVotingPage(Math.floor(directEligibility.indexOf(next) / 18));
-    }
+    submittingVote.current = true; setVoteSaving(true);
+    try {
+      await run(async () => {
+        await api.setResolutionDirectVote(document.id, targetSeatId, choice);
+        if (recordHistory) {
+          setVotingHistory(current => [...current, {seatId: targetSeatId, previousChoice}]);
+          const index = directEligibility.findIndex(item => item.seatId === targetSeatId);
+          const next = directEligibility.slice(index + 1).find(item => !directVoteBySeat.has(item.seatId));
+          if (next) {
+            setCurrentVotingSeatId(next.seatId); setVotingPage(Math.floor(directEligibility.indexOf(next) / 18));
+          }
+        } else {
+          setVotingHistory(current => current.slice(0, -1));
+          setCurrentVotingSeatId(targetSeatId);
+          setVotingPage(Math.floor(Math.max(0, directEligibility.findIndex(item => item.seatId === targetSeatId)) / 18));
+        }
+      });
+    } finally {submittingVote.current = false; setVoteSaving(false);}
   };
   const undoDirectVote = async () => {
     const previous = votingHistory.at(-1); if (!previous) return;
-    setVotingHistory(current => current.slice(0, -1));
-    setCurrentVotingSeatId(previous.seatId);
-    setVotingPage(Math.floor(Math.max(0, directEligibility.findIndex(item => item.seatId === previous.seatId)) / 18));
     await setDirectResolutionVote(previous.previousChoice, previous.seatId, false);
   };
   return <Container className="resolution-page" fluid style={{paddingBottom: '2em'}}><Grid columns="equal" stackable>
@@ -1577,8 +1586,8 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
         <Menu.Item key={path} as={Link} to={path === 'text' ? base : `${base}/${path}`}
           active={activeTab === path}>{t(label)}</Menu.Item>)}</Menu>
     {activeTab === 'text' && <><Button.Group basic compact className="resolution-content-source">
-      <Button active={contentSource === 'TEXT'} onClick={() => setContentSource('TEXT')}>{t('Text')}</Button>
       <Button active={contentSource === 'FILE'} onClick={() => setContentSource('FILE')}>{t('File')}</Button>
+      <Button active={contentSource === 'TEXT'} onClick={() => setContentSource('TEXT')}>{t('Text')}</Button>
     </Button.Group><Divider hidden />
     {contentSource === 'TEXT' ? <Form><TextArea value={versionContent} rows={3} placeholder={t('Resolution text')}
       disabled={!editable} onChange={(_, data) => {setVersionContent(String(data.value)); setBodyDirty(true);}} onBlur={() => void saveVersion()} /></Form>
@@ -1601,13 +1610,13 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
           : availableFiles.length === 0 ? <><Message content={t('No published files')} />
             <Button as={Link} to={`/committees/${snapshot.committee.id}/posts`}>{t('Files')}</Button></>
           : <Form onSubmit={() => void useFile()}>
-            <Form.Select label={t('Published file')} selection fluid search={availableFiles.length > 10}
+            <Form.Select label={t('Choose file')} selection fluid search={availableFiles.length > 10}
               value={selectedExistingFileId || false} disabled={fileSaving}
               options={availableFiles.map(file => ({key: file.id, value: file.id,
                 text: file.logicalName, description: file.fileType ? delegateFileTypeName(file.fileType, snapshot.committee.committeeLanguage) : undefined}))}
               onChange={(_, data) => setSelectedExistingFileId(String(data.value))} />
-            <Button primary loading={fileSaving} disabled={fileSaving || !selectedExistingFileId || !availableFiles.some(file => file.id === selectedExistingFileId)}
-              >{t('Use this file')}</Button>
+            <Button primary fluid loading={fileSaving} disabled={fileSaving || !selectedExistingFileId || !availableFiles.some(file => file.id === selectedExistingFileId)}
+              ><Icon name="check" />{t('Use this file')}</Button>
           </Form>}
       </>}
     </Segment>}</>}
@@ -1629,7 +1638,8 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
       </aside><div className="resolution-voting-matrix-wrap"><div className="resolution-voting-grid">
         {visibleDirectSeats.map(item => {const vote = directVoteBySeat.get(item.seatId); return <button type="button" key={item.seatId}
           className={`resolution-voting-member${vote ? ` vote-${vote.choice === 'ABSTAIN' ? 'abstaining' : vote.choice.toLowerCase()}` : ''}${item.seatId === currentVotingSeatId ? ' is-current' : ''}`}
-          aria-pressed={item.seatId === currentVotingSeatId} onClick={() => canChair && setCurrentVotingSeatId(item.seatId)}>
+          disabled={voteSaving} aria-pressed={item.seatId === currentVotingSeatId}
+          onClick={() => canChair && !submittingVote.current && setCurrentVotingSeatId(item.seatId)}>
           <span className="resolution-voting-status-light" aria-hidden="true" />
           <span className="resolution-voting-member-name"><span>{item.seatDisplayName}</span>
             {item.hasVeto && <span className="resolution-voting-veto-badge">{t('Veto power')}</span>}
@@ -1645,14 +1655,14 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
       <div className="resolution-voting-current"><div className="resolution-voting-current-label">{t('Now voting')}</div>
         <Header as="h2">{currentVotingSeat?.seatDisplayName ?? t('No eligible delegations')}</Header>
         {canChair && <div className="resolution-voting-actions"><div className="resolution-voting-primary-actions">
-          <Button positive content={t('yes')} icon="plus" disabled={!currentVotingSeat}
+          <Button positive content={t('yes')} icon="plus" disabled={!currentVotingSeat || voteSaving}
             onClick={() => void setDirectResolutionVote('FOR')} />
-          <Button negative content={t('no')} icon="remove" disabled={!currentVotingSeat}
+          <Button negative content={t('no')} icon="remove" disabled={!currentVotingSeat || voteSaving}
             onClick={() => void setDirectResolutionVote('AGAINST')} />
           <Button color="yellow" content={t('abstaining')} icon="minus"
-            disabled={!currentVotingSeat || currentVotingSeat.mustVote} onClick={() => void setDirectResolutionVote('ABSTAIN')} />
+            disabled={!currentVotingSeat || currentVotingSeat.mustVote || voteSaving} onClick={() => void setDirectResolutionVote('ABSTAIN')} />
         </div>{directVote.automaticResult === null && <Button basic className="resolution-voting-undo" content={t('Undo')} icon="undo"
-          disabled={votingHistory.length === 0} onClick={() => void undoDirectVote()} />}</div>}
+          disabled={votingHistory.length === 0 || voteSaving} onClick={() => void undoDirectVote()} />}</div>}
       </div><div className="resolution-voting-outcome">
         {directVote.automaticResult === 'PASSED' && <Statistic className="resolution-result outcome-passed">
           <Statistic.Value>{t('Passed')}</Statistic.Value></Statistic>}

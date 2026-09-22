@@ -85,7 +85,7 @@ export class Stage8ArchiveService {
   async exportCommittee(auth: AuthenticatedSession, committeeId: string): Promise<{
     fileName: string; content: Readable;
   }> {
-    if (auth.user.mustChangePassword) throw new AppError({code: 'FORBIDDEN', message: 'Change the temporary password first.'});
+    if (auth.user.mustChangePassword) throw new AppError({reason: 'PASSWORD_CHANGE_REQUIRED', code: 'FORBIDDEN', message: 'Change the temporary password first.'});
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
@@ -93,7 +93,7 @@ export class Stage8ArchiveService {
         visibility,operation_mode,status,revision,created_at,archived_at,committee_language,content_snapshot FROM committees WHERE id=$1`, [committeeId]);
       const committee = found.rows[0];
       if (!committee || committee.owner_user_id !== auth.user.id) throw new AppError({code: 'NOT_FOUND', message: 'Committee not found.'});
-      if (committee.status !== 'ARCHIVED') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Archive the committee before exporting it.'});
+      if (committee.status !== 'ARCHIVED') throw new AppError({reason: 'ARCHIVE_BEFORE_EXPORT', code: 'RESOURCE_CONFLICT', message: 'Archive the committee before exporting it.'});
       return {fileName: `quorum-committee-${committee.id}.jsonl`, content: this.stream(client, committee)};
     } catch (error) {
       await client.query('ROLLBACK').catch(() => undefined); client.release(); throw error;

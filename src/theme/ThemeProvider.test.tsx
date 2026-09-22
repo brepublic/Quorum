@@ -126,6 +126,18 @@ describe('ThemeProvider runtime', () => {
     expect(portal.querySelector('[aria-label="Appearance themes"]')).not.toBeNull();
   });
 
+  it('shows a non-empty size error when an imported theme exceeds 3 MB', async () => {
+    await act(async () => root.render(<MemoryRouter><ThemeProvider><Segment>Content</Segment></ThemeProvider></MemoryRouter>));
+    await act(async () => (document.querySelector('.quorum-theme-launcher') as HTMLButtonElement).click());
+    const input = document.querySelector<HTMLInputElement>('.quorum-theme-manager input[type="file"]')!;
+    expect(input).not.toBeNull();
+    const file = new File(['{}'], 'theme.json', {type: 'application/json'});
+    Object.defineProperty(file, 'size', {value: 3 * 1024 * 1024 + 1});
+    Object.defineProperty(input, 'files', {configurable: true, value: [file]});
+    await act(async () => input.dispatchEvent(new Event('change', {bubbles: true})));
+    expect(document.querySelector('.quorum-theme-manager .error.message')?.textContent).toContain('3 MB');
+  });
+
   it('loads themes and the active selection from legacy local-storage keys', async () => {
     window.localStorage.clear();
     window.localStorage.setItem('quorum-themes-v1', JSON.stringify([legacyStoredTheme]));

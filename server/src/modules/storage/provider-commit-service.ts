@@ -17,7 +17,7 @@ export class Stage6ProviderCommitService {
       FROM file_uploads u JOIN storage_bindings b ON b.id=u.storage_binding_id WHERE u.id=$1`, [uploadId]);
     if (!result.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Upload not found.'});
     if (result.rows[0].provider_type === 'CHAIR_AGENT') {
-      if (!this.chairAgent) throw new AppError({code: 'SERVICE_NOT_READY', message: 'Chair Agent storage is unavailable.'});
+      if (!this.chairAgent) throw new AppError({reason: 'CHAIR_STORAGE_UNAVAILABLE', expose: true, code: 'SERVICE_NOT_READY', message: 'Chair Agent storage is unavailable.'});
       return this.chairAgent.queueUpload(auth, uploadId, body, idempotencyKey, context);
     }
     return result.rows[0].provider_type === 'S3_COMPATIBLE'

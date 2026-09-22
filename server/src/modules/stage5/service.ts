@@ -92,21 +92,21 @@ interface ResolutionRow extends QueryResultRow {
 
 function positiveInteger(value: unknown, name: string): number {
   if (!Number.isSafeInteger(value) || Number(value) < 1) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
+    throw new AppError({reason: 'POSITIVE_INTEGER_REQUIRED', code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
   }
   return Number(value);
 }
 
 function uuid(value: unknown, name: string): string {
   if (typeof value !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
+    throw new AppError({reason: 'INVALID_REFERENCE', code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
   }
   return value;
 }
 
 function text(value: unknown, name: string, max: number, allowEmpty = false): string {
   if (typeof value !== 'string' || value.length > max || (!allowEmpty && !value.trim())) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
+    throw new AppError({reason: allowEmpty ? 'INVALID_TEXT' : 'REQUIRED_TEXT', params: {max: max}, code: 'VALIDATION_FAILED', message: `${name} is invalid.`});
   }
   return allowEmpty ? value : value.trim();
 }
@@ -123,10 +123,10 @@ function motionDurationMs(parameters: Record<string, unknown>, durationKey = 'ca
   unitKey = 'caucusUnit'): number {
   const duration = parameters[durationKey]; const unit = parameters[unitKey];
   if (typeof duration !== 'number' || !Number.isFinite(duration) || duration <= 0 || !['sec', 'min'].includes(unit as string)) {
-    throw new AppError({code: 'VALIDATION_FAILED', message: 'Motion duration is invalid.'});
+    throw new AppError({reason: 'INVALID_MOTION_DURATION', code: 'VALIDATION_FAILED', message: 'Motion duration is invalid.'});
   }
   const milliseconds = duration * (unit === 'min' ? 60_000 : 1_000);
-  if (!Number.isSafeInteger(milliseconds)) throw new AppError({code: 'VALIDATION_FAILED', message: 'Motion duration is invalid.'});
+  if (!Number.isSafeInteger(milliseconds)) throw new AppError({reason: 'INVALID_MOTION_DURATION', code: 'VALIDATION_FAILED', message: 'Motion duration is invalid.'});
   return milliseconds;
 }
 
@@ -273,7 +273,7 @@ async function requirePublishedDocumentFile(client: PoolClient, versionId: strin
   const source = (await client.query(`SELECT v.content_file_entry_id,e.status FROM document_versions v
     LEFT JOIN file_entries linked ON linked.id=v.content_file_entry_id
     LEFT JOIN file_entries e ON e.id=coalesce(linked.merged_into_file_entry_id,linked.id) WHERE v.id=$1`, [versionId])).rows[0];
-  if (source?.content_file_entry_id && source.status !== 'PUBLISHED') throw new AppError({code: 'RESOURCE_CONFLICT',
+  if (source?.content_file_entry_id && source.status !== 'PUBLISHED') throw new AppError({reason: 'DOCUMENT_FILE_NOT_PUBLISHED', code: 'RESOURCE_CONFLICT',
     message: 'Publish the document content file before continuing.', details: {reason: 'DOCUMENT_FILE_NOT_PUBLISHED'}});
 }
 
@@ -388,13 +388,13 @@ const documentRuleIds: Record<ProceedingDocumentKind, Record<'PUBLISH' | 'POSTPO
 
 async function frozenDocumentRule(client: PoolClient, row: DocumentRow, suppliedId: string, expectedId: string,
   now: Date): Promise<FrozenRuleEvaluation> {
-  if (suppliedId !== expectedId) throw new AppError({code: 'VALIDATION_FAILED', message: 'Document rule action is invalid.'});
+  if (suppliedId !== expectedId) throw new AppError({reason: 'INVALID_DOCUMENT_ACTION', code: 'VALIDATION_FAILED', message: 'Document rule action is invalid.'});
   const packageResult = await client.query<{definition: {motions?: unknown}}>(`SELECT definition FROM rule_package_versions
     WHERE id=$1 AND status='PUBLISHED'`, [row.rule_package_version_id]);
   const motions = packageResult.rows[0]?.definition.motions;
   const matches = Array.isArray(motions) ? motions.filter(item => item && typeof item === 'object'
     && (item as {id?: unknown}).id === suppliedId) : [];
-  if (matches.length !== 1) throw new AppError({code: 'VALIDATION_FAILED',
+  if (matches.length !== 1) throw new AppError({reason: 'DOCUMENT_ACTION_RULE_BLOCKED', code: 'VALIDATION_FAILED',
     message: 'Document action is not available in the frozen rule package.'});
   return freezeRuleEvaluation({packageVersionId: row.rule_package_version_id,
     definition: structuredClone(matches[0]) as Record<string, unknown>,
@@ -407,16 +407,16 @@ async function representedDocumentSeat(client: PoolClient, committee: Stage4Comm
   const chair = await isChair(client, committee.id, auth.user.id); let seatId: string | null;
   if (chair) seatId = uuid(requestedSeatId, 'Represented seat ID');
   else {
-    if (committee.operation_mode === 'CHAIR_OPERATED') throw new AppError({code: 'FORBIDDEN',
+    if (committee.operation_mode === 'CHAIR_OPERATED') throw new AppError({reason: 'CHAIR_OPERATED_ACTION', code: 'FORBIDDEN',
       message: 'Chair capability is required in Chair-operated mode.'});
-    if (requestedSeatId !== undefined) throw new AppError({code: 'FORBIDDEN', message: 'A delegate cannot choose another seat.'});
+    if (requestedSeatId !== undefined) throw new AppError({reason: 'OWN_SEAT_ONLY', code: 'FORBIDDEN', message: 'A delegate cannot choose another seat.'});
     seatId = await activeSeat(client, committee.id, auth.user.id);
   }
-  if (!seatId) throw new AppError({code: 'FORBIDDEN', message: 'An active seat assignment is required.'});
+  if (!seatId) throw new AppError({reason: 'ACTIVE_SEAT_REQUIRED', code: 'FORBIDDEN', message: 'An active seat assignment is required.'});
   const seat = await client.query<{display_name: string}>(`SELECT s.display_name FROM committee_seats s
     JOIN current_attendance a ON a.seat_id=s.id AND a.meeting_session_id=$3 AND a.state='PRESENT'
     WHERE s.id=$1 AND s.committee_id=$2 AND s.active=true`, [seatId, committee.id, meetingSessionId]);
-  if (!seat.rows[0]) throw new AppError({code: 'FORBIDDEN', message: 'The represented seat is not present.'});
+  if (!seat.rows[0]) throw new AppError({reason: 'SEAT_NOT_PRESENT', code: 'FORBIDDEN', message: 'The represented seat is not present.'});
   return {chair, seatId, displayName: seat.rows[0].display_name};
 }
 
@@ -467,7 +467,7 @@ export class Stage5Service {
     requireBusinessIdentity(auth); assertExactBody(input, ['ownerType', 'ownerId', 'durationMs']);
     const ownerType = input.ownerType as TimerOwnerType;
     if (!['COMMITTEE', 'SPEAKER_LIST', 'CAUCUS', 'SPEECH'].includes(ownerType)) {
-      throw new AppError({code: 'VALIDATION_FAILED', message: 'Timer owner type is invalid.'});
+      throw new AppError({reason: 'INVALID_TIMER_OWNER', code: 'VALIDATION_FAILED', message: 'Timer owner type is invalid.'});
     }
     const ownerId = uuid(input.ownerId, 'Timer owner ID'); const durationMs = positiveInteger(input.durationMs, 'Duration');
     return idempotentTransaction({pool: this.pool, auth, route: `POST /api/v1/committees/${committeeId}/timers`,
@@ -506,18 +506,18 @@ export class Stage5Service {
       let running = current.running; let startedAt: Date | null = current.started_at; let nextRemaining = remaining;
       let expiredAt: Date | null = current.expired_at;
       if (command === 'start' || command === 'resume') {
-        if (current.running) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The timer is already running.'});
-        if (remaining <= 0) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Reset or extend the timer before starting it.'});
+        if (current.running) throw new AppError({reason: 'TIMER_ALREADY_RUNNING', code: 'RESOURCE_CONFLICT', message: 'The timer is already running.'});
+        if (remaining <= 0) throw new AppError({reason: 'TIMER_EXHAUSTED', code: 'RESOURCE_CONFLICT', message: 'Reset or extend the timer before starting it.'});
         running = true; startedAt = now; expiredAt = null;
       } else if (command === 'pause') {
-        if (!current.running) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The timer is not running.'});
+        if (!current.running) throw new AppError({reason: 'TIMER_NOT_RUNNING', code: 'RESOURCE_CONFLICT', message: 'The timer is not running.'});
         running = false; startedAt = null;
       } else if (command === 'extend') {
         nextRemaining = remaining + (durationMs as number); startedAt = current.running ? now : null; expiredAt = null;
       } else if (command === 'reset') {
         running = false; startedAt = null; nextRemaining = durationMs as number; expiredAt = null;
       } else {
-        if (!current.running || remaining > 0) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The timer has not expired.'});
+        if (!current.running || remaining > 0) throw new AppError({reason: 'TIMER_NOT_EXPIRED', code: 'RESOURCE_CONFLICT', message: 'The timer has not expired.'});
         running = false; startedAt = null; nextRemaining = 0; expiredAt = now;
       }
       const updated = await client.query<TimerRow>(`UPDATE timer_states SET running=$2,started_at=$3,
@@ -543,18 +543,18 @@ export class Stage5Service {
       'delegatesCanQueue']);
     const meetingSessionId = uuid(input.meetingSessionId, 'Meeting session ID'); const kind = input.kind as SpeakerListKind;
     if (!['GENERAL', 'MODERATED_CAUCUS'].includes(kind)) {
-      throw new AppError({code: 'VALIDATION_FAILED', message: 'Speaker list kind is invalid.'});
+      throw new AppError({reason: 'INVALID_SPEAKER_LIST_KIND', code: 'VALIDATION_FAILED', message: 'Speaker list kind is invalid.'});
     }
     const customTitle = input.customTitle === undefined || input.customTitle === null ? null : text(input.customTitle, 'Name', 200);
     const topic = text(input.topic ?? '', 'Topic', 500, kind === 'GENERAL');
     const defaultSpeechMs = positiveInteger(input.defaultSpeechMs, 'Speech duration');
     const delegatesCanQueue = input.delegatesCanQueue ?? false;
     if (typeof delegatesCanQueue !== 'boolean') {
-      throw new AppError({code: 'VALIDATION_FAILED', message: 'Delegate queue setting is invalid.'});
+      throw new AppError({reason: 'INVALID_DELEGATE_QUEUE_SETTING', code: 'VALIDATION_FAILED', message: 'Delegate queue setting is invalid.'});
     }
     const totalDurationMs = kind === 'MODERATED_CAUCUS' ? positiveInteger(input.totalDurationMs, 'Caucus duration') : null;
     if (totalDurationMs !== null && totalDurationMs < defaultSpeechMs) {
-      throw new AppError({code: 'VALIDATION_FAILED', message: 'Caucus duration must allow one complete speech.'});
+      throw new AppError({reason: 'CAUCUS_SHORTER_THAN_SPEECH', code: 'VALIDATION_FAILED', message: 'Caucus duration must allow one complete speech.'});
     }
     return idempotentTransaction({pool: this.pool, auth, route: `POST /api/v1/committees/${committeeId}/speaker-lists`,
       key, request: input, status: 201, work: async client => {
@@ -563,11 +563,11 @@ export class Stage5Service {
         const session = await client.query<{active_rule_package_version_id: string; status: string}>(`SELECT status,
           active_rule_package_version_id FROM meeting_sessions WHERE id=$1 AND committee_id=$2`, [meetingSessionId, committeeId]);
         if (!session.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Meeting session not found.'});
-        if (session.rows[0].status !== 'OPEN') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Meeting session is closed.'});
+        if (session.rows[0].status !== 'OPEN') throw new AppError({reason: 'MEETING_CLOSED', code: 'RESOURCE_CONFLICT', message: 'Meeting session is closed.'});
         if (kind === 'GENERAL') {
           const existing = await client.query('SELECT 1 FROM speaker_lists WHERE meeting_session_id=$1 AND kind=\'GENERAL\'',
             [meetingSessionId]);
-          if (existing.rowCount) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The main speakers list already exists.'});
+          if (existing.rowCount) throw new AppError({reason: 'GENERAL_LIST_ALREADY_EXISTS', code: 'RESOURCE_CONFLICT', message: 'The main speakers list already exists.'});
         }
         const listId = randomUUID(); const speechTimerId = randomUUID(); const caucusId = randomUUID();
         const totalTimerId = kind === 'MODERATED_CAUCUS' ? randomUUID() : null;
@@ -603,7 +603,7 @@ export class Stage5Service {
     const baseRevision = positiveInteger(input.baseRevision, 'Base revision');
     if (input.customTitle === undefined && input.topic === undefined && input.defaultSpeechMs === undefined
       && input.delegatesCanQueue === undefined) {
-      throw new AppError({code: 'VALIDATION_FAILED', message: 'A speaker list change is required.'});
+      throw new AppError({reason: 'SPEAKER_SETTINGS_UNCHANGED', code: 'VALIDATION_FAILED', message: 'A speaker list change is required.'});
     }
     return transaction(this.pool, async client => {
       const located = await client.query<{committee_id: string}>('SELECT committee_id FROM speaker_lists WHERE id=$1', [listId]);
@@ -621,7 +621,7 @@ export class Stage5Service {
         : positiveInteger(input.defaultSpeechMs, 'Speech duration');
       const delegatesCanQueue = input.delegatesCanQueue === undefined ? list.delegates_can_queue : input.delegatesCanQueue;
       if (typeof delegatesCanQueue !== 'boolean') {
-        throw new AppError({code: 'VALIDATION_FAILED', message: 'Delegate queue setting is invalid.'});
+        throw new AppError({reason: 'INVALID_DELEGATE_QUEUE_SETTING', code: 'VALIDATION_FAILED', message: 'Delegate queue setting is invalid.'});
       }
       const updated = await client.query<SpeakerListRow>(`UPDATE speaker_lists SET custom_title=$2,topic=$3,default_speech_ms=$4,
         delegates_can_queue=$5,revision=revision+1 WHERE id=$1 RETURNING *`,
@@ -659,7 +659,7 @@ export class Stage5Service {
     const baseRevision = positiveInteger(input.baseRevision, 'Base revision');
     const status = input.status as SpeakerList['status'];
     if (!['OPEN', 'CLOSED'].includes(status)) {
-      throw new AppError({code: 'VALIDATION_FAILED', message: 'Speaker list status is invalid.'});
+      throw new AppError({reason: 'INVALID_SPEAKER_LIST_STATUS', code: 'VALIDATION_FAILED', message: 'Speaker list status is invalid.'});
     }
     return transaction(this.pool, async client => {
       const located = await client.query<{committee_id: string}>('SELECT committee_id FROM speaker_lists WHERE id=$1', [listId]);
@@ -735,7 +735,7 @@ export class Stage5Service {
     requireBusinessIdentity(auth); assertExactBody(input, ['seatId', 'stance']);
     const stance = (input.stance ?? 'NEUTRAL') as SpeakerStance;
     if (!['FOR', 'NEUTRAL', 'AGAINST'].includes(stance)) {
-      throw new AppError({code: 'VALIDATION_FAILED', message: 'Speaker stance is invalid.'});
+      throw new AppError({reason: 'INVALID_SPEAKER_STANCE', code: 'VALIDATION_FAILED', message: 'Speaker stance is invalid.'});
     }
     return idempotentTransaction({pool: this.pool, auth, route: `POST /api/v1/speaker-lists/${listId}/queue`,
       key, request: input, status: 201, work: async client => {
@@ -744,25 +744,25 @@ export class Stage5Service {
         const committee = await lockedCommittee(client, located.rows[0].committee_id); requireProceedingsActive(committee);
         const listResult = await client.query<SpeakerListRow>('SELECT * FROM speaker_lists WHERE id=$1 FOR UPDATE', [listId]);
         const list = listResult.rows[0] as SpeakerListRow;
-        if (list.status !== 'OPEN') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Speaker list is closed.'});
+        if (list.status !== 'OPEN') throw new AppError({reason: 'SPEAKER_LIST_CLOSED', code: 'RESOURCE_CONFLICT', message: 'Speaker list is closed.'});
         const chair = await isChair(client, committee.id, auth.user.id); const requested = input.seatId;
         let seatId: string | null;
         if (chair) seatId = uuid(requested, 'Seat ID');
         else {
           if (committee.operation_mode === 'CHAIR_OPERATED') {
-            throw new AppError({code: 'FORBIDDEN', message: 'Chair capability is required in Chair-operated mode.'});
+            throw new AppError({reason: 'CHAIR_OPERATED_ACTION', code: 'FORBIDDEN', message: 'Chair capability is required in Chair-operated mode.'});
           }
           if (!list.delegates_can_queue) {
-            throw new AppError({code: 'FORBIDDEN', message: 'Delegate self-queueing is disabled for this speaker list.'});
+            throw new AppError({reason: 'DELEGATE_QUEUE_DISABLED', code: 'FORBIDDEN', message: 'Delegate self-queueing is disabled for this speaker list.'});
           }
-          if (requested !== undefined) throw new AppError({code: 'FORBIDDEN', message: 'A delegate cannot choose another seat.'});
+          if (requested !== undefined) throw new AppError({reason: 'OWN_SEAT_ONLY', code: 'FORBIDDEN', message: 'A delegate cannot choose another seat.'});
           seatId = await activeSeat(client, committee.id, auth.user.id);
         }
-        if (!seatId) throw new AppError({code: 'FORBIDDEN', message: 'An active seat assignment is required.'});
+        if (!seatId) throw new AppError({reason: 'ACTIVE_SEAT_REQUIRED', code: 'FORBIDDEN', message: 'An active seat assignment is required.'});
         const seat = await client.query<{display_name: string}>(`SELECT s.display_name FROM committee_seats s
           JOIN current_attendance a ON a.seat_id=s.id AND a.meeting_session_id=$3 AND a.state='PRESENT'
           WHERE s.id=$1 AND s.committee_id=$2 AND s.active=true`, [seatId, committee.id, list.meeting_session_id]);
-        if (!seat.rows[0]) throw new AppError({code: 'VALIDATION_FAILED', message: 'Only a present active seat may join the queue.'});
+        if (!seat.rows[0]) throw new AppError({reason: 'PRESENT_SEAT_REQUIRED', code: 'VALIDATION_FAILED', message: 'Only a present active seat may join the queue.'});
         const duplicate = await client.query(`SELECT 1 FROM speaker_queue_entries WHERE speaker_list_id=$1 AND seat_id=$2
           AND status IN ('QUEUED','CURRENT')`, [listId, seatId]);
         if (duplicate.rowCount) throw new AppError({code: 'RESOURCE_CONFLICT', reason: 'SPEAKER_ALREADY_QUEUED',
@@ -796,14 +796,14 @@ export class Stage5Service {
       await requireChair(client, committee, auth.user.id);
       const listResult = await client.query<SpeakerListRow>('SELECT * FROM speaker_lists WHERE id=$1 FOR UPDATE', [listId]);
       const list = listResult.rows[0] as SpeakerListRow;
-      if (list.status !== 'OPEN') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Speaker list is closed.'});
+      if (list.status !== 'OPEN') throw new AppError({reason: 'SPEAKER_LIST_CLOSED', code: 'RESOURCE_CONFLICT', message: 'Speaker list is closed.'});
       if (list.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT',
         message: 'This speaker list changed since it was loaded.', details: {currentRevision: list.revision}});
       const entryResult = await client.query<SpeakerEntryRow>(`SELECT * FROM speaker_queue_entries
         WHERE id=$1 AND speaker_list_id=$2 FOR UPDATE`, [entryId, listId]);
       const entry = entryResult.rows[0];
       if (!entry || !['QUEUED', 'CURRENT'].includes(entry.status)) {
-        throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The speaker is no longer in the active queue.'});
+        throw new AppError({reason: 'SPEAKER_NO_LONGER_QUEUED', code: 'RESOURCE_CONFLICT', message: 'The speaker is no longer in the active queue.'});
       }
       const now = this.now();
       if (entry.status === 'CURRENT') {
@@ -889,7 +889,7 @@ export class Stage5Service {
     requireBusinessIdentity(auth); assertExactBody(input, ['baseRevision', 'entryIds']);
     const baseRevision = positiveInteger(input.baseRevision, 'Base revision');
     if (!Array.isArray(input.entryIds) || input.entryIds.some(id => typeof id !== 'string')) {
-      throw new AppError({code: 'VALIDATION_FAILED', message: 'Queue order is invalid.'});
+      throw new AppError({reason: 'INVALID_QUEUE_ORDER', code: 'VALIDATION_FAILED', message: 'Queue order is invalid.'});
     }
     const entryIds = input.entryIds as string[];
     return transaction(this.pool, async client => {
@@ -899,14 +899,14 @@ export class Stage5Service {
       await requireChair(client, committee, auth.user.id);
       const listResult = await client.query<SpeakerListRow>('SELECT * FROM speaker_lists WHERE id=$1 FOR UPDATE', [listId]);
       const list = listResult.rows[0] as SpeakerListRow;
-      if (list.status !== 'OPEN') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Speaker list is closed.'});
+      if (list.status !== 'OPEN') throw new AppError({reason: 'SPEAKER_LIST_CLOSED', code: 'RESOURCE_CONFLICT', message: 'Speaker list is closed.'});
       if (list.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT',
         message: 'This speaker list changed since it was loaded.', details: {currentRevision: list.revision}});
       const queued = await client.query<{id: string}>(`SELECT id FROM speaker_queue_entries
         WHERE speaker_list_id=$1 AND status='QUEUED' ORDER BY position`, [listId]);
       if (entryIds.length !== queued.rowCount || new Set(entryIds).size !== entryIds.length
         || queued.rows.some(row => !entryIds.includes(row.id))) {
-        throw new AppError({code: 'VALIDATION_FAILED', message: 'Queue order must contain every waiting speaker once.'});
+        throw new AppError({reason: 'INVALID_QUEUE_ORDER', code: 'VALIDATION_FAILED', message: 'Queue order must contain every waiting speaker once.'});
       }
       await client.query(`UPDATE speaker_queue_entries SET position=position+1000000
         WHERE speaker_list_id=$1 AND status='QUEUED'`, [listId]);
@@ -936,15 +936,15 @@ export class Stage5Service {
       await requireChair(client, committee, auth.user.id);
       const listResult = await client.query<SpeakerListRow>('SELECT * FROM speaker_lists WHERE id=$1 FOR UPDATE', [listId]);
       const list = listResult.rows[0] as SpeakerListRow;
-      if (list.status !== 'OPEN') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Speaker list is closed.'});
+      if (list.status !== 'OPEN') throw new AppError({reason: 'SPEAKER_LIST_CLOSED', code: 'RESOURCE_CONFLICT', message: 'Speaker list is closed.'});
       if (list.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT',
         message: 'This speaker list changed since it was loaded.', details: {currentRevision: list.revision}});
       const speechTimer = await client.query<TimerRow>('SELECT * FROM timer_states WHERE id=$1 FOR UPDATE', [list.speech_timer_id]);
-      if (speechTimer.rows[0]?.running) throw new AppError({code: 'RESOURCE_CONFLICT',
+      if (speechTimer.rows[0]?.running) throw new AppError({reason: 'PAUSE_SPEECH_FIRST', code: 'RESOURCE_CONFLICT',
         message: 'Pause the current speech before advancing the list.'});
       const unfinishedSpeech = await client.query(`SELECT 1 FROM speeches WHERE speaker_list_id=$1
         AND status IN ('READY','RUNNING','PAUSED')`, [listId]);
-      if (unfinishedSpeech.rowCount) throw new AppError({code: 'RESOURCE_CONFLICT',
+      if (unfinishedSpeech.rowCount) throw new AppError({reason: 'COMPLETE_SPEECH_FIRST', code: 'RESOURCE_CONFLICT',
         message: 'Complete the current speech before advancing the list.'});
       const now = this.now();
       if (list.current_entry_id) await client.query(`UPDATE speaker_queue_entries SET status='COMPLETED',completed_at=$2
@@ -1010,7 +1010,7 @@ export class Stage5Service {
       await requireChair(client, committee, auth.user.id);
       const listResult = await client.query<SpeakerListRow>('SELECT * FROM speaker_lists WHERE id=$1 FOR UPDATE', [listId]);
       const list = listResult.rows[0] as SpeakerListRow;
-      if (list.status !== 'OPEN' || !list.current_entry_id) throw new AppError({code: 'RESOURCE_CONFLICT',
+      if (list.status !== 'OPEN' || !list.current_entry_id) throw new AppError({reason: 'NO_CURRENT_SPEAKER', code: 'RESOURCE_CONFLICT',
         message: 'The speaker list has no current speaker.'});
       const timerResult = await client.query<TimerRow>('SELECT * FROM timer_states WHERE id=$1 FOR UPDATE', [list.speech_timer_id]);
       const timer = timerResult.rows[0] as TimerRow; const now = this.now(); const remaining = remainingTimerMs(timer, now);
@@ -1023,15 +1023,15 @@ export class Stage5Service {
         AND status IN ('READY','RUNNING','PAUSED') FOR UPDATE`, [listId]);
       let speech = activeResult.rows[0];
       if (command === 'start') {
-        if (speech) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'A speech is already active.'});
+        if (speech) throw new AppError({reason: 'SPEECH_ALREADY_ACTIVE', code: 'RESOURCE_CONFLICT', message: 'A speech is already active.'});
         if (list.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT',
           message: 'This speaker list changed since it was loaded.', details: {currentRevision: list.revision}});
         if (timer.running || remaining <= 0 || (totalTimer && (totalTimer.running || (totalRemaining ?? 0) <= 0))) {
-          throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The speech timers cannot start.'});
+          throw new AppError({reason: 'SPEECH_TIMERS_NOT_READY', code: 'RESOURCE_CONFLICT', message: 'The speech timers cannot start.'});
         }
         const entry = await client.query<{seat_id: string; seat_display_name: string}>(`SELECT seat_id,seat_display_name
           FROM speaker_queue_entries WHERE id=$1 AND status='CURRENT'`, [list.current_entry_id]);
-        if (!entry.rows[0]) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The current speaker is invalid.'});
+        if (!entry.rows[0]) throw new AppError({reason: 'CURRENT_SPEAKER_CHANGED', code: 'RESOURCE_CONFLICT', message: 'The current speaker is invalid.'});
         const id = randomUUID(); const inserted = await client.query<SpeechRow>(`INSERT INTO speeches
           (id,committee_id,speaker_list_id,queue_entry_id,seat_id,seat_display_name,kind,status,can_yield,
            actor_user_id,on_behalf_of_seat_id,started_at)
@@ -1040,18 +1040,18 @@ export class Stage5Service {
           auth.user.id, now]);
         speech = inserted.rows[0] as SpeechRow;
       } else {
-        if (!speech) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'There is no active speech.'});
+        if (!speech) throw new AppError({reason: 'NO_ACTIVE_SPEECH', code: 'RESOURCE_CONFLICT', message: 'There is no active speech.'});
         if (speech.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT',
           message: 'This speech changed since it was loaded.', details: {currentRevision: speech.revision}});
         if (command === 'pause' && (speech.status !== 'RUNNING' || !timer.running)) {
-          throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The speech is not running.'});
+          throw new AppError({reason: 'SPEECH_NOT_RUNNING', code: 'RESOURCE_CONFLICT', message: 'The speech is not running.'});
         }
         if (command === 'resume' && (!['READY', 'PAUSED'].includes(speech.status) || timer.running || remaining <= 0
           || (totalTimer && (totalTimer.running || (totalRemaining ?? 0) <= 0)))) {
-          throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The speech cannot resume.'});
+          throw new AppError({reason: 'SPEECH_CANNOT_RESUME', code: 'RESOURCE_CONFLICT', message: 'The speech cannot resume.'});
         }
         if (command === 'complete' && speech.status === 'COMPLETED') {
-          throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The speech is already complete.'});
+          throw new AppError({reason: 'SPEECH_ALREADY_COMPLETE', code: 'RESOURCE_CONFLICT', message: 'The speech is already complete.'});
         }
         const nextStatus = command === 'pause' ? 'PAUSED' : command === 'resume' ? 'RUNNING' : 'COMPLETED';
         const updated = await client.query<SpeechRow>(`UPDATE speeches SET status=$2::speech_status,revision=revision+1,
@@ -1107,7 +1107,7 @@ export class Stage5Service {
     requireBusinessIdentity(auth); assertExactBody(input, ['baseRevision', 'type', 'targetSeatId']);
     const baseRevision = positiveInteger(input.baseRevision, 'Base revision'); const type = input.type as YieldType;
     if (!['CHAIR', 'SEAT', 'QUESTIONS', 'COMMENTS'].includes(type)) {
-      throw new AppError({code: 'VALIDATION_FAILED', message: 'Yield type is invalid.'});
+      throw new AppError({reason: 'INVALID_YIELD_TYPE', code: 'VALIDATION_FAILED', message: 'Yield type is invalid.'});
     }
     return transaction(this.pool, async client => {
       const located = await client.query<{committee_id: string; speaker_list_id: string}>(`SELECT committee_id,speaker_list_id
@@ -1124,7 +1124,7 @@ export class Stage5Service {
         message: 'This speech changed since it was loaded.', details: {currentRevision: speech.revision}});
       const timerResult = await client.query<TimerRow>('SELECT * FROM timer_states WHERE id=$1 FOR UPDATE', [list.speech_timer_id]);
       const timer = timerResult.rows[0] as TimerRow; const now = this.now(); const remaining = remainingTimerMs(timer, now);
-      if (!canYieldSpeech(speech, remaining, timer.running)) throw new AppError({code: 'RESOURCE_CONFLICT',
+      if (!canYieldSpeech(speech, remaining, timer.running)) throw new AppError({code: 'RESOURCE_CONFLICT', reason: speech.kind === 'INHERITED' ? 'INHERITED_SPEECH_CANNOT_YIELD' : 'PAUSE_BEFORE_YIELD',
         message: speech.kind === 'INHERITED' ? 'Inherited speaking time cannot be yielded again.'
           : 'Pause the speech with more than one second remaining before yielding.'});
       let targetSeatId: string | null = null; let targetName = speech.seat_display_name;
@@ -1133,12 +1133,12 @@ export class Stage5Service {
         const target = await client.query<{display_name: string}>(`SELECT s.display_name FROM committee_seats s
           JOIN current_attendance a ON a.seat_id=s.id AND a.meeting_session_id=$3 AND a.state='PRESENT'
           WHERE s.id=$1 AND s.committee_id=$2 AND s.active=true`, [targetSeatId, committee.id, list.meeting_session_id]);
-        if (!target.rows[0]) throw new AppError({code: 'VALIDATION_FAILED', message: 'Yield target seat is not present.'});
-        if (targetSeatId === speech.seat_id) throw new AppError({code: 'VALIDATION_FAILED',
+        if (!target.rows[0]) throw new AppError({reason: 'SEAT_NOT_PRESENT', code: 'VALIDATION_FAILED', message: 'Yield target seat is not present.'});
+        if (targetSeatId === speech.seat_id) throw new AppError({reason: 'YIELD_TO_SELF', code: 'VALIDATION_FAILED',
           message: 'A speaker cannot yield to the same seat.'});
         targetName = target.rows[0].display_name;
       } else if (input.targetSeatId !== undefined) {
-        throw new AppError({code: 'VALIDATION_FAILED', message: 'This yield type does not accept a target seat.'});
+        throw new AppError({reason: 'YIELD_TARGET_UNEXPECTED', code: 'VALIDATION_FAILED', message: 'This yield type does not accept a target seat.'});
       }
       if (type === 'SEAT') {
         const offered = await client.query<SpeechRow>(`UPDATE speeches SET yield_type='SEAT',yield_target_seat_id=$2,
@@ -1236,7 +1236,7 @@ export class Stage5Service {
     const baseRevision = positiveInteger(input.baseRevision, 'Base revision');
     const decision = input.decision as 'ACCEPT' | 'REJECT';
     if (!['ACCEPT', 'REJECT'].includes(decision)) {
-      throw new AppError({code: 'VALIDATION_FAILED', message: 'Yield decision is invalid.'});
+      throw new AppError({reason: 'INVALID_YIELD_DECISION', code: 'VALIDATION_FAILED', message: 'Yield decision is invalid.'});
     }
     return transaction(this.pool, async client => {
       const located = await client.query<{committee_id: string; speaker_list_id: string}>(`SELECT committee_id,speaker_list_id
@@ -1253,7 +1253,7 @@ export class Stage5Service {
         message: 'This speech changed since it was loaded.', details: {currentRevision: speech.revision}});
       if (speech.status !== 'PAUSED' || speech.yield_type !== 'SEAT' || speech.yield_decision_status !== 'PENDING'
         || !speech.yield_target_seat_id) {
-        throw new AppError({code: 'RESOURCE_CONFLICT', message: 'There is no pending delegate yield to decide.'});
+        throw new AppError({reason: 'NO_PENDING_YIELD', code: 'RESOURCE_CONFLICT', message: 'There is no pending delegate yield to decide.'});
       }
       const timerResult = await client.query<TimerRow>('SELECT * FROM timer_states WHERE id=$1 FOR UPDATE', [list.speech_timer_id]);
       const timer = timerResult.rows[0] as TimerRow; const now = this.now(); const remaining = remainingTimerMs(timer, now);
@@ -1271,7 +1271,7 @@ export class Stage5Service {
           JOIN current_attendance a ON a.seat_id=s.id AND a.meeting_session_id=$3 AND a.state='PRESENT'
           WHERE s.id=$1 AND s.committee_id=$2 AND s.active=true`,
         [speech.yield_target_seat_id, committee.id, list.meeting_session_id]);
-        if (!target.rows[0]) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The target seat is no longer present.'});
+        if (!target.rows[0]) throw new AppError({reason: 'SEAT_NOT_PRESENT', code: 'RESOURCE_CONFLICT', message: 'The target seat is no longer present.'});
         inheritedId = randomUUID();
         await client.query(`INSERT INTO speeches
           (id,committee_id,speaker_list_id,queue_entry_id,seat_id,seat_display_name,kind,status,inherited_from_speech_id,
@@ -1322,7 +1322,7 @@ export class Stage5Service {
     context: Stage4Context): Promise<SpeechRecord> {
     requireBusinessIdentity(auth); assertExactBody(input, ['type', 'content', 'seatId']);
     const type = input.type as 'QUESTION' | 'COMMENT';
-    if (!['QUESTION', 'COMMENT'].includes(type)) throw new AppError({code: 'VALIDATION_FAILED', message: 'Contribution type is invalid.'});
+    if (!['QUESTION', 'COMMENT'].includes(type)) throw new AppError({reason: 'INVALID_CONTRIBUTION_TYPE', code: 'VALIDATION_FAILED', message: 'Contribution type is invalid.'});
     const content = text(input.content, 'Contribution', 4000);
     return transaction(this.pool, async client => {
       const located = await client.query<{committee_id: string; speaker_list_id: string}>(`SELECT committee_id,speaker_list_id
@@ -1333,20 +1333,20 @@ export class Stage5Service {
       const speech = speechResult.rows[0] as SpeechRow;
       const requiredYield = type === 'QUESTION' ? 'QUESTIONS' : 'COMMENTS';
       if (speech.kind !== 'INHERITED' || speech.yield_type !== requiredYield || speech.status === 'COMPLETED') {
-        throw new AppError({code: 'RESOURCE_CONFLICT', message: 'This speech does not accept that contribution.'});
+        throw new AppError({reason: 'CONTRIBUTION_NOT_ALLOWED', code: 'RESOURCE_CONFLICT', message: 'This speech does not accept that contribution.'});
       }
       const chair = await isChair(client, committee.id, auth.user.id); let seatId: string | null;
       if (chair) seatId = uuid(input.seatId, 'Seat ID');
       else {
-        if (committee.operation_mode === 'CHAIR_OPERATED') throw new AppError({code: 'FORBIDDEN',
+        if (committee.operation_mode === 'CHAIR_OPERATED') throw new AppError({reason: 'CHAIR_OPERATED_ACTION', code: 'FORBIDDEN',
           message: 'Chair capability is required in Chair-operated mode.'});
-        if (input.seatId !== undefined) throw new AppError({code: 'FORBIDDEN', message: 'A delegate cannot choose another seat.'});
+        if (input.seatId !== undefined) throw new AppError({reason: 'OWN_SEAT_ONLY', code: 'FORBIDDEN', message: 'A delegate cannot choose another seat.'});
         seatId = await activeSeat(client, committee.id, auth.user.id);
       }
-      if (!seatId) throw new AppError({code: 'FORBIDDEN', message: 'An active seat assignment is required.'});
+      if (!seatId) throw new AppError({reason: 'ACTIVE_SEAT_REQUIRED', code: 'FORBIDDEN', message: 'An active seat assignment is required.'});
       const seat = await client.query<{display_name: string}>(`SELECT display_name FROM committee_seats
         WHERE id=$1 AND committee_id=$2 AND active=true`, [seatId, committee.id]);
-      if (!seat.rows[0]) throw new AppError({code: 'VALIDATION_FAILED', message: 'Seat is invalid.'});
+      if (!seat.rows[0]) throw new AppError({reason: 'INVALID_SEAT_REFERENCE', code: 'VALIDATION_FAILED', message: 'Seat is invalid.'});
       const contributionId = randomUUID(); await client.query(`INSERT INTO speech_contributions
         (id,committee_id,speech_id,type,seat_id,seat_display_name,content,actor_user_id,on_behalf_of_seat_id)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$5)`, [contributionId, committee.id, speechId, type, seatId,
@@ -1378,7 +1378,7 @@ export class Stage5Service {
     const parameters = input.parameters ?? {};
     if (!parameters || typeof parameters !== 'object' || Array.isArray(parameters)
       || JSON.stringify(parameters).length > 16_000) {
-      throw new AppError({code: 'VALIDATION_FAILED', message: 'Motion parameters are invalid.'});
+      throw new AppError({reason: 'INVALID_MOTION_PARAMETERS', code: 'VALIDATION_FAILED', message: 'Motion parameters are invalid.'});
     }
     return idempotentTransaction({pool: this.pool, auth, route: `POST /api/v1/committees/${committeeId}/motions`,
       key, request: input, status: 201, work: async client => {
@@ -1386,46 +1386,46 @@ export class Stage5Service {
         const chair = await isChair(client, committeeId, auth.user.id); let seatId: string | null;
         if (chair) seatId = uuid(input.onBehalfOfSeatId, 'Represented seat ID');
         else {
-          if (committee.operation_mode === 'CHAIR_OPERATED') throw new AppError({code: 'FORBIDDEN',
+          if (committee.operation_mode === 'CHAIR_OPERATED') throw new AppError({reason: 'CHAIR_OPERATED_ACTION', code: 'FORBIDDEN',
             message: 'Chair capability is required in Chair-operated mode.'});
-          if (input.onBehalfOfSeatId !== undefined) throw new AppError({code: 'FORBIDDEN',
+          if (input.onBehalfOfSeatId !== undefined) throw new AppError({reason: 'OWN_SEAT_ONLY', code: 'FORBIDDEN',
             message: 'A delegate cannot choose another seat.'});
           seatId = await activeSeat(client, committeeId, auth.user.id);
         }
-        if (!seatId) throw new AppError({code: 'FORBIDDEN', message: 'An active seat assignment is required.'});
+        if (!seatId) throw new AppError({reason: 'ACTIVE_SEAT_REQUIRED', code: 'FORBIDDEN', message: 'An active seat assignment is required.'});
         const session = await client.query<{status: string; active_rule_package_version_id: string}>(`SELECT status,
           active_rule_package_version_id FROM meeting_sessions WHERE id=$1 AND committee_id=$2`, [meetingSessionId, committeeId]);
         if (!session.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Meeting session not found.'});
-        if (session.rows[0].status !== 'OPEN') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Meeting session is closed.'});
+        if (session.rows[0].status !== 'OPEN') throw new AppError({reason: 'MEETING_CLOSED', code: 'RESOURCE_CONFLICT', message: 'Meeting session is closed.'});
         const seat = await client.query<{display_name: string}>(`SELECT s.display_name FROM committee_seats s
           JOIN current_attendance a ON a.seat_id=s.id AND a.meeting_session_id=$3 AND a.state='PRESENT'
           WHERE s.id=$1 AND s.committee_id=$2 AND s.active=true`, [seatId, committeeId, meetingSessionId]);
-        if (!seat.rows[0]) throw new AppError({code: 'VALIDATION_FAILED', message: 'Only a present active seat may propose a motion.'});
+        if (!seat.rows[0]) throw new AppError({reason: 'PRESENT_SEAT_REQUIRED', code: 'VALIDATION_FAILED', message: 'Only a present active seat may propose a motion.'});
         const version = await client.query<{definition: {motions?: unknown}}>(`SELECT definition FROM rule_package_versions
           WHERE id=$1 AND status='PUBLISHED'`, [session.rows[0].active_rule_package_version_id]);
         const definitions = version.rows[0]?.definition.motions;
         const matches = Array.isArray(definitions) ? definitions.filter(item => item && typeof item === 'object'
           && (item as {id?: unknown}).id === motionTypeId) : [];
-        if (matches.length !== 1) throw new AppError({code: 'VALIDATION_FAILED',
+        if (matches.length !== 1) throw new AppError({reason: 'MOTION_TYPE_UNAVAILABLE', code: 'VALIDATION_FAILED',
           message: 'Motion type is not active in the meeting rule package.'});
         const definition = structuredClone(matches[0]) as {id: string; requiredSecondCount?: unknown; procedural?: unknown;
           effects?: unknown};
         const requiredSecondCount = definition.requiredSecondCount === undefined ? 0 : definition.requiredSecondCount;
         if (!Number.isSafeInteger(requiredSecondCount) || Number(requiredSecondCount) < 0) {
-          throw new AppError({code: 'VALIDATION_FAILED', message: 'Motion second requirement is invalid.'});
+          throw new AppError({reason: 'INVALID_SECOND_REQUIREMENT', code: 'VALIDATION_FAILED', message: 'Motion second requirement is invalid.'});
         }
         let secondedBySeatId: string | undefined; let secondedBySeatName: string | undefined;
         if (input.secondedBySeatId !== undefined) {
-          if (!chair) throw new AppError({code: 'FORBIDDEN', message: 'Only a Chair can record an initial seconder.'});
-          if (Number(requiredSecondCount) < 1) throw new AppError({code: 'VALIDATION_FAILED',
+          if (!chair) throw new AppError({reason: 'CHAIR_REQUIRED', code: 'FORBIDDEN', message: 'Only a Chair can record an initial seconder.'});
+          if (Number(requiredSecondCount) < 1) throw new AppError({reason: 'MOTION_NO_SECONDS_REQUIRED', code: 'VALIDATION_FAILED',
             message: 'This motion does not require a seconder.'});
           secondedBySeatId = uuid(input.secondedBySeatId, 'Seconding seat ID');
-          if (secondedBySeatId === seatId) throw new AppError({code: 'VALIDATION_FAILED',
+          if (secondedBySeatId === seatId) throw new AppError({reason: 'PROPOSER_SECONDER_SAME', code: 'VALIDATION_FAILED',
             message: 'The proposer and seconder must be different seats.'});
           const secondingSeat = await client.query<{display_name: string}>(`SELECT s.display_name FROM committee_seats s
             JOIN current_attendance a ON a.seat_id=s.id AND a.meeting_session_id=$3 AND a.state='PRESENT'
             WHERE s.id=$1 AND s.committee_id=$2 AND s.active=true`, [secondedBySeatId, committeeId, meetingSessionId]);
-          if (!secondingSeat.rows[0]) throw new AppError({code: 'VALIDATION_FAILED',
+          if (!secondingSeat.rows[0]) throw new AppError({reason: 'PRESENT_SEAT_REQUIRED', code: 'VALIDATION_FAILED',
             message: 'Only a present active seat may second a motion.'});
           secondedBySeatName = secondingSeat.rows[0].display_name;
         }
@@ -1487,21 +1487,21 @@ export class Stage5Service {
         const committee = await lockedCommittee(client, located.rows[0].committee_id); requireProceedingsActive(committee);
         const motionResult = await client.query<MotionRow>('SELECT * FROM motions WHERE id=$1 FOR UPDATE', [motionId]);
         const motion = motionResult.rows[0] as MotionRow;
-        if (motion.status !== 'PENDING') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'This motion no longer accepts seconds.'});
+        if (motion.status !== 'PENDING') throw new AppError({reason: 'MOTION_SECONDS_CLOSED', code: 'RESOURCE_CONFLICT', message: 'This motion no longer accepts seconds.'});
         const chair = await isChair(client, committee.id, auth.user.id); let seatId: string | null;
         if (chair) seatId = uuid(input.onBehalfOfSeatId, 'Represented seat ID');
         else {
-          if (committee.operation_mode === 'CHAIR_OPERATED') throw new AppError({code: 'FORBIDDEN',
+          if (committee.operation_mode === 'CHAIR_OPERATED') throw new AppError({reason: 'CHAIR_OPERATED_ACTION', code: 'FORBIDDEN',
             message: 'Chair capability is required in Chair-operated mode.'});
-          if (input.onBehalfOfSeatId !== undefined) throw new AppError({code: 'FORBIDDEN', message: 'A delegate cannot choose another seat.'});
+          if (input.onBehalfOfSeatId !== undefined) throw new AppError({reason: 'OWN_SEAT_ONLY', code: 'FORBIDDEN', message: 'A delegate cannot choose another seat.'});
           seatId = await activeSeat(client, committee.id, auth.user.id);
         }
-        if (!seatId || seatId === motion.proposed_by_seat_id) throw new AppError({code: 'VALIDATION_FAILED',
+        if (!seatId || seatId === motion.proposed_by_seat_id) throw new AppError({reason: 'PROPOSER_SECONDER_SAME', code: 'VALIDATION_FAILED',
           message: 'A different present seat must second the motion.'});
         const seat = await client.query<{display_name: string}>(`SELECT s.display_name FROM committee_seats s
           JOIN current_attendance a ON a.seat_id=s.id AND a.meeting_session_id=$3 AND a.state='PRESENT'
           WHERE s.id=$1 AND s.committee_id=$2 AND s.active=true`, [seatId, committee.id, motion.meeting_session_id]);
-        if (!seat.rows[0]) throw new AppError({code: 'VALIDATION_FAILED', message: 'Only a present active seat may second a motion.'});
+        if (!seat.rows[0]) throw new AppError({reason: 'PRESENT_SEAT_REQUIRED', code: 'VALIDATION_FAILED', message: 'Only a present active seat may second a motion.'});
         const secondId = randomUUID(); await client.query(`INSERT INTO motion_seconds
           (id,committee_id,motion_id,seat_id,seat_display_name,actor_user_id,on_behalf_of_seat_id)
           VALUES ($1,$2,$3,$4,$5,$6,$4)`, [secondId, committee.id, motionId, seatId, seat.rows[0].display_name, auth.user.id]);
@@ -1527,13 +1527,13 @@ export class Stage5Service {
       const sessionResult = await client.query<MeetingSessionRow>(`SELECT * FROM meeting_sessions
         WHERE id=$1 AND committee_id=$2 FOR UPDATE`, [motion.meeting_session_id, committeeId]);
       const session = sessionResult.rows[0];
-      if (!session || session.status !== 'OPEN') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The meeting session is not open.'});
+      if (!session || session.status !== 'OPEN') throw new AppError({reason: 'MEETING_NOT_OPEN', code: 'RESOURCE_CONFLICT', message: 'The meeting session is not open.'});
       const activeRollCall = await client.query(`SELECT 1 FROM roll_calls
         WHERE meeting_session_id=$1 AND status='IN_PROGRESS'`, [session.id]);
-      if (activeRollCall.rowCount) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Complete or reset the active roll call first.'});
+      if (activeRollCall.rowCount) throw new AppError({reason: 'ROLL_CALL_MUST_FINISH', code: 'RESOURCE_CONFLICT', message: 'Complete or reset the active roll call first.'});
       const pending = await client.query<MeetingSessionRow>(`SELECT * FROM meeting_sessions
         WHERE committee_id=$1 AND status='PENDING' FOR UPDATE`, [committeeId]);
-      if ((pending.rowCount ?? 0) > 0) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'A meeting session is already pending.'});
+      if ((pending.rowCount ?? 0) > 0) throw new AppError({reason: 'MEETING_ALREADY_PENDING', code: 'RESOURCE_CONFLICT', message: 'A meeting session is already pending.'});
       const closed = await client.query<MeetingSessionRow>(`UPDATE meeting_sessions SET status='CLOSED',revision=revision+1,
         closed_at=$2 WHERE id=$1 RETURNING *`, [session.id, now]);
       const nextId = randomUUID();
@@ -1566,11 +1566,11 @@ export class Stage5Service {
       const sessionResult = await client.query<MeetingSessionRow>(`SELECT * FROM meeting_sessions
         WHERE id=$1 AND committee_id=$2 FOR UPDATE`, [motion.meeting_session_id, committeeId]);
       const session = sessionResult.rows[0];
-      if (!session || session.status !== 'OPEN') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The meeting session is not open.'});
+      if (!session || session.status !== 'OPEN') throw new AppError({reason: 'MEETING_NOT_OPEN', code: 'RESOURCE_CONFLICT', message: 'The meeting session is not open.'});
       const lists = await client.query<SpeakerListRow>(`SELECT * FROM speaker_lists
         WHERE meeting_session_id=$1 AND kind='GENERAL' FOR UPDATE`, [session.id]);
       const list = lists.rows[0];
-      if (!list) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The general speakers list is missing.'});
+      if (!list) throw new AppError({reason: 'GENERAL_SPEAKER_LIST_MISSING', code: 'RESOURCE_CONFLICT', message: 'The general speakers list is missing.'});
       if (session.formal_debate_open !== formalDebateOpen) await client.query(`UPDATE meeting_sessions
         SET formal_debate_open=$2 WHERE id=$1`, [session.id, formalDebateOpen]);
       if (list.status !== (formalDebateOpen ? 'OPEN' : 'CLOSED')) {
@@ -1639,7 +1639,7 @@ export class Stage5Service {
       const found = await client.query<TimerRow>(`SELECT * FROM timer_states
         WHERE committee_id=$1 AND owner_type='COMMITTEE' AND owner_id=$1 FOR UPDATE`, [committeeId]);
       const timer = found.rows[0];
-      if (!timer) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'There is no unmoderated caucus timer to extend.'});
+      if (!timer) throw new AppError({reason: 'UNMODERATED_TIMER_MISSING', code: 'RESOURCE_CONFLICT', message: 'There is no unmoderated caucus timer to extend.'});
       const remaining = remainingTimerMs(timer, now); const nextRemaining = remaining + durationMs;
       await client.query(`UPDATE timer_states SET started_at=$2,remaining_at_start_ms=$3,expired_at=NULL,
         revision=revision+1,updated_at=$4 WHERE id=$1`, [timer.id, timer.running ? now : null, nextRemaining, now]);
@@ -1657,7 +1657,7 @@ export class Stage5Service {
       const defaultSpeechMs = motionDurationMs(parameters, 'speakerDuration', 'speakerUnit');
       if (committee.operation_mode !== 'CHAIR_OPERATED'
         && (totalDurationMs < defaultSpeechMs || totalDurationMs % defaultSpeechMs !== 0)) {
-        throw new AppError({code: 'VALIDATION_FAILED', message: 'Speaker time must evenly divide the caucus time.'});
+        throw new AppError({reason: 'CAUCUS_DURATION_NOT_DIVISIBLE', code: 'VALIDATION_FAILED', message: 'Speaker time must evenly divide the caucus time.'});
       }
       let linkedResolution: {id: string; title: string; proposerSeatId: string; proposerSeatName: string;
         seconderSeatId: string; seconderSeatName: string} | null = null;
@@ -1675,12 +1675,12 @@ export class Stage5Service {
         const row = target.rows[0];
         if (!row) throw new AppError({code: 'NOT_FOUND', message: 'Target resolution not found.'});
         if (!row.proposer_seat_id || !row.proposer_seat_name || !row.seconder_seat_id || !row.seconder_seat_name) {
-          throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The target resolution has not been introduced.'});
+          throw new AppError({reason: 'RESOLUTION_NOT_INTRODUCED', code: 'RESOURCE_CONFLICT', message: 'The target resolution has not been introduced.'});
         }
         const existing = await client.query('SELECT id FROM speaker_lists WHERE linked_resolution_document_id=$1',
           [resolutionId]);
         if (existing.rows[0]) {
-          throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The target resolution already has an associated caucus.'});
+          throw new AppError({reason: 'RESOLUTION_CAUCUS_EXISTS', code: 'RESOURCE_CONFLICT', message: 'The target resolution already has an associated caucus.'});
         }
         linkedResolution = {id: row.id, title: formatCommitteeContent({kind: 'RESOLUTION', ordinal: row.ordinal,
           sessionOrdinal: row.session_ordinal, customTitle: row.custom_title}, committee.committee_language), proposerSeatId: row.proposer_seat_id,
@@ -1735,7 +1735,7 @@ export class Stage5Service {
       const found = await client.query<SpeakerListRow>(`SELECT * FROM speaker_lists
         WHERE id=$1 AND committee_id=$2 AND kind='MODERATED_CAUCUS' FOR UPDATE`, [listId, committeeId]);
       const list = found.rows[0];
-      if (!list || list.status !== 'OPEN') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The target caucus is not open.'});
+      if (!list || list.status !== 'OPEN') throw new AppError({reason: 'CAUCUS_CLOSED', code: 'RESOURCE_CONFLICT', message: 'The target caucus is not open.'});
       const active = await client.query<SpeechRow>(`SELECT * FROM speeches WHERE speaker_list_id=$1
         AND status IN ('READY','RUNNING','PAUSED') FOR UPDATE`, [listId]);
       const activeSpeech = active.rows[0];
@@ -1808,10 +1808,10 @@ export class Stage5Service {
       const found = await client.query<SpeakerListRow>(`SELECT * FROM speaker_lists
         WHERE id=$1 AND committee_id=$2 AND kind='MODERATED_CAUCUS' FOR UPDATE`, [listId, committeeId]);
       const list = found.rows[0];
-      if (!list || list.status !== 'OPEN' || !list.total_timer_id) throw new AppError({code: 'RESOURCE_CONFLICT',
+      if (!list || list.status !== 'OPEN' || !list.total_timer_id) throw new AppError({reason: 'CAUCUS_CLOSED', code: 'RESOURCE_CONFLICT',
         message: 'The target caucus is not open.'});
       const timerResult = await client.query<TimerRow>('SELECT * FROM timer_states WHERE id=$1 FOR UPDATE', [list.total_timer_id]);
-      const timer = timerResult.rows[0]; if (!timer) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The caucus timer is unavailable.'});
+      const timer = timerResult.rows[0]; if (!timer) throw new AppError({reason: 'CAUCUS_TIMER_MISSING', code: 'RESOURCE_CONFLICT', message: 'The caucus timer is unavailable.'});
       const remaining = remainingTimerMs(timer, now); const nextRemaining = remaining + durationMs;
       await client.query(`UPDATE timer_states SET started_at=$2,remaining_at_start_ms=$3,expired_at=NULL,
         revision=revision+1,updated_at=$4 WHERE id=$1`, [timer.id, timer.running ? now : null, nextRemaining, now]);
@@ -1833,7 +1833,7 @@ export class Stage5Service {
       if (!document || document.meeting_session_id !== motion.meeting_session_id) {
         throw new AppError({code: 'NOT_FOUND', message: 'Target resolution not found.'});
       }
-      if (document.status !== 'DRAFT') throw new AppError({code: 'RESOURCE_CONFLICT',
+      if (document.status !== 'DRAFT') throw new AppError({reason: 'RESOLUTION_ALREADY_INTRODUCED', code: 'RESOURCE_CONFLICT',
         message: 'Only an unintroduced draft resolution can be introduced.'});
       const contentSource = await client.query<{content_file_entry_id: string | null; file_status: string | null}>(
         `SELECT v.content_file_entry_id,e.status AS file_status FROM document_versions v
@@ -1842,7 +1842,7 @@ export class Stage5Service {
           WHERE v.document_id=$1 AND v.id=$2`, [documentId, document.current_version_id]);
       const source = contentSource.rows[0];
       if (source?.content_file_entry_id && source.file_status !== 'PUBLISHED') {
-        throw new AppError({code: 'RESOURCE_CONFLICT',
+        throw new AppError({reason: 'DOCUMENT_FILE_NOT_PUBLISHED', code: 'RESOURCE_CONFLICT',
           message: 'Publish the resolution content file before introducing the draft.'});
       }
       const second = await client.query<{seat_id: string}>(`SELECT seat_id FROM motion_seconds
@@ -1886,7 +1886,7 @@ export class Stage5Service {
       if (!document || document.meeting_session_id !== motion.meeting_session_id) {
         throw new AppError({code: 'NOT_FOUND', message: 'Target amendment not found.'});
       }
-      if (document.status !== 'DRAFT') throw new AppError({code: 'RESOURCE_CONFLICT',
+      if (document.status !== 'DRAFT') throw new AppError({reason: 'AMENDMENT_ALREADY_INTRODUCED', code: 'RESOURCE_CONFLICT',
         message: 'Only a draft amendment can be introduced.'});
       const contentSource = await client.query<{content: string; content_file_entry_id: string | null;
         file_status: string | null}>(`SELECT v.content,v.content_file_entry_id,e.status AS file_status
@@ -1894,9 +1894,9 @@ export class Stage5Service {
             LEFT JOIN file_entries e ON e.id=coalesce(linked.merged_into_file_entry_id,linked.id)
         WHERE v.document_id=$1 AND v.id=$2`, [documentId, document.current_version_id]);
       const source = contentSource.rows[0];
-      if (!source || !source.content.trim() && !source.content_file_entry_id) throw new AppError({code: 'RESOURCE_CONFLICT',
+      if (!source || !source.content.trim() && !source.content_file_entry_id) throw new AppError({reason: 'AMENDMENT_BODY_REQUIRED', code: 'RESOURCE_CONFLICT',
         message: 'Add amendment text or a file before introducing it.'});
-      if (source.content_file_entry_id && source.file_status !== 'PUBLISHED') throw new AppError({code: 'RESOURCE_CONFLICT',
+      if (source.content_file_entry_id && source.file_status !== 'PUBLISHED') throw new AppError({reason: 'DOCUMENT_FILE_NOT_PUBLISHED', code: 'RESOURCE_CONFLICT',
         message: 'Publish the amendment content file before introducing it.'});
       const amendment = await client.query<{proposer_seat_id: string}>(
         'SELECT proposer_seat_id FROM amendments WHERE document_id=$1 FOR UPDATE', [documentId]);
@@ -1930,7 +1930,7 @@ export class Stage5Service {
       if (!document || document.meeting_session_id !== motion.meeting_session_id) {
         throw new AppError({code: 'NOT_FOUND', message: 'Target amendment not found.'});
       }
-      if (document.status !== 'PUBLISHED') throw new AppError({code: 'RESOURCE_CONFLICT',
+      if (document.status !== 'PUBLISHED') throw new AppError({reason: 'AMENDMENT_NOT_INTRODUCED', code: 'RESOURCE_CONFLICT',
         message: 'Only an introduced amendment can enter voting.'});
       await requirePublishedDocumentFile(client, document.current_version_id);
       await client.query(`UPDATE documents SET status='VOTING',voting_version_id=current_version_id,
@@ -1960,7 +1960,7 @@ export class Stage5Service {
       if (!document || document.meeting_session_id !== motion.meeting_session_id) {
         throw new AppError({code: 'NOT_FOUND', message: 'Target resolution not found.'});
       }
-      if (document.status !== 'PUBLISHED') throw new AppError({code: 'RESOURCE_CONFLICT',
+      if (document.status !== 'PUBLISHED') throw new AppError({reason: 'RESOLUTION_NOT_INTRODUCED', code: 'RESOURCE_CONFLICT',
         message: 'Only an introduced resolution can enter voting.'});
       await requirePublishedDocumentFile(client, document.current_version_id);
       await client.query(`UPDATE documents SET status='VOTING',voting_version_id=current_version_id,
@@ -2004,7 +2004,7 @@ export class Stage5Service {
     context: Stage4Context): Promise<ProceedingMotion> {
     requireBusinessIdentity(auth); assertExactBody(input, ['baseRevision', 'result']);
     const baseRevision = positiveInteger(input.baseRevision, 'Base revision'); const result = input.result;
-    if (!['PASSED', 'FAILED'].includes(result as string)) throw new AppError({code: 'VALIDATION_FAILED',
+    if (!['PASSED', 'FAILED'].includes(result as string)) throw new AppError({reason: 'INVALID_MOTION_RESULT', code: 'VALIDATION_FAILED',
       message: 'Motion result is invalid.'});
     return transaction(this.pool, async client => {
       const located = await client.query<{committee_id: string}>('SELECT committee_id FROM motions WHERE id=$1', [motionId]);
@@ -2013,13 +2013,13 @@ export class Stage5Service {
       await requireChair(client, committee, auth.user.id);
       const motionResult = await client.query<MotionRow>('SELECT * FROM motions WHERE id=$1 FOR UPDATE', [motionId]);
       const motion = motionResult.rows[0] as MotionRow;
-      if (!['PENDING', 'SECONDED', 'VOTING'].includes(motion.status)) throw new AppError({code: 'RESOURCE_CONFLICT',
+      if (!['PENDING', 'SECONDED', 'VOTING'].includes(motion.status)) throw new AppError({reason: 'MOTION_ALREADY_DECIDED', code: 'RESOURCE_CONFLICT',
         message: 'The motion has already been decided.'});
       if (motion.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT',
         message: 'This motion changed since it was loaded.', details: {currentRevision: motion.revision}});
       const seconds = await client.query<{count: string}>('SELECT count(*)::text AS count FROM motion_seconds WHERE motion_id=$1', [motionId]);
       if (result === 'PASSED' && committee.operation_mode !== 'CHAIR_OPERATED'
-        && Number(seconds.rows[0]?.count ?? 0) < motion.required_second_count) throw new AppError({code: 'RESOURCE_CONFLICT',
+        && Number(seconds.rows[0]?.count ?? 0) < motion.required_second_count) throw new AppError({reason: 'MOTION_SECONDS_INSUFFICIENT', code: 'RESOURCE_CONFLICT',
         message: 'The motion does not have the required seconds.'});
       const now = this.now();
       const destinationPath = result === 'PASSED'
@@ -2044,7 +2044,7 @@ export class Stage5Service {
     context: Stage4Context): Promise<ProceedingMotion> {
     requireBusinessIdentity(auth); assertExactBody(input, ['baseRevision', 'includeNonVotingSeats']);
     const baseRevision = positiveInteger(input.baseRevision, 'Settings revision');
-    if (typeof input.includeNonVotingSeats !== 'boolean') throw new AppError({code: 'VALIDATION_FAILED',
+    if (typeof input.includeNonVotingSeats !== 'boolean') throw new AppError({reason: 'INVALID_NON_VOTING_SETTING', code: 'VALIDATION_FAILED',
       message: 'The non-voting-seat setting is invalid.'});
     return transaction(this.pool, async client => {
       const located = await client.query<{committee_id: string}>('SELECT committee_id FROM motions WHERE id=$1', [motionId]);
@@ -2053,14 +2053,14 @@ export class Stage5Service {
       await requireChair(client, committee, auth.user.id);
       const found = await client.query<MotionRow>('SELECT * FROM motions WHERE id=$1 FOR UPDATE', [motionId]);
       const motion = found.rows[0] as MotionRow;
-      if (['PASSED', 'FAILED', 'WITHDRAWN', 'SUPERSEDED'].includes(motion.status)) throw new AppError({
+      if (['PASSED', 'FAILED', 'WITHDRAWN', 'SUPERSEDED'].includes(motion.status)) throw new AppError({reason: 'MOTION_ALREADY_DECIDED',
         code: 'RESOURCE_CONFLICT', message: 'The motion has already been decided.'});
       if (motion.direct_vote_settings_revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT',
         message: 'The direct-vote setting changed since it was loaded.',
         details: {currentRevision: motion.direct_vote_settings_revision}});
-      if (motion.direct_vote_started_at && committee.operation_mode !== 'CHAIR_OPERATED') throw new AppError({
+      if (motion.direct_vote_started_at && committee.operation_mode !== 'CHAIR_OPERATED') throw new AppError({reason: 'VOTE_SETTINGS_LOCKED',
         code: 'RESOURCE_CONFLICT', message: 'This setting is locked after delegate voting starts.'});
-      if (motion.direct_vote_include_non_voting === input.includeNonVotingSeats) throw new AppError({
+      if (motion.direct_vote_include_non_voting === input.includeNonVotingSeats) throw new AppError({reason: 'VOTE_SETTINGS_UNCHANGED',
         code: 'RESOURCE_CONFLICT', message: 'This direct-vote setting is already selected.'});
       const now = this.now();
       const updated = await client.query<MotionRow>(`UPDATE motions SET direct_vote_include_non_voting=$2,
@@ -2088,7 +2088,7 @@ export class Stage5Service {
     context: Stage4Context): Promise<ProceedingMotion> {
     requireBusinessIdentity(auth); assertExactBody(input, ['choice', 'onBehalfOfSeatId']);
     const choice = input.choice === null ? null : input.choice as BallotChoice;
-    if (choice !== null && !['FOR', 'AGAINST', 'ABSTAIN'].includes(choice)) throw new AppError({
+    if (choice !== null && !['FOR', 'AGAINST', 'ABSTAIN'].includes(choice)) throw new AppError({reason: 'INVALID_VOTE_CHOICE',
       code: 'VALIDATION_FAILED', message: 'Vote choice is invalid.'});
     return transaction(this.pool, async client => {
       const located = await client.query<{committee_id: string}>('SELECT committee_id FROM motions WHERE id=$1', [motionId]);
@@ -2096,36 +2096,36 @@ export class Stage5Service {
       const committee = await lockedCommittee(client, located.rows[0].committee_id); requireProceedingsActive(committee);
       const found = await client.query<MotionRow>('SELECT * FROM motions WHERE id=$1 FOR UPDATE', [motionId]);
       const motion = found.rows[0] as MotionRow;
-      if (['PASSED', 'FAILED', 'WITHDRAWN', 'SUPERSEDED'].includes(motion.status)) throw new AppError({
+      if (['PASSED', 'FAILED', 'WITHDRAWN', 'SUPERSEDED'].includes(motion.status)) throw new AppError({reason: 'MOTION_ALREADY_DECIDED',
         code: 'RESOURCE_CONFLICT', message: 'The motion has already been decided.'});
       const chair = await isChair(client, committee.id, auth.user.id); let seatId: string | null;
       if (chair) seatId = uuid(input.onBehalfOfSeatId, 'Represented seat ID');
       else {
         if (committee.operation_mode !== 'DELEGATE_OPERATED' || !committee.delegate_motion_voting_enabled) {
-          throw new AppError({code: 'FORBIDDEN', message: 'Delegate motion voting is disabled.'});
+          throw new AppError({reason: 'DELEGATE_VOTING_DISABLED', code: 'FORBIDDEN', message: 'Delegate motion voting is disabled.'});
         }
-        if (input.onBehalfOfSeatId !== undefined) throw new AppError({code: 'FORBIDDEN',
+        if (input.onBehalfOfSeatId !== undefined) throw new AppError({reason: 'OWN_SEAT_ONLY', code: 'FORBIDDEN',
           message: 'A delegate cannot choose another seat.'});
         seatId = await activeSeat(client, committee.id, auth.user.id);
       }
-      if (!seatId) throw new AppError({code: 'FORBIDDEN', message: 'An active seat assignment is required.'});
+      if (!seatId) throw new AppError({reason: 'ACTIVE_SEAT_REQUIRED', code: 'FORBIDDEN', message: 'An active seat assignment is required.'});
       const eligible = await client.query<{display_name: string}>(`SELECT s.display_name FROM committee_seats s
         JOIN current_attendance a ON a.seat_id=s.id AND a.meeting_session_id=$3 AND a.state='PRESENT'
         WHERE s.id=$1 AND s.committee_id=$2 AND s.active=true AND ($4 OR s.can_vote=true)`,
       [seatId, committee.id, motion.meeting_session_id, motion.direct_vote_include_non_voting]);
-      if (!eligible.rows[0]) throw new AppError({code: 'FORBIDDEN', message: 'This seat is not eligible for the direct vote.'});
+      if (!eligible.rows[0]) throw new AppError({reason: 'SEAT_NOT_ELIGIBLE_TO_VOTE', code: 'FORBIDDEN', message: 'This seat is not eligible for the direct vote.'});
       const procedural = motion.rule_evaluation.resolvedValues.procedural === true;
-      if (choice === 'ABSTAIN' && procedural) throw new AppError({code: 'VALIDATION_FAILED',
+      if (choice === 'ABSTAIN' && procedural) throw new AppError({reason: 'PROCEDURAL_ABSTENTION_FORBIDDEN', code: 'VALIDATION_FAILED',
         message: 'Procedural motion votes cannot abstain.'});
       const vote = await client.query<{id: string; current_choice: BallotChoice; revision: number; retracted_at: Date | null}>(
         `SELECT id,current_choice,revision,retracted_at FROM motion_direct_votes WHERE motion_id=$1 AND seat_id=$2 FOR UPDATE`,
         [motionId, seatId]);
       const current = vote.rows[0]; const previousChoice = current && !current.retracted_at ? current.current_choice : null;
-      if (choice === previousChoice) throw new AppError({code: 'RESOURCE_CONFLICT', message: choice === null
+      if (choice === previousChoice) throw new AppError({code: 'RESOURCE_CONFLICT', reason: choice === null ? 'NO_VOTE_TO_UNDO' : 'VOTE_ALREADY_RECORDED', message: choice === null
         ? 'This seat has no current vote to retract.' : 'This seat already has that vote.'});
       const now = this.now(); let voteId: string; let voteRevision: number;
       if (!current) {
-        if (choice === null) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'This seat has no current vote to retract.'});
+        if (choice === null) throw new AppError({reason: 'NO_VOTE_TO_UNDO', code: 'RESOURCE_CONFLICT', message: 'This seat has no current vote to retract.'});
         voteId = randomUUID(); voteRevision = 1;
         await client.query(`INSERT INTO motion_direct_votes
           (id,committee_id,motion_id,seat_id,seat_display_name,current_choice,actor_user_id,on_behalf_of_seat_id,cast_at)
@@ -2172,7 +2172,7 @@ export class Stage5Service {
       await requireChair(client, committee, auth.user.id);
       const found = await client.query<MotionRow>('SELECT * FROM motions WHERE id=$1 FOR UPDATE', [motionId]);
       const motion = found.rows[0] as MotionRow;
-      if (!['PENDING', 'SECONDED'].includes(motion.status)) throw new AppError({code: 'RESOURCE_CONFLICT',
+      if (!['PENDING', 'SECONDED'].includes(motion.status)) throw new AppError({reason: 'MOTION_NOT_WITHDRAWABLE', code: 'RESOURCE_CONFLICT',
         message: 'Only a pending motion can be withdrawn.'});
       if (motion.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT',
         message: 'This motion changed since it was loaded.', details: {currentRevision: motion.revision}});
@@ -2195,12 +2195,12 @@ export class Stage5Service {
     assertExactBody(input, ['meetingSessionId', 'subjectType', 'subjectId', 'procedural', 'thresholdKind']);
     const meetingSessionId = uuid(input.meetingSessionId, 'Meeting session ID');
     const subjectType = input.subjectType as FormalBallot['subjectType'];
-    if (!['MOTION', 'RESOLUTION', 'AMENDMENT'].includes(subjectType)) throw new AppError({code: 'VALIDATION_FAILED',
+    if (!['MOTION', 'RESOLUTION', 'AMENDMENT'].includes(subjectType)) throw new AppError({reason: 'INVALID_BALLOT_SUBJECT', code: 'VALIDATION_FAILED',
       message: 'Ballot subject type is invalid.'});
     const subjectId = uuid(input.subjectId, 'Ballot subject ID'); const procedural = input.procedural;
-    if (typeof procedural !== 'boolean') throw new AppError({code: 'VALIDATION_FAILED', message: 'Ballot procedure type is invalid.'});
+    if (typeof procedural !== 'boolean') throw new AppError({reason: 'INVALID_BALLOT_PROCEDURE', code: 'VALIDATION_FAILED', message: 'Ballot procedure type is invalid.'});
     const thresholdKind = input.thresholdKind as FormalBallot['threshold']['kind'];
-    if (!['SIMPLE_MAJORITY', 'TWO_THIRDS'].includes(thresholdKind)) throw new AppError({code: 'VALIDATION_FAILED',
+    if (!['SIMPLE_MAJORITY', 'TWO_THIRDS'].includes(thresholdKind)) throw new AppError({reason: 'INVALID_BALLOT_THRESHOLD', code: 'VALIDATION_FAILED',
       message: 'Ballot threshold is invalid.'});
     return idempotentTransaction({pool: this.pool, auth, route: `POST /api/v1/committees/${committeeId}/ballots`,
       key, request: input, status: 201, work: async client => {
@@ -2209,23 +2209,23 @@ export class Stage5Service {
         const session = await client.query<{status: string; active_rule_package_version_id: string}>(`SELECT status,
           active_rule_package_version_id FROM meeting_sessions WHERE id=$1 AND committee_id=$2`, [meetingSessionId, committeeId]);
         if (!session.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Meeting session not found.'});
-        if (session.rows[0].status !== 'OPEN') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Meeting session is closed.'});
+        if (session.rows[0].status !== 'OPEN') throw new AppError({reason: 'MEETING_CLOSED', code: 'RESOURCE_CONFLICT', message: 'Meeting session is closed.'});
         let subjectVersionId: string | null = null; let motionSubject: MotionRow | undefined;
         if (subjectType === 'MOTION') {
           const motion = await client.query<MotionRow>(`SELECT * FROM motions
             WHERE id=$1 AND committee_id=$2 FOR UPDATE`, [subjectId, committeeId]);
           motionSubject = motion.rows[0];
           if (!motionSubject) throw new AppError({code: 'NOT_FOUND', message: 'Motion not found.'});
-          if (motionSubject.meeting_session_id !== meetingSessionId) throw new AppError({code: 'RESOURCE_CONFLICT',
+          if (motionSubject.meeting_session_id !== meetingSessionId) throw new AppError({reason: 'MOTION_SESSION_MISMATCH', code: 'RESOURCE_CONFLICT',
             message: 'The motion belongs to another meeting session.'});
-          if (motionSubject.status !== 'SECONDED') throw new AppError({code: 'RESOURCE_CONFLICT',
+          if (motionSubject.status !== 'SECONDED') throw new AppError({reason: 'MOTION_NOT_READY_FOR_VOTE', code: 'RESOURCE_CONFLICT',
             message: 'The motion is not ready for voting.'});
           const frozenProcedural = motionSubject.rule_evaluation.resolvedValues.procedural === true;
-          if (procedural !== frozenProcedural) throw new AppError({code: 'VALIDATION_FAILED',
+          if (procedural !== frozenProcedural) throw new AppError({reason: 'BALLOT_PROCEDURE_MISMATCH', code: 'VALIDATION_FAILED',
             message: 'The ballot procedure type does not match the frozen motion rule.'});
           const existing = await client.query('SELECT 1 FROM ballots WHERE subject_type=$1 AND subject_id=$2 LIMIT 1',
             ['MOTION', subjectId]);
-          if (existing.rowCount) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The motion already has a ballot.'});
+          if (existing.rowCount) throw new AppError({reason: 'BALLOT_ALREADY_EXISTS', code: 'RESOURCE_CONFLICT', message: 'The motion already has a ballot.'});
         } else {
           const kind = subjectType === 'RESOLUTION' ? 'RESOLUTION' : 'AMENDMENT';
           const document = await client.query<{status: ProceedingDocumentStatus; voting_version_id: string | null}>(
@@ -2233,7 +2233,7 @@ export class Stage5Service {
               AND deleted_at IS NULL FOR UPDATE`,
             [subjectId, committeeId, kind]);
           if (!document.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Ballot document not found.'});
-          if (document.rows[0].status !== 'VOTING' || !document.rows[0].voting_version_id) throw new AppError({
+          if (document.rows[0].status !== 'VOTING' || !document.rows[0].voting_version_id) throw new AppError({reason: 'DOCUMENT_NOT_IN_VOTING',
             code: 'RESOURCE_CONFLICT', message: 'The document has not entered formal voting.'});
           subjectVersionId = document.rows[0].voting_version_id;
           await requirePublishedDocumentFile(client, subjectVersionId);
@@ -2243,7 +2243,7 @@ export class Stage5Service {
           ON a.seat_id=s.id AND a.meeting_session_id=$2 AND a.state='PRESENT'
           WHERE s.committee_id=$1 AND s.active=true AND s.can_vote=true ORDER BY s.sort_order,s.stable_key,s.id`,
         [committeeId, meetingSessionId]);
-        if (eligible.rowCount === 0) throw new AppError({code: 'VALIDATION_FAILED', message: 'The ballot has no eligible seats.'});
+        if (eligible.rowCount === 0) throw new AppError({reason: 'NO_ELIGIBLE_VOTERS', code: 'VALIDATION_FAILED', message: 'The ballot has no eligible seats.'});
         const eligibility = eligible.rows.map(seat => ({seatId: seat.seat_id, seatDisplayName: seat.display_name,
           mustVote: procedural || seat.must_vote, hasVeto: seat.has_veto}));
         const thresholdValue = thresholdKind === 'TWO_THIRDS' ? Math.ceil(eligibility.length * 2 / 3)
@@ -2289,7 +2289,7 @@ export class Stage5Service {
     context: Stage4Context): Promise<FormalBallot> {
     requireBusinessIdentity(auth); assertExactBody(input, ['choice', 'onBehalfOfSeatId']);
     const choice = input.choice as BallotChoice;
-    if (!['FOR', 'AGAINST', 'ABSTAIN'].includes(choice)) throw new AppError({code: 'VALIDATION_FAILED', message: 'Vote choice is invalid.'});
+    if (!['FOR', 'AGAINST', 'ABSTAIN'].includes(choice)) throw new AppError({reason: 'INVALID_VOTE_CHOICE', code: 'VALIDATION_FAILED', message: 'Vote choice is invalid.'});
     return idempotentTransaction({pool: this.pool, auth, route: `POST /api/v1/ballots/${ballotId}/votes`, key,
       request: input, status: 201, work: async client => {
         const located = await client.query<{committee_id: string}>('SELECT committee_id FROM ballots WHERE id=$1', [ballotId]);
@@ -2297,19 +2297,19 @@ export class Stage5Service {
         const committee = await lockedCommittee(client, located.rows[0].committee_id); requireProceedingsActive(committee);
         const ballotResult = await client.query<BallotRow>('SELECT * FROM ballots WHERE id=$1 FOR UPDATE', [ballotId]);
         const ballot = ballotResult.rows[0] as BallotRow;
-        if (ballot.status !== 'OPEN') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The ballot is not open.'});
+        if (ballot.status !== 'OPEN') throw new AppError({reason: 'BALLOT_NOT_OPEN', code: 'RESOURCE_CONFLICT', message: 'The ballot is not open.'});
         const chair = await isChair(client, committee.id, auth.user.id); let seatId: string | null;
         if (chair) seatId = uuid(input.onBehalfOfSeatId, 'Represented seat ID');
         else {
-          if (committee.operation_mode === 'CHAIR_OPERATED') throw new AppError({code: 'FORBIDDEN',
+          if (committee.operation_mode === 'CHAIR_OPERATED') throw new AppError({reason: 'CHAIR_OPERATED_ACTION', code: 'FORBIDDEN',
             message: 'Chair capability is required in Chair-operated mode.'});
-          if (input.onBehalfOfSeatId !== undefined) throw new AppError({code: 'FORBIDDEN', message: 'A delegate cannot choose another seat.'});
+          if (input.onBehalfOfSeatId !== undefined) throw new AppError({reason: 'OWN_SEAT_ONLY', code: 'FORBIDDEN', message: 'A delegate cannot choose another seat.'});
           seatId = await activeSeat(client, committee.id, auth.user.id);
         }
         const eligibility = ballot.eligibility_snapshot.find(seat => seat.seatId === seatId);
-        if (!seatId || !eligibility) throw new AppError({code: 'FORBIDDEN', message: 'This seat is not eligible for the ballot.'});
+        if (!seatId || !eligibility) throw new AppError({reason: 'SEAT_NOT_ELIGIBLE_TO_VOTE', code: 'FORBIDDEN', message: 'This seat is not eligible for the ballot.'});
         if (!ballot.choices.includes(choice) || (eligibility.mustVote && choice === 'ABSTAIN')) {
-          throw new AppError({code: 'VALIDATION_FAILED', message: 'This seat cannot cast that choice.'});
+          throw new AppError({reason: 'VOTE_CHOICE_NOT_ALLOWED', code: 'VALIDATION_FAILED', message: 'This seat cannot cast that choice.'});
         }
         const voteId = randomUUID(); const vote = await client.query(`INSERT INTO ballot_votes
           (id,ballot_id,seat_id,seat_display_name,current_choice,cast_by_user_id,cast_on_behalf)
@@ -2335,7 +2335,7 @@ export class Stage5Service {
     requireBusinessIdentity(auth); assertExactBody(input, ['baseRevision', 'seatId', 'choice', 'reason']);
     const baseRevision = positiveInteger(input.baseRevision, 'Base revision'); const seatId = uuid(input.seatId, 'Seat ID');
     const choice = input.choice as BallotChoice; const reason = text(input.reason, 'Correction reason', 1000);
-    if (!['FOR', 'AGAINST', 'ABSTAIN'].includes(choice)) throw new AppError({code: 'VALIDATION_FAILED', message: 'Vote choice is invalid.'});
+    if (!['FOR', 'AGAINST', 'ABSTAIN'].includes(choice)) throw new AppError({reason: 'INVALID_VOTE_CHOICE', code: 'VALIDATION_FAILED', message: 'Vote choice is invalid.'});
     return transaction(this.pool, async client => {
       const located = await client.query<{committee_id: string}>('SELECT committee_id FROM ballots WHERE id=$1', [ballotId]);
       if (!located.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Ballot not found.'});
@@ -2343,12 +2343,12 @@ export class Stage5Service {
       await requireChair(client, committee, auth.user.id);
       const ballotResult = await client.query<BallotRow>('SELECT * FROM ballots WHERE id=$1 FOR UPDATE', [ballotId]);
       const ballot = ballotResult.rows[0] as BallotRow;
-      if (ballot.status !== 'OPEN') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The ballot is not open.'});
+      if (ballot.status !== 'OPEN') throw new AppError({reason: 'BALLOT_NOT_OPEN', code: 'RESOURCE_CONFLICT', message: 'The ballot is not open.'});
       if (ballot.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT', message: 'This ballot changed since it was loaded.',
         details: {currentRevision: ballot.revision}});
       const eligibility = ballot.eligibility_snapshot.find(seat => seat.seatId === seatId);
       if (!eligibility || !ballot.choices.includes(choice) || (eligibility.mustVote && choice === 'ABSTAIN')) {
-        throw new AppError({code: 'VALIDATION_FAILED', message: 'The corrected vote is invalid.'});
+        throw new AppError({reason: 'INVALID_VOTE_CORRECTION', code: 'VALIDATION_FAILED', message: 'The corrected vote is invalid.'});
       }
       const vote = await client.query<{id: string; current_choice: BallotChoice; revision: number}>(`SELECT id,current_choice,revision
         FROM ballot_votes WHERE ballot_id=$1 AND seat_id=$2 AND retracted_at IS NULL FOR UPDATE`, [ballotId, seatId]);
@@ -2376,7 +2376,7 @@ export class Stage5Service {
     const baseRevision = positiveInteger(input.baseRevision, 'Base revision');
     const choice = input.choice === null ? null : input.choice as BallotChoice;
     if (choice !== null && !['FOR', 'AGAINST', 'ABSTAIN'].includes(choice)) {
-      throw new AppError({code: 'VALIDATION_FAILED', message: 'Vote choice is invalid.'});
+      throw new AppError({reason: 'INVALID_VOTE_CHOICE', code: 'VALIDATION_FAILED', message: 'Vote choice is invalid.'});
     }
     return transaction(this.pool, async client => {
       const located = await client.query<{committee_id: string}>('SELECT committee_id FROM ballots WHERE id=$1', [ballotId]);
@@ -2384,31 +2384,31 @@ export class Stage5Service {
       const committee = await lockedCommittee(client, located.rows[0].committee_id); requireProceedingsActive(committee);
       const ballotResult = await client.query<BallotRow>('SELECT * FROM ballots WHERE id=$1 FOR UPDATE', [ballotId]);
       const ballot = ballotResult.rows[0] as BallotRow;
-      if (ballot.status !== 'OPEN') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The ballot is not open.'});
+      if (ballot.status !== 'OPEN') throw new AppError({reason: 'BALLOT_NOT_OPEN', code: 'RESOURCE_CONFLICT', message: 'The ballot is not open.'});
       if (ballot.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT',
         message: 'This ballot changed since it was loaded.', details: {currentRevision: ballot.revision}});
       const chair = await isChair(client, committee.id, auth.user.id); let seatId: string | null;
       if (chair) seatId = uuid(input.onBehalfOfSeatId, 'Represented seat ID');
       else {
         if (committee.operation_mode === 'CHAIR_OPERATED' || !committee.delegate_motion_voting_enabled) {
-          throw new AppError({code: 'FORBIDDEN', message: 'Delegate motion voting is disabled.'});
+          throw new AppError({reason: 'DELEGATE_VOTING_DISABLED', code: 'FORBIDDEN', message: 'Delegate motion voting is disabled.'});
         }
-        if (input.onBehalfOfSeatId !== undefined) throw new AppError({code: 'FORBIDDEN',
+        if (input.onBehalfOfSeatId !== undefined) throw new AppError({reason: 'OWN_SEAT_ONLY', code: 'FORBIDDEN',
           message: 'A delegate cannot choose another seat.'});
         seatId = await activeSeat(client, committee.id, auth.user.id);
       }
       const eligibility = ballot.eligibility_snapshot.find(seat => seat.seatId === seatId);
-      if (!seatId || !eligibility) throw new AppError({code: 'FORBIDDEN', message: 'This seat is not eligible for the ballot.'});
+      if (!seatId || !eligibility) throw new AppError({reason: 'SEAT_NOT_ELIGIBLE_TO_VOTE', code: 'FORBIDDEN', message: 'This seat is not eligible for the ballot.'});
       if (choice !== null && (!ballot.choices.includes(choice) || (eligibility.mustVote && choice === 'ABSTAIN'))) {
-        throw new AppError({code: 'VALIDATION_FAILED', message: 'This seat cannot cast that choice.'});
+        throw new AppError({reason: 'VOTE_CHOICE_NOT_ALLOWED', code: 'VALIDATION_FAILED', message: 'This seat cannot cast that choice.'});
       }
       const vote = await client.query<{id: string; current_choice: BallotChoice; revision: number; retracted_at: Date | null}>(
         `SELECT id,current_choice,revision,retracted_at FROM ballot_votes WHERE ballot_id=$1 AND seat_id=$2 FOR UPDATE`,
         [ballotId, seatId]);
       const current = vote.rows[0]; const previousChoice = current && !current.retracted_at ? current.current_choice : null;
-      if (choice === null && previousChoice === null) throw new AppError({code: 'RESOURCE_CONFLICT',
+      if (choice === null && previousChoice === null) throw new AppError({reason: 'NO_VOTE_TO_UNDO', code: 'RESOURCE_CONFLICT',
         message: 'This seat has no current vote to retract.'});
-      if (choice !== null && previousChoice === choice) throw new AppError({code: 'RESOURCE_CONFLICT',
+      if (choice !== null && previousChoice === choice) throw new AppError({reason: 'VOTE_ALREADY_RECORDED', code: 'RESOURCE_CONFLICT',
         message: 'This seat already has that vote.'});
       const now = this.now(); let voteId: string; let voteRevision: number;
       if (!current) {
@@ -2455,7 +2455,7 @@ export class Stage5Service {
       await requireChair(client, committee, auth.user.id);
       const ballotResult = await client.query<BallotRow>('SELECT * FROM ballots WHERE id=$1 FOR UPDATE', [ballotId]);
       const ballot = ballotResult.rows[0] as BallotRow;
-      if (ballot.status !== 'OPEN') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The ballot is not open.'});
+      if (ballot.status !== 'OPEN') throw new AppError({reason: 'BALLOT_NOT_OPEN', code: 'RESOURCE_CONFLICT', message: 'The ballot is not open.'});
       if (ballot.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT', message: 'This ballot changed since it was loaded.',
         details: {currentRevision: ballot.revision}});
       const votes = await client.query<{seat_id: string; current_choice: BallotChoice}>(`SELECT seat_id,current_choice
@@ -2464,7 +2464,7 @@ export class Stage5Service {
       const missingMustVote = ballot.eligibility_snapshot.filter(seat => seat.mustVote && !voted.has(seat.seatId));
       const vetoRequiresAll = ballot.eligibility_snapshot.some(seat => seat.hasVeto);
       if (missingMustVote.length > 0 || (vetoRequiresAll && voted.size < ballot.eligibility_snapshot.length)) {
-        throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Required eligible votes have not all been cast.'});
+        throw new AppError({reason: 'REQUIRED_VOTES_MISSING', code: 'RESOURCE_CONFLICT', message: 'Required eligible votes have not all been cast.'});
       }
       const now = this.now(); const updated = await client.query<BallotRow>(`UPDATE ballots SET status='CLOSED',
         closed_at=$2,revision=revision+1 WHERE id=$1 RETURNING *`, [ballotId, now]);
@@ -2486,7 +2486,7 @@ export class Stage5Service {
       await requireChair(client, committee, auth.user.id);
       const ballotResult = await client.query<BallotRow>('SELECT * FROM ballots WHERE id=$1 FOR UPDATE', [ballotId]);
       const ballot = ballotResult.rows[0] as BallotRow;
-      if (ballot.status !== 'CLOSED') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Close the ballot before publishing.'});
+      if (ballot.status !== 'CLOSED') throw new AppError({reason: 'CLOSE_BALLOT_FIRST', code: 'RESOURCE_CONFLICT', message: 'Close the ballot before publishing.'});
       if (ballot.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT', message: 'This ballot changed since it was loaded.',
         details: {currentRevision: ballot.revision}});
       const state = await ballotState(client, ballot); const result = calculateBallotResult(ballot.eligibility_snapshot,
@@ -2495,7 +2495,7 @@ export class Stage5Service {
         revision=revision+1 WHERE id=$1 RETURNING *`, [ballotId, result, now]);
       if (ballot.subject_type === 'MOTION') {
         const motion = await client.query<MotionRow>('SELECT * FROM motions WHERE id=$1 FOR UPDATE', [ballot.subject_id]);
-        if (!motion.rows[0] || !['SECONDED', 'VOTING'].includes(motion.rows[0].status)) throw new AppError({
+        if (!motion.rows[0] || !['SECONDED', 'VOTING'].includes(motion.rows[0].status)) throw new AppError({reason: 'BALLOT_MOTION_ALREADY_DECIDED',
           code: 'RESOURCE_CONFLICT', message: 'The ballot motion is no longer awaiting a result.'});
         const nextStatus = result.outcome === 'PASSED' ? 'PASSED' : 'FAILED';
         const destinationPath = nextStatus === 'PASSED'
@@ -2520,7 +2520,7 @@ export class Stage5Service {
           WHERE id=$1 AND status='VOTING' RETURNING *,
           (SELECT resolution_document_id FROM amendments WHERE document_id=$1) AS resolution_document_id`,
         [ballot.subject_id, nextStatus, now]);
-        if (!document.rows[0]) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The ballot document is not in voting state.'});
+        if (!document.rows[0]) throw new AppError({reason: 'DOCUMENT_NOT_IN_VOTING', code: 'RESOURCE_CONFLICT', message: 'The ballot document is not in voting state.'});
         const rule = await client.query<{rule_stable_id: string; rule_evaluation: FrozenRuleEvaluation}>(`SELECT
           rule_stable_id,rule_evaluation FROM document_actions WHERE document_id=$1 AND to_status='VOTING'
           ORDER BY created_at DESC,id DESC LIMIT 1`, [ballot.subject_id]);
@@ -2554,23 +2554,23 @@ export class Stage5Service {
     const requestedQuestion = text(input.question, 'Question', 1000, true);
     const votingMode = input.votingMode as StrawpollVotingMode;
     if (!['ANONYMOUS', 'SEAT_AUTHENTICATED'].includes(votingMode)) {
-      throw new AppError({code: 'VALIDATION_FAILED', message: 'Strawpoll voting mode is invalid.'});
+      throw new AppError({reason: 'INVALID_POLL_VOTING_MODE', code: 'VALIDATION_FAILED', message: 'Strawpoll voting mode is invalid.'});
     }
     if (typeof input.multipleChoice !== 'boolean') {
-      throw new AppError({code: 'VALIDATION_FAILED', message: 'Strawpoll choice mode is invalid.'});
+      throw new AppError({reason: 'INVALID_POLL_CHOICE_MODE', code: 'VALIDATION_FAILED', message: 'Strawpoll choice mode is invalid.'});
     }
     if (!Array.isArray(input.options) || input.options.length > 20) {
-      throw new AppError({code: 'VALIDATION_FAILED', message: 'Strawpoll options are invalid.'});
+      throw new AppError({reason: 'INVALID_POLL_OPTIONS', code: 'VALIDATION_FAILED', message: 'Strawpoll options are invalid.'});
     }
     const medium = (input.medium ?? 'LINK') as Strawpoll['medium'];
-    if (!['LINK', 'MANUAL'].includes(medium)) throw new AppError({code: 'VALIDATION_FAILED',
+    if (!['LINK', 'MANUAL'].includes(medium)) throw new AppError({reason: 'INVALID_POLL_MEDIUM', code: 'VALIDATION_FAILED',
       message: 'Strawpoll medium is invalid.'});
     if (input.optionsArePublic !== undefined && typeof input.optionsArePublic !== 'boolean') {
-      throw new AppError({code: 'VALIDATION_FAILED', message: 'Strawpoll option permission is invalid.'});
+      throw new AppError({reason: 'INVALID_POLL_OPTION_PERMISSION', code: 'VALIDATION_FAILED', message: 'Strawpoll option permission is invalid.'});
     }
     const optionLabels = input.options.map((value, index) => text(value, `Option ${index + 1}`, 500));
     if (new Set(optionLabels).size !== optionLabels.length) {
-      throw new AppError({code: 'VALIDATION_FAILED', message: 'Strawpoll options must be unique.'});
+      throw new AppError({reason: 'POLL_OPTIONS_DUPLICATED', code: 'VALIDATION_FAILED', message: 'Strawpoll options must be unique.'});
     }
     return idempotentTransaction({pool: this.pool, auth, route: `POST /api/v1/committees/${committeeId}/strawpolls`,
       key, request: input, status: 201, work: async client => {
@@ -2579,11 +2579,11 @@ export class Stage5Service {
         const session = await client.query<{status: string}>('SELECT status FROM meeting_sessions WHERE id=$1 AND committee_id=$2',
           [meetingSessionId, committeeId]);
         if (!session.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Meeting session not found.'});
-        if (session.rows[0].status !== 'OPEN') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Meeting session is closed.'});
+        if (session.rows[0].status !== 'OPEN') throw new AppError({reason: 'MEETING_CLOSED', code: 'RESOURCE_CONFLICT', message: 'Meeting session is closed.'});
         const question = requestedQuestion;
         const id = randomUUID(); const accessToken = votingMode === 'ANONYMOUS' && medium === 'LINK'
           ? randomBytes(32).toString('base64url') : undefined;
-        if (votingMode === 'ANONYMOUS' && medium === 'MANUAL') throw new AppError({code: 'VALIDATION_FAILED',
+        if (votingMode === 'ANONYMOUS' && medium === 'MANUAL') throw new AppError({reason: 'MANUAL_POLL_CANNOT_BE_ANONYMOUS', code: 'VALIDATION_FAILED',
           message: 'Manual strawpolls do not use anonymous voting.'});
         const stage: Strawpoll['stage'] = question.trim() && optionLabels.length >= 2 ? 'VOTING' : 'PREPARING';
         const inserted = await client.query<StrawpollRow>(`INSERT INTO strawpolls
@@ -2613,10 +2613,10 @@ export class Stage5Service {
     requireBusinessIdentity(auth);
     assertExactBody(input, ['optionIds', 'onBehalfOfSeatId', 'anonymousAccessToken']);
     if (!Array.isArray(input.optionIds) || input.optionIds.length > 20) {
-      throw new AppError({code: 'VALIDATION_FAILED', message: 'Strawpoll choices are invalid.'});
+      throw new AppError({reason: 'INVALID_POLL_OPTIONS', code: 'VALIDATION_FAILED', message: 'Strawpoll choices are invalid.'});
     }
     const optionIds = input.optionIds.map((value, index) => uuid(value, `Option ID ${index + 1}`));
-    if (new Set(optionIds).size !== optionIds.length) throw new AppError({code: 'VALIDATION_FAILED', message: 'Strawpoll choices are invalid.'});
+    if (new Set(optionIds).size !== optionIds.length) throw new AppError({reason: 'INVALID_POLL_OPTIONS', code: 'VALIDATION_FAILED', message: 'Strawpoll choices are invalid.'});
     return idempotentTransaction({pool: this.pool, auth, route: `POST /api/v1/strawpolls/${strawpollId}/votes`, key,
       request: input, status: 201, work: async client => {
         const located = await client.query<{committee_id: string}>('SELECT committee_id FROM strawpolls WHERE id=$1', [strawpollId]);
@@ -2626,22 +2626,22 @@ export class Stage5Service {
           'SELECT * FROM strawpolls WHERE id=$1 FOR UPDATE', [strawpollId]);
         const poll = pollResult.rows[0];
         if (!poll) throw new AppError({code: 'NOT_FOUND', message: 'Strawpoll not found.'});
-        if (poll.stage !== 'VOTING' || poll.medium !== 'LINK') throw new AppError({code: 'RESOURCE_CONFLICT',
+        if (poll.stage !== 'VOTING' || poll.medium !== 'LINK') throw new AppError({reason: 'POLL_NOT_ACCEPTING_LINKED_VOTES', code: 'RESOURCE_CONFLICT',
           message: 'The strawpoll is not accepting linked votes.'});
         if (!poll.multiple_choice && optionIds.length > 1) {
-          throw new AppError({code: 'VALIDATION_FAILED', message: 'Select one strawpoll option.'});
+          throw new AppError({reason: 'POLL_SINGLE_CHOICE_REQUIRED', code: 'VALIDATION_FAILED', message: 'Select one strawpoll option.'});
         }
         const validOptions = optionIds.length === 0 ? {rowCount: 0} : await client.query<{id: string}>(
           'SELECT id FROM strawpoll_options WHERE strawpoll_id=$1 AND id=ANY($2::uuid[])', [strawpollId, optionIds]);
-        if (validOptions.rowCount !== optionIds.length) throw new AppError({code: 'VALIDATION_FAILED', message: 'Strawpoll choice is invalid.'});
+        if (validOptions.rowCount !== optionIds.length) throw new AppError({reason: 'POLL_OPTION_UNAVAILABLE', code: 'VALIDATION_FAILED', message: 'Strawpoll choice is invalid.'});
         const chair = await isChair(client, committee.id, auth.user.id);
         if (poll.voting_mode === 'ANONYMOUS') {
-          if (optionIds.length === 0) throw new AppError({code: 'VALIDATION_FAILED',
+          if (optionIds.length === 0) throw new AppError({reason: 'ANONYMOUS_VOTE_NOT_RETRACTABLE', code: 'VALIDATION_FAILED',
             message: 'Anonymous strawpoll votes cannot be retracted.'});
-          if (input.onBehalfOfSeatId !== undefined) throw new AppError({code: 'VALIDATION_FAILED', message: 'Anonymous votes do not use seats.'});
+          if (input.onBehalfOfSeatId !== undefined) throw new AppError({reason: 'POLL_MODE_MISMATCH', code: 'VALIDATION_FAILED', message: 'Anonymous votes do not use seats.'});
           const accessToken = text(input.anonymousAccessToken, 'Anonymous access token', 200);
           if (!poll.anonymous_access_token_hash?.equals(sha256(accessToken))) {
-            throw new AppError({code: 'FORBIDDEN', message: 'Anonymous strawpoll access is invalid.'});
+            throw new AppError({reason: 'ANONYMOUS_POLL_ACCESS_INVALID', code: 'FORBIDDEN', message: 'Anonymous strawpoll access is invalid.'});
           }
           const credentialHash = sha256(`${strawpollId}\0${accessToken}\0${auth.user.id}`);
           await client.query('INSERT INTO strawpoll_anonymous_receipts (strawpoll_id,credential_hash) VALUES ($1,$2)',
@@ -2654,28 +2654,28 @@ export class Stage5Service {
             after: {votingMode: 'ANONYMOUS', selectionCount: optionIds.length, revision: poll.revision + 1}});
         } else {
           if (input.anonymousAccessToken !== undefined) {
-            throw new AppError({code: 'VALIDATION_FAILED', message: 'Seat strawpolls do not use anonymous credentials.'});
+            throw new AppError({reason: 'POLL_MODE_MISMATCH', code: 'VALIDATION_FAILED', message: 'Seat strawpolls do not use anonymous credentials.'});
           }
           let seatId: string | null;
           if (chair) seatId = uuid(input.onBehalfOfSeatId, 'Represented seat ID');
           else {
-            if (committee.operation_mode === 'CHAIR_OPERATED') throw new AppError({code: 'FORBIDDEN',
+            if (committee.operation_mode === 'CHAIR_OPERATED') throw new AppError({reason: 'CHAIR_OPERATED_ACTION', code: 'FORBIDDEN',
               message: 'Chair capability is required in Chair-operated mode.'});
-            if (input.onBehalfOfSeatId !== undefined) throw new AppError({code: 'FORBIDDEN', message: 'A delegate cannot choose another seat.'});
+            if (input.onBehalfOfSeatId !== undefined) throw new AppError({reason: 'OWN_SEAT_ONLY', code: 'FORBIDDEN', message: 'A delegate cannot choose another seat.'});
             seatId = await activeSeat(client, committee.id, auth.user.id);
           }
-          if (!seatId) throw new AppError({code: 'FORBIDDEN', message: 'An active committee seat is required.'});
+          if (!seatId) throw new AppError({reason: 'ACTIVE_SEAT_REQUIRED', code: 'FORBIDDEN', message: 'An active committee seat is required.'});
           const present = await client.query(`SELECT 1 FROM current_attendance WHERE meeting_session_id=$1 AND seat_id=$2
             AND state='PRESENT'`, [poll.meeting_session_id, seatId]);
-          if (!present.rowCount) throw new AppError({code: 'FORBIDDEN', message: 'The represented seat is not present.'});
+          if (!present.rowCount) throw new AppError({reason: 'SEAT_NOT_PRESENT', code: 'FORBIDDEN', message: 'The represented seat is not present.'});
           const previous = await client.query<{id: string; option_ids: string[]; revision: number; retracted_at: Date | null}>(
             'SELECT id,option_ids,revision,retracted_at FROM strawpoll_seat_votes WHERE strawpoll_id=$1 AND seat_id=$2 FOR UPDATE',
           [strawpollId, seatId]);
           const current = previous.rows[0]; const previousOptionIds = current && !current.retracted_at ? current.option_ids : null;
-          if (!current && optionIds.length === 0 || current?.retracted_at && optionIds.length === 0) throw new AppError({
+          if (!current && optionIds.length === 0 || current?.retracted_at && optionIds.length === 0) throw new AppError({reason: 'NO_VOTE_TO_UNDO',
             code: 'RESOURCE_CONFLICT', message: 'This seat has no current strawpoll vote to retract.'});
           if (previousOptionIds && JSON.stringify([...previousOptionIds].sort()) === JSON.stringify([...optionIds].sort())) {
-            throw new AppError({code: 'RESOURCE_CONFLICT', message: 'This seat already selected those strawpoll options.'});
+            throw new AppError({reason: 'VOTE_ALREADY_RECORDED', code: 'RESOURCE_CONFLICT', message: 'This seat already selected those strawpoll options.'});
           }
           const voteId = current?.id ?? randomUUID();
           if (!current) await client.query(`INSERT INTO strawpoll_seat_votes
@@ -2716,7 +2716,7 @@ export class Stage5Service {
       await requireChair(client, committee, auth.user.id);
       const pollResult = await client.query<StrawpollRow>('SELECT * FROM strawpolls WHERE id=$1 FOR UPDATE', [strawpollId]);
       const poll = pollResult.rows[0] as StrawpollRow;
-      if (poll.stage !== 'VOTING') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The strawpoll is not voting.'});
+      if (poll.stage !== 'VOTING') throw new AppError({reason: 'POLL_NOT_VOTING', code: 'RESOURCE_CONFLICT', message: 'The strawpoll is not voting.'});
       if (poll.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT',
         message: 'This strawpoll changed since it was loaded.', details: {currentRevision: poll.revision}});
       const now = this.now(); const updated = await client.query<StrawpollRow>(`UPDATE strawpolls SET status='CLOSED',
@@ -2739,13 +2739,13 @@ export class Stage5Service {
     const question = text(input.question, 'Question', 1000, true); const votingMode = input.votingMode as StrawpollVotingMode;
     const medium = input.medium as Strawpoll['medium'];
     if (!['ANONYMOUS', 'SEAT_AUTHENTICATED'].includes(votingMode) || !['LINK', 'MANUAL'].includes(medium)
-      || medium === 'MANUAL' && votingMode !== 'SEAT_AUTHENTICATED') throw new AppError({code: 'VALIDATION_FAILED',
+      || medium === 'MANUAL' && votingMode !== 'SEAT_AUTHENTICATED') throw new AppError({reason: 'INVALID_POLL_CONFIGURATION', code: 'VALIDATION_FAILED',
       message: 'Strawpoll voting configuration is invalid.'});
     if (typeof input.multipleChoice !== 'boolean' || typeof input.optionsArePublic !== 'boolean'
-      || !Array.isArray(input.options) || input.options.length > 20) throw new AppError({code: 'VALIDATION_FAILED',
+      || !Array.isArray(input.options) || input.options.length > 20) throw new AppError({reason: 'INVALID_POLL_CONFIGURATION', code: 'VALIDATION_FAILED',
       message: 'Strawpoll round settings are invalid.'});
     const optionLabels = input.options.map((value, index) => text(value, `Option ${index + 1}`, 500));
-    if (new Set(optionLabels).size !== optionLabels.length) throw new AppError({code: 'VALIDATION_FAILED',
+    if (new Set(optionLabels).size !== optionLabels.length) throw new AppError({reason: 'POLL_OPTIONS_DUPLICATED', code: 'VALIDATION_FAILED',
       message: 'Strawpoll options must be unique.'});
     return idempotentTransaction({pool: this.pool, auth, route: `POST /api/v1/strawpolls/${strawpollId}/rounds`,
       key, request: input, status: 201, work: async client => {
@@ -2755,19 +2755,19 @@ export class Stage5Service {
         const found = await client.query<StrawpollRow & {anonymous_access_token_hash: Buffer | null}>(
           'SELECT * FROM strawpolls WHERE id=$1 FOR UPDATE', [strawpollId]);
         const poll = found.rows[0];
-        if (!poll || poll.superseded_by_id) throw new AppError({code: 'RESOURCE_CONFLICT',
+        if (!poll || poll.superseded_by_id) throw new AppError({reason: 'POLL_ROUND_CHANGED', code: 'RESOURCE_CONFLICT',
           message: 'This strawpoll round is no longer current.'});
         if (poll.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT',
           message: 'This strawpoll changed since it was loaded.', details: {currentRevision: poll.revision}});
         const chair = await isChair(client, committee.id, auth.user.id);
         if (!chair) {
           if (committee.operation_mode !== 'DELEGATE_OPERATED' || !poll.options_are_public || poll.stage !== 'PREPARING') {
-            throw new AppError({code: 'FORBIDDEN', message: 'A Chair is required to edit this strawpoll.'});
+            throw new AppError({reason: 'CHAIR_REQUIRED', code: 'FORBIDDEN', message: 'A Chair is required to edit this strawpoll.'});
           }
           const seatId = await activeSeat(client, committee.id, auth.user.id);
           const present = seatId ? await client.query(`SELECT 1 FROM current_attendance
             WHERE meeting_session_id=$1 AND seat_id=$2 AND state='PRESENT'`, [poll.meeting_session_id, seatId]) : {rowCount: 0};
-          if (!present.rowCount) throw new AppError({code: 'FORBIDDEN', message: 'A present seat is required.'});
+          if (!present.rowCount) throw new AppError({reason: 'PRESENT_SEAT_REQUIRED', code: 'FORBIDDEN', message: 'A present seat is required.'});
           const currentOptions = await client.query<{label: string}>(
             'SELECT label FROM strawpoll_options WHERE strawpoll_id=$1 ORDER BY sort_order,id', [strawpollId]);
           const unchanged = question === poll.question && votingMode === poll.voting_mode
@@ -2775,7 +2775,7 @@ export class Stage5Service {
             && input.optionsArePublic === poll.options_are_public;
           const appendedOne = optionLabels.length === currentOptions.rows.length + 1
             && currentOptions.rows.every((item, index) => item.label === optionLabels[index]);
-          if (!unchanged || !appendedOne) throw new AppError({code: 'FORBIDDEN',
+          if (!unchanged || !appendedOne) throw new AppError({reason: 'DELEGATE_OPTION_LIMIT', code: 'FORBIDDEN',
             message: 'Delegates may only add one option to this strawpoll.'});
         }
         const id = randomUUID(); const now = this.now();
@@ -2809,7 +2809,7 @@ export class Stage5Service {
     requireBusinessIdentity(auth); assertExactBody(input, ['baseRevision', 'action']);
     const baseRevision = positiveInteger(input.baseRevision, 'Base revision');
     const action = input.action as 'START' | 'VIEW_RESULTS' | 'REOPEN';
-    if (!['START', 'VIEW_RESULTS', 'REOPEN'].includes(action)) throw new AppError({code: 'VALIDATION_FAILED',
+    if (!['START', 'VIEW_RESULTS', 'REOPEN'].includes(action)) throw new AppError({reason: 'INVALID_POLL_ACTION', code: 'VALIDATION_FAILED',
       message: 'Strawpoll stage action is invalid.'});
     return transaction(this.pool, async client => {
       const located = await client.query<{committee_id: string}>('SELECT committee_id FROM strawpolls WHERE id=$1', [strawpollId]);
@@ -2818,15 +2818,15 @@ export class Stage5Service {
       await requireChair(client, committee, auth.user.id);
       const found = await client.query<StrawpollRow>('SELECT * FROM strawpolls WHERE id=$1 FOR UPDATE', [strawpollId]);
       const poll = found.rows[0] as StrawpollRow;
-      if (poll.superseded_by_id) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'This strawpoll round is no longer current.'});
+      if (poll.superseded_by_id) throw new AppError({reason: 'POLL_ROUND_CHANGED', code: 'RESOURCE_CONFLICT', message: 'This strawpoll round is no longer current.'});
       if (poll.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT',
         message: 'This strawpoll changed since it was loaded.', details: {currentRevision: poll.revision}});
       const expected = action === 'START' ? 'PREPARING' : action === 'VIEW_RESULTS' ? 'VOTING' : 'RESULTS';
-      if (poll.stage !== expected) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The strawpoll is in another stage.'});
+      if (poll.stage !== expected) throw new AppError({reason: 'POLL_STAGE_CHANGED', code: 'RESOURCE_CONFLICT', message: 'The strawpoll is in another stage.'});
       if (action === 'START') {
-        if (!poll.question.trim()) throw new AppError({code: 'VALIDATION_FAILED', message: 'Enter a strawpoll question.'});
+        if (!poll.question.trim()) throw new AppError({reason: 'POLL_QUESTION_REQUIRED', code: 'VALIDATION_FAILED', message: 'Enter a strawpoll question.'});
         const options = await client.query('SELECT 1 FROM strawpoll_options WHERE strawpoll_id=$1', [strawpollId]);
-        if (Number(options.rowCount) < 2) throw new AppError({code: 'VALIDATION_FAILED',
+        if (Number(options.rowCount) < 2) throw new AppError({reason: 'POLL_OPTIONS_REQUIRED', code: 'VALIDATION_FAILED',
           message: 'At least two options are required to start a strawpoll.'});
       }
       const stage: Strawpoll['stage'] = action === 'VIEW_RESULTS' ? 'RESULTS' : 'VOTING';
@@ -2847,7 +2847,7 @@ export class Stage5Service {
     context: Stage4Context): Promise<Strawpoll> {
     requireBusinessIdentity(auth); assertExactBody(input, ['baseRevision', 'optionId', 'tally']);
     const baseRevision = positiveInteger(input.baseRevision, 'Base revision'); const optionId = uuid(input.optionId, 'Option ID');
-    if (!Number.isSafeInteger(input.tally) || Number(input.tally) < 0) throw new AppError({code: 'VALIDATION_FAILED',
+    if (!Number.isSafeInteger(input.tally) || Number(input.tally) < 0) throw new AppError({reason: 'INVALID_MANUAL_TALLY', code: 'VALIDATION_FAILED',
       message: 'Manual tally is invalid.'});
     return transaction(this.pool, async client => {
       const located = await client.query<{committee_id: string}>('SELECT committee_id FROM strawpolls WHERE id=$1', [strawpollId]);
@@ -2856,7 +2856,7 @@ export class Stage5Service {
       await requireChair(client, committee, auth.user.id);
       const found = await client.query<StrawpollRow>('SELECT * FROM strawpolls WHERE id=$1 FOR UPDATE', [strawpollId]);
       const poll = found.rows[0] as StrawpollRow;
-      if (poll.medium !== 'MANUAL' || poll.stage !== 'VOTING' || poll.superseded_by_id) throw new AppError({
+      if (poll.medium !== 'MANUAL' || poll.stage !== 'VOTING' || poll.superseded_by_id) throw new AppError({reason: 'POLL_NOT_ACCEPTING_TALLIES',
         code: 'RESOURCE_CONFLICT', message: 'This strawpoll is not accepting manual tallies.'});
       if (poll.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT',
         message: 'This strawpoll changed since it was loaded.', details: {currentRevision: poll.revision}});
@@ -2864,7 +2864,7 @@ export class Stage5Service {
         'SELECT manual_tally FROM strawpoll_options WHERE id=$1 AND strawpoll_id=$2 FOR UPDATE', [optionId, strawpollId]);
       if (!option.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Strawpoll option not found.'});
       const previous = option.rows[0].manual_tally; const tally = Number(input.tally);
-      if (previous === tally) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The manual tally is unchanged.'});
+      if (previous === tally) throw new AppError({reason: 'TALLY_UNCHANGED', code: 'RESOURCE_CONFLICT', message: 'The manual tally is unchanged.'});
       const now = this.now();
       await client.query('UPDATE strawpoll_options SET manual_tally=$2 WHERE id=$1', [optionId, tally]);
       await client.query(`INSERT INTO strawpoll_manual_tally_revisions
@@ -2915,12 +2915,12 @@ export class Stage5Service {
         message: 'This amendment changed since it was loaded.', details: {currentRevision: document.revision}});
       const chair = await isChair(client, committee.id, auth.user.id);
       const seatId = chair ? null : await activeSeat(client, committee.id, auth.user.id);
-      if (!chair && (!seatId || seatId !== document.created_on_behalf_of_seat_id)) throw new AppError({code: 'FORBIDDEN',
+      if (!chair && (!seatId || seatId !== document.created_on_behalf_of_seat_id)) throw new AppError({reason: 'AMENDMENT_PROPOSER_OR_CHAIR_REQUIRED', code: 'FORBIDDEN',
         message: 'Only the amendment proposer or a Chair may delete it.'});
       const ballot = await client.query('SELECT 1 FROM ballots WHERE subject_type=$1 AND subject_id=$2 LIMIT 1',
         ['AMENDMENT', documentId]);
       if (ballot.rowCount || document.voting_version_id || ['VOTING', 'INCORPORATED', 'REJECTED'].includes(document.status)) {
-        throw new AppError({code: 'RESOURCE_CONFLICT', message: 'An amendment cannot be deleted after voting begins.'});
+        throw new AppError({reason: 'AMENDMENT_VOTING_STARTED', code: 'RESOURCE_CONFLICT', message: 'An amendment cannot be deleted after voting begins.'});
       }
       const now = this.now();
       await client.query(`UPDATE documents SET deleted_at=$2,deleted_by_user_id=$3,revision=revision+1,updated_at=$2
@@ -2954,7 +2954,7 @@ export class Stage5Service {
       const session = await client.query<{status: string; active_rule_package_version_id: string}>(`SELECT status,
         active_rule_package_version_id FROM meeting_sessions WHERE id=$1 AND committee_id=$2`, [meetingSessionId, committeeId]);
       if (!session.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Meeting session not found.'});
-      if (session.rows[0].status !== 'OPEN') throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Meeting session is closed.'});
+      if (session.rows[0].status !== 'OPEN') throw new AppError({reason: 'MEETING_CLOSED', code: 'RESOURCE_CONFLICT', message: 'Meeting session is closed.'});
       const chair = await isChair(client, committee.id, auth.user.id);
       const actor = kind === 'RESOLUTION' && chair && input.onBehalfOfSeatId === undefined
         ? {chair: true, seatId: null as string | null, displayName: ''}
@@ -2965,9 +2965,9 @@ export class Stage5Service {
           WHERE d.id=$1 AND d.committee_id=$2 AND d.kind='RESOLUTION' AND d.deleted_at IS NULL FOR UPDATE`,
         [resolutionId, committeeId]);
         if (!parent.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Resolution not found.'});
-        if (parent.rows[0].meeting_session_id !== meetingSessionId) throw new AppError({code: 'VALIDATION_FAILED',
+        if (parent.rows[0].meeting_session_id !== meetingSessionId) throw new AppError({reason: 'DOCUMENT_SESSION_MISMATCH', code: 'VALIDATION_FAILED',
           message: 'Amendment and resolution must use the same meeting session.'});
-        if (!['PUBLISHED', 'POSTPONED'].includes(parent.rows[0].status)) throw new AppError({code: 'RESOURCE_CONFLICT',
+        if (!['PUBLISHED', 'POSTPONED'].includes(parent.rows[0].status)) throw new AppError({reason: 'AMENDMENTS_NOT_ACCEPTED', code: 'RESOURCE_CONFLICT',
           message: 'The resolution does not accept amendments.'});
       }
       const id = randomUUID(); const versionId = randomUUID(); const now = this.now();
@@ -3014,22 +3014,22 @@ export class Stage5Service {
       const found = await client.query<DocumentRow>(`SELECT d.*,a.resolution_document_id FROM documents d
         LEFT JOIN amendments a ON a.document_id=d.id WHERE d.id=$1 AND d.deleted_at IS NULL FOR UPDATE OF d`, [documentId]);
       const document = found.rows[0]; if (!document) throw new AppError({code: 'NOT_FOUND', message: 'Document not found.'});
-      if (contentFileEntryId && content) throw new AppError({code: 'VALIDATION_FAILED',
+      if (contentFileEntryId && content) throw new AppError({reason: 'DOCUMENT_BODY_SOURCE_CONFLICT', code: 'VALIDATION_FAILED',
         message: 'A document body must use either text or a file.'});
-      if (document.kind === 'AMENDMENT' && !content.trim() && !contentFileEntryId) throw new AppError({code: 'VALIDATION_FAILED',
+      if (document.kind === 'AMENDMENT' && !content.trim() && !contentFileEntryId) throw new AppError({reason: 'AMENDMENT_BODY_REQUIRED', code: 'VALIDATION_FAILED',
         message: 'Amendment content is invalid.'});
       if (document.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT',
         message: 'This document changed since it was loaded.', details: {currentRevision: document.revision}});
       if (document.status === 'VOTING' || ['PASSED', 'FAILED', 'INCORPORATED', 'REJECTED'].includes(document.status)) {
-        throw new AppError({code: 'RESOURCE_CONFLICT', message: 'The document version is frozen.'});
+        throw new AppError({reason: 'DOCUMENT_FROZEN', code: 'RESOURCE_CONFLICT', message: 'The document version is frozen.'});
       }
       const actor = await representedDocumentSeat(client, committee, auth, input.onBehalfOfSeatId, document.meeting_session_id);
-      if (!actor.chair && actor.seatId !== document.created_on_behalf_of_seat_id) throw new AppError({code: 'FORBIDDEN',
+      if (!actor.chair && actor.seatId !== document.created_on_behalf_of_seat_id) throw new AppError({reason: 'DOCUMENT_PROPOSER_OR_CHAIR_REQUIRED', code: 'FORBIDDEN',
         message: 'Only the proposer or a Chair may create a new version.'});
       if (contentFileEntryId) {
         const file = await client.query<{id: string; status: string}>(`SELECT id,status FROM file_entries
           WHERE id=$1 AND committee_id=$2 AND merged_into_file_entry_id IS NULL FOR UPDATE`, [contentFileEntryId, committee.id]);
-        if (!file.rows[0] || file.rows[0].status !== 'PUBLISHED') throw new AppError({code: 'RESOURCE_CONFLICT',
+        if (!file.rows[0] || file.rows[0].status !== 'PUBLISHED') throw new AppError({reason: 'DOCUMENT_FILE_NOT_PUBLISHED', code: 'RESOURCE_CONFLICT',
           message: 'Choose a published file from this committee.', details: {reason: 'DOCUMENT_FILE_NOT_PUBLISHED'}});
       }
       const next = await client.query<{version_number: number}>(
@@ -3061,7 +3061,7 @@ export class Stage5Service {
     requireBusinessIdentity(auth); assertExactBody(input, ['baseRevision', 'action', 'ruleStableId']);
     const baseRevision = positiveInteger(input.baseRevision, 'Base revision');
     const action = input.action as 'PUBLISH' | 'POSTPONE' | 'RESUME' | 'RECOMMEND_BALLOT';
-    if (!['PUBLISH', 'POSTPONE', 'RESUME', 'RECOMMEND_BALLOT'].includes(action)) throw new AppError({
+    if (!['PUBLISH', 'POSTPONE', 'RESUME', 'RECOMMEND_BALLOT'].includes(action)) throw new AppError({reason: 'INVALID_DOCUMENT_ACTION',
       code: 'VALIDATION_FAILED', message: 'Document action is invalid.'});
     const ruleStableId = text(input.ruleStableId, 'Rule stable ID', 128);
     return transaction(this.pool, async client => {
@@ -3073,7 +3073,7 @@ export class Stage5Service {
       const found = await client.query<DocumentRow>(`SELECT d.*,a.resolution_document_id FROM documents d
         LEFT JOIN amendments a ON a.document_id=d.id WHERE d.id=$1 AND d.deleted_at IS NULL FOR UPDATE OF d`, [documentId]);
       const document = found.rows[0]; if (!document) throw new AppError({code: 'NOT_FOUND', message: 'Document not found.'});
-      if (action === 'PUBLISH') throw new AppError({code: 'RESOURCE_CONFLICT',
+      if (action === 'PUBLISH') throw new AppError({reason: 'DOCUMENT_INTRODUCTION_MOTION_REQUIRED', code: 'RESOURCE_CONFLICT',
         message: 'A draft document can only be introduced by a passed motion.'});
       if (document.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT',
         message: 'This document changed since it was loaded.', details: {currentRevision: document.revision}});
@@ -3081,7 +3081,7 @@ export class Stage5Service {
         RESUME: 'POSTPONED', RECOMMEND_BALLOT: 'PUBLISHED'};
       const nextStatus: Record<typeof action, ProceedingDocumentStatus> = {POSTPONE: 'POSTPONED',
         RESUME: 'PUBLISHED', RECOMMEND_BALLOT: 'VOTING'};
-      if (document.status !== expectedFrom[action]) throw new AppError({code: 'RESOURCE_CONFLICT',
+      if (document.status !== expectedFrom[action]) throw new AppError({reason: 'DOCUMENT_STATE_CHANGED', code: 'RESOURCE_CONFLICT',
         message: 'The document is not in the required state.'});
       if (action !== 'POSTPONE') await requirePublishedDocumentFile(client, document.current_version_id);
       const now = this.now(); const evaluation = await frozenDocumentRule(client, document, ruleStableId,
@@ -3113,7 +3113,7 @@ export class Stage5Service {
     const baseRevision = positiveInteger(input.baseRevision, 'Base revision');
     const supplied = ['proposerSeatId', 'seconderSeatId', 'delegatesCanAmend', 'majority']
       .filter(key => Object.prototype.hasOwnProperty.call(input, key));
-    if (supplied.length === 0) throw new AppError({code: 'VALIDATION_FAILED', message: 'No document setting was supplied.'});
+    if (supplied.length === 0) throw new AppError({reason: 'DOCUMENT_SETTINGS_EMPTY', code: 'VALIDATION_FAILED', message: 'No document setting was supplied.'});
     return transaction(this.pool, async client => {
       const located = await client.query<{committee_id: string}>(
         'SELECT committee_id FROM documents WHERE id=$1 AND deleted_at IS NULL', [documentId]);
@@ -3126,28 +3126,28 @@ export class Stage5Service {
       if (!document) throw new AppError({code: 'NOT_FOUND', message: 'Document not found.'});
       if (document.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT',
         message: 'This document changed since it was loaded.', details: {currentRevision: document.revision}});
-      if (document.kind === 'AMENDMENT' && supplied.some(key => key !== 'proposerSeatId')) throw new AppError({
+      if (document.kind === 'AMENDMENT' && supplied.some(key => key !== 'proposerSeatId')) throw new AppError({reason: 'RESOLUTION_SETTING_ONLY',
         code: 'VALIDATION_FAILED', message: 'This setting is only available for resolutions.'});
       const seat = async (value: unknown, name: string): Promise<string> => {
         const seatId = uuid(value, name);
         const present = await client.query(`SELECT 1 FROM committee_seats s JOIN current_attendance a ON a.seat_id=s.id
           AND a.meeting_session_id=$3 AND a.state='PRESENT' WHERE s.id=$1 AND s.committee_id=$2 AND s.active=true`,
         [seatId, committee.id, document.meeting_session_id]);
-        if (!present.rowCount) throw new AppError({code: 'VALIDATION_FAILED', message: `${name} is not present.`});
+        if (!present.rowCount) throw new AppError({code: 'VALIDATION_FAILED', reason: 'SEAT_NOT_PRESENT', message: `${name} is not present.`});
         return seatId;
       };
       const proposerSeatId = Object.prototype.hasOwnProperty.call(input, 'proposerSeatId')
         ? await seat(input.proposerSeatId, 'Proposer seat') : undefined;
       const seconderSeatId = Object.prototype.hasOwnProperty.call(input, 'seconderSeatId')
         ? input.seconderSeatId === null ? null : await seat(input.seconderSeatId, 'Seconder seat') : undefined;
-      if (proposerSeatId && seconderSeatId && proposerSeatId === seconderSeatId) throw new AppError({
+      if (proposerSeatId && seconderSeatId && proposerSeatId === seconderSeatId) throw new AppError({reason: 'PROPOSER_SECONDER_SAME',
         code: 'VALIDATION_FAILED', message: 'The proposer and seconder must be different seats.'});
       if (Object.prototype.hasOwnProperty.call(input, 'delegatesCanAmend') && typeof input.delegatesCanAmend !== 'boolean') {
-        throw new AppError({code: 'VALIDATION_FAILED', message: 'The delegate amendment setting is invalid.'});
+        throw new AppError({reason: 'INVALID_AMENDMENT_SETTING', code: 'VALIDATION_FAILED', message: 'The delegate amendment setting is invalid.'});
       }
       const majority = input.majority as ResolutionDirectVoteMajority | undefined;
       if (majority !== undefined && !['SIMPLE_MAJORITY', 'TWO_THIRDS', 'TWO_THIRDS_NON_ABSTAINING'].includes(majority)) {
-        throw new AppError({code: 'VALIDATION_FAILED', message: 'The direct-vote majority is invalid.'});
+        throw new AppError({reason: 'INVALID_BALLOT_THRESHOLD', code: 'VALIDATION_FAILED', message: 'The direct-vote majority is invalid.'});
       }
       const now = this.now(); let before: Record<string, unknown>; let after: Record<string, unknown>;
       if (document.kind === 'RESOLUTION') {
@@ -3159,9 +3159,9 @@ export class Stage5Service {
           seconderSeatId: seconderSeatId === undefined ? metadata.seconder_seat_id : seconderSeatId,
           delegatesCanAmend: input.delegatesCanAmend === undefined ? metadata.delegates_can_amend : input.delegatesCanAmend,
           majority: majority ?? metadata.direct_vote_majority};
-        if (after.proposerSeatId === after.seconderSeatId) throw new AppError({code: 'VALIDATION_FAILED',
+        if (after.proposerSeatId === after.seconderSeatId) throw new AppError({reason: 'PROPOSER_SECONDER_SAME', code: 'VALIDATION_FAILED',
           message: 'The proposer and seconder must be different seats.'});
-        if (JSON.stringify(before) === JSON.stringify(after)) throw new AppError({code: 'RESOURCE_CONFLICT',
+        if (JSON.stringify(before) === JSON.stringify(after)) throw new AppError({reason: 'DOCUMENT_SETTINGS_UNCHANGED', code: 'RESOURCE_CONFLICT',
           message: 'The document settings are unchanged.'});
         await client.query(`UPDATE resolutions SET proposer_seat_id=$2,seconder_seat_id=$3,delegates_can_amend=$4,
           direct_vote_majority=$5,direct_vote_revision=direct_vote_revision+CASE WHEN direct_vote_majority<>$5 THEN 1 ELSE 0 END
@@ -3169,7 +3169,7 @@ export class Stage5Service {
       } else {
         const metadata = await client.query<{proposer_seat_id: string}>('SELECT proposer_seat_id FROM amendments WHERE document_id=$1 FOR UPDATE', [documentId]);
         before = {proposerSeatId: metadata.rows[0]?.proposer_seat_id}; after = {proposerSeatId};
-        if (!proposerSeatId || before.proposerSeatId === proposerSeatId) throw new AppError({code: 'RESOURCE_CONFLICT',
+        if (!proposerSeatId || before.proposerSeatId === proposerSeatId) throw new AppError({reason: 'DOCUMENT_SETTINGS_UNCHANGED', code: 'RESOURCE_CONFLICT',
           message: 'The document settings are unchanged.'});
         await client.query('UPDATE amendments SET proposer_seat_id=$2 WHERE document_id=$1', [documentId, proposerSeatId]);
       }
@@ -3193,7 +3193,7 @@ export class Stage5Service {
     requireBusinessIdentity(auth); assertExactBody(input, ['seatId', 'choice']);
     const seatId = uuid(input.seatId, 'Voting seat ID');
     const choice = input.choice === null ? null : input.choice as BallotChoice;
-    if (choice !== null && !['FOR', 'AGAINST', 'ABSTAIN'].includes(choice)) throw new AppError({
+    if (choice !== null && !['FOR', 'AGAINST', 'ABSTAIN'].includes(choice)) throw new AppError({reason: 'INVALID_VOTE_CHOICE',
       code: 'VALIDATION_FAILED', message: 'Vote choice is invalid.'});
     return transaction(this.pool, async client => {
       const located = await client.query<{committee_id: string}>(
@@ -3210,18 +3210,18 @@ export class Stage5Service {
         FROM committee_seats s JOIN current_attendance a ON a.seat_id=s.id AND a.meeting_session_id=$3 AND a.state='PRESENT'
         WHERE s.id=$1 AND s.committee_id=$2 AND s.active=true AND s.can_vote=true`,
       [seatId, committee.id, document.meeting_session_id]);
-      if (!eligible.rows[0]) throw new AppError({code: 'FORBIDDEN', message: 'This seat is not eligible for the resolution vote.'});
-      if (choice === 'ABSTAIN' && eligible.rows[0].must_vote) throw new AppError({code: 'VALIDATION_FAILED',
+      if (!eligible.rows[0]) throw new AppError({reason: 'SEAT_NOT_ELIGIBLE_TO_VOTE', code: 'FORBIDDEN', message: 'This seat is not eligible for the resolution vote.'});
+      if (choice === 'ABSTAIN' && eligible.rows[0].must_vote) throw new AppError({reason: 'SEAT_MUST_VOTE', code: 'VALIDATION_FAILED',
         message: 'This seat must vote for or against.'});
       const vote = await client.query<{id: string; current_choice: BallotChoice; revision: number; retracted_at: Date | null}>(
         `SELECT id,current_choice,revision,retracted_at FROM resolution_direct_votes
           WHERE resolution_document_id=$1 AND seat_id=$2 FOR UPDATE`, [documentId, seatId]);
       const current = vote.rows[0]; const previousChoice = current && !current.retracted_at ? current.current_choice : null;
-      if (choice === previousChoice) throw new AppError({code: 'RESOURCE_CONFLICT', message: choice === null
+      if (choice === previousChoice) throw new AppError({code: 'RESOURCE_CONFLICT', reason: choice === null ? 'NO_VOTE_TO_UNDO' : 'VOTE_ALREADY_RECORDED', message: choice === null
         ? 'This seat has no current vote to retract.' : 'This seat already has that vote.'});
       const now = this.now(); let voteId: string; let voteRevision: number;
       if (!current) {
-        if (choice === null) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'This seat has no current vote to retract.'});
+        if (choice === null) throw new AppError({reason: 'NO_VOTE_TO_UNDO', code: 'RESOURCE_CONFLICT', message: 'This seat has no current vote to retract.'});
         voteId = randomUUID(); voteRevision = 1;
         await client.query(`INSERT INTO resolution_direct_votes
           (id,committee_id,resolution_document_id,seat_id,seat_display_name,current_choice,actor_user_id,on_behalf_of_seat_id,cast_at)
@@ -3267,19 +3267,19 @@ export class Stage5Service {
         LEFT JOIN amendments a ON a.document_id=d.id WHERE d.id=$1 AND d.deleted_at IS NULL FOR UPDATE OF d`, [documentId]);
       const document = found.rows[0] as DocumentRow;
       const allowed = document.kind === 'RESOLUTION' ? ['PASSED', 'FAILED'] : ['INCORPORATED', 'REJECTED'];
-      if (!allowed.includes(outcome)) throw new AppError({code: 'VALIDATION_FAILED', message: 'Document result is invalid.'});
-      if (document.kind === 'AMENDMENT' && document.status === 'DRAFT') throw new AppError({code: 'RESOURCE_CONFLICT',
+      if (!allowed.includes(outcome)) throw new AppError({reason: 'INVALID_DOCUMENT_RESULT', code: 'VALIDATION_FAILED', message: 'Document result is invalid.'});
+      if (document.kind === 'AMENDMENT' && document.status === 'DRAFT') throw new AppError({reason: 'AMENDMENT_NOT_INTRODUCED', code: 'RESOURCE_CONFLICT',
         message: 'Introduce the amendment before recording its result.'});
       if (document.kind === 'AMENDMENT' && (document.status === 'VOTING' || document.voting_version_id)) {
-        throw new AppError({code: 'RESOURCE_CONFLICT', message: 'Publish the formal ballot result for this amendment.'});
+        throw new AppError({reason: 'AMENDMENT_BALLOT_RESULT_REQUIRED', code: 'RESOURCE_CONFLICT', message: 'Publish the formal ballot result for this amendment.'});
       }
       if (document.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT',
         message: 'This document changed since it was loaded.', details: {currentRevision: document.revision}});
-      if (document.status === outcome) throw new AppError({code: 'RESOURCE_CONFLICT', message: 'This result is already recorded.'});
+      if (document.status === outcome) throw new AppError({reason: 'RESULT_ALREADY_RECORDED', code: 'RESOURCE_CONFLICT', message: 'This result is already recorded.'});
       const terminal = ['PASSED', 'FAILED', 'INCORPORATED', 'REJECTED'].includes(document.status);
       const reason = input.reason === undefined || input.reason === null ? null : text(input.reason, 'Correction reason', 2000);
-      if (terminal && !reason) throw new AppError({code: 'VALIDATION_FAILED', message: 'A correction reason is required.'});
-      if (!terminal && input.reason !== undefined && input.reason !== null) throw new AppError({code: 'VALIDATION_FAILED',
+      if (terminal && !reason) throw new AppError({reason: 'CORRECTION_REASON_REQUIRED', code: 'VALIDATION_FAILED', message: 'A correction reason is required.'});
+      if (!terminal && input.reason !== undefined && input.reason !== null) throw new AppError({reason: 'INITIAL_RESULT_CORRECTION_UNEXPECTED', code: 'VALIDATION_FAILED',
         message: 'An initial result does not use a correction reason.'});
       const previous = await client.query<{id: string}>(`SELECT id FROM document_result_decisions
         WHERE document_id=$1 ORDER BY created_at DESC,id DESC LIMIT 1`, [documentId]);
@@ -3316,7 +3316,7 @@ export class Stage5Service {
         const found = await client.query<DocumentRow>(`SELECT d.*,a.resolution_document_id FROM documents d
           LEFT JOIN amendments a ON a.document_id=d.id WHERE d.id=$1 AND d.deleted_at IS NULL FOR UPDATE OF d`, [documentId]);
         const document = found.rows[0]; if (!document) throw new AppError({code: 'NOT_FOUND', message: 'Document not found.'});
-        if (document.status !== 'PUBLISHED') throw new AppError({code: 'RESOURCE_CONFLICT',
+        if (document.status !== 'PUBLISHED') throw new AppError({reason: 'DOCUMENT_DISCUSSION_CLOSED', code: 'RESOURCE_CONFLICT',
           message: 'The document is not open for discussion.'});
         const actor = await representedDocumentSeat(client, committee, auth, input.onBehalfOfSeatId, document.meeting_session_id);
         await frozenDocumentRule(client, document, ruleStableId, documentRuleIds[document.kind].DISCUSS, this.now());
