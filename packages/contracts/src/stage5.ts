@@ -1,5 +1,6 @@
 import type {CommitteeEventName, EventAudience} from './registry.js';
 import type {FrozenRuleEvaluation} from './stage3.js';
+import type {FlagSnapshot} from './stage4.js';
 
 export type RealtimeSyncState = 'LIVE' | 'DEGRADED' | 'OFFLINE_READONLY' | 'RESYNCING';
 
@@ -301,6 +302,12 @@ export interface DocumentResultDecision {
   createdAt: string;
 }
 
+export interface DocumentCountry {
+  seatId: string;
+  seatDisplayName: string;
+  flag: FlagSnapshot;
+}
+
 export interface ProceedingDocument {
   ordinal: number;
   customTitle: string | null;
@@ -315,8 +322,8 @@ export interface ProceedingDocument {
   currentVersion: ProceedingDocumentVersion;
   votingVersionId: string | null;
   public: boolean;
-  proposerSeatId: string | null;
-  seconderSeatId: string | null;
+  proposers: DocumentCountry[];
+  seconders: DocumentCountry[];
   delegatesCanAmend: boolean;
   directVote: ResolutionDirectVoteState | null;
   resultDecisions: DocumentResultDecision[];

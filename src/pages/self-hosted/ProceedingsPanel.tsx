@@ -729,7 +729,7 @@ function AmendmentCard({snapshot, amendment, run, api, canChair, representedSeat
   const [ballotThreshold, setBallotThreshold] = React.useState<'SIMPLE_MAJORITY' | 'TWO_THIRDS'>('SIMPLE_MAJORITY');
   const represented = canChair && representedSeatId ? {onBehalfOfSeatId: representedSeatId} : {};
   const editable = snapshot.viewer.audience !== 'PUBLIC' && snapshot.committee.status === 'ACTIVE'
-    && (canChair || Boolean(snapshot.viewer.seatId) && amendment.proposerSeatId === snapshot.viewer.seatId)
+    && (canChair || Boolean(snapshot.viewer.seatId) && amendment.proposers.some(country => country.seatId === snapshot.viewer.seatId))
     && !['VOTING', 'INCORPORATED', 'REJECTED'].includes(amendment.status);
   const amendmentBallots = (snapshot.ballots ?? []).filter(ballot => ballot.subjectType === 'AMENDMENT'
     && ballot.subjectId === amendment.id);
@@ -808,10 +808,10 @@ function AmendmentCard({snapshot, amendment, run, api, canChair, representedSeat
         && void setResult(data.value as 'INCORPORATED' | 'REJECTED')} />
     <Button floated="right" icon="trash" negative basic disabled={!deletable} aria-label={t('Delete')}
       onClick={() => void run(() => api.deleteAmendment(amendment.id, amendment.revision))} />
-  </Card.Header><Card.Meta><Dropdown search selection fluid value={amendment.proposerSeatId || false}
+  </Card.Header><Card.Meta><Dropdown search selection fluid value={amendment.proposers[0]?.seatId || false}
     placeholder={t('Amendment proposer')} options={seatOptions} disabled={!canChair}
     onChange={(_, data) => void run(() => api.updateDocumentSettings(amendment.id,
-      {baseRevision: amendment.revision, proposerSeatId: String(data.value)}))} /></Card.Meta>
+      {baseRevision: amendment.revision, proposerSeatIds: [String(data.value)]}))} /></Card.Meta>
   <Input fluid value={title} disabled={!editable} placeholder={t('Amendment title')}
     onChange={event => {setTitle(event.currentTarget.value); setTitleDirty(true);}} onBlur={() => void save()} />
   <Divider hidden /><Button.Group basic compact><Button active={source === 'TEXT'}
@@ -989,7 +989,7 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
   const amendments = (snapshot.documents ?? []).filter(document => document.kind === 'AMENDMENT');
   const linkedResolutionIds = new Set((snapshot.speakerLists ?? []).map(list => list.linkedResolutionId).filter(Boolean));
   const caucusResolutionOptions = resolutions.filter(document => document.status === 'PUBLISHED'
-    && document.proposerSeatId && document.seconderSeatId && !linkedResolutionIds.has(document.id));
+    && !linkedResolutionIds.has(document.id));
   const motionOptions = [
     ...types.map(type => ({key: type.id, value: type.id,
       text: motionTypeName(type, type.id, snapshot.committee.committeeLanguage)})),
@@ -1440,6 +1440,9 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
   const [filesLoading, setFilesLoading] = React.useState(true);
   const [bodyDirty, setBodyDirty] = React.useState(false);
   const [downloadFailure, setDownloadFailure] = React.useState<unknown>();
+  const [countrySelections, setCountrySelections] = React.useState({proposers: '', seconders: ''});
+  const [countriesSaving, setCountriesSaving] = React.useState(false);
+  const savingCountries = React.useRef(false);
   const [fileSaving, setFileSaving] = React.useState(false);
   const savingFile = React.useRef(false);
   const [preparingDownload, setPreparingDownload] = React.useState(false);
@@ -1474,7 +1477,7 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
     setVersionTitle(selectedDocument.title); setVersionTitleDirty(false); setBodyDirty(false); setVersionContent(selectedDocument.currentVersion.content);
     setVersionFileId(selectedDocument.currentVersion.contentFile?.id ?? '');
   }, [selectedDocument?.id, selectedDocument?.revision]);
-  React.useEffect(() => {setContentSource('FILE');}, [selectedDocument?.id]);
+  React.useEffect(() => {setContentSource('FILE'); setCountrySelections({proposers: '', seconders: ''});}, [selectedDocument?.id]);
   React.useEffect(() => {
     if (contentSource !== 'FILE') return;
     let active = true; setFileError(undefined); setFilesLoading(true);
@@ -1535,9 +1538,25 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
     } catch (caught) {if (generation === downloadGeneration.current) setDownloadFailure(caught);}
     finally {downloadingFile.current = false; if (generation === downloadGeneration.current) setPreparingDownload(false);}
   };
-  const presentSeatIds = new Set(snapshot.attendance.filter(item => item.state === 'PRESENT').map(item => item.seatId));
+  const presentSeatIds = new Set((snapshot.attendanceBySession?.[document.meetingSessionId] ?? snapshot.attendance)
+    .filter(item => item.state === 'PRESENT').map(item => item.seatId));
   const seatOptions = snapshot.seats.map(seat => ({key: seat.id, value: seat.id, text: seat.displayName,
     disabled: !presentSeatIds.has(seat.id)}));
+  const selectedCountryIds = new Set([...document.proposers, ...document.seconders].map(country => country.seatId));
+  const countryOptions = snapshot.seats.filter(seat => !selectedCountryIds.has(seat.id))
+    .map(seat => ({key: seat.id, value: seat.id, text: seat.displayName, content: seatOptionContent(seat),
+      disabled: !presentSeatIds.has(seat.id)}));
+  const saveCountries = async (role: 'proposers' | 'seconders', ids: string[], added = false) => {
+    if (!canChair || savingCountries.current) return;
+    savingCountries.current = true; setCountriesSaving(true);
+    try {
+      await run(async () => {
+        await api.updateDocumentSettings(document.id, {baseRevision: document.revision,
+          [role === 'proposers' ? 'proposerSeatIds' : 'seconderSeatIds']: ids});
+        if (added) setCountrySelections(previous => ({...previous, [role]: ''}));
+      });
+    } finally {savingCountries.current = false; setCountriesSaving(false);}
+  };
   const directVote = document.directVote;
   const directVotes = directVote?.votes ?? [];
   const directVoteBySeat = new Map(directVotes.map(vote => [vote.seatId, vote]));
@@ -1683,14 +1702,24 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
           {meetingSessionId: session.id, subjectType: 'RESOLUTION', subjectId: document.id, procedural: false,
             thresholdKind: 'TWO_THIRDS'}))}>{t('Open formal ballot')}</Button>}</>}</>}</Grid.Column>
     {activeTab !== 'voting' && <Grid.Column width={5}><Segment><Form>
-      {canChair && <Form.Dropdown label={t('Resolution proposer')} search selection fluid value={document.proposerSeatId ?? false}
-        options={seatOptions} onChange={(_, data) => void run(() => api.updateDocumentSettings(document.id,
-          {baseRevision: document.revision, proposerSeatId: String(data.value)}))} />}
-      {canChair && <Form.Dropdown label={t('Resolution seconder')} search selection clearable fluid value={document.seconderSeatId ?? false}
-        options={seatOptions.filter(option => option.value !== document.proposerSeatId)}
-        onChange={(_, data) => void run(() => api.updateDocumentSettings(document.id,
-          {baseRevision: document.revision, seconderSeatId: data.value ? String(data.value) : null}))} />}
-      {canChair && <Form.Checkbox label={t('Delegates can amend')} toggle checked={document.delegatesCanAmend}
+      {(['proposers', 'seconders'] as const).map(role => <section className="resolution-country-list" key={role}
+        aria-label={t(role === 'proposers' ? 'Resolution proposer' : 'Resolution seconder')}>
+        <Header size="small">{t(role === 'proposers' ? 'Resolution proposer' : 'Resolution seconder')}</Header>
+        <ul>{document[role].map(country => <li key={country.seatId}>
+          <CountryFlagDisplay flag={country.flag} /><span className="resolution-country-name">{country.seatDisplayName}</span>
+          {canChair && <Button basic icon="remove" size="mini" disabled={countriesSaving}
+            aria-label={`${t('Remove')} ${country.seatDisplayName}`}
+            onClick={() => void saveCountries(role, document[role].filter(item => item.seatId !== country.seatId).map(item => item.seatId))} />}
+        </li>)}</ul>
+        {canChair && <><Form.Dropdown search selection fluid placeholder={t('Country or delegation')}
+          aria-label={t(role === 'proposers' ? 'Resolution proposer' : 'Resolution seconder')}
+          value={countrySelections[role] || false} options={countryOptions} disabled={countriesSaving}
+          onChange={(_, data) => setCountrySelections(previous => ({...previous, [role]: String(data.value)}))} />
+          <Button fluid icon="plus" content={t('Add country')} disabled={countriesSaving || !countrySelections[role]
+            || !countryOptions.some(option => option.value === countrySelections[role] && !option.disabled)}
+            onClick={() => void saveCountries(role, [...document[role].map(country => country.seatId), countrySelections[role]], true)} /></>}
+      </section>)}
+      {canChair && <Form.Checkbox label={t('Delegates can amend')} toggle disabled={countriesSaving} checked={document.delegatesCanAmend}
         onChange={(_, data) => void run(() => api.updateDocumentSettings(document.id,
           {baseRevision: document.revision, delegatesCanAmend: data.checked ?? false}))} />}
     </Form></Segment></Grid.Column>}

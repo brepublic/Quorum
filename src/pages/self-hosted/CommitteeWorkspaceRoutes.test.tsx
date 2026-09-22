@@ -643,7 +643,7 @@ describe('committee workspace routes and roles', () => {
         resolutionId: null, ordinal: 1, customTitle: null, title: 'New draft resolution 1', status: 'DRAFT', rulePackageVersionId: 'rules',
         currentVersion: {id: 'version', versionNumber: 1, content: '', contentFile: null,
           createdAt: '2026-08-14T00:00:00.000Z'},
-        votingVersionId: null, public: false, proposerSeatId: null, seconderSeatId: null, delegatesCanAmend: false,
+        votingVersionId: null, public: false, proposers: [], seconders: [], delegatesCanAmend: false,
         directVote: null, resultDecisions: [], revision: 1, discussion: [],
         createdAt: '2026-08-14T00:00:00.000Z', updatedAt: '2026-08-14T00:00:00.000Z'}],
       activeRules: {...value.activeRules, motionTypes: [{id: 'introduce-draft-resolution',
@@ -656,7 +656,7 @@ describe('committee workspace routes and roles', () => {
 
   it('targets an existing amendment draft instead of creating one from the introduction motion', async () => {
     const baseDocument = {committeeId: 'committee', meetingSessionId: 'meeting', rulePackageVersionId: 'rules',
-      votingVersionId: null, public: false, proposerSeatId: 'seat', seconderSeatId: null, delegatesCanAmend: false,
+      votingVersionId: null, public: false, proposers: [{seatId: 'seat', seatDisplayName: 'China', flag: {type: 'STANDARD', value: 'cn'}}], seconders: [], delegatesCanAmend: false,
       directVote: null, resultDecisions: [], revision: 1, discussion: [], createdAt: '2026-08-14T00:00:00.000Z',
       updatedAt: '2026-08-14T00:00:00.000Z'};
     const page = await render('CHAIR', '/committees/committee/motions', user, value => ({...value,
@@ -682,7 +682,7 @@ describe('committee workspace routes and roles', () => {
 
   it('targets an introduced amendment from the formal-vote motion', async () => {
     const document = {committeeId: 'committee', meetingSessionId: 'meeting', rulePackageVersionId: 'rules',
-      votingVersionId: null, public: true, proposerSeatId: 'seat', seconderSeatId: null, delegatesCanAmend: false,
+      votingVersionId: null, public: true, proposers: [{seatId: 'seat', seatDisplayName: 'China', flag: {type: 'STANDARD', value: 'cn'}}], seconders: [], delegatesCanAmend: false,
       directVote: null, resultDecisions: [], revision: 2, discussion: [], createdAt: '2026-08-14T00:00:00.000Z',
       updatedAt: '2026-08-14T00:00:00.000Z'};
     const page = await render('CHAIR', '/committees/committee/motions', user, value => ({...value,
@@ -716,7 +716,7 @@ describe('committee workspace routes and roles', () => {
         resolutionId: null, ordinal: 1, customTitle: null, title: 'New draft resolution 1', status: 'PUBLISHED', rulePackageVersionId: 'rules',
         currentVersion: {id: 'version', versionNumber: 1, content: 'Draft body', contentFile: null,
           createdAt: '2026-08-14T00:00:00.000Z'}, votingVersionId: null, public: true,
-        proposerSeatId: 'seat', seconderSeatId: 'seconder', delegatesCanAmend: false, directVote: null,
+        proposers: [{seatId: 'seat', seatDisplayName: 'China', flag: {type: 'STANDARD', value: 'cn'}}], seconders: [{seatId: 'seconder', seatDisplayName: 'France', flag: {type: 'STANDARD', value: 'fr'}}], delegatesCanAmend: false, directVote: null,
         resultDecisions: [], revision: 2, discussion: [], createdAt: '2026-08-14T00:00:00.000Z',
         updatedAt: '2026-08-14T00:00:00.000Z'}],
       activeRules: {...value.activeRules, motionTypes: [{id: 'open-moderated-caucus',
@@ -1460,7 +1460,7 @@ describe('committee workspace routes and roles', () => {
         title: 'Climate resolution', status: 'PUBLISHED', rulePackageVersionId: 'rules', currentVersion: {id: 'version',
           versionNumber: 1, content: 'Operative text', contentFile: null,
           createdAt: '2026-08-14T00:00:00.000Z'}, votingVersionId: null,
-        public: true, proposerSeatId: null, seconderSeatId: null, delegatesCanAmend: false,
+        public: true, proposers: [], seconders: [], delegatesCanAmend: false,
         directVote: {majority: 'SIMPLE_MAJORITY', startedAt: null, settingsRevision: 1, eligibility: [], threshold: 0,
           automaticResult: null, votes: []}, resultDecisions: [], revision: 2, discussion: [],
         createdAt: '2026-08-14T00:00:00.000Z', updatedAt: '2026-08-14T00:00:00.000Z'}]}));
@@ -1485,7 +1485,7 @@ describe('committee workspace routes and roles', () => {
       kind: 'RESOLUTION', resolutionId: null, ordinal: 1, customTitle: null, title: 'New draft resolution 1', status: 'PUBLISHED',
       rulePackageVersionId: 'rules', currentVersion: {id: 'resolution-version', versionNumber: 1,
         content: 'Resolution body', contentFile: null, createdAt: '2026-08-14T00:00:00.000Z'}, votingVersionId: null,
-      public: true, proposerSeatId: 'seat', seconderSeatId: null, delegatesCanAmend: false, directVote: null,
+      public: true, proposers: [{seatId: 'seat', seatDisplayName: 'China', flag: {type: 'STANDARD', value: 'cn'}}], seconders: [], delegatesCanAmend: false, directVote: null,
       resultDecisions: [], revision: 2, discussion: [], createdAt: '2026-08-14T00:00:00.000Z',
       updatedAt: '2026-08-14T00:00:00.000Z'};
     const amendment: ProceedingDocument = {...resolution, id: 'amendment', kind: 'AMENDMENT',
@@ -1519,7 +1519,7 @@ describe('committee workspace routes and roles', () => {
       kind: 'RESOLUTION', resolutionId: null, ordinal: 1, customTitle: null, title: 'New draft resolution 1', status: 'PUBLISHED',
       rulePackageVersionId: 'rules', currentVersion: {id: 'resolution-version', versionNumber: 1,
         content: 'Resolution body', contentFile: null, createdAt: '2026-08-14T00:00:00.000Z'}, votingVersionId: null,
-      public: true, proposerSeatId: 'seat', seconderSeatId: null, delegatesCanAmend: false, directVote: null,
+      public: true, proposers: [{seatId: 'seat', seatDisplayName: 'China', flag: {type: 'STANDARD', value: 'cn'}}], seconders: [], delegatesCanAmend: false, directVote: null,
       resultDecisions: [], revision: 2, discussion: [], createdAt: '2026-08-14T00:00:00.000Z',
       updatedAt: '2026-08-14T00:00:00.000Z'};
     const amendment: ProceedingDocument = {...resolution, id: 'amendment', kind: 'AMENDMENT',
@@ -1560,8 +1560,8 @@ describe('committee workspace routes and roles', () => {
     const created: ProceedingDocument = {id: 'created-resolution', committeeId: 'committee', meetingSessionId: 'meeting',
       kind: 'RESOLUTION', resolutionId: null, ordinal: 1, customTitle: null, title: 'New draft resolution 1', status: 'DRAFT',
       rulePackageVersionId: 'rules', currentVersion: {id: 'version', versionNumber: 1, content: '', contentFile: null,
-        createdAt: '2026-08-14T00:00:00.000Z'}, votingVersionId: null, public: false, proposerSeatId: null,
-      seconderSeatId: null, delegatesCanAmend: false, directVote: null, resultDecisions: [], revision: 1,
+        createdAt: '2026-08-14T00:00:00.000Z'}, votingVersionId: null, public: false, proposers: [],
+      seconders: [], delegatesCanAmend: false, directVote: null, resultDecisions: [], revision: 1,
       discussion: [], createdAt: '2026-08-14T00:00:00.000Z', updatedAt: '2026-08-14T00:00:00.000Z'};
     const createResolution = vi.fn(async () => created);
     await render('CHAIR', '/committees/committee/resolutions/new', user, value => ({...value,
@@ -1576,8 +1576,8 @@ describe('committee workspace routes and roles', () => {
     const document: ProceedingDocument = {id: kind === 'RESOLUTION' ? 'resolution' : 'amendment', committeeId: 'committee', meetingSessionId: 'meeting',
       kind, resolutionId: kind === 'AMENDMENT' ? 'resolution' : null, ordinal: 1, customTitle: null, title: 'New draft resolution 1', status: 'DRAFT',
       rulePackageVersionId: 'rules', currentVersion: {id: 'version', versionNumber: 1, content: '', contentFile: null,
-        createdAt: '2026-08-14T00:00:00.000Z'}, votingVersionId: null, public: false, proposerSeatId: null,
-      seconderSeatId: null, delegatesCanAmend: false, directVote: null, resultDecisions: [], revision: 1,
+        createdAt: '2026-08-14T00:00:00.000Z'}, votingVersionId: null, public: false, proposers: [],
+      seconders: [], delegatesCanAmend: false, directVote: null, resultDecisions: [], revision: 1,
       discussion: [], createdAt: '2026-08-14T00:00:00.000Z', updatedAt: '2026-08-14T00:00:00.000Z'};
     const uploadedFile = {id: 'file', committeeId: 'committee', logicalName: 'draft.pdf', mediaType: 'application/pdf',
       status: 'PUBLISHED' as const, syncState: 'SYNCED' as const, createdByUserId: 'user',
@@ -1633,7 +1633,7 @@ describe('committee workspace routes and roles', () => {
       rulePackageVersionId: 'rules', currentVersion: {id: 'version', versionNumber: 2, content: '', contentFile: {
         id: 'file', logicalName: 'draft.pdf', originalName: 'draft.pdf', mediaType: 'application/pdf',
         status, fileType: null}, createdAt: '2026-08-14T00:01:00.000Z'}, votingVersionId: null, public: false,
-      proposerSeatId: null, seconderSeatId: null, delegatesCanAmend: false, directVote: null, resultDecisions: [],
+      proposers: [], seconders: [], delegatesCanAmend: false, directVote: null, resultDecisions: [],
       revision: 2, discussion: [], createdAt: '2026-08-14T00:00:00.000Z', updatedAt: '2026-08-14T00:01:00.000Z'};
     const publishFile = vi.fn(async () => ({...file, status: 'PUBLISHED' as const, revision: 3,
       publishedAt: '2026-08-14T00:02:00.000Z'}));
@@ -1655,7 +1655,7 @@ describe('committee workspace routes and roles', () => {
       kind: 'RESOLUTION', resolutionId: null, ordinal: 1, customTitle: null, title: 'Draft resolution 1.1', status: 'DRAFT',
       rulePackageVersionId: 'rules', currentVersion: {id: 'version', versionNumber: 1, content: '', contentFile: null,
         createdAt: '2026-08-14T00:00:00.000Z'}, votingVersionId: null, public: false,
-      proposerSeatId: null, seconderSeatId: null, delegatesCanAmend: false, directVote: null, resultDecisions: [],
+      proposers: [], seconders: [], delegatesCanAmend: false, directVote: null, resultDecisions: [],
       revision: 1, discussion: [], createdAt: '2026-08-14T00:00:00.000Z', updatedAt: '2026-08-14T00:00:00.000Z'};
     const page = await render('CHAIR', '/committees/committee/resolutions/resolution/text', user,
       value => ({...value, documents: [document]}), {createDocumentVersion});
@@ -1666,12 +1666,53 @@ describe('committee workspace routes and roles', () => {
     expect(createDocumentVersion).not.toHaveBeenCalled();
   });
 
+  it('renders country rows with flags and serializes additions and removals for both draft lists', async () => {
+    const china = {seatId: 'seat', seatDisplayName: 'China', flag: {type: 'STANDARD' as const, value: 'cn'}};
+    const france = {seatId: 'france', seatDisplayName: 'France', flag: {type: 'STANDARD' as const, value: 'fr'}};
+    let document: ProceedingDocument = {id: 'resolution', committeeId: 'committee', meetingSessionId: 'meeting',
+      kind: 'RESOLUTION', resolutionId: null, ordinal: 1, customTitle: null, title: 'Draft resolution 1.1', status: 'DRAFT',
+      rulePackageVersionId: 'rules', currentVersion: {id: 'version', versionNumber: 1, content: '', contentFile: null,
+        createdAt: '2026-08-14T00:00:00.000Z'}, votingVersionId: null, public: false, proposers: [china, france],
+      seconders: [], delegatesCanAmend: false, directVote: null, resultDecisions: [], revision: 1,
+      discussion: [], createdAt: '2026-08-14T00:00:00.000Z', updatedAt: '2026-08-14T00:00:00.000Z'};
+    let finish: (() => void) | undefined;
+    const updateDocumentSettings = vi.fn(async (_id, input) => {
+      await new Promise<void>(resolve => {finish = resolve;});
+      document = {...document, revision: document.revision + 1,
+        proposers: input.proposerSeatIds ? [china, france].filter(item => input.proposerSeatIds.includes(item.seatId)) : document.proposers,
+        seconders: input.seconderSeatIds ? [china, france].filter(item => input.seconderSeatIds.includes(item.seatId)) : document.seconders};
+      return document;
+    });
+    const page = await render('CHAIR', '/committees/committee/resolutions/resolution/text', user,
+      value => ({...value, seats: [...value.seats, {...value.seats[0], id: 'france', displayName: 'France', flag: france.flag}],
+        attendance: ['seat', 'france'].map(seatId => ({seatId, state: 'PRESENT', canVote: true, revision: 1, lastEventId: 'present', updatedAt: '2026-08-14T00:00:00.000Z'})),
+        documents: [document]}), {updateDocumentSettings});
+    const lists = () => [...page.querySelectorAll('.resolution-country-list')];
+    expect([...lists()[0].querySelectorAll('li')].map(row => row.textContent)).toEqual(['China', 'France']);
+    expect(lists()[0].querySelectorAll('li .country-flag-display')).toHaveLength(2);
+    await act(async () => {page.querySelector<HTMLButtonElement>('[aria-label="Remove France"]')?.click();
+      page.querySelector<HTMLButtonElement>('[aria-label="Remove China"]')?.click();});
+    expect(updateDocumentSettings).toHaveBeenCalledTimes(1);
+    expect(updateDocumentSettings).toHaveBeenLastCalledWith('resolution', {baseRevision: 1, proposerSeatIds: ['seat']});
+    await act(async () => {finish?.();});
+    expect(lists()[0].querySelectorAll('li')).toHaveLength(1);
+    await act(async () => {lists()[1].querySelector<HTMLElement>('.dropdown')?.click();});
+    await act(async () => {([...lists()[1].querySelectorAll<HTMLElement>('[role="option"]')]
+      .find(option => option.textContent === 'France'))?.click();});
+    await act(async () => {([...lists()[1].querySelectorAll<HTMLButtonElement>('button')]
+      .find(button => button.textContent === 'Add country'))?.click();});
+    expect(updateDocumentSettings).toHaveBeenLastCalledWith('resolution', {baseRevision: 2, seconderSeatIds: ['france']});
+    await act(async () => {finish?.();});
+    expect(lists()[1].querySelector('li')?.textContent).toBe('France');
+    expect(lists()[1].querySelectorAll('li .country-flag-display')).toHaveLength(1);
+  });
+
   it('serializes rapid resolution votes and changes the cursor and undo history only after success', async () => {
     let document: ProceedingDocument = {id: 'resolution', committeeId: 'committee', meetingSessionId: 'meeting',
       kind: 'RESOLUTION', resolutionId: null, ordinal: 1, customTitle: null, title: 'A/RES/1', status: 'PUBLISHED',
       rulePackageVersionId: 'rules', currentVersion: {id: 'version', versionNumber: 1, content: 'Text', contentFile: null,
-        createdAt: '2026-08-14T00:00:00.000Z'}, votingVersionId: null, public: true, proposerSeatId: 'seat',
-      seconderSeatId: null, delegatesCanAmend: false, directVote: {majority: 'SIMPLE_MAJORITY', startedAt: null,
+        createdAt: '2026-08-14T00:00:00.000Z'}, votingVersionId: null, public: true, proposers: [{seatId: 'seat', seatDisplayName: 'China', flag: {type: 'STANDARD', value: 'cn'}}],
+      seconders: [], delegatesCanAmend: false, directVote: {majority: 'SIMPLE_MAJORITY', startedAt: null,
         settingsRevision: 1, eligibility: [{seatId: 'seat', seatDisplayName: 'China', mustVote: false, hasVeto: false},
           {seatId: 'second', seatDisplayName: 'France', mustVote: false, hasVeto: false}], threshold: 2,
         automaticResult: null, votes: []}, resultDecisions: [], revision: 2, discussion: [],
@@ -1729,7 +1770,7 @@ describe('committee workspace routes and roles', () => {
         resolutionId: null, ordinal: 1, customTitle: null, title: 'A/RES/1', status: 'PUBLISHED', rulePackageVersionId: 'rules',
         currentVersion: {id: 'version', versionNumber: 1, content: '', contentFile: null,
           createdAt: '2026-08-14T00:00:00.000Z'},
-        votingVersionId: null, public: true, proposerSeatId: 'seat', seconderSeatId: null, delegatesCanAmend: false,
+        votingVersionId: null, public: true, proposers: [{seatId: 'seat', seatDisplayName: 'China', flag: {type: 'STANDARD', value: 'cn'}}], seconders: [], delegatesCanAmend: false,
         directVote: {majority: 'SIMPLE_MAJORITY', startedAt: null, settingsRevision: 1,
           eligibility: [{seatId: 'seat', seatDisplayName: 'China', mustVote: false, hasVeto: true}], threshold: 1,
           automaticResult, votes: []}, resultDecisions: [], revision: 2, discussion: [],

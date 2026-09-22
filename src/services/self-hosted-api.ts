@@ -459,8 +459,8 @@ export const selfHostedApi = {
     return request<ProceedingDocument>(`/api/v1/documents/${id}/commands`, {method: 'POST',
       body: {baseRevision, action, ruleStableId}});
   },
-  updateDocumentSettings(id: string, input: {baseRevision: number; proposerSeatId?: string;
-    seconderSeatId?: string | null; delegatesCanAmend?: boolean;
+  updateDocumentSettings(id: string, input: {baseRevision: number; proposerSeatIds?: string[];
+    seconderSeatIds?: string[]; delegatesCanAmend?: boolean;
     majority?: 'SIMPLE_MAJORITY' | 'TWO_THIRDS' | 'TWO_THIRDS_NON_ABSTAINING'}) {
     return request<ProceedingDocument>(`/api/v1/documents/${id}/settings`, {method: 'POST', body: input});
   },

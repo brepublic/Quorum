@@ -192,6 +192,8 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
     const f = await meetingFixture(); const other = await meetingFixture();
     const document = await stage5.createResolution(f.firstChair, f.committee.id,
       {meetingSessionId: f.session.id, customTitle: null, content: ''}, randomUUID(), context('purge-document'));
+    await stage5.updateDocumentSettings(f.firstChair, document.id,
+      {baseRevision: document.revision, proposerSeatIds: [f.firstSeat.id], seconderSeatIds: [f.secondSeat.id]}, context('purge-countries'));
     await stage5.setResolutionDirectVote(f.firstChair, document.id,
       {seatId: f.firstSeat.id, choice: 'FOR'}, context('purge-resolution-vote'));
     const motion = await stage5.proposeMotion(f.firstDelegate, f.committee.id,
@@ -377,7 +379,7 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
         {meetingSessionId: f.session.id, customTitle: null, content: ''}, 'empty-electorate', context('empty-electorate'));
       expect(document.directVote).toMatchObject({eligibility: [], threshold: 0, automaticResult: null});
       document = await stage5.updateDocumentSettings(f.firstChair, document.id,
-        {baseRevision: document.revision, majority, proposerSeatId: f.firstSeat.id}, context('majority'));
+        {baseRevision: document.revision, majority, proposerSeatIds: [f.firstSeat.id]}, context('majority'));
       expect(document.directVote).toMatchObject({eligibility: [], votes: [], threshold: 0, automaticResult: null});
       const snapshotDocument = async () => (await stage4.snapshot(f.committee.id, f.firstChair))
         .documents?.find(item => item.id === document.id);
@@ -551,13 +553,15 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
     expect(history?.rows[0]?.decided_at).toBeTruthy();
   });
 
-  it('introduces an existing empty draft and records its proposer and required seconder atomically', async () => {
+  it('introduces an existing draft without replacing its countries with motion sponsors', async () => {
     const fixture = await meetingFixture();
     const draft = await stage5.createResolution(fixture.firstChair, fixture.committee.id,
       {meetingSessionId: fixture.session.id, customTitle: null, content: ''},
       'empty-resolution-draft', context('empty-resolution-draft'));
-    expect(draft).toMatchObject({title: 'Draft resolution 1.1', status: 'DRAFT', proposerSeatId: null,
-      seconderSeatId: null, directVote: {majority: 'TWO_THIRDS'}, currentVersion: {content: ''}});
+    expect(draft).toMatchObject({title: 'Draft resolution 1.1', status: 'DRAFT', proposers: [],
+      seconders: [], directVote: {majority: 'TWO_THIRDS'}, currentVersion: {content: ''}});
+    await stage5.updateDocumentSettings(fixture.firstChair, draft.id,
+      {baseRevision: draft.revision, proposerSeatIds: [fixture.secondSeat.id], seconderSeatIds: [fixture.firstSeat.id]}, context('draft-countries'));
     const motion = await stage5.proposeMotion(fixture.firstChair, fixture.committee.id,
       {meetingSessionId: fixture.session.id, motionTypeId: 'introduce-draft-resolution',
         onBehalfOfSeatId: fixture.firstSeat.id, secondedBySeatId: fixture.secondSeat.id,
@@ -570,10 +574,53 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
       {baseRevision: motion.revision, result: 'PASSED'}, context('introduce-resolution'));
     expect(passed).toMatchObject({status: 'PASSED', destinationPath:
       `/committees/${fixture.committee.id}/resolutions/${draft.id}`});
-    const introduced = await pool?.query(`SELECT d.status,d.is_public,r.proposer_seat_id,r.seconder_seat_id
-      FROM documents d JOIN resolutions r ON r.document_id=d.id WHERE d.id=$1`, [draft.id]);
-    expect(introduced?.rows[0]).toEqual({status: 'PUBLISHED', is_public: true,
-      proposer_seat_id: fixture.firstSeat.id, seconder_seat_id: fixture.secondSeat.id});
+    const introduced = (await stage4.snapshot(fixture.committee.id, fixture.firstChair)).documents!.find(item => item.id === draft.id)!;
+    expect(introduced).toMatchObject({status: 'PUBLISHED', public: true,
+      proposers: [expect.objectContaining({seatId: fixture.secondSeat.id})],
+      seconders: [expect.objectContaining({seatId: fixture.firstSeat.id})]});
+  });
+
+  it('saves multiple drafting and seconding countries in roll-call order, with revision and membership checks', async () => {
+    const f = await meetingFixture();
+    const draft = await stage5.createResolution(f.firstChair, f.committee.id,
+      {meetingSessionId: f.session.id, customTitle: null, content: ''}, 'multi-countries', context('multi-countries'));
+    await pool!.query('UPDATE committee_seats SET sort_order=CASE WHEN id=$1 THEN 20 ELSE 10 END WHERE id=ANY($2::uuid[])',
+      [f.firstSeat.id, [f.firstSeat.id, f.secondSeat.id]]);
+    const ids = [f.firstSeat.id, f.secondSeat.id];
+    let updated = await stage5.updateDocumentSettings(f.firstChair, draft.id,
+      {baseRevision: draft.revision, proposerSeatIds: ids}, context('multiple-proposers'));
+    expect(updated.proposers.map(item => item.seatId)).toEqual([...ids].reverse());
+    expect(updated.proposers[0]).toMatchObject({seatDisplayName: f.secondSeat.displayName, flag: f.secondSeat.flag});
+    await expect(stage5.updateDocumentSettings(f.secondChair, draft.id,
+      {baseRevision: draft.revision, proposerSeatIds: []}, context('stale-countries'))).rejects.toMatchObject({code: 'REVISION_CONFLICT'});
+    await expect(stage5.updateDocumentSettings(f.firstDelegate, draft.id,
+      {baseRevision: updated.revision, proposerSeatIds: []}, context('delegate-countries'))).rejects.toMatchObject({code: 'FORBIDDEN', reason: 'CHAIR_REQUIRED'});
+    await expect(stage5.updateDocumentSettings(f.firstChair, draft.id,
+      {baseRevision: updated.revision, seconderSeatIds: ids}, context('overlapping-countries')))
+      .rejects.toMatchObject({reason: 'DOCUMENT_COUNTRY_ROLES_OVERLAP'});
+    await expect(stage5.updateDocumentSettings(f.firstChair, draft.id,
+      {baseRevision: updated.revision, proposerSeatIds: [ids[0], ids[0]]}, context('duplicate-countries')))
+      .rejects.toMatchObject({reason: 'INVALID_DOCUMENT_COUNTRIES'});
+    await expect(stage5.updateDocumentSettings(f.firstChair, draft.id,
+      {baseRevision: updated.revision, proposerSeatIds: [randomUUID()]}, context('foreign-country')))
+      .rejects.toMatchObject({reason: 'SEAT_NOT_PRESENT'});
+    updated = await stage5.updateDocumentSettings(f.firstChair, draft.id,
+      {baseRevision: updated.revision, proposerSeatIds: [], seconderSeatIds: ids}, context('multiple-seconders'));
+    expect(updated.seconders.map(item => item.seatId)).toEqual([...ids].reverse());
+    await pool!.query("UPDATE documents SET status='PUBLISHED',is_public=true WHERE id=$1", [draft.id]);
+    await stage4.createAttendanceEvent(f.firstChair, f.committee.id,
+      {meetingSessionId: f.session.id, seatId: ids[1], type: 'ABSENT'}, context('absent-country'));
+    updated = await stage5.updateDocumentSettings(f.firstChair, draft.id,
+      {baseRevision: updated.revision, seconderSeatIds: [ids[1]]}, context('remove-other-country'));
+    expect(updated.seconders.map(item => item.seatId)).toEqual([ids[1]]);
+    const snapshot = await stage4.snapshot(f.committee.id, f.firstChair);
+    expect(snapshot.documents!.find(item => item.id === draft.id)!.seconders).toEqual(updated.seconders);
+    const events = await pool!.query("SELECT audience FROM committee_events WHERE resource_id=$1 AND event_type='document.settings_changed' ORDER BY sequence DESC LIMIT 1", [draft.id]);
+    expect(events.rows[0].audience).toBe('PUBLIC');
+    const publicSnapshot = await stage4.snapshot(f.committee.id);
+    expect(publicSnapshot.documents!.find(item => item.id === draft.id)!.seconders).toEqual(updated.seconders);
+    const history = await pool!.query('SELECT after_value FROM resolution_setting_revisions WHERE resolution_document_id=$1 ORDER BY created_at', [draft.id]);
+    expect(history.rows.at(-1).after_value).toMatchObject({proposerSeatIds: [], seconderSeatIds: [ids[1]]});
   });
 
   it('numbers generated resolution titles within their meeting session', async () => {
@@ -636,7 +683,7 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
     expect(passed.destinationPath).toBe(`/committees/${fixture.committee.id}/resolutions/${resolution.id}/amendments`);
     const introduced = (await stage4.snapshot(fixture.committee.id, fixture.firstChair)).documents!
       .find(document => document.id === amendment.id)!;
-    expect(introduced).toMatchObject({status: 'PUBLISHED', public: true, proposerSeatId: fixture.firstSeat.id});
+    expect(introduced).toMatchObject({status: 'PUBLISHED', public: true, proposers: [expect.objectContaining({seatId: fixture.firstSeat.id})]});
     const recorded = await stage5.recordDocumentResult(fixture.firstChair, amendment.id,
       {baseRevision: introduced.revision, outcome: 'INCORPORATED'}, context('incorporate-amendment'));
     expect(recorded).toMatchObject({status: 'INCORPORATED', resultDecisions: [expect.objectContaining({
@@ -685,7 +732,7 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
       context('delete-formal-amendment'))).rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
   });
 
-  it('opens the one resolution-linked caucus with its proposer speaking and seconder queued', async () => {
+  it('opens a resolution-linked caucus empty and lets the Chair add speakers', async () => {
     const fixture = await meetingFixture();
     const draft = await stage5.createResolution(fixture.firstChair, fixture.committee.id,
       {meetingSessionId: fixture.session.id, customTitle: null, content: 'Draft body'},
@@ -710,13 +757,13 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
     const linked = await pool?.query(`SELECT id,custom_title,topic,linked_resolution_document_id,current_entry_id
       FROM speaker_lists WHERE linked_resolution_document_id=$1`, [draft.id]);
     expect(linked?.rows).toEqual([expect.objectContaining({custom_title: null, topic: draft.title,
-      linked_resolution_document_id: draft.id, current_entry_id: expect.any(String)})]);
+      linked_resolution_document_id: draft.id, current_entry_id: null})]);
     const queue = await pool?.query(`SELECT seat_id,position,status,stance FROM speaker_queue_entries
       WHERE speaker_list_id=$1 ORDER BY position`, [linked?.rows[0]?.id]);
-    expect(queue?.rows).toEqual([
-      {seat_id: fixture.firstSeat.id, position: 1, status: 'CURRENT', stance: 'FOR'},
-      {seat_id: fixture.secondSeat.id, position: 2, status: 'QUEUED', stance: 'FOR'}
-    ]);
+    expect(queue?.rows).toEqual([]);
+    const populated = await stage5.joinSpeakerQueue(fixture.firstChair, linked?.rows[0]?.id,
+      {seatId: fixture.secondSeat.id}, 'chair-add-linked-speaker', context('chair-add-linked-speaker'));
+    expect(populated.queue).toEqual([expect.objectContaining({seatId: fixture.secondSeat.id, status: 'QUEUED'})]);
     const snapshot = await stage4.snapshot(fixture.committee.id, fixture.firstChair);
     expect(snapshot.speakerLists).toEqual(expect.arrayContaining([
       expect.objectContaining({id: linked?.rows[0]?.id, linkedResolutionId: draft.id})

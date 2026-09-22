@@ -86,7 +86,7 @@ interface DocumentRow extends QueryResultRow {
 }
 
 interface ResolutionRow extends QueryResultRow {
-  document_id: string; proposer_seat_id: string | null; seconder_seat_id: string | null; delegates_can_amend: boolean;
+  document_id: string; delegates_can_amend: boolean;
   direct_vote_majority: ResolutionDirectVoteMajority; direct_vote_started_at: Date | null; direct_vote_revision: number;
 }
 
@@ -304,18 +304,22 @@ async function documentState(client: PoolClient, row: DocumentRow): Promise<Proc
     new_status: ProceedingDocumentStatus; reason: string | null; corrects_decision_id: string | null; created_at: Date}>(
   `SELECT id,previous_status,new_status,reason,corrects_decision_id,created_at FROM document_result_decisions
     WHERE document_id=$1 ORDER BY created_at,id`, [row.id]);
-  let proposerSeatId: string | null = null; let seconderSeatId: string | null = null;
+  const countries = await client.query<{seat_id: string; display_name: string;
+    flag_type: ProceedingDocument['proposers'][number]['flag']['type']; flag_value: string; role: string}>(`
+    SELECT s.id AS seat_id,s.display_name,s.flag_type,s.flag_value,c.role
+    FROM (SELECT seat_id,role FROM resolution_countries WHERE resolution_document_id=$1
+      UNION ALL SELECT proposer_seat_id,'PROPOSER' FROM amendments WHERE document_id=$1) c
+    JOIN committee_seats s ON s.id=c.seat_id ORDER BY s.sort_order,s.stable_key,s.id`, [row.id]);
+  const countryList = (role: string): ProceedingDocument['proposers'] => countries.rows.filter(item => item.role === role)
+    .map(item => ({seatId: item.seat_id, seatDisplayName: item.display_name,
+      flag: {type: item.flag_type, value: item.flag_value} as ProceedingDocument['proposers'][number]['flag']}));
   let delegatesCanAmend = false; let directVote: ResolutionDirectVoteState | null = null;
   if (row.kind === 'RESOLUTION') {
     const resolution = await client.query<ResolutionRow>('SELECT * FROM resolutions WHERE document_id=$1', [row.id]);
     const metadata = resolution.rows[0];
     if (!metadata) throw new AppError({code: 'INTERNAL_ERROR', message: 'Resolution metadata is unavailable.'});
-    proposerSeatId = metadata.proposer_seat_id; seconderSeatId = metadata.seconder_seat_id;
     delegatesCanAmend = metadata.delegates_can_amend;
     directVote = await resolutionDirectVoteState(client, row, metadata);
-  } else {
-    const amendment = await client.query<{proposer_seat_id: string}>('SELECT proposer_seat_id FROM amendments WHERE document_id=$1', [row.id]);
-    proposerSeatId = amendment.rows[0]?.proposer_seat_id ?? null;
   }
   return {id: row.id, committeeId: row.committee_id, meetingSessionId: row.meeting_session_id, kind: row.kind,
     resolutionId: row.resolution_document_id, title, ordinal: row.ordinal, customTitle: row.custom_title, status: row.status,
@@ -326,7 +330,7 @@ async function documentState(client: PoolClient, row: DocumentRow): Promise<Proc
         originalName: current.original_name ?? '', mediaType: current.media_type ?? '',
         status: current.file_status ?? 'DELETED', fileType: current.file_type ?? null} : null,
       createdAt: current.created_at.toISOString()}, votingVersionId: row.voting_version_id, public: row.is_public,
-    proposerSeatId, seconderSeatId, delegatesCanAmend, directVote,
+    proposers: countryList('PROPOSER'), seconders: countryList('SECONDER'), delegatesCanAmend, directVote,
     resultDecisions: resultDecisions.rows.map(item => ({id: item.id, previousStatus: item.previous_status,
       newStatus: item.new_status, reason: item.reason, correctsDecisionId: item.corrects_decision_id,
       createdAt: item.created_at.toISOString()})),
@@ -1659,36 +1663,29 @@ export class Stage5Service {
         && (totalDurationMs < defaultSpeechMs || totalDurationMs % defaultSpeechMs !== 0)) {
         throw new AppError({reason: 'CAUCUS_DURATION_NOT_DIVISIBLE', code: 'VALIDATION_FAILED', message: 'Speaker time must evenly divide the caucus time.'});
       }
-      let linkedResolution: {id: string; title: string; proposerSeatId: string; proposerSeatName: string;
-        seconderSeatId: string; seconderSeatName: string} | null = null;
+      let linkedResolution: {id: string; title: string} | null = null;
       if (parameters.resolutionTarget !== undefined) {
         const resolutionId = motionId(parameters, 'resolutionTarget', 'Target resolution ID');
-        const target = await client.query<{id: string; custom_title: string | null; ordinal: number; session_ordinal: number; proposer_seat_id: string | null;
-          proposer_seat_name: string | null; seconder_seat_id: string | null; seconder_seat_name: string | null}>(`SELECT
-          d.id,d.custom_title,d.ordinal,ms.ordinal AS session_ordinal,r.proposer_seat_id,p.display_name AS proposer_seat_name,
-          r.seconder_seat_id,s.display_name AS seconder_seat_name
-          FROM documents d JOIN resolutions r ON r.document_id=d.id JOIN meeting_sessions ms ON ms.id=d.meeting_session_id
-          LEFT JOIN committee_seats p ON p.id=r.proposer_seat_id
-          LEFT JOIN committee_seats s ON s.id=r.seconder_seat_id
-          WHERE d.id=$1 AND d.committee_id=$2 AND d.meeting_session_id=$3 AND d.deleted_at IS NULL FOR UPDATE OF d,r`,
+        const target = await client.query<{id: string; custom_title: string | null; ordinal: number;
+          session_ordinal: number; is_public: boolean}>(`SELECT d.id,d.custom_title,d.ordinal,
+          ms.ordinal AS session_ordinal,d.is_public FROM documents d JOIN resolutions r ON r.document_id=d.id
+          JOIN meeting_sessions ms ON ms.id=d.meeting_session_id
+          WHERE d.id=$1 AND d.committee_id=$2 AND d.meeting_session_id=$3 AND d.deleted_at IS NULL FOR UPDATE OF d`,
         [resolutionId, committeeId, motion.meeting_session_id]);
         const row = target.rows[0];
         if (!row) throw new AppError({code: 'NOT_FOUND', message: 'Target resolution not found.'});
-        if (!row.proposer_seat_id || !row.proposer_seat_name || !row.seconder_seat_id || !row.seconder_seat_name) {
-          throw new AppError({reason: 'RESOLUTION_NOT_INTRODUCED', code: 'RESOURCE_CONFLICT', message: 'The target resolution has not been introduced.'});
-        }
+        if (!row.is_public) throw new AppError({reason: 'RESOLUTION_NOT_INTRODUCED', code: 'RESOURCE_CONFLICT',
+          message: 'The target resolution has not been introduced.'});
         const existing = await client.query('SELECT id FROM speaker_lists WHERE linked_resolution_document_id=$1',
           [resolutionId]);
         if (existing.rows[0]) {
           throw new AppError({reason: 'RESOLUTION_CAUCUS_EXISTS', code: 'RESOURCE_CONFLICT', message: 'The target resolution already has an associated caucus.'});
         }
         linkedResolution = {id: row.id, title: formatCommitteeContent({kind: 'RESOLUTION', ordinal: row.ordinal,
-          sessionOrdinal: row.session_ordinal, customTitle: row.custom_title}, committee.committee_language), proposerSeatId: row.proposer_seat_id,
-          proposerSeatName: row.proposer_seat_name, seconderSeatId: row.seconder_seat_id,
-          seconderSeatName: row.seconder_seat_name};
+          sessionOrdinal: row.session_ordinal, customTitle: row.custom_title}, committee.committee_language)};
       }
       const listId = randomUUID(); const caucusId = randomUUID(); const speechTimerId = randomUUID();
-      const totalTimerId = randomUUID(); const entryId = randomUUID(); const queuedEntryId = randomUUID();
+      const totalTimerId = randomUUID(); const entryId = linkedResolution ? null : randomUUID();
       await client.query(`INSERT INTO timer_states
         (id,committee_id,owner_type,owner_id,remaining_at_start_ms,created_by_user_id,created_at,updated_at)
         VALUES ($1,$2,'SPEAKER_LIST',$3,$4,$5,$6,$6),
@@ -1704,20 +1701,14 @@ export class Stage5Service {
         (id,committee_id,meeting_session_id,speaker_list_id,topic,total_timer_id,speech_timer_id,created_at)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
       [caucusId, committeeId, motion.meeting_session_id, listId, topic, totalTimerId, speechTimerId, now]);
-      const initialSeatId = linkedResolution?.proposerSeatId ?? motion.proposed_by_seat_id;
-      const initialSeatName = linkedResolution?.proposerSeatName ?? motion.proposed_by_seat_display_name;
-      await client.query(`INSERT INTO speaker_queue_entries
+      const initialSeatId = linkedResolution ? null : motion.proposed_by_seat_id;
+      const initialSeatName = motion.proposed_by_seat_display_name;
+      if (entryId) await client.query(`INSERT INTO speaker_queue_entries
         (id,committee_id,speaker_list_id,seat_id,seat_display_name,position,status,stance,speech_duration_ms,
          actor_user_id,on_behalf_of_seat_id,created_at)
         VALUES ($1,$2,$3,$4,$5,1,'CURRENT','FOR',$6,$7,$4,$8)`,
       [entryId, committeeId, listId, initialSeatId, initialSeatName, defaultSpeechMs, actorUserId, now]);
-      if (linkedResolution) await client.query(`INSERT INTO speaker_queue_entries
-        (id,committee_id,speaker_list_id,seat_id,seat_display_name,position,status,stance,speech_duration_ms,
-         actor_user_id,on_behalf_of_seat_id,created_at)
-        VALUES ($1,$2,$3,$4,$5,2,'QUEUED','FOR',$6,$7,$4,$8)`,
-      [queuedEntryId, committeeId, listId, linkedResolution.seconderSeatId, linkedResolution.seconderSeatName,
-        defaultSpeechMs, actorUserId, now]);
-      await client.query('UPDATE speaker_lists SET current_entry_id=$2 WHERE id=$1', [listId, entryId]);
+      if (entryId) await client.query('UPDATE speaker_lists SET current_entry_id=$2 WHERE id=$1', [listId, entryId]);
       await appendEvent(client, committee, {type: 'speaker_list.created', resourceType: 'speaker_list', resourceId: listId,
         revision: 1, payload: {kind: 'MODERATED_CAUCUS', topic, defaultSpeechMs, totalDurationMs,
           currentEntryId: entryId, linkedResolutionId: linkedResolution?.id ?? null, motionId: motion.id}, audience: 'PUBLIC'});
@@ -1725,7 +1716,7 @@ export class Stage5Service {
         onBehalfOfSeatId: motion.proposed_by_seat_id, action: 'proceedings.speaker_list_created',
         resourceType: 'speaker_list', resourceId: listId,
         after: {kind: 'MODERATED_CAUCUS', topic, defaultSpeechMs, totalDurationMs,
-          initialSpeakerSeatId: initialSeatId, queuedSeconderSeatId: linkedResolution?.seconderSeatId ?? null,
+          initialSpeakerSeatId: initialSeatId,
           linkedResolutionId: linkedResolution?.id ?? null, motionId: motion.id, revision: 1}});
       return `/committees/${committeeId}/caucuses/${listId}`;
     }
@@ -1845,19 +1836,6 @@ export class Stage5Service {
         throw new AppError({reason: 'DOCUMENT_FILE_NOT_PUBLISHED', code: 'RESOURCE_CONFLICT',
           message: 'Publish the resolution content file before introducing the draft.'});
       }
-      const second = await client.query<{seat_id: string}>(`SELECT seat_id FROM motion_seconds
-        WHERE motion_id=$1 ORDER BY created_at,id LIMIT 1`, [motion.id]);
-      const seconderSeatId = second.rows[0]?.seat_id ?? null;
-      const metadata = await client.query<ResolutionRow>('SELECT * FROM resolutions WHERE document_id=$1 FOR UPDATE', [documentId]);
-      const resolution = metadata.rows[0] as ResolutionRow;
-      const beforeSettings = {proposerSeatId: resolution.proposer_seat_id, seconderSeatId: resolution.seconder_seat_id};
-      const afterSettings = {proposerSeatId: motion.proposed_by_seat_id, seconderSeatId};
-      await client.query(`UPDATE resolutions SET proposer_seat_id=$2,seconder_seat_id=$3 WHERE document_id=$1`,
-      [documentId, motion.proposed_by_seat_id, seconderSeatId]);
-      await client.query(`INSERT INTO resolution_setting_revisions
-        (id,committee_id,resolution_document_id,before_value,after_value,actor_user_id,created_at)
-        VALUES ($1,$2,$3,$4,$5,$6,$7)`, [randomUUID(), committeeId, documentId,
-        beforeSettings, afterSettings, actorUserId, now]);
       const updated = await client.query<DocumentRow>(`UPDATE documents SET status='PUBLISHED',is_public=true,
         revision=revision+1,updated_at=$2 WHERE id=$1 RETURNING *,NULL::uuid AS resolution_document_id`, [documentId, now]);
       await client.query(`INSERT INTO document_actions
@@ -1870,9 +1848,9 @@ export class Stage5Service {
       await audit(client, context, {committeeId, actorUserId, capabilities: ['CHAIR'],
         onBehalfOfSeatId: motion.proposed_by_seat_id, action: 'documents.status_changed',
         resourceType: 'document', resourceId: documentId,
-        before: {status: document.status, revision: document.revision, ...beforeSettings},
+        before: {status: document.status, revision: document.revision},
         after: {status: 'PUBLISHED', revision: (updated.rows[0] as DocumentRow).revision,
-          ...afterSettings, motionId: motion.id}});
+          motionId: motion.id}});
       return `/committees/${committeeId}/resolutions/${documentId}`;
     }
 
@@ -2980,8 +2958,11 @@ export class Stage5Service {
       await client.query(`INSERT INTO document_versions
         (id,document_id,version_number,content,created_by_user_id,created_on_behalf_of_seat_id,created_at)
         VALUES ($1,$2,1,$3,$4,$5,$6)`, [versionId, id, content, auth.user.id, actor.seatId, now]);
-      if (kind === 'RESOLUTION') await client.query('INSERT INTO resolutions (document_id,proposer_seat_id) VALUES ($1,$2)',
-        [id, actor.seatId]);
+      if (kind === 'RESOLUTION') {
+        await client.query('INSERT INTO resolutions (document_id) VALUES ($1)', [id]);
+        if (actor.seatId) await client.query(`INSERT INTO resolution_countries (resolution_document_id,seat_id,role)
+          VALUES ($1,$2,'PROPOSER')`, [id, actor.seatId]);
+      }
       else await client.query(`INSERT INTO amendments (document_id,resolution_document_id,proposer_seat_id)
         VALUES ($1,$2,$3)`, [id, resolutionId, actor.seatId]);
       const eventAudience = isPublic ? 'PUBLIC' : 'MEMBER';
@@ -3109,9 +3090,9 @@ export class Stage5Service {
   async updateDocumentSettings(auth: AuthenticatedSession, documentId: string, input: Record<string, unknown>,
     context: Stage4Context): Promise<ProceedingDocument> {
     requireBusinessIdentity(auth);
-    assertExactBody(input, ['baseRevision', 'proposerSeatId', 'seconderSeatId', 'delegatesCanAmend', 'majority']);
+    assertExactBody(input, ['baseRevision', 'proposerSeatIds', 'seconderSeatIds', 'delegatesCanAmend', 'majority']);
     const baseRevision = positiveInteger(input.baseRevision, 'Base revision');
-    const supplied = ['proposerSeatId', 'seconderSeatId', 'delegatesCanAmend', 'majority']
+    const supplied = ['proposerSeatIds', 'seconderSeatIds', 'delegatesCanAmend', 'majority']
       .filter(key => Object.prototype.hasOwnProperty.call(input, key));
     if (supplied.length === 0) throw new AppError({reason: 'DOCUMENT_SETTINGS_EMPTY', code: 'VALIDATION_FAILED', message: 'No document setting was supplied.'});
     return transaction(this.pool, async client => {
@@ -3126,7 +3107,7 @@ export class Stage5Service {
       if (!document) throw new AppError({code: 'NOT_FOUND', message: 'Document not found.'});
       if (document.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT',
         message: 'This document changed since it was loaded.', details: {currentRevision: document.revision}});
-      if (document.kind === 'AMENDMENT' && supplied.some(key => key !== 'proposerSeatId')) throw new AppError({reason: 'RESOLUTION_SETTING_ONLY',
+      if (document.kind === 'AMENDMENT' && supplied.some(key => key !== 'proposerSeatIds')) throw new AppError({reason: 'RESOLUTION_SETTING_ONLY',
         code: 'VALIDATION_FAILED', message: 'This setting is only available for resolutions.'});
       const seat = async (value: unknown, name: string): Promise<string> => {
         const seatId = uuid(value, name);
@@ -3136,12 +3117,22 @@ export class Stage5Service {
         if (!present.rowCount) throw new AppError({code: 'VALIDATION_FAILED', reason: 'SEAT_NOT_PRESENT', message: `${name} is not present.`});
         return seatId;
       };
-      const proposerSeatId = Object.prototype.hasOwnProperty.call(input, 'proposerSeatId')
-        ? await seat(input.proposerSeatId, 'Proposer seat') : undefined;
-      const seconderSeatId = Object.prototype.hasOwnProperty.call(input, 'seconderSeatId')
-        ? input.seconderSeatId === null ? null : await seat(input.seconderSeatId, 'Seconder seat') : undefined;
-      if (proposerSeatId && seconderSeatId && proposerSeatId === seconderSeatId) throw new AppError({reason: 'PROPOSER_SECONDER_SAME',
-        code: 'VALIDATION_FAILED', message: 'The proposer and seconder must be different seats.'});
+      const existingCountries = await client.query<{seat_id: string; role: string}>(
+        `SELECT seat_id,role FROM resolution_countries WHERE resolution_document_id=$1 ORDER BY seat_id`, [documentId]);
+      const previousIds = (role: string) => existingCountries.rows.filter(item => item.role === role).map(item => item.seat_id);
+      const countries = async (key: string, previous: string[]): Promise<string[] | undefined> => {
+        if (!Object.prototype.hasOwnProperty.call(input, key)) return undefined;
+        const value = input[key];
+        if (!Array.isArray(value)) throw new AppError({
+          reason: 'INVALID_DOCUMENT_COUNTRIES', code: 'VALIDATION_FAILED', message: 'Select a list of distinct countries.'});
+        const ids = value.map(item => uuid(item, 'Country seat').toLowerCase());
+        if (new Set(ids).size !== ids.length) throw new AppError({reason: 'INVALID_DOCUMENT_COUNTRIES',
+          code: 'VALIDATION_FAILED', message: 'Select a list of distinct countries.'});
+        for (const id of ids) if (!previous.includes(id)) await seat(id, 'Country seat');
+        return ids.sort();
+      };
+      const proposerSeatIds = await countries('proposerSeatIds', previousIds('PROPOSER'));
+      const seconderSeatIds = await countries('seconderSeatIds', previousIds('SECONDER'));
       if (Object.prototype.hasOwnProperty.call(input, 'delegatesCanAmend') && typeof input.delegatesCanAmend !== 'boolean') {
         throw new AppError({reason: 'INVALID_AMENDMENT_SETTING', code: 'VALIDATION_FAILED', message: 'The delegate amendment setting is invalid.'});
       }
@@ -3153,23 +3144,36 @@ export class Stage5Service {
       if (document.kind === 'RESOLUTION') {
         const metadataResult = await client.query<ResolutionRow>('SELECT * FROM resolutions WHERE document_id=$1 FOR UPDATE', [documentId]);
         const metadata = metadataResult.rows[0] as ResolutionRow;
-        before = {proposerSeatId: metadata.proposer_seat_id, seconderSeatId: metadata.seconder_seat_id,
+        const nextProposers = proposerSeatIds ?? previousIds('PROPOSER');
+        const nextSeconders = seconderSeatIds ?? previousIds('SECONDER');
+        before = {proposerSeatIds: previousIds('PROPOSER'), seconderSeatIds: previousIds('SECONDER'),
           delegatesCanAmend: metadata.delegates_can_amend, majority: metadata.direct_vote_majority};
-        after = {proposerSeatId: proposerSeatId ?? metadata.proposer_seat_id,
-          seconderSeatId: seconderSeatId === undefined ? metadata.seconder_seat_id : seconderSeatId,
+        after = {proposerSeatIds: nextProposers, seconderSeatIds: nextSeconders,
           delegatesCanAmend: input.delegatesCanAmend === undefined ? metadata.delegates_can_amend : input.delegatesCanAmend,
           majority: majority ?? metadata.direct_vote_majority};
-        if (after.proposerSeatId === after.seconderSeatId) throw new AppError({reason: 'PROPOSER_SECONDER_SAME', code: 'VALIDATION_FAILED',
-          message: 'The proposer and seconder must be different seats.'});
+        if (nextProposers.some(id => nextSeconders.includes(id))) throw new AppError({reason: 'DOCUMENT_COUNTRY_ROLES_OVERLAP',
+          code: 'VALIDATION_FAILED', message: 'Drafting and seconding countries must be different.'});
         if (JSON.stringify(before) === JSON.stringify(after)) throw new AppError({reason: 'DOCUMENT_SETTINGS_UNCHANGED', code: 'RESOURCE_CONFLICT',
           message: 'The document settings are unchanged.'});
-        await client.query(`UPDATE resolutions SET proposer_seat_id=$2,seconder_seat_id=$3,delegates_can_amend=$4,
-          direct_vote_majority=$5,direct_vote_revision=direct_vote_revision+CASE WHEN direct_vote_majority<>$5 THEN 1 ELSE 0 END
-          WHERE document_id=$1`, [documentId, after.proposerSeatId, after.seconderSeatId, after.delegatesCanAmend, after.majority]);
+        await client.query(`UPDATE resolutions SET delegates_can_amend=$2,
+          direct_vote_majority=$3,direct_vote_revision=direct_vote_revision+CASE WHEN direct_vote_majority<>$3 THEN 1 ELSE 0 END
+          WHERE document_id=$1`, [documentId, after.delegatesCanAmend, after.majority]);
+        for (const [role, ids] of [['PROPOSER', proposerSeatIds], ['SECONDER', seconderSeatIds]] as const) {
+          if (ids === undefined) continue;
+          await client.query('DELETE FROM resolution_countries WHERE resolution_document_id=$1 AND role=$2', [documentId, role]);
+        }
+        for (const [role, ids] of [['PROPOSER', proposerSeatIds], ['SECONDER', seconderSeatIds]] as const) {
+          if (ids === undefined) continue;
+          await client.query(`INSERT INTO resolution_countries (resolution_document_id,seat_id,role)
+            SELECT $1,unnest($2::uuid[]),$3`, [documentId, ids, role]);
+        }
       } else {
+        if (proposerSeatIds?.length !== 1) throw new AppError({reason: 'AMENDMENT_PROPOSER_REQUIRED',
+          code: 'VALIDATION_FAILED', message: 'Select one amendment proposer.'});
+        const proposerSeatId = proposerSeatIds[0];
         const metadata = await client.query<{proposer_seat_id: string}>('SELECT proposer_seat_id FROM amendments WHERE document_id=$1 FOR UPDATE', [documentId]);
-        before = {proposerSeatId: metadata.rows[0]?.proposer_seat_id}; after = {proposerSeatId};
-        if (!proposerSeatId || before.proposerSeatId === proposerSeatId) throw new AppError({reason: 'DOCUMENT_SETTINGS_UNCHANGED', code: 'RESOURCE_CONFLICT',
+        before = {proposerSeatIds: [metadata.rows[0]?.proposer_seat_id]}; after = {proposerSeatIds};
+        if (metadata.rows[0]?.proposer_seat_id === proposerSeatId) throw new AppError({reason: 'DOCUMENT_SETTINGS_UNCHANGED', code: 'RESOURCE_CONFLICT',
           message: 'The document settings are unchanged.'});
         await client.query('UPDATE amendments SET proposer_seat_id=$2 WHERE document_id=$1', [documentId, proposerSeatId]);
       }
@@ -3181,7 +3185,7 @@ export class Stage5Service {
         VALUES ($1,$2,$3,$4,$5,$6,$7)`, [randomUUID(), committee.id,
         document.kind === 'RESOLUTION' ? documentId : document.resolution_document_id, before, after, auth.user.id, now]);
       await appendEvent(client, committee, {type: 'document.settings_changed', resourceType: 'document', resourceId: documentId,
-        revision: document.revision + 1, payload: {kind: document.kind}, audience: 'MEMBER'});
+        revision: document.revision + 1, payload: {kind: document.kind}, audience: document.is_public ? 'PUBLIC' : 'MEMBER'});
       await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id, capabilities: ['CHAIR'],
         action: 'documents.settings_changed', resourceType: 'document', resourceId: documentId, before, after});
       return documentState(client, updated.rows[0] as DocumentRow);

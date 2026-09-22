@@ -987,7 +987,7 @@ function StatisticsPanel({snapshot}: {snapshot: CommitteeWorkspaceSnapshot}) {
     duration: speechDuration(seat.id),
     motions: (snapshot.motions ?? []).filter(motion => motion.proposedBySeatId === seat.id).length,
     amendments: (snapshot.documents ?? []).filter(document => document.kind === 'AMENDMENT'
-      && document.proposerSeatId === seat.id).length,
+      && document.proposers.some(country => country.seatId === seat.id)).length,
     points: snapshot.points.filter(point => point.raisedBySeatId === seat.id).length,
     documentEntries: (snapshot.documents ?? []).flatMap(document => document.discussion).filter(entry => entry.seatId === seat.id).length
   })).sort((first, second) => second.speeches - first.speeches || first.seat.sortOrder - second.seat.sortOrder);

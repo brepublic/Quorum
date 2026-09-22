@@ -913,15 +913,21 @@ export class Stage4Service {
         ]);
         const current = version.rows[0];
         if (!current) throw new AppError({code: 'INTERNAL_ERROR', message: 'Document version is unavailable.'});
-        let proposerSeatId: string | null = null; let seconderSeatId: string | null = null;
+        const countries = await client.query<{seat_id: string; display_name: string;
+          flag_type: ProceedingDocument['proposers'][number]['flag']['type']; flag_value: string; role: string}>(`
+          SELECT s.id AS seat_id,s.display_name,s.flag_type,s.flag_value,c.role
+          FROM (SELECT seat_id,role FROM resolution_countries WHERE resolution_document_id=$1
+            UNION ALL SELECT proposer_seat_id,'PROPOSER' FROM amendments WHERE document_id=$1) c
+          JOIN committee_seats s ON s.id=c.seat_id ORDER BY s.sort_order,s.stable_key,s.id`, [row.id]);
+        const countryList = (role: string): ProceedingDocument['proposers'] => countries.rows.filter(item => item.role === role)
+          .map(item => ({seatId: item.seat_id, seatDisplayName: item.display_name,
+            flag: {type: item.flag_type, value: item.flag_value} as ProceedingDocument['proposers'][number]['flag']}));
         let delegatesCanAmend = false; let directVote: ProceedingDocument['directVote'] = null;
         if (row.kind === 'RESOLUTION') {
-          const metadata = await client.query<{proposer_seat_id: string; seconder_seat_id: string | null;
-            delegates_can_amend: boolean; direct_vote_majority: NonNullable<ProceedingDocument['directVote']>['majority'];
+          const metadata = await client.query<{delegates_can_amend: boolean; direct_vote_majority: NonNullable<ProceedingDocument['directVote']>['majority'];
             direct_vote_started_at: Date | null; direct_vote_revision: number}>('SELECT * FROM resolutions WHERE document_id=$1', [row.id]);
           const resolution = metadata.rows[0];
           if (!resolution) throw new AppError({code: 'INTERNAL_ERROR', message: 'Resolution metadata is unavailable.'});
-          proposerSeatId = resolution.proposer_seat_id; seconderSeatId = resolution.seconder_seat_id;
           delegatesCanAmend = resolution.delegates_can_amend;
           const eligibility = await client.query<{seat_id: string; seat_display_name: string; must_vote: boolean; has_veto: boolean}>(
           `SELECT s.id AS seat_id,s.display_name AS seat_display_name,s.must_vote,s.has_veto FROM committee_seats s
@@ -964,9 +970,6 @@ export class Stage4Service {
               mustVote: item.must_vote, hasVeto: item.has_veto})), threshold, automaticResult,
             votes: currentVotes.map(vote => ({id: vote.id, seatId: vote.seat_id, seatDisplayName: vote.seat_display_name,
               choice: vote.current_choice, revision: vote.revision, castAt: vote.cast_at.toISOString()}))};
-        } else {
-          const amendment = await client.query<{proposer_seat_id: string}>('SELECT proposer_seat_id FROM amendments WHERE document_id=$1', [row.id]);
-          proposerSeatId = amendment.rows[0]?.proposer_seat_id ?? null;
         }
         return {id: row.id, committeeId: row.committee_id, meetingSessionId: row.meeting_session_id, kind: row.kind,
           resolutionId: row.resolution_document_id, ordinal: row.ordinal, customTitle: row.custom_title,
@@ -979,7 +982,7 @@ export class Stage4Service {
               originalName: current.original_name ?? '', mediaType: current.media_type ?? '',
               status: current.file_status ?? 'DELETED', fileType: current.file_type ?? null} : null,
             createdAt: current.created_at.toISOString()}, votingVersionId: row.voting_version_id, public: row.is_public,
-          proposerSeatId, seconderSeatId, delegatesCanAmend, directVote,
+          proposers: countryList('PROPOSER'), seconders: countryList('SECONDER'), delegatesCanAmend, directVote,
           resultDecisions: decisions.rows.map(item => ({id: item.id, previousStatus: item.previous_status,
             newStatus: item.new_status, reason: item.reason, correctsDecisionId: item.corrects_decision_id,
             createdAt: item.created_at.toISOString()})),

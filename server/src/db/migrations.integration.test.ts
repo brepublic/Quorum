@@ -51,6 +51,58 @@ afterEach(async () => {
 });
 
 integration('PostgreSQL migrations', () => {
+  it('upgrades schema 66 single-country drafts without losing countries or rewriting history', async () => {
+    const pool = new Pool({connectionString: databaseUrl});
+    const source = resolve('server/migrations');
+    const staged = await mkdtemp(join(tmpdir(), 'quorum-migrations-0067-')); temporaryDirectories.push(staged);
+    const userId=randomUUID(), committeeId=randomUUID(), packageId=randomUUID(), ruleId=randomUUID();
+    const sessionId=randomUUID(), documentId=randomUUID(), emptyId=randomUUID(), first=randomUUID(), second=randomUUID();
+    const historyId=randomUUID();
+    try {
+      for (const file of (await readdir(source)).filter(file=>file.endsWith('.sql') && Number(file.slice(0,4))<=66))
+        await cp(join(source,file),join(staged,file));
+      await runMigrations(pool,staged);
+      await pool.query(`INSERT INTO users(id,email,display_name,status,is_system_admin,must_change_password)
+        VALUES($1,'countries@example.test','Countries','ACTIVE',false,false)`,[userId]);
+      await pool.query("INSERT INTO rule_packages(id,scope,stable_key) VALUES($1,'BUILTIN','countries-test')",[packageId]);
+      await pool.query(`INSERT INTO rule_package_versions(id,package_id,version,status,definition,schema_version,published_at)
+        VALUES($1,$2,1,'PUBLISHED','{}',1,now())`,[ruleId,packageId]);
+      const countries = ['China','France'].map((name,index) => ({stableKey:name, names:{en:name}, flag:{type:'STANDARD',value:index?'fr':'cn'}}));
+      await pool.query(`INSERT INTO committees(id,owner_user_id,name,visibility,operation_mode,active_rule_package_version_id,content_snapshot,committee_language)
+        VALUES($1,$2,'Countries','PRIVATE','CHAIR_OPERATED',$3,$4,'en')`,[committeeId,userId,ruleId,
+          {schemaVersion:1,countryTemplate:{countries},committeeTemplate:null,initialRulePackageVersionId:ruleId}]);
+      for (const [index,id] of [first,second].entries()) await pool.query(`INSERT INTO committee_seats
+        (id,committee_id,stable_key,display_name,rank,flag_type,flag_value) VALUES($1,$2,$3,$3,'STANDARD','STANDARD',$4)`,
+      [id,committeeId,countries[index].stableKey,countries[index].flag.value]);
+      await pool.query(`INSERT INTO meeting_sessions(id,committee_id,phase_id,active_rule_package_version_id,created_by_user_id)
+        VALUES($1,$2,'formal-debate',$3,$4)`,[sessionId,committeeId,ruleId,userId]);
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        for (const id of [documentId,emptyId]) {
+          const versionId = randomUUID();
+          await client.query(`INSERT INTO documents(id,committee_id,meeting_session_id,kind,rule_package_version_id,created_by_user_id,current_version_id)
+            VALUES($1,$2,$3,'RESOLUTION',$4,$5,$6)`,[id,committeeId,sessionId,ruleId,userId,versionId]);
+          await client.query(`INSERT INTO document_versions(id,document_id,version_number,content,created_by_user_id)
+            VALUES($1,$2,1,'',$3)`, [versionId,id,userId]);
+          await client.query('INSERT INTO resolutions(document_id,proposer_seat_id,seconder_seat_id) VALUES($1,$2,$3)',
+            [id,id===documentId?first:null,id===documentId?second:null]);
+        }
+        await client.query('COMMIT');
+      } catch (error) {await client.query('ROLLBACK'); throw error;}
+      finally {client.release();}
+      const history={proposerSeatId:first,seconderSeatId:second};
+      await pool.query(`INSERT INTO resolution_setting_revisions(id,committee_id,resolution_document_id,before_value,after_value,actor_user_id)
+        VALUES($1,$2,$3,'{}',$4,$5)`,[historyId,committeeId,documentId,history,userId]);
+      await cp(join(source,'0067_resolution_countries.sql'),join(staged,'0067_resolution_countries.sql'));
+      expect((await runMigrations(pool,staged)).latestAppliedVersion).toBe(67);
+      expect((await pool.query('SELECT seat_id,role FROM resolution_countries WHERE resolution_document_id=$1 ORDER BY role', [documentId])).rows)
+        .toEqual([{seat_id:first,role:'PROPOSER'},{seat_id:second,role:'SECONDER'}]);
+      expect((await pool.query('SELECT * FROM resolution_countries WHERE resolution_document_id=$1', [emptyId])).rows).toEqual([]);
+      expect((await pool.query('SELECT after_value FROM resolution_setting_revisions WHERE id=$1', [historyId])).rows[0].after_value).toEqual(history);
+    } finally {await pool.end();}
+  });
+
   it('stops the formal-name upgrade with conflicting file IDs instead of merging them', async () => {
     const pool = new Pool({connectionString: databaseUrl});
     const source = resolve('server/migrations');
@@ -213,11 +265,11 @@ integration('PostgreSQL migrations', () => {
       );
       const applied = await pool.query('SELECT version FROM quorum_meta.schema_migrations');
 
-      expect(first).toEqual(expect.objectContaining({ready: true, latestAppliedVersion: 66}));
+      expect(first).toEqual(expect.objectContaining({ready: true, latestAppliedVersion: 67}));
       expect(second).toEqual(expect.objectContaining({ready: true, pendingVersions: []}));
       expect(status.ready).toBe(true);
-      expect(runtime.rows[0]?.schema_compatibility).toBe(66);
-      expect(applied.rowCount).toBe(66);
+      expect(runtime.rows[0]?.schema_compatibility).toBe(67);
+      expect(applied.rowCount).toBe(67);
       const stage3Tables = await pool.query<{name: string}>(`SELECT table_name AS name FROM information_schema.tables
         WHERE table_schema='public' AND table_name IN ('committees','committee_memberships','committee_capabilities',
         'committee_seats','seat_assignments','seat_invitations','rule_packages','rule_package_versions',
