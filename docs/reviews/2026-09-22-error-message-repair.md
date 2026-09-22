@@ -47,6 +47,19 @@
 - 最终文案复核后的错误目录和安全契约：8 项复跑通过；文件面板 21 项复跑通过。
 - 本机 `quorum-dev` 开发服务已重建并更新；运行容器与新镜像 ID 一致，`/health/ready` 返回 200，数据库与存储均正常，schema 66。
 - 浏览器：实际决议页面双击赞成由 7 增至 8，双击撤销由 8 恢复至 7，并返回 Liberia；未出现原模糊错误，提交期间控件禁用。文件选择默认“文件”，菜单展开完整显示，按钮全宽。
-- 原生 Rust/Slint 翻译已同步；本机没有 Rust 编译器，未执行原生编译或 GUI 验收。Node 桥接测试不能替代原生 GUI 验收。
+- 原生 Rust/Slint：使用项目 `.tools/cargo`、`.tools/rustup` 中的 Rust/Cargo 1.98.1，`cargo test --locked --offline --manifest-path packages/storage-agent-desktop/Cargo.toml` 通过（1 项错误翻译测试），`cargo build --locked --offline --manifest-path packages/storage-agent-desktop/Cargo.toml` 通过（桌面程序开发构建）。测试构建仅有预览示例中 3 个未使用函数的警告。本次未执行原生 GUI 操作验收。
 
 首次非数据库测试在受限沙箱内因本机 HTTPS 监听受限而超时，已在允许本机连接的环境完整重跑通过。首次数据库测试在并行负载下触发默认 5 秒超时；随后一次长进程在汇总前结束，未将这两轮计作通过。最终两组测试均正常退出并产生完整通过汇总。并非每个业务错误都在浏览器逐个触发；覆盖证据分别来自静态分支检查、自动化测试、数据库测试与代表性页面验收。
+
+## Rust 补验更正
+
+首次检查只查找了系统路径和用户目录，遗漏项目自带工具链，因此“本机没有 Rust 编译器”的判断不准确。用户指出后，按 `scripts/storage-agent-desktop.sh` 中的配置补验通过，未修改业务代码或依赖。
+
+在仓库根目录执行以下环境配置后，运行上述 Cargo 命令：
+
+```sh
+source scripts/wsl-env.sh
+export CARGO_HOME="$PWD/.tools/cargo"
+export RUSTUP_HOME="$PWD/.tools/rustup"
+export PATH="$CARGO_HOME/bin:$PATH"
+```
