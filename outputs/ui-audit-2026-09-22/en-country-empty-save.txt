@@ -1,0 +1,65 @@
+- link "Quorum":
+  - /url: /committees
+- listbox "Account menu":
+  - alert: Colin
+  - generic: 
+  - text:      
+- heading "Country manager" [level=1]
+- button "New country template":
+  - generic: 
+  - text: New country template
+- list:
+  - generic: 
+  - generic: Default countries
+  - generic: Built-in · 250 countries
+  - generic: 
+  - generic: 语言切换验收 20260918
+  - generic: 0 countries
+  - generic: 
+  - generic: UI audit 0922 countries
+  - generic: 0 countries
+- heading "Edit country template" [level=2]
+- button "Clone country template":
+  - generic: 
+  - text: Clone country template
+- generic: Country template name *
+- textbox "Country template name *": UI audit 0922 countries
+- button "Other language":
+  - generic: 
+  - text: Other language
+- heading "Countries" [level=3]
+- button "Add country name language":
+  - generic: 
+  - text: Add country name language
+- table:
+  - rowgroup:
+    - row "Country name · English Flag Continent":
+      - columnheader "Country name · English"
+      - columnheader "Flag"
+      - columnheader "Continent"
+      - columnheader
+  - rowgroup:
+    - row "🏳️ Remove":
+      - cell:
+        - textbox
+      - cell "🏳️":
+        - generic: 🏳️
+        - listbox:
+          - alert: Emoji
+          - generic: 
+        - textbox: 🏳️
+      - cell:
+        - listbox:
+          - generic: 
+      - cell "Remove":
+        - button "Remove":
+          - generic: 
+- button "Add country":
+  - generic: 
+  - text: Add country
+- button "Save country template" [active]:
+  - generic: 
+  - text: Save country template
+- button "Delete country template":
+  - generic: 
+  - text: Delete country template

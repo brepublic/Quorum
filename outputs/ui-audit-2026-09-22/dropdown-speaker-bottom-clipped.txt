@@ -1,0 +1,85 @@
+- text:               
+- navigation "Committee navigation":
+  - button "Open committee navigation":
+    - generic: 
+  - link "联合国安全理事会":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/info
+  - listbox "Account menu":
+    - alert: Colin
+    - generic: 
+    - text:      
+- textbox "Set speakers list name": 主发言名单
+- listbox:
+  - alert: Open
+  - generic: 
+- textbox "Set agenda"
+- generic: Now speaking
+- generic: 巴林
+- generic: Queue
+- button "Motions":
+  - text: Motions
+  - generic: 
+- button "Question":
+  - text: Question
+  - generic: 
+- combobox [expanded]:
+  - textbox [active]
+  - generic: 美国
+  - generic: 
+- button "Join queue":
+  - generic: 
+  - text: Join queue
+- generic: Next speaker
+- generic: (None)
+- generic: Speaker timer
+- button "1:50":
+  - time: 1:50
+- button "Unmute":
+  - generic: 
+- textbox "Duration": "110"
+- listbox:
+  - alert: sec
+  - generic: 
+- button "Set"
+- button "Continue":
+  - generic: 
+  - text: Continue
+- button "Next":
+  - generic: 
+  - text: Next
+- generic: Yield
+- button "Yield to the chair"
+- button "Yield to another delegate"
+- button "Yield to questions"
+- button "Yield to comments"
+- listbox:
+  - option "巴林":
+    - generic: 巴林
+  - option "中国":
+    - generic: 中国
+  - option "哥伦比亚":
+    - generic: 哥伦比亚
+  - option "刚果（金）":
+    - generic: 刚果（金）
+  - option "丹麦":
+    - generic: 丹麦
+  - option "法国":
+    - generic: 法国
+  - option "希腊":
+    - generic: 希腊
+  - option "拉脱维亚":
+    - generic: 拉脱维亚
+  - option "利比里亚":
+    - generic: 利比里亚
+  - option "巴基斯坦":
+    - generic: 巴基斯坦
+  - option "巴拿马":
+    - generic: 巴拿马
+  - option "俄罗斯":
+    - generic: 俄罗斯
+  - option "索马里":
+    - generic: 索马里
+  - option "英国":
+    - generic: 英国
+  - option "美国" [selected]:
+    - generic: 美国

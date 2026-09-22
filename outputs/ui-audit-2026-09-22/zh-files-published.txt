@@ -1,0 +1,129 @@
+- navigation "委员会导航":
+  - link "联合国安全理事会":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/info
+  - link "席位":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/setup
+  - link "点名":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/roll-call
+  - link "动议":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/motions
+  - link "问题":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/points
+  - link "主发言名单":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/caucuses/f9b8529a-4b94-446f-a3f0-38f99f987154
+  - link "自由磋商":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/unmod
+  - listbox:
+    - alert: 有主持核心磋商
+    - generic: 
+    - text: 
+  - listbox:
+    - alert: 决议草案
+    - generic: 
+    - text: 
+  - listbox:
+    - alert: 意向性投票
+    - generic: 
+    - text: 
+  - link "笔记":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/notes
+  - listbox "更多选项":
+    - generic: 
+  - generic "出席代表数/三分之二多数/简单多数": 15/10/8
+  - generic "实时":
+    - generic: 
+  - listbox "账户菜单":
+    - alert: Colin
+    - generic: 
+    - text:      
+- navigation "委员会导航":        
+- generic "资料分区":
+  - link "文件总览":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/posts/attachments
+  - link "分享":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/posts/share
+  - link "上传文件":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/posts/upload
+  - link "存储设置":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/posts/storage
+  - link "文件设置":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/posts/file-settings
+- listbox "文件状态":
+  - alert: 待审核与已发布
+  - generic: 
+- paragraph: 暂无待审核文件
+- generic: 界面检查 0922 文件
+- generic: 
+- text: 已发布
+- table:
+  - rowgroup:
+    - row "来源 主席":
+      - cell "来源"
+      - cell "主席"
+    - row "文件类型 工作文件":
+      - cell "文件类型"
+      - cell "工作文件"
+    - row "提交时间 2026/9/22 13:22:02":
+      - cell "提交时间"
+      - cell "2026/9/22 13:22:02"
+    - row "原始文件 quorum-ui-audit-0922.txt 55 B":
+      - cell "原始文件"
+      - cell "quorum-ui-audit-0922.txt 55 B":
+        - text: quorum-ui-audit-0922.txt
+        - generic: 55 B
+- button "下载文件":
+  - text: 下载文件
+  - generic: 
+- button "永久删除":
+  - text: 永久删除
+  - generic: 
+- generic: 主席电脑-代表批准文件
+- generic: 
+- text: 已发布
+- table:
+  - rowgroup:
+    - row "来源 中国":
+      - cell "来源"
+      - cell "中国"
+    - row "文件类型 工作文件":
+      - cell "文件类型"
+      - cell "工作文件"
+    - row "提交时间 2026/9/21 18:17:17":
+      - cell "提交时间"
+      - cell "2026/9/21 18:17:17"
+    - row "原始文件 delegate-approve.txt 37 B":
+      - cell "原始文件"
+      - cell "delegate-approve.txt 37 B":
+        - text: delegate-approve.txt
+        - generic: 37 B
+- button "下载文件":
+  - text: 下载文件
+  - generic: 
+- button "永久删除":
+  - text: 永久删除
+  - generic: 
+- generic: 主席电脑-主席批准文件
+- generic: 
+- text: 已发布
+- table:
+  - rowgroup:
+    - row "来源 主席":
+      - cell "来源"
+      - cell "主席"
+    - row "文件类型 工作文件":
+      - cell "文件类型"
+      - cell "工作文件"
+    - row "提交时间 2026/9/21 18:15:13":
+      - cell "提交时间"
+      - cell "2026/9/21 18:15:13"
+    - row "原始文件 chair-upload.txt 51 B":
+      - cell "原始文件"
+      - cell "chair-upload.txt 51 B":
+        - text: chair-upload.txt
+        - generic: 51 B
+- button "下载文件":
+  - text: 下载文件
+  - generic: 
+- button "永久删除":
+  - text: 永久删除
+  - generic: 

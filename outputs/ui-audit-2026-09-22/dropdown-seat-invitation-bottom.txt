@@ -1,0 +1,367 @@
+- text:               
+- navigation "Committee navigation":
+  - button "Open committee navigation":
+    - generic: 
+  - link "联合国安全理事会":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/info
+  - listbox "Account menu":
+    - alert: Colin
+    - generic: 
+    - text:      
+- heading "Seats" [level=2]
+- table:
+  - rowgroup:
+    - row "Seat Seat type Voting Veto No abstention":
+      - columnheader "Seat"
+      - columnheader "Seat type"
+      - columnheader "Voting"
+      - columnheader "Veto"
+      - columnheader "No abstention"
+      - columnheader
+    - row "Voting Veto No abstention Create seat":
+      - columnheader:
+        - listbox "Seat":
+          - alert: 阿富汗
+          - generic: 
+      - columnheader:
+        - combobox "Seat type":
+          - textbox
+          - alert: Standard
+          - generic: 
+      - columnheader "Voting":
+        - checkbox "Voting" [checked]
+      - columnheader "Veto":
+        - checkbox "Veto"
+      - columnheader "No abstention":
+        - checkbox "No abstention"
+      - columnheader "Create seat":
+        - button "Create seat":
+          - generic: 
+- table:
+  - rowgroup:
+    - row "Seat Seat type Voting Veto No abstention":
+      - columnheader "Seat"
+      - columnheader "Seat type"
+      - columnheader "Voting"
+      - columnheader "Veto"
+      - columnheader "No abstention"
+      - columnheader
+  - rowgroup:
+    - row "All seats Voting · All seats Veto · All seats No abstention · All seats":
+      - cell "All seats"
+      - cell:
+        - combobox "Seat type · All seats":
+          - textbox
+          - alert: Standard
+          - generic: 
+      - cell "Voting · All seats":
+        - checkbox "Voting · All seats" [checked]
+      - cell "Veto · All seats":
+        - checkbox "Veto · All seats" [checked=mixed]
+      - cell "No abstention · All seats":
+        - checkbox "No abstention · All seats"
+      - cell
+    - row "巴林 Voting · 巴林 Veto · 巴林 No abstention · 巴林 Deactivate · 巴林":
+      - cell "巴林":
+        - generic: 巴林
+      - cell:
+        - combobox "Seat type · 巴林":
+          - textbox
+          - alert: Standard
+          - generic: 
+      - cell "Voting · 巴林":
+        - checkbox "Voting · 巴林" [checked]
+      - cell "Veto · 巴林":
+        - checkbox "Veto · 巴林"
+      - cell "No abstention · 巴林":
+        - checkbox "No abstention · 巴林"
+      - cell "Deactivate · 巴林":
+        - button "Deactivate · 巴林":
+          - generic: 
+    - row "中国 Voting · 中国 Veto · 中国 No abstention · 中国 Deactivate · 中国":
+      - cell "中国":
+        - generic: 中国
+      - cell:
+        - combobox "Seat type · 中国":
+          - textbox
+          - alert: Standard
+          - generic: 
+      - cell "Voting · 中国":
+        - checkbox "Voting · 中国" [checked]
+      - cell "Veto · 中国":
+        - checkbox "Veto · 中国" [checked]
+      - cell "No abstention · 中国":
+        - checkbox "No abstention · 中国"
+      - cell "Deactivate · 中国":
+        - button "Deactivate · 中国":
+          - generic: 
+    - row "哥伦比亚 Voting · 哥伦比亚 Veto · 哥伦比亚 No abstention · 哥伦比亚 Deactivate · 哥伦比亚":
+      - cell "哥伦比亚":
+        - generic: 哥伦比亚
+      - cell:
+        - combobox "Seat type · 哥伦比亚":
+          - textbox
+          - alert: Standard
+          - generic: 
+      - cell "Voting · 哥伦比亚":
+        - checkbox "Voting · 哥伦比亚" [checked]
+      - cell "Veto · 哥伦比亚":
+        - checkbox "Veto · 哥伦比亚"
+      - cell "No abstention · 哥伦比亚":
+        - checkbox "No abstention · 哥伦比亚"
+      - cell "Deactivate · 哥伦比亚":
+        - button "Deactivate · 哥伦比亚":
+          - generic: 
+    - row "刚果（金） Voting · 刚果（金） Veto · 刚果（金） No abstention · 刚果（金） Deactivate · 刚果（金）":
+      - cell "刚果（金）":
+        - generic: 刚果（金）
+      - cell:
+        - combobox "Seat type · 刚果（金）":
+          - textbox
+          - alert: Standard
+          - generic: 
+      - cell "Voting · 刚果（金）":
+        - checkbox "Voting · 刚果（金）" [checked]
+      - cell "Veto · 刚果（金）":
+        - checkbox "Veto · 刚果（金）"
+      - cell "No abstention · 刚果（金）":
+        - checkbox "No abstention · 刚果（金）"
+      - cell "Deactivate · 刚果（金）":
+        - button "Deactivate · 刚果（金）":
+          - generic: 
+    - row "丹麦 Voting · 丹麦 Veto · 丹麦 No abstention · 丹麦 Deactivate · 丹麦":
+      - cell "丹麦":
+        - generic: 丹麦
+      - cell:
+        - combobox "Seat type · 丹麦":
+          - textbox
+          - alert: Standard
+          - generic: 
+      - cell "Voting · 丹麦":
+        - checkbox "Voting · 丹麦" [checked]
+      - cell "Veto · 丹麦":
+        - checkbox "Veto · 丹麦"
+      - cell "No abstention · 丹麦":
+        - checkbox "No abstention · 丹麦"
+      - cell "Deactivate · 丹麦":
+        - button "Deactivate · 丹麦":
+          - generic: 
+    - row "法国 Voting · 法国 Veto · 法国 No abstention · 法国 Deactivate · 法国":
+      - cell "法国":
+        - generic: 法国
+      - cell:
+        - combobox "Seat type · 法国":
+          - textbox
+          - alert: Standard
+          - generic: 
+      - cell "Voting · 法国":
+        - checkbox "Voting · 法国" [checked]
+      - cell "Veto · 法国":
+        - checkbox "Veto · 法国" [checked]
+      - cell "No abstention · 法国":
+        - checkbox "No abstention · 法国"
+      - cell "Deactivate · 法国":
+        - button "Deactivate · 法国":
+          - generic: 
+    - row "希腊 Voting · 希腊 Veto · 希腊 No abstention · 希腊 Deactivate · 希腊":
+      - cell "希腊":
+        - generic: 希腊
+      - cell:
+        - combobox "Seat type · 希腊":
+          - textbox
+          - alert: Standard
+          - generic: 
+      - cell "Voting · 希腊":
+        - checkbox "Voting · 希腊" [checked]
+      - cell "Veto · 希腊":
+        - checkbox "Veto · 希腊"
+      - cell "No abstention · 希腊":
+        - checkbox "No abstention · 希腊"
+      - cell "Deactivate · 希腊":
+        - button "Deactivate · 希腊":
+          - generic: 
+    - row "拉脱维亚 Voting · 拉脱维亚 Veto · 拉脱维亚 No abstention · 拉脱维亚 Deactivate · 拉脱维亚":
+      - cell "拉脱维亚":
+        - generic: 拉脱维亚
+      - cell:
+        - combobox "Seat type · 拉脱维亚":
+          - textbox
+          - alert: Standard
+          - generic: 
+      - cell "Voting · 拉脱维亚":
+        - checkbox "Voting · 拉脱维亚" [checked]
+      - cell "Veto · 拉脱维亚":
+        - checkbox "Veto · 拉脱维亚"
+      - cell "No abstention · 拉脱维亚":
+        - checkbox "No abstention · 拉脱维亚"
+      - cell "Deactivate · 拉脱维亚":
+        - button "Deactivate · 拉脱维亚":
+          - generic: 
+    - row "利比里亚 Voting · 利比里亚 Veto · 利比里亚 No abstention · 利比里亚 Deactivate · 利比里亚":
+      - cell "利比里亚":
+        - generic: 利比里亚
+      - cell:
+        - combobox "Seat type · 利比里亚":
+          - textbox
+          - alert: Standard
+          - generic: 
+      - cell "Voting · 利比里亚":
+        - checkbox "Voting · 利比里亚" [checked]
+      - cell "Veto · 利比里亚":
+        - checkbox "Veto · 利比里亚"
+      - cell "No abstention · 利比里亚":
+        - checkbox "No abstention · 利比里亚"
+      - cell "Deactivate · 利比里亚":
+        - button "Deactivate · 利比里亚":
+          - generic: 
+    - row "巴基斯坦 Voting · 巴基斯坦 Veto · 巴基斯坦 No abstention · 巴基斯坦 Deactivate · 巴基斯坦":
+      - cell "巴基斯坦":
+        - generic: 巴基斯坦
+      - cell:
+        - combobox "Seat type · 巴基斯坦":
+          - textbox
+          - alert: Standard
+          - generic: 
+      - cell "Voting · 巴基斯坦":
+        - checkbox "Voting · 巴基斯坦" [checked]
+      - cell "Veto · 巴基斯坦":
+        - checkbox "Veto · 巴基斯坦"
+      - cell "No abstention · 巴基斯坦":
+        - checkbox "No abstention · 巴基斯坦"
+      - cell "Deactivate · 巴基斯坦":
+        - button "Deactivate · 巴基斯坦":
+          - generic: 
+    - row "巴拿马 Voting · 巴拿马 Veto · 巴拿马 No abstention · 巴拿马 Deactivate · 巴拿马":
+      - cell "巴拿马":
+        - generic: 巴拿马
+      - cell:
+        - combobox "Seat type · 巴拿马":
+          - textbox
+          - alert: Standard
+          - generic: 
+      - cell "Voting · 巴拿马":
+        - checkbox "Voting · 巴拿马" [checked]
+      - cell "Veto · 巴拿马":
+        - checkbox "Veto · 巴拿马"
+      - cell "No abstention · 巴拿马":
+        - checkbox "No abstention · 巴拿马"
+      - cell "Deactivate · 巴拿马":
+        - button "Deactivate · 巴拿马":
+          - generic: 
+    - row "俄罗斯 Voting · 俄罗斯 Veto · 俄罗斯 No abstention · 俄罗斯 Deactivate · 俄罗斯":
+      - cell "俄罗斯":
+        - generic: 俄罗斯
+      - cell:
+        - combobox "Seat type · 俄罗斯":
+          - textbox
+          - alert: Standard
+          - generic: 
+      - cell "Voting · 俄罗斯":
+        - checkbox "Voting · 俄罗斯" [checked]
+      - cell "Veto · 俄罗斯":
+        - checkbox "Veto · 俄罗斯" [checked]
+      - cell "No abstention · 俄罗斯":
+        - checkbox "No abstention · 俄罗斯"
+      - cell "Deactivate · 俄罗斯":
+        - button "Deactivate · 俄罗斯":
+          - generic: 
+    - row "索马里 Voting · 索马里 Veto · 索马里 No abstention · 索马里 Deactivate · 索马里":
+      - cell "索马里":
+        - generic: 索马里
+      - cell:
+        - combobox "Seat type · 索马里":
+          - textbox
+          - alert: Standard
+          - generic: 
+      - cell "Voting · 索马里":
+        - checkbox "Voting · 索马里" [checked]
+      - cell "Veto · 索马里":
+        - checkbox "Veto · 索马里"
+      - cell "No abstention · 索马里":
+        - checkbox "No abstention · 索马里"
+      - cell "Deactivate · 索马里":
+        - button "Deactivate · 索马里":
+          - generic: 
+    - row "英国 Voting · 英国 Veto · 英国 No abstention · 英国 Deactivate · 英国":
+      - cell "英国":
+        - generic: 英国
+      - cell:
+        - combobox "Seat type · 英国":
+          - textbox
+          - alert: Standard
+          - generic: 
+      - cell "Voting · 英国":
+        - checkbox "Voting · 英国" [checked]
+      - cell "Veto · 英国":
+        - checkbox "Veto · 英国" [checked]
+      - cell "No abstention · 英国":
+        - checkbox "No abstention · 英国"
+      - cell "Deactivate · 英国":
+        - button "Deactivate · 英国":
+          - generic: 
+    - row "美国 Voting · 美国 Veto · 美国 No abstention · 美国 Deactivate · 美国":
+      - cell "美国":
+        - generic: 美国
+      - cell:
+        - combobox "Seat type · 美国":
+          - textbox
+          - alert: Standard
+          - generic: 
+      - cell "Voting · 美国":
+        - checkbox "Voting · 美国" [checked]
+      - cell "Veto · 美国":
+        - checkbox "Veto · 美国" [checked]
+      - cell "No abstention · 美国":
+        - checkbox "No abstention · 美国"
+      - cell "Deactivate · 美国":
+        - button "Deactivate · 美国":
+          - generic: 
+- button "Roll call":
+  - text: Roll call
+  - generic: 
+- heading "Chairs" [level=2]
+- generic: Email *
+- textbox
+- button "Grant Chair" [disabled]
+- table:
+  - rowgroup:
+    - row "Email Actions":
+      - columnheader "Email"
+      - columnheader "Actions"
+  - rowgroup:
+    - row "colinshenglzm@gmail.com Revoke":
+      - cell "colinshenglzm@gmail.com"
+      - cell "Revoke":
+        - button "Revoke"
+- heading "Seat assignments" [level=2]
+- generic: Seat
+- listbox:
+  - alert: 巴林
+  - generic: 
+- generic: Email *
+- textbox
+- button "Assign seat" [disabled]
+- list
+- heading "One-time seat invitation" [level=2]
+- generic: Seat
+- listbox [expanded] [active]:
+  - alert: 巴林
+  - generic: 
+  - option "巴林" [checked] [selected]
+  - option "中国"
+  - option "哥伦比亚"
+  - option "刚果（金）"
+  - option "丹麦"
+  - option "法国"
+  - option "希腊"
+  - option "拉脱维亚"
+  - option "利比里亚"
+  - option "巴基斯坦"
+  - option "巴拿马"
+  - option "俄罗斯"
+  - option "索马里"
+  - option "英国"
+  - option "美国"
+- generic: Expires at *
+- textbox: 2026-09-23T12:21
+- button "Create invitation"

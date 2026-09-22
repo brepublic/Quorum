@@ -1,0 +1,66 @@
+- navigation "Committee navigation":
+  - link "UI audit 0922 EN":
+    - /url: /committees/5dc1fd5b-7af8-4602-bdb1-59afe404f90e/info
+  - link "Seats":
+    - /url: /committees/5dc1fd5b-7af8-4602-bdb1-59afe404f90e/setup
+  - link "Roll call":
+    - /url: /committees/5dc1fd5b-7af8-4602-bdb1-59afe404f90e/roll-call
+  - link "Motions":
+    - /url: /committees/5dc1fd5b-7af8-4602-bdb1-59afe404f90e/motions
+  - link "Points":
+    - /url: /committees/5dc1fd5b-7af8-4602-bdb1-59afe404f90e/points
+  - link "General Speaker's List":
+    - /url: /committees/5dc1fd5b-7af8-4602-bdb1-59afe404f90e/caucuses/fc3a58cb-ebf6-4af8-8fbb-d0fec3377992
+  - link "Unmoderated caucus":
+    - /url: /committees/5dc1fd5b-7af8-4602-bdb1-59afe404f90e/unmod
+  - listbox:
+    - alert: Moderated caucuses
+    - generic: 
+    - text: 
+  - listbox:
+    - alert: Resolutions
+    - generic: 
+    - text: 
+  - listbox:
+    - alert: Strawpolls
+    - generic: 
+    - text: 
+  - link "Notes":
+    - /url: /committees/5dc1fd5b-7af8-4602-bdb1-59afe404f90e/notes
+  - link "Files":
+    - /url: /committees/5dc1fd5b-7af8-4602-bdb1-59afe404f90e/posts
+  - listbox "More options":
+    - generic: 
+  - generic "Attendance / two-thirds majority / simple majority": 1/1/1
+  - generic "Live":
+    - generic: 
+  - listbox "Account menu":
+    - alert: Colin
+    - generic: 
+    - text:      
+- navigation "Committee navigation":        
+- generic: Point type
+- combobox [expanded]:
+  - textbox [active]
+  - alert: Point of order
+  - generic: 
+  - listbox:
+    - option "Point of order" [checked] [selected]
+    - option "Point of information"
+    - option "Point of personal privilege"
+- generic: Raised by
+- combobox:
+  - textbox
+  - alert: Select a delegation
+  - generic: 
+- generic: Reason (optional)
+- textbox
+- button "Raise point" [disabled]:
+  - generic: 
+- generic: Session 1
+- generic: Point of order
+- generic: Uphold point
+- generic: Raised by
+- generic: Afghanistan
+- generic: Reason
+- generic: "UI audit 0922: inspect handling states."

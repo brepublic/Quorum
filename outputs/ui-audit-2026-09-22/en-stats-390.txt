@@ -1,0 +1,156 @@
+- text:               
+- navigation "Committee navigation":
+  - button "Open committee navigation":
+    - generic: 
+  - link "联合国安全理事会":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/info
+  - listbox "Account menu":
+    - alert: Colin
+    - generic: 
+    - text:      
+- table:
+  - rowgroup:
+    - row "Times spoken Total speaking time Motions proposed Amendments proposed Points Document discussion entries":
+      - columnheader
+      - columnheader "Times spoken"
+      - columnheader "Total speaking time"
+      - columnheader "Motions proposed"
+      - columnheader "Amendments proposed"
+      - columnheader "Points"
+      - columnheader "Document discussion entries"
+  - rowgroup:
+    - row "巴林 0 00:00:00 1 0 0 0":
+      - cell "巴林":
+        - generic: 巴林
+      - cell "0"
+      - cell "00:00:00"
+      - cell "1"
+      - cell "0"
+      - cell "0"
+      - cell "0"
+    - row "中国 0 00:00:00 0 0 0 0":
+      - cell "中国":
+        - generic: 中国
+      - cell "0"
+      - cell "00:00:00"
+      - cell "0"
+      - cell "0"
+      - cell "0"
+      - cell "0"
+    - row "哥伦比亚 0 00:00:00 0 0 0 0":
+      - cell "哥伦比亚":
+        - generic: 哥伦比亚
+      - cell "0"
+      - cell "00:00:00"
+      - cell "0"
+      - cell "0"
+      - cell "0"
+      - cell "0"
+    - row "刚果（金） 0 00:00:00 0 0 0 0":
+      - cell "刚果（金）":
+        - generic: 刚果（金）
+      - cell "0"
+      - cell "00:00:00"
+      - cell "0"
+      - cell "0"
+      - cell "0"
+      - cell "0"
+    - row "丹麦 0 00:00:00 0 0 0 0":
+      - cell "丹麦":
+        - generic: 丹麦
+      - cell "0"
+      - cell "00:00:00"
+      - cell "0"
+      - cell "0"
+      - cell "0"
+      - cell "0"
+    - row "法国 0 00:00:00 0 0 0 0":
+      - cell "法国":
+        - generic: 法国
+      - cell "0"
+      - cell "00:00:00"
+      - cell "0"
+      - cell "0"
+      - cell "0"
+      - cell "0"
+    - row "希腊 0 00:00:00 0 0 0 0":
+      - cell "希腊":
+        - generic: 希腊
+      - cell "0"
+      - cell "00:00:00"
+      - cell "0"
+      - cell "0"
+      - cell "0"
+      - cell "0"
+    - row "拉脱维亚 0 00:00:00 0 0 0 0":
+      - cell "拉脱维亚":
+        - generic: 拉脱维亚
+      - cell "0"
+      - cell "00:00:00"
+      - cell "0"
+      - cell "0"
+      - cell "0"
+      - cell "0"
+    - row "利比里亚 0 00:00:00 0 0 0 0":
+      - cell "利比里亚":
+        - generic: 利比里亚
+      - cell "0"
+      - cell "00:00:00"
+      - cell "0"
+      - cell "0"
+      - cell "0"
+      - cell "0"
+    - row "巴基斯坦 0 00:00:00 0 0 0 0":
+      - cell "巴基斯坦":
+        - generic: 巴基斯坦
+      - cell "0"
+      - cell "00:00:00"
+      - cell "0"
+      - cell "0"
+      - cell "0"
+      - cell "0"
+    - row "巴拿马 0 00:00:00 0 0 0 0":
+      - cell "巴拿马":
+        - generic: 巴拿马
+      - cell "0"
+      - cell "00:00:00"
+      - cell "0"
+      - cell "0"
+      - cell "0"
+      - cell "0"
+    - row "俄罗斯 0 00:00:00 0 0 0 0":
+      - cell "俄罗斯":
+        - generic: 俄罗斯
+      - cell "0"
+      - cell "00:00:00"
+      - cell "0"
+      - cell "0"
+      - cell "0"
+      - cell "0"
+    - row "索马里 0 00:00:00 0 0 0 0":
+      - cell "索马里":
+        - generic: 索马里
+      - cell "0"
+      - cell "00:00:00"
+      - cell "0"
+      - cell "0"
+      - cell "0"
+      - cell "0"
+    - row "英国 0 00:00:00 0 0 0 0":
+      - cell "英国":
+        - generic: 英国
+      - cell "0"
+      - cell "00:00:00"
+      - cell "0"
+      - cell "0"
+      - cell "0"
+      - cell "0"
+    - row "美国 0 00:00:00 0 0 0 0":
+      - cell "美国":
+        - generic: 美国
+      - cell "0"
+      - cell "00:00:00"
+      - cell "0"
+      - cell "0"
+      - cell "0"
+      - cell "0"

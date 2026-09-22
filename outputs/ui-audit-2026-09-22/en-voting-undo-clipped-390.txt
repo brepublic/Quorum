@@ -1,0 +1,84 @@
+- text:               
+- navigation "Committee navigation":
+  - button "Open committee navigation":
+    - generic: 
+  - link "联合国安全理事会":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/info
+  - listbox "Account menu":
+    - alert: Colin
+    - generic: 
+    - text:      
+- textbox "Set resolution name": 决议草案 1.1
+- generic: Draft
+- link "Text":
+  - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/resolutions/07e22ffb-916e-4040-905e-3d8980007a17
+- link "Amendments":
+  - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/resolutions/07e22ffb-916e-4040-905e-3d8980007a17/amendments
+- link "Voting":
+  - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/resolutions/07e22ffb-916e-4040-905e-3d8980007a17/voting
+- complementary:
+  - generic: Present
+  - strong: "15"
+  - generic: Simple majority
+  - strong: "8"
+  - generic: Two-thirds majority
+  - strong: "10"
+- button "巴林":
+  - generic: 巴林
+- button "中国 Veto" [pressed]:
+  - generic: 中国
+  - generic: Veto
+- button "哥伦比亚":
+  - generic: 哥伦比亚
+- button "刚果（金）":
+  - generic: 刚果（金）
+- button "丹麦":
+  - generic: 丹麦
+- button "法国 Veto":
+  - generic: 法国
+  - generic: Veto
+- button "希腊":
+  - generic: 希腊
+- button "拉脱维亚":
+  - generic: 拉脱维亚
+- button "利比里亚":
+  - generic: 利比里亚
+- button "巴基斯坦":
+  - generic: 巴基斯坦
+- button "巴拿马":
+  - generic: 巴拿马
+- button "俄罗斯 Veto":
+  - generic: 俄罗斯
+  - generic: Veto
+- button "索马里":
+  - generic: 索马里
+- button "英国 Veto":
+  - generic: 英国
+  - generic: Veto
+- button "美国 Veto":
+  - generic: 美国
+  - generic: Veto
+- complementary:
+  - generic: "Yes"
+  - strong: "1"
+  - generic: "No"
+  - strong: "0"
+  - generic: Abstain
+  - strong: "0"
+- generic: Now voting
+- heading "中国" [level=2]
+- button "Yes":
+  - generic: 
+  - text: "Yes"
+- button "No":
+  - generic: 
+  - text: "No"
+- button "Abstain":
+  - generic: 
+  - text: Abstain
+- button "Undo":
+  - generic: 
+  - text: Undo
+- listbox:
+  - alert: Two-thirds majority required
+  - generic: 

@@ -1,0 +1,109 @@
+- navigation "委员会导航":
+  - link "联合国安全理事会":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/info
+  - link "席位":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/setup
+  - link "点名":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/roll-call
+  - link "动议":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/motions
+  - link "问题":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/points
+  - link "主发言名单":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/caucuses/f9b8529a-4b94-446f-a3f0-38f99f987154
+  - link "自由磋商":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/unmod
+  - listbox:
+    - alert: 有主持核心磋商
+    - generic: 
+    - text: 
+  - listbox:
+    - alert: 决议草案
+    - generic: 
+    - text: 
+  - listbox:
+    - alert: 意向性投票
+    - generic: 
+    - text: 
+  - link "笔记":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/notes
+  - link "文件":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/posts
+  - link "统计":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/stats
+  - link "设置":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/settings
+  - link "帮助":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/help
+  - generic "出席代表数/三分之二多数/简单多数": 15/10/8
+  - generic "实时":
+    - generic: 
+    - generic: 实时
+  - listbox "账户菜单":
+    - alert: Colin
+    - generic: 
+    - text:      
+- navigation "委员会导航":        
+- generic "资料分区":
+  - link "文件总览":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/posts/attachments
+  - link "分享":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/posts/share
+  - link "上传文件":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/posts/upload
+  - link "存储设置":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/posts/storage
+  - link "文件设置":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/posts/file-settings
+- heading "驳回类型管理" [level=2]
+- generic: 内容语言
+- listbox:
+  - alert: 简体中文
+  - generic: 
+- generic: 类型名称 *
+- textbox "类型名称 1": 内容格式不合要求
+- generic: 提示方式
+- listbox:
+  - alert: 固定消息
+  - generic: 
+- generic: 代表端提示消息 *
+- textbox "代表端提示消息 1": 文件内容格式不合要求，请参阅《学术指引》修改后重新提交。
+- button "删除类型"
+- generic: 类型名称 *
+- textbox "类型名称 2": 重复提交
+- generic: 提示方式
+- listbox:
+  - alert: 固定消息
+  - generic: 
+- generic: 代表端提示消息 *
+- textbox "代表端提示消息 2": 此文件已被提交过，请勿重复提交
+- button "删除类型"
+- generic: 类型名称 *
+- textbox "类型名称 3": 其他
+- generic: 提示方式
+- listbox [expanded] [active]:
+  - alert: 主席自行输入
+  - generic: 
+  - option "固定消息"
+  - option "主席自行输入" [checked] [selected]
+- button "删除类型"
+- button "添加驳回类型":
+  - generic: 
+  - text: 添加驳回类型
+- heading "文件格式设置" [level=2]
+- generic: 工作文件允许的后缀名 *
+- textbox "工作文件允许的后缀名 *":
+  - /placeholder: docx, doc, pdf
+  - text: docx, doc, pdf, odt, rtf, txt, md, xlsx, xls, ods, csv, pptx, ppt, odp
+- generic: 指令草案允许的后缀名 *
+- textbox "指令草案允许的后缀名 *":
+  - /placeholder: docx, doc, pdf
+  - text: docx, doc, pdf, odt, rtf, txt, md, xlsx, xls, ods, csv, pptx, ppt, odp
+- generic: 决议草案允许的后缀名 *
+- textbox "决议草案允许的后缀名 *":
+  - /placeholder: docx, doc, pdf
+  - text: docx, doc, pdf, odt, rtf, txt, md, xlsx, xls, ods, csv, pptx, ppt, odp
+- button "保存设置" [disabled]:
+  - generic: 
+  - text: 保存设置
+- button "重新载入"

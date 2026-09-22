@@ -1,0 +1,31 @@
+- text:               
+- navigation "Committee navigation":
+  - button "Open committee navigation":
+    - generic: 
+  - link "UI audit 0922 EN":
+    - /url: /committees/5dc1fd5b-7af8-4602-bdb1-59afe404f90e/info
+  - listbox "Account menu":
+    - alert: Colin
+    - generic: 
+    - text:      
+- generic: Point type
+- combobox:
+  - textbox
+  - alert: Point of order
+  - generic: 
+- generic: Raised by
+- combobox:
+  - textbox
+  - alert: Select a delegation
+  - generic: 
+- generic: Reason (optional)
+- textbox
+- button "Raise point" [disabled]:
+  - generic: 
+- generic: Session 1
+- generic: Point of order
+- generic: Uphold point
+- generic: Raised by
+- generic: Afghanistan
+- generic: Reason
+- generic: "UI audit 0922: inspect handling states."

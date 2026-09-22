@@ -1,0 +1,31 @@
+- text:               
+- navigation "Committee navigation":
+  - button "Open committee navigation":
+    - generic: 
+  - link "联合国安全理事会":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/info
+  - listbox "Account menu":
+    - alert: Colin
+    - generic: 
+    - text:      
+- generic "Resource sections":
+  - link "File overview":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/posts/attachments
+  - link "Share":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/posts/share
+  - link "Upload files":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/posts/upload
+  - link "Storage settings":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/posts/storage
+  - link "File settings":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/posts/file-settings
+- heading "File storage" [level=3]
+- heading "Chair computer" [level=4]
+- paragraph: Linux Chair computer · Online · 9/22/2026, 8:20:58 PM
+- button "Transfer to another computer"
+- button "Revoke chair computer"
+- paragraph: Current:Chair computer
+- generic: Migrate to
+- listbox [expanded] [active]:
+  - generic: 
+- button "Start migration" [disabled]

@@ -1,0 +1,381 @@
+- navigation "委员会导航":
+  - link "联合国安全理事会":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/info
+  - link "席位" [active]:
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/setup
+  - link "点名":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/roll-call
+  - link "动议":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/motions
+  - link "问题":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/points
+  - link "主发言名单":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/caucuses/f9b8529a-4b94-446f-a3f0-38f99f987154
+  - link "自由磋商":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/unmod
+  - listbox:
+    - alert: 有主持核心磋商
+    - generic: 
+    - text: 
+  - listbox:
+    - alert: 决议草案
+    - generic: 
+    - text: 
+  - listbox:
+    - alert: 意向性投票
+    - generic: 
+    - text: 
+  - link "笔记":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/notes
+  - listbox "更多选项":
+    - generic: 
+  - generic "出席代表数/三分之二多数/简单多数": 15/10/8
+  - generic "实时":
+    - generic: 
+  - listbox "账户菜单":
+    - alert: Colin
+    - generic: 
+    - text:      
+- navigation "委员会导航":        
+- heading "席位" [level=2]
+- table:
+  - rowgroup:
+    - row "席位 席位类型 表决权 否决权 不得弃权":
+      - columnheader "席位"
+      - columnheader "席位类型"
+      - columnheader "表决权"
+      - columnheader "否决权"
+      - columnheader "不得弃权"
+      - columnheader
+    - row "表决权 否决权 不得弃权 创建席位":
+      - columnheader:
+        - listbox "席位":
+          - alert: 阿富汗
+          - generic: 
+      - columnheader:
+        - combobox "席位类型":
+          - textbox
+          - alert: 标准席位
+          - generic: 
+      - columnheader "表决权":
+        - checkbox "表决权" [checked]
+      - columnheader "否决权":
+        - checkbox "否决权"
+      - columnheader "不得弃权":
+        - checkbox "不得弃权"
+      - columnheader "创建席位":
+        - button "创建席位":
+          - generic: 
+- table:
+  - rowgroup:
+    - row "席位 席位类型 表决权 否决权 不得弃权":
+      - columnheader "席位"
+      - columnheader "席位类型"
+      - columnheader "表决权"
+      - columnheader "否决权"
+      - columnheader "不得弃权"
+      - columnheader
+  - rowgroup:
+    - row "全部 表决权 · 全部 否决权 · 全部 不得弃权 · 全部":
+      - cell "全部"
+      - cell:
+        - combobox "席位类型 · 全部":
+          - textbox
+          - alert: 标准席位
+          - generic: 
+      - cell "表决权 · 全部":
+        - checkbox "表决权 · 全部" [checked]
+      - cell "否决权 · 全部":
+        - checkbox "否决权 · 全部" [checked=mixed]
+      - cell "不得弃权 · 全部":
+        - checkbox "不得弃权 · 全部"
+      - cell
+    - row "巴林 表决权 · 巴林 否决权 · 巴林 不得弃权 · 巴林 停用 · 巴林":
+      - cell "巴林":
+        - generic: 巴林
+      - cell:
+        - combobox "席位类型 · 巴林":
+          - textbox
+          - alert: 标准席位
+          - generic: 
+      - cell "表决权 · 巴林":
+        - checkbox "表决权 · 巴林" [checked]
+      - cell "否决权 · 巴林":
+        - checkbox "否决权 · 巴林"
+      - cell "不得弃权 · 巴林":
+        - checkbox "不得弃权 · 巴林"
+      - cell "停用 · 巴林":
+        - button "停用 · 巴林":
+          - generic: 
+    - row "中国 表决权 · 中国 否决权 · 中国 不得弃权 · 中国 停用 · 中国":
+      - cell "中国":
+        - generic: 中国
+      - cell:
+        - combobox "席位类型 · 中国":
+          - textbox
+          - alert: 标准席位
+          - generic: 
+      - cell "表决权 · 中国":
+        - checkbox "表决权 · 中国" [checked]
+      - cell "否决权 · 中国":
+        - checkbox "否决权 · 中国" [checked]
+      - cell "不得弃权 · 中国":
+        - checkbox "不得弃权 · 中国"
+      - cell "停用 · 中国":
+        - button "停用 · 中国":
+          - generic: 
+    - row "哥伦比亚 表决权 · 哥伦比亚 否决权 · 哥伦比亚 不得弃权 · 哥伦比亚 停用 · 哥伦比亚":
+      - cell "哥伦比亚":
+        - generic: 哥伦比亚
+      - cell:
+        - combobox "席位类型 · 哥伦比亚":
+          - textbox
+          - alert: 标准席位
+          - generic: 
+      - cell "表决权 · 哥伦比亚":
+        - checkbox "表决权 · 哥伦比亚" [checked]
+      - cell "否决权 · 哥伦比亚":
+        - checkbox "否决权 · 哥伦比亚"
+      - cell "不得弃权 · 哥伦比亚":
+        - checkbox "不得弃权 · 哥伦比亚"
+      - cell "停用 · 哥伦比亚":
+        - button "停用 · 哥伦比亚":
+          - generic: 
+    - row "刚果（金） 表决权 · 刚果（金） 否决权 · 刚果（金） 不得弃权 · 刚果（金） 停用 · 刚果（金）":
+      - cell "刚果（金）":
+        - generic: 刚果（金）
+      - cell:
+        - combobox "席位类型 · 刚果（金）":
+          - textbox
+          - alert: 标准席位
+          - generic: 
+      - cell "表决权 · 刚果（金）":
+        - checkbox "表决权 · 刚果（金）" [checked]
+      - cell "否决权 · 刚果（金）":
+        - checkbox "否决权 · 刚果（金）"
+      - cell "不得弃权 · 刚果（金）":
+        - checkbox "不得弃权 · 刚果（金）"
+      - cell "停用 · 刚果（金）":
+        - button "停用 · 刚果（金）":
+          - generic: 
+    - row "丹麦 表决权 · 丹麦 否决权 · 丹麦 不得弃权 · 丹麦 停用 · 丹麦":
+      - cell "丹麦":
+        - generic: 丹麦
+      - cell:
+        - combobox "席位类型 · 丹麦":
+          - textbox
+          - alert: 标准席位
+          - generic: 
+      - cell "表决权 · 丹麦":
+        - checkbox "表决权 · 丹麦" [checked]
+      - cell "否决权 · 丹麦":
+        - checkbox "否决权 · 丹麦"
+      - cell "不得弃权 · 丹麦":
+        - checkbox "不得弃权 · 丹麦"
+      - cell "停用 · 丹麦":
+        - button "停用 · 丹麦":
+          - generic: 
+    - row "法国 表决权 · 法国 否决权 · 法国 不得弃权 · 法国 停用 · 法国":
+      - cell "法国":
+        - generic: 法国
+      - cell:
+        - combobox "席位类型 · 法国":
+          - textbox
+          - alert: 标准席位
+          - generic: 
+      - cell "表决权 · 法国":
+        - checkbox "表决权 · 法国" [checked]
+      - cell "否决权 · 法国":
+        - checkbox "否决权 · 法国" [checked]
+      - cell "不得弃权 · 法国":
+        - checkbox "不得弃权 · 法国"
+      - cell "停用 · 法国":
+        - button "停用 · 法国":
+          - generic: 
+    - row "希腊 表决权 · 希腊 否决权 · 希腊 不得弃权 · 希腊 停用 · 希腊":
+      - cell "希腊":
+        - generic: 希腊
+      - cell:
+        - combobox "席位类型 · 希腊":
+          - textbox
+          - alert: 标准席位
+          - generic: 
+      - cell "表决权 · 希腊":
+        - checkbox "表决权 · 希腊" [checked]
+      - cell "否决权 · 希腊":
+        - checkbox "否决权 · 希腊"
+      - cell "不得弃权 · 希腊":
+        - checkbox "不得弃权 · 希腊"
+      - cell "停用 · 希腊":
+        - button "停用 · 希腊":
+          - generic: 
+    - row "拉脱维亚 表决权 · 拉脱维亚 否决权 · 拉脱维亚 不得弃权 · 拉脱维亚 停用 · 拉脱维亚":
+      - cell "拉脱维亚":
+        - generic: 拉脱维亚
+      - cell:
+        - combobox "席位类型 · 拉脱维亚":
+          - textbox
+          - alert: 标准席位
+          - generic: 
+      - cell "表决权 · 拉脱维亚":
+        - checkbox "表决权 · 拉脱维亚" [checked]
+      - cell "否决权 · 拉脱维亚":
+        - checkbox "否决权 · 拉脱维亚"
+      - cell "不得弃权 · 拉脱维亚":
+        - checkbox "不得弃权 · 拉脱维亚"
+      - cell "停用 · 拉脱维亚":
+        - button "停用 · 拉脱维亚":
+          - generic: 
+    - row "利比里亚 表决权 · 利比里亚 否决权 · 利比里亚 不得弃权 · 利比里亚 停用 · 利比里亚":
+      - cell "利比里亚":
+        - generic: 利比里亚
+      - cell:
+        - combobox "席位类型 · 利比里亚":
+          - textbox
+          - alert: 标准席位
+          - generic: 
+      - cell "表决权 · 利比里亚":
+        - checkbox "表决权 · 利比里亚" [checked]
+      - cell "否决权 · 利比里亚":
+        - checkbox "否决权 · 利比里亚"
+      - cell "不得弃权 · 利比里亚":
+        - checkbox "不得弃权 · 利比里亚"
+      - cell "停用 · 利比里亚":
+        - button "停用 · 利比里亚":
+          - generic: 
+    - row "巴基斯坦 表决权 · 巴基斯坦 否决权 · 巴基斯坦 不得弃权 · 巴基斯坦 停用 · 巴基斯坦":
+      - cell "巴基斯坦":
+        - generic: 巴基斯坦
+      - cell:
+        - combobox "席位类型 · 巴基斯坦":
+          - textbox
+          - alert: 标准席位
+          - generic: 
+      - cell "表决权 · 巴基斯坦":
+        - checkbox "表决权 · 巴基斯坦" [checked]
+      - cell "否决权 · 巴基斯坦":
+        - checkbox "否决权 · 巴基斯坦"
+      - cell "不得弃权 · 巴基斯坦":
+        - checkbox "不得弃权 · 巴基斯坦"
+      - cell "停用 · 巴基斯坦":
+        - button "停用 · 巴基斯坦":
+          - generic: 
+    - row "巴拿马 表决权 · 巴拿马 否决权 · 巴拿马 不得弃权 · 巴拿马 停用 · 巴拿马":
+      - cell "巴拿马":
+        - generic: 巴拿马
+      - cell:
+        - combobox "席位类型 · 巴拿马":
+          - textbox
+          - alert: 标准席位
+          - generic: 
+      - cell "表决权 · 巴拿马":
+        - checkbox "表决权 · 巴拿马" [checked]
+      - cell "否决权 · 巴拿马":
+        - checkbox "否决权 · 巴拿马"
+      - cell "不得弃权 · 巴拿马":
+        - checkbox "不得弃权 · 巴拿马"
+      - cell "停用 · 巴拿马":
+        - button "停用 · 巴拿马":
+          - generic: 
+    - row "俄罗斯 表决权 · 俄罗斯 否决权 · 俄罗斯 不得弃权 · 俄罗斯 停用 · 俄罗斯":
+      - cell "俄罗斯":
+        - generic: 俄罗斯
+      - cell:
+        - combobox "席位类型 · 俄罗斯":
+          - textbox
+          - alert: 标准席位
+          - generic: 
+      - cell "表决权 · 俄罗斯":
+        - checkbox "表决权 · 俄罗斯" [checked]
+      - cell "否决权 · 俄罗斯":
+        - checkbox "否决权 · 俄罗斯" [checked]
+      - cell "不得弃权 · 俄罗斯":
+        - checkbox "不得弃权 · 俄罗斯"
+      - cell "停用 · 俄罗斯":
+        - button "停用 · 俄罗斯":
+          - generic: 
+    - row "索马里 表决权 · 索马里 否决权 · 索马里 不得弃权 · 索马里 停用 · 索马里":
+      - cell "索马里":
+        - generic: 索马里
+      - cell:
+        - combobox "席位类型 · 索马里":
+          - textbox
+          - alert: 标准席位
+          - generic: 
+      - cell "表决权 · 索马里":
+        - checkbox "表决权 · 索马里" [checked]
+      - cell "否决权 · 索马里":
+        - checkbox "否决权 · 索马里"
+      - cell "不得弃权 · 索马里":
+        - checkbox "不得弃权 · 索马里"
+      - cell "停用 · 索马里":
+        - button "停用 · 索马里":
+          - generic: 
+    - row "英国 表决权 · 英国 否决权 · 英国 不得弃权 · 英国 停用 · 英国":
+      - cell "英国":
+        - generic: 英国
+      - cell:
+        - combobox "席位类型 · 英国":
+          - textbox
+          - alert: 标准席位
+          - generic: 
+      - cell "表决权 · 英国":
+        - checkbox "表决权 · 英国" [checked]
+      - cell "否决权 · 英国":
+        - checkbox "否决权 · 英国" [checked]
+      - cell "不得弃权 · 英国":
+        - checkbox "不得弃权 · 英国"
+      - cell "停用 · 英国":
+        - button "停用 · 英国":
+          - generic: 
+    - row "美国 表决权 · 美国 否决权 · 美国 不得弃权 · 美国 停用 · 美国":
+      - cell "美国":
+        - generic: 美国
+      - cell:
+        - combobox "席位类型 · 美国":
+          - textbox
+          - alert: 标准席位
+          - generic: 
+      - cell "表决权 · 美国":
+        - checkbox "表决权 · 美国" [checked]
+      - cell "否决权 · 美国":
+        - checkbox "否决权 · 美国" [checked]
+      - cell "不得弃权 · 美国":
+        - checkbox "不得弃权 · 美国"
+      - cell "停用 · 美国":
+        - button "停用 · 美国":
+          - generic: 
+- button "点名":
+  - text: 点名
+  - generic: 
+- heading "主席" [level=2]
+- generic: 电子邮箱 *
+- textbox
+- button "授予主席权限" [disabled]
+- table:
+  - rowgroup:
+    - row "电子邮箱 操作":
+      - columnheader "电子邮箱"
+      - columnheader "操作"
+  - rowgroup:
+    - row "colinshenglzm@gmail.com 撤销":
+      - cell "colinshenglzm@gmail.com"
+      - cell "撤销":
+        - button "撤销"
+- heading "席位分配" [level=2]
+- generic: 席位
+- listbox:
+  - alert: 巴林
+  - generic: 
+- generic: 电子邮箱 *
+- textbox
+- button "分配席位" [disabled]
+- list
+- heading "一次性席位邀请码" [level=2]
+- generic: 席位
+- listbox:
+  - alert: 巴林
+  - generic: 
+- generic: 失效时间 *
+- textbox: 2026-09-23T05:14
+- button "创建邀请码"
