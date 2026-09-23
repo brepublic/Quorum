@@ -955,9 +955,9 @@ function PointsPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspa
       const point = 'content' in item ? item as CommitteePoint : undefined;
       return <Card className="point-card" key={item.id}><Card.Content>
         <div className="motion-heading"><Card.Header>{committeeContentName(item.typeNames, snapshot.committee.committeeLanguage)}</Card.Header>
-          <Label basic color={item.status === 'PENDING' ? 'blue' : ['OVERRULED', 'REJECTED'].includes(item.status) ? 'red' : 'green'}
-            icon={item.status === 'PENDING' ? 'clock outline' : ['OVERRULED', 'REJECTED'].includes(item.status) ? 'times circle' : 'check circle'}
-            content={point ? label(point) : t(item.status)} /></div>
+          {item.status !== 'PENDING' && <time className={`motion-decision motion-decision-${['OVERRULED', 'REJECTED'].includes(item.status) ? 'failed' : 'passed'}`}
+            dateTime={item.resolvedAt ?? undefined}>{point ? label(point) : t(item.status)}{item.resolvedAt
+              ? ` · ${new Date(item.resolvedAt).toLocaleString(getLanguage())}` : ''}</time>}</div>
         <Table compact celled unstackable className="motion-metadata-table">
           <Table.Body><Table.Row><Table.Cell className="motion-metadata-key">{t('Point proposer')}</Table.Cell>
             <Table.Cell>{item.raisedBySeatDisplayName}</Table.Cell></Table.Row>
