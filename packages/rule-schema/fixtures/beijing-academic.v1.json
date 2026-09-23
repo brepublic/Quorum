@@ -16,7 +16,7 @@
     "operationMode": {"defaultValue": "CHAIR_OPERATED"}
   },
   "attendance": {
-    "responses": ["PRESENT", "PRESENT_AND_VOTING", "ABSENT"],
+    "responses": ["PRESENT", "ABSENT"],
     "quorum": {"formula": {"op": "ceil", "value": {"op": "multiply", "left": {"fact": "attendance.allVotingSeatCount"}, "right": 0.25}}},
     "simpleMajority": {"formula": {"op": "ceil", "value": {"op": "multiply", "left": {"fact": "attendance.presentVotingSeatCount"}, "right": 0.5}}},
     "twoThirdsMajority": {"formula": {"op": "ceil", "value": {"op": "multiply", "left": {"fact": "attendance.presentVotingSeatCount"}, "right": 0.6666666667}}}

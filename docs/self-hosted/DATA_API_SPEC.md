@@ -622,7 +622,7 @@ POST   /api/v1/committee-templates/:id/clone
 DELETE /api/v1/committee-templates/:id
 ```
 
-创建和 `PUT` 的 `template` 包含 `names`、`defaultLanguage`、`countryTemplateKey` 和 `members`。每个 member 包含稳定 key、多语言名称、`STANDARD|VETO|NGO|OBSERVER`、`canVote`、`hasVeto`、`mustVote`、排序和国旗。三项表决属性分别保存：`canVote` 表示正式表决资格，`hasVeto` 表示否决权，`mustVote` 表示出席并参与表决时不得弃权。
+创建和 `PUT` 的 `template` 包含 `names`、`defaultLanguage`、`countryTemplateKey` 和 `members`。每个 member 包含稳定 key、多语言名称、`STANDARD|VETO|NGO|OBSERVER`、`canVote`、`hasVeto`、`mustVote`、排序和国旗。三项表决属性分别保存：`canVote` 表示正式表决资格，`hasVeto` 表示否决权，`mustVote` 表示不得弃权。使用委员会模板时，模板提供席位的初始表决属性；创建后由席位设置页面调整，手动新增席位也在该页面设置。点名回答只记录出席状态，不改变这三项属性。
 
 同一账号的多个委员会模板可以引用同一个国家模板。引用必须指向 `builtin:default` 或当前账号仍存在的国家模板。克隆生成独立 UUID 和 revision 1；后续修改或删除源模板不改变克隆。
 
@@ -692,7 +692,7 @@ POST /api/v1/committees/:id/attendance-events
 
 开始点名请求为 `{meetingSessionId}`，要求 `Idempotency-Key`。同一会期最多一个 `IN_PROGRESS` 点名。点名冻结规则版本、`attendance.responses`、开始时的活动席位顺序和每个席位显示名。规则响应为空、重复或包含未知值时返回 422。
 
-记录请求为 `{baseRevision, seatId, response}`。只接受冻结名单中尚未记录的席位和冻结回答；每次成功递增 roll call revision 并移动 `currentSeatId`。最后一席成功后把点名标记为 `COMPLETED`，并为每席追加来源为 roll-call entry 的 `PRESENT` 或 `ABSENT` attendance event。`PRESENT_AND_VOTING` 映射为当前出席 `PRESENT`，但 entry 保留原回答。并发请求以 roll call 行锁和 revision 保证只有一个成功。
+记录请求为 `{baseRevision, seatId, response}`。只接受冻结名单中尚未记录的席位和冻结回答；每次成功递增 roll call revision 并移动 `currentSeatId`。北京学术标准第 6 版的回答只有 `PRESENT` 和 `ABSENT`。最后一席成功后把点名标记为 `COMPLETED`，并为每席追加来源为 roll-call entry 的 `PRESENT` 或 `ABSENT` attendance event。旧版本的 `PRESENT_AND_VOTING` 历史回答仍映射为当前出席 `PRESENT`，但 entry 保留原回答。并发请求以 roll call 行锁和 revision 保证只有一个成功。
 
 `set-response` 使用相同的 `{baseRevision, seatId, response}`，但允许 Chair 直接选择冻结名单中的任意席位。目标席位已有有效 entry 时，服务端先为旧 entry 写入撤销时间，再追加新 entry；不物理覆盖历史。进行中点名随后把 `currentSeatId` 移到冻结顺序中最早的未回答席位，全部回答后完成点名并生成出席事件。已完成点名允许更正并追加新的 attendance event；原完成时间和其他席位回答不变。命令记录 `directSelection`、被替代 entry、actor、事件和审计，仍受委员会活动状态、Chair 权限、行锁和 revision 约束。
 

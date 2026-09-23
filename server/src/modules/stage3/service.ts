@@ -96,7 +96,7 @@ function builtInVersion4(definition: RulePackageDefinition): RulePackageDefiniti
   return builtInVersion3(definition);
 }
 
-function builtInVersion5(definition: RulePackageDefinition): RulePackageDefinition {
+function builtInVersion6(definition: RulePackageDefinition): RulePackageDefinition {
   const upgraded = builtInVersion4(definition);
   const names: Record<string, {'zh-CN': string; en: string}> = {
     'discuss-resolution': {'zh-CN': '讨论决议草案', en: 'Discuss draft resolution'},
@@ -311,13 +311,13 @@ export class Stage3Service {
         const inserted = await client.query<{id: string}>(`INSERT INTO rule_packages
           (id, scope, stable_key) VALUES ($1,'BUILTIN',$2)
           ON CONFLICT (scope, stable_key) DO UPDATE SET stable_key=EXCLUDED.stable_key RETURNING id`, [packageId, definition.key]);
-        for (const versionDefinition of [builtInVersion5(definition)]) {
+        for (const versionDefinition of [builtInVersion6(definition)]) {
           const validated = validateRulePackage(versionDefinition);
-          if (!validated.ok) throw new Error(`Invalid built-in rule package: ${definition.key} v5: ${JSON.stringify(validated.issues)}`);
+          if (!validated.ok) throw new Error(`Invalid built-in rule package: ${definition.key} v6: ${JSON.stringify(validated.issues)}`);
           await client.query(`INSERT INTO rule_package_versions
             (id, package_id, version, status, definition, schema_version, validation_result, published_at)
             VALUES ($1,$2,$3,'PUBLISHED',$4,$5,$6,now()) ON CONFLICT (package_id, version) DO NOTHING`,
-          [randomUUID(), inserted.rows[0]?.id, 5, versionDefinition, RULE_SCHEMA_VERSION, {valid: true, issues: []}]);
+          [randomUUID(), inserted.rows[0]?.id, 6, versionDefinition, RULE_SCHEMA_VERSION, {valid: true, issues: []}]);
         }
       }
     });

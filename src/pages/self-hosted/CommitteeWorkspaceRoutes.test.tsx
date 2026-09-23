@@ -322,7 +322,7 @@ describe('committee workspace routes and roles', () => {
   it('restores the paged roll-call board and lets a Chair directly change any frozen seat', async () => {
     const setRollCallResponse = vi.fn(async (): Promise<RollCall> => ({id: 'roll-call', committeeId: 'committee',
       meetingSessionId: 'meeting', status: 'IN_PROGRESS', currentSeatId: 'seat-0', rulePackageVersionId: 'rules',
-      allowedResponses: ['PRESENT', 'PRESENT_AND_VOTING', 'ABSENT'], entries: [], revision: 4,
+      allowedResponses: ['PRESENT', 'ABSENT'], entries: [], revision: 4,
       startedAt: '2026-08-14T00:00:00.000Z', completedAt: null}));
     const seats = Array.from({length: 20}, (_, index) => ({id: `seat-${index}`, stableKey: `seat-${index}`,
       displayName: `Seat ${String(20 - index).padStart(2, '0')}`, rank: 'STANDARD' as const, canVote: true,
@@ -332,7 +332,7 @@ describe('committee workspace routes and roles', () => {
       meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: '第1会期', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1, createdAt: '2026-08-14T00:00:00.000Z', closedAt: null},
       rollCall: {id: 'roll-call', committeeId: 'committee', meetingSessionId: 'meeting', status: 'IN_PROGRESS',
-        currentSeatId: 'seat-0', rulePackageVersionId: 'rules', allowedResponses: ['PRESENT', 'PRESENT_AND_VOTING', 'ABSENT'],
+        currentSeatId: 'seat-0', rulePackageVersionId: 'rules', allowedResponses: ['PRESENT', 'ABSENT'],
         entries: [{id: 'entry', seatId: 'seat-1', seatDisplayName: 'Seat 02', response: 'PRESENT', actorUserId: 'chair',
           onBehalfOfSeatId: 'seat-1', rulePackageVersionId: 'rules', recordedAt: '2026-08-14T00:00:00.000Z', revision: 1}],
         revision: 3, startedAt: '2026-08-14T00:00:00.000Z', completedAt: null}}), {setRollCallResponse});
@@ -342,7 +342,7 @@ describe('committee workspace routes and roles', () => {
     expect(Array.from(page.querySelectorAll<HTMLButtonElement>('.roll-call-grid .roll-call-member'))
       .map(seat => seat.dataset.rollCallSeat)).toEqual(Array.from({length: 9}, (_, index) => `seat-${index}`));
     expect(page.textContent).toContain('1 of 20 called');
-    expect(page.textContent).toContain('Present and voting');
+    expect(page.textContent).not.toContain('Present and voting');
     const secondSeat = page.querySelector<HTMLButtonElement>('[data-roll-call-seat="seat-1"]');
     await act(async () => {secondSeat?.click(); await Promise.resolve();});
     expect(setRollCallResponse).toHaveBeenCalledWith('roll-call', 3, 'seat-1', 'ABSENT');

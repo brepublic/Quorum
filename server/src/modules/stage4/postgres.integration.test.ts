@@ -290,7 +290,7 @@ integration('PostgreSQL stage 4 templates and seat snapshots', () => {
       .rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
     const started = await stage4.startRollCall(chair, committee.id, {meetingSessionId: session.id},
       'roll-start', context('roll-start'));
-    expect(started).toEqual(expect.objectContaining({currentSeatId: first.id, allowedResponses: ['PRESENT', 'PRESENT_AND_VOTING', 'ABSENT']}));
+    expect(started).toEqual(expect.objectContaining({currentSeatId: first.id, allowedResponses: ['PRESENT', 'ABSENT']}));
     await expect(stage4.updateSeat(chair, committee.id, first.id, {baseRevision: 1, patch: {displayName: 'Renamed'}}, context('rename-after-freeze')))
       .rejects.toMatchObject({code: 'VALIDATION_FAILED'});
 
