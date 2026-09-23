@@ -285,7 +285,7 @@ function UnmoderatedCaucus({snapshot, run, api, canChair}: CommonProps) {
     return created;
   };
   return <Container text className="legacy-unmod-page">
-    <TimerControls name="Unmoderated caucus" timer={timer ?? initialTimer} run={run} api={api} canChair={canChair}
+    <TimerControls name="Unmoderated Caucus" timer={timer ?? initialTimer} run={run} api={api} canChair={canChair}
       onCreate={timer ? undefined : create} />
   </Container>;
 }
@@ -555,7 +555,7 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
     value, text: t(value === 'OPEN' ? 'Open' : 'Close speaker list')}))} onChange={(_, data) => void run(() => api.setSpeakerListStatus(list.id,
       list.revision, data.value as 'OPEN' | 'CLOSED'))} /> : <span>{statusLabel}</span>;
   const header = <Grid.Row><Grid.Column><Input label={statusControl} labelPosition="right" value={nameDraft} fluid size="massive"
-    readOnly={!canChair} placeholder={t(list.kind === 'GENERAL' ? 'Set speakers list name' : 'Set caucus name')}
+    readOnly={!canChair} placeholder={t(list.kind === 'GENERAL' ? "Set General Speaker's List name" : 'Set Moderated Caucus name')}
     onChange={event => {setNameDraft(event.currentTarget.value); setNameDirty(true);}}
     onBlur={() => persistHeader(list.kind === 'GENERAL' ? {name: nameDraft} : {name: nameDraft, topic: nameDraft})} />
     {list.kind === 'GENERAL' && <Form><TextArea value={topicDraft} rows={1} readOnly={!canChair}
@@ -565,8 +565,8 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
   </Grid.Column></Grid.Row>;
   if (list.status === 'CLOSED') return <Container className="legacy-speaker-workspace"><Grid columns="equal" stackable>{header}
     <Grid.Row><Grid.Column><Segment placeholder textAlign="center"><Header icon><Icon name="times circle outline" />
-      {t(generalSpeakerListIsUnopened(list, snapshot) ? 'General speakers list not open'
-        : list.kind === 'GENERAL' ? 'Speakers list closed' : 'Moderated caucus complete')}</Header>
+      {t(generalSpeakerListIsUnopened(list, snapshot) ? "General Speaker's List not open"
+        : list.kind === 'GENERAL' ? "Speaker's List closed" : 'Moderated Caucus complete')}</Header>
       <Button primary size="large" as={Link} to={`/committees/${snapshot.committee.id}/motions`}>{t('Go to motions')}<Icon name="arrow right" /></Button>
     </Segment></Grid.Column></Grid.Row></Grid></Container>;
   const nowSpeaking = <Segment><Label attached="top left" size="large">{t('Now speaking')}</Label><Feed size="large" className="speaker-current-speaker-feed">
@@ -658,13 +658,13 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
     onTrigger={() => void advance()} /><Grid columns="equal" stackable>{header}{separateTimers ? <Grid.Row>
     <Grid.Column className="speaker-timer-column"><TimerControls name="Speaker timer" timer={speechTimer} run={run} api={api} canChair={canChair}
       onToggle={toggleSpeech} toggleKey="s">{nextControl}</TimerControls>{nowSpeaking}</Grid.Column>
-    <Grid.Column className="caucus-timer-column"><TimerControls name="Caucus timer" timer={totalTimer} run={run} api={api}
+    <Grid.Column className="caucus-timer-column"><TimerControls name="Moderated Caucus timer" timer={totalTimer} run={run} api={api}
       canChair={canChair} toggleKey="c" />{queuePanel}{nextSpeaking}</Grid.Column>
   </Grid.Row> : <Grid.Row>
     <Grid.Column>{orderedQueuePanels}</Grid.Column>
     <Grid.Column><TimerControls name="Speaker timer" timer={speechTimer} run={run} api={api} canChair={canChair}
       onToggle={toggleSpeech} toggleKey="s">{nextControl}</TimerControls>
-      {list.kind === 'MODERATED_CAUCUS' && <TimerControls name="Caucus timer" timer={totalTimer} run={run} api={api}
+      {list.kind === 'MODERATED_CAUCUS' && <TimerControls name="Moderated Caucus timer" timer={totalTimer} run={run} api={api}
         canChair={canChair} toggleKey="c" />}
       {list.kind === 'GENERAL' && yieldCard}<LingeringMessage content={!contributionRecorded ? yieldNotice : undefined} />
       {contributionJustRecorded && showContributionSuccess && <TimedMessage positive content={t('Interaction recorded.')}
@@ -679,7 +679,7 @@ function Ballots({snapshot, run, api, canChair, subjectId, embedded = false, sto
   const [selectedSeats, setSelectedSeats] = React.useState<Record<string, string>>({});
   const canVote = snapshot.committee.status === 'ACTIVE' && (canChair
     || Boolean(snapshot.viewer.seatId) && snapshot.committee.operationMode !== 'CHAIR_OPERATED');
-  return <>{!embedded && <Header as="h2">{t('Formal ballot')}</Header>}
+  return <>{!embedded && <Header as="h2">{t('Formal Ballot')}</Header>}
     <List divided>{ballots.map(ballot => {
       const seatId = canChair ? selectedSeats[ballot.id] ?? ballot.eligibility[0]?.seatId : snapshot.viewer.seatId;
       const eligible = ballot.eligibility.find(seat => seat.seatId === seatId);
@@ -877,7 +877,7 @@ function AmendmentCard({snapshot, amendment, run, api, canChair, representedSeat
         meetingSessionId: amendment.meetingSessionId, subjectType: 'AMENDMENT', subjectId: amendment.id,
         procedural: false, thresholdKind: ballotThreshold}))}>{t('Open substantive ballot')}</Button>
     </Form.Group></Card.Content>}
-  {hasBallot && <Card.Content extra><Header as="h4">{t('Formal ballot')}</Header>
+  {hasBallot && <Card.Content extra><Header as="h4">{t('Formal Ballot')}</Header>
     <Ballots snapshot={snapshot} run={run} api={api} canChair={canChair} subjectId={amendment.id} embedded />
   </Card.Content>}
   </Card>;
@@ -907,9 +907,9 @@ const motionDetailLabel = (id: string) => ({'open-moderated-caucus': 'Topic', 'i
   'introduce-amendment': 'Text', 'propose-strawpoll': 'Question', 'introduce-working-paper': 'Task'}[id] ?? '');
 const motionDestinationLabel = (id: string) => ({'open-moderated-caucus': 'Caucuses',
   'extend-moderated-caucus': 'Caucuses', 'close-moderated-caucus': 'Caucuses',
-  'open-debate': 'General speakers list',
-  'open-unmoderated-caucus': 'Unmod', 'extend-unmoderated-caucus': 'Unmod',
-  'introduce-working-paper': 'Unmod', 'introduce-draft-resolution': 'Draft resolution',
+  'open-debate': "General Speaker's List",
+  'open-unmoderated-caucus': 'Unmoderated Caucus', 'extend-unmoderated-caucus': 'Unmoderated Caucus',
+  'introduce-working-paper': 'Unmoderated Caucus', 'introduce-draft-resolution': 'Draft Resolution',
   'introduce-amendment': 'Amendments', 'vote-on-amendment': 'Amendments', 'vote-on-resolution': 'Voting',
   'propose-strawpoll': 'Strawpolls'}[id] ?? '');
 const motionSeconds = (value: number, unit: MotionTimeUnit) => unit === 'min' ? value * 60 : value;
@@ -924,30 +924,30 @@ const motionSecondsLabel = (minutes: number) => `${minutes * 60} ${t('sec')}`;
 const linkedResolutionMotionValue = (resolutionId: string) => `open-moderated-caucus::resolution::${resolutionId}`;
 const linkedResolutionMotionPrefix = 'open-moderated-caucus::resolution::';
 const motionTypeFallbackLabels: Record<string, string> = {
-  'open-unmoderated-caucus': 'Open unmoderated caucus',
-  'open-moderated-caucus': 'Open moderated caucus',
-  'extend-unmoderated-caucus': 'Extend unmoderated caucus',
-  'extend-moderated-caucus': 'Extend moderated caucus',
-  'close-moderated-caucus': 'Close moderated caucus',
-  'introduce-draft-resolution': 'Introduce draft resolution',
-  'postpone-resolution': 'Postpone resolution',
-  'resume-resolution': 'Resume resolution',
-  'introduce-amendment': 'Introduce amendment',
-  'discuss-amendment': 'Discuss amendment',
-  'postpone-amendment': 'Postpone amendment',
-  'resume-amendment': 'Resume amendment',
-  'vote-on-amendment': 'Vote on amendment',
-  'suspend-draft-resolution-speakers-list': 'Suspend draft resolution speakers list',
-  'vote-on-resolution': 'Vote on resolution',
-  'open-debate': 'Open debate',
-  'suspend-debate': 'Suspend debate',
-  'resume-debate': 'Resume debate',
-  'close-debate': 'Close debate',
+  'open-unmoderated-caucus': 'Open Unmoderated Caucus',
+  'open-moderated-caucus': 'Open Moderated Caucus',
+  'extend-unmoderated-caucus': 'Extend Unmoderated Caucus',
+  'extend-moderated-caucus': 'Extend Moderated Caucus',
+  'close-moderated-caucus': 'Close Moderated Caucus',
+  'introduce-draft-resolution': 'Introduce Draft Resolution',
+  'postpone-resolution': 'Postpone Draft Resolution',
+  'resume-resolution': 'Resume Draft Resolution',
+  'introduce-amendment': 'Introduce Amendment',
+  'discuss-amendment': 'Discuss Amendment',
+  'postpone-amendment': 'Postpone Amendment',
+  'resume-amendment': 'Resume Amendment',
+  'vote-on-amendment': 'Vote on Amendment',
+  'suspend-draft-resolution-speakers-list': "Suspend Draft Resolution Speaker's List",
+  'vote-on-resolution': 'Vote on Draft Resolution',
+  'open-debate': 'Open Formal Debate',
+  'suspend-debate': 'Suspend Formal Debate',
+  'resume-debate': 'Resume Formal Debate',
+  'close-debate': 'Close Formal Debate',
   'suspend-meeting': 'Suspend the meeting',
   'adjourn-meeting': 'Adjourn the meeting',
-  'reorder-draft-resolutions': 'Reorder draft resolutions',
-  'propose-strawpoll': 'Propose strawpoll',
-  'introduce-working-paper': 'Introduce working paper'
+  'reorder-draft-resolutions': 'Reorder Draft Resolutions',
+  'propose-strawpoll': 'Propose Strawpoll',
+  'introduce-working-paper': 'Introduce Working Paper'
 };
 
 function motionTypeName(type: {id: string; names?: Record<string, string>} | undefined, id: string, language: ContentLanguage): string {
@@ -992,7 +992,7 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
     <Card className="motions-empty-card">
       <Card.Content textAlign="center" className="motions-empty-card-content">
         <Card.Description>{t(snapshot.meetingEndedAt ? 'Meeting ended' : 'Open a meeting first.')}</Card.Description>
-        <Button as={Link} to={`/committees/${snapshot.committee.id}/roll-call`} primary>{t('Roll call')}<Icon name="arrow right" /></Button>
+        <Button as={Link} to={`/committees/${snapshot.committee.id}/roll-call`} primary>{t('Roll Call')}<Icon name="arrow right" /></Button>
       </Card.Content>
     </Card>
   </Container>;
@@ -1013,7 +1013,7 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
       text: motionTypeName(type, type.id, snapshot.committee.committeeLanguage)})),
     ...(types.some(type => type.id === 'open-moderated-caucus') ? caucusResolutionOptions.map(document => ({
       key: linkedResolutionMotionValue(document.id), value: linkedResolutionMotionValue(document.id),
-      text: `${t('Moderated caucus')} - ${document.title}`})) : [])
+      text: `${t('Moderated Caucus')} - ${document.title}`})) : [])
   ];
   const targetResolutions = resolutions.filter(document => motionType === 'introduce-draft-resolution'
     ? document.status === 'DRAFT'
@@ -1108,21 +1108,21 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
           options={seatOptions} disabled={!canChair}
           onChange={(_, data) => setSeconderId(String(data.value))} />}
       </Form.Group>
-      {canChair && presentSeats.length === 0 && <Message info content={t('No delegations are marked present. Check roll call.')} />}
+      {canChair && presentSeats.length === 0 && <Message info content={t('No delegations are marked present. Check Roll Call.')} />}
       {(hasMotionSpeakers(motionType) || hasMotionDuration(motionType) || hasCaucusTarget(motionType)
         || hasResolutionTarget(motionType) || hasAmendmentTarget(motionType)) && <Form.Group widths="equal"
           className={hasMotionDuration(motionType) && hasMotionSpeakers(motionType) ? 'motion-time-fields' : undefined}>
         {hasCaucusTarget(motionType) && <Form.Select required key="caucusTarget" search selection fluid error={!caucusTarget}
           icon="search" label={t('Target caucus')} value={caucusTarget}
-          options={openCaucuses.map(list => ({key: list.id, value: list.id, text: list.topic || t('Moderated caucus')}))}
+          options={openCaucuses.map(list => ({key: list.id, value: list.id, text: list.topic || t('Moderated Caucus')}))}
           onChange={(_, data) => setCaucusTarget(String(data.value))} />}
         {hasResolutionTarget(motionType) && <Form.Select required key="resolutionTarget" search selection fluid error={!resolutionTarget}
-          icon="search" label={t('Target resolution')} value={resolutionTarget}
+          icon="search" label={t('Target Draft Resolution')} value={resolutionTarget}
           options={targetResolutions.map(document => ({key: document.id, value: document.id,
             text: document.title}))}
           onChange={(_, data) => setResolutionTarget(String(data.value))} />}
         {hasAmendmentTarget(motionType) && <Form.Select required key="amendmentTarget" search selection fluid
-          error={!amendmentTarget} icon="search" label={t('Target amendment')} value={amendmentTarget}
+          error={!amendmentTarget} icon="search" label={t('Target Amendment')} value={amendmentTarget}
           options={targetAmendments.map(document => ({key: document.id, value: document.id,
             text: document.title}))}
           onChange={(_, data) => {const id = String(data.value); const target = targetAmendments.find(item => item.id === id);
@@ -1218,13 +1218,13 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
                   ?? String(motion.parameters.caucusTarget ?? '')}
               </span></Table.Cell></Table.Row>}
             {(hasResolutionTarget(motion.motionTypeId) || Boolean(motion.parameters.resolutionTarget))
-              && <Table.Row><Table.Cell className="motion-metadata-key">{t('Target resolution')}</Table.Cell>
+              && <Table.Row><Table.Cell className="motion-metadata-key">{t('Target Draft Resolution')}</Table.Cell>
                 <Table.Cell><span className="motion-metadata-value">{resolutions.find(document => document.id
                   === motion.parameters.resolutionTarget)?.title
                     ?? String(motion.parameters.resolutionTarget ?? '')}</span></Table.Cell>
               </Table.Row>}
             {Boolean(motion.parameters.amendmentTarget) && <Table.Row><Table.Cell className="motion-metadata-key">
-              {t('Target amendment')}</Table.Cell><Table.Cell><span className="motion-metadata-value">
+              {t('Target Amendment')}</Table.Cell><Table.Cell><span className="motion-metadata-value">
                 {amendments.find(document => document.id === motion.parameters.amendmentTarget)?.title
                   ?? String(motion.parameters.amendmentTarget ?? '')}
               </span></Table.Cell></Table.Row>}
@@ -1278,7 +1278,7 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
           {meetingSessionId: session.id, subjectType: 'MOTION', subjectId: motion.id, procedural: proceduralMotion,
             thresholdKind: 'SIMPLE_MAJORITY'}))}>{t(proceduralMotion ? 'Open procedural ballot' : 'Open substantive ballot')}</Button>
       </Card.Content>}
-      {delegateMode && hasMotionBallot && <Card.Content extra className="motion-ballot-panel"><Header as="h4">{t('Formal ballot')}</Header>
+      {delegateMode && hasMotionBallot && <Card.Content extra className="motion-ballot-panel"><Header as="h4">{t('Formal Ballot')}</Header>
         <Ballots snapshot={snapshot} run={run} api={api} canChair={canChair} subjectId={motion.id} embedded stopAction />
       </Card.Content>}
       {!decided && chairAdvisoryMode && <>
@@ -1552,7 +1552,7 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
   if (resourceId === 'new') return canParticipate && session ? <Loading />
     : <Message content={session ? t('An active seat assignment is required.') : t('Start a meeting first.')} />;
   const document = selectedDocument;
-  if (!document) return <Message error content={t('Draft resolution not found.')} />;
+  if (!document) return <Message error content={t('Draft Resolution not found.')} />;
   const amendments = (snapshot.documents ?? []).filter(item => item.resolutionId === document.id);
   const activeTab = ({activity: 'text', body: 'text', ballot: 'voting'}[tab ?? '']
     ?? (tab && ['text', 'amendments', 'voting'].includes(tab) ? tab : 'text')) as 'text' | 'amendments' | 'voting';
@@ -1694,9 +1694,9 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
           </Form>}
       </>}
     </Segment>}</>}
-    {activeTab === 'amendments' && <>{amendments.length === 0 && <Message content={t('No amendments')} />}<Card.Group itemsPerRow={1}>
+    {activeTab === 'amendments' && <>{amendments.length === 0 && <Message content={t('No Amendments')} />}<Card.Group itemsPerRow={1}>
       {canParticipate && session && ['PUBLISHED', 'POSTPONED'].includes(document.status) && <Card><Button icon="plus"
-        primary fluid basic aria-label={t('Create amendment')} onClick={() => void run(() => api.createAmendment(document.id,
+        primary fluid basic aria-label={t('Create Amendment')} onClick={() => void run(() => api.createAmendment(document.id,
           {meetingSessionId: session.id, customTitle: null, content: '', ...represented}))} /></Card>}
       {[...amendments].reverse().map(amendment => <AmendmentCard key={amendment.id} snapshot={snapshot}
         amendment={amendment} run={run} api={api} canChair={canChair} representedSeatId={seatId}
@@ -1751,11 +1751,11 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
         onChange={(_, data) => void run(() => api.updateDocumentSettings(document.id,
           {baseRevision: document.revision, majority: data.value as 'SIMPLE_MAJORITY' | 'TWO_THIRDS' | 'TWO_THIRDS_NON_ABSTAINING'}))} />
       </Segment>}</Segment>}{snapshot.committee.operationMode !== 'CHAIR_OPERATED' && <>
-        <Divider horizontal>{t('Formal ballot')}</Divider>
+        <Divider horizontal>{t('Formal Ballot')}</Divider>
         <Ballots snapshot={snapshot} run={run} api={api} canChair={canChair} subjectId={document.id} />
         {canChair && document.status === 'VOTING' && session && <Button onClick={() => void run(() => api.createBallot(snapshot.committee.id,
           {meetingSessionId: session.id, subjectType: 'RESOLUTION', subjectId: document.id, procedural: false,
-            thresholdKind: 'TWO_THIRDS'}))}>{t('Open formal ballot')}</Button>}</>}</>}</Grid.Column>
+            thresholdKind: 'TWO_THIRDS'}))}>{t('Open Formal Ballot')}</Button>}</>}</>}</Grid.Column>
     {activeTab !== 'voting' && <Grid.Column width={5}><Segment><Form>
       {(['proposers', 'seconders'] as const).map(role => <section className="resolution-country-list" key={role}
         aria-label={t(role === 'proposers' ? 'Resolution proposer' : 'Resolution seconder')}>

@@ -10,9 +10,9 @@ import {sha256File} from '../../services/sha256';
 import {CountryFlagDisplay} from '../../components/CountryFlagDisplay';
 
 const FILE_TYPES: Array<{key: DelegateFileType; value: DelegateFileType; text: string}> = [
-  {key: 'WORKING_PAPER', value: 'WORKING_PAPER', text: "Working paper"},
-  {key: 'DIRECTIVE_DRAFT', value: 'DIRECTIVE_DRAFT', text: "Draft directive"},
-  {key: 'RESOLUTION_DRAFT', value: 'RESOLUTION_DRAFT', text: "resolution"}
+  {key: 'WORKING_PAPER', value: 'WORKING_PAPER', text: 'Working Paper'},
+  {key: 'DIRECTIVE_DRAFT', value: 'DIRECTIVE_DRAFT', text: 'Draft Directive'},
+  {key: 'RESOLUTION_DRAFT', value: 'RESOLUTION_DRAFT', text: 'Draft Resolution'}
 ];
 
 function dateTime(value: string | null): string { return value ? new Date(value).toLocaleString(getLanguage()) : '—'; }

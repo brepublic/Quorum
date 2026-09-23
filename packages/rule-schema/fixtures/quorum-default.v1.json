@@ -22,7 +22,7 @@
     "twoThirdsMajority": {"formula": {"op": "ceil", "value": {"op": "multiply", "left": {"fact": "attendance.presentVotingSeatCount"}, "right": 0.6666666667}}}
   },
   "phases": [
-    {"id": "open-debate", "names": {"zh-CN": "正式辩论", "en": "Formal debate"}}
+    {"id": "open-debate", "names": {"zh-CN": "正式辩论", "en": "Formal Debate"}}
   ],
   "speakerLists": [
     {

@@ -157,17 +157,17 @@ function PrimaryItems({snapshot, onNavigate, onCreateCaucus, level = 0}: {
   return <>
     <Menu.Item header title={snapshot.committee.name} as={Link} to={base + '/info'} active={location.pathname === base + '/info'} onClick={onNavigate}>{snapshot.committee.name}</Menu.Item>
     {item('/setup', 'Seats')}
-    {item('/roll-call', 'Roll call')}
+    {item('/roll-call', 'Roll Call')}
     {item('/motions', 'Motions')}
     {item('/points', 'Points')}
     {generalSpeakerList && <Menu.Item key="general-speakers-list" as={Link}
       to={`${base}/caucuses/${generalSpeakerList.id}`}
       active={routeActive(location.pathname, `${base}/caucuses/${generalSpeakerList.id}`)} onClick={onNavigate}>
-      {t("General Speakers' List")}</Menu.Item>}
-    {item('/unmod', 'Unmod')}
-    {dynamic('caucuses', 'Caucuses', 'New caucus', caucuses, gslPathActive ? false : undefined)}
-    {dynamic('resolutions', 'Resolutions', 'New resolution', resolutions)}
-    {level < 6 && dynamic('strawpolls', 'Strawpolls', 'New strawpoll', strawpolls)}
+      {t("General Speaker's List")}</Menu.Item>}
+    {item('/unmod', 'Unmoderated Caucus')}
+    {dynamic('caucuses', 'Moderated Caucuses', 'New Moderated Caucus', caucuses, gslPathActive ? false : undefined)}
+    {dynamic('resolutions', 'Draft Resolutions', 'New Draft Resolution', resolutions)}
+    {level < 6 && dynamic('strawpolls', 'Strawpolls', 'New Strawpoll', strawpolls)}
     {level < 5 && item('/notes', 'Notes')}
     {level < 4 && item('/posts', 'Files')}
     {level < 3 && item('/stats', 'Statistics')}
@@ -185,7 +185,7 @@ function PrimaryItems({snapshot, onNavigate, onCreateCaucus, level = 0}: {
         ].join(' ')} open={moreOpen} onOpen={() => setMoreOpen(true)}
         onClose={() => {setMoreOpen(false); setPollOpen(false);}}>
         <Dropdown.Menu>
-          {level >= 6 && dynamic('strawpolls', 'Strawpolls', 'New strawpoll', strawpolls, undefined, true)}
+          {level >= 6 && dynamic('strawpolls', 'Strawpolls', 'New Strawpoll', strawpolls, undefined, true)}
           {level >= 5 && <Dropdown.Item as={Link} to={`${base}/notes`} active={routeActive(location.pathname, `${base}/notes`, true)} text={t('Notes')} onClick={navigate} />}
           {level >= 4 && <Dropdown.Item as={Link} to={`${base}/posts`} active={routeActive(location.pathname, `${base}/posts`, true)} text={t('Files')} onClick={navigate} />}
           {level >= 3 && <Dropdown.Item as={Link} to={`${base}/stats`} active={routeActive(location.pathname, `${base}/stats`, true)} text={t('Statistics')} onClick={navigate} />}

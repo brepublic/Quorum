@@ -571,7 +571,7 @@ export class Stage5Service {
         if (kind === 'GENERAL') {
           const existing = await client.query('SELECT 1 FROM speaker_lists WHERE meeting_session_id=$1 AND kind=\'GENERAL\'',
             [meetingSessionId]);
-          if (existing.rowCount) throw new AppError({reason: 'GENERAL_LIST_ALREADY_EXISTS', code: 'RESOURCE_CONFLICT', message: 'The main speakers list already exists.'});
+          if (existing.rowCount) throw new AppError({reason: 'GENERAL_LIST_ALREADY_EXISTS', code: 'RESOURCE_CONFLICT', message: "The General Speaker's List already exists."});
         }
         const listId = randomUUID(); const speechTimerId = randomUUID(); const caucusId = randomUUID();
         const totalTimerId = kind === 'MODERATED_CAUCUS' ? randomUUID() : null;
@@ -1534,7 +1534,7 @@ export class Stage5Service {
       if (!session || session.status !== 'OPEN') throw new AppError({reason: 'MEETING_NOT_OPEN', code: 'RESOURCE_CONFLICT', message: 'The meeting session is not open.'});
       const activeRollCall = await client.query(`SELECT 1 FROM roll_calls
         WHERE meeting_session_id=$1 AND status='IN_PROGRESS'`, [session.id]);
-      if (activeRollCall.rowCount) throw new AppError({reason: 'ROLL_CALL_MUST_FINISH', code: 'RESOURCE_CONFLICT', message: 'Complete or reset the active roll call first.'});
+      if (activeRollCall.rowCount) throw new AppError({reason: 'ROLL_CALL_MUST_FINISH', code: 'RESOURCE_CONFLICT', message: 'Complete or reset the active Roll Call first.'});
       const pending = await client.query<MeetingSessionRow>(`SELECT * FROM meeting_sessions
         WHERE committee_id=$1 AND status='PENDING' FOR UPDATE`, [committeeId]);
       if ((pending.rowCount ?? 0) > 0) throw new AppError({reason: 'MEETING_ALREADY_PENDING', code: 'RESOURCE_CONFLICT', message: 'A meeting session is already pending.'});
@@ -1574,7 +1574,7 @@ export class Stage5Service {
       const lists = await client.query<SpeakerListRow>(`SELECT * FROM speaker_lists
         WHERE meeting_session_id=$1 AND kind='GENERAL' FOR UPDATE`, [session.id]);
       const list = lists.rows[0];
-      if (!list) throw new AppError({reason: 'GENERAL_SPEAKER_LIST_MISSING', code: 'RESOURCE_CONFLICT', message: 'The general speakers list is missing.'});
+      if (!list) throw new AppError({reason: 'GENERAL_SPEAKER_LIST_MISSING', code: 'RESOURCE_CONFLICT', message: "The General Speaker's List is missing."});
       if (session.formal_debate_open !== formalDebateOpen) await client.query(`UPDATE meeting_sessions
         SET formal_debate_open=$2 WHERE id=$1`, [session.id, formalDebateOpen]);
       if (list.status !== (formalDebateOpen ? 'OPEN' : 'CLOSED')) {
@@ -1643,7 +1643,7 @@ export class Stage5Service {
       const found = await client.query<TimerRow>(`SELECT * FROM timer_states
         WHERE committee_id=$1 AND owner_type='COMMITTEE' AND owner_id=$1 FOR UPDATE`, [committeeId]);
       const timer = found.rows[0];
-      if (!timer) throw new AppError({reason: 'UNMODERATED_TIMER_MISSING', code: 'RESOURCE_CONFLICT', message: 'There is no unmoderated caucus timer to extend.'});
+      if (!timer) throw new AppError({reason: 'UNMODERATED_TIMER_MISSING', code: 'RESOURCE_CONFLICT', message: 'There is no Unmoderated Caucus timer to extend.'});
       const remaining = remainingTimerMs(timer, now); const nextRemaining = remaining + durationMs;
       await client.query(`UPDATE timer_states SET started_at=$2,remaining_at_start_ms=$3,expired_at=NULL,
         revision=revision+1,updated_at=$4 WHERE id=$1`, [timer.id, timer.running ? now : null, nextRemaining, now]);
@@ -1825,7 +1825,7 @@ export class Stage5Service {
         throw new AppError({code: 'NOT_FOUND', message: 'Target resolution not found.'});
       }
       if (document.status !== 'DRAFT') throw new AppError({reason: 'RESOLUTION_ALREADY_INTRODUCED', code: 'RESOURCE_CONFLICT',
-        message: 'Only an unintroduced draft resolution can be introduced.'});
+        message: 'Only an unintroduced Draft Resolution can be introduced.'});
       const contentSource = await client.query<{content_file_entry_id: string | null; file_status: string | null}>(
         `SELECT v.content_file_entry_id,e.status AS file_status FROM document_versions v
           LEFT JOIN file_entries linked ON linked.id=v.content_file_entry_id
@@ -1862,10 +1862,10 @@ export class Stage5Service {
         AND d.deleted_at IS NULL FOR UPDATE OF d`, [documentId, committeeId]);
       const document = found.rows[0];
       if (!document || document.meeting_session_id !== motion.meeting_session_id) {
-        throw new AppError({code: 'NOT_FOUND', message: 'Target amendment not found.'});
+        throw new AppError({code: 'NOT_FOUND', message: 'Target Amendment not found.'});
       }
       if (document.status !== 'DRAFT') throw new AppError({reason: 'AMENDMENT_ALREADY_INTRODUCED', code: 'RESOURCE_CONFLICT',
-        message: 'Only a draft amendment can be introduced.'});
+        message: 'Only a Draft Amendment can be introduced.'});
       const contentSource = await client.query<{content: string; content_file_entry_id: string | null;
         file_status: string | null}>(`SELECT v.content,v.content_file_entry_id,e.status AS file_status
         FROM document_versions v LEFT JOIN file_entries linked ON linked.id=v.content_file_entry_id
@@ -1873,9 +1873,9 @@ export class Stage5Service {
         WHERE v.document_id=$1 AND v.id=$2`, [documentId, document.current_version_id]);
       const source = contentSource.rows[0];
       if (!source || !source.content.trim() && !source.content_file_entry_id) throw new AppError({reason: 'AMENDMENT_BODY_REQUIRED', code: 'RESOURCE_CONFLICT',
-        message: 'Add amendment text or a file before introducing it.'});
+        message: 'Add Amendment text or a file before introducing it.'});
       if (source.content_file_entry_id && source.file_status !== 'PUBLISHED') throw new AppError({reason: 'DOCUMENT_FILE_NOT_PUBLISHED', code: 'RESOURCE_CONFLICT',
-        message: 'Publish the amendment content file before introducing it.'});
+        message: 'Publish the Amendment content file before introducing it.'});
       const amendment = await client.query<{proposer_seat_id: string}>(
         'SELECT proposer_seat_id FROM amendments WHERE document_id=$1 FOR UPDATE', [documentId]);
       const previousProposer = amendment.rows[0]?.proposer_seat_id ?? null;
@@ -1906,10 +1906,10 @@ export class Stage5Service {
         AND d.deleted_at IS NULL FOR UPDATE OF d`, [documentId, committeeId]);
       const document = found.rows[0];
       if (!document || document.meeting_session_id !== motion.meeting_session_id) {
-        throw new AppError({code: 'NOT_FOUND', message: 'Target amendment not found.'});
+        throw new AppError({code: 'NOT_FOUND', message: 'Target Amendment not found.'});
       }
       if (document.status !== 'PUBLISHED') throw new AppError({reason: 'AMENDMENT_NOT_INTRODUCED', code: 'RESOURCE_CONFLICT',
-        message: 'Only an introduced amendment can enter voting.'});
+        message: 'Only an introduced Amendment can enter voting.'});
       await requirePublishedDocumentFile(client, document.current_version_id);
       await client.query(`UPDATE documents SET status='VOTING',voting_version_id=current_version_id,
         revision=revision+1,updated_at=$2 WHERE id=$1`, [documentId, now]);
@@ -2562,7 +2562,7 @@ export class Stage5Service {
         const id = randomUUID(); const accessToken = votingMode === 'ANONYMOUS' && medium === 'LINK'
           ? randomBytes(32).toString('base64url') : undefined;
         if (votingMode === 'ANONYMOUS' && medium === 'MANUAL') throw new AppError({reason: 'MANUAL_POLL_CANNOT_BE_ANONYMOUS', code: 'VALIDATION_FAILED',
-          message: 'Manual strawpolls do not use anonymous voting.'});
+          message: 'Manual Strawpolls do not use anonymous voting.'});
         const stage: Strawpoll['stage'] = question.trim() && optionLabels.length >= 2 ? 'VOTING' : 'PREPARING';
         const inserted = await client.query<StrawpollRow>(`INSERT INTO strawpolls
           (id,committee_id,meeting_session_id,question,voting_mode,multiple_choice,anonymous_access_token_hash,
@@ -2605,9 +2605,9 @@ export class Stage5Service {
         const poll = pollResult.rows[0];
         if (!poll) throw new AppError({code: 'NOT_FOUND', message: 'Strawpoll not found.'});
         if (poll.stage !== 'VOTING' || poll.medium !== 'LINK') throw new AppError({reason: 'POLL_NOT_ACCEPTING_LINKED_VOTES', code: 'RESOURCE_CONFLICT',
-          message: 'The strawpoll is not accepting linked votes.'});
+          message: 'The Strawpoll is not accepting linked votes.'});
         if (!poll.multiple_choice && optionIds.length > 1) {
-          throw new AppError({reason: 'POLL_SINGLE_CHOICE_REQUIRED', code: 'VALIDATION_FAILED', message: 'Select one strawpoll option.'});
+          throw new AppError({reason: 'POLL_SINGLE_CHOICE_REQUIRED', code: 'VALIDATION_FAILED', message: 'Select one Strawpoll option.'});
         }
         const validOptions = optionIds.length === 0 ? {rowCount: 0} : await client.query<{id: string}>(
           'SELECT id FROM strawpoll_options WHERE strawpoll_id=$1 AND id=ANY($2::uuid[])', [strawpollId, optionIds]);
@@ -2615,11 +2615,11 @@ export class Stage5Service {
         const chair = await isChair(client, committee.id, auth.user.id);
         if (poll.voting_mode === 'ANONYMOUS') {
           if (optionIds.length === 0) throw new AppError({reason: 'ANONYMOUS_VOTE_NOT_RETRACTABLE', code: 'VALIDATION_FAILED',
-            message: 'Anonymous strawpoll votes cannot be retracted.'});
+            message: 'Anonymous Strawpoll votes cannot be retracted.'});
           if (input.onBehalfOfSeatId !== undefined) throw new AppError({reason: 'POLL_MODE_MISMATCH', code: 'VALIDATION_FAILED', message: 'Anonymous votes do not use seats.'});
           const accessToken = text(input.anonymousAccessToken, 'Anonymous access token', 200);
           if (!poll.anonymous_access_token_hash?.equals(sha256(accessToken))) {
-            throw new AppError({reason: 'ANONYMOUS_POLL_ACCESS_INVALID', code: 'FORBIDDEN', message: 'Anonymous strawpoll access is invalid.'});
+            throw new AppError({reason: 'ANONYMOUS_POLL_ACCESS_INVALID', code: 'FORBIDDEN', message: 'Anonymous Strawpoll access is invalid.'});
           }
           const credentialHash = sha256(`${strawpollId}\0${accessToken}\0${auth.user.id}`);
           await client.query('INSERT INTO strawpoll_anonymous_receipts (strawpoll_id,credential_hash) VALUES ($1,$2)',
@@ -2632,7 +2632,7 @@ export class Stage5Service {
             after: {votingMode: 'ANONYMOUS', selectionCount: optionIds.length, revision: poll.revision + 1}});
         } else {
           if (input.anonymousAccessToken !== undefined) {
-            throw new AppError({reason: 'POLL_MODE_MISMATCH', code: 'VALIDATION_FAILED', message: 'Seat strawpolls do not use anonymous credentials.'});
+            throw new AppError({reason: 'POLL_MODE_MISMATCH', code: 'VALIDATION_FAILED', message: 'Seat Strawpolls do not use anonymous credentials.'});
           }
           let seatId: string | null;
           if (chair) seatId = uuid(input.onBehalfOfSeatId, 'Represented seat ID');
@@ -2651,9 +2651,9 @@ export class Stage5Service {
           [strawpollId, seatId]);
           const current = previous.rows[0]; const previousOptionIds = current && !current.retracted_at ? current.option_ids : null;
           if (!current && optionIds.length === 0 || current?.retracted_at && optionIds.length === 0) throw new AppError({reason: 'NO_VOTE_TO_UNDO',
-            code: 'RESOURCE_CONFLICT', message: 'This seat has no current strawpoll vote to retract.'});
+            code: 'RESOURCE_CONFLICT', message: 'This seat has no current Strawpoll vote to retract.'});
           if (previousOptionIds && JSON.stringify([...previousOptionIds].sort()) === JSON.stringify([...optionIds].sort())) {
-            throw new AppError({reason: 'VOTE_ALREADY_RECORDED', code: 'RESOURCE_CONFLICT', message: 'This seat already selected those strawpoll options.'});
+            throw new AppError({reason: 'VOTE_ALREADY_RECORDED', code: 'RESOURCE_CONFLICT', message: 'This seat already selected those Strawpoll options.'});
           }
           const voteId = current?.id ?? randomUUID();
           if (!current) await client.query(`INSERT INTO strawpoll_seat_votes
@@ -2694,9 +2694,9 @@ export class Stage5Service {
       await requireChair(client, committee, auth.user.id);
       const pollResult = await client.query<StrawpollRow>('SELECT * FROM strawpolls WHERE id=$1 FOR UPDATE', [strawpollId]);
       const poll = pollResult.rows[0] as StrawpollRow;
-      if (poll.stage !== 'VOTING') throw new AppError({reason: 'POLL_NOT_VOTING', code: 'RESOURCE_CONFLICT', message: 'The strawpoll is not voting.'});
+      if (poll.stage !== 'VOTING') throw new AppError({reason: 'POLL_NOT_VOTING', code: 'RESOURCE_CONFLICT', message: 'The Strawpoll is not voting.'});
       if (poll.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT',
-        message: 'This strawpoll changed since it was loaded.', details: {currentRevision: poll.revision}});
+        message: 'This Strawpoll changed since it was loaded.', details: {currentRevision: poll.revision}});
       const now = this.now(); const updated = await client.query<StrawpollRow>(`UPDATE strawpolls SET status='CLOSED',
         stage='RESULTS',closed_at=$2,revision=revision+1 WHERE id=$1 RETURNING *`, [strawpollId, now]);
       const state = await strawpollState(client, updated.rows[0] as StrawpollRow);
@@ -2734,13 +2734,13 @@ export class Stage5Service {
           'SELECT * FROM strawpolls WHERE id=$1 FOR UPDATE', [strawpollId]);
         const poll = found.rows[0];
         if (!poll || poll.superseded_by_id) throw new AppError({reason: 'POLL_ROUND_CHANGED', code: 'RESOURCE_CONFLICT',
-          message: 'This strawpoll round is no longer current.'});
+          message: 'This Strawpoll round is no longer current.'});
         if (poll.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT',
-          message: 'This strawpoll changed since it was loaded.', details: {currentRevision: poll.revision}});
+          message: 'This Strawpoll changed since it was loaded.', details: {currentRevision: poll.revision}});
         const chair = await isChair(client, committee.id, auth.user.id);
         if (!chair) {
           if (committee.operation_mode !== 'DELEGATE_OPERATED' || !poll.options_are_public || poll.stage !== 'PREPARING') {
-            throw new AppError({reason: 'CHAIR_REQUIRED', code: 'FORBIDDEN', message: 'A Chair is required to edit this strawpoll.'});
+            throw new AppError({reason: 'CHAIR_REQUIRED', code: 'FORBIDDEN', message: 'A Chair is required to edit this Strawpoll.'});
           }
           const seatId = await activeSeat(client, committee.id, auth.user.id);
           const present = seatId ? await client.query(`SELECT 1 FROM current_attendance
@@ -2754,7 +2754,7 @@ export class Stage5Service {
           const appendedOne = optionLabels.length === currentOptions.rows.length + 1
             && currentOptions.rows.every((item, index) => item.label === optionLabels[index]);
           if (!unchanged || !appendedOne) throw new AppError({reason: 'DELEGATE_OPTION_LIMIT', code: 'FORBIDDEN',
-            message: 'Delegates may only add one option to this strawpoll.'});
+            message: 'Delegates may only add one option to this Strawpoll.'});
         }
         const id = randomUUID(); const now = this.now();
         const accessToken = votingMode === 'ANONYMOUS' ? randomBytes(32).toString('base64url') : undefined;
@@ -2796,16 +2796,16 @@ export class Stage5Service {
       await requireChair(client, committee, auth.user.id);
       const found = await client.query<StrawpollRow>('SELECT * FROM strawpolls WHERE id=$1 FOR UPDATE', [strawpollId]);
       const poll = found.rows[0] as StrawpollRow;
-      if (poll.superseded_by_id) throw new AppError({reason: 'POLL_ROUND_CHANGED', code: 'RESOURCE_CONFLICT', message: 'This strawpoll round is no longer current.'});
+      if (poll.superseded_by_id) throw new AppError({reason: 'POLL_ROUND_CHANGED', code: 'RESOURCE_CONFLICT', message: 'This Strawpoll round is no longer current.'});
       if (poll.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT',
-        message: 'This strawpoll changed since it was loaded.', details: {currentRevision: poll.revision}});
+        message: 'This Strawpoll changed since it was loaded.', details: {currentRevision: poll.revision}});
       const expected = action === 'START' ? 'PREPARING' : action === 'VIEW_RESULTS' ? 'VOTING' : 'RESULTS';
-      if (poll.stage !== expected) throw new AppError({reason: 'POLL_STAGE_CHANGED', code: 'RESOURCE_CONFLICT', message: 'The strawpoll is in another stage.'});
+      if (poll.stage !== expected) throw new AppError({reason: 'POLL_STAGE_CHANGED', code: 'RESOURCE_CONFLICT', message: 'The Strawpoll is in another stage.'});
       if (action === 'START') {
-        if (!poll.question.trim()) throw new AppError({reason: 'POLL_QUESTION_REQUIRED', code: 'VALIDATION_FAILED', message: 'Enter a strawpoll question.'});
+        if (!poll.question.trim()) throw new AppError({reason: 'POLL_QUESTION_REQUIRED', code: 'VALIDATION_FAILED', message: 'Enter a Strawpoll question.'});
         const options = await client.query('SELECT 1 FROM strawpoll_options WHERE strawpoll_id=$1', [strawpollId]);
         if (Number(options.rowCount) < 2) throw new AppError({reason: 'POLL_OPTIONS_REQUIRED', code: 'VALIDATION_FAILED',
-          message: 'At least two options are required to start a strawpoll.'});
+          message: 'At least two options are required to start a Strawpoll.'});
       }
       const stage: Strawpoll['stage'] = action === 'VIEW_RESULTS' ? 'RESULTS' : 'VOTING';
       const status: Strawpoll['status'] = stage === 'RESULTS' ? 'CLOSED' : 'OPEN'; const now = this.now();
@@ -2835,9 +2835,9 @@ export class Stage5Service {
       const found = await client.query<StrawpollRow>('SELECT * FROM strawpolls WHERE id=$1 FOR UPDATE', [strawpollId]);
       const poll = found.rows[0] as StrawpollRow;
       if (poll.medium !== 'MANUAL' || poll.stage !== 'VOTING' || poll.superseded_by_id) throw new AppError({reason: 'POLL_NOT_ACCEPTING_TALLIES',
-        code: 'RESOURCE_CONFLICT', message: 'This strawpoll is not accepting manual tallies.'});
+        code: 'RESOURCE_CONFLICT', message: 'This Strawpoll is not accepting manual tallies.'});
       if (poll.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT',
-        message: 'This strawpoll changed since it was loaded.', details: {currentRevision: poll.revision}});
+        message: 'This Strawpoll changed since it was loaded.', details: {currentRevision: poll.revision}});
       const option = await client.query<{manual_tally: number}>(
         'SELECT manual_tally FROM strawpoll_options WHERE id=$1 AND strawpoll_id=$2 FOR UPDATE', [optionId, strawpollId]);
       if (!option.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Strawpoll option not found.'});
@@ -2890,15 +2890,15 @@ export class Stage5Service {
       const document = found.rows[0];
       if (!document || document.deleted_at) throw new AppError({code: 'NOT_FOUND', message: 'Amendment not found.'});
       if (document.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT',
-        message: 'This amendment changed since it was loaded.', details: {currentRevision: document.revision}});
+        message: 'This Amendment changed since it was loaded.', details: {currentRevision: document.revision}});
       const chair = await isChair(client, committee.id, auth.user.id);
       const seatId = chair ? null : await activeSeat(client, committee.id, auth.user.id);
       if (!chair && (!seatId || seatId !== document.created_on_behalf_of_seat_id)) throw new AppError({reason: 'AMENDMENT_PROPOSER_OR_CHAIR_REQUIRED', code: 'FORBIDDEN',
-        message: 'Only the amendment proposer or a Chair may delete it.'});
+        message: 'Only the Amendment proposer or a Chair may delete it.'});
       const ballot = await client.query('SELECT 1 FROM ballots WHERE subject_type=$1 AND subject_id=$2 LIMIT 1',
         ['AMENDMENT', documentId]);
       if (ballot.rowCount || document.voting_version_id || ['VOTING', 'INCORPORATED', 'REJECTED'].includes(document.status)) {
-        throw new AppError({reason: 'AMENDMENT_VOTING_STARTED', code: 'RESOURCE_CONFLICT', message: 'An amendment cannot be deleted after voting begins.'});
+        throw new AppError({reason: 'AMENDMENT_VOTING_STARTED', code: 'RESOURCE_CONFLICT', message: 'An Amendment cannot be deleted after voting begins.'});
       }
       const now = this.now();
       await client.query(`UPDATE documents SET deleted_at=$2,deleted_by_user_id=$3,revision=revision+1,updated_at=$2
@@ -2944,9 +2944,9 @@ export class Stage5Service {
         [resolutionId, committeeId]);
         if (!parent.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Resolution not found.'});
         if (parent.rows[0].meeting_session_id !== meetingSessionId) throw new AppError({reason: 'DOCUMENT_SESSION_MISMATCH', code: 'VALIDATION_FAILED',
-          message: 'Amendment and resolution must use the same meeting session.'});
+          message: 'Amendment and Draft Resolution must use the same meeting session.'});
         if (!['PUBLISHED', 'POSTPONED'].includes(parent.rows[0].status)) throw new AppError({reason: 'AMENDMENTS_NOT_ACCEPTED', code: 'RESOURCE_CONFLICT',
-          message: 'The resolution does not accept amendments.'});
+          message: 'The Draft Resolution does not accept Amendments.'});
       }
       const id = randomUUID(); const versionId = randomUUID(); const now = this.now();
       const inserted = await client.query<DocumentRow>(`INSERT INTO documents
@@ -3134,7 +3134,7 @@ export class Stage5Service {
       const proposerSeatIds = await countries('proposerSeatIds', previousIds('PROPOSER'));
       const seconderSeatIds = await countries('seconderSeatIds', previousIds('SECONDER'));
       if (Object.prototype.hasOwnProperty.call(input, 'delegatesCanAmend') && typeof input.delegatesCanAmend !== 'boolean') {
-        throw new AppError({reason: 'INVALID_AMENDMENT_SETTING', code: 'VALIDATION_FAILED', message: 'The delegate amendment setting is invalid.'});
+        throw new AppError({reason: 'INVALID_AMENDMENT_SETTING', code: 'VALIDATION_FAILED', message: 'The delegate Amendment setting is invalid.'});
       }
       const majority = input.majority as ResolutionDirectVoteMajority | undefined;
       if (majority !== undefined && !['SIMPLE_MAJORITY', 'TWO_THIRDS', 'TWO_THIRDS_NON_ABSTAINING'].includes(majority)) {
@@ -3169,7 +3169,7 @@ export class Stage5Service {
         }
       } else {
         if (proposerSeatIds?.length !== 1) throw new AppError({reason: 'AMENDMENT_PROPOSER_REQUIRED',
-          code: 'VALIDATION_FAILED', message: 'Select one amendment proposer.'});
+          code: 'VALIDATION_FAILED', message: 'Select one Amendment proposer.'});
         const proposerSeatId = proposerSeatIds[0];
         const metadata = await client.query<{proposer_seat_id: string}>('SELECT proposer_seat_id FROM amendments WHERE document_id=$1 FOR UPDATE', [documentId]);
         before = {proposerSeatIds: [metadata.rows[0]?.proposer_seat_id]}; after = {proposerSeatIds};
@@ -3273,9 +3273,9 @@ export class Stage5Service {
       const allowed = document.kind === 'RESOLUTION' ? ['PASSED', 'FAILED'] : ['INCORPORATED', 'REJECTED'];
       if (!allowed.includes(outcome)) throw new AppError({reason: 'INVALID_DOCUMENT_RESULT', code: 'VALIDATION_FAILED', message: 'Document result is invalid.'});
       if (document.kind === 'AMENDMENT' && document.status === 'DRAFT') throw new AppError({reason: 'AMENDMENT_NOT_INTRODUCED', code: 'RESOURCE_CONFLICT',
-        message: 'Introduce the amendment before recording its result.'});
+        message: 'Introduce the Amendment before recording its result.'});
       if (document.kind === 'AMENDMENT' && (document.status === 'VOTING' || document.voting_version_id)) {
-        throw new AppError({reason: 'AMENDMENT_BALLOT_RESULT_REQUIRED', code: 'RESOURCE_CONFLICT', message: 'Publish the formal ballot result for this amendment.'});
+        throw new AppError({reason: 'AMENDMENT_BALLOT_RESULT_REQUIRED', code: 'RESOURCE_CONFLICT', message: 'Publish the Formal Ballot result for this Amendment.'});
       }
       if (document.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT',
         message: 'This document changed since it was loaded.', details: {currentRevision: document.revision}});

@@ -126,7 +126,7 @@ describe('self-hosted workspace navigation', () => {
     const page = render(<CommitteeNavigation snapshot={snapshot} user={user} logout={() => undefined}
       onCreateCaucus={onCreateCaucus} />, '/committees/committee/caucuses/gsl');
     const item = [...page.querySelectorAll<HTMLElement>('.committee-primary-navigation .dropdown .item')]
-      .find(candidate => candidate.textContent?.includes('New caucus'));
+      .find(candidate => candidate.textContent?.includes('New Moderated Caucus'));
     expect(item?.getAttribute('href')).toBeNull();
     act(() => item?.click());
     expect(onCreateCaucus).toHaveBeenCalledOnce();

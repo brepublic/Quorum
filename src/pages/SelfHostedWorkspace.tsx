@@ -592,7 +592,7 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
               () => api.updateSeat(snapshot.committee.id, seat.id, seat.revision, {active: false}));}} /></Table.Cell>}
       </Table.Row>)}</Table.Body></Table>
       {snapshot.seats.length > 0 && <Button as={Link} to={`/committees/${snapshot.committee.id}/roll-call`} primary fluid>
-        {t('Roll call')}<Icon name="arrow right" /></Button>}
+        {t('Roll Call')}<Icon name="arrow right" /></Button>}
     </Grid.Column><Grid.Column width={5}>
     {owner && !readOnly && <Card fluid><Card.Content><Header as="h2">{t('Chairs')}</Header>
       <Form onSubmit={async () => {await execute('grant-chair', () => api.grantChair(snapshot.committee.id,
@@ -667,9 +667,9 @@ function SettingsPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
     <div className="committee-layout-toggles"><Checkbox toggle aria-label={t("'Queue' should appear above 'Next speaking'")} checked={snapshot.layoutSettings.moveQueueUp} disabled={readOnly}
       onChange={(_, data) => void setLayoutSetting({moveQueueUp: Boolean(data.checked)})}
       label={t("'Queue' should appear above 'Next speaking'")} />
-    <Checkbox toggle aria-label={t("Alternate arrangement with 'Speaker timer' and 'Caucus timer' in separate columns")} checked={snapshot.layoutSettings.timersInSeparateColumns} disabled={readOnly}
+    <Checkbox toggle aria-label={t("Alternate arrangement with 'Speaker timer' and 'Moderated Caucus timer' in separate columns")} checked={snapshot.layoutSettings.timersInSeparateColumns} disabled={readOnly}
       onChange={(_, data) => void setLayoutSetting({timersInSeparateColumns: Boolean(data.checked)})}
-      label={t("Alternate arrangement with 'Speaker timer' and 'Caucus timer' in separate columns")} /></div>
+      label={t("Alternate arrangement with 'Speaker timer' and 'Moderated Caucus timer' in separate columns")} /></div>
     {generalSpeakerList && <Form onSubmit={() => execute('general-speaker-duration', () => api.updateSpeakerList(
       generalSpeakerList.id, generalSpeakerList.revision, {defaultSpeechMs: generalSpeakerSeconds * 1000}))}>
       <Form.Input type="number" min={1} label={t('Speaker time in seconds')} value={generalSpeakerSeconds} disabled={readOnly}
@@ -768,8 +768,8 @@ function RollCallPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
         <Form.Input value={sessionName ?? ''} readOnly fluid />
         <Button primary fluid loading={pending === 'meeting'}>{t('Start meeting')}</Button>
       </Form>
-    </Segment>}<Confirm open={missingGeneralListConfirm} header={t('General speakers list missing')}
-      content={t('The previous session’s general speakers list could not be restored. Create a new list and continue?')}
+    </Segment>}<Confirm open={missingGeneralListConfirm} header={t("General Speaker's List missing")}
+      content={t("The previous session’s General Speaker's List could not be restored. Create a new list and continue?")}
       cancelButton={t('Cancel')} confirmButton={t('Create and continue')}
       onCancel={() => setMissingGeneralListConfirm(false)}
       onConfirm={() => {setMissingGeneralListConfirm(false); void startMeeting(true);}} />
@@ -801,8 +801,8 @@ function RollCallPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
   const rollCallFailed = quorumNotMet && (rollCall.status === 'COMPLETED' || quorumImpossible);
   const rollCallCompletedWithQuorum = rollCall.status === 'COMPLETED' && !quorumNotMet;
   return <Container fluid className="roll-call-page">
-    <div className="roll-call-heading"><Header as="h1">{t('Roll call')}</Header><div className="roll-call-heading-actions">
-      {chair && rollCall.status === 'COMPLETED' && <Button basic color="orange" icon="refresh" content={t('Restart roll call')}
+    <div className="roll-call-heading"><Header as="h1">{t('Roll Call')}</Header><div className="roll-call-heading-actions">
+      {chair && rollCall.status === 'COMPLETED' && <Button basic color="orange" icon="refresh" content={t('Restart Roll Call')}
         loading={pending === 'reset'} disabled={!!pending} onClick={() => setResetOpen(true)} />}
       <Label basic size="large">{t('{called} of {total} called', {called: rollCall.entries.length, total: seats.length})}</Label>
     </div></div>
@@ -833,8 +833,8 @@ function RollCallPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
             <div className="roll-call-flag-stage"><Flag seat={currentSeat} /></div>
             <Header as="h2" className="roll-call-current-name"><span>{currentSeat.displayName}</span></Header>
           </div>
-          : rollCallCompletedWithQuorum ? <Header as="h2" color="green">{t('Roll call complete')}</Header>
-          : <Header as="h2">{t('Roll call')}</Header>}</div>
+          : rollCallCompletedWithQuorum ? <Header as="h2" color="green">{t('Roll Call complete')}</Header>
+          : <Header as="h2">{t('Roll Call')}</Header>}</div>
         {chair && <div className="roll-call-actions">
           {currentSeat && rollCall.allowedResponses.map(response => <Button key={response}
             positive={response !== 'ABSENT'} negative={response === 'ABSENT'}
@@ -863,9 +863,9 @@ function RollCallPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
         </div>{rollCallCompletedWithQuorum && <Button as={Link} to={`/committees/${snapshot.committee.id}/motions`} primary fluid size="large">
           {t('Go to motions')}<Icon name="arrow right" /></Button>}</Segment>}
     </>}
-    <Confirm open={resetOpen} header={t(rollCall.status === 'COMPLETED' ? 'Restart roll call?' : 'Reset roll call?')}
-      content={t('This will start a new roll call for this meeting session.')}
-      cancelButton={t('Cancel')} confirmButton={t(rollCall.status === 'COMPLETED' ? 'Restart roll call' : 'Reset')} onCancel={() => setResetOpen(false)}
+    <Confirm open={resetOpen} header={t(rollCall.status === 'COMPLETED' ? 'Restart Roll Call?' : 'Reset Roll Call?')}
+      content={t('This will start a new Roll Call for this meeting session.')}
+      cancelButton={t('Cancel')} confirmButton={t(rollCall.status === 'COMPLETED' ? 'Restart Roll Call' : 'Reset')} onCancel={() => setResetOpen(false)}
       onConfirm={() => {setResetOpen(false); void execute('reset', () => api.resetRollCall(rollCall.id, rollCall.revision));}} />
   </Container>;
 }
@@ -1111,7 +1111,7 @@ function ModeratedCaucusCreateModal({open, snapshot, run, api, canChair, onClose
     dimmer={{onClick: (event: React.MouseEvent<HTMLElement>) => {
       if (event.target === event.currentTarget) setCloseHint(true);
     }}} mountNode={document.body} onClose={onClose} open={open} size="small">
-    <Modal.Header className="moderated-caucus-create-header">{t('New caucus')}
+    <Modal.Header className="moderated-caucus-create-header">{t('New Moderated Caucus')}
       <Button className="moderated-caucus-create-close" basic circular icon aria-label={t('Close dialog')} onClick={onClose}>
         <Icon name="close" />
       </Button>

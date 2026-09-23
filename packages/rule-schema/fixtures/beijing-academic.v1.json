@@ -22,7 +22,7 @@
     "twoThirdsMajority": {"formula": {"op": "ceil", "value": {"op": "multiply", "left": {"fact": "attendance.presentVotingSeatCount"}, "right": 0.6666666667}}}
   },
   "phases": [
-    {"id": "open-debate", "names": {"zh-CN": "正式辩论", "en": "Formal debate"}}
+    {"id": "open-debate", "names": {"zh-CN": "正式辩论", "en": "Formal Debate"}}
   ],
   "speakerLists": [
     {
@@ -41,9 +41,9 @@
     }
   ],
   "points": [
-    {"id": "point-of-order", "names": {"zh-CN": "程序性问题", "en": "Point of order"}, "interruptRequested": true},
-    {"id": "point-of-information", "names": {"zh-CN": "咨询性问题", "en": "Point of information"}, "interruptRequested": false},
-    {"id": "point-of-personal-privilege", "names": {"zh-CN": "个人特权问题", "en": "Point of personal privilege"}, "interruptRequested": true}
+    {"id": "point-of-order", "names": {"zh-CN": "程序性问题", "en": "Point of Order"}, "interruptRequested": true},
+    {"id": "point-of-information", "names": {"zh-CN": "咨询性问题", "en": "Point of Information"}, "interruptRequested": false},
+    {"id": "point-of-personal-privilege", "names": {"zh-CN": "个人特权问题", "en": "Point of Personal Privilege"}, "interruptRequested": true}
   ],
   "motions": [
     {"id": "open-unmoderated-caucus", "procedural": true, "effects": [{"type": "START_TIMER"}]},

@@ -35,41 +35,41 @@ interface CommitteeRow extends QueryResultRow {
 }
 
 const legacyMotionDefinitions = [
-  {id: 'open-unmoderated-caucus', names: {'zh-CN': '开启自由磋商', en: 'Open unmoderated caucus'}, procedural: true,
+  {id: 'open-unmoderated-caucus', names: {'zh-CN': '开启自由磋商', en: 'Open Unmoderated Caucus'}, procedural: true,
     effects: [{type: 'START_TIMER'}]},
-  {id: 'open-moderated-caucus', names: {'zh-CN': '开启有主持核心磋商', en: 'Open moderated caucus'}, procedural: true,
+  {id: 'open-moderated-caucus', names: {'zh-CN': '开启有主持核心磋商', en: 'Open Moderated Caucus'}, procedural: true,
     effects: [{type: 'CREATE_CAUCUS'}]},
-  {id: 'extend-unmoderated-caucus', names: {'zh-CN': '延长自由磋商', en: 'Extend unmoderated caucus'}, procedural: true,
+  {id: 'extend-unmoderated-caucus', names: {'zh-CN': '延长自由磋商', en: 'Extend Unmoderated Caucus'}, procedural: true,
     effects: [{type: 'START_TIMER'}]},
-  {id: 'extend-moderated-caucus', names: {'zh-CN': '延长有主持核心磋商', en: 'Extend moderated caucus'}, procedural: true,
+  {id: 'extend-moderated-caucus', names: {'zh-CN': '延长有主持核心磋商', en: 'Extend Moderated Caucus'}, procedural: true,
     effects: [{type: 'CREATE_CAUCUS'}]},
-  {id: 'close-moderated-caucus', names: {'zh-CN': '结束有主持核心磋商', en: 'Close moderated caucus'}, procedural: true,
+  {id: 'close-moderated-caucus', names: {'zh-CN': '结束有主持核心磋商', en: 'Close Moderated Caucus'}, procedural: true,
     effects: [{type: 'CREATE_CAUCUS'}]},
-  {id: 'introduce-draft-resolution', names: {'zh-CN': '介绍决议草案', en: 'Introduce draft resolution'},
+  {id: 'introduce-draft-resolution', names: {'zh-CN': '介绍决议草案', en: 'Introduce Draft Resolution'},
     requiredSecondCount: 1, effects: [{type: 'SET_DOCUMENT_STATUS'}]},
-  {id: 'introduce-amendment', names: {'zh-CN': '介绍修正案', en: 'Introduce amendment'},
+  {id: 'introduce-amendment', names: {'zh-CN': '介绍修正案', en: 'Introduce Amendment'},
     effects: [{type: 'SET_DOCUMENT_STATUS'}]},
-  {id: 'vote-on-amendment', names: {'zh-CN': '对修正案投票', en: 'Vote on amendment'},
+  {id: 'vote-on-amendment', names: {'zh-CN': '对修正案投票', en: 'Vote on Amendment'},
     effects: [{type: 'START_BALLOT'}]},
   {id: 'suspend-draft-resolution-speakers-list', names: {'zh-CN': '暂停决议草案发言名单',
-    en: 'Suspend draft resolution speakers list'}, effects: [{type: 'SET_DOCUMENT_STATUS'}]},
-  {id: 'vote-on-resolution', names: {'zh-CN': '对决议草案投票', en: 'Vote on resolution'}, effects: [{type: 'START_BALLOT'}]},
-  {id: 'open-debate', names: {'zh-CN': '开启正式辩论', en: 'Open formal debate'}, procedural: true,
+    en: "Suspend Draft Resolution Speaker's List"}, effects: [{type: 'SET_DOCUMENT_STATUS'}]},
+  {id: 'vote-on-resolution', names: {'zh-CN': '对决议草案投票', en: 'Vote on Draft Resolution'}, effects: [{type: 'START_BALLOT'}]},
+  {id: 'open-debate', names: {'zh-CN': '开启正式辩论', en: 'Open Formal Debate'}, procedural: true,
     effects: [{type: 'OPEN_DISCUSSION'}]},
-  {id: 'suspend-debate', names: {'zh-CN': '暂停辩论', en: 'Suspend debate'}, procedural: true,
+  {id: 'suspend-debate', names: {'zh-CN': '暂停辩论', en: 'Suspend Formal Debate'}, procedural: true,
     effects: [{type: 'OPEN_DISCUSSION'}]},
-  {id: 'resume-debate', names: {'zh-CN': '恢复辩论', en: 'Resume debate'}, procedural: true,
+  {id: 'resume-debate', names: {'zh-CN': '恢复辩论', en: 'Resume Formal Debate'}, procedural: true,
     effects: [{type: 'OPEN_DISCUSSION'}]},
   {id: 'suspend-meeting', names: {'zh-CN': '暂停会议', en: 'Suspend the meeting'}, procedural: true,
     effects: [{type: 'OPEN_DISCUSSION'}]},
-  {id: 'close-debate', names: {'zh-CN': '结束正式辩论', en: 'Close formal debate'}, procedural: true,
+  {id: 'close-debate', names: {'zh-CN': '结束正式辩论', en: 'Close Formal Debate'}, procedural: true,
     effects: [{type: 'OPEN_DISCUSSION'}]},
   {id: 'adjourn-meeting', names: {'zh-CN': '休会', en: 'Adjourn the meeting'}, procedural: true,
     effects: [{type: 'OPEN_DISCUSSION'}]},
-  {id: 'reorder-draft-resolutions', names: {'zh-CN': '调整决议草案顺序', en: 'Reorder draft resolutions'},
+  {id: 'reorder-draft-resolutions', names: {'zh-CN': '调整决议草案顺序', en: 'Reorder Draft Resolutions'},
     effects: [{type: 'SET_DOCUMENT_STATUS'}]},
-  {id: 'propose-strawpoll', names: {'zh-CN': '提出意向性投票', en: 'Propose strawpoll'}, effects: [{type: 'START_BALLOT'}]},
-  {id: 'introduce-working-paper', names: {'zh-CN': '介绍工作文件', en: 'Introduce working paper'},
+  {id: 'propose-strawpoll', names: {'zh-CN': '提出意向性投票', en: 'Propose Strawpoll'}, effects: [{type: 'START_BALLOT'}]},
+  {id: 'introduce-working-paper', names: {'zh-CN': '介绍工作文件', en: 'Introduce Working Paper'},
     effects: [{type: 'START_TIMER'}]}
 ] as const;
 
@@ -99,11 +99,11 @@ function builtInVersion4(definition: RulePackageDefinition): RulePackageDefiniti
 function builtInVersion6(definition: RulePackageDefinition): RulePackageDefinition {
   const upgraded = builtInVersion4(definition);
   const names: Record<string, {'zh-CN': string; en: string}> = {
-    'postpone-resolution': {'zh-CN': '推迟决议草案', en: 'Postpone draft resolution'},
-    'resume-resolution': {'zh-CN': '恢复决议草案', en: 'Resume draft resolution'},
-    'discuss-amendment': {'zh-CN': '讨论修正案', en: 'Discuss amendment'},
-    'postpone-amendment': {'zh-CN': '推迟修正案', en: 'Postpone amendment'},
-    'resume-amendment': {'zh-CN': '恢复修正案', en: 'Resume amendment'}
+    'postpone-resolution': {'zh-CN': '推迟决议草案', en: 'Postpone Draft Resolution'},
+    'resume-resolution': {'zh-CN': '恢复决议草案', en: 'Resume Draft Resolution'},
+    'discuss-amendment': {'zh-CN': '讨论修正案', en: 'Discuss Amendment'},
+    'postpone-amendment': {'zh-CN': '推迟修正案', en: 'Postpone Amendment'},
+    'resume-amendment': {'zh-CN': '恢复修正案', en: 'Resume Amendment'}
   };
   return {...upgraded, motions: upgraded.motions.map(item => ({...item, names: item.names ?? names[item.id]}))};
 }

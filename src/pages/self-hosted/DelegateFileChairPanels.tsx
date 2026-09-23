@@ -10,9 +10,9 @@ import FilesPanel, {storageErrorText} from './FilesPanel';
 import {Link} from 'react-router-dom';
 
 const FILE_TYPES: Array<{key: DelegateFileType; value: DelegateFileType; text: string}> = [
-  {key: 'WORKING_PAPER', value: 'WORKING_PAPER', text: "Working paper"},
-  {key: 'DIRECTIVE_DRAFT', value: 'DIRECTIVE_DRAFT', text: "Draft directive"},
-  {key: 'RESOLUTION_DRAFT', value: 'RESOLUTION_DRAFT', text: "resolution"}
+  {key: 'WORKING_PAPER', value: 'WORKING_PAPER', text: 'Working Paper'},
+  {key: 'DIRECTIVE_DRAFT', value: 'DIRECTIVE_DRAFT', text: 'Draft Directive'},
+  {key: 'RESOLUTION_DRAFT', value: 'RESOLUTION_DRAFT', text: 'Draft Resolution'}
 ];
 
 function dateTime(value: string | null): string { return value ? new Date(value).toLocaleString(getLanguage()) : '—'; }
@@ -269,7 +269,7 @@ function DelegateFileReviewPanel({snapshot, api, files, refresh}: {
       onClose={() => {if (!working) setReplacing(undefined);}}>
       <Modal.Header>{t('Replace and publish file')}</Modal.Header>
       <Modal.Content><Header as="h4" style={{overflowWrap: 'anywhere'}}>{replacing?.logicalName}</Header>
-        <p>{t('This will replace the current version. Resolutions and amendments that reference this file will use the new version.')}</p>
+        <p>{t('This will replace the current version. Draft Resolutions and Amendments that reference this file will use the new version.')}</p>
         {error && <Message error content={error} />}
       </Modal.Content>
       <Modal.Actions><Button disabled={working} onClick={() => setReplacing(undefined)}>{t('Cancel')}</Button>

@@ -35,9 +35,9 @@ describe('committee content language', () => {
     expect(() => motionContentName({fr: 'Texte'}, 'en', 'zh-CN')).toThrow('Missing committee translation');
   });
   it.each(['en', 'zh-CN'] as const)('uses explicit automatic metadata and preserves lookalike user titles in %s', language => {
-    expect(formatCommitteeContent({kind: 'AMENDMENT', ordinal: 9, customTitle: 'New amendment 1'}, language)).toBe('New amendment 1');
+    expect(formatCommitteeContent({kind: 'AMENDMENT', ordinal: 9, customTitle: 'New Amendment 1'}, language)).toBe('New Amendment 1');
     expect(formatCommitteeContent({kind: 'RESOLUTION', sessionOrdinal: 3, ordinal: 8, customTitle: '第1会期'}, language)).toBe('第1会期');
-    expect(formatCommitteeContent({kind: 'STRAWPOLL', ordinal: 2, question: 'New strawpoll 1'}, language)).toBe('New strawpoll 1');
+    expect(formatCommitteeContent({kind: 'STRAWPOLL', ordinal: 2, question: 'New Strawpoll 1'}, language)).toBe('New Strawpoll 1');
   });
   it('formats each resource using its explicit committee language and number', () => {
     expect(formatCommitteeContent({kind: 'GENERAL_SPEAKERS_LIST', customTitle: null}, 'en')).toBe("General Speaker's List");
@@ -45,8 +45,8 @@ describe('committee content language', () => {
     expect(formatCommitteeContent({kind: 'SESSION', ordinal: 2}, 'en')).toBe('Session 2');
     expect(formatCommitteeContent({kind: 'SESSION', ordinal: 2}, 'zh-CN')).toBe('第2会期');
     expect(formatCommitteeContent({kind: 'RESOLUTION', sessionOrdinal: 2, ordinal: 12, customTitle: null}, 'zh-CN')).toBe('决议草案 2.12');
-    expect(formatCommitteeContent({kind: 'AMENDMENT', ordinal: 2, customTitle: null}, 'en')).toBe('New amendment 2');
-    expect(formatCommitteeContent({kind: 'STRAWPOLL', ordinal: 2, question: ''}, 'en')).toBe('New strawpoll 2');
+    expect(formatCommitteeContent({kind: 'AMENDMENT', ordinal: 2, customTitle: null}, 'en')).toBe('New Amendment 2');
+    expect(formatCommitteeContent({kind: 'STRAWPOLL', ordinal: 2, question: ''}, 'en')).toBe('New Strawpoll 2');
     expect(formatCommitteeContent({kind: 'MODERATED_CAUCUS', topic: '用户主题', customTitle: null}, 'en')).toBe('用户主题');
   });
   it.each([0, -1, 1.1, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1])('rejects invalid ordinal %s', ordinal => {

@@ -463,7 +463,7 @@ describe('committee workspace routes and roles', () => {
     expect(page.textContent).toContain('Open a meeting first.');
     expect(page.querySelector('.motions-empty-card')).not.toBeNull();
     expect(page.querySelector('.motions-empty-card-content')).not.toBeNull();
-    expect(page.querySelector('.motions-empty-card a[href="/committees/committee/roll-call"]')?.textContent).toContain('Roll call');
+    expect(page.querySelector('.motions-empty-card a[href="/committees/committee/roll-call"]')?.textContent).toContain('Roll Call');
   });
 
   it.each(['suspend-meeting', 'adjourn-meeting'])('returns to the pending-session page after passing %s', async motionTypeId => {
@@ -499,7 +499,7 @@ describe('committee workspace routes and roles', () => {
     expect(page.querySelector('.motions-empty-card')?.textContent).toContain(
       motionTypeId === 'adjourn-meeting' ? 'Meeting ended' : 'Open a meeting first.');
     expect([...page.querySelectorAll('button')].some(button => button.textContent?.trim() === 'Passed')).toBe(false);
-    expect(page.querySelector('.motions-empty-card a[href="/committees/committee/roll-call"]')?.textContent).toContain('Roll call');
+    expect(page.querySelector('.motions-empty-card a[href="/committees/committee/roll-call"]')?.textContent).toContain('Roll Call');
   });
 
   it('allows starting the next session after adjournment and clears the ended notice', async () => {
@@ -672,7 +672,7 @@ describe('committee workspace routes and roles', () => {
       activeRules: {...value.activeRules, motionTypes: [{id: 'introduce-draft-resolution',
         names: {en: 'Introduce draft resolution', 'zh-CN': '展示决议草案'}, procedural: true,
         requiredSecondCount: 0}]}}), {proposeMotion});
-    expect(page.textContent).toContain('Target resolution');
+    expect(page.textContent).toContain('Target Draft Resolution');
     expect(page.textContent).toContain('New draft resolution 1');
     expect(page.textContent).not.toContain('Name');
     expect([...page.querySelectorAll('.motion-proposal-form label')].map(label => label.textContent)).not.toContain('Seconder');
@@ -680,7 +680,7 @@ describe('committee workspace routes and roles', () => {
     await act(async () => {proposer?.click(); await Promise.resolve();});
     await act(async () => {proposer?.querySelector<HTMLElement>('[role="option"]')?.click(); await Promise.resolve();});
     const target = [...page.querySelectorAll<HTMLElement>('.motion-proposal-form .field')]
-      .find(field => field.querySelector('label')?.textContent === 'Target resolution')?.querySelector<HTMLElement>('.ui.dropdown');
+      .find(field => field.querySelector('label')?.textContent === 'Target Draft Resolution')?.querySelector<HTMLElement>('.ui.dropdown');
     await act(async () => {target?.click(); await Promise.resolve();});
     await act(async () => {target?.querySelector<HTMLElement>('[role="option"]')?.click(); await Promise.resolve();});
     await act(async () => {page.querySelector<HTMLButtonElement>('button[aria-label="Propose motion"]')?.click(); await Promise.resolve();});
@@ -709,9 +709,9 @@ describe('committee workspace routes and roles', () => {
       ] as ProceedingDocument[],
       activeRules: {...value.activeRules, motionTypes: [{id: 'introduce-amendment',
         names: {en: 'Introduce amendment', 'zh-CN': '展示修正案'}, procedural: true, requiredSecondCount: 1}]}}));
-    expect(page.textContent).toContain('Target amendment');
+    expect(page.textContent).toContain('Target Amendment');
     expect(page.textContent).toContain('New amendment 1');
-    expect(page.textContent).not.toContain('Target resolution');
+    expect(page.textContent).not.toContain('Target Draft Resolution');
   });
 
   it('targets an introduced amendment from the formal-vote motion', async () => {
@@ -730,7 +730,7 @@ describe('committee workspace routes and roles', () => {
           content: 'Replace clause 1', contentFile: null, createdAt: '2026-08-14T00:00:00.000Z'}}] as ProceedingDocument[],
       activeRules: {...value.activeRules, motionTypes: [{id: 'vote-on-amendment',
         names: {en: 'Vote on amendment', 'zh-CN': '对修正案投票'}, procedural: false, requiredSecondCount: 0}]}}));
-    expect(page.textContent).toContain('Target amendment');
+    expect(page.textContent).toContain('Target Amendment');
     expect(page.textContent).toContain('New amendment 1');
     expect(page.textContent).not.toContain('Text');
   });
@@ -771,7 +771,7 @@ describe('committee workspace routes and roles', () => {
         names: {en: 'Open a moderated caucus', 'zh-CN': '开启有主持核心磋商'}, procedural: true,
         requiredSecondCount: 1}]}}));
 
-    const optionLabel = `${language === 'zh-CN' ? '有主持核心磋商' : 'Moderated caucus'} - ${title}`;
+    const optionLabel = `${language === 'zh-CN' ? '有主持核心磋商' : 'Moderated Caucus'} - ${title}`;
     expect(page.textContent).toContain(optionLabel);
     const option = [...page.querySelectorAll<HTMLElement>('.motion-proposal-form .menu .item')]
       .find(item => item.textContent?.includes(optionLabel));
@@ -941,7 +941,7 @@ describe('committee workspace routes and roles', () => {
         requiredSecondCount: 1}]}});
     const page = await render('CHAIR', '/committees/committee/motions', user, customize, {closeBallot});
 
-    expect(page.querySelector('.motion-ballot-panel')?.textContent).toContain('Formal ballot');
+    expect(page.querySelector('.motion-ballot-panel')?.textContent).toContain('Formal Ballot');
     expect(page.querySelector('.motion-ballot-panel')?.textContent).toContain('China: For');
     const stop = page.querySelector<HTMLButtonElement>('.motion-stop-voting');
     expect(stop?.textContent?.trim()).toBe('Stop voting');
@@ -1049,7 +1049,7 @@ describe('committee workspace routes and roles', () => {
         activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1,
         createdAt: '2026-08-14T00:00:00.000Z', closedAt: null}}));
     const createItem = [...page.querySelectorAll<HTMLElement>('.committee-primary-navigation .dropdown .item')]
-      .find(item => item.textContent?.includes('New caucus'));
+      .find(item => item.textContent?.includes('New Moderated Caucus'));
     await act(async () => {createItem?.click(); await Promise.resolve();});
     const dimmer = document.querySelector<HTMLElement>('.moderated-caucus-create-modal')?.parentElement;
     act(() => dimmer?.dispatchEvent(new MouseEvent('click', {bubbles: true})));
@@ -1075,7 +1075,7 @@ describe('committee workspace routes and roles', () => {
     const moderated = await render('CHAIR', '/committees/committee/caucuses/list', user,
       value => withList(value, 'MODERATED_CAUCUS'), {updateSpeakerList});
     expect(moderated.querySelector('textarea')).toBeNull();
-    const name = moderated.querySelector<HTMLInputElement>('input[placeholder="Set caucus name"]');
+    const name = moderated.querySelector<HTMLInputElement>('input[placeholder="Set Moderated Caucus name"]');
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(name, 'International finance');
       name?.dispatchEvent(new Event('input', {bubbles: true}));
@@ -1599,7 +1599,7 @@ describe('committee workspace routes and roles', () => {
     expect([...page.querySelectorAll<HTMLInputElement>('.amendment-card input')]
       .some(input => input.value === 'New amendment 1')).toBe(true);
     expect(page.textContent).toContain('Replace clause 1');
-    const add = page.querySelector<HTMLButtonElement>('button[aria-label="Create amendment"]');
+    const add = page.querySelector<HTMLButtonElement>('button[aria-label="Create Amendment"]');
     await act(async () => {add?.click(); await Promise.resolve();});
     expect(createAmendment).toHaveBeenCalledWith('resolution',
       {meetingSessionId: 'meeting', customTitle: null, content: '', onBehalfOfSeatId: 'seat'});
@@ -1647,7 +1647,7 @@ describe('committee workspace routes and roles', () => {
           frozenAt: '2026-08-14T00:00:00.000Z'}, eligibility: [{seatId: 'seat', seatDisplayName: 'China',
           mustVote: false, hasVeto: true}], threshold: {kind: 'SIMPLE_MAJORITY', value: 1}, votes: [], result: null,
         revision: 1, openedAt: '2026-08-14T00:00:00.000Z', closedAt: null, publishedAt: null}]}));
-    expect(ballotPage.textContent).toContain('Formal ballot');
+    expect(ballotPage.textContent).toContain('Formal Ballot');
     expect(ballotPage.textContent).toContain('For');
     expect(ballotPage.textContent).toContain('Against');
   });
@@ -1875,7 +1875,7 @@ describe('committee workspace routes and roles', () => {
     expect(page.querySelector('.resolution-voting-board')).not.toBeNull();
     expect(page.querySelectorAll('.resolution-voting-member')).toHaveLength(1);
     expect(page.textContent).toContain('Now voting');
-    expect(page.textContent).toContain('Formal ballot');
+    expect(page.textContent).toContain('Formal Ballot');
     const undo = [...page.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.trim() === 'Undo');
     expect(Boolean(undo)).toBe(automaticResult === null);
     if (automaticResult === null) expect(undo?.disabled).toBe(true);

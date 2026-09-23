@@ -10,7 +10,7 @@ import {Button, Form, Header, Icon, Message, Modal, Segment} from 'semantic-ui-r
 import {selfHostedApi, SelfHostedApiError, type SelfHostedApi} from '../../services/self-hosted-api';
 
 const FILE_TYPES: Array<[DelegateFileType, string]> = [
-  ['WORKING_PAPER', "Working paper"], ['DIRECTIVE_DRAFT', "Draft directive"], ['RESOLUTION_DRAFT', "resolution"]
+  ['WORKING_PAPER', 'Working Paper'], ['DIRECTIVE_DRAFT', 'Draft Directive'], ['RESOLUTION_DRAFT', 'Draft Resolution']
 ];
 
 export function DelegateFileSettingsPanel({committeeId, committeeLanguage, api = selfHostedApi, readOnly = false}: {

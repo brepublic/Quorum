@@ -58,9 +58,9 @@ export function motionContentName(names: LocalizedNames, interfaceLanguage: Cont
 }
 
 export function delegateFileTypeName(type: import('./delegate-files.js').DelegateFileType, language: ContentLanguage): string {
-  const names = {WORKING_PAPER: {en: 'Working paper', 'zh-CN': '工作文件'},
-    DIRECTIVE_DRAFT: {en: 'Draft directive', 'zh-CN': '指令草案'},
-    RESOLUTION_DRAFT: {en: 'Draft resolution', 'zh-CN': '决议草案'}};
+  const names = {WORKING_PAPER: {en: 'Working Paper', 'zh-CN': '工作文件'},
+    DIRECTIVE_DRAFT: {en: 'Draft Directive', 'zh-CN': '指令草案'},
+    RESOLUTION_DRAFT: {en: 'Draft Resolution', 'zh-CN': '决议草案'}};
   return names[type][language];
 }
 
@@ -87,8 +87,8 @@ export function formatCommitteeContent(resource: AutomaticContentName, language:
     case 'SESSION': return zh ? `第${positiveOrdinal(resource.ordinal)}会期` : `Session ${positiveOrdinal(resource.ordinal)}`;
     case 'GENERAL_SPEAKERS_LIST': return zh ? '主发言名单' : "General Speaker's List";
     case 'MODERATED_CAUCUS': return resource.topic || (zh ? '未命名有主持核心磋商' : 'Untitled caucus');
-    case 'RESOLUTION': return `${zh ? '决议草案' : 'Draft resolution'} ${positiveOrdinal(resource.sessionOrdinal)}.${positiveOrdinal(resource.ordinal)}`;
-    case 'AMENDMENT': return `${zh ? '新修正案' : 'New amendment '}${positiveOrdinal(resource.ordinal)}`;
-    case 'STRAWPOLL': return resource.question || `${zh ? '新意向性投票' : 'New strawpoll '}${positiveOrdinal(resource.ordinal)}`;
+    case 'RESOLUTION': return `${zh ? '决议草案' : 'Draft Resolution'} ${positiveOrdinal(resource.sessionOrdinal)}.${positiveOrdinal(resource.ordinal)}`;
+    case 'AMENDMENT': return `${zh ? '新修正案' : 'New Amendment '}${positiveOrdinal(resource.ordinal)}`;
+    case 'STRAWPOLL': return resource.question || `${zh ? '新意向性投票' : 'New Strawpoll '}${positiveOrdinal(resource.ordinal)}`;
   }
 }
