@@ -1,0 +1,62 @@
+- navigation "委员会导航":
+  - link "联合国安全理事会":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/info
+  - link "席位":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/setup
+  - link "点名":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/roll-call
+  - link "动议":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/motions
+  - link "问题":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/points
+  - link "主发言名单":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/caucuses/f9b8529a-4b94-446f-a3f0-38f99f987154
+  - link "自由磋商":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/unmod
+  - listbox:
+    - alert: 有主持核心磋商
+    - generic: 
+    - text: 
+  - listbox:
+    - alert: 决议草案
+    - generic: 
+    - text: 
+  - listbox:
+    - alert: 意向性投票
+    - generic: 
+    - text: 
+  - link "笔记":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/notes
+  - listbox "更多选项":
+    - generic: 
+  - generic "出席代表数/三分之二多数/简单多数": 15/10/8
+  - generic "实时":
+    - generic: 
+  - listbox "账户菜单":
+    - alert: Colin
+    - generic: 
+    - text:      
+- navigation "委员会导航":        
+- generic "资料分区":
+  - link "文件总览":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/posts/attachments
+  - link "分享":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/posts/share
+  - link "上传文件":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/posts/upload
+  - link "存储设置":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/posts/storage
+  - link "文件设置":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/posts/file-settings
+- status:
+  - generic: 
+  - heading "文件已提交，等待审核" [level=3]
+  - paragraph: quorum-ui-fix-0923.txt
+  - button "查看文件":
+    - text: 查看文件
+    - generic: 
+- generic: 选择文件
+- button "选择文件"
+- button "上传文件" [disabled]:
+  - text: 上传文件
+  - generic: 

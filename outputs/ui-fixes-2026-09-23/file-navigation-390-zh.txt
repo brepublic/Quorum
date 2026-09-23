@@ -1,0 +1,33 @@
+- text:               
+- navigation "委员会导航":
+  - button "打开委员会导航":
+    - generic: 
+  - link "联合国安全理事会":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/info
+  - listbox "账户菜单":
+    - alert: Colin
+    - generic: 
+    - text:      
+- generic "资料分区":
+  - link "文件总览":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/posts/attachments
+  - link "分享":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/posts/share
+  - link "上传文件":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/posts/upload
+  - link "存储设置":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/posts/storage
+  - link "文件设置":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/posts/file-settings
+- status:
+  - generic: 
+  - heading "文件已提交，等待审核" [level=3]
+  - paragraph: quorum-ui-fix-0923.txt
+  - button "查看文件":
+    - text: 查看文件
+    - generic: 
+- generic: 选择文件
+- button "选择文件"
+- button "上传文件" [disabled]:
+  - text: 上传文件
+  - generic: 

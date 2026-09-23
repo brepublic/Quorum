@@ -1,0 +1,59 @@
+- link "Quorum":
+  - /url: /committees
+- listbox "账户菜单":
+  - alert: Colin
+  - generic: 
+  - text:      
+- heading "Quorum" [level=1]
+- heading "Colin" [level=3]
+- heading "我创建的委员会" [level=4]
+- link "修复验收 0923 正常":
+  - /url: /committees/bf6fec02-eec5-4733-9d1a-a2bc7453c831
+  - generic: 修复验收 0923
+  - generic: 正常
+- button "删除委员会“修复验收 0923”":
+  - generic: 
+- link "UI audit 0922 EN 正常":
+  - /url: /committees/5dc1fd5b-7af8-4602-bdb1-59afe404f90e
+  - generic: UI audit 0922 EN
+  - generic: 正常
+- button "删除委员会“UI audit 0922 EN”":
+  - generic: 
+- button "退出登录":
+  - generic: 
+  - text: 退出登录
+- generic: 模板
+- combobox:
+  - textbox
+  - alert: 使用模板免去手动添加成员（可选）
+  - generic: 
+- button:
+  - generic: 
+- generic: 国家模板 *
+- listbox:
+  - alert: 默认国家
+  - generic: 
+- generic: 议事规则 *
+- listbox:
+  - alert: 北京学术标准 2021 · 5
+  - generic: 
+- generic: 委员会语言 *
+- listbox:
+  - alert: 简体中文
+  - generic: 
+- generic: 名称 *
+- textbox "名称 *":
+  - /placeholder: 委员会名称
+- generic: 议题
+- textbox "议题":
+  - /placeholder: 委员会议题
+- generic: 会议
+- textbox "会议":
+  - /placeholder: 会议名称
+- generic: 可见性
+- listbox:
+  - alert: 私有
+  - generic: 
+- button "创建委员会" [disabled]:
+  - text: 创建委员会
+  - generic: 

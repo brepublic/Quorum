@@ -1,0 +1,20 @@
+{
+  "retainedVersionId": "8ce2296c-2df0-4c18-ae1e-f4a4f0cea221",
+  "name": "北京学术标准 2021",
+  "removedVersions": 9,
+  "removedCommittees": [
+    {
+      "id": "37dc3a8c-8cd6-49de-954f-507a4ede261b",
+      "name": "联合国安全理事会"
+    },
+    {
+      "id": "7fccea9f-3640-49ee-9698-6d8deab66f4e",
+      "name": "Localization acceptance-EN"
+    },
+    {
+      "id": "bd42a925-530a-46b7-ac5f-5c11bbd2e5e1",
+      "name": "多语言验收-ZH"
+    }
+  ],
+  "retainedAccountsTemplatesAndSettings": true
+}

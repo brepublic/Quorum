@@ -1,0 +1,41 @@
+- navigation "Committee navigation":
+  - link "修复验收 0923":
+    - /url: /committees/bf6fec02-eec5-4733-9d1a-a2bc7453c831/info
+  - link "Seats":
+    - /url: /committees/bf6fec02-eec5-4733-9d1a-a2bc7453c831/setup
+  - link "Roll call":
+    - /url: /committees/bf6fec02-eec5-4733-9d1a-a2bc7453c831/roll-call
+  - link "Motions":
+    - /url: /committees/bf6fec02-eec5-4733-9d1a-a2bc7453c831/motions
+  - link "Points":
+    - /url: /committees/bf6fec02-eec5-4733-9d1a-a2bc7453c831/points
+  - link "Unmoderated caucus":
+    - /url: /committees/bf6fec02-eec5-4733-9d1a-a2bc7453c831/unmod
+  - listbox:
+    - alert: Moderated caucuses
+    - generic: 
+    - text: 
+  - listbox:
+    - alert: Resolutions
+    - generic: 
+    - text: 
+  - listbox:
+    - alert: Strawpolls
+    - generic: 
+    - text: 
+  - link "Notes":
+    - /url: /committees/bf6fec02-eec5-4733-9d1a-a2bc7453c831/notes
+  - link "Files":
+    - /url: /committees/bf6fec02-eec5-4733-9d1a-a2bc7453c831/posts
+  - listbox "More options":
+    - generic: 
+  - generic "Live":
+    - generic: 
+  - listbox "Account menu":
+    - alert: Colin
+    - generic: 
+    - text:      
+- navigation "Committee navigation":        
+- generic: Set meeting session
+- textbox: Session 1
+- button "Start meeting"

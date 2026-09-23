@@ -1,0 +1,58 @@
+- text:               
+- navigation "Committee navigation":
+  - button "Open committee navigation":
+    - generic: 
+  - link "联合国安全理事会":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/info
+  - listbox "Account menu":
+    - alert: Colin
+    - generic: 
+    - text:      
+- textbox "Set resolution name": 决议草案 1.1
+- generic: Draft
+- link "Text":
+  - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/resolutions/07e22ffb-916e-4040-905e-3d8980007a17
+- link "Amendments":
+  - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/resolutions/07e22ffb-916e-4040-905e-3d8980007a17/amendments
+- link "Voting":
+  - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/resolutions/07e22ffb-916e-4040-905e-3d8980007a17/voting
+- button "File"
+- button "Text"
+- heading "界面检查 0922 文件" [level=4]
+- generic: 工作文件
+- generic: 
+- text: Published
+- button "Download":
+  - text: Download
+  - generic: 
+- generic: Choose file
+- listbox:
+  - generic: 
+- button "Use this file" [disabled]:
+  - generic: 
+  - text: Use this file
+- region "Drafting countries":
+  - generic: Drafting countries
+  - list:
+    - generic: 巴林
+    - button "Remove 巴林":
+      - generic: 
+  - combobox "Drafting countries":
+    - textbox
+    - alert: Country or delegation
+    - generic: 
+  - button "Add country" [disabled]:
+    - generic: 
+    - text: Add country
+- region "Seconding countries":
+  - generic: Seconding countries
+  - list
+  - combobox "Seconding countries":
+    - textbox
+    - alert: Country or delegation
+    - generic: 
+  - button "Add country" [disabled]:
+    - generic: 
+    - text: Add country
+- checkbox
+- generic: Delegates can amend

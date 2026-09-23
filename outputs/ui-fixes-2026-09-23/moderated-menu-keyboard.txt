@@ -1,0 +1,109 @@
+- navigation "委员会导航":
+  - link "联合国安全理事会":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/info
+  - link "席位":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/setup
+  - link "点名":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/roll-call
+  - link "动议":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/motions
+  - link "问题":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/points
+  - link "主发言名单":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/caucuses/f9b8529a-4b94-446f-a3f0-38f99f987154
+  - link "自由磋商":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/unmod
+  - listbox:
+    - alert: 有主持核心磋商
+    - generic: 
+    - text: 
+  - listbox:
+    - alert: 决议草案
+    - generic: 
+    - text: 
+  - listbox:
+    - alert: 意向性投票
+    - generic: 
+    - text: 
+  - link "笔记":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/notes
+  - listbox "更多选项":
+    - generic: 
+  - generic "出席代表数/三分之二多数/简单多数": 15/10/8
+  - generic "实时":
+    - generic: 
+  - listbox "账户菜单":
+    - alert: Colin
+    - generic: 
+    - text:      
+- navigation "委员会导航":        
+- textbox "设置磋商名称": 界面检查 0922
+- listbox:
+  - alert: 开放
+  - generic: 
+- generic: 正在发言
+- generic: (无)
+- generic: 发言队列
+- combobox [expanded]:
+  - textbox [active]
+  - generic: 巴林
+  - generic: 
+- button "加入队列":
+  - generic: 
+  - text: 加入队列
+- generic: 下一位发言
+- generic: (无)
+- generic: 发言计时器
+- button "1:00":
+  - time: 1:00
+- button "取消静音":
+  - generic: 
+- textbox "时长": "1"
+- listbox:
+  - alert: 分钟
+  - generic: 
+- button "设置"
+- button "就位" [disabled]:
+  - generic: 
+  - text: 就位
+- generic: 磋商计时器
+- button "10:00":
+  - time: 10:00
+- button "取消静音":
+  - generic: 
+- textbox "时长": "10"
+- listbox:
+  - alert: 分钟
+  - generic: 
+- button "设置"
+- listbox:
+  - option "巴林" [selected]:
+    - generic: 巴林
+  - option "中国":
+    - generic: 中国
+  - option "哥伦比亚":
+    - generic: 哥伦比亚
+  - option "刚果（金）":
+    - generic: 刚果（金）
+  - option "丹麦":
+    - generic: 丹麦
+  - option "法国":
+    - generic: 法国
+  - option "希腊":
+    - generic: 希腊
+  - option "拉脱维亚":
+    - generic: 拉脱维亚
+  - option "利比里亚":
+    - generic: 利比里亚
+  - option "巴基斯坦":
+    - generic: 巴基斯坦
+  - option "巴拿马":
+    - generic: 巴拿马
+  - option "俄罗斯":
+    - generic: 俄罗斯
+  - option "索马里":
+    - generic: 索马里
+  - option "英国":
+    - generic: 英国
+  - option "美国":
+    - generic: 美国

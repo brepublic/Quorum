@@ -1,0 +1,46 @@
+- text:               
+- navigation "Committee navigation":
+  - button "Open committee navigation":
+    - generic: 
+  - link "UI audit 0922 EN":
+    - /url: /committees/5dc1fd5b-7af8-4602-bdb1-59afe404f90e/info
+  - listbox "Account menu":
+    - alert: Colin
+    - generic: 
+    - text:      
+- generic: Point type
+- combobox:
+  - textbox
+  - alert: Point of order
+  - generic: 
+- generic: Raised by
+- combobox:
+  - textbox
+  - alert: Afghanistan
+  - generic: 
+- generic: Reason (optional)
+- textbox
+- button "Raise point" [active]:
+  - generic: 
+- generic: Session 1
+- generic: Point of order
+- generic: 
+- text: Pending
+- table:
+  - rowgroup:
+    - row "Raised by Afghanistan":
+      - cell "Raised by"
+      - cell "Afghanistan"
+- button "Uphold point"
+- button "Overrule point"
+- generic: Point of order
+- generic: 
+- text: Point upheld
+- table:
+  - rowgroup:
+    - row "Raised by Afghanistan":
+      - cell "Raised by"
+      - cell "Afghanistan"
+    - 'row "Reason UI audit 0922: inspect handling states."':
+      - cell "Reason"
+      - 'cell "UI audit 0922: inspect handling states."'

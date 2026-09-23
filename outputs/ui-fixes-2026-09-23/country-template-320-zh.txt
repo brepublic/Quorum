@@ -1,0 +1,64 @@
+- link "Quorum":
+  - /url: /committees
+- listbox "账户菜单":
+  - alert: Colin
+  - generic: 
+  - text:      
+- heading "国家管理器" [level=1]
+- button "新建国家模板":
+  - generic: 
+  - text: 新建国家模板
+- list:
+  - generic: 
+  - generic: 默认国家
+  - generic: 内置 · 250 个国家
+  - generic: 
+  - generic: 语言切换验收 20260918
+  - generic: 0 个国家
+  - generic: 
+  - generic: UI audit 0922 countries
+  - generic: 1 个国家
+- heading "编辑国家模板" [level=2]
+- button "克隆国家模板":
+  - generic: 
+  - text: 克隆国家模板
+- generic: 国家模板名称 *
+- textbox "国家模板名称 *": UI audit 0922 countries
+- button "其他语言":
+  - generic: 
+  - text: 其他语言
+- heading "国家" [level=3]
+- button "添加国家名称语言":
+  - generic: 
+  - text: 添加国家名称语言
+- table:
+  - rowgroup:
+    - row "国家名称 · en 修复验收国家 国旗 🏳️ 大洲 移除":
+      - cell "国家名称 · en 修复验收国家":
+        - text: 国家名称 · en
+        - textbox "国家名称 · en · 1": 修复验收国家
+      - cell "国旗 🏳️":
+        - text: 国旗
+        - generic: 🏳️
+        - listbox:
+          - alert: Emoji
+          - generic: 
+        - textbox: 🏳️
+      - cell "大洲":
+        - text: 大洲
+        - listbox:
+          - alert: 亚洲
+          - generic: 
+      - cell "移除":
+        - button "移除":
+          - generic: 
+- paragraph: 国家模板已保存。
+- button "添加国家":
+  - generic: 
+  - text: 添加国家
+- button "保存国家模板" [active]:
+  - generic: 
+  - text: 保存国家模板
+- button "删除国家模板":
+  - generic: 
+  - text: 删除国家模板

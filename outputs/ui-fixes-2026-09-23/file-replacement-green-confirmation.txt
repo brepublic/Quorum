@@ -1,0 +1,155 @@
+- text:               
+- navigation "Committee navigation":
+  - button "Open committee navigation":
+    - generic: 
+  - link "联合国安全理事会":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/info
+  - listbox "Account menu":
+    - alert: Colin
+    - generic: 
+    - text:      
+- generic "Resource sections":
+  - link "File overview":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/posts/attachments
+  - link "Share":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/posts/share
+  - link "Upload files":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/posts/upload
+  - link "Storage settings":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/posts/storage
+  - link "File settings":
+    - /url: /committees/37dc3a8c-8cd6-49de-954f-507a4ede261b/posts/file-settings
+- listbox "File status":
+  - alert: Pending and published
+  - generic: 
+- textbox "File name" [disabled]: 工作文件 1.4
+- generic: 
+- text: Pending review
+- table:
+  - rowgroup:
+    - row "File source Chair":
+      - cell "File source"
+      - cell "Chair"
+    - row "File type":
+      - cell "File type"
+      - cell:
+        - listbox [disabled]:
+          - alert: 工作文件
+          - generic: 
+    - row "Submitted at 9/22/2026, 8:22:09 PM":
+      - cell "Submitted at"
+      - cell "9/22/2026, 8:22:09 PM"
+    - row "Original file quorum-ui-audit-0922-dropdown.txt":
+      - cell "Original file"
+      - cell "quorum-ui-audit-0922-dropdown.txt"
+- button "Download file":
+  - text: Download file
+  - generic: 
+- button "Approve file" [disabled]
+- button "Reject file" [disabled]
+- textbox "File name" [disabled]: 界面检查 0922 文件
+- generic: This name already exists. Approval will update the existing file.
+- generic: 
+- text: Pending review
+- table:
+  - rowgroup:
+    - row "File source Chair":
+      - cell "File source"
+      - cell "Chair"
+    - row "File type":
+      - cell "File type"
+      - cell:
+        - listbox [disabled]:
+          - alert: 工作文件
+          - generic: 
+    - row "Submitted at 9/23/2026, 8:06:09 AM":
+      - cell "Submitted at"
+      - cell "9/23/2026, 8:06:09 AM"
+    - row "Original file quorum-ui-fix-0923.txt":
+      - cell "Original file"
+      - cell "quorum-ui-fix-0923.txt"
+- button "Download file":
+  - text: Download file
+  - generic: 
+- button "Approve file" [disabled]
+- button "Reject file" [disabled]
+- generic: 界面检查 0922 文件
+- generic: 
+- text: Published
+- table:
+  - rowgroup:
+    - row "File source Chair":
+      - cell "File source"
+      - cell "Chair"
+    - row "File type 工作文件":
+      - cell "File type"
+      - cell "工作文件"
+    - row "Submitted at 9/22/2026, 1:22:02 PM":
+      - cell "Submitted at"
+      - cell "9/22/2026, 1:22:02 PM"
+    - row "Original file quorum-ui-audit-0922.txt 55 B":
+      - cell "Original file"
+      - cell "quorum-ui-audit-0922.txt 55 B":
+        - text: quorum-ui-audit-0922.txt
+        - generic: 55 B
+- button "Download file":
+  - text: Download file
+  - generic: 
+- button "Delete permanently":
+  - text: Delete permanently
+  - generic: 
+- generic: 主席电脑-代表批准文件
+- generic: 
+- text: Published
+- table:
+  - rowgroup:
+    - row "File source 中国":
+      - cell "File source"
+      - cell "中国"
+    - row "File type 工作文件":
+      - cell "File type"
+      - cell "工作文件"
+    - row "Submitted at 9/21/2026, 6:17:17 PM":
+      - cell "Submitted at"
+      - cell "9/21/2026, 6:17:17 PM"
+    - row "Original file delegate-approve.txt 37 B":
+      - cell "Original file"
+      - cell "delegate-approve.txt 37 B":
+        - text: delegate-approve.txt
+        - generic: 37 B
+- button "Download file":
+  - text: Download file
+  - generic: 
+- button "Delete permanently":
+  - text: Delete permanently
+  - generic: 
+- generic: 主席电脑-主席批准文件
+- generic: 
+- text: Published
+- table:
+  - rowgroup:
+    - row "File source Chair":
+      - cell "File source"
+      - cell "Chair"
+    - row "File type 工作文件":
+      - cell "File type"
+      - cell "工作文件"
+    - row "Submitted at 9/21/2026, 6:15:13 PM":
+      - cell "Submitted at"
+      - cell "9/21/2026, 6:15:13 PM"
+    - row "Original file chair-upload.txt 51 B":
+      - cell "Original file"
+      - cell "chair-upload.txt 51 B":
+        - text: chair-upload.txt
+        - generic: 51 B
+- button "Download file":
+  - text: Download file
+  - generic: 
+- button "Delete permanently":
+  - text: Delete permanently
+  - generic: 
+- generic: Replace and publish file
+- heading "界面检查 0922 文件" [level=4]
+- paragraph: This will replace the current version. Resolutions and amendments that reference this file will use the new version.
+- button "Cancel"
+- button "Confirm replacement and publish"

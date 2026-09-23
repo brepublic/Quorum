@@ -1,0 +1,77 @@
+- link "Quorum":
+  - /url: /committees
+- listbox "Account menu":
+  - alert: Colin
+  - generic: 
+  - text:      
+- heading "Template editor" [level=1]
+- button "New template":
+  - generic: 
+  - text: New template
+- list:
+  - generic: 
+  - generic: UI audit 0922 committee
+  - generic: 1 members
+- heading "Edit template" [level=2]
+- generic: Template name *
+- textbox "Enter a template name": UI audit 0922 committee
+- button "Other language":
+  - generic: 
+  - text: Other language
+- generic: Country template *
+- combobox:
+  - textbox
+  - alert: Default countries
+  - generic: 
+- heading "Committee members" [level=3]
+- table:
+  - rowgroup:
+    - row "Country or delegation Seat type Voting Veto No abstention":
+      - columnheader "Country or delegation"
+      - columnheader "Seat type"
+      - columnheader "Voting"
+      - columnheader "Veto"
+      - columnheader "No abstention"
+      - columnheader
+  - rowgroup:
+    - row "Voting · Afghanistan Veto · Afghanistan No abstention · Afghanistan Remove":
+      - cell:
+        - generic "Afghanistan": Afghanistan
+      - cell:
+        - listbox:
+          - alert: Standard
+          - generic: 
+      - cell "Voting · Afghanistan":
+        - checkbox "Voting · Afghanistan" [checked]
+      - cell "Veto · Afghanistan":
+        - checkbox "Veto · Afghanistan" [checked]
+      - cell "No abstention · Afghanistan":
+        - checkbox "No abstention · Afghanistan"
+      - cell "Remove":
+        - button "Remove":
+          - generic: 
+  - rowgroup:
+    - row "Voting Veto No abstention Add committee member":
+      - columnheader:
+        - combobox:
+          - textbox
+          - generic: 
+      - columnheader:
+        - listbox:
+          - alert: Standard
+          - generic: 
+      - columnheader "Voting":
+        - checkbox "Voting" [checked]
+      - columnheader "Veto":
+        - checkbox "Veto"
+      - columnheader "No abstention":
+        - checkbox "No abstention"
+      - columnheader "Add committee member":
+        - button "Add committee member" [disabled]:
+          - generic: 
+- button "Save template":
+  - generic: 
+  - text: Save template
+- button "Delete template":
+  - generic: 
+  - text: Delete template

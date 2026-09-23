@@ -1,0 +1,54 @@
+- link "Quorum":
+  - /url: /committees
+- listbox "Account menu":
+  - alert: Colin
+  - generic: 
+  - text:      
+- heading "Quorum" [level=1]
+- heading "Colin" [level=3]
+- heading "My created committees" [level=4]
+- link "UI audit 0922 EN Active":
+  - /url: /committees/5dc1fd5b-7af8-4602-bdb1-59afe404f90e
+  - generic: UI audit 0922 EN
+  - generic: Active
+- button "Delete committee UI audit 0922 EN":
+  - generic: 
+- button "Logout":
+  - generic: 
+  - text: Logout
+- generic: Template
+- combobox:
+  - textbox
+  - alert: Template to skip manual member creation (optional)
+  - generic: 
+- button:
+  - generic: 
+- generic: Country template *
+- listbox:
+  - alert: Default countries
+  - generic: 
+- generic: Rules *
+- listbox [expanded] [active]:
+  - alert: 北京学术标准 2021 · 5
+  - generic: 
+  - option "北京学术标准 2021 · 5" [checked] [selected]
+- generic: Committee language *
+- listbox:
+  - alert: English
+  - generic: 
+- generic: Name *
+- textbox "Name *":
+  - /placeholder: Committee name
+- generic: Topic
+- textbox "Topic":
+  - /placeholder: Committee topic
+- generic: Conference
+- textbox "Conference":
+  - /placeholder: Conference name
+- generic: Visibility
+- listbox:
+  - alert: Private
+  - generic: 
+- button "Create committee" [disabled]:
+  - text: Create committee
+  - generic: 
