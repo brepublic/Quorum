@@ -633,6 +633,7 @@ describe('committee workspace routes and roles', () => {
   });
 
   it('targets an existing unintroduced draft instead of naming a new resolution in the introduction motion', async () => {
+    const proposeMotion = vi.fn(async () => ({} as ProceedingMotion));
     const page = await render('CHAIR', '/committees/committee/motions', user, value => ({...value,
       meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: '第1会期', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1,
@@ -648,10 +649,21 @@ describe('committee workspace routes and roles', () => {
         createdAt: '2026-08-14T00:00:00.000Z', updatedAt: '2026-08-14T00:00:00.000Z'}],
       activeRules: {...value.activeRules, motionTypes: [{id: 'introduce-draft-resolution',
         names: {en: 'Introduce draft resolution', 'zh-CN': '展示决议草案'}, procedural: true,
-        requiredSecondCount: 1}]}}));
+        requiredSecondCount: 0}]}}), {proposeMotion});
     expect(page.textContent).toContain('Target resolution');
     expect(page.textContent).toContain('New draft resolution 1');
     expect(page.textContent).not.toContain('Name');
+    expect([...page.querySelectorAll('.motion-proposal-form label')].map(label => label.textContent)).not.toContain('Seconder');
+    const proposer = page.querySelector<HTMLElement>('.motion-proposer-field .ui.dropdown');
+    await act(async () => {proposer?.click(); await Promise.resolve();});
+    await act(async () => {proposer?.querySelector<HTMLElement>('[role="option"]')?.click(); await Promise.resolve();});
+    const target = [...page.querySelectorAll<HTMLElement>('.motion-proposal-form .field')]
+      .find(field => field.querySelector('label')?.textContent === 'Target resolution')?.querySelector<HTMLElement>('.ui.dropdown');
+    await act(async () => {target?.click(); await Promise.resolve();});
+    await act(async () => {target?.querySelector<HTMLElement>('[role="option"]')?.click(); await Promise.resolve();});
+    await act(async () => {page.querySelector<HTMLButtonElement>('button[aria-label="Propose motion"]')?.click(); await Promise.resolve();});
+    expect(proposeMotion).toHaveBeenCalledWith('committee', {meetingSessionId: 'meeting', motionTypeId: 'introduce-draft-resolution',
+      onBehalfOfSeatId: 'seat', parameters: {resolutionTarget: 'resolution'}});
   });
 
   it('targets an existing amendment draft instead of creating one from the introduction motion', async () => {

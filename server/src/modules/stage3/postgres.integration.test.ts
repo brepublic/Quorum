@@ -172,8 +172,14 @@ integration('PostgreSQL stage 3 integration', () => {
     await stage3.ensureBuiltins();
     expect(await stage3.listRulePackages()).toEqual(packages);
     const source = packages.find(item => item.key === 'builtin:beijing-academic') as (typeof packages)[number];
-    expect(source.versions).toHaveLength(1);
+    expect(source.versions).toHaveLength(2);
     expect(source.versions[0]).toMatchObject({version: 6, names: {'zh-CN': '北京学术标准 2021', en: 'Beijing Academic Standard 2021'}});
+    expect(source.versions[1]).toMatchObject({version: 7, names: {'zh-CN': '北京学术标准 2021', en: 'Beijing Academic Standard 2021'}});
+    const versions = await pool!.query<{version: number; definition: {motions?: Array<{id: string; requiredSecondCount?: number}>}}>(
+      'SELECT version,definition FROM rule_package_versions WHERE package_id=$1 ORDER BY version', [source.id]);
+    expect(versions.rows.map(row => ({version: row.version,
+      requiredSecondCount: row.definition.motions?.find(motion => motion.id === 'introduce-draft-resolution')?.requiredSecondCount})))
+      .toEqual([{version: 6, requiredSecondCount: 1}, {version: 7, requiredSecondCount: 0}]);
     await expect(stage3.createRuleVersion(administrator, source.id, {definition: {}}, context('edit-builtin')))
       .rejects.toMatchObject({code: 'VALIDATION_FAILED'});
     const cloned = await stage3.cloneRulePackage(chair, source.id, {scope: 'COMMITTEE', committeeId: committee.id,

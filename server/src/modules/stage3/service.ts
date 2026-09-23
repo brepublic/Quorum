@@ -109,6 +109,12 @@ function builtInVersion6(definition: RulePackageDefinition): RulePackageDefiniti
   return {...upgraded, motions: upgraded.motions.map(item => ({...item, names: item.names ?? names[item.id]}))};
 }
 
+function builtInVersion7(definition: RulePackageDefinition): RulePackageDefinition {
+  const upgraded = builtInVersion6(definition);
+  return {...upgraded, motions: upgraded.motions.map(item => item.id === 'introduce-draft-resolution'
+    ? {...item, requiredSecondCount: 0} : item)};
+}
+
 function committee(row: CommitteeRow): CommitteeSummary {
   return {id: row.id, committeeLanguage: row.committee_language, ownerUserId: row.owner_user_id, name: row.name, chairLabel: row.chair_label,
     topic: row.topic, conference: row.conference, visibility: row.visibility, operationMode: row.operation_mode,
@@ -311,13 +317,13 @@ export class Stage3Service {
         const inserted = await client.query<{id: string}>(`INSERT INTO rule_packages
           (id, scope, stable_key) VALUES ($1,'BUILTIN',$2)
           ON CONFLICT (scope, stable_key) DO UPDATE SET stable_key=EXCLUDED.stable_key RETURNING id`, [packageId, definition.key]);
-        for (const versionDefinition of [builtInVersion6(definition)]) {
+        for (const [version, versionDefinition] of [[6, builtInVersion6(definition)], [7, builtInVersion7(definition)]] as const) {
           const validated = validateRulePackage(versionDefinition);
-          if (!validated.ok) throw new Error(`Invalid built-in rule package: ${definition.key} v6: ${JSON.stringify(validated.issues)}`);
+          if (!validated.ok) throw new Error(`Invalid built-in rule package: ${definition.key} v${version}: ${JSON.stringify(validated.issues)}`);
           await client.query(`INSERT INTO rule_package_versions
             (id, package_id, version, status, definition, schema_version, validation_result, published_at)
             VALUES ($1,$2,$3,'PUBLISHED',$4,$5,$6,now()) ON CONFLICT (package_id, version) DO NOTHING`,
-          [randomUUID(), inserted.rows[0]?.id, 6, versionDefinition, RULE_SCHEMA_VERSION, {valid: true, issues: []}]);
+          [randomUUID(), inserted.rows[0]?.id, version, versionDefinition, RULE_SCHEMA_VERSION, {valid: true, issues: []}]);
         }
       }
     });

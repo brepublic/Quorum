@@ -553,7 +553,7 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
     expect(history?.rows[0]?.decided_at).toBeTruthy();
   });
 
-  it('introduces an existing draft without replacing its countries with motion sponsors', async () => {
+  it('introduces an existing draft without an initial seconder or replacing its countries with motion sponsors', async () => {
     const fixture = await meetingFixture();
     const draft = await stage5.createResolution(fixture.firstChair, fixture.committee.id,
       {meetingSessionId: fixture.session.id, customTitle: null, content: ''},
@@ -564,12 +564,13 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
       {baseRevision: draft.revision, proposerSeatIds: [fixture.secondSeat.id], seconderSeatIds: [fixture.firstSeat.id]}, context('draft-countries'));
     const motion = await stage5.proposeMotion(fixture.firstChair, fixture.committee.id,
       {meetingSessionId: fixture.session.id, motionTypeId: 'introduce-draft-resolution',
-        onBehalfOfSeatId: fixture.firstSeat.id, secondedBySeatId: fixture.secondSeat.id,
+        onBehalfOfSeatId: fixture.firstSeat.id,
         parameters: {resolutionTarget: draft.id}}, 'motion-with-seconder', context('motion-with-seconder'));
     expect(motion).toMatchObject({status: 'SECONDED', proposedBySeatId: fixture.firstSeat.id,
-      requiredSecondCount: 1, parameters: {resolutionTarget: draft.id}});
-    expect(motion.seconds).toEqual([expect.objectContaining({seatId: fixture.secondSeat.id,
-      seatDisplayName: fixture.secondSeat.displayName})]);
+      requiredSecondCount: 0, parameters: {resolutionTarget: draft.id}});
+    expect(motion.seconds).toEqual([]);
+    expect((await pool?.query('SELECT count(*)::int AS count FROM motion_seconds WHERE motion_id=$1', [motion.id]))?.rows)
+      .toEqual([{count: 0}]);
     const passed = await stage5.decideMotion(fixture.firstChair, motion.id,
       {baseRevision: motion.revision, result: 'PASSED'}, context('introduce-resolution'));
     expect(passed).toMatchObject({status: 'PASSED', destinationPath:
@@ -646,7 +647,7 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
       'amendment-parent', context('amendment-parent'));
     const resolutionMotion = await stage5.proposeMotion(fixture.firstChair, fixture.committee.id,
       {meetingSessionId: fixture.session.id, motionTypeId: 'introduce-draft-resolution',
-        onBehalfOfSeatId: fixture.firstSeat.id, secondedBySeatId: fixture.secondSeat.id,
+        onBehalfOfSeatId: fixture.firstSeat.id,
         parameters: {resolutionTarget: resolution.id}}, 'amendment-parent-motion', context('amendment-parent-motion'));
     await stage5.decideMotion(fixture.firstChair, resolutionMotion.id,
       {baseRevision: resolutionMotion.revision, result: 'PASSED'}, context('amendment-parent-introduced'));
@@ -739,7 +740,7 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
       'linked-caucus-draft', context('linked-caucus-draft'));
     const introduction = await stage5.proposeMotion(fixture.firstChair, fixture.committee.id,
       {meetingSessionId: fixture.session.id, motionTypeId: 'introduce-draft-resolution',
-        onBehalfOfSeatId: fixture.firstSeat.id, secondedBySeatId: fixture.secondSeat.id,
+        onBehalfOfSeatId: fixture.firstSeat.id,
         parameters: {resolutionTarget: draft.id}}, 'linked-caucus-introduction', context('linked-caucus-introduction'));
     await stage5.decideMotion(fixture.firstChair, introduction.id,
       {baseRevision: introduction.revision, result: 'PASSED'}, context('linked-caucus-introduced'));
@@ -830,7 +831,7 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
 
     const motion = await stage5.proposeMotion(fixture.firstChair, fixture.committee.id,
       {meetingSessionId: fixture.session.id, motionTypeId: 'introduce-draft-resolution',
-        onBehalfOfSeatId: fixture.firstSeat.id, secondedBySeatId: fixture.secondSeat.id,
+        onBehalfOfSeatId: fixture.firstSeat.id,
         parameters: {resolutionTarget: draft.id}}, 'file-resolution-motion', context('file-resolution-motion'));
     await expect(stage5.decideMotion(fixture.firstChair, motion.id,
       {baseRevision: motion.revision, result: 'PASSED'}, context('blocked-file-introduction')))
@@ -901,7 +902,7 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
 
   });
 
-  it('lets the Chair reject an unseconded motion but not pass it', async () => {
+  it('lets the Chair pass an introduction motion without a seconder', async () => {
     const fixture = await meetingFixture();
     const draft = await stage5.createResolution(fixture.firstDelegate, fixture.committee.id,
       {meetingSessionId: fixture.session.id, customTitle: null, content: ''},
@@ -909,15 +910,13 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
     const motion = await stage5.proposeMotion(fixture.firstDelegate, fixture.committee.id,
       {meetingSessionId: fixture.session.id, motionTypeId: 'introduce-draft-resolution',
         parameters: {resolutionTarget: draft.id}}, 'unseconded-motion', context('unseconded-motion'));
-    await expect(stage5.decideMotion(fixture.firstChair, motion.id,
-      {baseRevision: motion.revision, result: 'PASSED'}, context('pass-unseconded')))
-      .rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
-    const failed = await stage5.decideMotion(fixture.firstChair, motion.id,
-      {baseRevision: motion.revision, result: 'FAILED'}, context('fail-unseconded'));
-    expect(failed.status).toBe('FAILED');
+    expect(motion).toMatchObject({status: 'SECONDED', requiredSecondCount: 0, seconds: []});
+    const passed = await stage5.decideMotion(fixture.firstChair, motion.id,
+      {baseRevision: motion.revision, result: 'PASSED'}, context('pass-unseconded'));
+    expect(passed.status).toBe('PASSED');
   });
 
-  it('treats rules as advisory in Chair-operated mode and enacts a passed motion before navigation', async () => {
+  it('enacts a passed introduction motion in Chair-operated mode without a seconder', async () => {
     const fixture = await meetingFixture();
     await pool?.query("UPDATE committees SET operation_mode='CHAIR_OPERATED' WHERE id=$1", [fixture.committee.id]);
     const draft = await stage5.createResolution(fixture.firstChair, fixture.committee.id,
@@ -927,7 +926,7 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
       {meetingSessionId: fixture.session.id, motionTypeId: 'introduce-draft-resolution',
         onBehalfOfSeatId: fixture.firstSeat.id, parameters: {resolutionTarget: draft.id}},
       'chair-advisory-motion', context('chair-advisory-motion'));
-    expect(motion).toMatchObject({status: 'PENDING', requiredSecondCount: 1});
+    expect(motion).toMatchObject({status: 'SECONDED', requiredSecondCount: 0, seconds: []});
     const passed = await stage5.decideMotion(fixture.firstChair, motion.id,
       {baseRevision: motion.revision, result: 'PASSED'}, context('chair-advisory-pass'));
     expect(passed.status).toBe('PASSED');
@@ -938,7 +937,7 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
     const audit = await pool?.query(`SELECT after_summary FROM audit_log
       WHERE committee_id=$1 AND action='proceedings.motion_decided' ORDER BY created_at DESC LIMIT 1`,
     [fixture.committee.id]);
-    expect(audit?.rows[0]?.after_summary).toMatchObject({status: 'PASSED', advisoryRuleOverride: true});
+    expect(audit?.rows[0]?.after_summary).toMatchObject({status: 'PASSED', advisoryRuleOverride: false});
   });
 
   it('closes a moderated caucus by motion without discarding its current or waiting queue', async () => {
@@ -1047,7 +1046,7 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
       meetingSessionId: fixture.session.id, customTitle: 'A/RES/1', content: '第一版'}, 'resolution', context('resolution'));
     const introduction = await stage5.proposeMotion(fixture.firstChair, fixture.committee.id,
       {meetingSessionId: fixture.session.id, motionTypeId: 'introduce-draft-resolution',
-        onBehalfOfSeatId: fixture.firstSeat.id, secondedBySeatId: fixture.secondSeat.id,
+        onBehalfOfSeatId: fixture.firstSeat.id,
         parameters: {resolutionTarget: resolution.id}}, 'introduce-resolution', context('introduce-resolution'));
     await stage5.decideMotion(fixture.firstChair, introduction.id,
       {baseRevision: introduction.revision, result: 'PASSED'}, context('pass-introduction'));
