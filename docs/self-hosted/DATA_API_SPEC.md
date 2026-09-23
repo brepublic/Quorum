@@ -493,7 +493,6 @@ POST /api/v1/committees/:id/resolutions
 POST /api/v1/resolutions/:id/amendments
 POST /api/v1/documents/:id/versions
 POST /api/v1/documents/:id/commands
-POST /api/v1/documents/:id/discussion
 ```
 
 ### 规则与实时

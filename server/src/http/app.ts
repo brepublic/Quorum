@@ -1059,15 +1059,14 @@ async function handleStage5Request(options: {
     sendJson(response, 200, success(await stage5.setResolutionDirectVote(auth, resolutionDirectVote[1] as string,
       body, context), requestId)); return true;
   }
-  const documentCommand = /^\/api\/v1\/documents\/([0-9a-f-]{36})\/(versions|commands|discussion|settings|result)$/.exec(pathname);
+  const documentCommand = /^\/api\/v1\/documents\/([0-9a-f-]{36})\/(versions|commands|settings|result)$/.exec(pathname);
   if (method === 'POST' && documentCommand) {
     const auth = await write(); const body = await readJson(request); const id = documentCommand[1] as string;
     const result = documentCommand[2] === 'versions' ? await stage5.createDocumentVersion(auth, id, body, context)
       : documentCommand[2] === 'commands' ? await stage5.commandDocument(auth, id, body, context)
         : documentCommand[2] === 'settings' ? await stage5.updateDocumentSettings(auth, id, body, context)
-          : documentCommand[2] === 'result' ? await stage5.recordDocumentResult(auth, id, body, context)
-            : await stage5.addDocumentDiscussion(auth, id, body, idempotencyKey(request), context);
-    sendJson(response, ['versions', 'discussion'].includes(documentCommand[2] as string) ? 201 : 200,
+          : await stage5.recordDocumentResult(auth, id, body, context);
+    sendJson(response, documentCommand[2] === 'versions' ? 201 : 200,
       success(result, requestId)); return true;
   }
   const timerCommand = /^\/api\/v1\/timers\/([0-9a-f-]{36})\/(start|pause|resume|extend|reset|expire)$/.exec(pathname);

@@ -383,11 +383,11 @@ async function resolutionDirectVoteState(client: PoolClient, document: DocumentR
       castAt: vote.cast_at.toISOString()}))};
 }
 
-const documentRuleIds: Record<ProceedingDocumentKind, Record<'PUBLISH' | 'POSTPONE' | 'RESUME' | 'RECOMMEND_BALLOT' | 'DISCUSS', string>> = {
+const documentRuleIds: Record<ProceedingDocumentKind, Record<'PUBLISH' | 'POSTPONE' | 'RESUME' | 'RECOMMEND_BALLOT', string>> = {
   RESOLUTION: {PUBLISH: 'introduce-draft-resolution', POSTPONE: 'postpone-resolution', RESUME: 'resume-resolution',
-    RECOMMEND_BALLOT: 'vote-on-resolution', DISCUSS: 'discuss-resolution'},
+    RECOMMEND_BALLOT: 'vote-on-resolution'},
   AMENDMENT: {PUBLISH: 'introduce-amendment', POSTPONE: 'postpone-amendment', RESUME: 'resume-amendment',
-    RECOMMEND_BALLOT: 'vote-on-amendment', DISCUSS: 'discuss-amendment'}
+    RECOMMEND_BALLOT: 'vote-on-amendment'}
 };
 
 async function frozenDocumentRule(client: PoolClient, row: DocumentRow, suppliedId: string, expectedId: string,
@@ -3306,37 +3306,4 @@ export class Stage5Service {
     });
   }
 
-  async addDocumentDiscussion(auth: AuthenticatedSession, documentId: string, input: Record<string, unknown>, key: string,
-    context: Stage4Context): Promise<ProceedingDocument> {
-    requireBusinessIdentity(auth); assertExactBody(input, ['content', 'ruleStableId', 'onBehalfOfSeatId']);
-    const content = text(input.content, 'Discussion content', 10_000);
-    const ruleStableId = text(input.ruleStableId, 'Rule stable ID', 128);
-    return idempotentTransaction({pool: this.pool, auth, route: `POST /api/v1/documents/${documentId}/discussion`,
-      key, request: input, status: 201, work: async client => {
-        const located = await client.query<{committee_id: string}>(
-          'SELECT committee_id FROM documents WHERE id=$1 AND deleted_at IS NULL', [documentId]);
-        if (!located.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Document not found.'});
-        const committee = await lockedCommittee(client, located.rows[0].committee_id); requireProceedingsActive(committee);
-        const found = await client.query<DocumentRow>(`SELECT d.*,a.resolution_document_id FROM documents d
-          LEFT JOIN amendments a ON a.document_id=d.id WHERE d.id=$1 AND d.deleted_at IS NULL FOR UPDATE OF d`, [documentId]);
-        const document = found.rows[0]; if (!document) throw new AppError({code: 'NOT_FOUND', message: 'Document not found.'});
-        if (document.status !== 'PUBLISHED') throw new AppError({reason: 'DOCUMENT_DISCUSSION_CLOSED', code: 'RESOURCE_CONFLICT',
-          message: 'The document is not open for discussion.'});
-        const actor = await representedDocumentSeat(client, committee, auth, input.onBehalfOfSeatId, document.meeting_session_id);
-        await frozenDocumentRule(client, document, ruleStableId, documentRuleIds[document.kind].DISCUSS, this.now());
-        const id = randomUUID(); const now = this.now();
-        await client.query(`INSERT INTO discussion_entries
-          (id,committee_id,document_id,seat_id,seat_display_name,content,rule_stable_id,actor_user_id,on_behalf_of_seat_id,created_at)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$4,$9)`, [id, committee.id, documentId, actor.seatId,
-          actor.displayName, content, ruleStableId, auth.user.id, now]);
-        await appendEvent(client, committee, {type: 'document.discussion_added', resourceType: 'document', resourceId: documentId,
-          revision: document.revision, payload: {id, seatId: actor.seatId, seatDisplayName: actor.displayName,
-            content, ruleStableId, createdAt: now.toISOString()}, audience: document.is_public ? 'PUBLIC' : 'MEMBER'});
-        await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id,
-          capabilities: actor.chair ? ['CHAIR'] : ['MEMBER'], onBehalfOfSeatId: actor.seatId,
-          action: 'documents.discussion_added', resourceType: 'document', resourceId: documentId,
-          after: {discussionEntryId: id, ruleStableId, characterCount: [...content].length}});
-        return documentState(client, document);
-      }});
-  }
 }

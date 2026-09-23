@@ -473,10 +473,6 @@ export const selfHostedApi = {
     return request<ProceedingDocument>(`/api/v1/documents/${id}/result`, {method: 'POST',
       body: {baseRevision, outcome, ...(reason ? {reason} : {})}});
   },
-  addDocumentDiscussion(id: string, input: {content: string; ruleStableId: string; onBehalfOfSeatId?: string}) {
-    return request<ProceedingDocument>(`/api/v1/documents/${id}/discussion`, {method: 'POST',
-      body: input, idempotencyKey: key()});
-  },
   updateCommittee(id: string, baseRevision: number, patch: UpdateCommitteeRequest['patch']) {
     return request<CommitteeSummary>(`/api/v1/committees/${id}`, {method: 'PATCH', body: {baseRevision, patch}});
   },

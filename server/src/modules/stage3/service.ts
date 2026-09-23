@@ -99,7 +99,6 @@ function builtInVersion4(definition: RulePackageDefinition): RulePackageDefiniti
 function builtInVersion6(definition: RulePackageDefinition): RulePackageDefinition {
   const upgraded = builtInVersion4(definition);
   const names: Record<string, {'zh-CN': string; en: string}> = {
-    'discuss-resolution': {'zh-CN': '讨论决议草案', en: 'Discuss draft resolution'},
     'postpone-resolution': {'zh-CN': '推迟决议草案', en: 'Postpone draft resolution'},
     'resume-resolution': {'zh-CN': '恢复决议草案', en: 'Resume draft resolution'},
     'discuss-amendment': {'zh-CN': '讨论修正案', en: 'Discuss amendment'},
@@ -113,6 +112,11 @@ function builtInVersion7(definition: RulePackageDefinition): RulePackageDefiniti
   const upgraded = builtInVersion6(definition);
   return {...upgraded, motions: upgraded.motions.map(item => item.id === 'introduce-draft-resolution'
     ? {...item, requiredSecondCount: 0} : item)};
+}
+
+function builtInVersion8(definition: RulePackageDefinition): RulePackageDefinition {
+  const upgraded = builtInVersion7(definition);
+  return {...upgraded, motions: upgraded.motions.filter(item => item.id !== 'discuss-resolution')};
 }
 
 function committee(row: CommitteeRow): CommitteeSummary {
@@ -317,7 +321,7 @@ export class Stage3Service {
         const inserted = await client.query<{id: string}>(`INSERT INTO rule_packages
           (id, scope, stable_key) VALUES ($1,'BUILTIN',$2)
           ON CONFLICT (scope, stable_key) DO UPDATE SET stable_key=EXCLUDED.stable_key RETURNING id`, [packageId, definition.key]);
-        for (const [version, versionDefinition] of [[6, builtInVersion6(definition)], [7, builtInVersion7(definition)]] as const) {
+        for (const [version, versionDefinition] of [[8, builtInVersion8(definition)]] as const) {
           const validated = validateRulePackage(versionDefinition);
           if (!validated.ok) throw new Error(`Invalid built-in rule package: ${definition.key} v${version}: ${JSON.stringify(validated.issues)}`);
           await client.query(`INSERT INTO rule_package_versions
