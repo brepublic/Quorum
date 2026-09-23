@@ -134,6 +134,24 @@ describe('committee workspace routes and roles', () => {
     expect(page.textContent).not.toContain('Grant Chair');
   });
 
+  it('hides seat creation when all template countries are seated and restores it after deactivation', async () => {
+    let franceSeated = true;
+    const updateSeat = vi.fn(async () => {franceSeated = false;}) as unknown as SelfHostedApi['updateSeat'];
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    try {
+      const page = await render('CHAIR', '/committees/committee/setup', user, value => ({...value,
+        seats: franceSeated ? [...value.seats, {...value.seats[0], id: 'france-seat', stableKey: 'france',
+          displayName: 'France'}] : value.seats}), {updateSeat});
+      expect(page.querySelector('.seat-create-table')).toBeNull();
+      expect(page.querySelector('.seat-list-table')?.textContent).toContain('France');
+
+      await act(async () => {page.querySelector<HTMLButtonElement>('[aria-label="Deactivate · France"]')?.click();});
+      expect(updateSeat).toHaveBeenCalledWith('committee', 'france-seat', 2, {active: false});
+      expect(page.querySelector('.seat-create-table')).toBeTruthy();
+      expect(page.querySelector('[aria-label="Create seat"]')).toBeTruthy();
+    } finally {confirm.mockRestore();}
+  });
+
   it('preserves the fixed member name instead of overwriting it from the country directory', async () => {
     const page = await render('CHAIR', '/committees/committee/setup', user, value => ({...value,
       seats: [...value.seats, {...value.seats[0], id: 'france-seat', stableKey: 'france', displayName: 'French delegation'}]}));
@@ -294,7 +312,7 @@ describe('committee workspace routes and roles', () => {
       createdAt: '2026-08-14T00:00:00.000Z', closedAt: null}));
     const startRollCall = vi.fn(async (): Promise<RollCall> => ({id: 'roll-call', committeeId: 'committee',
       meetingSessionId: 'meeting', status: 'IN_PROGRESS', currentSeatId: 'seat', rulePackageVersionId: 'rules',
-      allowedResponses: ['PRESENT', 'ABSENT'], entries: [], revision: 1, startedAt: '2026-08-14T00:00:00.000Z',
+      allowedResponses: ['PRESENT', 'ABSENT'], seats: [], entries: [], revision: 1, startedAt: '2026-08-14T00:00:00.000Z',
       completedAt: null}));
     const page = await render('CHAIR', '/committees/committee/roll-call', user, value => value,
       {startMeetingSession, startRollCall});
@@ -309,7 +327,7 @@ describe('committee workspace routes and roles', () => {
   it('automatically starts roll call for an already-open meeting session', async () => {
     const startRollCall = vi.fn(async (): Promise<RollCall> => ({id: 'roll-call', committeeId: 'committee',
       meetingSessionId: 'meeting', status: 'IN_PROGRESS', currentSeatId: 'seat', rulePackageVersionId: 'rules',
-      allowedResponses: ['PRESENT', 'ABSENT'], entries: [], revision: 1, startedAt: '2026-08-14T00:00:00.000Z',
+      allowedResponses: ['PRESENT', 'ABSENT'], seats: [], entries: [], revision: 1, startedAt: '2026-08-14T00:00:00.000Z',
       completedAt: null}));
     const page = await render('CHAIR', '/committees/committee/roll-call', user, value => ({...value,
       meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: '第1会期', phaseId: 'formal-debate',
@@ -324,17 +342,17 @@ describe('committee workspace routes and roles', () => {
   it('restores the paged roll-call board and lets a Chair directly change any frozen seat', async () => {
     const setRollCallResponse = vi.fn(async (): Promise<RollCall> => ({id: 'roll-call', committeeId: 'committee',
       meetingSessionId: 'meeting', status: 'IN_PROGRESS', currentSeatId: 'seat-0', rulePackageVersionId: 'rules',
-      allowedResponses: ['PRESENT', 'ABSENT'], entries: [], revision: 4,
+      allowedResponses: ['PRESENT', 'ABSENT'], seats: [], entries: [], revision: 4,
       startedAt: '2026-08-14T00:00:00.000Z', completedAt: null}));
     const seats = Array.from({length: 20}, (_, index) => ({id: `seat-${index}`, stableKey: `seat-${index}`,
       displayName: `Seat ${String(20 - index).padStart(2, '0')}`, rank: 'STANDARD' as const, canVote: true,
       hasVeto: false, mustVote: false, sortOrder: index, active: true, revision: 1,
       flag: {type: 'EMOJI' as const, value: index === 0 ? '🏳️' : '🌐'}}));
-    const page = await render('CHAIR', '/committees/committee/roll-call', user, value => ({...value, seats,
+    const page = await render('CHAIR', '/committees/committee/roll-call', user, value => ({...value, seats: seats.slice(1),
       meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: '第1会期', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1, createdAt: '2026-08-14T00:00:00.000Z', closedAt: null},
       rollCall: {id: 'roll-call', committeeId: 'committee', meetingSessionId: 'meeting', status: 'IN_PROGRESS',
-        currentSeatId: 'seat-0', rulePackageVersionId: 'rules', allowedResponses: ['PRESENT', 'ABSENT'],
+        currentSeatId: 'seat-0', rulePackageVersionId: 'rules', allowedResponses: ['PRESENT', 'ABSENT'], seats: seats.map(({id, displayName, canVote, flag}) => ({id, displayName, canVote, flag})),
         entries: [{id: 'entry', seatId: 'seat-1', seatDisplayName: 'Seat 02', response: 'PRESENT', actorUserId: 'chair',
           onBehalfOfSeatId: 'seat-1', rulePackageVersionId: 'rules', recordedAt: '2026-08-14T00:00:00.000Z', revision: 1}],
         revision: 3, startedAt: '2026-08-14T00:00:00.000Z', completedAt: null}}), {setRollCallResponse});
@@ -344,6 +362,8 @@ describe('committee workspace routes and roles', () => {
     expect(Array.from(page.querySelectorAll<HTMLButtonElement>('.roll-call-grid .roll-call-member'))
       .map(seat => seat.dataset.rollCallSeat)).toEqual(Array.from({length: 9}, (_, index) => `seat-${index}`));
     expect(page.textContent).toContain('1 of 20 called');
+    expect(page.textContent).toContain('Now calling');
+    expect(page.querySelector('.roll-call-current-name')?.textContent).toBe('Seat 20');
     expect(page.textContent).not.toContain('Present and voting');
     const secondSeat = page.querySelector<HTMLButtonElement>('[data-roll-call-seat="seat-1"]');
     await act(async () => {secondSeat?.click(); await Promise.resolve();});
@@ -489,7 +509,7 @@ describe('committee workspace routes and roles', () => {
       createdAt: '2026-08-14T00:01:00.000Z', closedAt: null};
     const rollCall: RollCall = {id: 'roll-call', committeeId: 'committee', meetingSessionId: session.id,
       status: 'IN_PROGRESS', currentSeatId: 'seat', rulePackageVersionId: 'rules',
-      allowedResponses: ['PRESENT', 'ABSENT'], entries: [], revision: 1,
+      allowedResponses: ['PRESENT', 'ABSENT'], seats: [], entries: [], revision: 1,
       startedAt: '2026-08-14T00:02:00.000Z', completedAt: null};
     const startMeetingSession = vi.fn(async () => {started = true; return session;});
     const startRollCall = vi.fn(async () => rollCall);

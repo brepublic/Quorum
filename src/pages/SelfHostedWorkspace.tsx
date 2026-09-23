@@ -430,7 +430,7 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
     return (snapshot.countryTemplate?.countries ?? []).filter(country => !seated.has(country.stableKey)).map(country => ({
       key: country.stableKey, value: country.stableKey,
       text: <><Flag seat={{displayName: committeeContentName(country.names, snapshot.committee.committeeLanguage), flag: country.flag}} />
-        {committeeContentName(country.names, snapshot.committee.committeeLanguage)}</>,
+        <span>{committeeContentName(country.names, snapshot.committee.committeeLanguage)}</span></>,
       country
     }));
   }, [snapshot.countryTemplate, snapshot.seats, snapshot.committee.committeeLanguage]);
@@ -503,8 +503,8 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
       }
     });
   return <Container className="committee-setup-page"><Grid columns={2} stackable><Grid.Row>
-    <Grid.Column width={9}><Header as="h2">{t('Seats')}</Header>
-    {canChair && !readOnly && <Table className="members-table seat-create-table" compact celled definition stackable><Table.Header fullWidth><Table.Row>
+    <Grid.Column width={11}><Header as="h2">{t('Seats')}</Header>
+    {canChair && !readOnly && countryOptions.length > 0 && <Table className="members-table seat-create-table" compact celled definition stackable><Table.Header fullWidth><Table.Row>
       <Table.HeaderCell>{t('Seat')}</Table.HeaderCell><Table.HeaderCell>{t('Rank')}</Table.HeaderCell>
       <Table.HeaderCell>{t('Voting rights')}</Table.HeaderCell><Table.HeaderCell>{t('Veto power')}</Table.HeaderCell><Table.HeaderCell>{t('No abstention')}</Table.HeaderCell>
       {canChair && !readOnly && <Table.HeaderCell />}</Table.Row>
@@ -593,7 +593,7 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
       </Table.Row>)}</Table.Body></Table>
       {snapshot.seats.length > 0 && <Button as={Link} to={`/committees/${snapshot.committee.id}/roll-call`} primary fluid>
         {t('Roll call')}<Icon name="arrow right" /></Button>}
-    </Grid.Column><Grid.Column width={7}>
+    </Grid.Column><Grid.Column width={5}>
     {owner && !readOnly && <Card fluid><Card.Content><Header as="h2">{t('Chairs')}</Header>
       <Form onSubmit={async () => {await execute('grant-chair', () => api.grantChair(snapshot.committee.id,
         chairEmail.trim(), snapshot.committee.revision)); setChairEmail('');}}>
@@ -730,18 +730,21 @@ function RollCallPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
   const execute = React.useCallback(async (key: string, operation: () => Promise<unknown>) => {
     setPending(key); try {await run(operation);} finally {setPending(undefined);}
   }, [run]);
-  const seats = snapshot.seats;
+  const seats = rollCall?.seats ?? snapshot.seats;
   const entryBySeat = React.useMemo(() => new Map(rollCall?.entries.map(entry => [entry.seatId, entry]) ?? []), [rollCall?.entries]);
-  const currentSeat = snapshot.seats.find(seat => seat.id === rollCall?.currentSeatId);
+  const currentSeat = seats.find(seat => seat.id === rollCall?.currentSeatId);
   React.useEffect(() => {
     const index = seats.findIndex(seat => seat.id === rollCall?.currentSeatId);
     if (index >= 0) setPage(Math.floor(index / ROLL_CALL_PAGE_SIZE));
   }, [rollCall?.currentSeatId, seats]);
   React.useEffect(() => {
-    if (!chair || rollCall || session?.status !== 'OPEN' || autoStartedSessionId.current === session.id) return;
+    if (rollCall) autoStartedSessionId.current = undefined;
+  }, [rollCall?.id]);
+  React.useEffect(() => {
+    if (!chair || rollCall || seats.length === 0 || session?.status !== 'OPEN' || autoStartedSessionId.current === session.id) return;
     autoStartedSessionId.current = session.id;
     void execute('roll-call', () => api.startRollCall(snapshot.committee.id, session.id));
-  }, [api, chair, execute, rollCall, session?.id, session?.status, snapshot.committee.id]);
+  }, [api, chair, execute, rollCall, seats.length, session?.id, session?.status, snapshot.committee.id]);
   const startMeeting = (replacement = false) => execute('meeting', async () => {
     try {
       const meeting = replacement
@@ -758,6 +761,7 @@ function RollCallPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
     }
   });
   if (!rollCall) return <>{snapshot.meetingEndedAt && <Message content={t('Meeting ended')} />}
+    {session?.status === 'OPEN' && seats.length === 0 && <Message warning content={t('Add at least one committee member to proceed')} />}
     {chair && (!session || session.status === 'PENDING') && <Segment className="roll-call-start-card">
       <Label attached="top left" size="large">{t('Set meeting session')}</Label>
       <Form onSubmit={() => startMeeting()}>
@@ -781,7 +785,8 @@ function RollCallPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
     return execute(`seat:${seatId}`, () => api.setRollCallResponse(rollCall.id, rollCall.revision, seatId, next));
   };
   const presentSeatIds = new Set(seats.filter(seat => {
-    const attendance = snapshot.attendance.find(item => item.seatId === seat.id)?.state;
+    const attendance = rollCall.status === 'IN_PROGRESS' ? undefined
+      : snapshot.attendance.find(item => item.seatId === seat.id)?.state;
     if (attendance) return attendance === 'PRESENT';
     return entryBySeat.get(seat.id)?.response !== 'ABSENT' && entryBySeat.has(seat.id);
   }).map(seat => seat.id));

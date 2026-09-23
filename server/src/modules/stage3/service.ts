@@ -114,9 +114,16 @@ function builtInVersion7(definition: RulePackageDefinition): RulePackageDefiniti
     ? {...item, requiredSecondCount: 0} : item)};
 }
 
-function builtInVersion8(definition: RulePackageDefinition): RulePackageDefinition {
+function builtInVersion9(definition: RulePackageDefinition): RulePackageDefinition {
   const upgraded = builtInVersion7(definition);
-  return {...upgraded, motions: upgraded.motions.filter(item => item.id !== 'discuss-resolution')};
+  const removed = new Set([
+    'discuss-resolution',
+    'extend-unmoderated-caucus',
+    'extend-moderated-caucus',
+    'close-moderated-caucus',
+    'suspend-draft-resolution-speakers-list'
+  ]);
+  return {...upgraded, motions: upgraded.motions.filter(item => !removed.has(item.id))};
 }
 
 function committee(row: CommitteeRow): CommitteeSummary {
@@ -321,7 +328,7 @@ export class Stage3Service {
         const inserted = await client.query<{id: string}>(`INSERT INTO rule_packages
           (id, scope, stable_key) VALUES ($1,'BUILTIN',$2)
           ON CONFLICT (scope, stable_key) DO UPDATE SET stable_key=EXCLUDED.stable_key RETURNING id`, [packageId, definition.key]);
-        for (const [version, versionDefinition] of [[8, builtInVersion8(definition)]] as const) {
+        for (const [version, versionDefinition] of [[9, builtInVersion9(definition)]] as const) {
           const validated = validateRulePackage(versionDefinition);
           if (!validated.ok) throw new Error(`Invalid built-in rule package: ${definition.key} v${version}: ${JSON.stringify(validated.issues)}`);
           await client.query(`INSERT INTO rule_package_versions

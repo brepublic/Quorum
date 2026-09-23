@@ -260,7 +260,7 @@ function ReadyTimerControls({name, timer, run, api, canChair, onCreate, onToggle
       <Icon name={muted ? 'alarm mute' : 'alarm'} />
     </Button>
     <Progress percent={percent} active={false} indicating />
-    {canChair && <Form><Form.Input value={duration} placeholder={t('Duration')} error={!Number.isFinite(Number(duration)) || Number(duration) <= 0}
+    {canChair && timer.ownerType !== 'CAUCUS' && !(timer.ownerType === 'COMMITTEE' && remainingMs > 0) && <Form><Form.Input value={duration} placeholder={t('Duration')} error={!Number.isFinite(Number(duration)) || Number(duration) <= 0}
       onChange={event => setDuration(event.currentTarget.value)} action fluid>
       <input />
       <Select compact button value={unit} options={[{key: 'sec', value: 'sec', text: t('sec')},
@@ -551,7 +551,7 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
       : speech?.kind === 'INHERITED' && speech.yieldType === 'SEAT'
         ? t('{name} accepted the yield and inherited the remaining time.', {name: speech.seatDisplayName}) : undefined;
   const statusLabel = t(list.status === 'OPEN' ? 'Open' : 'Close speaker list');
-  const statusControl = canChair ? <Dropdown value={list.status} options={['OPEN', 'CLOSED'].map(value => ({key: value,
+  const statusControl = canChair && list.kind === 'GENERAL' ? <Dropdown value={list.status} options={['OPEN', 'CLOSED'].map(value => ({key: value,
     value, text: t(value === 'OPEN' ? 'Open' : 'Close speaker list')}))} onChange={(_, data) => void run(() => api.setSpeakerListStatus(list.id,
       list.revision, data.value as 'OPEN' | 'CLOSED'))} /> : <span>{statusLabel}</span>;
   const header = <Grid.Row><Grid.Column><Input label={statusControl} labelPosition="right" value={nameDraft} fluid size="massive"

@@ -695,7 +695,7 @@ POST /api/v1/committees/:id/attendance-events
 
 `set-response` 使用相同的 `{baseRevision, seatId, response}`，但允许 Chair 直接选择冻结名单中的任意席位。目标席位已有有效 entry 时，服务端先为旧 entry 写入撤销时间，再追加新 entry；不物理覆盖历史。进行中点名随后把 `currentSeatId` 移到冻结顺序中最早的未回答席位，全部回答后完成点名并生成出席事件。已完成点名允许更正并追加新的 attendance event；原完成时间和其他席位回答不变。命令记录 `directSelection`、被替代 entry、actor、事件和审计，仍受委员会活动状态、Chair 权限、行锁和 revision 约束。
 
-`undo` 只撤销当前 `IN_PROGRESS` 点名的最后一个 entry：entry 保存撤销时间，不物理删除；点名恢复该席位为当前席位。完成后的点名不可撤销。`reset` 把当前点名标记 `ABANDONED` 并在同一会期创建新的 `IN_PROGRESS` 点名；旧 entries 保留。它不修改已完成点名或其 attendance events。
+`undo` 只撤销当前 `IN_PROGRESS` 点名的最后一个 entry：entry 保存撤销时间，不物理删除；点名恢复该席位为当前席位。完成后的点名不可撤销。`reset` 把当前点名标记 `ABANDONED` 并按当前现役席位在同一会期创建新的 `IN_PROGRESS` 点名；旧 entries 保留。席位新增、重新启用或属性变动后，当前会期的进行中或已完成点名自动执行同样的重开。已完成点名及其 attendance events 保留历史状态；没有现役席位时不创建新点名。
 
 出席事件请求为 `{meetingSessionId, seatId, type}`，type 为 `PRESENT`、`TEMPORARILY_LEFT`、`RETURNED` 或 `ABSENT`。仅 Chair 可提交；actor 来自 Session，`on_behalf_of_seat_id` 固定为目标席位。当前状态由最后一个有效事件物化为 `PRESENT`、`TEMPORARILY_LEFT` 或 `ABSENT`，并可按事件顺序重建。事件追加不改写点名 entry。
 

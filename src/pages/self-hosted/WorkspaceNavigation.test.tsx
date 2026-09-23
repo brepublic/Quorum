@@ -154,6 +154,22 @@ describe('self-hosted workspace navigation', () => {
     expect(summary?.nextElementSibling).toBe(realtime);
   });
 
+  it("excludes deactivated seats from attendance while counting only voting seats for thresholds", () => {
+    const current = {...completedRollCall,
+      seats: [{id: "one", canVote: false}, {id: "two", canVote: true}, {id: "three", canVote: true},
+        {id: "four", canVote: true}, {id: "five", canVote: true}]};
+    const page = render(<CommitteeNavigation snapshot={current as unknown as CommitteeWorkspaceSnapshot}
+      user={user} logout={() => undefined} />, "/committees/committee/roll-call");
+    expect(page.querySelector(".attendance-threshold-summary")?.textContent).toBe("5/3/3");
+  });
+
+  it("shows zero majority thresholds when no present seat can vote", () => {
+    const current = {...completedRollCall, seats: [{id: "one", canVote: false}]};
+    const page = render(<CommitteeNavigation snapshot={current as unknown as CommitteeWorkspaceSnapshot}
+      user={user} logout={() => undefined} />, "/committees/committee/roll-call");
+    expect(page.querySelector(".attendance-threshold-summary")?.textContent).toBe("1/0/0");
+  });
+
   it("hides attendance thresholds until the current session has a completed roll call", () => {
     const page = render(<CommitteeNavigation snapshot={{...completedRollCall, rollCall: {...completedRollCall.rollCall!, status: "IN_PROGRESS"}}}
       user={user} logout={() => undefined} />, "/committees/committee/motions");

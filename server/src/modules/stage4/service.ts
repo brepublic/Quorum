@@ -340,12 +340,63 @@ function rollCallEntry(row: RollCallEntryRow): RollCallEntry {
 }
 
 async function rollCall(client: PoolClient, row: RollCallRow): Promise<RollCall> {
+  const seats = await client.query<{id: string; displayName: string; canVote: boolean; flag: FlagSnapshot}>(
+    `SELECT frozen.seat_id AS id,frozen.seat_display_name AS "displayName",seat.can_vote AS "canVote",
+      json_build_object('type',seat.flag_type,'value',seat.flag_value) AS flag
+      FROM roll_call_seats frozen JOIN committee_seats seat ON seat.id=frozen.seat_id
+      WHERE frozen.roll_call_id=$1 ORDER BY frozen.sort_order`, [row.id]);
   const entries = await client.query<RollCallEntryRow>(`SELECT * FROM roll_call_entries
     WHERE roll_call_id=$1 AND undone_at IS NULL ORDER BY recorded_at,id`, [row.id]);
   return {id: row.id, committeeId: row.committee_id, meetingSessionId: row.meeting_session_id, status: row.status,
     currentSeatId: row.current_seat_id, rulePackageVersionId: row.rule_package_version_id,
-    allowedResponses: row.allowed_responses, entries: entries.rows.map(rollCallEntry), revision: row.revision,
+    allowedResponses: row.allowed_responses, seats: seats.rows, entries: entries.rows.map(rollCallEntry), revision: row.revision,
     startedAt: row.started_at.toISOString(), completedAt: row.completed_at?.toISOString() ?? null};
+}
+
+async function replaceRollCall(client: PoolClient, committee: Stage4CommitteeRow, current: RollCallRow,
+  actorUserId: string, context: Stage4Context, allowEmpty = false): Promise<RollCall | undefined> {
+  const seats = await client.query<{id: string; display_name: string}>(`SELECT id,display_name FROM committee_seats
+    WHERE committee_id=$1 AND active=true ORDER BY sort_order,stable_key,id`, [committee.id]);
+  if (!seats.rows.length && !allowEmpty) throw new AppError({reason: 'NO_ACTIVE_SEATS', code: 'RESOURCE_CONFLICT',
+    message: 'The committee has no active seats.'});
+  await client.query(`UPDATE roll_calls SET status=CASE WHEN status='IN_PROGRESS' THEN 'ABANDONED'::roll_call_status ELSE status END,
+    current_seat_id=CASE WHEN status='IN_PROGRESS' THEN NULL ELSE current_seat_id END,
+    revision=revision+CASE WHEN status='IN_PROGRESS' THEN 1 ELSE 0 END WHERE id=$1`, [current.id]);
+  const nextId = seats.rows.length ? randomUUID() : null;
+  let replacement: RollCallRow | undefined;
+  if (nextId) {
+    const inserted = await client.query<RollCallRow>(`INSERT INTO roll_calls
+      (id,committee_id,meeting_session_id,current_seat_id,rule_package_version_id,allowed_responses,started_by_user_id)
+      VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+    [nextId, committee.id, current.meeting_session_id, seats.rows[0]?.id,
+      current.rule_package_version_id, current.allowed_responses, actorUserId]);
+    replacement = inserted.rows[0];
+    for (const [index, seat] of seats.rows.entries()) await client.query(`INSERT INTO roll_call_seats
+      (roll_call_id,seat_id,seat_display_name,sort_order) VALUES ($1,$2,$3,$4)`,
+    [nextId, seat.id, seat.display_name, index]);
+  }
+  await appendEvent(client, committee, {type: 'roll_call.reset', resourceType: 'roll_call', resourceId: current.id,
+    revision: current.revision + (current.status === 'IN_PROGRESS' ? 1 : 0),
+    payload: {replacementRollCallId: nextId, meetingSessionId: current.meeting_session_id}});
+  if (nextId) await appendEvent(client, committee, {type: 'roll_call.started', resourceType: 'roll_call', resourceId: nextId,
+    revision: 1, payload: {resetFromRollCallId: current.id, meetingSessionId: current.meeting_session_id,
+      rulePackageVersionId: current.rule_package_version_id, allowedResponses: current.allowed_responses,
+      seatCount: seats.rows.length}});
+  await audit(client, context, {committeeId: committee.id, actorUserId, capabilities: ['CHAIR'],
+    action: 'proceedings.roll_call_reset', resourceType: 'roll_call', resourceId: current.id,
+    before: {status: current.status, revision: current.revision},
+    after: {status: current.status === 'IN_PROGRESS' ? 'ABANDONED' : current.status,
+      revision: current.revision + (current.status === 'IN_PROGRESS' ? 1 : 0), replacementRollCallId: nextId}});
+  return replacement ? rollCall(client, replacement) : undefined;
+}
+
+async function resetRollCallAfterSeatChange(client: PoolClient, committee: Stage4CommitteeRow,
+  actorUserId: string, context: Stage4Context): Promise<void> {
+  const latest = await client.query<RollCallRow>(`SELECT roll.* FROM roll_calls roll
+    JOIN meeting_sessions session ON session.id=roll.meeting_session_id
+    WHERE roll.committee_id=$1 AND session.status='OPEN' AND roll.status<>'ABANDONED'
+    ORDER BY (roll.status='IN_PROGRESS') DESC,roll.started_at DESC,roll.id DESC LIMIT 1 FOR UPDATE`, [committee.id]);
+  if (latest.rows[0]) await replaceRollCall(client, committee, latest.rows[0], actorUserId, context, true);
 }
 
 async function insertAttendanceEvent(client: PoolClient, input: {
@@ -730,10 +781,10 @@ export class Stage4Service {
           status: row.status, rulePackageVersionId: row.rule_package_version_id, revision: row.revision,
           createdAt: row.created_at.toISOString(), resolvedAt: row.resolved_at?.toISOString() ?? null}))
         : pointRows.rows.map(row => point(client, row)));
-      if (currentSession) {
+      if (currentSession && seats.rows.length > 0) {
         if (viewer.audience !== 'PUBLIC') {
           const rollCallResult = await client.query<RollCallRow>(`SELECT * FROM roll_calls WHERE meeting_session_id=$1
-            ORDER BY (status='IN_PROGRESS') DESC,started_at DESC,id DESC LIMIT 1`, [currentSession.id]);
+            AND status<>'ABANDONED' ORDER BY (status='IN_PROGRESS') DESC,started_at DESC,id DESC LIMIT 1`, [currentSession.id]);
           if (rollCallResult.rows[0]) currentRollCall = await rollCall(client, rollCallResult.rows[0]);
         }
       }
@@ -1148,6 +1199,30 @@ export class Stage4Service {
           fieldErrors: [{field: 'stableKey', reason: 'UNKNOWN_FIXED_MEMBER'}]});
         const displayName = committeeContentName(definition.names, row.committee_language);
         const seatFlag = definition.flag;
+        const existing = await client.query<{id: string; revision: number; active: boolean}>(
+          'SELECT id,revision,active FROM committee_seats WHERE committee_id=$1 AND stable_key=$2 FOR UPDATE',
+          [committeeId, stableKey]);
+        if (existing.rows[0]) {
+          const seat = existing.rows[0];
+          if (seat.active) throw new AppError({reason: 'RESOURCE_ALREADY_EXISTS', code: 'RESOURCE_CONFLICT',
+            message: 'The requested resource already exists.'});
+          const restored = await client.query(`UPDATE committee_seats SET rank=$2,can_vote=$3,has_veto=$4,
+            must_vote=$5,sort_order=$6,active=true,revision=revision+1,updated_at=now()
+            WHERE id=$1 RETURNING id,stable_key AS "stableKey",display_name AS "displayName",rank,
+              can_vote AS "canVote",has_veto AS "hasVeto",must_vote AS "mustVote",sort_order AS "sortOrder",active,revision,
+              json_build_object('type',flag_type,'value',flag_value) AS flag`,
+          [seat.id, rank, canVote, hasVeto, mustVote, sortOrder]);
+          await appendEvent(client, row, {type: 'seat.updated', resourceType: 'seat', resourceId: seat.id,
+            revision: seat.revision + 1,
+            payload: {displayName, rank, canVote, hasVeto, mustVote, sortOrder, active: true, flagType: seatFlag.type}});
+          await audit(client, context, {committeeId, actorUserId: auth.user.id, capabilities: ['CHAIR'],
+            action: 'committee.seat_updated', resourceType: 'seat', resourceId: seat.id,
+            before: {revision: seat.revision, active: false},
+            after: {revision: seat.revision + 1, displayName, rank, canVote, hasVeto, mustVote, sortOrder,
+              active: true, flagType: seatFlag.type}});
+          await resetRollCallAfterSeatChange(client, row, auth.user.id, context);
+          return restored.rows[0] as Stage4CommitteeSeat;
+        }
         const id = randomUUID();
         const result = await client.query(`INSERT INTO committee_seats
           (id,committee_id,stable_key,display_name,rank,can_vote,has_veto,must_vote,sort_order,flag_type,flag_value)
@@ -1161,6 +1236,7 @@ export class Stage4Service {
         await audit(client, context, {committeeId, actorUserId: auth.user.id, capabilities: ['CHAIR'],
           action: 'committee.seat_created', resourceType: 'seat', resourceId: id,
           after: {stableKey, displayName, rank, canVote, hasVeto, mustVote, sortOrder, flagType: seatFlag.type}});
+        await resetRollCallAfterSeatChange(client, row, auth.user.id, context);
         return result.rows[0] as Stage4CommitteeSeat;
       }});
   }
@@ -1208,6 +1284,10 @@ export class Stage4Service {
         action: active ? 'committee.seat_updated' : 'committee.seat_deactivated', resourceType: 'seat', resourceId: seatId,
         before: {revision: current.revision}, after: {revision: current.revision + 1, displayName, rank,
           canVote, hasVeto, mustVote, sortOrder, active, flagType: seatFlag.type}});
+      if (rank !== current.rank || canVote !== current.can_vote || hasVeto !== current.has_veto
+        || mustVote !== current.must_vote || sortOrder !== current.sort_order || active !== current.active) {
+        await resetRollCallAfterSeatChange(client, committee, auth.user.id, context);
+      }
       return result.rows[0] as Stage4CommitteeSeat;
     });
   }
@@ -1541,9 +1621,12 @@ export class Stage4Service {
     const baseRevision = positiveRevision(input.baseRevision); const seatId = requiredText(input.seatId, 'Seat ID');
     const response = requiredText(input.response, 'Response', 128);
     return transaction(this.pool, async client => {
+      const located = await client.query<{committee_id: string}>('SELECT committee_id FROM roll_calls WHERE id=$1', [rollCallId]);
+      if (!located.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Roll call not found.'});
+      const committee = await lockedCommittee(client, located.rows[0].committee_id);
+      await requireChair(client, committee, auth.user.id);
       const found = await client.query<RollCallRow>('SELECT * FROM roll_calls WHERE id=$1 FOR UPDATE', [rollCallId]);
       const current = found.rows[0]; if (!current) throw new AppError({code: 'NOT_FOUND', message: 'Roll call not found.'});
-      const committee = await lockedCommittee(client, current.committee_id); await requireChair(client, committee, auth.user.id);
       requireProceedingsActive(committee);
       if (current.status !== 'IN_PROGRESS') throw new AppError({reason: 'ROLL_CALL_NOT_ACTIVE', code: 'RESOURCE_CONFLICT', message: 'Roll call is not in progress.'});
       if (current.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT', message: 'This roll call changed since it was loaded.',
@@ -1601,9 +1684,12 @@ export class Stage4Service {
     const baseRevision = positiveRevision(input.baseRevision); const seatId = requiredText(input.seatId, 'Seat ID');
     const response = requiredText(input.response, 'Response', 128);
     return transaction(this.pool, async client => {
+      const located = await client.query<{committee_id: string}>('SELECT committee_id FROM roll_calls WHERE id=$1', [rollCallId]);
+      if (!located.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Roll call not found.'});
+      const committee = await lockedCommittee(client, located.rows[0].committee_id);
+      await requireChair(client, committee, auth.user.id);
       const found = await client.query<RollCallRow>('SELECT * FROM roll_calls WHERE id=$1 FOR UPDATE', [rollCallId]);
       const current = found.rows[0]; if (!current) throw new AppError({code: 'NOT_FOUND', message: 'Roll call not found.'});
-      const committee = await lockedCommittee(client, current.committee_id); await requireChair(client, committee, auth.user.id);
       requireProceedingsActive(committee);
       if (current.status === 'ABANDONED') throw new AppError({reason: 'ROLL_CALL_NOT_ACTIVE', code: 'RESOURCE_CONFLICT', message: 'Roll call is not active.'});
       if (current.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT',
@@ -1683,9 +1769,12 @@ export class Stage4Service {
     context: Stage4Context): Promise<RollCall> {
     requireBusinessIdentity(auth); assertExactBody(input, ['baseRevision']); const baseRevision = positiveRevision(input.baseRevision);
     return transaction(this.pool, async client => {
+      const located = await client.query<{committee_id: string}>('SELECT committee_id FROM roll_calls WHERE id=$1', [rollCallId]);
+      if (!located.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Roll call not found.'});
+      const committee = await lockedCommittee(client, located.rows[0].committee_id);
+      await requireChair(client, committee, auth.user.id);
       const found = await client.query<RollCallRow>('SELECT * FROM roll_calls WHERE id=$1 FOR UPDATE', [rollCallId]);
       const current = found.rows[0]; if (!current) throw new AppError({code: 'NOT_FOUND', message: 'Roll call not found.'});
-      const committee = await lockedCommittee(client, current.committee_id); await requireChair(client, committee, auth.user.id);
       requireProceedingsActive(committee);
       if (current.status !== 'IN_PROGRESS') throw new AppError({reason: 'ROLL_CALL_NOT_ACTIVE', code: 'RESOURCE_CONFLICT', message: 'Only an active roll call can be undone.'});
       if (current.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT', message: 'This roll call changed since it was loaded.',
@@ -1709,34 +1798,17 @@ export class Stage4Service {
     context: Stage4Context): Promise<RollCall> {
     requireBusinessIdentity(auth); assertExactBody(input, ['baseRevision']); const baseRevision = positiveRevision(input.baseRevision);
     return transaction(this.pool, async client => {
+      const located = await client.query<{committee_id: string}>('SELECT committee_id FROM roll_calls WHERE id=$1', [rollCallId]);
+      if (!located.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Roll call not found.'});
+      const committee = await lockedCommittee(client, located.rows[0].committee_id);
+      await requireChair(client, committee, auth.user.id);
       const found = await client.query<RollCallRow>('SELECT * FROM roll_calls WHERE id=$1 FOR UPDATE', [rollCallId]);
       const current = found.rows[0]; if (!current) throw new AppError({code: 'NOT_FOUND', message: 'Roll call not found.'});
-      const committee = await lockedCommittee(client, current.committee_id); await requireChair(client, committee, auth.user.id);
       requireProceedingsActive(committee);
       if (current.status === 'ABANDONED') throw new AppError({reason: 'ROLL_CALL_NOT_ACTIVE', code: 'RESOURCE_CONFLICT', message: 'Roll call is not active.'});
       if (current.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT', message: 'This roll call changed since it was loaded.',
         details: {currentRevision: current.revision}});
-      const seats = await client.query<{seat_id: string; seat_display_name: string; sort_order: number}>(`SELECT * FROM roll_call_seats
-        WHERE roll_call_id=$1 ORDER BY sort_order`, [rollCallId]);
-      await client.query(`UPDATE roll_calls SET status=CASE WHEN status='IN_PROGRESS' THEN 'ABANDONED'::roll_call_status ELSE status END,current_seat_id=CASE WHEN status='IN_PROGRESS' THEN NULL ELSE current_seat_id END,revision=revision+CASE WHEN status='IN_PROGRESS' THEN 1 ELSE 0 END WHERE id=$1`, [rollCallId]);
-      const nextId = randomUUID(); const inserted = await client.query<RollCallRow>(`INSERT INTO roll_calls
-        (id,committee_id,meeting_session_id,current_seat_id,rule_package_version_id,allowed_responses,started_by_user_id)
-        VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-      [nextId, current.committee_id, current.meeting_session_id, seats.rows[0]?.seat_id,
-        current.rule_package_version_id, current.allowed_responses, auth.user.id]);
-      for (const seat of seats.rows) await client.query(`INSERT INTO roll_call_seats
-        (roll_call_id,seat_id,seat_display_name,sort_order) VALUES ($1,$2,$3,$4)`,
-      [nextId, seat.seat_id, seat.seat_display_name, seat.sort_order]);
-      await appendEvent(client, committee, {type: 'roll_call.reset', resourceType: 'roll_call', resourceId: rollCallId,
-        revision: current.revision + (current.status === 'IN_PROGRESS' ? 1 : 0), payload: {replacementRollCallId: nextId, meetingSessionId: current.meeting_session_id}});
-      await appendEvent(client, committee, {type: 'roll_call.started', resourceType: 'roll_call', resourceId: nextId,
-        revision: 1, payload: {resetFromRollCallId: rollCallId, meetingSessionId: current.meeting_session_id,
-          rulePackageVersionId: current.rule_package_version_id, allowedResponses: current.allowed_responses, seatCount: seats.rows.length}});
-      await audit(client, context, {committeeId: current.committee_id, actorUserId: auth.user.id, capabilities: ['CHAIR'],
-        action: 'proceedings.roll_call_reset', resourceType: 'roll_call', resourceId: rollCallId,
-        before: {status: current.status, revision: current.revision},
-        after: {status: current.status === 'IN_PROGRESS' ? 'ABANDONED' : current.status, revision: current.revision + (current.status === 'IN_PROGRESS' ? 1 : 0), replacementRollCallId: nextId}});
-      return rollCall(client, inserted.rows[0] as RollCallRow);
+      return (await replaceRollCall(client, committee, current, auth.user.id, context)) as RollCall;
     });
   }
 

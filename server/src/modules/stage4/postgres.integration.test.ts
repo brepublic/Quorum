@@ -177,6 +177,31 @@ integration('PostgreSQL stage 4 templates and seat snapshots', () => {
     }
   });
 
+  it('reactivates a deactivated seat when it is added again', async () => {
+    const owner = await user('restoreseat');
+    const countries = await stage4.createCountryTemplate(owner, countryTemplate, 'restore-countries', context('restore-countries'));
+    const committee = await stage4.createCommittee(owner, await testCommitteeInput(pool!, owner, {
+      name: 'Restore seats', visibility: 'PRIVATE', countryTemplateKey: countries.key}),
+    'restore-committee', context('restore-committee'));
+    await stage3.setChair(owner, committee.id, owner.user.email, true, 1, context('restore-chair'));
+    const original = await stage4.createSeat(owner, committee.id, {stableKey: 'france', rank: 'OBSERVER', canVote: false},
+      'restore-original', context('restore-original'));
+    await stage4.updateSeat(owner, committee.id, original.id,
+      {baseRevision: original.revision, patch: {active: false}}, context('restore-deactivate'));
+    expect((await stage4.snapshot(committee.id, owner)).seats).toEqual([]);
+
+    const input = {stableKey: 'france', rank: 'STANDARD', canVote: true, hasVeto: true, mustVote: true, sortOrder: 4};
+    const restored = await stage4.createSeat(owner, committee.id, input, 'restore-add', context('restore-add'));
+    expect(restored).toMatchObject({id: original.id, stableKey: 'france', displayName: 'France',
+      rank: 'STANDARD', canVote: true, hasVeto: true, mustVote: true, sortOrder: 4, active: true, revision: 3});
+    expect((await stage4.snapshot(committee.id, owner)).seats).toEqual([restored]);
+    expect((await pool!.query('SELECT count(*)::int AS count FROM committee_seats WHERE committee_id=$1 AND stable_key=$2',
+      [committee.id, 'france'])).rows).toEqual([{count: 1}]);
+    expect(await stage4.createSeat(owner, committee.id, input, 'restore-add', context('restore-retry'))).toEqual(restored);
+    await expect(stage4.createSeat(owner, committee.id, input, 'restore-duplicate', context('restore-duplicate')))
+      .rejects.toMatchObject({code: 'RESOURCE_CONFLICT', reason: 'RESOURCE_ALREADY_EXISTS'});
+  });
+
   it('isolates account templates, protects references, snapshots seats, and enforces revisions and Chair capability', async () => {
     await pool!.query('UPDATE system_settings SET default_committee_creator_is_chair=false');
     const owner = await user('templateowner'); const other = await user('templateother'); const chair = await user('templatechair');
@@ -323,6 +348,62 @@ integration('PostgreSQL stage 4 templates and seat snapshots', () => {
       [session.id, second.id]))?.rows).toEqual([{type: 'ABSENT'}, {type: 'RETURNED'}]);
     const closed = await stage4.closeMeetingSession(chair, session.id, {baseRevision: 1}, context('meeting-close'));
     expect(closed.status).toBe('CLOSED');
+  });
+
+  it('rebuilds the current roll call after seat changes and manual reset', async () => {
+    const chair = await user('seat-roll-reset');
+    const committee = await stage4.createCommittee(chair, await testCommitteeInput(pool!, chair, {
+      name: 'Seat roll reset', visibility: 'PRIVATE', countryTemplateKey: 'builtin:default'}),
+    randomUUID(), context('seat-roll-committee'));
+    await stage3.setChair(chair, committee.id, chair.user.email, true, 1, context('seat-roll-chair'));
+    const first = await stage4.createSeat(chair, committee.id, {stableKey: 'first', sortOrder: 10},
+      randomUUID(), context('seat-roll-first'));
+    const second = await stage4.createSeat(chair, committee.id, {stableKey: 'second', sortOrder: 20},
+      randomUUID(), context('seat-roll-second'));
+    const session = await stage4.startMeetingSession(chair, committee.id, {}, context('seat-roll-session'), randomUUID());
+    const started = await stage4.startRollCall(chair, committee.id, {meetingSessionId: session.id},
+      randomUUID(), context('seat-roll-start'));
+    expect(started.seats.map(seat => seat.id)).toEqual([first.id, second.id]);
+    await stage4.recordRollCallResponse(chair, started.id,
+      {baseRevision: started.revision, seatId: first.id, response: 'PRESENT'}, context('seat-roll-answer'));
+
+    const inactive = await stage4.updateSeat(chair, committee.id, second.id,
+      {baseRevision: second.revision, patch: {active: false}}, context('seat-roll-deactivate'));
+    const afterRemoval = (await stage4.snapshot(committee.id, chair)).rollCall!;
+    expect(afterRemoval).toMatchObject({status: 'IN_PROGRESS', currentSeatId: first.id, entries: []});
+    expect(afterRemoval.seats.map(seat => seat.id)).toEqual([first.id]);
+    expect((await pool!.query('SELECT status FROM roll_calls WHERE id=$1', [started.id])).rows)
+      .toEqual([{status: 'ABANDONED'}]);
+    expect((await pool!.query('SELECT count(*)::int AS count FROM roll_call_entries WHERE roll_call_id=$1', [started.id])).rows)
+      .toEqual([{count: 1}]);
+
+    const restored = await stage4.createSeat(chair, committee.id, {stableKey: second.stableKey, sortOrder: 20},
+      randomUUID(), context('seat-roll-reactivate'));
+    expect(restored.id).toBe(inactive.id);
+    const afterRestore = (await stage4.snapshot(committee.id, chair)).rollCall!;
+    expect(afterRestore.seats.map(seat => seat.id)).toEqual([first.id, second.id]);
+    const firstAnswer = await stage4.recordRollCallResponse(chair, afterRestore.id,
+      {baseRevision: afterRestore.revision, seatId: first.id, response: 'PRESENT'}, context('seat-roll-first-answer'));
+    const completed = await stage4.recordRollCallResponse(chair, afterRestore.id,
+      {baseRevision: firstAnswer.revision, seatId: second.id, response: 'ABSENT'}, context('seat-roll-second-answer'));
+    expect(completed.status).toBe('COMPLETED');
+    await stage4.updateSeat(chair, committee.id, first.id,
+      {baseRevision: first.revision, patch: {canVote: false}}, context('seat-roll-vote-change'));
+    const afterCompleted = (await stage4.snapshot(committee.id, chair)).rollCall!;
+    expect(afterCompleted).toMatchObject({status: 'IN_PROGRESS', entries: []});
+    expect(afterCompleted.seats.find(seat => seat.id === first.id)?.canVote).toBe(false);
+    expect((await pool!.query('SELECT status FROM roll_calls WHERE id=$1', [completed.id])).rows)
+      .toEqual([{status: 'COMPLETED'}]);
+
+    await pool!.query('UPDATE committee_seats SET active=false WHERE id=$1', [second.id]);
+    const manual = await stage4.resetRollCall(chair, afterCompleted.id,
+      {baseRevision: afterCompleted.revision}, context('seat-roll-manual-reset'));
+    expect(manual.seats.map(seat => seat.id)).toEqual([first.id]);
+    await stage4.updateSeat(chair, committee.id, first.id,
+      {baseRevision: first.revision + 1, patch: {active: false}}, context('seat-roll-last-deactivate'));
+    expect((await stage4.snapshot(committee.id, chair)).rollCall).toBeUndefined();
+    expect((await pool!.query('SELECT status FROM roll_calls WHERE id=$1', [manual.id])).rows)
+      .toEqual([{status: 'ABANDONED'}]);
   });
 
   it('preserves session attendance snapshots across new sessions and roll calls', async () => {

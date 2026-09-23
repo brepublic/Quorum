@@ -940,41 +940,30 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
     expect(audit?.rows[0]?.after_summary).toMatchObject({status: 'PASSED', advisoryRuleOverride: false});
   });
 
-  it('closes a moderated caucus by motion without discarding its current or waiting queue', async () => {
+  it('requires caucuses to end naturally and keeps their timers fixed', async () => {
     const fixture = await meetingFixture();
-    await pool?.query("UPDATE committees SET operation_mode='CHAIR_OPERATED' WHERE id=$1", [fixture.committee.id]);
-    let list = await stage5.createSpeakerList(fixture.firstChair, fixture.committee.id,
+    const list = await stage5.createSpeakerList(fixture.firstChair, fixture.committee.id,
       {meetingSessionId: fixture.session.id, kind: 'MODERATED_CAUCUS', customTitle: 'Climate finance',
         topic: 'Climate finance', defaultSpeechMs: 60_000, totalDurationMs: 600_000},
-      'motion-close-list', context('motion-close-list'));
-    list = await stage5.joinSpeakerQueue(fixture.firstChair, list.id, {seatId: fixture.firstSeat.id},
-      'motion-close-first', context('motion-close-first'));
-    list = await stage5.joinSpeakerQueue(fixture.firstChair, list.id, {seatId: fixture.secondSeat.id},
-      'motion-close-second', context('motion-close-second'));
-    list = await stage5.advanceSpeakerQueue(fixture.firstChair, list.id, {baseRevision: list.revision},
-      context('motion-close-stage'));
-    const speech = await stage5.commandSpeech(fixture.firstChair, list.id, 'start', {baseRevision: list.revision},
-      context('motion-close-start'));
-    const motion = await stage5.proposeMotion(fixture.firstChair, fixture.committee.id,
-      {meetingSessionId: fixture.session.id, motionTypeId: 'close-moderated-caucus',
-        onBehalfOfSeatId: fixture.firstSeat.id, parameters: {caucusTarget: list.id}},
-      'motion-close', context('motion-close'));
-    const passed = await stage5.decideMotion(fixture.firstChair, motion.id,
-      {baseRevision: motion.revision, result: 'PASSED'}, context('motion-close-pass'));
-    expect(passed.destinationPath).toBe(`/committees/${fixture.committee.id}/caucuses/${list.id}`);
-    const storedList = await pool?.query<{status: string; current_entry_id: string | null}>(
-      'SELECT status,current_entry_id FROM speaker_lists WHERE id=$1', [list.id]);
-    expect(storedList?.rows[0]).toEqual({status: 'CLOSED', current_entry_id: list.currentEntryId});
-    const queue = await pool?.query<{status: string}>('SELECT status FROM speaker_queue_entries WHERE speaker_list_id=$1 ORDER BY position',
-      [list.id]);
-    expect(queue?.rows.map(item => item.status)).toEqual(['CURRENT', 'QUEUED']);
-    const timers = await pool?.query<{running: boolean; remaining_at_start_ms: string}>(
-      'SELECT running,remaining_at_start_ms FROM timer_states WHERE id=ANY($1::uuid[])',
-      [[list.speechTimerId, list.totalTimerId]]);
-    expect(timers?.rows).toHaveLength(2);
-    expect(timers?.rows.every(timer => !timer.running && Number(timer.remaining_at_start_ms) > 0)).toBe(true);
-    const storedSpeech = await pool?.query<{status: string}>('SELECT status FROM speeches WHERE id=$1', [speech.id]);
-    expect(storedSpeech?.rows[0]?.status).toBe('COMPLETED');
+      'fixed-caucus-list', context('fixed-caucus-list'));
+    await expect(stage5.setSpeakerListStatus(fixture.firstChair, list.id,
+      {baseRevision: list.revision, status: 'CLOSED'}, context('manual-caucus-close')))
+      .rejects.toMatchObject({reason: 'CAUCUS_MUST_END_NATURALLY'});
+    await expect(stage5.commandTimer(fixture.firstChair, list.totalTimerId!, 'extend',
+      {baseRevision: 1, durationMs: 60_000}, context('extend-caucus-timer')))
+      .rejects.toMatchObject({reason: 'CAUCUS_TIMER_FIXED'});
+    await expect(stage5.commandTimer(fixture.firstChair, list.totalTimerId!, 'reset',
+      {baseRevision: 1, durationMs: 600_000}, context('reset-caucus-timer')))
+      .rejects.toMatchObject({reason: 'CAUCUS_MUST_END_NATURALLY'});
+    const unmoderated = await stage5.createTimer(fixture.firstChair, fixture.committee.id,
+      {ownerType: 'COMMITTEE', ownerId: fixture.committee.id, durationMs: 600_000}, 'fixed-unmoderated',
+      context('fixed-unmoderated'));
+    await expect(stage5.commandTimer(fixture.firstChair, unmoderated.id, 'extend',
+      {baseRevision: unmoderated.revision, durationMs: 60_000}, context('extend-unmoderated-timer')))
+      .rejects.toMatchObject({reason: 'CAUCUS_TIMER_FIXED'});
+    await expect(stage5.commandTimer(fixture.firstChair, unmoderated.id, 'reset',
+      {baseRevision: unmoderated.revision, durationMs: 600_000}, context('reset-unmoderated-timer')))
+      .rejects.toMatchObject({reason: 'CAUCUS_MUST_END_NATURALLY'});
   });
 
   it('moves a motion through voting and applies the published ballot result', async () => {

@@ -206,6 +206,7 @@ export interface RollCall {
   currentSeatId: string | null;
   rulePackageVersionId: string;
   allowedResponses: string[];
+  seats: Pick<Stage4CommitteeSeat, 'id' | 'displayName' | 'canVote' | 'flag'>[];
   entries: RollCallEntry[];
   revision: number;
   startedAt: string;

@@ -173,13 +173,15 @@ integration('PostgreSQL stage 3 integration', () => {
     expect(await stage3.listRulePackages()).toEqual(packages);
     const source = packages.find(item => item.key === 'builtin:beijing-academic') as (typeof packages)[number];
     expect(source.versions).toHaveLength(1);
-    expect(source.versions[0]).toMatchObject({version: 8, names: {'zh-CN': '北京学术标准 2021', en: 'Beijing Academic Standard 2021'}});
+    expect(source.versions[0]).toMatchObject({version: 9, names: {'zh-CN': '北京学术标准 2021', en: 'Beijing Academic Standard 2021'}});
     const versions = await pool!.query<{version: number; definition: {motions?: Array<{id: string; requiredSecondCount?: number}>}}>(
       'SELECT version,definition FROM rule_package_versions WHERE package_id=$1 ORDER BY version', [source.id]);
     expect(versions.rows.map(row => ({version: row.version,
       requiredSecondCount: row.definition.motions?.find(motion => motion.id === 'introduce-draft-resolution')?.requiredSecondCount,
-      discussResolution: row.definition.motions?.some(motion => motion.id === 'discuss-resolution')})))
-      .toEqual([{version: 8, requiredSecondCount: 0, discussResolution: false}]);
+      removedMotions: ['discuss-resolution', 'extend-unmoderated-caucus', 'extend-moderated-caucus',
+        'close-moderated-caucus', 'suspend-draft-resolution-speakers-list']
+        .filter(id => row.definition.motions?.some(motion => motion.id === id))})))
+      .toEqual([{version: 9, requiredSecondCount: 0, removedMotions: []}]);
     await expect(stage3.createRuleVersion(administrator, source.id, {definition: {}}, context('edit-builtin')))
       .rejects.toMatchObject({code: 'VALIDATION_FAILED'});
     const cloned = await stage3.cloneRulePackage(chair, source.id, {scope: 'COMMITTEE', committeeId: committee.id,
