@@ -333,8 +333,14 @@ describe('self-hosted stage 6 file panel', () => {
     const view = await render('CHAIR', client, 'chair');
     expect(view.querySelector('a[href$="/posts/review"]')?.textContent).toBe('文件审核');
     expect(publishFile).not.toHaveBeenCalled();
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
-    await act(async () => {button('永久删除')?.click(); await new Promise(resolve => setTimeout(resolve, 0));});
+    await act(async () => {button('永久删除')?.click();});
+    expect(deleteFile).not.toHaveBeenCalled();
+    const modal = document.body.querySelector('.ui.modal')!;
+    expect(modal.textContent).toContain(file.logicalName);
+    await act(async () => {[...modal.querySelectorAll<HTMLButtonElement>('button')].find(el => el.textContent === '取消')!.click();});
+    expect(deleteFile).not.toHaveBeenCalled();
+    await act(async () => {button('永久删除')?.click();});
+    await act(async () => {[...document.body.querySelectorAll<HTMLButtonElement>('.ui.modal button')].find(el => el.textContent === '永久删除')!.click();});
     expect(deleteFile).toHaveBeenCalledWith(file.id, 2);
     expect(view.textContent).not.toContain('工作文件一');
   });

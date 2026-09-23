@@ -54,6 +54,16 @@ async function send(uploads: Stage6UploadService, options: {
 }
 
 describe('stage 6 upload HTTP boundary', () => {
+  it('reads completion state through the authenticated upload service', async () => {
+    const getUpload = vi.fn(async () => ({id: 'upload', status: 'COMMITTED', committedFileEntryId: 'file'}));
+    const id = '20000000-0000-4000-8000-000000000001';
+    const response = await send({getUpload} as unknown as Stage6UploadService,
+      {method: 'GET', path: `/api/v1/file-uploads/${id}`, chunks: []});
+    expect(response.statusCode).toBe(200);
+    expect(getUpload).toHaveBeenCalledWith(authenticated, id);
+    expect(JSON.parse(response.body).data.status).toBe('COMMITTED');
+  });
+
   it('creates an upload from Session-authenticated metadata', async () => {
     const createUpload = vi.fn(async () => ({id: 'upload', status: 'CREATED'}));
     const uploads = {createUpload} as unknown as Stage6UploadService;

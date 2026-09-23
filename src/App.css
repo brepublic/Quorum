@@ -1007,8 +1007,21 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   }
 
   .ui.table.country-editor-table {
-    min-width: 48rem;
+    min-width: 0;
   }
+  .ui.table.country-editor-table td::before {
+    content: attr(data-label);
+    display: block;
+    font-weight: 700;
+    margin-bottom: 0.5rem;
+  }
+  .ui.table.country-editor-table thead { display: none !important; }
+  .country-flag-editor { min-width: 0; grid-template-columns: auto minmax(0, 1fr); }
+  .country-flag-editor .country-flag-display { font-size: 3rem; }
+  .country-flag-editor .ui.selection.dropdown,
+  .ui.table.country-editor-table .field { min-width: 0; }
+  .country-flag-editor input[type='file'] { max-width: 100%; min-width: 0; }
+
 }
 
 .storage-cache-table-wrap {
@@ -2504,11 +2517,13 @@ html[lang='zh-CN'] .ui {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .resolution-voting-actions {
-    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-  }
+  .resolution-voting-actions { grid-template-columns: minmax(0, 1fr); gap: 0.75rem; }
+
 
   .resolution-voting-primary-actions {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-column: 1;
     gap: 0.35rem;
   }
 
@@ -2517,7 +2532,9 @@ html[lang='zh-CN'] .ui {
   }
 
   .resolution-voting-actions .ui.button.resolution-voting-undo {
-    margin-left: 0.35rem;
+    grid-column: 1;
+    justify-self: center;
+    margin-left: 0;
     min-width: 0;
   }
 }
@@ -2633,3 +2650,9 @@ html[lang='zh-CN'] .ui.grid > .column {
 .resolution-country-list li > :not(.resolution-country-name) { flex-shrink: 0; }
 .resolution-country-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .resolution-country-list li .ui.button { margin: 0; }
+
+.template-editor-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; }
+.template-editor-actions .ui.button { margin: 0; }
+.template-editor-actions .template-delete-action { margin-left: auto; }
+.committee-files-page > .ui.menu { flex-wrap: wrap; }
+.committee-files-page > .ui.menu .item { flex-shrink: 0; }

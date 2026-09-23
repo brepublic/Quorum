@@ -62,7 +62,7 @@ describe('delegate file chair review', () => {
   it.each([false, true])('shows a named upload receipt only after durable save (pending host commit: %s)', async pendingHostCommit => {
     const selected = new File(['abc'], 'review-upload.txt', {type: 'text/plain'});
     Object.defineProperty(selected, 'arrayBuffer', {value: async () => new TextEncoder().encode('abc').buffer});
-    const api = {listPendingHostCommits: async () => [], createFileUpload: vi.fn(async () => ({id: 'upload'})),
+    const api = {listPendingHostCommits: async () => [], getFileUpload: async () => ({status: 'STAGED'}), createFileUpload: vi.fn(async () => ({id: 'upload'})),
       uploadFileContent: vi.fn(async () => ({})), commitFileUpload: vi.fn(async () => pendingHostCommit
         ? {kind: 'PENDING_HOST_COMMIT'} : {id: 'saved-file'})} as unknown as SelfHostedApi;
     await act(async () => root.render(<MemoryRouter><DelegateFileUploadPanel snapshot={snapshot} api={api} /></MemoryRouter>));
@@ -80,6 +80,29 @@ describe('delegate file chair review', () => {
       expect(receipt?.querySelector('a')?.getAttribute('href')).toBe('/committees/committee/posts/attachments');
       expect(input.value).toBe('');
     }
+  });
+
+  it('shows the named receipt after an async upload is confirmed committed, not when a pending entry disappears', async () => {
+    vi.useFakeTimers();
+    try {
+      let status = 'STAGED';
+      const selected = new File(['abc'], 'async-review.txt', {type: 'text/plain'});
+      Object.defineProperty(selected, 'arrayBuffer', {value: async () => new TextEncoder().encode('abc').buffer});
+      const api = {listPendingHostCommits: async () => [], createFileUpload: async () => ({id: 'async-upload'}),
+        uploadFileContent: async () => ({}), commitFileUpload: async () => ({kind: 'PENDING_HOST_COMMIT'}),
+        getFileUpload: vi.fn(async () => ({id: 'async-upload', status, committedFileEntryId: status === 'COMMITTED' ? 'file' : null}))} as unknown as SelfHostedApi;
+      await act(async () => root.render(<MemoryRouter><DelegateFileUploadPanel snapshot={snapshot} api={api} /></MemoryRouter>));
+      const input = host.querySelector<HTMLInputElement>('input[type="file"]')!;
+      Object.defineProperty(input, 'files', {value: [selected], configurable: true});
+      await act(async () => input.dispatchEvent(new Event('change', {bubbles: true})));
+      await act(async () => {host.querySelector('form')!.dispatchEvent(new Event('submit', {bubbles: true, cancelable: true}));
+        await vi.advanceTimersByTimeAsync(100);});
+      expect(host.querySelector('.delegate-file-upload-result')).toBeNull();
+      status = 'COMMITTED';
+      await act(async () => vi.advanceTimersByTimeAsync(2100));
+      expect(host.querySelector('.delegate-file-upload-result')?.textContent).toContain('async-review.txt');
+      expect(host.textContent).toContain('文件已提交，等待审核');
+    } finally {vi.useRealTimers();}
   });
 
   it('keeps the upload component separate from review cards', async () => {
@@ -114,7 +137,7 @@ describe('delegate file chair review', () => {
       getDelegateFileSettings:async () => ({rejectionTypes:[{id:'format',label:{'zh-CN':'内容格式不合要求'},message:{'zh-CN':'文件内容格式不合要求，请参阅《学术指引》修改后重新提交。'},custom:false}]})} as unknown as SelfHostedApi;
     await act(async () => root.render(<DelegateFilePanels tab="review" snapshot={snapshot} api={api} />));
     expect((host.querySelector('input[aria-label="文件名称"]') as HTMLInputElement).value).toBe('工作文件 1.2');
-    await act(async () => (Array.from(host.querySelectorAll('button')).find(x => x.textContent==='驳回') as HTMLElement).click());
+    await act(async () => (Array.from(host.querySelectorAll('button')).find(x => x.textContent==='驳回文件') as HTMLElement).click());
     expect(rejectDelegateFile).not.toHaveBeenCalled();
     expect(document.body.textContent).toContain('文件内容格式不合要求，请参阅《学术指引》修改后重新提交。');
     await act(async () => (Array.from(document.body.querySelectorAll('button')).find(x => x.textContent==='确认驳回') as HTMLElement).click());

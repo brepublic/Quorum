@@ -430,6 +430,24 @@ integration('PostgreSQL stage 6 file metadata', () => {
     await expect(portal.bootstrap(capability)).rejects.toMatchObject({code: 'LINK_EXPIRED'});
   });
 
+  it('reads committed upload receipts only for the uploader, Owner or Chair', async () => {
+    const fixture = await storageFixture();
+    const upload = await uploads.createUpload(fixture.member, fixture.committee.id, {
+      logicalName: 'Receipt', originalName: 'receipt.txt', mediaType: 'text/plain', expectedSizeBytes: 4, sha256: digest('data')
+    }, 'receipt-upload', context('receipt-upload'));
+    expect(await uploads.getUpload(fixture.member, upload.id)).toMatchObject({id: upload.id, status: 'CREATED'});
+    await expect(uploads.getUpload(administrator, upload.id)).rejects.toMatchObject({code: 'FORBIDDEN'});
+    const other = await user('other-member');
+    const otherSeat = await stage4.createSeat(fixture.chair, fixture.committee.id, {stableKey: 'other'}, 'other-seat', context('other-seat'));
+    await stage3.assignSeat(fixture.chair, fixture.committee.id, {seatId: otherSeat.id, email: other.user.email}, context('assign-other'));
+    await expect(uploads.getUpload(other, upload.id)).rejects.toMatchObject({code: 'NOT_FOUND'});
+    await uploads.receiveContent(fixture.member, upload.id, (async function* () {yield 'data';})(), 'receipt-content', 4, context('receipt-content'));
+    const file = await serverVolume.commitUpload(fixture.member, upload.id, {}, 'receipt-commit', context('receipt-commit'));
+    for (const viewer of [fixture.member, fixture.owner, fixture.chair]) {
+      expect(await uploads.getUpload(viewer, upload.id)).toMatchObject({status: 'COMMITTED', committedFileEntryId: file.id});
+    }
+  });
+
   it('lists storage binding state only for the committee Owner or Chair', async () => {
     const fixture = await storageFixture();
     await expect(storage.listBindings(fixture.owner, fixture.committee.id)).resolves.toEqual([fixture.binding]);

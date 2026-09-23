@@ -168,6 +168,26 @@ export class Stage6UploadService {
     private readonly capacity?: StorageCapacityGuard
   ) {}
 
+  async getUpload(auth: AuthenticatedSession, uploadId: string): Promise<FileUpload> {
+    requireBusinessIdentity(auth);
+    return transaction(this.pool, async client => {
+      const found = await client.query<UploadRow>(`SELECT u.*,encode(u.expected_sha256,'hex') AS expected_sha256_hex,
+        CASE WHEN u.actual_sha256 IS NULL THEN NULL ELSE encode(u.actual_sha256,'hex') END AS actual_sha256_hex,
+        COALESCE(u.failure_code,task.failure_code) AS failure_code
+        FROM file_uploads u LEFT JOIN storage_agent_tasks task ON task.id=u.agent_task_id WHERE u.id=$1`,
+      [uuid(uploadId, 'Upload ID')]);
+      const row = found.rows[0];
+      if (!row) throw new AppError({code: 'NOT_FOUND', message: 'Upload not found.'});
+      const committee = await lockedCommittee(client, row.committee_id);
+      await requireContributor(client, committee, auth.user.id);
+      if (row.created_by_user_id !== auth.user.id && committee.owner_user_id !== auth.user.id
+        && !await isChair(client, committee.id, auth.user.id)) {
+        throw new AppError({code: 'NOT_FOUND', message: 'Upload not found.'});
+      }
+      return uploadState(row);
+    });
+  }
+
   async listPendingHostCommits(auth: AuthenticatedSession, committeeId: string): Promise<FileUpload[]> {
     requireBusinessIdentity(auth);
     return transaction(this.pool, async client => {

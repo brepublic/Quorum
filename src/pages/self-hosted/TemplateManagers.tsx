@@ -2,6 +2,8 @@ import {useApiFieldErrors} from '../../components/useApiFieldErrors';
 import {apiErrorText} from '../../i18n';
 import {committeeContentName, type ContentLanguage} from '@quorum/contracts';
 import * as React from 'react';
+import {unstable_batchedUpdates} from 'react-dom';
+import {Prompt} from 'react-router-dom';
 import type {
   CommitteeTemplate,
   CommitteeTemplateInput,
@@ -76,6 +78,27 @@ function draftNameLanguage(names: LocalizedNames, defaultLanguage: string): Lang
   return SUPPORTED_LANGUAGES.find(candidate => names[candidate]?.trim()) ?? language;
 }
 
+function useTemplateDraftGuard(fingerprint: string) {
+  const reset = React.useRef(true);
+  const [baseline, setBaseline] = React.useState(fingerprint);
+  const [nextAction, setNextAction] = React.useState<(() => void)>();
+  const dirty = fingerprint !== baseline;
+  React.useLayoutEffect(() => {
+    if (reset.current) { reset.current = false; setBaseline(fingerprint); }
+  });
+  React.useEffect(() => {
+    if (!dirty) return;
+    const prevent = (event: BeforeUnloadEvent) => {event.preventDefault(); event.returnValue = '';};
+    window.addEventListener('beforeunload', prevent);
+    return () => window.removeEventListener('beforeunload', prevent);
+  }, [dirty]);
+  const protect = (action: () => void) => {if (dirty) setNextAction(() => action); else action();};
+  const confirmation = <Confirm open={Boolean(nextAction)} header={t('Discard unsaved changes?')} content={null}
+    cancelButton={t('Keep editing')} confirmButton={{content: t('Discard changes'), negative: true, primary: false}}
+    onCancel={() => setNextAction(undefined)} onConfirm={() => {setNextAction(undefined); nextAction?.();}} />;
+  return {reset, dirty, protect, confirmation};
+}
+
 export function CountryTemplateManager({api}: {api: SelfHostedApi}) {
   useLanguage();
   const [displayLanguage, setDisplayLanguage] = React.useState<Language>(getLanguage);
@@ -87,11 +110,14 @@ export function CountryTemplateManager({api}: {api: SelfHostedApi}) {
   const error = failure ? errorText(failure) : undefined;
   const field = useApiFieldErrors(failure);
   const selected = templates.find(template => template.id === selectedId); const isBuiltin = selected?.builtin ?? false;
+  const draft = useTemplateDraftGuard(JSON.stringify({selectedId, displayLanguage, name, defaultLanguage, localizedNames, languages, countries}));
+  const [invalidCountry, setInvalidCountry] = React.useState<string>();
 
   const refresh = React.useCallback(async () => { const next = await api.listCountryTemplates(); setTemplates(next); return next; }, [api]);
   React.useEffect(() => { void refresh().catch(caught => setError(caught)); }, [refresh]);
 
-  const load = React.useCallback((template: CountryTemplate) => {
+  const load = React.useCallback((template: CountryTemplate) => unstable_batchedUpdates(() => {
+    draft.reset.current = true; setInvalidCountry(undefined);
     const nextLanguage = draftNameLanguage(template.names, template.defaultLanguage);
     setDisplayLanguage(nextLanguage);
     setSelectedId(template.id); setName(template.names[nextLanguage] ?? '');
@@ -103,11 +129,11 @@ export function CountryTemplateManager({api}: {api: SelfHostedApi}) {
       defaultLanguage: country.defaultLanguage, continent: country.continent, sortOrder: country.sortOrder, flag: country.flag,
       flagMode: country.flag.type})));
     setSaved(false); setError(undefined);
-  }, []);
+  }), []);
 
-  const startNew = () => { const language = getLanguage(); setDisplayLanguage(language);
+  const startNew = () => unstable_batchedUpdates(() => { draft.reset.current = true; setInvalidCountry(undefined); const language = getLanguage(); setDisplayLanguage(language);
     setSelectedId(undefined); setName(''); setDefaultLanguage(language); setLocalizedNames([]);
-    setLanguages([language]); setCountries([]); setSaved(false); setError(undefined); };
+    setLanguages([language]); setCountries([]); setSaved(false); setError(undefined); });
 
   const create = async () => {
     if (!name.trim()) return; setSaving(true); setError(undefined);
@@ -126,8 +152,15 @@ export function CountryTemplateManager({api}: {api: SelfHostedApi}) {
   };
 
   const save = async () => {
-    if (!selected || isBuiltin || !name.trim() || countries.some(country => !languages.some(language => country.names[language]?.trim())
-      || (country.flagMode === 'IMAGE' && country.flag.type !== 'IMAGE'))) return;
+    if (!selected || isBuiltin || !name.trim()) return;
+    const invalid = countries.find(country => !languages.some(language => country.names[language]?.trim())
+      || (country.flagMode === 'IMAGE' && country.flag.type !== 'IMAGE'));
+    if (invalid) {
+      setInvalidCountry(invalid.id);
+      document.getElementById(`country-name-${invalid.id}-${languages[0]}`)?.focus();
+      return;
+    }
+    setInvalidCountry(undefined);
     setSaving(true); setError(undefined);
     try {
       const localized = templateNames();
@@ -166,8 +199,8 @@ export function CountryTemplateManager({api}: {api: SelfHostedApi}) {
     <Header as="h1">{t('Country manager')}</Header>
     <Grid stackable className="country-manager-layout">
       <Grid.Column className="country-manager-sidebar"><Segment>
-        <Button primary fluid icon labelPosition="left" onClick={startNew}><Icon name="plus" />{t('New country template')}</Button>
-        <List divided relaxed selection>{templates.map(template => <List.Item key={template.id} active={template.id === selectedId} onClick={() => load(template)}>
+        <Button primary fluid icon labelPosition="left" onClick={() => draft.protect(startNew)}><Icon name="plus" />{t('New country template')}</Button>
+        <List divided relaxed selection>{templates.map(template => <List.Item key={template.id} active={template.id === selectedId} onClick={() => {if (template.id !== selectedId) draft.protect(() => load(template));}}>
           <Icon name={template.builtin ? 'world' : 'globe'} /><List.Content><List.Header>{localizedDisplayName(template.names, template.defaultLanguage)}</List.Header>
             <List.Description>{template.builtin ? `${t('Built-in')} · ` : ''}{t('{count} countries', {count: template.countries.length})}</List.Description>
           </List.Content></List.Item>)}</List>
@@ -179,9 +212,9 @@ export function CountryTemplateManager({api}: {api: SelfHostedApi}) {
           {error && <Message error content={error} />}<Button primary disabled={!name.trim()}>{t('Create country template')}</Button>
         </Form> : <>
           <div className="country-template-editor-header"><Header as="h2">{isBuiltin ? t('Default country template') : t('Edit country template')}</Header>
-            <Button type="button" basic primary onClick={() => void clone()}><Icon name="copy outline" />{t('Clone country template')}</Button></div>
+            <Button type="button" basic primary onClick={() => draft.protect(() => void clone())}><Icon name="copy outline" />{t('Clone country template')}</Button></div>
           {isBuiltin && <Message info content={t('The built-in country template is read-only. Clone it to customize the countries.')} />}
-          <Form success={saved} error={!!error} onSubmit={save}>
+          <Form success={saved && !draft.dirty} error={!!error} onSubmit={save}>
             <Form.Input {...field(`names.${displayLanguage}`)} required disabled={isBuiltin} label={t('Country template name')} value={name}
               onChange={event => {setName(event.currentTarget.value); setSaved(false);}} />
             <div className="template-localized-names">{localizedNames.map(item => <Form.Group key={item.id} className="template-localized-name-row">
@@ -203,13 +236,15 @@ export function CountryTemplateManager({api}: {api: SelfHostedApi}) {
               {!isBuiltin && unusedCountryLanguages.length > 0 && <Button type="button" basic onClick={() => {
                 setLanguages(current => [...current, unusedCountryLanguages[0]!]); setSaved(false);}}>
                 <Icon name="language" />{t('Add country name language')}</Button>}</div>
-            <div className="country-table-scroll"><Table compact celled className="country-editor-table"><Table.Header><Table.Row>
+            <div className="country-table-scroll"><Table compact celled stackable className="country-editor-table"><Table.Header><Table.Row>
               {languages.map(language => <Table.HeaderCell key={language}>{t('Country name')} · {LANGUAGE_OPTIONS.find(item => item.value === language)?.text}</Table.HeaderCell>)}
               <Table.HeaderCell>{t('Flag')}</Table.HeaderCell><Table.HeaderCell>{t('Continent')}</Table.HeaderCell>{!isBuiltin && <Table.HeaderCell />}
             </Table.Row></Table.Header><Table.Body>{countries.map((country, index) => <Table.Row key={country.id}>
-              {languages.map(language => <Table.Cell key={language}><Form.Input {...field(`countries.${index}.names.${language}`)} disabled={isBuiltin} value={country.names[language] ?? ''}
+              {languages.map(language => <Table.Cell data-label={`${t('Country name')} · ${language}`} key={language}><Form.Input {...field(`countries.${index}.names.${language}`)} id={`country-name-${country.id}-${language}`}
+                error={invalidCountry === country.id && !languages.some(lang => country.names[lang]?.trim()) ? {content: t('Enter a country name')} : field(`countries.${index}.names.${language}`).error}
+                aria-label={`${t('Country name')} · ${language} · ${index + 1}`} disabled={isBuiltin} value={country.names[language] ?? ''}
                 onChange={event => updateCountry(country.id, {names: {...country.names, [language]: event.currentTarget.value}, defaultLanguage: country.defaultLanguage || language})} /></Table.Cell>)}
-              <Table.Cell><div className="country-flag-editor"><FlagDisplay flag={country.flag} />
+              <Table.Cell data-label={t('Flag')}><div className="country-flag-editor"><FlagDisplay flag={country.flag} />
                 <Dropdown disabled={isBuiltin} selection value={country.flagMode} options={[
                   {key: 'standard', value: 'STANDARD', text: t('Standard flag')}, {key: 'emoji', value: 'EMOJI', text: 'Emoji'},
                   {key: 'image', value: 'IMAGE', text: t('Image')}]}
@@ -221,24 +256,26 @@ export function CountryTemplateManager({api}: {api: SelfHostedApi}) {
                 {!isBuiltin && country.flagMode === 'IMAGE' && <input type="file" accept="image/*" onChange={event => {const file = event.currentTarget.files?.[0];
                   if (file) void resizeFlagImage(file).then(value => updateCountry(country.id, {flag: {type: 'IMAGE', value}, flagMode: 'IMAGE'}))
                     .catch(caught => setError(caught));}} />}
+                {invalidCountry === country.id && country.flagMode === 'IMAGE' && country.flag.type !== 'IMAGE' && <Message error content={t('Choose an image for this flag')} />}
               </div></Table.Cell>
-              <Table.Cell><Dropdown disabled={isBuiltin} clearable selection value={country.continent ?? ''}
+              <Table.Cell data-label={t('Continent')}><Dropdown disabled={isBuiltin} clearable selection value={country.continent ?? ''}
                 options={CONTINENTS.map(continent => ({key: continent, value: continent, text: t(continent)}))}
                 onChange={(_event, data) => updateCountry(country.id, {continent: String(data.value || '') || null})} /></Table.Cell>
               {!isBuiltin && <Table.Cell><Button type="button" basic negative icon="trash" aria-label={t('Remove')}
                 onClick={() => {setCountries(current => current.filter(candidate => candidate.id !== country.id)); setSaved(false);}} /></Table.Cell>}
             </Table.Row>)}</Table.Body></Table></div>
-            {!isBuiltin && <Button type="button" basic primary className="add-country-button" onClick={() => {const language = languages[0] ?? displayLanguage;
+            <Message success content={t('Country template saved')} />{error && <Message error content={error} onDismiss={() => setError(undefined)} />}
+            <div className="template-editor-actions">{!isBuiltin && <Button type="button" basic primary className="add-country-button" onClick={() => {const language = languages[0] ?? displayLanguage;
               setCountries(current => [...current, {id: draftId('country'), stableKey: draftId('country'), names: {[language]: ''},
                 defaultLanguage: language, continent: null, sortOrder: current.length, flag: {type: 'EMOJI', value: '🏳️'}, flagMode: 'EMOJI'}]); setSaved(false);}}>
               <Icon name="plus" />{t('Add country')}</Button>}
-            <Message success content={t('Country template saved')} />{error && <Message error content={error} onDismiss={() => setError(undefined)} />}
             {!isBuiltin && <><Button type="submit" primary disabled={!name.trim()}><Icon name="save" />{t('Save country template')}</Button>
-              <Button type="button" negative basic floated="right" onClick={() => setDeleteOpen(true)}><Icon name="trash" />{t('Delete country template')}</Button></>}
+              <Button type="button" negative basic className="template-delete-action" onClick={() => setDeleteOpen(true)}><Icon name="trash" />{t('Delete country template')}</Button></>}</div>
           </Form>
         </>}
       </Segment></Grid.Column>
     </Grid>
+    {draft.confirmation}<Prompt when={draft.dirty && !saving} message={t('Discard unsaved changes?')} />
     <Confirm open={deleteOpen} header={t('Delete country template?')} content={t('Are you sure that you want to delete this country template?')}
       cancelButton={t('Cancel')} confirmButton={{content: t('Delete'), primary: false, negative: true}} onCancel={() => setDeleteOpen(false)} onConfirm={() => void remove()} />
   </Container>;
@@ -259,21 +296,22 @@ export function CommitteeTemplateManager({api}: {api: SelfHostedApi}) {
   const field = useApiFieldErrors(failure);
   const customTemplates = templates.filter(template => !template.builtin);
   const selectedCountry = countryTemplates.find(template => template.key === countryKey);
+  const draft = useTemplateDraftGuard(JSON.stringify({selectedId, displayLanguage, name, defaultLanguage, localizedNames, countryKey, members}));
 
   const refresh = React.useCallback(async () => { const [nextTemplates, nextCountries] = await Promise.all([
     api.listCommitteeTemplates(), api.listCountryTemplates()]); setTemplates(nextTemplates); setCountryTemplates(nextCountries);
     return {nextTemplates, nextCountries}; }, [api]);
   React.useEffect(() => { void refresh().catch(caught => setError(caught)); }, [refresh]);
-  const startNew = () => {const language = getLanguage(); setDisplayLanguage(language);
+  const startNew = () => unstable_batchedUpdates(() => {draft.reset.current = true; const language = getLanguage(); setDisplayLanguage(language);
     setSelectedId(undefined); setName(''); setDefaultLanguage(language); setLocalizedNames([]);
-    setCountryKey('builtin:default'); setMembers([]); setSaved(false); setError(undefined);};
-  const load = (template: CommitteeTemplate) => {const nextLanguage = draftNameLanguage(template.names, template.defaultLanguage);
+    setCountryKey('builtin:default'); setMembers([]); setSaved(false); setError(undefined);});
+  const load = (template: CommitteeTemplate) => unstable_batchedUpdates(() => {draft.reset.current = true; const nextLanguage = draftNameLanguage(template.names, template.defaultLanguage);
     setDisplayLanguage(nextLanguage); setSelectedId(template.id); setName(template.names[nextLanguage] ?? '');
     setDefaultLanguage((SUPPORTED_LANGUAGES.includes(template.defaultLanguage as Language) ? template.defaultLanguage : nextLanguage) as Language);
     setLocalizedNames(localizedDrafts(template.names, nextLanguage)); setCountryKey(template.countryTemplateKey);
     setMembers(template.members.map(member => ({id: member.id, stableKey: member.stableKey, names: {...member.names},
       defaultLanguage: member.defaultLanguage, rank: member.rank, canVote: member.canVote, hasVeto: member.hasVeto,
-      mustVote: member.mustVote, sortOrder: member.sortOrder, flag: member.flag}))); setSaved(false); setError(undefined);};
+      mustVote: member.mustVote, sortOrder: member.sortOrder, flag: member.flag}))); setSaved(false); setError(undefined);});
   const save = async () => {
     if (!name.trim() || members.length === 0 || !selectedCountry) return; setSaving(true); setError(undefined);
     const names: LocalizedNames = {[displayLanguage]: name.trim()}; localizedNames.forEach(item => {if (item.name.trim()) names[item.language] = item.name.trim();});
@@ -297,14 +335,14 @@ export function CommitteeTemplateManager({api}: {api: SelfHostedApi}) {
 
   return <Container style={{padding: '1em 0 2em'}}><Header as="h1">{t('Template editor')}</Header>
     <Grid stackable columns={2}><Grid.Column width={5}><Segment>
-      <Button primary fluid icon labelPosition="left" onClick={startNew}><Icon name="plus" />{t('New template')}</Button>
-      <List divided relaxed selection>{customTemplates.map(template => <List.Item key={template.id} active={template.id === selectedId} onClick={() => load(template)}>
+      <Button primary fluid icon labelPosition="left" onClick={() => draft.protect(startNew)}><Icon name="plus" />{t('New template')}</Button>
+      <List divided relaxed selection>{customTemplates.map(template => <List.Item key={template.id} active={template.id === selectedId} onClick={() => {if (template.id !== selectedId) draft.protect(() => load(template));}}>
         <Icon name="file alternate outline" /><List.Content><List.Header>{localizedDisplayName(template.names, template.defaultLanguage)}</List.Header>
           <List.Description>{t('{count} members', {count: template.members.length})}</List.Description></List.Content></List.Item>)}
         {customTemplates.length === 0 && <List.Item><List.Content>{t('No custom templates yet')}</List.Content></List.Item>}
       </List></Segment></Grid.Column>
       <Grid.Column width={11}><Segment loading={saving}><Header as="h2">{selectedId ? t('Edit template') : t('New template')}</Header>
-        <Form success={saved} error={!!error} warning={members.length === 0} onSubmit={save}>
+        <Form success={saved && !draft.dirty} error={!!error} warning={members.length === 0} onSubmit={save}>
           <Form.Input required label={t('Template name')} value={name} onChange={event => {setName(event.currentTarget.value); setSaved(false);}}
             placeholder={t('Enter a template name')} />
           <div className="template-localized-names">{localizedNames.map(item => <Form.Group key={item.id} className="template-localized-name-row">
@@ -362,9 +400,10 @@ export function CommitteeTemplateManager({api}: {api: SelfHostedApi}) {
           </Table.Row></Table.Footer></Table>
           {members.length === 0 && <Message warning content={t('Add at least one committee member')} />}<Message success content={t('Template saved')} />
           {error && <Message error content={error} onDismiss={() => setError(undefined)} />}
-          <Button type="submit" primary disabled={!name.trim() || members.length === 0 || !selectedCountry}><Icon name="save" />{t('Save template')}</Button>
-          {selectedId && <Button type="button" negative basic floated="right" onClick={() => setDeleteOpen(true)}><Icon name="trash" />{t('Delete template')}</Button>}
+          <div className="template-editor-actions"><Button type="submit" primary disabled={!name.trim() || members.length === 0 || !selectedCountry}><Icon name="save" />{t('Save template')}</Button>
+          {selectedId && <Button type="button" negative basic className="template-delete-action" onClick={() => setDeleteOpen(true)}><Icon name="trash" />{t('Delete template')}</Button>}</div>
         </Form></Segment></Grid.Column></Grid>
+    {draft.confirmation}<Prompt when={draft.dirty && !saving} message={t('Discard unsaved changes?')} />
     <Confirm open={deleteOpen} header={t('Delete template?')} content={t('Are you sure that you want to delete this template?')}
       cancelButton={t('Cancel')} confirmButton={{content: t('Delete'), primary: false, negative: true}} onCancel={() => setDeleteOpen(false)} onConfirm={() => void remove()} />
   </Container>;

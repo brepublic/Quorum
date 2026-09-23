@@ -701,6 +701,12 @@ async function handleStage6UploadRequest(options: {
     sendJson(response, 201, success(await storage.createChairAgentBinding(auth, chairAgentBinding[1] as string,
       body, idempotencyKey(request), context), requestId)); return true;
   }
+  const uploadStatus = /^\/api\/v1\/file-uploads\/([0-9a-f-]{36})$/.exec(pathname);
+  if (method === 'GET' && uploadStatus) {
+    const auth = await authenticatedRead(request, identity);
+    sendJson(response, 200, success(await uploads.getUpload(auth, uploadStatus[1] as string), requestId));
+    return true;
+  }
   const pendingHostCommits = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/file-uploads\/pending-host-commit$/.exec(pathname);
   if (method === 'GET' && pendingHostCommits) {
     const auth = await authenticatedRead(request, identity);

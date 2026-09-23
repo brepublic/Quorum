@@ -3,22 +3,13 @@ import {t, useLanguage, getLanguage} from '../../i18n';
 import * as React from 'react';
 import type {CommitteeWorkspaceSnapshot, FileEntry, FileUpload, StorageMigration, DelegateReviewFile,
   StorageAgentConflict, StorageAgentConflictResolution, StoragePairingCode, StorageProviderType} from '@quorum/contracts';
-import {Button, Card, Divider, Form, Header, Icon, Label, Message, Progress, Segment, Table} from 'semantic-ui-react';
+import {Button, Card, Divider, Form, Modal, Header, Icon, Label, Message, Progress, Segment, Table} from 'semantic-ui-react';
 import {SelfHostedApiError, newIdempotencyKey, type SelfHostedApi} from '../../services/self-hosted-api';
 import {delegateFileTypeName, ERROR_TEXT} from '@quorum/contracts';
 import {Link} from 'react-router-dom';
+import {FileStatusLabel} from '../../components/FileStatusLabel';
 import {sha256File} from '../../services/sha256';
 
-const FILE_STATUS: Record<FileEntry['status'], string> = {
-  UPLOAD_COMPLETE: "Pending review", PENDING_REVIEW: "Pending review", PUBLISHED: "Published", REJECTED: "File status: Rejected", DELETED: "Deleted"
-};
-const FILE_STATUS_APPEARANCE = {
-  UPLOAD_COMPLETE: {color: 'blue', icon: 'clock outline'},
-  PENDING_REVIEW: {color: 'blue', icon: 'clock outline'},
-  PUBLISHED: {color: 'green', icon: 'check circle'},
-  REJECTED: {color: 'red', icon: 'times circle'},
-  DELETED: {color: 'grey', icon: 'trash alternate outline'}
-} as const;
 const MIGRATION_STATUS: Record<StorageMigration['status'], string> = {
   COPYING: "Copying", READY_TO_CONFIRM: "Awaiting confirmation", FAILED: "Migration failed", COMPLETED: "Migration completed", CANCELLED: "Cancelled"
 };
@@ -73,6 +64,7 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
   const canManage = !readOnly && (snapshot.viewer.audience === 'CHAIR' || snapshot.viewer.audience === 'OWNER');
   const canUpload = !readOnly && snapshot.viewer.audience !== 'PUBLIC';
   const [statusFilter, setStatusFilter] = React.useState('ACTIVE');
+  const [deletingFile, setDeletingFile] = React.useState<FileEntry>();
   const [files, setFiles] = React.useState<FileEntry[]>([]);
   const [pendingHostCommits, setPendingHostCommits] = React.useState<FileUpload[]>([]);
   const [bindings, setBindings] = React.useState<Awaited<ReturnType<SelfHostedApi['listStorageBindings']>>>([]);
@@ -278,7 +270,7 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
           {index > 0 && isPending(visibleFiles[index - 1]) && !isPending(file) && <Divider className="delegate-file-review-divider" />}
           <Card fluid className="self-hosted-file-card motion-card"><Card.Content>
           <div className="motion-heading self-hosted-file-heading"><Card.Header>{file.logicalName}</Card.Header>
-            <Label basic className="self-hosted-file-status" {...FILE_STATUS_APPEARANCE[file.status]} content={t(FILE_STATUS[file.status])} />
+            <FileStatusLabel status={file.status} />
           </div>
           {file.syncState !== 'SYNCED' && <div className="self-hosted-file-sync"><Label color="orange" icon="sync"
             content={file.syncState === 'PENDING_HOST_COMMIT' ? t("Waiting for the chair computer to save") : t("Waiting for chair computer sync")} /></div>}
@@ -302,14 +294,19 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
             onClick={() => void run(() => api.submitFileForReview(file.id, file.revision))}>{t("Submit for review")}</Button>}
           {canManage && ['PENDING_REVIEW', 'UPLOAD_COMPLETE'].includes(file.status) && <Button as={Link} primary size="small"
             to={`/committees/${committeeId}/posts/review`}>{t("File review")}</Button>}
-          {canChange && <Button negative fluid disabled={working} onClick={() => {
-            if (window.confirm(t('Permanently delete “{name}”? The file will become unavailable and cannot be recovered.', {name: file.logicalName}))) {
-              void run(() => api.deleteFile(file.id, file.revision));
-            }
-          }}>{t("Delete permanently")} <Icon name="trash alternate outline" /></Button>}
+          {canChange && <Button negative fluid disabled={working} onClick={() => setDeletingFile(file)}>{t("Delete permanently")} <Icon name="trash alternate outline" /></Button>}
         </Card.Content></Card></React.Fragment>;
       })}
     </div>}</div></>}
+
+    <Modal size="tiny" open={Boolean(deletingFile)} closeOnDimmerClick={!working} closeOnEscape={!working}
+      onClose={() => {if (!working) setDeletingFile(undefined);}}>
+      <Modal.Header>{t('Delete permanently')}</Modal.Header>
+      <Modal.Content>{t('Permanently delete “{name}”? The file will become unavailable and cannot be recovered.', {name: deletingFile?.logicalName ?? ''})}</Modal.Content>
+      <Modal.Actions><Button disabled={working} onClick={() => setDeletingFile(undefined)}>{t('Cancel')}</Button>
+        <Button negative loading={working} disabled={working} onClick={() => {const file = deletingFile; if (!file || working) return;
+          void run(async () => {await api.deleteFile(file.id, file.revision); setDeletingFile(undefined);});}}>{t('Delete permanently')}</Button></Modal.Actions>
+    </Modal>
 
     {(section === 'storage' || section === 'all') && canManage && <Segment loading={working && !progress} className="self-hosted-storage-panel">
       <Header as="h3">{t("File storage")}</Header>

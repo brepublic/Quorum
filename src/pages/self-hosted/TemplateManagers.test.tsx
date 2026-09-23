@@ -1,6 +1,10 @@
+import {MemoryRouter} from 'react-router-dom';
 import * as React from 'react';
 import {act} from 'react';
-import {createRoot, type Root} from 'react-dom/client';
+import {render as legacyRender, unmountComponentAtNode} from 'react-dom';
+// Match the application's legacy React root, including async update batching.
+const createRoot = (element: HTMLElement) => ({render: (node: React.ReactElement) => legacyRender(node, element), unmount: () => unmountComponentAtNode(element)});
+type Root = ReturnType<typeof createRoot>;
 import {afterEach, describe, expect, it, vi} from 'vitest';
 import type {CountryTemplate, CommitteeTemplate} from '@quorum/contracts';
 import type {SelfHostedApi} from '../../services/self-hosted-api';
@@ -24,7 +28,7 @@ afterEach(() => {if (root) act(() => root?.unmount()); container?.remove(); root
 
 async function render(api: SelfHostedApi) {
   container = document.createElement('div'); document.body.append(container); root = createRoot(container);
-  await act(async () => {root?.render(<CountryTemplateManager api={api} />); await Promise.resolve(); await Promise.resolve();});
+  await act(async () => {root?.render(<MemoryRouter><CountryTemplateManager api={api} /></MemoryRouter>); await Promise.resolve(); await Promise.resolve();});
 }
 
 describe('self-hosted template managers', () => {
@@ -70,6 +74,31 @@ describe('self-hosted template managers', () => {
     expect(container?.textContent).toContain('Add country');
   });
 
+  it('validates empty countries and protects the draft when switching templates', async () => {
+    const updateCountryTemplate = vi.fn();
+    await render({listCountryTemplates: async () => [builtin, custom], updateCountryTemplate} as unknown as SelfHostedApi);
+    const item = (name: string) => [...container!.querySelectorAll<HTMLElement>('.list .item')].find(el => el.textContent?.includes(name))!;
+    const button = (name: string) => [...container!.querySelectorAll<HTMLButtonElement>('button')].find(el => el.textContent?.trim() === name)!;
+    await act(async () => item('测试模板').click());
+    await act(async () => button('Add country').click());
+    await act(async () => container!.querySelector('form')!.dispatchEvent(new Event('submit', {bubbles: true, cancelable: true})));
+    expect(updateCountryTemplate).not.toHaveBeenCalled();
+    expect(container!.textContent).toContain('Enter a country name');
+    expect(document.activeElement?.getAttribute('id')).toContain('country-name-');
+    const input = container!.querySelector<HTMLInputElement>('input[id^="country-name-"]')!;
+    await act(async () => {Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'Draft country');
+      input.dispatchEvent(new Event('input', {bubbles: true}));});
+    await act(async () => item('Default countries').click());
+    expect(document.body.querySelector('.ui.modal')?.textContent).toContain('Discard unsaved changes?');
+    const action = (text: string) => [...document.body.querySelectorAll<HTMLButtonElement>('.ui.modal button')].find(el => el.textContent === text)!;
+    await act(async () => action('Keep editing').click());
+    expect(input.value).toBe('Draft country');
+    await act(async () => item('Default countries').click());
+    await act(async () => action('Discard changes').click());
+    expect(container!.textContent).toContain('Default country template');
+    expect(container!.textContent).not.toContain('Enter a country name');
+  });
+
   it('opens the built-in countries in the old read-only editor and clones through the API', async () => {
     const language = getLanguage();
     const cloneCountryTemplate = vi.fn(async () => custom);
@@ -100,7 +129,7 @@ describe('committee template independent capabilities', () => {
     const api = {listCommitteeTemplates: vi.fn(async () => [template]), listCountryTemplates: vi.fn(async () => [builtin]),
       updateCommitteeTemplate} as unknown as SelfHostedApi;
     container = document.createElement('div'); document.body.append(container); root = createRoot(container);
-    await act(async () => {root!.render(<CommitteeTemplateManager api={api} />);});
+    await act(async () => {root!.render(<MemoryRouter><CommitteeTemplateManager api={api} /></MemoryRouter>);});
     await act(async () => {[...container!.querySelectorAll<HTMLElement>('.list .item')]
       .find(item => item.textContent?.includes('Capabilities'))!.click();});
     const row = () => container!.querySelector('tbody tr')!;
@@ -118,5 +147,8 @@ describe('committee template independent capabilities', () => {
     await act(async () => {container!.querySelector('form')!.dispatchEvent(new Event('submit', {bubbles: true, cancelable: true}));});
     expect(updateCommitteeTemplate).toHaveBeenCalledWith('cap-template', 1, expect.objectContaining({members: [expect.objectContaining({
       rank: 'OBSERVER', canVote: true, hasVeto: true, mustVote: false})]}));
+    expect(container!.querySelector('form')!.classList.contains('success')).toBe(true);
+    await click(1);
+    expect(container!.querySelector('form')!.classList.contains('success')).toBe(false);
   });
 });

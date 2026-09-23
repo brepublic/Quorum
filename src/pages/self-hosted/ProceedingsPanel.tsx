@@ -1,3 +1,4 @@
+import {FileStatusLabel} from '../../components/FileStatusLabel';
 import {apiErrorText} from '../../i18n';
 import {delegateFileTypeName, motionContentName, type ContentLanguage} from '@quorum/contracts';
 import * as React from 'react';
@@ -41,6 +42,8 @@ function SpeakerSeatDropdown({value, options, disabled = false, error = false, p
   onChange: (value: string) => void;
 }) {
   const anchorRef = React.useRef<HTMLDivElement>(null);
+  const menuRef = React.useRef<HTMLDivElement>(null);
+  const menuId = React.useId();
   const inputRef = React.useRef<HTMLInputElement>(null);
   const [open, setOpen] = React.useState(false);
   const [query, setQuery] = React.useState('');
@@ -60,8 +63,13 @@ function SpeakerSeatDropdown({value, options, disabled = false, error = false, p
     const anchor = anchorRef.current;
     if (!anchor) return;
     const rect = anchor.getBoundingClientRect();
-    setMenuStyle({left: rect.left, top: rect.bottom - 1, width: rect.width,
-      maxHeight: Math.max(96, window.innerHeight - rect.bottom - 8)});
+    const below = Math.max(0, window.innerHeight - rect.bottom - 8);
+    const above = Math.max(0, rect.top - 8);
+    const upward = below < 240 && above > below;
+    const width = Math.min(rect.width, Math.max(0, window.innerWidth - 16));
+    setMenuStyle({left: Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)), width,
+      ...(upward ? {bottom: window.innerHeight - rect.top - 1} : {top: rect.bottom - 1}),
+      maxHeight: Math.min(320, upward ? above : below)});
   }, []);
 
   React.useLayoutEffect(() => {
@@ -74,6 +82,16 @@ function SpeakerSeatDropdown({value, options, disabled = false, error = false, p
       window.removeEventListener('scroll', placeMenu, true);
     };
   }, [open, placeMenu]);
+
+  React.useLayoutEffect(() => {
+    const menu = menuRef.current;
+    const active = menu?.children[activeIndex] as HTMLElement | undefined;
+    if (!open || !menu || !active) return;
+    const menuRect = menu.getBoundingClientRect();
+    const itemRect = active.getBoundingClientRect();
+    if (itemRect.top < menuRect.top) menu.scrollTop -= menuRect.top - itemRect.top;
+    else if (itemRect.bottom > menuRect.bottom) menu.scrollTop += itemRect.bottom - menuRect.bottom;
+  }, [open, activeIndex, query, menuStyle]);
 
   React.useEffect(() => {
     if (!open) return;
@@ -89,8 +107,8 @@ function SpeakerSeatDropdown({value, options, disabled = false, error = false, p
   const openMenu = () => {
     if (disabled) return;
     setOpen(true);
-    setActiveIndex(firstEnabledIndex());
-    requestAnimationFrame(() => inputRef.current?.focus());
+    setActiveIndex(Math.max(firstEnabledIndex(), filtered.findIndex(option => option.value === value && !option.disabled)));
+    requestAnimationFrame(() => inputRef.current?.focus({preventScroll: true}));
   };
   const select = (option: SpeakerSeatOption) => {
     if (option.disabled) return;
@@ -101,12 +119,13 @@ function SpeakerSeatDropdown({value, options, disabled = false, error = false, p
 
   return <Form.Field className="speaker-seat-dropdown" error={error}><>
     <div ref={anchorRef} className={`ui fluid search selection dropdown${open ? ' active visible' : ''}${disabled ? ' disabled' : ''}`}
-      role="combobox" aria-expanded={open} aria-haspopup="listbox" onClick={openMenu}>
-      <input ref={inputRef} className="search" autoComplete="off" tabIndex={disabled ? -1 : 0} value={query}
+      role="combobox" aria-expanded={open} aria-haspopup="listbox" aria-controls={open ? menuId : undefined} onClick={openMenu}>
+      <input ref={inputRef} className="search" disabled={disabled} aria-controls={open ? menuId : undefined}
+        aria-activedescendant={open && filtered[activeIndex] ? `${menuId}-${activeIndex}` : undefined} autoComplete="off" tabIndex={disabled ? -1 : 0} value={query}
         onFocus={openMenu} onChange={event => {setQuery(event.currentTarget.value); setActiveIndex(0);}}
         onKeyDown={event => {
-          if (event.key === 'Escape') {setOpen(false); setQuery(''); return;}
-          if (event.key === 'ArrowDown') {event.preventDefault(); moveActiveIndex(1); return;}
+          if (event.key === 'Escape' || event.key === 'Tab') {setOpen(false); setQuery(''); return;}
+          if (event.key === 'ArrowDown') {event.preventDefault(); if (!open) openMenu(); else moveActiveIndex(1); return;}
           if (event.key === 'ArrowUp') {event.preventDefault(); moveActiveIndex(-1); return;}
           if (event.key === 'Enter' && open && filtered[activeIndex] && !filtered[activeIndex].disabled) {
             event.preventDefault(); select(filtered[activeIndex]);
@@ -116,8 +135,8 @@ function SpeakerSeatDropdown({value, options, disabled = false, error = false, p
       <Icon name="search" />
     </div>
     {open && createPortal(<div className="ui active visible search selection dropdown speaker-seat-dropdown-portal" style={menuStyle}>
-      <div className="visible menu transition" role="listbox">
-        {filtered.map((option, index) => <div key={option.key} role="option" aria-selected={option.value === value}
+      <div ref={menuRef} id={menuId} className="visible menu transition" role="listbox">
+        {filtered.map((option, index) => <div key={option.key} id={`${menuId}-${index}`} role="option" aria-selected={option.value === value}
           aria-disabled={option.disabled || undefined} className={`${option.value === value ? 'selected ' : ''}${index === activeIndex ? 'active ' : ''}${option.disabled ? 'disabled ' : ''}item`}
           onMouseDown={event => event.preventDefault()} onMouseEnter={() => !option.disabled && setActiveIndex(index)} onClick={() => select(option)}>
           {option.content ?? option.text}{option.description && <span className="description">{option.description}</span>}
@@ -824,7 +843,7 @@ function AmendmentCard({snapshot, amendment, run, api, canChair, representedSeat
       {Boolean(downloadFailure) && <Message error content={apiErrorText(downloadFailure)} />}
       {amendment.currentVersion.contentFile && <><Header as="h4">{amendment.currentVersion.contentFile.logicalName}</Header>
         {amendment.currentVersion.contentFile.fileType && <Label>{delegateFileTypeName(amendment.currentVersion.contentFile.fileType!, snapshot.committee.committeeLanguage)}</Label>}
-        <Label>{statusLabel(amendment.currentVersion.contentFile.status)}</Label>
+        <FileStatusLabel status={amendment.currentVersion.contentFile.status} />
         {amendment.currentVersion.contentFile.status === 'PUBLISHED'
           ? <Button type="button" primary fluid loading={preparingDownload} disabled={preparingDownload}
             onClick={() => void downloadFile()}>{t('Download')} <Icon name="arrow down" /></Button>
@@ -1287,6 +1306,11 @@ function StrawpollWorkspace({snapshot, run, api, canChair, resourceId}: CommonPr
   const [seatId, setSeatId] = React.useState(snapshot.viewer.seatId ?? snapshot.seats[0]?.id ?? '');
   const [manualTallies, setManualTallies] = React.useState<Record<string, string>>(
     Object.fromEntries(poll?.options.map(option => [option.id, String(option.voteCount)]) ?? []));
+  const tallyDrafts = React.useRef<Record<string, string>>({});
+  const latestPoll = React.useRef(poll);
+  const tallyQueue = React.useRef(Promise.resolve());
+  if (latestPoll.current?.id !== poll?.id) { latestPoll.current = poll; tallyDrafts.current = {}; }
+  else if (poll && poll.revision > (latestPoll.current?.revision ?? 0)) latestPoll.current = poll;
   const creatingPoll = React.useRef(false);
   const submittingPoll = React.useRef(false);
   const [submitting, setSubmitting] = React.useState(false);
@@ -1306,7 +1330,7 @@ function StrawpollWorkspace({snapshot, run, api, canChair, resourceId}: CommonPr
     if (!poll) return;
     setQuestion(poll.question); setOptionLabels(poll.options.map(option => option.label)); setMode(poll.votingMode);
     setMultipleChoice(poll.multipleChoice); setOptionsArePublic(poll.optionsArePublic);
-    setManualTallies(Object.fromEntries(poll.options.map(option => [option.id, String(option.voteCount)])));
+    setManualTallies(Object.fromEntries(poll.options.map(option => [option.id, tallyDrafts.current[option.id] ?? String(option.voteCount)])));
   }, [poll?.id, poll?.revision]);
   React.useEffect(() => {setAnonymousChoices([]); setAnonymousSubmitted(false);}, [poll?.id]);
   if (resourceId === 'new') return canChair && session ? <Loading />
@@ -1321,7 +1345,7 @@ function StrawpollWorkspace({snapshot, run, api, canChair, resourceId}: CommonPr
   const revise = async (next: Partial<{question: string; mode: typeof mode; multipleChoice: boolean;
     options: string[]; medium: 'LINK' | 'MANUAL'; optionsArePublic: boolean}>) => {
     let created: Awaited<ReturnType<SelfHostedApi['reviseStrawpoll']>> | undefined;
-    await run(async () => {created = await api.reviseStrawpoll(poll.id, {baseRevision: poll.revision,
+    await run(async () => {created = await api.reviseStrawpoll(poll.id, {baseRevision: latestPoll.current?.revision ?? poll.revision,
       question: next.question ?? question, votingMode: next.mode ?? mode, multipleChoice: next.multipleChoice ?? multipleChoice,
       options: next.options ?? cleanOptions, medium: next.medium ?? poll.medium,
       optionsArePublic: next.optionsArePublic ?? optionsArePublic});});
@@ -1341,6 +1365,30 @@ function StrawpollWorkspace({snapshot, run, api, canChair, resourceId}: CommonPr
     });} finally {submittingPoll.current = false; setSubmitting(false);}
     if (created) {if (created.anonymousAccessToken) setCreatedCode(created.anonymousAccessToken);
       history.replace(`/committees/${snapshot.committee.id}/strawpolls/${created.id}`);}
+  };
+  const saveTallies = (showResults = false, editOptions = false) => {
+    if (showResults || editOptions) {if (submittingPoll.current) return; submittingPoll.current = true; setSubmitting(true);}
+    const pollId = poll.id;
+    const task = tallyQueue.current.then(async () => {
+      try {await run(async () => {
+        let current = latestPoll.current;
+        if (!current || current.id !== pollId) return;
+        for (const option of current.options) {
+          const draft = tallyDrafts.current[option.id];
+          if (draft === undefined) continue;
+          const tally = Number(draft);
+          if (!Number.isSafeInteger(tally) || tally < 0) throw new Error(t('Invalid vote count'));
+          if (tally !== current.options.find(item => item.id === option.id)?.voteCount) {
+            current = await api.setStrawpollManualTally(pollId, current.revision, option.id, tally);
+            latestPoll.current = current;
+          }
+          if (tallyDrafts.current[option.id] === draft) delete tallyDrafts.current[option.id];
+        }
+        if (editOptions) await revise({medium: current.medium});
+        if (showResults) latestPoll.current = await api.commandStrawpollStage(pollId, current.revision, 'VIEW_RESULTS');
+      });} finally {if (showResults || editOptions) {submittingPoll.current = false; setSubmitting(false);}}
+    });
+    tallyQueue.current = task.catch(() => {});
   };
   const selectedSeatVote = poll.seatVotes.find(vote => vote.seatId === seatId);
   const setSeatChoice = (optionId: string) => {
@@ -1406,15 +1454,14 @@ function StrawpollWorkspace({snapshot, run, api, canChair, resourceId}: CommonPr
       {poll.medium === 'MANUAL' && <List>{poll.options.map(option => <List.Item key={option.id}><Input fluid
         data-strawpoll-manual={option.id}
         placeholder={t('Number of votes received')} label={option.label} value={manualTallies[option.id] ?? ''}
-        disabled={!canChair} onChange={event => {const value = event.currentTarget.value.replace(/\D/g, '');
+        disabled={!canChair || submitting} onChange={event => {const value = event.currentTarget.value.replace(/\D/g, '');
+          tallyDrafts.current[option.id] = value;
           setManualTallies(current => ({...current, [option.id]: value}));}}
-        onBlur={() => {const tally = Number(manualTallies[option.id]);
-          if (canChair && Number.isSafeInteger(tally) && tally >= 0 && tally !== option.voteCount)
-            void run(() => api.setStrawpollManualTally(poll.id, poll.revision, option.id, tally));}} /></List.Item>)}</List>}
+        onBlur={() => {if (canChair && !submittingPoll.current) saveTallies();}} /></List.Item>)}</List>}
       {createdCode && <Message info header={t('Anonymous voting code')} content={<code>{createdCode}</code>} />}
-      {canChair && <Button.Group fluid><Button basic secondary onClick={() => void revise({medium: poll.medium})}>
-        <Icon name="arrow left" />{t('Edit options')}</Button><Button primary basic
-        onClick={() => void run(() => api.commandStrawpollStage(poll.id, poll.revision, 'VIEW_RESULTS'))}>
+      {canChair && <Button.Group fluid><Button basic secondary disabled={submitting} onClick={() => poll.medium === 'MANUAL' ? saveTallies(false, true) : void revise({medium: poll.medium})}>
+        <Icon name="arrow left" />{t('Edit options')}</Button><Button primary basic disabled={submitting} loading={submitting}
+        onClick={() => poll.medium === 'MANUAL' ? saveTallies(true) : void run(() => api.commandStrawpollStage(poll.id, poll.revision, 'VIEW_RESULTS'))}>
         {t('View results')}<Icon name="arrow right" /></Button></Button.Group>}
     </>}
     {poll.stage === 'RESULTS' && <><List>{poll.options.map(option => <List.Item key={option.id}>
@@ -1615,7 +1662,7 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
       {Boolean(downloadFailure) && <Message error content={apiErrorText(downloadFailure)} />}
       {document.currentVersion.contentFile && <><Header as="h4">{document.currentVersion.contentFile.logicalName}</Header>
         {document.currentVersion.contentFile.fileType && <Label>{delegateFileTypeName(document.currentVersion.contentFile.fileType!, snapshot.committee.committeeLanguage)}</Label>}
-        <Label>{statusLabel(document.currentVersion.contentFile.status)}</Label>
+        <FileStatusLabel status={document.currentVersion.contentFile.status} />
         {document.currentVersion.contentFile.status === 'PUBLISHED'
           ? <Button type="button" primary fluid loading={preparingDownload} disabled={preparingDownload}
             onClick={() => void downloadFile()}>{t('Download')} <Icon name="arrow down" /></Button>

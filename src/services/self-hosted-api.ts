@@ -623,6 +623,9 @@ export const selfHostedApi = {
   listFiles(committeeId: string) {
     return request<FileEntry[]>(`/api/v1/committees/${committeeId}/files`);
   },
+  getFileUpload(uploadId: string) {
+    return request<FileUpload>(`/api/v1/file-uploads/${uploadId}`);
+  },
   listPendingHostCommits(committeeId: string) {
     return request<FileUpload[]>(`/api/v1/committees/${committeeId}/file-uploads/pending-host-commit`);
   },

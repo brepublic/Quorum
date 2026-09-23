@@ -1430,6 +1430,48 @@ describe('committee workspace routes and roles', () => {
     expect(voteStrawpoll).toHaveBeenNthCalledWith(2, 'poll', {optionIds: []});
   });
 
+  it.each([false, true])('serializes manual tally changes before results (failure=%s)', async fails => {
+    let poll: Strawpoll = {id: 'poll', committeeId: 'committee', meetingSessionId: 'meeting', ordinal: 1, question: 'Count?',
+      votingMode: 'SEAT_AUTHENTICATED', multipleChoice: true, status: 'OPEN', stage: 'VOTING', medium: 'MANUAL',
+      optionsArePublic: false, seriesId: 'poll', roundNumber: 1, supersededById: null,
+      options: [{id: 'one', label: 'A', sortOrder: 0, voteCount: 0}, {id: 'two', label: 'B', sortOrder: 1, voteCount: 0}],
+      seatVotes: [], revision: 4, createdAt: '2026-08-14T00:00:00.000Z', closedAt: null};
+    let release!: () => void;
+    const pending = new Promise<void>(resolve => {release = resolve;});
+    const setStrawpollManualTally = vi.fn<SelfHostedApi['setStrawpollManualTally']>(async (_id, revision, optionId, count) => {
+      await pending;
+      if (fails) throw new Error('unavailable');
+      expect(revision).toBe(poll.revision);
+      poll = {...poll, revision: revision + 1, options: poll.options.map(option => option.id === optionId ? {...option, voteCount: count} : option)};
+      return poll;
+    });
+    const commandStrawpollStage = vi.fn<SelfHostedApi['commandStrawpollStage']>(async (_id, revision) => {
+      expect(revision).toBe(6); poll = {...poll, revision: 7, stage: 'RESULTS'}; return poll;
+    });
+    const page = await render('CHAIR', '/committees/committee/strawpolls/poll', user,
+      value => ({...value, strawpolls: [poll]}), {setStrawpollManualTally, commandStrawpollStage});
+    const edit = async (id: string, value: string) => {
+      const input = page.querySelector<HTMLInputElement>(`[data-strawpoll-manual="${id}"] input`)!;
+      await act(async () => {Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value);
+        input.dispatchEvent(new Event('input', {bubbles: true})); input.dispatchEvent(new FocusEvent('focusout', {bubbles: true}));});
+    };
+    await edit('one', '8'); await edit('two', '7');
+    expect(setStrawpollManualTally).toHaveBeenCalledTimes(1);
+    expect(page.querySelector<HTMLInputElement>('[data-strawpoll-manual="two"] input')?.value).toBe('7');
+    await act(async () => [...page.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'View results')!.click());
+    expect(commandStrawpollStage).not.toHaveBeenCalled();
+    await act(async () => {release(); await pending;});
+    if (fails) {
+      expect(commandStrawpollStage).not.toHaveBeenCalled();
+      expect(page.querySelector<HTMLInputElement>('[data-strawpoll-manual="one"] input')?.value).toBe('8');
+      expect(page.querySelector<HTMLInputElement>('[data-strawpoll-manual="two"] input')?.value).toBe('7');
+    } else {
+      expect(setStrawpollManualTally.mock.calls).toEqual([['poll', 4, 'one', 8], ['poll', 5, 'two', 7]]);
+      expect(commandStrawpollStage).toHaveBeenCalledWith('poll', 6, 'VIEW_RESULTS');
+      expect(page.textContent).toContain('8 votes'); expect(page.textContent).toContain('7 votes');
+    }
+  });
+
   it('keeps manual tallies and the legacy results progress view separate from linked voting', async () => {
     const setStrawpollManualTally = vi.fn(async (): Promise<Strawpoll> => ({} as Strawpoll));
     const manual: Strawpoll = {id: 'poll', committeeId: 'committee', meetingSessionId: 'meeting', ordinal: 1, question: 'Count?',

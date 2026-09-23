@@ -905,7 +905,7 @@ function PointsPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspa
   const resolve = (point: CommitteePoint, status: Exclude<PointStatus, 'PENDING'>) =>
     void run(() => api.resolvePoint(point.id, {baseRevision: point.revision, status}));
   const label = (point: CommitteePoint) => point.status === 'PENDING' ? t('PENDING')
-    : point.pointTypeId === 'point-of-order' ? t(point.status === 'UPHELD' ? 'Uphold point' : 'Overrule point')
+    : point.pointTypeId === 'point-of-order' ? t(point.status === 'UPHELD' ? 'Point upheld' : 'Point overruled')
     : point.pointTypeId === 'point-of-information' ? t('Handled point')
     : point.pointTypeId === 'point-of-personal-privilege' ? t(point.status === 'UPHELD' ? 'Approved point' : 'Denied point')
     : t(point.status);
@@ -929,7 +929,8 @@ function PointsPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspa
   }, []);
   const canRaise = snapshot.viewer.audience !== 'PUBLIC' && snapshot.committee.status === 'ACTIVE';
   return <Container text className="points-page">
-    {canRaise && session?.status === 'OPEN' && <Form className="point-proposal-form" onSubmit={create}>
+    {canRaise && session?.status === 'OPEN' && types.length === 0 && <Message content={t('The current rules do not enable points.')} />}
+    {canRaise && session?.status === 'OPEN' && types.length > 0 && <Form className="point-proposal-form" onSubmit={create}>
       <Form.Select label={t('Point type')} placeholder={t('Select type')} search selection fluid icon="search"
         value={type} options={types.map(item => ({key: item.id, value: item.id,
           text: item.names ? committeeContentName(item.names, snapshot.committee.committeeLanguage) : t(item.id)}))}
@@ -949,13 +950,15 @@ function PointsPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspa
       const point = 'content' in item ? item as CommitteePoint : undefined;
       return <Card className="point-card" key={item.id}><Card.Content>
         <div className="motion-heading"><Card.Header>{committeeContentName(item.typeNames, snapshot.committee.committeeLanguage)}</Card.Header>
-          <Label>{point ? label(point) : t(item.status)}</Label></div>
-        <Card.Meta className="motion-metadata">
-          <div className="motion-metadata-row"><Label horizontal>{t('Point proposer')}</Label>
-            <span className="motion-metadata-value">{item.raisedBySeatDisplayName}</span></div>
-          {point?.content && <div className="motion-metadata-row"><Label horizontal>{t('Reason')}</Label>
-            <span className="motion-metadata-value">{point.content}</span></div>}
-        </Card.Meta>
+          <Label basic color={item.status === 'PENDING' ? 'blue' : ['OVERRULED', 'REJECTED'].includes(item.status) ? 'red' : 'green'}
+            icon={item.status === 'PENDING' ? 'clock outline' : ['OVERRULED', 'REJECTED'].includes(item.status) ? 'times circle' : 'check circle'}
+            content={point ? label(point) : t(item.status)} /></div>
+        <Table compact celled unstackable className="motion-metadata-table">
+          <Table.Body><Table.Row><Table.Cell className="motion-metadata-key">{t('Point proposer')}</Table.Cell>
+            <Table.Cell>{item.raisedBySeatDisplayName}</Table.Cell></Table.Row>
+          {point?.content && <Table.Row><Table.Cell className="motion-metadata-key">{t('Reason')}</Table.Cell>
+            <Table.Cell>{point.content}</Table.Cell></Table.Row>}</Table.Body>
+        </Table>
       </Card.Content>
       {canChair && item.status === 'PENDING' && point && <Card.Content extra>
         {chairOperated ? actions(point) : <PointResolutionForm point={point} run={run} api={api} />}

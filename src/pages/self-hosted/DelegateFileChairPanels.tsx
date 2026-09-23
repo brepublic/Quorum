@@ -123,24 +123,48 @@ export function DelegateFileUploadPanel({snapshot, api}: {snapshot: CommitteeWor
   const [selected, setSelected] = React.useState<File>();
   const [pending, setPending] = React.useState<Awaited<ReturnType<SelfHostedApi['listPendingHostCommits']>>>([]);
   const [saved, setSaved] = React.useState<string>();
+  const [trackedUpload, setTrackedUpload] = React.useState<{id: string; name: string}>();
   const fileInput = React.useRef<HTMLInputElement>(null);
   const refreshPending = React.useCallback(async () => {
     try {setPending(await api.listPendingHostCommits(snapshot.committee.id));} catch (caught) {setError(caught);}
   }, [api, snapshot.committee.id]);
   React.useEffect(() => {void refreshPending();}, [refreshPending, snapshot.sync.committeeEventSequence]);
+  React.useEffect(() => {
+    if (!trackedUpload) return;
+    let active = true;
+    let loading = false;
+    const check = async () => {
+      if (loading) return;
+      loading = true;
+      try {
+        const current = await api.getFileUpload(trackedUpload.id);
+        if (!active) return;
+        setError(undefined);
+        if (current.status === 'COMMITTED' && current.committedFileEntryId) {
+          setSaved(trackedUpload.name); setTrackedUpload(undefined); void refreshPending();
+        } else if (current.status === 'FAILED' || current.status === 'CANCELLED' || current.agentCommitState === 'CONFLICT') {
+          setError(new SelfHostedApiError(503, 'SERVICE_NOT_READY', 'Storage commit failed.')); setTrackedUpload(undefined);
+        }
+      } catch (caught) {if (active) setError(caught);} finally {loading = false;}
+    };
+    void check();
+    const timer = window.setInterval(() => void check(), 2000);
+    return () => {active = false; window.clearInterval(timer);};
+  }, [api, trackedUpload, refreshPending, snapshot.sync.committeeEventSequence]);
   const [progress, setProgress] = React.useState<number>(); const [working, setWorking] = React.useState(false);
   const [failure, setError] = React.useState<unknown>();
   const error = failure ? storageErrorText(failure) : undefined;
   const upload = async () => {
     if (snapshot.committee.status !== 'ACTIVE') return;
-    if (!selected || working) return; setWorking(true); setSaved(undefined); setProgress(0); setError(undefined);
+    if (!selected || working) return; setWorking(true); setSaved(undefined); setTrackedUpload(undefined); setProgress(0); setError(undefined);
     try {
       const sha256 = await sha256File(selected, {onProgress: (done, total) => setProgress(total ? done / total * 20 : 0)});
       const created = await api.createFileUpload(snapshot.committee.id, {logicalName: selected.name,
         originalName: selected.name, mediaType: selected.type || 'application/octet-stream', expectedSizeBytes: selected.size, sha256});
       await api.uploadFileContent(created.id, selected, newIdempotencyKey(), {onProgress: (done, total) => setProgress(20 + (total ? done / total * 75 : 0))});
       setProgress(98); const result = await api.commitFileUpload(created.id);
-      setSaved('kind' in result ? undefined : selected.name); await refreshPending(); setProgress(undefined); setSelected(undefined);
+      if ('kind' in result) setTrackedUpload({id: created.id, name: selected.name}); else setSaved(selected.name);
+      await refreshPending(); setProgress(undefined); setSelected(undefined);
       if (fileInput.current) fileInput.current.value = '';
     } catch (caught) {setProgress(undefined); setError(caught);} finally {setWorking(false);}
   };
@@ -239,7 +263,7 @@ function DelegateFileReviewPanel({snapshot, api, files, refresh}: {
         <Button.Group fluid widths={2} className="delegate-file-decisions"><Button positive disabled={working || readOnly || Boolean(replacing) || !nameFor(file).trim()} onClick={() => void approve(file)}>{t("Approve file")}</Button>
         <Button negative disabled={working || readOnly || Boolean(replacing)} onClick={() => {setRejecting(file); setReason(''); setSettings(undefined); setRejectionTypeId(''); setError(undefined);
           void api.getDelegateFileSettings(snapshot.committee.id).then(next => {setSettings(next); setRejectionTypeId(next.rejectionTypes[0]?.id ?? '');})
-            .catch(caught => setError(caught));}}>{t("OVERRULED")}</Button></Button.Group>
+            .catch(caught => setError(caught));}}>{t("Reject file")}</Button></Button.Group>
       </Card.Content></Card>) : <Message content={t("No files awaiting review")} />}</div>
     <Modal size="tiny" open={Boolean(replacing)} closeOnDimmerClick={!working} closeOnEscape={!working}
       onClose={() => {if (!working) setReplacing(undefined);}}>
@@ -249,7 +273,7 @@ function DelegateFileReviewPanel({snapshot, api, files, refresh}: {
         {error && <Message error content={error} />}
       </Modal.Content>
       <Modal.Actions><Button disabled={working} onClick={() => setReplacing(undefined)}>{t('Cancel')}</Button>
-        <Button primary loading={working} disabled={working} onClick={() => {
+        <Button positive loading={working} disabled={working} onClick={() => {
           const confirmed = replacing; if (!confirmed) return;
           void run(async () => {
             try {await api.approveDelegateFile(confirmed.fileId, confirmed.revision, confirmed.logicalName,
