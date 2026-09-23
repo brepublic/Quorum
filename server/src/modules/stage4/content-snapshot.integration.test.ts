@@ -1,6 +1,7 @@
 // @vitest-environment node
 
 import {randomUUID} from 'node:crypto';
+import {readFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import pg from 'pg';
 import {afterEach, beforeEach, describe, expect, it} from 'vitest';
@@ -151,9 +152,16 @@ integration('immutable committee content', () => {
     expect(seat.displayName).toBe(country.names['zh-CN']);
     const rules = (await stage3.listRulePackages(owner)).find(pkg => pkg.scope === 'BUILTIN')!;
     expect(rules.versions.at(-1)?.languageAvailability.supportedLanguages).toEqual(['zh-CN', 'en']);
-    expect(rules.versions[0]?.languageAvailability.supportedLanguages).toEqual([]);
     expect(rules.versions[0]?.definition).toBeUndefined();
-    await expect(stage3.activateRules(owner, committee.id, rules.versions[0]!.id, committee.revision, context('activate')))
+    // Keep the incompatible historical-rule scenario explicit; it is no longer seeded in production.
+    const oldDefinition = JSON.parse(await readFile('packages/rule-schema/fixtures/quorum-default.v1.json', 'utf8'));
+    const legacyId = randomUUID(); const packageId = randomUUID();
+    await pool!.query(`INSERT INTO rule_packages (id,scope,stable_key) VALUES ($1,'BUILTIN','test:legacy-rule')`, [packageId]);
+    await pool!.query(`INSERT INTO rule_package_versions (id,package_id,version,status,definition,schema_version,published_at)
+      VALUES ($1,$2,1,'PUBLISHED',$3,1,now())`, [legacyId, packageId, oldDefinition]);
+    const historical = (await stage3.listRulePackages(owner)).find(pkg => pkg.id === packageId)!;
+    expect(historical.versions[0]?.languageAvailability.supportedLanguages).toEqual([]);
+    await expect(stage3.activateRules(owner, committee.id, legacyId, committee.revision, context('activate')))
       .rejects.toMatchObject({reason: 'MISSING_CONTENT_TRANSLATION'});
   });
 

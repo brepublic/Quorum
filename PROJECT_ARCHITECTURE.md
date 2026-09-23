@@ -60,7 +60,7 @@ flowchart LR
 
 ## 3. 服务端模块与数据边界
 
-`server/` 是单进程模块化单体。启动时使用 PostgreSQL advisory lock 执行带 SHA-256 校验和的顺序 migration；源码 schema compatibility 为 67。实例级 `system_settings` 保存新委员会的默认运作模式与创建者是否自动获得 Chair；它们只在创建事务中读取，不追溯既有委员会。系统管理员不能创建委员会。数据库版本、连接、存储目录可写性或容量采样不满足要求时 readiness 失败。
+`server/` 是单进程模块化单体。启动时使用 PostgreSQL advisory lock 执行带 SHA-256 校验和的顺序 migration；源码 schema compatibility 为 68。实例级 `system_settings` 保存新委员会的默认运作模式与创建者是否自动获得 Chair；它们只在创建事务中读取，不追溯既有委员会。系统管理员不能创建委员会。数据库版本、连接、存储目录可写性或容量采样不满足要求时 readiness 失败。
 
 | 模块 | 责任 |
 | --- | --- |
@@ -72,7 +72,7 @@ flowchart LR
 | Delegate Files | 主席控制的能力链接、代表团浏览器绑定、代表上传/审核、已发布文件与独立 SSE |
 | Operations | 归档导出、委员会删除、账号处置、retention、状态、健康和指标 |
 
-`packages/contracts/` 保存浏览器、后端与 Agent 共用的错误码、事件、审计动作、响应类型和不可变规则快照。`packages/rule-schema/` 保存规则包 v1 的 schema、安全表达式求值和内置 `Quorum Default`/北京学术标准 fixture。`packages/storage-agent/` 保存独立 Chair Agent 客户端、安全目录、扫描、恢复循环和发布入口。
+`packages/contracts/` 保存浏览器、后端与 Agent 共用的错误码、事件、审计动作、响应类型和不可变规则快照。`packages/rule-schema/` 保存规则包 v1 的 schema、安全表达式求值和唯一启用的内置规则「北京学术标准 2021」fixture（北京规则第 5 版；旧 `Quorum Default` fixture 仅保留用于规则 schema 测试）。`packages/storage-agent/` 保存独立 Chair Agent 客户端、安全目录、扫描、恢复循环和发布入口。
 
 委员会创建必须显式选择内容语言（`zh-CN` 或 `en`）、已发布规则版本及模板 revision。Stage 3 创建入口委托 Stage 4 的同一事务，锁定源模板并检查完整目录、成员和规则的实际翻译，原子保存 `committees.content_snapshot`。语言和固定副本由 migration 56 的触发器禁止修改；席位只能引用副本中的稳定标识，名称与旗帜不可改，权限和排序仍可调整。公开/代表快照不包含私有目录。规则激活及 FUTURE 调整也校验内容语言；已发布旧版本保留，内置 v5 仅补齐缺失动议名称。
 
@@ -202,3 +202,11 @@ Web 的共享错误格式化读取 reason/code 和受约束参数；身份、业
 本机 schema 55→63 开发切换使用 `server/scripts/localization-rebuild.mjs --local-development-rebuild`，须先停止 app/worker。脚本复用受控委员会清理顺序，在同一事务验证账号、源模板及其成员、全局规则和系统配置未变；随后再应用 migration 56–63。脚本不适用于生产升级，不清理外部主席电脑的本地目录。字段错误通过 `useApiFieldErrors` 对应到输入、展开并聚焦；切换界面语言仅重译提示。历史表决按钮读取该表决的规则版本。
 
 桌面保存、另存为和配对写入已有配置文件前均弹窗确认目标路径；取消不写入，确认后以 0600 权限原子替换。配对使用临时配置，服务器拒绝配对时保留原文件。目录、符号链接及非独立普通文件不能作为覆盖目标。
+
+### 2026-09-23 交互验收修复
+
+- 初始化仅补齐 `builtin:beijing-academic` 第 5 版，新建委员会默认选用它；不再重建旧规则。显式的本机开发清理脚本 `server/scripts/consolidate-development-rules.mjs --local-development-rebuild` 保留该版本，删除其他规则及采用其他版本的委员会，不在正常启动或迁移中执行破坏性清理。
+- `GET /api/v1/file-uploads/:id` 向上传者和该委员会 Owner/Chair 提供上传状态及已提交文件 ID。Chair Agent 异步落盘完成后，上传界面据此显示保存回执；待提交列表消失本身不作为成功凭据。
+- 模板测试采用与应用一致的旧版 React 挂载方式，覆盖异步保存后的草稿基线更新。
+
+- migration 68 对齐主席模式问题的可选原因约束；代表模式仍由服务层要求非空原因。

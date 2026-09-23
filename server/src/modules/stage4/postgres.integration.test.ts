@@ -290,7 +290,7 @@ integration('PostgreSQL stage 4 templates and seat snapshots', () => {
       .rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
     const started = await stage4.startRollCall(chair, committee.id, {meetingSessionId: session.id},
       'roll-start', context('roll-start'));
-    expect(started).toEqual(expect.objectContaining({currentSeatId: first.id, allowedResponses: ['PRESENT', 'ABSENT']}));
+    expect(started).toEqual(expect.objectContaining({currentSeatId: first.id, allowedResponses: ['PRESENT', 'PRESENT_AND_VOTING', 'ABSENT']}));
     await expect(stage4.updateSeat(chair, committee.id, first.id, {baseRevision: 1, patch: {displayName: 'Renamed'}}, context('rename-after-freeze')))
       .rejects.toMatchObject({code: 'VALIDATION_FAILED'});
 
@@ -413,6 +413,9 @@ integration('PostgreSQL stage 4 templates and seat snapshots', () => {
       'point-seat', context('point-seat'));
     await stage3.assignSeat(chair, committee.id, {seatId: seat.id, email: member.user.email}, context('point-assign'));
     const session = await stage4.startMeetingSession(chair, committee.id, {}, context('point-session'), randomUUID());
+    await expect(stage4.createPoint(member, committee.id, {meetingSessionId: session.id,
+      pointTypeId: 'point-of-order', content: ''}, 'point-empty-delegate', context('point-empty-delegate')))
+      .rejects.toMatchObject({code: 'VALIDATION_FAILED'});
     const order = await stage4.createPoint(member, committee.id, {meetingSessionId: session.id,
       pointTypeId: 'point-of-order', content: 'Rules question'}, 'point-order', context('point-order'));
     expect(order).toEqual(expect.objectContaining({raisedBySeatId: seat.id, actorUserId: member.user.id,
@@ -437,6 +440,9 @@ integration('PostgreSQL stage 4 templates and seat snapshots', () => {
 
     const mode = await stage3.setOperationMode(chair, committee.id, 'CHAIR_OPERATED', 2, context('point-chair-operated'));
     expect(mode.operationMode).toBe('CHAIR_OPERATED');
+    const withoutReason = await stage4.createPoint(chair, committee.id, {meetingSessionId: session.id,
+      pointTypeId: 'point-of-order', content: '', onBehalfOfSeatId: seat.id}, 'point-without-reason', context('point-without-reason'));
+    expect(withoutReason.content).toBe('');
     await expect(stage4.createPoint(member, committee.id, {meetingSessionId: session.id,
       pointTypeId: 'point-of-information', content: 'Blocked'}, 'point-blocked', context('point-blocked')))
       .rejects.toMatchObject({code: 'FORBIDDEN'});

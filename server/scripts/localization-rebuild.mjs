@@ -43,7 +43,11 @@ try {
       [randomUUID(),committee.id,committee.owner_user_id,createHash('sha256').update(committee.name).digest(),token]);
     await client.query(`SELECT set_config('quorum.committee_purge_id',$1,true),
       set_config('quorum.committee_purge_token',$2,true)`, [committee.id,token]);
-    for (const query of COMMITTEE_PURGE_QUERIES) await client.query(query,[committee.id]);
+    // This script is guarded to schema 55; resolution countries were introduced in schema 67.
+    for (const query of COMMITTEE_PURGE_QUERIES) {
+      if (query.startsWith('DELETE FROM resolution_countries ')) continue;
+      await client.query(query,[committee.id]);
+    }
     await client.query(`UPDATE committee_deletion_jobs SET status='COMPLETED',completed_at=now(),
       claimed_at=NULL,claim_token=NULL,failure_code=NULL,failure_reason=NULL WHERE committee_id=$1`,[committee.id]);
   }

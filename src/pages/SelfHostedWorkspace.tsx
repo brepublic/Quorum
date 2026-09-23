@@ -74,7 +74,7 @@ function CommitteeList({api, user, logout}: {api: SelfHostedApi; user: SelfHoste
       ]);
       setCommittees(nextCommittees); setCountryTemplates(nextCountries); setCommitteeTemplates(nextTemplates);
       setRulePackages(nextRules);
-      setRuleVersionId(current => current || nextRules.find(pkg => pkg.key === 'builtin:quorum-default')?.versions
+      setRuleVersionId(current => current || nextRules.find(pkg => pkg.key === 'builtin:beijing-academic')?.versions
         .filter(version => version.status === 'PUBLISHED').at(-1)?.id || '');
     } catch (caught) { setError(caught); } finally { setLoading(false); }
   }, [api]);
@@ -905,9 +905,9 @@ function PointsPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspa
   const resolve = (point: CommitteePoint, status: Exclude<PointStatus, 'PENDING'>) =>
     void run(() => api.resolvePoint(point.id, {baseRevision: point.revision, status}));
   const label = (point: CommitteePoint) => point.status === 'PENDING' ? t('PENDING')
-    : point.pointTypeId === 'point-of-order' ? t(point.status === 'UPHELD' ? 'Point upheld' : 'Point overruled')
+    : point.pointTypeId === 'point-of-order' && ['UPHELD', 'OVERRULED'].includes(point.status) ? t(point.status === 'UPHELD' ? 'Point upheld' : 'Point overruled')
     : point.pointTypeId === 'point-of-information' ? t('Handled point')
-    : point.pointTypeId === 'point-of-personal-privilege' ? t(point.status === 'UPHELD' ? 'Approved point' : 'Denied point')
+    : point.pointTypeId === 'point-of-personal-privilege' && ['UPHELD', 'REJECTED'].includes(point.status) ? t(point.status === 'UPHELD' ? 'Approved point' : 'Denied point')
     : t(point.status);
   const actions = (point: CommitteePoint) => point.pointTypeId === 'point-of-order' ? <Button.Group fluid>
     <Button positive onClick={() => resolve(point, 'UPHELD')}>{t('Uphold point')}</Button>

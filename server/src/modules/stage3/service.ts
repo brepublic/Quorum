@@ -303,7 +303,7 @@ export class Stage3Service {
   }
 
   async ensureBuiltins(): Promise<void> {
-    const definitions = await Promise.all(['quorum-default.v1.json', 'beijing-academic.v1.json'].map(async name =>
+    const definitions = await Promise.all(['beijing-academic.v1.json'].map(async name =>
       JSON.parse(await readFile(new URL(`../../../../packages/rule-schema/fixtures/${name}`, import.meta.url), 'utf8')) as RulePackageDefinition));
     await transaction(this.pool, async client => {
       for (const definition of definitions) {
@@ -311,14 +311,13 @@ export class Stage3Service {
         const inserted = await client.query<{id: string}>(`INSERT INTO rule_packages
           (id, scope, stable_key) VALUES ($1,'BUILTIN',$2)
           ON CONFLICT (scope, stable_key) DO UPDATE SET stable_key=EXCLUDED.stable_key RETURNING id`, [packageId, definition.key]);
-        for (const [index, versionDefinition] of [definition, builtInVersion2(definition), builtInVersion3(definition),
-          builtInVersion4(definition), builtInVersion5(definition)].entries()) {
+        for (const versionDefinition of [builtInVersion5(definition)]) {
           const validated = validateRulePackage(versionDefinition);
-          if (!validated.ok) throw new Error(`Invalid built-in rule package: ${definition.key} v${index + 1}: ${JSON.stringify(validated.issues)}`);
+          if (!validated.ok) throw new Error(`Invalid built-in rule package: ${definition.key} v5: ${JSON.stringify(validated.issues)}`);
           await client.query(`INSERT INTO rule_package_versions
             (id, package_id, version, status, definition, schema_version, validation_result, published_at)
             VALUES ($1,$2,$3,'PUBLISHED',$4,$5,$6,now()) ON CONFLICT (package_id, version) DO NOTHING`,
-          [randomUUID(), inserted.rows[0]?.id, index + 1, versionDefinition, RULE_SCHEMA_VERSION, {valid: true, issues: []}]);
+          [randomUUID(), inserted.rows[0]?.id, 5, versionDefinition, RULE_SCHEMA_VERSION, {valid: true, issues: []}]);
         }
       }
     });

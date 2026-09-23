@@ -10,7 +10,7 @@ const testMembers: Array<[string, string]> = [["china", "中国"], ["shared", "�
 export async function testCommitteeInput(pool: Pool, auth: AuthenticatedSession,
   input: Record<string, unknown>): Promise<Record<string, unknown>> {
   const stage3 = new Stage3Service(pool); const stage4 = new Stage4Service(pool);
-  const rules = (await stage3.listRulePackages()).find(item => item.key === 'builtin:quorum-default')!;
+  const rules = (await stage3.listRulePackages()).find(item => item.key === 'builtin:beijing-academic')!;
   const result = {...input, committeeLanguage: input.committeeLanguage ?? 'en',
     activeRulePackageVersionId: input.activeRulePackageVersionId ?? rules.versions.at(-1)!.id};
   if (input.committeeTemplateId) {
