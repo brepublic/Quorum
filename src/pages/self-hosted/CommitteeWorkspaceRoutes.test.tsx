@@ -7,6 +7,7 @@ import type {CommitteePoint, CommitteeWorkspaceSnapshot, CreatedStrawpoll, Proce
   SpeakerList, Strawpoll} from '@quorum/contracts';
 import type {SelfHostedApi} from '../../services/self-hosted-api';
 import type {SelfHostedUser} from '../../services/self-hosted-identity';
+import {setLanguage} from '../../i18n';
 import SelfHostedWorkspace from '../SelfHostedWorkspace';
 import {generalQueueHasDividerBefore, legacyInterlacedQueue} from './ProceedingsPanel';
 
@@ -42,7 +43,8 @@ function snapshot(audience: CommitteeWorkspaceSnapshot['viewer']['audience']): C
 }
 
 let root: Root | undefined; let container: HTMLDivElement | undefined;
-afterEach(() => {if (root) act(() => root?.unmount()); container?.remove(); root = undefined; container = undefined; vi.useRealTimers();});
+afterEach(() => {if (root) act(() => root?.unmount()); container?.remove(); root = undefined; container = undefined;
+  setLanguage('en'); vi.useRealTimers();});
 
 async function render(audience: CommitteeWorkspaceSnapshot['viewer']['audience'], path: string,
   currentUser: SelfHostedUser = user,
@@ -713,8 +715,22 @@ describe('committee workspace routes and roles', () => {
     expect(page.textContent).not.toContain('Text');
   });
 
-  it('offers the old resolution caucus action as a motion and fills its topic', async () => {
+  it.each([
+    ['en', 'Draft resolution 1.1', 'Discussion of Draft resolution 1.1'],
+    ['zh-CN', '决议草案 1.1', '关于决议草案 1.1的讨论']
+  ] as const)('keeps the %s resolution caucus option and fills its topic', async (language, title, topic) => {
+    setLanguage(language);
+    const motion: ProceedingMotion = {id: 'motion', committeeId: 'committee', meetingSessionId: 'meeting',
+      motionTypeId: 'open-moderated-caucus', proposedBySeatId: 'seat', proposedBySeatDisplayName: 'China',
+      parameters: {proposal: topic, resolutionTarget: 'resolution', caucusDuration: 10, caucusUnit: 'min',
+        speakerDuration: 1, speakerUnit: 'min'}, status: 'SECONDED', rulePackageVersionId: 'rules',
+      ruleEvaluation: {schemaVersion: 1, packageVersionId: 'rules', definition: {}, facts: {}, resolvedValues: {},
+        frozenAt: '2026-08-14T00:00:00.000Z'}, requiredSecondCount: 0, seconds: [], revision: 1,
+      directVote: {includeNonVotingSeats: false, startedAt: null, settingsRevision: 1, eligibility: [],
+        choices: ['FOR', 'AGAINST'], threshold: 1, automaticResult: null, votes: []},
+      createdAt: '2026-08-14T00:00:00.000Z', decidedAt: null, destinationPath: null};
     const page = await render('CHAIR', '/committees/committee/motions', user, value => ({...value,
+      committee: {...value.committee, committeeLanguage: language}, motions: [motion],
       seats: [...value.seats, {id: 'seconder', stableKey: 'usa', displayName: 'United States', rank: 'STANDARD',
         canVote: true, hasVeto: false, mustVote: false, sortOrder: 1, active: true, revision: 1,
         flag: {type: 'STANDARD', value: 'us'}}],
@@ -725,7 +741,7 @@ describe('committee workspace routes and roles', () => {
         updatedAt: '2026-08-14T00:00:00.000Z'}, {seatId: 'seconder', state: 'PRESENT',
         lastEventId: 'attendance-2', updatedAt: '2026-08-14T00:00:00.000Z'}],
       documents: [{id: 'resolution', committeeId: 'committee', meetingSessionId: 'meeting', kind: 'RESOLUTION',
-        resolutionId: null, ordinal: 1, customTitle: null, title: 'New draft resolution 1', status: 'PUBLISHED', rulePackageVersionId: 'rules',
+        resolutionId: null, ordinal: 1, customTitle: null, title, status: 'PUBLISHED', rulePackageVersionId: 'rules',
         currentVersion: {id: 'version', versionNumber: 1, content: 'Draft body', contentFile: null,
           createdAt: '2026-08-14T00:00:00.000Z'}, votingVersionId: null, public: true,
         proposers: [{seatId: 'seat', seatDisplayName: 'China', flag: {type: 'STANDARD', value: 'cn'}}], seconders: [{seatId: 'seconder', seatDisplayName: 'France', flag: {type: 'STANDARD', value: 'fr'}}], delegatesCanAmend: false, directVote: null,
@@ -735,12 +751,18 @@ describe('committee workspace routes and roles', () => {
         names: {en: 'Open a moderated caucus', 'zh-CN': '开启有主持核心磋商'}, procedural: true,
         requiredSecondCount: 1}]}}));
 
-    expect(page.textContent).toContain('Moderated caucus - New draft resolution 1');
+    const optionLabel = `${language === 'zh-CN' ? '有主持核心磋商' : 'Moderated caucus'} - ${title}`;
+    expect(page.textContent).toContain(optionLabel);
     const option = [...page.querySelectorAll<HTMLElement>('.motion-proposal-form .menu .item')]
-      .find(item => item.textContent?.includes('Moderated caucus - New draft resolution 1'));
+      .find(item => item.textContent?.includes(optionLabel));
     await act(async () => {option?.click(); await Promise.resolve();});
-    expect(page.querySelector<HTMLInputElement>('.motion-proposal-form input[placeholder="Topic"]')?.value)
-      .toBe('New draft resolution 1');
+    expect(page.querySelector<HTMLInputElement>(`.motion-proposal-form input[placeholder="${language === 'zh-CN' ? '议题' : 'Topic'}"]`)?.value)
+      .toBe(topic);
+    const rows = [...page.querySelectorAll<HTMLTableRowElement>('.motion-card .motion-metadata-table tr')]
+      .map(row => [row.cells[0]?.textContent, row.cells[1]?.textContent]);
+    expect(rows).toEqual(expect.arrayContaining(language === 'zh-CN'
+      ? [['总时长', '600秒'], ['单次发言时长', '60秒']]
+      : [['Total duration', '600 sec'], ['Speaking time', '60 sec']]));
   });
 
   it('restores the focused legacy motion form and pending-card removal', async () => {

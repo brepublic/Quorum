@@ -930,7 +930,6 @@ const motionTypeFallbackLabels: Record<string, string> = {
   'extend-moderated-caucus': 'Extend moderated caucus',
   'close-moderated-caucus': 'Close moderated caucus',
   'introduce-draft-resolution': 'Introduce draft resolution',
-  'discuss-resolution': 'Discuss resolution',
   'postpone-resolution': 'Postpone resolution',
   'resume-resolution': 'Resume resolution',
   'introduce-amendment': 'Introduce amendment',
@@ -1081,7 +1080,8 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
             const targetId = value.slice(linkedResolutionMotionPrefix.length);
             const target = caucusResolutionOptions.find(document => document.id === targetId);
             setMotionType('open-moderated-caucus'); setResolutionTarget(targetId);
-            setProposal(target ? target.title : '');
+            setProposal(target ? snapshot.committee.committeeLanguage === 'zh-CN'
+              ? `关于${target.title}的讨论` : `Discussion of ${target.title}` : '');
           } else {
             setMotionType(value); setResolutionTarget(''); setAmendmentTarget(''); setProposal('');
           }
@@ -1191,7 +1191,7 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
       const counts = {FOR: 0, AGAINST: 0, ABSTAIN: 0};
       for (const vote of motion.directVote.votes) counts[vote.choice] += 1;
       return <Card className="motion motion-card" key={motion.id}><Card.Content>
-        <div className="motion-heading"><Card.Header>{time && `${time} `}{motionTypeName(type, motion.motionTypeId, snapshot.committee.committeeLanguage)}</Card.Header>
+        <div className="motion-heading"><Card.Header>{time && motion.motionTypeId !== 'open-moderated-caucus' && `${time} `}{motionTypeName(type, motion.motionTypeId, snapshot.committee.committeeLanguage)}</Card.Header>
           {decided ? <time className={`motion-decision motion-decision-${motion.status.toLowerCase()}`}
             dateTime={motion.decidedAt ?? undefined}>{statusLabel(motion.status)}{motion.decidedAt
               ? ` · ${new Date(motion.decidedAt).toLocaleString(document.documentElement.lang)}` : ''}</time>
@@ -1231,6 +1231,14 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
             {detailLabel && <Table.Row><Table.Cell className="motion-metadata-key">{t(detailLabel)}</Table.Cell>
               <Table.Cell><span className="motion-metadata-value">{String(motion.parameters.proposal ?? '')}</span>
               </Table.Cell></Table.Row>}
+            {motion.motionTypeId === 'open-moderated-caucus' && <>
+              <Table.Row><Table.Cell className="motion-metadata-key">{t('Total duration')}</Table.Cell>
+                <Table.Cell><span className="motion-metadata-value">{t('{count} sec', {
+                  count: duration * (durationUnit === 'min' ? 60 : 1)})}</span></Table.Cell></Table.Row>
+              <Table.Row><Table.Cell className="motion-metadata-key">{t('Unit duration')}</Table.Cell>
+                <Table.Cell><span className="motion-metadata-value">{t('{count} sec', {
+                  count: speech * (speechUnit === 'min' ? 60 : 1)})}</span></Table.Cell></Table.Row>
+            </>}
           </Table.Body></Table>
         </Card.Meta>
       </Card.Content>
