@@ -269,6 +269,7 @@ export const ERROR_TEXT = {
   AMENDMENT_VOTING_STARTED: {en: "Voting has begun for this Amendment. It cannot be deleted.", 'zh-CN': "修正案已开始表决，不能删除。"},
   DOCUMENT_SESSION_MISMATCH: {en: "The Amendment and Draft Resolution must belong to the same meeting session.", 'zh-CN': "修正案必须与决议草案属于同一会期。"},
   AMENDMENTS_NOT_ACCEPTED: {en: "This Draft Resolution does not currently accept Amendments. Check its status and Amendment settings.", 'zh-CN': "该决议草案当前不接受修正案，请检查状态和修正案设置。"},
+  FORMAL_DEBATE_CLOSED: {en: "Formal Debate has ended. Reopen it to introduce an Amendment.", 'zh-CN': "正式辩论已结束；重新开启后才可介绍修正案。"},
   DOCUMENT_BODY_SOURCE_CONFLICT: {en: "Use either text or one file for the document body.", 'zh-CN': "正文只能使用文本或一个文件，请选择其中一种。"},
   DOCUMENT_FROZEN: {en: "This document has entered voting or has a result. Its version cannot be edited.", 'zh-CN': "文书已进入表决或已产生结果，不能再修改版本。"},
   DOCUMENT_PROPOSER_OR_CHAIR_REQUIRED: {en: "Only the proposer or a Chair can edit this document.", 'zh-CN': "只有提案国或主席可以修改此文书。"},

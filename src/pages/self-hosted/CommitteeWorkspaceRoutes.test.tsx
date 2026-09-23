@@ -714,6 +714,60 @@ describe('committee workspace routes and roles', () => {
     expect(page.textContent).not.toContain('Target Draft Resolution');
   });
 
+  it.each([
+    {status: 'PUBLISHED', debate: [] as string[], visible: ['Postpone Draft Resolution', 'Vote on Draft Resolution',
+      'Introduce Amendment', 'Moderated Caucus - Draft A'], hidden: ['Resume the Draft Resolution']},
+    {status: 'POSTPONED', debate: [] as string[], visible: ['Resume the Draft Resolution'],
+      hidden: ['Postpone Draft Resolution', 'Vote on Draft Resolution', 'Introduce Amendment', 'Moderated Caucus - Draft A']},
+    {status: 'PUBLISHED', debate: ['close-debate'], visible: ['Postpone Draft Resolution', 'Vote on Draft Resolution'],
+      hidden: ['Introduce Amendment', 'Resume the Draft Resolution']},
+    {status: 'PUBLISHED', debate: ['close-debate', 'open-debate'], visible: ['Introduce Amendment'],
+      hidden: ['Resume the Draft Resolution']}
+  ] as const)('filters resolution motions for $status after $debate', async ({status, debate, visible, hidden}) => {
+    document.documentElement.lang = 'en';
+    const base = {committeeId: 'committee', meetingSessionId: 'meeting', rulePackageVersionId: 'rules',
+      votingVersionId: null, public: true, proposers: [], seconders: [], delegatesCanAmend: false, directVote: null,
+      resultDecisions: [], revision: 2, discussion: [], createdAt: '2026-08-14T00:00:00.000Z',
+      updatedAt: '2026-08-14T00:00:00.000Z'};
+    const page = await render('CHAIR', '/committees/committee/motions', user, value => ({...value,
+      meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: 'Session 1', phaseId: 'formal-debate',
+        activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1,
+        createdAt: '2026-08-14T00:00:00.000Z', closedAt: null},
+      documents: [{...base, id: 'resolution', kind: 'RESOLUTION', resolutionId: null, ordinal: 1, customTitle: 'Draft A',
+        title: 'Draft A', status, currentVersion: {id: 'resolution-version', versionNumber: 1,
+          content: 'Body', contentFile: null, createdAt: '2026-08-14T00:00:00.000Z'}},
+      {...base, id: 'amendment', kind: 'AMENDMENT', resolutionId: 'resolution', ordinal: 1, customTitle: null,
+        title: 'Amendment A', status: 'DRAFT', currentVersion: {id: 'amendment-version', versionNumber: 1,
+          content: 'Replace clause', contentFile: null, createdAt: '2026-08-14T00:00:00.000Z'}}] as ProceedingDocument[],
+      motions: debate.map((motionTypeId, index) => ({id: `debate-${index}`, committeeId: 'committee',
+        meetingSessionId: 'meeting', motionTypeId, proposedBySeatId: 'seat', proposedBySeatDisplayName: 'China',
+        parameters: {}, status: 'PASSED', rulePackageVersionId: 'rules', ruleEvaluation: {schemaVersion: 1,
+          packageVersionId: 'rules', definition: {}, facts: {}, resolvedValues: {}, frozenAt: '2026-08-14T00:00:00.000Z'},
+        requiredSecondCount: 0, seconds: [], directVote: {includeNonVotingSeats: false, startedAt: null,
+          settingsRevision: 1, eligibility: [], choices: ['FOR', 'AGAINST'], threshold: 1,
+          automaticResult: null, votes: []}, revision: 2, createdAt: '2026-08-14T00:00:00.000Z',
+        decidedAt: `2026-08-14T00:0${index + 1}:00.000Z`, destinationPath: null})) as ProceedingMotion[],
+      activeRules: {...value.activeRules, motionTypes: [
+        {id: 'open-moderated-caucus', names: {en: 'Open Moderated Caucus'}, procedural: true, requiredSecondCount: 0},
+        {id: 'postpone-resolution', names: {en: 'Postpone Draft Resolution'}, procedural: false, requiredSecondCount: 0},
+        {id: 'resume-resolution', names: {en: 'Resume the Draft Resolution'}, procedural: false, requiredSecondCount: 0},
+        {id: 'vote-on-resolution', names: {en: 'Vote on Draft Resolution'}, procedural: false, requiredSecondCount: 0},
+        {id: 'introduce-amendment', names: {en: 'Introduce Amendment'}, procedural: false, requiredSecondCount: 0}
+      ]}}));
+    const options = [...page.querySelectorAll<HTMLElement>('.motion-proposal-form .field .menu .item')]
+      .map(item => item.textContent?.trim());
+    for (const label of visible) expect(options).toContain(label);
+    for (const label of hidden) expect(options).not.toContain(label);
+    if (status === 'PUBLISHED' && debate.length === 0) {
+      const voteOption = [...page.querySelectorAll<HTMLElement>('.motion-proposal-form .field .menu .item')]
+        .find(item => item.textContent?.trim() === 'Vote on Draft Resolution');
+      await act(async () => {voteOption?.click(); await Promise.resolve();});
+      const target = [...page.querySelectorAll<HTMLElement>('.motion-proposal-form .field')]
+        .find(field => field.querySelector('label')?.textContent === 'Target Draft Resolution');
+      expect(target?.querySelector('.menu .item .description')?.textContent).toBe('Not yet discussed');
+    }
+  });
+
   it('targets an introduced amendment from the formal-vote motion', async () => {
     const document = {committeeId: 'committee', meetingSessionId: 'meeting', rulePackageVersionId: 'rules',
       votingVersionId: null, public: true, proposers: [{seatId: 'seat', seatDisplayName: 'China', flag: {type: 'STANDARD', value: 'cn'}}], seconders: [], delegatesCanAmend: false,
@@ -725,7 +779,10 @@ describe('committee workspace routes and roles', () => {
         createdAt: '2026-08-14T00:00:00.000Z', closedAt: null},
       attendance: [{seatId: 'seat', state: 'PRESENT', lastEventId: 'attendance',
         updatedAt: '2026-08-14T00:00:00.000Z'}],
-      documents: [{...document, id: 'amendment', kind: 'AMENDMENT', resolutionId: 'resolution', ordinal: 1, customTitle: null,
+      documents: [{...document, id: 'resolution', kind: 'RESOLUTION', resolutionId: null, ordinal: 1, customTitle: null,
+        title: 'Draft resolution 1', status: 'PUBLISHED', currentVersion: {id: 'resolution-version', versionNumber: 1,
+          content: 'Resolution body', contentFile: null, createdAt: '2026-08-14T00:00:00.000Z'}},
+      {...document, id: 'amendment', kind: 'AMENDMENT', resolutionId: 'resolution', ordinal: 1, customTitle: null,
         title: 'New amendment 1', status: 'PUBLISHED', currentVersion: {id: 'amendment-version', versionNumber: 1,
           content: 'Replace clause 1', contentFile: null, createdAt: '2026-08-14T00:00:00.000Z'}}] as ProceedingDocument[],
       activeRules: {...value.activeRules, motionTypes: [{id: 'vote-on-amendment',

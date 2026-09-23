@@ -454,7 +454,7 @@ export const selfHostedApi = {
     onBehalfOfSeatId?: string}) {
     return request<ProceedingDocument>(`/api/v1/documents/${id}/versions`, {method: 'POST', body: input});
   },
-  commandDocument(id: string, baseRevision: number, action: 'PUBLISH' | 'POSTPONE' | 'RESUME' | 'RECOMMEND_BALLOT',
+  commandDocument(id: string, baseRevision: number, action: 'RECOMMEND_BALLOT',
     ruleStableId: string) {
     return request<ProceedingDocument>(`/api/v1/documents/${id}/commands`, {method: 'POST',
       body: {baseRevision, action, ruleStableId}});

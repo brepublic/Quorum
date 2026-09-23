@@ -901,7 +901,7 @@ const hasMotionDetail = (id: string) => ['open-moderated-caucus',
 const hasMotionTextArea = (id: string) => ['introduce-amendment', 'introduce-working-paper'].includes(id);
 const hasCaucusTarget = (id: string) => ['extend-moderated-caucus', 'close-moderated-caucus'].includes(id);
 const hasResolutionTarget = (id: string) => ['introduce-draft-resolution', 'suspend-draft-resolution-speakers-list',
-  'vote-on-resolution'].includes(id);
+  'postpone-resolution', 'resume-resolution', 'vote-on-resolution'].includes(id);
 const hasAmendmentTarget = (id: string) => ['introduce-amendment', 'vote-on-amendment'].includes(id);
 const motionDetailLabel = (id: string) => ({'open-moderated-caucus': 'Topic', 'introduce-draft-resolution': 'Name',
   'introduce-amendment': 'Text', 'propose-strawpoll': 'Question', 'introduce-working-paper': 'Task'}[id] ?? '');
@@ -931,11 +931,9 @@ const motionTypeFallbackLabels: Record<string, string> = {
   'close-moderated-caucus': 'Close Moderated Caucus',
   'introduce-draft-resolution': 'Introduce Draft Resolution',
   'postpone-resolution': 'Postpone Draft Resolution',
-  'resume-resolution': 'Resume Draft Resolution',
+  'resume-resolution': 'Resume the Draft Resolution',
   'introduce-amendment': 'Introduce Amendment',
   'discuss-amendment': 'Discuss Amendment',
-  'postpone-amendment': 'Postpone Amendment',
-  'resume-amendment': 'Resume Amendment',
   'vote-on-amendment': 'Vote on Amendment',
   'suspend-draft-resolution-speakers-list': "Suspend Draft Resolution Speaker's List",
   'vote-on-resolution': 'Vote on Draft Resolution',
@@ -997,19 +995,35 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
     </Card>
   </Container>;
 
-  const selectedType = types.find(type => type.id === motionType);
-  const needsSeconder = Boolean(selectedType && selectedType.requiredSecondCount > 0);
   const presentSeatIds = new Set(snapshot.attendance.filter(item => item.state === 'PRESENT').map(item => item.seatId));
   const presentSeats = snapshot.seats.filter(seat => presentSeatIds.has(seat.id));
   const seatOptions = attendanceSeatOptions(snapshot, presentSeatIds);
   const openCaucuses = (snapshot.speakerLists ?? []).filter(list => list.kind === 'MODERATED_CAUCUS' && list.status === 'OPEN');
-  const resolutions = (snapshot.documents ?? []).filter(document => document.kind === 'RESOLUTION');
+  const resolutions = (snapshot.documents ?? []).filter(document => document.kind === 'RESOLUTION'
+    && document.meetingSessionId === session.id);
   const amendments = (snapshot.documents ?? []).filter(document => document.kind === 'AMENDMENT');
+  const eligibleResolutions = resolutions.filter(document => document.status === 'PUBLISHED');
+  const postponableResolutions = eligibleResolutions.filter(document => !document.directVote?.startedAt);
+  const postponedResolutions = resolutions.filter(document => document.status === 'POSTPONED');
+  const latestDebateMotion = (snapshot.motions ?? []).filter(motion => motion.meetingSessionId === session.id
+    && motion.status === 'PASSED' && ['open-debate', 'close-debate'].includes(motion.motionTypeId))
+    .sort((first, second) => Date.parse(second.decidedAt ?? '') - Date.parse(first.decidedAt ?? '')
+      || second.id.localeCompare(first.id))[0];
+  const debateClosed = latestDebateMotion?.motionTypeId === 'close-debate';
+  const availableTypes = types.filter(type => type.id === 'postpone-resolution' ? postponableResolutions.length > 0
+    : type.id === 'resume-resolution' ? postponedResolutions.length > 0
+      : type.id === 'vote-on-resolution' ? eligibleResolutions.length > 0
+        : type.id === 'introduce-amendment' ? eligibleResolutions.length > 0 && !debateClosed
+          : true);
+  const selectedType = availableTypes.find(type => type.id === motionType);
+  const needsSeconder = Boolean(selectedType && selectedType.requiredSecondCount > 0);
   const linkedResolutionIds = new Set((snapshot.speakerLists ?? []).map(list => list.linkedResolutionId).filter(Boolean));
-  const caucusResolutionOptions = resolutions.filter(document => document.status === 'PUBLISHED'
-    && !linkedResolutionIds.has(document.id));
+  const caucusResolutionOptions = eligibleResolutions.filter(document => !linkedResolutionIds.has(document.id));
+  const discussedResolutionIds = new Set((snapshot.motions ?? []).filter(motion => motion.status === 'PASSED'
+    && motion.motionTypeId === 'open-moderated-caucus' && typeof motion.parameters.resolutionTarget === 'string')
+    .map(motion => String(motion.parameters.resolutionTarget)));
   const motionOptions = [
-    ...types.map(type => ({key: type.id, value: type.id,
+    ...availableTypes.map(type => ({key: type.id, value: type.id,
       text: motionTypeName(type, type.id, snapshot.committee.committeeLanguage)})),
     ...(types.some(type => type.id === 'open-moderated-caucus') ? caucusResolutionOptions.map(document => ({
       key: linkedResolutionMotionValue(document.id), value: linkedResolutionMotionValue(document.id),
@@ -1017,9 +1031,13 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
   ];
   const targetResolutions = resolutions.filter(document => motionType === 'introduce-draft-resolution'
     ? document.status === 'DRAFT'
-    : motionType === 'vote-on-resolution' ? document.status === 'PUBLISHED' : true);
+    : motionType === 'resume-resolution' ? document.status === 'POSTPONED'
+      : motionType === 'postpone-resolution' ? postponableResolutions.some(item => item.id === document.id)
+        : motionType === 'vote-on-resolution' ? document.status === 'PUBLISHED' : true);
   const targetAmendments = amendments.filter(document => motionType === 'introduce-amendment'
-    ? document.status === 'DRAFT' : motionType === 'vote-on-amendment' ? document.status === 'PUBLISHED' : true);
+    ? document.status === 'DRAFT' && eligibleResolutions.some(resolution => resolution.id === document.resolutionId)
+      : motionType === 'vote-on-amendment' ? document.status === 'PUBLISHED'
+        && resolutions.some(resolution => resolution.id === document.resolutionId && resolution.status !== 'POSTPONED') : true);
   const identicalSeats = Boolean(proposerId && seconderId && proposerId === seconderId);
   const caucusDurationValue = motionDurationValue(caucusDuration, caucusUnit);
   const speakerDurationValue = motionDurationValue(speakerDuration, speakerUnit);
@@ -1033,8 +1051,8 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
     && durationsValid && (chairAdvisoryMode || divisible)
     && (!hasMotionDetail(motionType) || proposal.trim())
     && (!hasCaucusTarget(motionType) || caucusTarget)
-    && (!hasResolutionTarget(motionType) || resolutionTarget)
-    && (!hasAmendmentTarget(motionType) || amendmentTarget));
+    && (!hasResolutionTarget(motionType) || targetResolutions.some(document => document.id === resolutionTarget))
+    && (!hasAmendmentTarget(motionType) || targetAmendments.some(document => document.id === amendmentTarget)));
   const propose = async () => {
     const parameters: Record<string, unknown> = {};
     if (hasMotionDetail(motionType)) parameters.proposal = proposal;
@@ -1074,7 +1092,7 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
     {canPropose && <Form className="motion-proposal-form"
       error={(!chairAdvisoryMode && !divisible) || identicalSeats} onSubmit={propose}>
       <Form.Select placeholder={t('Select type')} search selection fluid label={t('Type')} icon="search"
-        options={motionOptions} value={motionChoice} onChange={(_, data) => {
+        options={motionOptions} value={motionOptions.some(option => option.value === motionChoice) ? motionChoice : ''} onChange={(_, data) => {
           const value = String(data.value); setMotionChoice(value);
           if (value.startsWith(linkedResolutionMotionPrefix)) {
             const targetId = value.slice(linkedResolutionMotionPrefix.length);
@@ -1119,7 +1137,8 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
         {hasResolutionTarget(motionType) && <Form.Select required key="resolutionTarget" search selection fluid error={!resolutionTarget}
           icon="search" label={t('Target Draft Resolution')} value={resolutionTarget}
           options={targetResolutions.map(document => ({key: document.id, value: document.id,
-            text: document.title}))}
+            text: document.title, ...(motionType === 'vote-on-resolution' && !discussedResolutionIds.has(document.id)
+              ? {description: t('Not yet discussed')} : {})}))}
           onChange={(_, data) => setResolutionTarget(String(data.value))} />}
         {hasAmendmentTarget(motionType) && <Form.Select required key="amendmentTarget" search selection fluid
           error={!amendmentTarget} icon="search" label={t('Target Amendment')} value={amendmentTarget}
@@ -1695,7 +1714,7 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
       </>}
     </Segment>}</>}
     {activeTab === 'amendments' && <>{amendments.length === 0 && <Message content={t('No Amendments')} />}<Card.Group itemsPerRow={1}>
-      {canParticipate && session && ['PUBLISHED', 'POSTPONED'].includes(document.status) && <Card><Button icon="plus"
+      {canParticipate && session && document.status === 'PUBLISHED' && <Card><Button icon="plus"
         primary fluid basic aria-label={t('Create Amendment')} onClick={() => void run(() => api.createAmendment(document.id,
           {meetingSessionId: session.id, customTitle: null, content: '', ...represented}))} /></Card>}
       {[...amendments].reverse().map(amendment => <AmendmentCard key={amendment.id} snapshot={snapshot}

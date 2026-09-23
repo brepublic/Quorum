@@ -383,12 +383,16 @@ async function resolutionDirectVoteState(client: PoolClient, document: DocumentR
       castAt: vote.cast_at.toISOString()}))};
 }
 
-const documentRuleIds: Record<ProceedingDocumentKind, Record<'PUBLISH' | 'POSTPONE' | 'RESUME' | 'RECOMMEND_BALLOT', string>> = {
-  RESOLUTION: {PUBLISH: 'introduce-draft-resolution', POSTPONE: 'postpone-resolution', RESUME: 'resume-resolution',
-    RECOMMEND_BALLOT: 'vote-on-resolution'},
-  AMENDMENT: {PUBLISH: 'introduce-amendment', POSTPONE: 'postpone-amendment', RESUME: 'resume-amendment',
-    RECOMMEND_BALLOT: 'vote-on-amendment'}
+const documentBallotRuleIds: Record<ProceedingDocumentKind, string> = {
+  RESOLUTION: 'vote-on-resolution', AMENDMENT: 'vote-on-amendment'
 };
+
+async function formalDebateClosed(client: PoolClient, meetingSessionId: string): Promise<boolean> {
+  const latest = await client.query<{motion_type_id: string}>(`SELECT motion_type_id FROM motions
+    WHERE meeting_session_id=$1 AND status='PASSED' AND motion_type_id IN ('open-debate','close-debate')
+    ORDER BY decided_at DESC,id DESC LIMIT 1`, [meetingSessionId]);
+  return latest.rows[0]?.motion_type_id === 'close-debate';
+}
 
 async function frozenDocumentRule(client: PoolClient, row: DocumentRow, suppliedId: string, expectedId: string,
   now: Date): Promise<FrozenRuleEvaluation> {
@@ -510,6 +514,11 @@ export class Stage5Service {
       let running = current.running; let startedAt: Date | null = current.started_at; let nextRemaining = remaining;
       let expiredAt: Date | null = current.expired_at;
       if (command === 'start' || command === 'resume') {
+        const linked = await client.query<{status: ProceedingDocumentStatus}>(`SELECT d.status FROM speaker_lists l
+          JOIN documents d ON d.id=l.linked_resolution_document_id
+          WHERE l.speech_timer_id=$1 OR l.total_timer_id=$1`, [timerId]);
+        if (linked.rows[0]?.status === 'POSTPONED') throw new AppError({reason: 'DOCUMENT_STATE_CHANGED',
+          code: 'RESOURCE_CONFLICT', message: 'The linked resolution is postponed.'});
         if (current.running) throw new AppError({reason: 'TIMER_ALREADY_RUNNING', code: 'RESOURCE_CONFLICT', message: 'The timer is already running.'});
         if (remaining <= 0) throw new AppError({reason: 'TIMER_EXHAUSTED', code: 'RESOURCE_CONFLICT', message: 'Reset or extend the timer before starting it.'});
         running = true; startedAt = now; expiredAt = null;
@@ -674,6 +683,12 @@ export class Stage5Service {
       const list = found.rows[0] as SpeakerListRow;
       if (list.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT',
         message: 'This speaker list changed since it was loaded.', details: {currentRevision: list.revision}});
+      if (status === 'OPEN' && list.linked_resolution_document_id) {
+        const linked = await client.query<{status: ProceedingDocumentStatus}>(`SELECT status FROM documents
+          WHERE id=$1 FOR UPDATE`, [list.linked_resolution_document_id]);
+        if (linked.rows[0]?.status !== 'PUBLISHED') throw new AppError({reason: 'DOCUMENT_STATE_CHANGED',
+          code: 'RESOURCE_CONFLICT', message: 'The linked Draft Resolution is not available for discussion.'});
+      }
       if (list.status === status) return speakerListState(client, list);
       const now = this.now();
       if (status === 'CLOSED') {
@@ -1412,6 +1427,31 @@ export class Stage5Service {
           && (item as {id?: unknown}).id === motionTypeId) : [];
         if (matches.length !== 1) throw new AppError({reason: 'MOTION_TYPE_UNAVAILABLE', code: 'VALIDATION_FAILED',
           message: 'Motion type is not active in the meeting rule package.'});
+        if (['postpone-resolution', 'resume-resolution', 'vote-on-resolution'].includes(motionTypeId)
+          || motionTypeId === 'open-moderated-caucus' && (parameters as Record<string, unknown>).resolutionTarget !== undefined) {
+          const targetId = motionId(parameters as Record<string, unknown>, 'resolutionTarget', 'Target resolution ID');
+          const target = await client.query<{status: ProceedingDocumentStatus; direct_vote_started_at: Date | null}>(
+            `SELECT d.status,r.direct_vote_started_at FROM documents d JOIN resolutions r ON r.document_id=d.id
+            WHERE d.id=$1 AND d.committee_id=$2 AND d.meeting_session_id=$3 AND d.deleted_at IS NULL`,
+          [targetId, committeeId, meetingSessionId]);
+          const expected = motionTypeId === 'resume-resolution' ? 'POSTPONED' : 'PUBLISHED';
+          if (target.rows[0]?.status !== expected || motionTypeId === 'postpone-resolution'
+            && target.rows[0].direct_vote_started_at) throw new AppError({reason: 'DOCUMENT_STATE_CHANGED', code: 'RESOURCE_CONFLICT',
+            message: 'The target resolution is not available for this motion.'});
+        }
+        if (motionTypeId === 'introduce-amendment' || motionTypeId === 'vote-on-amendment') {
+          const targetId = motionId(parameters as Record<string, unknown>, 'amendmentTarget', 'Target amendment ID');
+          const parent = await client.query<{status: ProceedingDocumentStatus}>(`SELECT r.status FROM documents a
+            JOIN amendments m ON m.document_id=a.id JOIN documents r ON r.id=m.resolution_document_id
+            WHERE a.id=$1 AND a.committee_id=$2 AND a.meeting_session_id=$3 AND a.kind='AMENDMENT'
+              AND a.deleted_at IS NULL AND r.deleted_at IS NULL`, [targetId, committeeId, meetingSessionId]);
+          if (parent.rows[0]?.status !== 'PUBLISHED') throw new AppError({reason: 'AMENDMENTS_NOT_ACCEPTED', code: 'RESOURCE_CONFLICT',
+            message: 'The target Draft Resolution does not accept Amendments.'});
+          if (motionTypeId === 'introduce-amendment' && await formalDebateClosed(client, meetingSessionId)) {
+            throw new AppError({reason: 'FORMAL_DEBATE_CLOSED', code: 'RESOURCE_CONFLICT',
+              message: 'Formal Debate has ended for this meeting session.'});
+          }
+        }
         const definition = structuredClone(matches[0]) as {id: string; requiredSecondCount?: unknown; procedural?: unknown;
           effects?: unknown};
         const requiredSecondCount = definition.requiredSecondCount === undefined ? 0 : definition.requiredSecondCount;
@@ -1667,15 +1707,15 @@ export class Stage5Service {
       if (parameters.resolutionTarget !== undefined) {
         const resolutionId = motionId(parameters, 'resolutionTarget', 'Target resolution ID');
         const target = await client.query<{id: string; custom_title: string | null; ordinal: number;
-          session_ordinal: number; is_public: boolean}>(`SELECT d.id,d.custom_title,d.ordinal,
-          ms.ordinal AS session_ordinal,d.is_public FROM documents d JOIN resolutions r ON r.document_id=d.id
+          session_ordinal: number; status: ProceedingDocumentStatus}>(`SELECT d.id,d.custom_title,d.ordinal,
+          ms.ordinal AS session_ordinal,d.status FROM documents d JOIN resolutions r ON r.document_id=d.id
           JOIN meeting_sessions ms ON ms.id=d.meeting_session_id
           WHERE d.id=$1 AND d.committee_id=$2 AND d.meeting_session_id=$3 AND d.deleted_at IS NULL FOR UPDATE OF d`,
         [resolutionId, committeeId, motion.meeting_session_id]);
         const row = target.rows[0];
         if (!row) throw new AppError({code: 'NOT_FOUND', message: 'Target resolution not found.'});
-        if (!row.is_public) throw new AppError({reason: 'RESOLUTION_NOT_INTRODUCED', code: 'RESOURCE_CONFLICT',
-          message: 'The target resolution has not been introduced.'});
+        if (row.status !== 'PUBLISHED') throw new AppError({reason: 'RESOLUTION_NOT_INTRODUCED', code: 'RESOURCE_CONFLICT',
+          message: 'The target resolution is not available for discussion.'});
         const existing = await client.query('SELECT id FROM speaker_lists WHERE linked_resolution_document_id=$1',
           [resolutionId]);
         if (existing.rows[0]) {
@@ -1854,7 +1894,74 @@ export class Stage5Service {
       return `/committees/${committeeId}/resolutions/${documentId}`;
     }
 
+    if (motion.motion_type_id === 'postpone-resolution' || motion.motion_type_id === 'resume-resolution') {
+      const documentId = motionId(parameters, 'resolutionTarget', 'Target resolution ID');
+      const found = await client.query<DocumentRow>(`SELECT d.*,NULL::uuid AS resolution_document_id FROM documents d
+        WHERE d.id=$1 AND d.committee_id=$2 AND d.meeting_session_id=$3 AND d.kind='RESOLUTION'
+          AND d.deleted_at IS NULL FOR UPDATE`, [documentId, committeeId, motion.meeting_session_id]);
+      const document = found.rows[0];
+      if (!document) throw new AppError({code: 'NOT_FOUND', message: 'Target resolution not found.'});
+      const postpone = motion.motion_type_id === 'postpone-resolution';
+      const fromStatus = postpone ? 'PUBLISHED' : 'POSTPONED';
+      const status = postpone ? 'POSTPONED' : 'PUBLISHED';
+      if (document.status !== fromStatus) throw new AppError({reason: 'DOCUMENT_STATE_CHANGED', code: 'RESOURCE_CONFLICT',
+        message: 'The target resolution is not in the required state.'});
+      if (postpone) {
+        const voting = await client.query<{direct_vote_started_at: Date | null}>(
+          'SELECT direct_vote_started_at FROM resolutions WHERE document_id=$1 FOR UPDATE', [documentId]);
+        if (voting.rows[0]?.direct_vote_started_at) throw new AppError({reason: 'DOCUMENT_STATE_CHANGED',
+          code: 'RESOURCE_CONFLICT', message: 'The target resolution has already entered voting.'});
+      }
+      const updated = await client.query<DocumentRow>(`UPDATE documents SET status=$2::proceeding_document_status,
+        revision=revision+1,updated_at=$3 WHERE id=$1 RETURNING *,NULL::uuid AS resolution_document_id`,
+      [documentId, status, now]);
+      await client.query(`INSERT INTO document_actions
+        (id,committee_id,document_id,action,from_status,to_status,rule_stable_id,rule_evaluation,actor_user_id,created_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, [randomUUID(), committeeId, documentId,
+          postpone ? 'POSTPONE' : 'RESUME', fromStatus, status, motion.motion_type_id, motion.rule_evaluation, actorUserId, now]);
+      await appendEvent(client, committee, {type: 'document.status_changed', resourceType: 'document', resourceId: documentId,
+        revision: document.revision + 1, payload: {kind: 'RESOLUTION', status, ruleStableId: motion.motion_type_id,
+          motionId: motion.id}, audience: 'PUBLIC'});
+      await audit(client, context, {committeeId, actorUserId, capabilities: ['CHAIR'],
+        onBehalfOfSeatId: motion.proposed_by_seat_id, action: 'documents.status_changed', resourceType: 'document',
+        resourceId: documentId, before: {status: fromStatus, revision: document.revision},
+        after: {status, revision: updated.rows[0]!.revision, motionId: motion.id}});
+      if (postpone) {
+        const lists = await client.query<SpeakerListRow>(`SELECT * FROM speaker_lists
+          WHERE linked_resolution_document_id=$1 AND status='OPEN' FOR UPDATE`, [documentId]);
+        for (const list of lists.rows) {
+          const timers = await client.query<TimerRow>('SELECT * FROM timer_states WHERE id=ANY($1::uuid[]) FOR UPDATE',
+            [[list.speech_timer_id, list.total_timer_id].filter(Boolean)]);
+          for (const timer of timers.rows) {
+            const remaining = remainingTimerMs(timer, now);
+            await client.query(`UPDATE timer_states SET running=false,started_at=NULL,remaining_at_start_ms=$2,
+              revision=revision+1,updated_at=$3 WHERE id=$1`, [timer.id, remaining, now]);
+            await appendEvent(client, committee, {type: 'timer.changed', resourceType: 'timer', resourceId: timer.id,
+              revision: timer.revision + 1, payload: {command: 'PAUSED_BY_LIST_CLOSE', running: false, remainingMs: remaining}});
+          }
+          const active = await client.query<SpeechRow>(`SELECT * FROM speeches WHERE speaker_list_id=$1
+            AND status IN ('READY','RUNNING','PAUSED') FOR UPDATE`, [list.id]);
+          for (const speech of active.rows) {
+            await client.query(`UPDATE speeches SET status='COMPLETED',ended_at=$2,revision=revision+1,
+              yield_decision_status=CASE WHEN yield_decision_status='PENDING' THEN 'REJECTED'::speech_yield_decision_status
+                ELSE yield_decision_status END WHERE id=$1`, [speech.id, now]);
+            await appendEvent(client, committee, {type: 'speech.changed', resourceType: 'speech', resourceId: speech.id,
+              revision: speech.revision + 1, payload: {command: 'COMPLETED_BY_LIST_CLOSE', speakerListId: list.id}});
+          }
+          await client.query(`UPDATE speaker_lists SET status='CLOSED',closed_at=$2,revision=revision+1 WHERE id=$1`, [list.id, now]);
+          await client.query(`UPDATE caucuses SET status='CLOSED',closed_at=$2,revision=revision+1
+            WHERE speaker_list_id=$1`, [list.id, now]);
+          await appendEvent(client, committee, {type: 'speaker_list.changed', resourceType: 'speaker_list', resourceId: list.id,
+            revision: list.revision + 1, payload: {command: 'CLOSED_BY_RESOLUTION_POSTPONEMENT', status: 'CLOSED',
+              motionId: motion.id}, audience: 'PUBLIC'});
+        }
+      }
+      return `/committees/${committeeId}/resolutions/${documentId}`;
+    }
+
     if (motion.motion_type_id === 'introduce-amendment') {
+      if (await formalDebateClosed(client, motion.meeting_session_id)) throw new AppError({reason: 'FORMAL_DEBATE_CLOSED',
+        code: 'RESOURCE_CONFLICT', message: 'Formal Debate has ended for this meeting session.'});
       motionText(parameters, 'proposal', 'Amendment text', 200_000);
       const documentId = motionId(parameters, 'amendmentTarget', 'Target amendment ID');
       const found = await client.query<DocumentRow>(`SELECT d.*,a.resolution_document_id FROM documents d
@@ -1866,6 +1973,11 @@ export class Stage5Service {
       }
       if (document.status !== 'DRAFT') throw new AppError({reason: 'AMENDMENT_ALREADY_INTRODUCED', code: 'RESOURCE_CONFLICT',
         message: 'Only a Draft Amendment can be introduced.'});
+      const parent = await client.query<{status: ProceedingDocumentStatus}>(`SELECT status FROM documents
+        WHERE id=$1 AND committee_id=$2 AND kind='RESOLUTION' AND deleted_at IS NULL FOR UPDATE`,
+      [document.resolution_document_id, committeeId]);
+      if (parent.rows[0]?.status !== 'PUBLISHED') throw new AppError({reason: 'AMENDMENTS_NOT_ACCEPTED', code: 'RESOURCE_CONFLICT',
+        message: 'The target Draft Resolution does not accept Amendments.'});
       const contentSource = await client.query<{content: string; content_file_entry_id: string | null;
         file_status: string | null}>(`SELECT v.content,v.content_file_entry_id,e.status AS file_status
         FROM document_versions v LEFT JOIN file_entries linked ON linked.id=v.content_file_entry_id
@@ -1910,6 +2022,11 @@ export class Stage5Service {
       }
       if (document.status !== 'PUBLISHED') throw new AppError({reason: 'AMENDMENT_NOT_INTRODUCED', code: 'RESOURCE_CONFLICT',
         message: 'Only an introduced Amendment can enter voting.'});
+      const parent = await client.query<{status: ProceedingDocumentStatus}>(`SELECT status FROM documents
+        WHERE id=$1 AND committee_id=$2 AND kind='RESOLUTION' AND deleted_at IS NULL FOR UPDATE`,
+      [document.resolution_document_id, committeeId]);
+      if (parent.rows[0]?.status === 'POSTPONED') throw new AppError({reason: 'DOCUMENT_STATE_CHANGED', code: 'RESOURCE_CONFLICT',
+        message: 'The target Draft Resolution is postponed.'});
       await requirePublishedDocumentFile(client, document.current_version_id);
       await client.query(`UPDATE documents SET status='VOTING',voting_version_id=current_version_id,
         revision=revision+1,updated_at=$2 WHERE id=$1`, [documentId, now]);
@@ -2945,7 +3062,7 @@ export class Stage5Service {
         if (!parent.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Resolution not found.'});
         if (parent.rows[0].meeting_session_id !== meetingSessionId) throw new AppError({reason: 'DOCUMENT_SESSION_MISMATCH', code: 'VALIDATION_FAILED',
           message: 'Amendment and Draft Resolution must use the same meeting session.'});
-        if (!['PUBLISHED', 'POSTPONED'].includes(parent.rows[0].status)) throw new AppError({reason: 'AMENDMENTS_NOT_ACCEPTED', code: 'RESOURCE_CONFLICT',
+        if (parent.rows[0].status !== 'PUBLISHED') throw new AppError({reason: 'AMENDMENTS_NOT_ACCEPTED', code: 'RESOURCE_CONFLICT',
           message: 'The Draft Resolution does not accept Amendments.'});
       }
       const id = randomUUID(); const versionId = randomUUID(); const now = this.now();
@@ -3041,8 +3158,8 @@ export class Stage5Service {
     context: Stage4Context): Promise<ProceedingDocument> {
     requireBusinessIdentity(auth); assertExactBody(input, ['baseRevision', 'action', 'ruleStableId']);
     const baseRevision = positiveInteger(input.baseRevision, 'Base revision');
-    const action = input.action as 'PUBLISH' | 'POSTPONE' | 'RESUME' | 'RECOMMEND_BALLOT';
-    if (!['PUBLISH', 'POSTPONE', 'RESUME', 'RECOMMEND_BALLOT'].includes(action)) throw new AppError({reason: 'INVALID_DOCUMENT_ACTION',
+    const action = input.action;
+    if (action !== 'RECOMMEND_BALLOT') throw new AppError({reason: 'INVALID_DOCUMENT_ACTION',
       code: 'VALIDATION_FAILED', message: 'Document action is invalid.'});
     const ruleStableId = text(input.ruleStableId, 'Rule stable ID', 128);
     return transaction(this.pool, async client => {
@@ -3054,19 +3171,19 @@ export class Stage5Service {
       const found = await client.query<DocumentRow>(`SELECT d.*,a.resolution_document_id FROM documents d
         LEFT JOIN amendments a ON a.document_id=d.id WHERE d.id=$1 AND d.deleted_at IS NULL FOR UPDATE OF d`, [documentId]);
       const document = found.rows[0]; if (!document) throw new AppError({code: 'NOT_FOUND', message: 'Document not found.'});
-      if (action === 'PUBLISH') throw new AppError({reason: 'DOCUMENT_INTRODUCTION_MOTION_REQUIRED', code: 'RESOURCE_CONFLICT',
-        message: 'A draft document can only be introduced by a passed motion.'});
       if (document.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT',
         message: 'This document changed since it was loaded.', details: {currentRevision: document.revision}});
-      const expectedFrom: Record<typeof action, ProceedingDocumentStatus> = {POSTPONE: 'PUBLISHED',
-        RESUME: 'POSTPONED', RECOMMEND_BALLOT: 'PUBLISHED'};
-      const nextStatus: Record<typeof action, ProceedingDocumentStatus> = {POSTPONE: 'POSTPONED',
-        RESUME: 'PUBLISHED', RECOMMEND_BALLOT: 'VOTING'};
-      if (document.status !== expectedFrom[action]) throw new AppError({reason: 'DOCUMENT_STATE_CHANGED', code: 'RESOURCE_CONFLICT',
+      if (document.status !== 'PUBLISHED') throw new AppError({reason: 'DOCUMENT_STATE_CHANGED', code: 'RESOURCE_CONFLICT',
         message: 'The document is not in the required state.'});
-      if (action !== 'POSTPONE') await requirePublishedDocumentFile(client, document.current_version_id);
+      if (document.kind === 'AMENDMENT') {
+        const parent = await client.query<{status: ProceedingDocumentStatus}>(`SELECT status FROM documents
+          WHERE id=$1 FOR UPDATE`, [document.resolution_document_id]);
+        if (parent.rows[0]?.status === 'POSTPONED') throw new AppError({reason: 'DOCUMENT_STATE_CHANGED',
+          code: 'RESOURCE_CONFLICT', message: 'The target Draft Resolution is postponed.'});
+      }
+      await requirePublishedDocumentFile(client, document.current_version_id);
       const now = this.now(); const evaluation = await frozenDocumentRule(client, document, ruleStableId,
-        documentRuleIds[document.kind][action], now); const status = nextStatus[action];
+        documentBallotRuleIds[document.kind], now); const status = 'VOTING';
       const updated = await client.query<DocumentRow>(`UPDATE documents SET status=$2::proceeding_document_status,is_public=true,
         voting_version_id=CASE WHEN $2::proceeding_document_status='VOTING' THEN current_version_id ELSE voting_version_id END,
         revision=revision+1,updated_at=$3 WHERE id=$1 RETURNING *,
@@ -3209,6 +3326,8 @@ export class Stage5Service {
       const found = await client.query<DocumentRow>(`SELECT d.*,NULL::uuid AS resolution_document_id FROM documents d
         WHERE d.id=$1 AND d.kind='RESOLUTION' AND d.deleted_at IS NULL FOR UPDATE`, [documentId]);
       const document = found.rows[0] as DocumentRow;
+      if (document.status === 'POSTPONED') throw new AppError({reason: 'DOCUMENT_STATE_CHANGED', code: 'RESOURCE_CONFLICT',
+        message: 'The Draft Resolution is postponed.'});
       if (choice !== null) await requirePublishedDocumentFile(client, document.current_version_id);
       const eligible = await client.query<{display_name: string; must_vote: boolean}>(`SELECT s.display_name,s.must_vote
         FROM committee_seats s JOIN current_attendance a ON a.seat_id=s.id AND a.meeting_session_id=$3 AND a.state='PRESENT'
@@ -3270,6 +3389,8 @@ export class Stage5Service {
       const found = await client.query<DocumentRow>(`SELECT d.*,a.resolution_document_id FROM documents d
         LEFT JOIN amendments a ON a.document_id=d.id WHERE d.id=$1 AND d.deleted_at IS NULL FOR UPDATE OF d`, [documentId]);
       const document = found.rows[0] as DocumentRow;
+      if (document.status === 'POSTPONED') throw new AppError({reason: 'DOCUMENT_STATE_CHANGED', code: 'RESOURCE_CONFLICT',
+        message: 'The Draft Resolution is postponed.'});
       const allowed = document.kind === 'RESOLUTION' ? ['PASSED', 'FAILED'] : ['INCORPORATED', 'REJECTED'];
       if (!allowed.includes(outcome)) throw new AppError({reason: 'INVALID_DOCUMENT_RESULT', code: 'VALIDATION_FAILED', message: 'Document result is invalid.'});
       if (document.kind === 'AMENDMENT' && document.status === 'DRAFT') throw new AppError({reason: 'AMENDMENT_NOT_INTRODUCED', code: 'RESOURCE_CONFLICT',

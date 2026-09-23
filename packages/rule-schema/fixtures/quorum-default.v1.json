@@ -51,8 +51,6 @@
     {"id": "vote-on-resolution", "effects": [{"type": "START_BALLOT"}]},
     {"id": "introduce-amendment", "effects": [{"type": "SET_DOCUMENT_STATUS"}]},
     {"id": "discuss-amendment", "effects": [{"type": "OPEN_DISCUSSION"}]},
-    {"id": "postpone-amendment", "effects": [{"type": "SET_DOCUMENT_STATUS"}]},
-    {"id": "resume-amendment", "effects": [{"type": "SET_DOCUMENT_STATUS"}]},
     {"id": "vote-on-amendment", "effects": [{"type": "START_BALLOT"}]}
   ],
   "ballots": {

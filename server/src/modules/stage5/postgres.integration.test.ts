@@ -787,6 +787,85 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
     expect(effects?.rows[0]).toEqual({lists: 1, timers: 2});
   });
 
+  it('postpones only the selected introduced resolution and restores its actions after a passed resume motion', async () => {
+    const f = await meetingFixture();
+    const draft = await stage5.createResolution(f.firstChair, f.committee.id,
+      {meetingSessionId: f.session.id, customTitle: 'Draft A', content: 'Body'}, randomUUID(), context('postpone-draft'));
+    const propose = (motionTypeId: string, parameters: Record<string, unknown>) => stage5.proposeMotion(
+      f.firstChair, f.committee.id, {meetingSessionId: f.session.id, motionTypeId,
+        onBehalfOfSeatId: f.firstSeat.id, parameters}, randomUUID(), context(motionTypeId));
+    const pass = async (motion: Awaited<ReturnType<typeof propose>>) => stage5.decideMotion(f.firstChair, motion.id,
+      {baseRevision: motion.revision, result: 'PASSED'}, context(`pass-${motion.motionTypeId}`));
+    await expect(propose('postpone-resolution', {resolutionTarget: draft.id})).rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
+    await pass(await propose('introduce-draft-resolution', {resolutionTarget: draft.id}));
+    await expect(propose('postpone-resolution', {})).rejects.toMatchObject({code: 'VALIDATION_FAILED'});
+    const caucus = await propose('open-moderated-caucus', {proposal: 'Discuss Draft A', resolutionTarget: draft.id,
+      caucusDuration: 10, caucusUnit: 'min', speakerDuration: 1, speakerUnit: 'min'});
+    await pass(caucus);
+    const linked = (await stage4.snapshot(f.committee.id, f.firstChair)).speakerLists!
+      .find(list => list.linkedResolutionId === draft.id)!;
+    expect(linked.status).toBe('OPEN');
+    await pass(await propose('postpone-resolution', {resolutionTarget: draft.id}));
+    let snapshot = await stage4.snapshot(f.committee.id, f.firstChair);
+    expect(snapshot.documents?.find(document => document.id === draft.id)?.status).toBe('POSTPONED');
+    expect(snapshot.speakerLists?.find(list => list.id === linked.id)?.status).toBe('CLOSED');
+    const linkedTimer = snapshot.timers!.find(timer => timer.id === linked.totalTimerId)!;
+    await expect(stage5.commandTimer(f.firstChair, linkedTimer.id, 'start',
+      {baseRevision: linkedTimer.revision}, context('blocked-discussion-timer')))
+      .rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
+    await expect(propose('postpone-resolution', {resolutionTarget: draft.id})).rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
+    await expect(propose('vote-on-resolution', {resolutionTarget: draft.id})).rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
+    await expect(propose('open-moderated-caucus', {proposal: 'Discuss Draft A', resolutionTarget: draft.id,
+      caucusDuration: 10, caucusUnit: 'min', speakerDuration: 1, speakerUnit: 'min'}))
+      .rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
+    await expect(stage5.createAmendment(f.firstDelegate, draft.id,
+      {meetingSessionId: f.session.id, customTitle: null, content: ''}, randomUUID(), context('blocked-amendment')))
+      .rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
+    await expect(stage5.setResolutionDirectVote(f.firstChair, draft.id,
+      {seatId: f.firstSeat.id, choice: 'FOR'}, context('blocked-vote'))).rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
+    await expect(stage5.setSpeakerListStatus(f.firstChair, linked.id,
+      {baseRevision: snapshot.speakerLists!.find(list => list.id === linked.id)!.revision, status: 'OPEN'},
+      context('blocked-discussion'))).rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
+    await pass(await propose('resume-resolution', {resolutionTarget: draft.id}));
+    snapshot = await stage4.snapshot(f.committee.id, f.firstChair);
+    expect(snapshot.documents?.find(document => document.id === draft.id)?.status).toBe('PUBLISHED');
+    await expect(propose('resume-resolution', {resolutionTarget: draft.id})).rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
+    await stage5.setSpeakerListStatus(f.firstChair, linked.id,
+      {baseRevision: snapshot.speakerLists!.find(list => list.id === linked.id)!.revision, status: 'OPEN'},
+      context('resume-discussion'));
+    await propose('vote-on-resolution', {resolutionTarget: draft.id});
+    await stage5.setResolutionDirectVote(f.firstChair, draft.id,
+      {seatId: f.firstSeat.id, choice: 'FOR'}, context('direct-vote-started'));
+    await expect(propose('postpone-resolution', {resolutionTarget: draft.id}))
+      .rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
+    const actions = await pool!.query<{action: string}>(`SELECT action FROM document_actions WHERE document_id=$1
+      ORDER BY created_at,id`, [draft.id]);
+    expect(actions.rows.map(row => row.action)).toEqual(expect.arrayContaining(['PUBLISH', 'POSTPONE', 'RESUME']));
+  });
+
+  it('restores amendment introduction when Formal Debate is reopened in the same meeting session', async () => {
+    const f = await meetingFixture();
+    const draft = await stage5.createResolution(f.firstChair, f.committee.id,
+      {meetingSessionId: f.session.id, customTitle: 'Draft B', content: 'Body'}, randomUUID(), context('debate-draft'));
+    const propose = (motionTypeId: string, parameters: Record<string, unknown>) => stage5.proposeMotion(
+      f.firstChair, f.committee.id, {meetingSessionId: f.session.id, motionTypeId,
+        onBehalfOfSeatId: f.firstSeat.id, parameters}, randomUUID(), context(motionTypeId));
+    const pass = async (motion: Awaited<ReturnType<typeof propose>>) => stage5.decideMotion(f.firstChair, motion.id,
+      {baseRevision: motion.revision, result: 'PASSED'}, context(`pass-${motion.motionTypeId}`));
+    await pass(await propose('introduce-draft-resolution', {resolutionTarget: draft.id}));
+    const amendment = await stage5.createAmendment(f.firstDelegate, draft.id,
+      {meetingSessionId: f.session.id, customTitle: null, content: 'Replace clause'}, randomUUID(), context('amendment'));
+    await pass(await propose('close-debate', {}));
+    await expect(propose('introduce-amendment', {amendmentTarget: amendment.id, proposal: 'Replace clause'}))
+      .rejects.toMatchObject({reason: 'FORMAL_DEBATE_CLOSED'});
+    await pass(await propose('open-debate', {}));
+    const introduction = await propose('introduce-amendment',
+      {amendmentTarget: amendment.id, proposal: 'Replace clause'});
+    await pass(introduction);
+    expect((await stage4.snapshot(f.committee.id, f.firstChair)).documents?.find(item => item.id === amendment.id)?.status)
+      .toBe('PUBLISHED');
+  });
+
   it('keeps the motion and resolution unchanged until an attached body file is published', async () => {
     const fixture = await meetingFixture();
     const bindingId = randomUUID(); const blobId = randomUUID(); const fileId = randomUUID(); const fileVersionId = randomUUID();

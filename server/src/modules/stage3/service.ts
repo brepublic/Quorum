@@ -127,6 +127,15 @@ function builtInVersion10(definition: RulePackageDefinition): RulePackageDefinit
   return {...upgraded, motions: upgraded.motions.filter(item => !removed.has(item.id))};
 }
 
+function builtInVersion11(definition: RulePackageDefinition): RulePackageDefinition {
+  const upgraded = builtInVersion10(definition);
+  const removed = new Set(['postpone-amendment', 'resume-amendment']);
+  return {...upgraded, motions: upgraded.motions.filter(item => !removed.has(item.id)).map(item =>
+    item.id === 'postpone-resolution' ? {...item, names: {'zh-CN': '延置决议草案', en: 'Postpone Draft Resolution'}}
+      : item.id === 'resume-resolution' ? {...item, names: {'zh-CN': '取消延置决议草案', en: 'Resume the Draft Resolution'}}
+        : item)};
+}
+
 function committee(row: CommitteeRow): CommitteeSummary {
   return {id: row.id, committeeLanguage: row.committee_language, ownerUserId: row.owner_user_id, name: row.name, chairLabel: row.chair_label,
     topic: row.topic, conference: row.conference, visibility: row.visibility, operationMode: row.operation_mode,
@@ -329,7 +338,7 @@ export class Stage3Service {
         const inserted = await client.query<{id: string}>(`INSERT INTO rule_packages
           (id, scope, stable_key) VALUES ($1,'BUILTIN',$2)
           ON CONFLICT (scope, stable_key) DO UPDATE SET stable_key=EXCLUDED.stable_key RETURNING id`, [packageId, definition.key]);
-        for (const [version, versionDefinition] of [[10, builtInVersion10(definition)]] as const) {
+        for (const [version, versionDefinition] of [[11, builtInVersion11(definition)]] as const) {
           const validated = validateRulePackage(versionDefinition);
           if (!validated.ok) throw new Error(`Invalid built-in rule package: ${definition.key} v${version}: ${JSON.stringify(validated.issues)}`);
           await client.query(`INSERT INTO rule_package_versions
