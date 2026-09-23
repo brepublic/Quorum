@@ -26,7 +26,7 @@ describe('committee creation content language', () => {
       listCommittees: async () => [], listCommitteeTemplates: async () => [],
       listCountryTemplates: async () => [{id: 'countries', key: 'builtin:default', names: {en: 'Countries', 'zh-CN': '国家'},
         defaultLanguage: 'en', builtin: true, revision: 7, countries: [{stableKey: 'china', names: {en: 'China', 'zh-CN': '中国'}}]}],
-      listRulePackages: async () => [{scope: 'BUILTIN', key: 'builtin:beijing-academic', versions: [{id: 'rules', names: {en: 'Default rules', 'zh-CN': '默认规则'}, version: 5,
+      listRulePackages: async () => [{scope: 'BUILTIN', key: 'builtin:beijing-academic', versions: [{id: 'rules', names: {en: 'Beijing Academic Standard 2021', 'zh-CN': '北京学术标准 2021'}, version: 5,
         status: 'PUBLISHED', languageAvailability: {supportedLanguages: ['zh-CN', 'en'], missing: []}}]}],
       createCommittee
     } as unknown as SelfHostedApi;
@@ -38,6 +38,10 @@ describe('committee creation content language', () => {
       input.dispatchEvent(new Event('input', {bubbles: true})); input.focus(); input.setSelectionRange(2, 5);
     });
     act(() => setLanguage(interfaceLanguage));
+    const ruleName = interfaceLanguage === 'en' ? 'Beijing Academic Standard 2021' : '北京学术标准 2021';
+    const ruleOption = Array.from(container.querySelectorAll('[role="option"]')).find(option => option.textContent?.includes(ruleName));
+    expect(ruleOption?.textContent).toBe(ruleName);
+    expect(container.textContent).not.toContain(interfaceLanguage === 'en' ? '北京学术标准 2021' : 'Beijing Academic Standard 2021');
     expect(container.querySelector('input[required]')).toBe(input);
     expect(input.value).toBe('Custom committee name');
     expect(document.activeElement).toBe(input);

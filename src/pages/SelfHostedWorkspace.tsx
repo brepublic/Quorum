@@ -83,7 +83,7 @@ function CommitteeList({api, user, logout}: {api: SelfHostedApi; user: SelfHoste
   const selectedCountries = countryTemplates.find(item => item.key === (selectedTemplate?.countryTemplateKey ?? countryKey));
   const ruleOptions = rulePackages.filter(pkg => pkg.scope !== 'COMMITTEE').flatMap(pkg => pkg.versions
     .filter(version => version.status === 'PUBLISHED').map(version => ({key: version.id, value: version.id,
-      text: `${localizedDisplayName(version.names, 'en')} · ${version.version}`, version})));
+      text: localizedDisplayName(version.names, 'en'), version})));
   const selectedRule = ruleOptions.find(item => item.value === ruleVersionId)?.version;
   const templateAvailability = selectedCountries ? templateLanguageAvailability(selectedCountries, selectedTemplate?.members) : undefined;
   const supportedLanguages = intersectContentLanguages(templateAvailability?.supportedLanguages ?? [],
@@ -660,7 +660,7 @@ function SettingsPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
   const execute = async (key: string, operation: () => Promise<unknown>) => {setPending(key); try {await run(operation);} finally {setPending(undefined);}};
   React.useEffect(() => {if (canChair) void api.listRulePackages().then(setRulePackages);}, [api, canChair]);
   const ruleOptions = rulePackages.flatMap(rulePackage => rulePackage.versions.filter(version => version.status === 'PUBLISHED')
-    .map(version => ({key: version.id, value: version.id, text: `${localizedDisplayName(version.names, 'en')} · ${version.version}`})));
+    .map(version => ({key: version.id, value: version.id, text: localizedDisplayName(version.names, 'en')})));
   const setLayoutSetting = (patch: Partial<CommitteeWorkspaceSnapshot['layoutSettings']>) => execute('layout', () =>
     api.setLayoutSettings(snapshot.committee.id, {...snapshot.layoutSettings, ...patch}, snapshot.committee.revision));
   return <Container text className="committee-settings-page">{canChair && <><Header as="h3" attached="top">{t('Settings')}</Header><Segment attached="bottom" loading={pending === 'layout'}>
@@ -1025,7 +1025,7 @@ function HelpPanel({snapshot, api}: {snapshot: CommitteeWorkspaceSnapshot; api: 
     </List></Segment>
     <Header as="h3" attached="top">{t('Permissions')}</Header><Segment attached="bottom"><List>
       <List.Item><List.Header>{t('Current role')}</List.Header>{t(role)}</List.Item>
-      <List.Item><List.Header>{t('Rule version')}</List.Header>{ruleVersion ? `${localizedDisplayName(ruleVersion.names, 'en')} · ${ruleVersion.version}` : '—'}</List.Item>
+      <List.Item><List.Header>{t('Rule version')}</List.Header>{ruleVersion ? localizedDisplayName(ruleVersion.names, 'en') : '—'}</List.Item>
     </List></Segment>
     <Header as="h3" attached="top">{t('Bug reporting & help requests')}</Header><Segment attached="bottom">
       <List ordered><List.Item><a href="https://github.com/brepublic/Quorum/issues">{t('Quorum issue tracking page')}</a></List.Item>

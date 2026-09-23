@@ -173,7 +173,7 @@ integration('PostgreSQL stage 3 integration', () => {
     expect(await stage3.listRulePackages()).toEqual(packages);
     const source = packages.find(item => item.key === 'builtin:beijing-academic') as (typeof packages)[number];
     expect(source.versions).toHaveLength(1);
-    expect(source.versions[0]).toMatchObject({version: 5, names: {'zh-CN': '北京学术标准 2021', en: '北京学术标准 2021'}});
+    expect(source.versions[0]).toMatchObject({version: 5, names: {'zh-CN': '北京学术标准 2021', en: 'Beijing Academic Standard 2021'}});
     await expect(stage3.createRuleVersion(administrator, source.id, {definition: {}}, context('edit-builtin')))
       .rejects.toMatchObject({code: 'VALIDATION_FAILED'});
     const cloned = await stage3.cloneRulePackage(chair, source.id, {scope: 'COMMITTEE', committeeId: committee.id,

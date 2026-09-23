@@ -60,7 +60,7 @@ try {
   const removed = await client.query('DELETE FROM rule_package_versions WHERE id<>$1', [retained.id]);
   await client.query('DELETE FROM rule_packages WHERE id<>$1',[retained.package_id]);
   await client.query(`UPDATE rule_package_versions SET definition=jsonb_set(definition,'{metadata,names}',$2::jsonb) WHERE id=$1`,
-    [retained.id,JSON.stringify({'zh-CN':'北京学术标准 2021',en:'北京学术标准 2021'})]);
+    [retained.id,JSON.stringify({'zh-CN':'北京学术标准 2021',en:'Beijing Academic Standard 2021'})]);
   await client.query('ALTER TABLE rule_package_versions ENABLE TRIGGER rule_package_versions_published_immutable');
   if (before !== await preserved()) throw new Error('Account, template or system settings changed; rolling back.');
   await client.query('COMMIT');
