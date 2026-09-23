@@ -15,8 +15,8 @@ try {
   await client.query('SET CONSTRAINTS ALL DEFERRED');
   await client.query('LOCK TABLE committees, rule_packages, rule_package_versions IN ACCESS EXCLUSIVE MODE');
   const keep = (await client.query(`SELECT v.id,v.package_id FROM rule_package_versions v JOIN rule_packages p ON p.id=v.package_id
-    WHERE p.scope='BUILTIN' AND p.stable_key='builtin:beijing-academic' AND v.version=9 AND v.status='PUBLISHED'`)).rows;
-  if (keep.length !== 1) throw new Error('Expected exactly one published Beijing version 9.');
+    WHERE p.scope='BUILTIN' AND p.stable_key='builtin:beijing-academic' AND v.version=10 AND v.status='PUBLISHED'`)).rows;
+  if (keep.length !== 1) throw new Error('Expected exactly one published Beijing version 10.');
   const retained = keep[0];
   const committees = (await client.query(`SELECT id,name,owner_user_id FROM committees
     WHERE active_rule_package_version_id IS DISTINCT FROM $1 ORDER BY id`, [retained.id])).rows;
