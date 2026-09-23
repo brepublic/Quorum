@@ -1,0 +1,73 @@
+- navigation "Committee navigation":
+  - link "修复验收 0923":
+    - /url: /committees/bf6fec02-eec5-4733-9d1a-a2bc7453c831/info
+  - link "Seats":
+    - /url: /committees/bf6fec02-eec5-4733-9d1a-a2bc7453c831/setup
+  - link "Roll call":
+    - /url: /committees/bf6fec02-eec5-4733-9d1a-a2bc7453c831/roll-call
+  - link "Motions":
+    - /url: /committees/bf6fec02-eec5-4733-9d1a-a2bc7453c831/motions
+  - link "Points":
+    - /url: /committees/bf6fec02-eec5-4733-9d1a-a2bc7453c831/points
+  - link "Unmoderated caucus":
+    - /url: /committees/bf6fec02-eec5-4733-9d1a-a2bc7453c831/unmod
+  - listbox:
+    - alert: Moderated caucuses
+    - generic: 
+    - text: 
+  - listbox:
+    - alert: Resolutions
+    - generic: 
+    - text: 
+  - listbox:
+    - alert: Strawpolls
+    - generic: 
+    - text: 
+  - link "Notes":
+    - /url: /committees/bf6fec02-eec5-4733-9d1a-a2bc7453c831/notes
+  - listbox "More options":
+    - generic: 
+  - generic "Live":
+    - generic: 
+  - listbox "Account menu":
+    - alert: Colin
+    - generic: 
+    - text:      
+- navigation "Committee navigation":        
+- heading "Settings" [level=3]
+- checkbox "Show 'Queue' above 'Next speaker'"
+- generic: Show 'Queue' above 'Next speaker'
+- checkbox "Show 'Speaker timer' and 'Caucus timer' in separate columns"
+- generic: Show 'Speaker timer' and 'Caucus timer' in separate columns
+- heading "Committee profile" [level=2]
+- paragraph: "Committee language: English"
+- generic: Committee name
+- textbox: 修复验收 0923
+- generic: Topic
+- textbox
+- generic: Conference
+- textbox
+- generic: Visibility
+- listbox:
+  - alert: Private
+  - generic: 
+- button "Save changes":
+  - generic: 
+  - text: Save changes
+- heading "Committee operation" [level=2]
+- generic: Operation mode
+- listbox:
+  - alert: Chair operated
+  - generic: 
+- button "Save operation mode":
+  - generic: 
+  - text: Save operation mode
+- generic: Rule version
+- listbox [expanded] [active]:
+  - alert: Beijing Academic Standard 2021
+  - generic: 
+  - option "Beijing Academic Standard 2021" [checked] [selected]
+- button "Activate rule version"
+- heading "Committee status" [level=2]
+- button "Pause committee"
+- button "Archive committee"

@@ -30,3 +30,8 @@
 
 - [发言名单几何测量](gsl-keyboard-short-window.json)
 - [开发规则清理结果](rule-cleanup-result.json)
+
+
+## 规则名称修正证据
+
+`corrected-rule-{create,settings,help}-{zh,en}.jpg/.txt` 为用户指出规则名称漏检后的六组实测证据：中英文名称正确且无内部版本后缀，创建和设置页均展开了规则菜单。`only-rule-default`、`final-rule-default-zh` 是修正前的历史证据，包含当时遗漏的问题，不能用于证明最终名称正确。

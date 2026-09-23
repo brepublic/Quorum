@@ -1,0 +1,80 @@
+- navigation "委员会导航":
+  - link "修复验收 0923":
+    - /url: /committees/bf6fec02-eec5-4733-9d1a-a2bc7453c831/info
+  - link "席位":
+    - /url: /committees/bf6fec02-eec5-4733-9d1a-a2bc7453c831/setup
+  - link "点名":
+    - /url: /committees/bf6fec02-eec5-4733-9d1a-a2bc7453c831/roll-call
+  - link "动议":
+    - /url: /committees/bf6fec02-eec5-4733-9d1a-a2bc7453c831/motions
+  - link "问题":
+    - /url: /committees/bf6fec02-eec5-4733-9d1a-a2bc7453c831/points
+  - link "自由磋商":
+    - /url: /committees/bf6fec02-eec5-4733-9d1a-a2bc7453c831/unmod
+  - listbox:
+    - alert: 有主持核心磋商
+    - generic: 
+    - text: 
+  - listbox:
+    - alert: 决议草案
+    - generic: 
+    - text: 
+  - listbox:
+    - alert: 意向性投票
+    - generic: 
+    - text: 
+  - link "笔记":
+    - /url: /committees/bf6fec02-eec5-4733-9d1a-a2bc7453c831/notes
+  - link "文件":
+    - /url: /committees/bf6fec02-eec5-4733-9d1a-a2bc7453c831/posts
+  - link "统计":
+    - /url: /committees/bf6fec02-eec5-4733-9d1a-a2bc7453c831/stats
+  - link "设置":
+    - /url: /committees/bf6fec02-eec5-4733-9d1a-a2bc7453c831/settings
+  - link "帮助":
+    - /url: /committees/bf6fec02-eec5-4733-9d1a-a2bc7453c831/help
+  - generic "实时":
+    - generic: 
+    - generic: 实时
+  - listbox "账户菜单":
+    - alert: Colin
+    - generic: 
+    - text:      
+- navigation "委员会导航":        
+- heading "设置" [level=3]
+- checkbox "将“发言队列”显示在“下一位发言”上方"
+- generic: 将“发言队列”显示在“下一位发言”上方
+- checkbox "将“发言计时器”和“磋商计时器”分列显示"
+- generic: 将“发言计时器”和“磋商计时器”分列显示
+- heading "委员会资料" [level=2]
+- paragraph: "委员会语言: English"
+- generic: 委员会名称
+- textbox: 修复验收 0923
+- generic: 议题
+- textbox
+- generic: 会议
+- textbox
+- generic: 可见性
+- listbox:
+  - alert: 私有
+  - generic: 
+- button "保存更改":
+  - generic: 
+  - text: 保存更改
+- heading "委员会运作" [level=2]
+- generic: 运作模式
+- listbox:
+  - alert: 主席代操作
+  - generic: 
+- button "保存运作模式":
+  - generic: 
+  - text: 保存运作模式
+- generic: 规则版本
+- listbox [expanded] [active]:
+  - alert: 北京学术标准 2021
+  - generic: 
+  - option "北京学术标准 2021" [checked] [selected]
+- button "启用规则版本"
+- heading "委员会状态" [level=2]
+- button "暂停委员会"
+- button "归档委员会"

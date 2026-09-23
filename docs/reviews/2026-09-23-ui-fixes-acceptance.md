@@ -41,7 +41,7 @@
 
 ## 规则与开发数据
 
-保留版本 ID：`8ce2296c-2df0-4c18-ae1e-f4a4f0cea221`，包键 `builtin:beijing-academic`，版本 5。中英文元数据名称均为用户指定的“北京学术标准 2021”，没有改动该版本的议事行为。
+保留版本 ID：`8ce2296c-2df0-4c18-ae1e-f4a4f0cea221`，包键 `builtin:beijing-academic`，版本 5。中文名称为“北京学术标准 2021”，英文名称为“Beijing Academic Standard 2021”。界面名称不附加内部版本号，没有改动该版本的议事行为。
 
 `ensureBuiltins` 现在只初始化这一版本。旧 Quorum fixture 仍供 schema／历史兼容测试使用，不再出现在运行中的规则列表。
 
@@ -53,7 +53,7 @@
 
 清理使用事务和委员会受控清理流程；首次遇到缓存外键依赖时完整回滚，补齐依赖顺序后成功。账号、源国家／委员会模板及系统设置通过事务前后比较保持一致；已恢复规则不可变触发器。该脚本不由启动或数据库迁移自动执行。
 
-重启后数据库仍只有一个规则版本。保留的 `UI audit 0922 EN` 和实际新建的 `修复验收 0923` 都关联该版本。[唯一规则选项](../../outputs/ui-fixes-2026-09-23/only-rule-default.jpg)、[中文默认值](../../outputs/ui-fixes-2026-09-23/final-rule-default-zh.jpg)
+重启后数据库仍只有一个规则版本。保留的 `UI audit 0922 EN` 和实际新建的 `修复验收 0923` 都关联该版本。[修正后的英文唯一规则选项](../../outputs/ui-fixes-2026-09-23/corrected-rule-create-en.jpg)、[修正后的中文默认值](../../outputs/ui-fixes-2026-09-23/corrected-rule-create-zh.jpg)
 
 ## 自动验证与部署
 
@@ -79,3 +79,22 @@
 - `0bfce60`：交互、布局、状态和上传回执修复。
 - `17579e1`：唯一默认规则、开发清理及问题约束修复。
 - 本文与[本轮证据目录](../../outputs/ui-fixes-2026-09-23/README.md)由后续验收文档提交保存。
+
+
+## 规则名称补充修正（用户指出漏检后）
+
+上一次验收漏掉了两个明确问题：把内部版本号 `· 5` 拼进显示名称，以及英文元数据误用了中文。此前将规则名称判为符合要求的结论不成立。旧 `only-rule-default`、`final-rule-default-zh` 截图保留为历史记录，不作为修正后的通过证据。
+
+修复提交 `b98f794`：新建委员会、设置、帮助三处统一只显示当前界面语言对应的名称。内置 fixture、开发清理脚本及现有唯一规则的英文元数据均已更正。数据库修正仅更新这一个版本的名称，事务结束后确认不可变触发器已启用。
+
+| 浏览器实际页面 | 中文证据 | 英文证据 |
+| --- | --- | --- |
+| 新建委员会默认规则及展开选项 | [北京学术标准 2021](../../outputs/ui-fixes-2026-09-23/corrected-rule-create-zh.jpg) | [Beijing Academic Standard 2021](../../outputs/ui-fixes-2026-09-23/corrected-rule-create-en.jpg) |
+| 委员会设置及展开选项 | [中文](../../outputs/ui-fixes-2026-09-23/corrected-rule-settings-zh.jpg) | [英文](../../outputs/ui-fixes-2026-09-23/corrected-rule-settings-en.jpg) |
+| 帮助页当前规则 | [中文](../../outputs/ui-fixes-2026-09-23/corrected-rule-help-zh.jpg) | [英文](../../outputs/ui-fixes-2026-09-23/corrected-rule-help-en.jpg) |
+
+三处均无版本后缀，规则名称随界面语言切换；四个展开的规则菜单选项完整可见。每张截图有同名 `.txt` 页面快照。
+
+本次重新运行创建语言与工作区测试：94 项通过；定向 PostgreSQL 规则初始化及不可变约束测试：1 项通过，2 项因名称过滤未运行。构建 app、caddy 成功，运行容器镜像 ID 与新镜像一致，健康检查 HTTP 200、schema 68。
+
+实际浏览器验收入口为 `http://localhost:5173`，连接已更新的真实后端。额外尝试直接打开 `https://localhost` 时浏览器拒绝了本地证书（`ERR_CERT_AUTHORITY_INVALID`），没有绕过；因此未将 HTTPS 前端直连计为浏览器验收通过。

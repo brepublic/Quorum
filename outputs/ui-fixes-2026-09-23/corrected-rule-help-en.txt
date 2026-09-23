@@ -1,0 +1,76 @@
+- navigation "Committee navigation":
+  - link "修复验收 0923":
+    - /url: /committees/bf6fec02-eec5-4733-9d1a-a2bc7453c831/info
+  - link "Seats":
+    - /url: /committees/bf6fec02-eec5-4733-9d1a-a2bc7453c831/setup
+  - link "Roll call":
+    - /url: /committees/bf6fec02-eec5-4733-9d1a-a2bc7453c831/roll-call
+  - link "Motions":
+    - /url: /committees/bf6fec02-eec5-4733-9d1a-a2bc7453c831/motions
+  - link "Points":
+    - /url: /committees/bf6fec02-eec5-4733-9d1a-a2bc7453c831/points
+  - link "Unmoderated caucus":
+    - /url: /committees/bf6fec02-eec5-4733-9d1a-a2bc7453c831/unmod
+  - listbox:
+    - alert: Moderated caucuses
+    - generic: 
+    - text: 
+  - listbox:
+    - alert: Resolutions
+    - generic: 
+    - text: 
+  - listbox:
+    - alert: Strawpolls
+    - generic: 
+    - text: 
+  - link "Notes":
+    - /url: /committees/bf6fec02-eec5-4733-9d1a-a2bc7453c831/notes
+  - listbox "More options":
+    - generic: 
+  - generic "Live":
+    - generic: 
+  - listbox "Account menu":
+    - alert: Colin
+    - generic: 
+    - text:      
+- navigation "Committee navigation":        
+- heading "Keyboard shortcuts" [level=3]
+- list:
+  - button "Alt"
+  - button "N"
+  - text: Next speaker
+  - button "Alt"
+  - button "S"
+  - text: Toggle speaker timer
+  - button "Alt"
+  - button "C"
+  - text: Toggle caucus timer
+- heading "Permissions" [level=3]
+- list:
+  - generic: Current role
+  - text: Owner
+  - generic: Rule version
+  - text: Beijing Academic Standard 2021
+- heading "Bug reporting & help requests" [level=3]
+- list:
+  - link "Quorum issue tracking page":
+    - /url: https://github.com/brepublic/Quorum/issues
+  - listitem: Describe what you intended to do
+  - listitem: Describe what happened instead
+  - listitem: List the time, date, and browser that you were using when this occurred
+- heading "Version" [level=3]
+- list:
+  - listitem: Quorum self-hosted
+  - listitem: Theme API 2
+- heading "License" [level=3]
+- text: Quorum is licensed under
+- link "GNU GPLv3":
+  - /url: https://github.com/brepublic/Quorum/blob/master/LICENSE
+- heading "Community" [level=3]
+- link "Visit the Quorum discussion space":
+  - /url: https://github.com/brepublic/Quorum/discussions
+- heading "Acknowledgements" [level=3]
+- text: Quorum is based on
+- link "Muncoordinated":
+  - /url: https://github.com/MaxwellBo/Muncoordinated-2
+- text: . Thanks to its original authors and contributors.

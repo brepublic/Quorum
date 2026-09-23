@@ -1,0 +1,83 @@
+- navigation "委员会导航":
+  - link "修复验收 0923":
+    - /url: /committees/bf6fec02-eec5-4733-9d1a-a2bc7453c831/info
+  - link "席位":
+    - /url: /committees/bf6fec02-eec5-4733-9d1a-a2bc7453c831/setup
+  - link "点名":
+    - /url: /committees/bf6fec02-eec5-4733-9d1a-a2bc7453c831/roll-call
+  - link "动议":
+    - /url: /committees/bf6fec02-eec5-4733-9d1a-a2bc7453c831/motions
+  - link "问题":
+    - /url: /committees/bf6fec02-eec5-4733-9d1a-a2bc7453c831/points
+  - link "自由磋商":
+    - /url: /committees/bf6fec02-eec5-4733-9d1a-a2bc7453c831/unmod
+  - listbox:
+    - alert: 有主持核心磋商
+    - generic: 
+    - text: 
+  - listbox:
+    - alert: 决议草案
+    - generic: 
+    - text: 
+  - listbox:
+    - alert: 意向性投票
+    - generic: 
+    - text: 
+  - link "笔记":
+    - /url: /committees/bf6fec02-eec5-4733-9d1a-a2bc7453c831/notes
+  - link "文件":
+    - /url: /committees/bf6fec02-eec5-4733-9d1a-a2bc7453c831/posts
+  - link "统计":
+    - /url: /committees/bf6fec02-eec5-4733-9d1a-a2bc7453c831/stats
+  - link "设置":
+    - /url: /committees/bf6fec02-eec5-4733-9d1a-a2bc7453c831/settings
+  - link "帮助":
+    - /url: /committees/bf6fec02-eec5-4733-9d1a-a2bc7453c831/help
+  - generic "实时":
+    - generic: 
+    - generic: 实时
+  - listbox "账户菜单":
+    - alert: Colin
+    - generic: 
+    - text:      
+- navigation "委员会导航":        
+- heading "键盘快捷键" [level=3]
+- list:
+  - button "Alt"
+  - button "N"
+  - text: 下一位发言者
+  - button "Alt"
+  - button "S"
+  - text: 启动或暂停发言计时器
+  - button "Alt"
+  - button "C"
+  - text: 启动或暂停磋商计时器
+- heading "权限" [level=3]
+- list:
+  - generic: 当前角色
+  - text: 所有者
+  - generic: 规则版本
+  - text: 北京学术标准 2021
+- heading "错误报告与帮助请求" [level=3]
+- list:
+  - link "前往 Quorum 问题反馈页面":
+    - /url: https://github.com/brepublic/Quorum/issues
+  - listitem: 说明您原本希望执行的操作
+  - listitem: 说明实际发生的情况
+  - listitem: 注明问题发生的日期、时间和所用浏览器
+- heading "版本" [level=3]
+- list:
+  - listitem: Quorum self-hosted
+  - listitem: Theme API 2
+- heading "许可协议" [level=3]
+- text: Quorum 采用以下许可协议：
+- link "GNU GPLv3":
+  - /url: https://github.com/brepublic/Quorum/blob/master/LICENSE
+- heading "社区" [level=3]
+- link "前往 Quorum 讨论区":
+  - /url: https://github.com/brepublic/Quorum/discussions
+- heading "鸣谢" [level=3]
+- text: Quorum 基于
+- link "Muncoordinated":
+  - /url: https://github.com/MaxwellBo/Muncoordinated-2
+- text: 。感谢原项目的作者与所有贡献者。
