@@ -23,8 +23,7 @@ describe('structured error localization', () => {
 });
 
 it('explains business conflicts and download blockers in both languages without exposing diagnostics', () => {
-  for (const reason of ['VOTE_ALREADY_RECORDED', 'SPEAKER_LIST_CLOSED', 'TIMER_EXHAUSTED', 'CAUCUS_TIMER_FIXED',
-    'CAUCUS_MUST_END_NATURALLY', 'REQUIRED_VOTES_MISSING',
+  for (const reason of ['VOTE_ALREADY_RECORDED', 'SPEAKER_LIST_CLOSED', 'TIMER_EXHAUSTED', 'REQUIRED_VOTES_MISSING',
     'FILE_NOT_PENDING_REVIEW', 'STORAGE_AGENT_OFFLINE', 'STORAGE_AGENT_SOURCE_MISSING', 'STORAGE_CACHE_CAPACITY_UNAVAILABLE']) {
     for (const language of ['en', 'zh-CN'] as const) {
       const text = formatApiError({code: 'RESOURCE_CONFLICT', reason, message: 'secret /private/file'}, language);

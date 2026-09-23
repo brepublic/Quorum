@@ -507,15 +507,6 @@ export class Stage5Service {
       if (current.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT',
         message: 'This timer changed since it was loaded.', details: {currentRevision: current.revision}});
       const now = this.now(); const remaining = remainingTimerMs(current, now);
-      if (command === 'extend' && (current.owner_type === 'COMMITTEE' || current.owner_type === 'CAUCUS')) {
-        throw new AppError({reason: 'CAUCUS_TIMER_FIXED', code: 'RESOURCE_CONFLICT',
-          message: 'A caucus timer cannot be extended.'});
-      }
-      if (command === 'reset' && (current.owner_type === 'CAUCUS'
-        || current.owner_type === 'COMMITTEE' && remaining > 0)) {
-        throw new AppError({reason: 'CAUCUS_MUST_END_NATURALLY', code: 'RESOURCE_CONFLICT',
-          message: 'An active caucus must end naturally.'});
-      }
       let running = current.running; let startedAt: Date | null = current.started_at; let nextRemaining = remaining;
       let expiredAt: Date | null = current.expired_at;
       if (command === 'start' || command === 'resume') {
@@ -683,10 +674,6 @@ export class Stage5Service {
       const list = found.rows[0] as SpeakerListRow;
       if (list.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT',
         message: 'This speaker list changed since it was loaded.', details: {currentRevision: list.revision}});
-      if (list.kind === 'MODERATED_CAUCUS') {
-        throw new AppError({reason: 'CAUCUS_MUST_END_NATURALLY', code: 'RESOURCE_CONFLICT',
-          message: 'A moderated caucus must end naturally.'});
-      }
       if (list.status === status) return speakerListState(client, list);
       const now = this.now();
       if (status === 'CLOSED') {
@@ -1634,8 +1621,6 @@ export class Stage5Service {
       let timerId: string; let revision: number; let before: Record<string, unknown> | undefined;
       if (current.rows[0]) {
         const timer = current.rows[0]; timerId = timer.id; revision = timer.revision + 1;
-        if (remainingTimerMs(timer, now) > 0) throw new AppError({reason: 'CAUCUS_MUST_END_NATURALLY', code: 'RESOURCE_CONFLICT',
-          message: 'The active unmoderated caucus must end naturally.'});
         before = {running: timer.running, remainingMs: remainingTimerMs(timer, now), revision: timer.revision};
         await client.query(`UPDATE timer_states SET running=false,started_at=NULL,remaining_at_start_ms=$2,
           expired_at=NULL,revision=revision+1,updated_at=$3 WHERE id=$1`, [timerId, durationMs, now]);

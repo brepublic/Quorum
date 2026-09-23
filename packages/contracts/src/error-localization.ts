@@ -158,8 +158,6 @@ export const ERROR_TEXT = {
   TIMER_EXHAUSTED: {en: "Time has run out. Reset or extend the timer first.", 'zh-CN': "时间已用尽，请先重置或延长计时器。"},
   TIMER_NOT_RUNNING: {en: "The timer has not started or is paused. Refresh its status.", 'zh-CN': "计时器尚未运行或已经暂停，请刷新计时状态。"},
   TIMER_NOT_EXPIRED: {en: "The timer has not expired. Wait for it to finish.", 'zh-CN': "计时器尚未结束，请等待时间用尽。"},
-  CAUCUS_TIMER_FIXED: {en: "A caucus timer cannot be extended.", 'zh-CN': "磋商计时器不能延长。"},
-  CAUCUS_MUST_END_NATURALLY: {en: "The active caucus must end naturally.", 'zh-CN': "正在进行的磋商只能自然结束。"},
   INVALID_SPEAKER_LIST_KIND: {en: "Choose a general speaker list or moderated caucus.", 'zh-CN': "请选择主发言名单或有主持核心磋商。"},
   INVALID_DELEGATE_QUEUE_SETTING: {en: "Select whether delegates may join the queue themselves.", 'zh-CN': "请重新选择是否允许代表自行加入名单。"},
   CAUCUS_SHORTER_THAN_SPEECH: {en: "The caucus duration must allow one complete speech.", 'zh-CN': "磋商总时长不能短于一次发言时间。"},

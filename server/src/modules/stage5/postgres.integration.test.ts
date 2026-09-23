@@ -940,30 +940,33 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
     expect(audit?.rows[0]?.after_summary).toMatchObject({status: 'PASSED', advisoryRuleOverride: false});
   });
 
-  it('requires caucuses to end naturally and keeps their timers fixed', async () => {
+  it('allows direct caucus status and timer controls without the removed motions', async () => {
     const fixture = await meetingFixture();
     const list = await stage5.createSpeakerList(fixture.firstChair, fixture.committee.id,
       {meetingSessionId: fixture.session.id, kind: 'MODERATED_CAUCUS', customTitle: 'Climate finance',
         topic: 'Climate finance', defaultSpeechMs: 60_000, totalDurationMs: 600_000},
       'fixed-caucus-list', context('fixed-caucus-list'));
-    await expect(stage5.setSpeakerListStatus(fixture.firstChair, list.id,
-      {baseRevision: list.revision, status: 'CLOSED'}, context('manual-caucus-close')))
-      .rejects.toMatchObject({reason: 'CAUCUS_MUST_END_NATURALLY'});
-    await expect(stage5.commandTimer(fixture.firstChair, list.totalTimerId!, 'extend',
-      {baseRevision: 1, durationMs: 60_000}, context('extend-caucus-timer')))
-      .rejects.toMatchObject({reason: 'CAUCUS_TIMER_FIXED'});
-    await expect(stage5.commandTimer(fixture.firstChair, list.totalTimerId!, 'reset',
-      {baseRevision: 1, durationMs: 600_000}, context('reset-caucus-timer')))
-      .rejects.toMatchObject({reason: 'CAUCUS_MUST_END_NATURALLY'});
+    const closed = await stage5.setSpeakerListStatus(fixture.firstChair, list.id,
+      {baseRevision: list.revision, status: 'CLOSED'}, context('manual-caucus-close'));
+    expect(closed.status).toBe('CLOSED');
+    const reopened = await stage5.setSpeakerListStatus(fixture.firstChair, list.id,
+      {baseRevision: closed.revision, status: 'OPEN'}, context('manual-caucus-reopen'));
+    expect(reopened.status).toBe('OPEN');
+    const extendedCaucus = await stage5.commandTimer(fixture.firstChair, list.totalTimerId!, 'extend',
+      {baseRevision: 1, durationMs: 60_000}, context('extend-caucus-timer'));
+    expect(extendedCaucus.remainingAtStartMs).toBe(660_000);
+    const resetCaucus = await stage5.commandTimer(fixture.firstChair, list.totalTimerId!, 'reset',
+      {baseRevision: extendedCaucus.revision, durationMs: 600_000}, context('reset-caucus-timer'));
+    expect(resetCaucus.remainingAtStartMs).toBe(600_000);
     const unmoderated = await stage5.createTimer(fixture.firstChair, fixture.committee.id,
       {ownerType: 'COMMITTEE', ownerId: fixture.committee.id, durationMs: 600_000}, 'fixed-unmoderated',
       context('fixed-unmoderated'));
-    await expect(stage5.commandTimer(fixture.firstChair, unmoderated.id, 'extend',
-      {baseRevision: unmoderated.revision, durationMs: 60_000}, context('extend-unmoderated-timer')))
-      .rejects.toMatchObject({reason: 'CAUCUS_TIMER_FIXED'});
-    await expect(stage5.commandTimer(fixture.firstChair, unmoderated.id, 'reset',
-      {baseRevision: unmoderated.revision, durationMs: 600_000}, context('reset-unmoderated-timer')))
-      .rejects.toMatchObject({reason: 'CAUCUS_MUST_END_NATURALLY'});
+    const extendedUnmoderated = await stage5.commandTimer(fixture.firstChair, unmoderated.id, 'extend',
+      {baseRevision: unmoderated.revision, durationMs: 60_000}, context('extend-unmoderated-timer'));
+    expect(extendedUnmoderated.remainingAtStartMs).toBe(660_000);
+    const resetUnmoderated = await stage5.commandTimer(fixture.firstChair, unmoderated.id, 'reset',
+      {baseRevision: extendedUnmoderated.revision, durationMs: 600_000}, context('reset-unmoderated-timer'));
+    expect(resetUnmoderated.remainingAtStartMs).toBe(600_000);
   });
 
   it('moves a motion through voting and applies the published ballot result', async () => {
