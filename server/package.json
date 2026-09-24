@@ -14,7 +14,8 @@
     "@quorum/contracts": "workspace:*",
     "@quorum/rule-schema": "workspace:*",
     "argon2": "^0.44.0",
-    "pg": "^8.13.1"
+    "pg": "^8.13.1",
+    "pinyin-pro": "3.29.4"
   },
   "devDependencies": {
     "@types/node": "20.14.2",

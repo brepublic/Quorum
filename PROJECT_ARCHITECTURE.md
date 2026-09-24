@@ -16,6 +16,8 @@ Quorum 已完成自主托管实施计划阶段 0–9。当前只有一条生产�
 | 可观测性 | 结构化 stdout、Prometheus `/metrics`、Sentry、Google Analytics | 服务运行证据、聚合指标和浏览器错误/访问上报 |
 | 构建与测试 | pnpm、Vite、Vitest、PostgreSQL integration、Docker Compose | 类型检查、生产构建、契约/服务/HTTP/数据库验证 |
 
+搜索词使用服务器本地 `pinyin-pro` 生成中文拼音首字母；生成词与账号维护的国家检索词分别存放在 PostgreSQL。浏览器只匹配服务器返回的候选项搜索词，不请求外部拼音服务。
+
 ```mermaid
 flowchart LR
   Browser["React 浏览器"] -->|"HTTPS API / SSE"| Caddy["Caddy"]
