@@ -8,7 +8,7 @@ const ENGLISH_ABBREVIATIONS: Record<string, string> = {
 };
 
 // Bump on any change to the generators or their checked-in dictionaries.
-export const SEARCH_ALGORITHM_VERSION = `1:pinyin-pro-3.29.4:icu-${process.versions.icu ?? 'unknown'}`;
+export const SEARCH_ALGORITHM_VERSION = `2:pinyin-pro-3.29.4:icu-${process.versions.icu ?? 'unknown'}`;
 
 export function generatedTerms(names: LocalizedNames, builtinCode?: string): string[] {
   const terms = new Set<string>();
@@ -16,16 +16,16 @@ export function generatedTerms(names: LocalizedNames, builtinCode?: string): str
     const normalized = normalizeSearchTerm(value);
     if (normalized) terms.add(normalized);
   };
-  for (const [language, value] of Object.entries(names)) {
+  for (const value of Object.values(names)) {
     const name = value.trim();
     if (!name) continue;
     add(name);
-    if (language.startsWith('zh')) {
+    if (/\p{Script=Han}/u.test(name)) {
       const initials = pinyin(name, {pattern: 'first', toneType: 'none', type: 'array', nonZh: 'removed'}).join('');
       add(initials);
     }
-    if (language.startsWith('en')) {
-      const words = name.normalize('NFKC').toLocaleLowerCase('en').match(/[\p{L}\p{N}]+/gu) ?? [];
+    if (/[A-Za-z]/.test(name)) {
+      const words = name.normalize('NFKC').toLocaleLowerCase('en').match(/[a-z0-9]+/g) ?? [];
       add(ENGLISH_ABBREVIATIONS[words.join(' ')] ?? words.filter(word => !ENGLISH_STOP_WORDS.has(word))
         .map(word => word[0]).join(''));
     }

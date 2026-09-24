@@ -42,10 +42,12 @@ export async function indexedSearchTerms(pool: Pool, subjects: SearchSubject[]):
   const result = new Map<string, string[]>();
   if (!subjects.length) return result;
   const generation = await activeGeneration(pool);
-  const keys = subjects.map(subject => identity(subject));
+  const keys = subjects.map(subject => ({subject_kind: subject.kind, subject_key: identity(subject)}));
   const rows = await pool.query<{subject_key: string; source_hash: string; terms: string[]}>(
-    `SELECT subject_key,source_hash,terms FROM generated_search_terms
-     WHERE generation_id=$1 AND subject_key=ANY($2::text[])`, [generation, keys]);
+    `SELECT indexed.subject_key,indexed.source_hash,indexed.terms FROM generated_search_terms indexed
+     JOIN jsonb_to_recordset($2::jsonb) AS wanted(subject_kind text,subject_key text)
+       ON indexed.subject_kind=wanted.subject_kind AND indexed.subject_key=wanted.subject_key
+     WHERE indexed.generation_id=$1`, [generation, JSON.stringify(keys)]);
   const stored = new Map(rows.rows.map(row => [row.subject_key, row]));
   const changed: Array<{kind: string; key: string; hash: string; terms: string[]}> = [];
   for (const subject of subjects) {

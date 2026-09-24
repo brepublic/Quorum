@@ -227,7 +227,7 @@ export function CountryTemplateManager({api}: {api: SelfHostedApi}) {
         </Form> : <>
           <div className="country-template-editor-header"><Header as="h2">{isBuiltin ? t('Default country template') : t('Edit country template')}</Header>
             <Button type="button" basic primary onClick={() => draft.protect(() => void clone())}><Icon name="copy outline" />{t('Clone country template')}</Button></div>
-          {isBuiltin && <Message info content={t('The built-in country template is read-only. Clone it to customize the countries.')} />}
+          {isBuiltin && <Message info content={t('Names and flags of built-in countries are read-only. Clone the template to change them.')} />}
           <Form success={saved && !draft.dirty} error={!!error} onSubmit={save}>
             <Form.Input {...field(`names.${displayLanguage}`)} required disabled={isBuiltin} label={t('Country template name')} value={name}
               onChange={event => {setName(event.currentTarget.value); setSaved(false);}} />
@@ -253,7 +253,7 @@ export function CountryTemplateManager({api}: {api: SelfHostedApi}) {
             <div className="country-table-scroll"><Table compact celled stackable className="country-editor-table"><Table.Header><Table.Row>
               {languages.map(language => <Table.HeaderCell key={language}>{t('Country name')} · {LANGUAGE_OPTIONS.find(item => item.value === language)?.text}</Table.HeaderCell>)}
               <Table.HeaderCell>{t('Flag')}</Table.HeaderCell><Table.HeaderCell>{t('Continent')}</Table.HeaderCell>
-              <Table.HeaderCell>{t('Search codes')}</Table.HeaderCell>{!isBuiltin && <Table.HeaderCell />}
+              <Table.HeaderCell>{t('Search codes (comma-separated)')}</Table.HeaderCell>{!isBuiltin && <Table.HeaderCell />}
             </Table.Row></Table.Header><Table.Body>{countries.map((country, index) => <Table.Row key={country.id}>
               {languages.map(language => <Table.Cell data-label={`${t('Country name')} · ${language}`} key={language}><Form.Input {...field(`countries.${index}.names.${language}`)} id={`country-name-${country.id}-${language}`}
                 error={invalidCountry === country.id && !languages.some(lang => country.names[lang]?.trim()) ? {content: t('Enter a country name')} : field(`countries.${index}.names.${language}`).error}
@@ -281,7 +281,8 @@ export function CountryTemplateManager({api}: {api: SelfHostedApi}) {
               {!isBuiltin && <Table.Cell><Button type="button" basic negative icon="trash" aria-label={t('Remove')}
                 onClick={() => {setCountries(current => current.filter(candidate => candidate.id !== country.id)); setSaved(false);}} /></Table.Cell>}
             </Table.Row>)}</Table.Body></Table></div>
-            <Message success content={t('Country template saved')} />{error && <Message error content={error} onDismiss={() => setError(undefined)} />}
+            <Message success content={t(isBuiltin ? 'Search codes saved' : 'Country template saved')} />
+            {error && <Message error content={error} onDismiss={() => setError(undefined)} />}
             <div className="template-editor-actions">{!isBuiltin && <Button type="button" basic primary className="add-country-button" onClick={() => {const language = languages[0] ?? displayLanguage;
               setCountries(current => [...current, {id: draftId('country'), stableKey: draftId('country'), names: {[language]: ''},
                 defaultLanguage: language, continent: null, sortOrder: current.length, flag: {type: 'EMOJI', value: '🏳️'}, flagMode: 'EMOJI',
@@ -349,8 +350,8 @@ export function CommitteeTemplateManager({api}: {api: SelfHostedApi}) {
     text: localizedDisplayName(country.names, country.defaultLanguage), searchTerms: country.searchTerms, country})) ?? [];
   const selectCountryOrCustom = (value: string) => {
     const normalized = normalizeSearchTerm(value);
-    const match = countryOptions.find(option => option.searchTerms?.some(term => normalizeSearchTerm(term) === normalized));
-    setMemberName(match?.value ?? value);
+    const matches = countryOptions.filter(option => option.searchTerms?.some(term => normalizeSearchTerm(term) === normalized));
+    setMemberName(matches.length === 1 ? matches[0]!.value : value);
   };
   const selectedMemberCountry = countryOptions.find(option => option.value === memberName)?.country;
   const duplicateMember = members.some(member => selectedMemberCountry

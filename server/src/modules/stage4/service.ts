@@ -683,6 +683,8 @@ export class Stage4Service {
         FROM committee_templates WHERE owner_user_id=$1 AND country_template_id=$2 ORDER BY created_at,id`, [auth.user.id, id]);
       if (used.rowCount) throw new AppError({reason: 'COUNTRY_TEMPLATE_IN_USE', code: 'RESOURCE_CONFLICT', message: 'This country template is still in use.',
         details: {templates: used.rows.map(item => ({id: item.id, name: localizedDisplayName(item.names, item.default_language, item.default_language)}))}});
+      await client.query('DELETE FROM manual_country_search_terms WHERE owner_user_id=$1 AND country_template_key=$2',
+        [auth.user.id, `custom:${id}`]);
       await client.query('DELETE FROM country_template_countries WHERE country_template_id=$1', [id]);
       await client.query('DELETE FROM country_templates WHERE id=$1', [id]);
       await audit(client, context, {actorUserId: auth.user.id, capabilities: ['ACCOUNT_OWNER'],

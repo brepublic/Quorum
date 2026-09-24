@@ -108,7 +108,9 @@ integration('PostgreSQL stage 4 templates and seat snapshots', () => {
       .toEqual(expect.arrayContaining(['zg', 'PRC']));
 
     const search = new SearchIndexService(pool!);
+    await expect(search.rebuild(other, context('unauthorized-rebuild'))).rejects.toMatchObject({code: 'FORBIDDEN'});
     await search.rebuild(administrator, context('rebuild-search'));
+    expect((await search.status(administrator)).count).toBeGreaterThan(0);
     expect((await stage4.snapshot(committee.id, other)).seats[0]?.searchTerms).toContain('PRC');
     expect((await stage4.getCountryTemplate(owner, 'builtin:default')).countries.find(item => item.stableKey === 'cn')?.searchCodes)
       .toEqual(['CHN']);

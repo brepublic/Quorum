@@ -11,4 +11,9 @@ describe('generated search terms', () => {
     expect(generatedTerms({'zh-CN': '星河联邦', en: 'Xinghe Federation'}))
       .toEqual(expect.arrayContaining(['星河联邦', 'xhlb', 'xinghefederation', 'xf']));
   });
+
+  it('uses the text itself when its language label differs from its script', () => {
+    expect(generatedTerms({en: '中国', 'zh-CN': 'United Nations'}))
+      .toEqual(expect.arrayContaining(['中国', 'zg', 'unitednations', 'un']));
+  });
 });
