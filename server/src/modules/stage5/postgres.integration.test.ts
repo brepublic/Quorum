@@ -558,7 +558,7 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
     const draft = await stage5.createResolution(fixture.firstChair, fixture.committee.id,
       {meetingSessionId: fixture.session.id, customTitle: null, content: ''},
       'empty-resolution-draft', context('empty-resolution-draft'));
-    expect(draft).toMatchObject({title: 'Draft resolution 1.1', status: 'DRAFT', proposers: [],
+    expect(draft).toMatchObject({title: 'Draft Resolution 1.1', status: 'DRAFT', proposers: [],
       seconders: [], directVote: {majority: 'TWO_THIRDS'}, currentVersion: {content: ''}});
     await stage5.updateDocumentSettings(fixture.firstChair, draft.id,
       {baseRevision: draft.revision, proposerSeatIds: [fixture.secondSeat.id], seconderSeatIds: [fixture.firstSeat.id]}, context('draft-countries'));
@@ -630,14 +630,14 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
       {meetingSessionId: fixture.session.id, customTitle: null, content: ''}, 'resolution-1-1', context('resolution-1-1'));
     const second = await stage5.createResolution(fixture.firstChair, fixture.committee.id,
       {meetingSessionId: fixture.session.id, customTitle: null, content: ''}, 'resolution-1-2', context('resolution-1-2'));
-    expect([first.title, second.title]).toEqual(['Draft resolution 1.1', 'Draft resolution 1.2']);
+    expect([first.title, second.title]).toEqual(['Draft Resolution 1.1', 'Draft Resolution 1.2']);
 
     await stage4.closeMeetingSession(fixture.firstChair, fixture.session.id,
       {baseRevision: fixture.session.revision}, context('close-first-session'));
     const nextSession = await stage4.startMeetingSession(fixture.firstChair, fixture.committee.id, {}, context('start-second-session'), randomUUID());
     const next = await stage5.createResolution(fixture.firstChair, fixture.committee.id,
       {meetingSessionId: nextSession.id, customTitle: null, content: ''}, 'resolution-2-1', context('resolution-2-1'));
-    expect(next.title).toBe('Draft resolution 2.1');
+    expect(next.title).toBe('Draft Resolution 2.1');
   });
 
   it('creates, introduces, records, and softly deletes amendments without replacing their history', async () => {
@@ -656,7 +656,7 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
 
     const deletedDraft = await stage5.createAmendment(fixture.firstDelegate, resolution.id,
       {meetingSessionId: fixture.session.id, customTitle: null, content: ''}, 'empty-amendment', context('empty-amendment'));
-    expect(deletedDraft).toMatchObject({title: 'New amendment 1', status: 'DRAFT', currentVersion: {content: ''}});
+    expect(deletedDraft).toMatchObject({title: 'New Amendment 1', status: 'DRAFT', currentVersion: {content: ''}});
     await stage5.deleteAmendment(fixture.firstDelegate, deletedDraft.id, {baseRevision: deletedDraft.revision},
       context('delete-empty-amendment'));
     const retained = await pool?.query(`SELECT deleted_at,deleted_by_user_id FROM documents WHERE id=$1`, [deletedDraft.id]);
@@ -1031,8 +1031,10 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
     const reopened = await stage5.setSpeakerListStatus(fixture.firstChair, list.id,
       {baseRevision: closed.revision, status: 'OPEN'}, context('manual-caucus-reopen'));
     expect(reopened.status).toBe('OPEN');
+    const caucusTimer = await pool!.query<{revision: number}>('SELECT revision FROM timer_states WHERE id=$1',
+      [list.totalTimerId]);
     const extendedCaucus = await stage5.commandTimer(fixture.firstChair, list.totalTimerId!, 'extend',
-      {baseRevision: 1, durationMs: 60_000}, context('extend-caucus-timer'));
+      {baseRevision: caucusTimer.rows[0].revision, durationMs: 60_000}, context('extend-caucus-timer'));
     expect(extendedCaucus.remainingAtStartMs).toBe(660_000);
     const resetCaucus = await stage5.commandTimer(fixture.firstChair, list.totalTimerId!, 'reset',
       {baseRevision: extendedCaucus.revision, durationMs: 600_000}, context('reset-caucus-timer'));
