@@ -1,0 +1,97 @@
+name: Publish release images
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  publish:
+    name: Test and publish linux/amd64 images
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+      RELEASE_TAG: ${{ github.event.release.tag_name }}
+
+    steps:
+      - name: Check out release commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check release source and tag
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")" = "$GITHUB_SHA"
+          git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/master
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build production artifacts
+        run: pnpm build:self-host
+
+      - name: Run frontend tests
+        run: pnpm test:self-host:frontend
+
+      - name: Run server and shared tests
+        run: pnpm test:self-host:server
+
+      - name: Run PostgreSQL integration tests
+        run: pnpm test:self-host:integration
+
+      - name: Verify the single production runtime
+        run: pnpm verify:no-legacy-runtime
+
+      - name: Build and smoke-test release images
+        run: bash scripts/test-release-images.sh
+
+      - name: Publish tested images to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          export DOCKER_CONFIG="$(mktemp -d "$RUNNER_TEMP/quorum-docker.XXXXXX")"
+          trap 'docker logout ghcr.io >/dev/null 2>&1 || true; rm -rf "$DOCKER_CONFIG"' EXIT
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          for component in app caddy; do
+            local_image="quorum-release-smoke-$component:$GITHUB_SHA"
+            platform="$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$local_image")"
+            test "$platform" = linux/amd64
+
+            published_image="ghcr.io/$owner/quorum-$component:$RELEASE_TAG"
+            docker tag "$local_image" "$published_image"
+            docker push "$published_image"
+            digest="$(docker buildx imagetools inspect "$published_image" --format '{{json .Manifest}}' | jq -r '.digest')"
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+            printf '%s\n' "$published_image@$digest" >> "$GITHUB_STEP_SUMMARY"
+          done

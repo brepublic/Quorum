@@ -4,6 +4,12 @@ Compose 同时启动 Caddy、Quorum TypeScript 后端和 PostgreSQL。PostgreSQL
 
 从全新腾讯云 Ubuntu Server 主机开始部署时，按 [`docs/self-hosted/DEPLOYMENT_RUNBOOK.md`](../docs/self-hosted/DEPLOYMENT_RUNBOOK.md) 完成主机加固、Docker 安装、DNS/TLS、首次管理员、业务、持久性和恢复验收。
 
+## 发布镜像
+
+把已通过 `Integration Tests` 的提交合入 `master` 后，先把发布工作流所在提交推送到 GitHub，再为该提交创建形如 `v1.0.0` 的 GitHub Release。`Publish release images` 会重新运行前端、服务端、PostgreSQL 和镜像启动检查，再将检查过的 `linux/amd64` 应用与 Caddy 镜像发布到 `ghcr.io/<仓库所有者>/quorum-app` 和 `ghcr.io/<仓库所有者>/quorum-caddy`。工作流只在发布步骤使用 GitHub 自动提供的短期令牌；不需要把个人令牌写进仓库、工作流或聊天。
+
+工作流成功后，从该次 GitHub Actions 运行摘要复制两条带 `@sha256:` 的完整镜像地址，供生产服务器按内容哈希拉取。首次发布后，在 GitHub Packages 页面确认两个包都设为 **Private**，再配置服务器的只读拉取凭据。Compose 文件和服务器的 `.env` 不在镜像内；服务器部署配置会在后续步骤单独准备。
+
 ```sh
 cp deploy/.env.example deploy/.env
 # 编辑域名、同源 Origin、数据库密码和存储 master key
