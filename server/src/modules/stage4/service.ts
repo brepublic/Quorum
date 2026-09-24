@@ -773,7 +773,7 @@ export class Stage4Service {
           lastEventId: row.last_event_id, updatedAt: row.updated_at.toISOString()});
       }
       const attendance = currentSession ? attendanceBySession[currentSession.id] ?? [] : [];
-      const pointRows = await client.query<PointRow>('SELECT * FROM points WHERE committee_id=$1 ORDER BY created_at,id', [committeeId]);
+      const pointRows = await client.query<PointRow>("SELECT * FROM points WHERE committee_id=$1 AND status<>'WITHDRAWN' ORDER BY created_at,id", [committeeId]);
       const points: Array<CommitteePoint | PublicCommitteePoint> = await Promise.all(viewer.audience === 'PUBLIC'
         ? pointRows.rows.map(async row => ({typeNames: await pointTypeNames(client, row), id: row.id, committeeId: row.committee_id, meetingSessionId: row.meeting_session_id,
           pointTypeId: row.point_type_id, raisedBySeatId: row.raised_by_seat_id,
@@ -1908,7 +1908,7 @@ export class Stage4Service {
     context: Stage4Context): Promise<CommitteePoint> {
     requireBusinessIdentity(auth); assertExactBody(input, ['baseRevision', 'status', 'chairResponse', 'attendanceChange']);
     const baseRevision = positiveRevision(input.baseRevision);
-    const status = input.status as Exclude<PointStatus, 'PENDING'>;
+    const status = input.status as Exclude<PointStatus, 'PENDING' | 'WITHDRAWN'>;
     if (!['UPHELD', 'OVERRULED', 'ANSWERED', 'RESOLVED', 'REJECTED'].includes(status)) {
       throw new AppError({reason: 'INVALID_POINT_RESULT', code: 'VALIDATION_FAILED', message: 'Point resolution status is invalid.'});
     }
@@ -1958,6 +1958,31 @@ export class Stage4Service {
         capabilities: ['CHAIR'], onBehalfOfSeatId: current.raised_by_seat_id,
         action: 'proceedings.attendance_changed', resourceType: 'point', resourceId: pointId,
         after: {meetingSessionId: current.meeting_session_id, seatId: current.raised_by_seat_id, type: attendanceType}});
+      return point(client, updated.rows[0] as PointRow);
+    });
+  }
+
+  async withdrawPoint(auth: AuthenticatedSession, pointId: string, input: Record<string, unknown>,
+    context: Stage4Context): Promise<CommitteePoint> {
+    requireBusinessIdentity(auth); assertExactBody(input, ['baseRevision']);
+    const baseRevision = positiveRevision(input.baseRevision);
+    return transaction(this.pool, async client => {
+      const found = await client.query<PointRow>('SELECT * FROM points WHERE id=$1 FOR UPDATE', [pointId]);
+      const current = found.rows[0]; if (!current) throw new AppError({code: 'NOT_FOUND', message: 'Point not found.'});
+      const committee = await lockedCommittee(client, current.committee_id); await requireChair(client, committee, auth.user.id);
+      requireProceedingsActive(committee);
+      if (current.status !== 'PENDING') throw new AppError({reason: 'POINT_NOT_WITHDRAWABLE', code: 'RESOURCE_CONFLICT',
+        message: 'Only a pending point can be withdrawn.'});
+      if (current.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT',
+        message: 'This point changed since it was loaded.', details: {currentRevision: current.revision}});
+      const updated = await client.query<PointRow>(`UPDATE points SET status='WITHDRAWN',resolved_by_user_id=$2,
+        resolved_at=now(),revision=revision+1 WHERE id=$1 RETURNING *`, [pointId, auth.user.id]);
+      await appendEvent(client, committee, {type: 'point.withdrawn', resourceType: 'point', resourceId: pointId,
+        revision: current.revision + 1, payload: {status: 'WITHDRAWN'}});
+      await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id, capabilities: ['CHAIR'],
+        onBehalfOfSeatId: current.raised_by_seat_id, action: 'proceedings.point_withdrawn', resourceType: 'point',
+        resourceId: pointId, before: {status: current.status, revision: current.revision},
+        after: {status: 'WITHDRAWN', revision: current.revision + 1}});
       return point(client, updated.rows[0] as PointRow);
     });
   }

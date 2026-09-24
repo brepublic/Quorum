@@ -346,6 +346,7 @@ export const ERROR_TEXT = {
   POINT_TYPE_UNAVAILABLE: {en: "This point type is not in the current session rules. Select another type.", 'zh-CN': "该问题类型不在当前会期规则中，请重新选择。"},
   INVALID_POINT_RESULT: {en: "Choose a valid ruling for this point.", 'zh-CN': "请选择有效的问题裁定结果。"},
   POINT_ALREADY_RESOLVED: {en: "This point is already resolved. Refresh the point list.", 'zh-CN': "该问题已经裁定，请刷新问题列表。"},
+  POINT_NOT_WITHDRAWABLE: {en: "Only a pending point can be deleted. Refresh the point list.", 'zh-CN': "只能删除待处理的问题，请刷新问题列表。"},
   ATTENDANCE_POINT_REQUIRED: {en: "Only a personal privilege point can change attendance.", 'zh-CN': "只有个人特权问题可以同时修改出席状态。"},
   INVALID_TEXT_PATCH: {en: "The text update contains invalid fields. Reload and edit again.", 'zh-CN': "文本修改内容包含无效字段，请刷新后重新编辑。"},
   TEXT_PATCH_EMPTY: {en: "Enter a text change first.", 'zh-CN': "请先填写需要修改的文本。"},

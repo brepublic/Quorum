@@ -41,7 +41,8 @@ function domain(overrides: Record<string, unknown> = {}): Stage4Service {
     createTextPost: vi.fn(async () => ({id: 'post'})), deleteTextPost: vi.fn(async () => undefined),
     startMeetingSession: vi.fn(async () => ({id: 'session'})), startRollCall: vi.fn(async () => ({id: 'roll-call'})),
     createAttendanceEvent: vi.fn(async () => ({id: 'attendance'})), createPoint: vi.fn(async () => ({id: 'point'})),
-    resolvePoint: vi.fn(async () => ({id: 'point', revision: 2})), ...overrides} as unknown as Stage4Service;
+    resolvePoint: vi.fn(async () => ({id: 'point', revision: 2})),
+    withdrawPoint: vi.fn(async () => ({id: 'point', status: 'WITHDRAWN'})), ...overrides} as unknown as Stage4Service;
 }
 
 async function request(stage4: Stage4Service, options: {path: string; method?: string; headers?: Record<string, string>; body?: unknown}) {
@@ -58,6 +59,16 @@ async function request(stage4: Stage4Service, options: {path: string; method?: s
 }
 
 describe('stage 4 template and seat HTTP boundary', () => {
+  it('routes point withdrawal with its revision to the Chair command', async () => {
+    const withdrawPoint = vi.fn(async () => ({id: 'point', status: 'WITHDRAWN'}));
+    const stage4 = domain({withdrawPoint});
+    const pointId = '30000000-0000-4000-8000-000000000001';
+    const response = await request(stage4, {path: `/api/v1/points/${pointId}/withdraw`, method: 'POST',
+      headers: protectedHeaders, body: {baseRevision: 4}});
+    expect(response.status).toBe(200);
+    expect(withdrawPoint).toHaveBeenCalledWith(authenticated, pointId, {baseRevision: 4}, expect.any(Object));
+  });
+
   it('lists only public committees without requiring a Session', async () => {
     const listCommittees = vi.fn(async () => []); const stage4 = domain({listCommittees});
     const response = await request(stage4, {path: '/api/v1/committees'});

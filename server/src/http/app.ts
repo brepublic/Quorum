@@ -564,6 +564,12 @@ async function handleStage4Request(options: {
     sendJson(response, 200, success(await stage4.resolvePoint(auth, resolvePoint[1] as string, body, context), requestId));
     return true;
   }
+  const withdrawPoint = /^\/api\/v1\/points\/([0-9a-f-]{36})\/withdraw$/.exec(pathname);
+  if (withdrawPoint && method === 'POST') {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 200, success(await stage4.withdrawPoint(auth, withdrawPoint[1] as string, body, context), requestId));
+    return true;
+  }
   return false;
 }
 

@@ -616,6 +616,9 @@ export const selfHostedApi = {
   resolvePoint(id: string, input: ResolvePointRequest) {
     return request<CommitteePoint>(`/api/v1/points/${id}/resolve`, {method: 'POST', body: input});
   },
+  withdrawPoint(id: string, baseRevision: number) {
+    return request<CommitteePoint>(`/api/v1/points/${id}/withdraw`, {method: 'POST', body: {baseRevision}});
+  },
   listFiles(committeeId: string) {
     return request<FileEntry[]>(`/api/v1/committees/${committeeId}/files`);
   },

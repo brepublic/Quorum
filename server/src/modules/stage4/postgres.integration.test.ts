@@ -524,10 +524,26 @@ integration('PostgreSQL stage 4 templates and seat snapshots', () => {
     const withoutReason = await stage4.createPoint(chair, committee.id, {meetingSessionId: session.id,
       pointTypeId: 'point-of-order', content: '', onBehalfOfSeatId: seat.id}, 'point-without-reason', context('point-without-reason'));
     expect(withoutReason.content).toBe('');
+    await expect(stage4.withdrawPoint(member, withoutReason.id, {baseRevision: 1}, context('point-withdraw-member')))
+      .rejects.toMatchObject({code: 'FORBIDDEN'});
+    await expect(stage4.withdrawPoint(chair, withoutReason.id, {baseRevision: 2}, context('point-withdraw-stale')))
+      .rejects.toMatchObject({code: 'REVISION_CONFLICT'});
+    const withdrawn = await stage4.withdrawPoint(chair, withoutReason.id, {baseRevision: 1}, context('point-withdraw'));
+    expect(withdrawn).toEqual(expect.objectContaining({status: 'WITHDRAWN', revision: 2, resolvedByUserId: chair.user.id}));
+    expect((await stage4.snapshot(committee.id, chair)).points.some(point => point.id === withoutReason.id)).toBe(false);
+    await expect(stage4.withdrawPoint(chair, withoutReason.id, {baseRevision: 2}, context('point-withdraw-repeat')))
+      .rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
+    await expect(stage4.withdrawPoint(chair, order.id, {baseRevision: 2}, context('point-withdraw-resolved')))
+      .rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
+    const trace = await pool?.query(`SELECT
+      (SELECT count(*)::int FROM committee_events WHERE resource_id=$1 AND event_type='point.withdrawn') AS events,
+      (SELECT count(*)::int FROM audit_log WHERE resource_id=$1 AND action='proceedings.point_withdrawn') AS audits`,
+    [withoutReason.id]);
+    expect(trace?.rows[0]).toEqual({events: 1, audits: 1});
     await expect(stage4.createPoint(member, committee.id, {meetingSessionId: session.id,
       pointTypeId: 'point-of-information', content: 'Blocked'}, 'point-blocked', context('point-blocked')))
       .rejects.toMatchObject({code: 'FORBIDDEN'});
-  });
+  }, 20_000);
 
   it('filters workspace snapshots by public, member, Chair, Owner, and system-admin audience', async () => {
     const owner = await user('snapshotowner'); const chair = await user('snapshotchair'); const member = await user('snapshotmember');

@@ -250,7 +250,7 @@ export interface CreateAttendanceEventRequest {
   type: AttendanceEventType;
 }
 
-export type PointStatus = 'PENDING' | 'UPHELD' | 'OVERRULED' | 'ANSWERED' | 'RESOLVED' | 'REJECTED';
+export type PointStatus = 'PENDING' | 'UPHELD' | 'OVERRULED' | 'ANSWERED' | 'RESOLVED' | 'REJECTED' | 'WITHDRAWN';
 export interface CommitteePoint {
   typeNames: LocalizedNames;
   id: string;
@@ -285,7 +285,7 @@ export interface CreatePointRequest {
 
 export interface ResolvePointRequest {
   baseRevision: number;
-  status: Exclude<PointStatus, 'PENDING'>;
+  status: Exclude<PointStatus, 'PENDING' | 'WITHDRAWN'>;
   chairResponse?: string;
   attendanceChange?: {type: AttendanceEventType};
 }

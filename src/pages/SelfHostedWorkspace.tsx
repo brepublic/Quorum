@@ -873,7 +873,7 @@ function RollCallPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
 function PointResolutionForm({point, run, api}: {point: CommitteePoint; run(operation: () => Promise<unknown>): Promise<void>;
   api: SelfHostedApi}) {
   useLanguage();
-  const [status, setStatus] = React.useState<Exclude<PointStatus, 'PENDING'>>('ANSWERED');
+  const [status, setStatus] = React.useState<Exclude<PointStatus, 'PENDING' | 'WITHDRAWN'>>('ANSWERED');
   const [response, setResponse] = React.useState(''); const [attendance, setAttendance] = React.useState('');
   const [pending, setPending] = React.useState(false);
   const personalPrivilege = point.pointTypeId === 'point-of-personal-privilege';
@@ -885,7 +885,7 @@ function PointResolutionForm({point, run, api}: {point: CommitteePoint; run(oper
   };
   return <Form onSubmit={submit} size="small">
     <Form.Select label={t('Ruling')} value={status} options={(['ANSWERED', 'UPHELD', 'OVERRULED', 'RESOLVED', 'REJECTED'] as const)
-      .map(value => ({key: value, value, text: t(value)}))} onChange={(_, data) => setStatus(data.value as Exclude<PointStatus, 'PENDING'>)} />
+      .map(value => ({key: value, value, text: t(value)}))} onChange={(_, data) => setStatus(data.value as Exclude<PointStatus, 'PENDING' | 'WITHDRAWN'>)} />
     <Form.TextArea label={t('Chair response')} value={response} onChange={(_, data) => setResponse(String(data.value))} />
     {personalPrivilege && <Form.Select label={t('Attendance change')} value={attendance} options={[
       {key: 'none', value: '', text: t('No attendance change')},
@@ -907,7 +907,7 @@ function PointsPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspa
   const create = async () => {if (!session) return; await run(() => api.createPoint(snapshot.committee.id,
     {meetingSessionId: session.id, pointTypeId: type, content: content.trim(),
       ...(canChair && seatId ? {onBehalfOfSeatId: seatId} : {})})); setContent('');};
-  const resolve = (point: CommitteePoint, status: Exclude<PointStatus, 'PENDING'>) =>
+  const resolve = (point: CommitteePoint, status: Exclude<PointStatus, 'PENDING' | 'WITHDRAWN'>) =>
     void run(() => api.resolvePoint(point.id, {baseRevision: point.revision, status}));
   const label = (point: CommitteePoint) => point.status === 'PENDING' ? t('PENDING')
     : point.pointTypeId === 'point-of-order' && ['UPHELD', 'OVERRULED'].includes(point.status) ? t(point.status === 'UPHELD' ? 'Point upheld' : 'Point overruled')
@@ -956,9 +956,12 @@ function PointsPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspa
       const proposer = snapshot.seats.find(seat => seat.id === item.raisedBySeatId);
       return <Card className="point-card" key={item.id}><Card.Content>
         <div className="motion-heading"><Card.Header>{committeeContentName(item.typeNames, snapshot.committee.committeeLanguage)}</Card.Header>
-          {item.status !== 'PENDING' && <time className={`motion-decision motion-decision-${['OVERRULED', 'REJECTED'].includes(item.status) ? 'failed' : 'passed'}`}
+          {item.status !== 'PENDING' ? <time className={`motion-decision motion-decision-${['OVERRULED', 'REJECTED'].includes(item.status) ? 'failed' : 'passed'}`}
             dateTime={item.resolvedAt ?? undefined}>{point ? label(point) : t(item.status)}{item.resolvedAt
-              ? ` · ${new Date(item.resolvedAt).toLocaleString(getLanguage())}` : ''}</time>}</div>
+              ? ` · ${new Date(item.resolvedAt).toLocaleString(getLanguage())}` : ''}</time>
+            : canChair && point && <Popup content={t('Delete')} trigger={<Button
+              aria-label={t('Delete')} basic circular compact icon="trash" negative
+              onClick={() => void run(() => api.withdrawPoint(point.id, point.revision))} />} />}</div>
         <Card.Meta><Table compact celled unstackable className="motion-metadata-table">
           <Table.Body><Table.Row><Table.Cell className="motion-metadata-key">{t('Point proposer')}</Table.Cell>
             <Table.Cell><span className="motion-metadata-value">{proposer

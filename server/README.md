@@ -41,6 +41,7 @@ PUT|DELETE /api/v1/{notes,text-posts}/:id
 POST /api/v1/meeting-sessions/:id/close
 POST /api/v1/roll-calls/:id/{record-response,undo,reset}
 POST /api/v1/points/:id/resolve
+POST /api/v1/points/:id/withdraw
 GET  /api/v1/committees/:id/events
 POST /api/v1/committees/:id/{timers,speaker-lists,motions,ballots,strawpolls,resolutions}
 POST /api/v1/timers/:id/{start,pause,resume,extend,reset,expire}
