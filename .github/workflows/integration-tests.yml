@@ -14,8 +14,65 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  postgres_api:
-    name: PostgreSQL and API integration
+  frontend:
+    name: Frontend tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build production artifacts
+        run: pnpm build:self-host
+
+      - name: Run frontend tests
+        run: pnpm test:self-host:frontend
+
+  server:
+    name: Server and shared tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build production artifacts
+        run: pnpm build:self-host
+
+      - name: Run server and shared tests
+        run: pnpm test:self-host:server
+
+      - name: Verify the single production runtime
+        run: pnpm verify:no-legacy-runtime
+
+  postgres:
+    name: PostgreSQL integration tests
     runs-on: ubuntu-latest
     timeout-minutes: 30
     services:
@@ -52,11 +109,5 @@ jobs:
       - name: Build production artifacts
         run: pnpm build:self-host
 
-      - name: Run self-hosted tests
-        run: pnpm test:self-host
-
       - name: Run PostgreSQL integration tests
         run: pnpm test:self-host:integration
-
-      - name: Verify the single production runtime
-        run: pnpm verify:no-legacy-runtime
