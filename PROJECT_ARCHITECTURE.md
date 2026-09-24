@@ -163,7 +163,7 @@ retention worker 使用 advisory lock，仅清理明确过期且不再承载业�
 | `deploy/` | Caddy、应用与 PostgreSQL Compose、Dockerfile 和环境模板 |
 | `docs/self-hosted/` | 目标规格、实施历史、恢复与人工验收 |
 
-`deploy/compose.yaml` 为当前生产拓扑。Caddy 代理 `/api/v1/*`、`/health/*` 和 `/metrics`，其余路径回退 SPA。容量默认 80% warning、90% critical；critical 只拒绝新文件字节和 provider copy，下载、议事与清理继续可用。Compose 的 JSON 日志固定轮换为 10 MiB × 3。常规 CI 在前端、服务端和 PostgreSQL 测试通过后，以 `linux/amd64` 构建应用和 Caddy 镜像，再用独立的 `deploy/compose.release-smoke.yaml`、临时数据库与文件卷检查迁移、HTTPS、就绪状态、版本、匿名身份入口和 SPA 路由；此检查不发布镜像。发布 GitHub Release 时，独立工作流对 master 历史中的发布提交重新运行测试与镜像检查，然后用该工作流的临时 GitHub 凭据将刚通过检查的两张 `linux/amd64` 镜像推送到 GHCR，并在运行摘要中记录两张镜像的内容哈希。拉取和部署仍由服务器单独执行。
+`deploy/compose.yaml` 定义服务、端口、健康检查和命名卷，并保留本地源码构建方式。生产服务器同时加载 `deploy/compose.production.yaml`，以内容哈希固定应用、Caddy 和 PostgreSQL 16 镜像，移除应用与 Caddy 的构建设置；项目名为 `quorum`。Caddy 代理 `/api/v1/*`、`/health/*` 和 `/metrics`，其余路径回退 SPA。容量默认 80% warning、90% critical；critical 只拒绝新文件字节和 provider copy，下载、议事与清理继续可用。Compose 的 JSON 日志固定轮换为 10 MiB × 3。常规 CI 在前端、服务端和 PostgreSQL 测试通过后，以 `linux/amd64` 构建应用和 Caddy 镜像，再用独立的 `deploy/compose.release-smoke.yaml`、临时数据库与文件卷检查迁移、HTTPS、就绪状态、版本、匿名身份入口和 SPA 路由；此检查不发布镜像。发布 GitHub Release 时，独立工作流对 master 历史中的发布提交重新运行测试与镜像检查，然后用该工作流的临时 GitHub 凭据将刚通过检查的两张 `linux/amd64` 镜像推送到 GHCR，并在运行摘要中记录两张镜像的内容哈希。拉取和部署仍由服务器单独执行。
 
 ## 8. 开发与验证
 

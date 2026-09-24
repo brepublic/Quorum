@@ -8,7 +8,22 @@ Compose 同时启动 Caddy、Quorum TypeScript 后端和 PostgreSQL。PostgreSQL
 
 把已通过 `Integration Tests` 的提交合入 `master` 后，先把发布工作流所在提交推送到 GitHub，再为该提交创建形如 `v1.0.0` 的 GitHub Release。`Publish release images` 会重新运行前端、服务端、PostgreSQL 和镜像启动检查，再将检查过的 `linux/amd64` 应用与 Caddy 镜像发布到 `ghcr.io/<仓库所有者>/quorum-app` 和 `ghcr.io/<仓库所有者>/quorum-caddy`。工作流只在发布步骤使用 GitHub 自动提供的短期令牌；不需要把个人令牌写进仓库、工作流或聊天。
 
-工作流成功后，从该次 GitHub Actions 运行摘要复制两条带 `@sha256:` 的完整镜像地址，供生产服务器按内容哈希拉取。首次发布后，在 GitHub Packages 页面确认两个包都设为 **Private**，再配置服务器的只读拉取凭据。Compose 文件和服务器的 `.env` 不在镜像内；服务器部署配置会在后续步骤单独准备。
+工作流成功后，从该次 GitHub Actions 运行摘要复制两条带 `@sha256:` 的完整镜像地址。当前 `v1.0.0` 的应用与 Caddy 镜像均为公开包，生产服务器可匿名拉取。`deploy/compose.production.yaml` 固定这两张镜像和 PostgreSQL 16 镜像的内容哈希；与 `deploy/compose.yaml` 一起使用时会清除应用和 Caddy 的本地构建设置，继续使用原有端口、健康检查和命名卷。Compose 项目标识为小写 `quorum`。
+
+把这两份 Compose 文件和 `deploy/.env.example` 从仓库复制到服务器；真正的 `deploy/.env` 只在服务器创建，不能提交到 Git 或放进镜像。若服务器从 Git 拉取，应固定包含生产覆盖文件的配置提交；它可以晚于 `v1.0.0` 镜像的源码提交。首次启动前检查展开结果，不要打印含密码的完整配置：
+
+```sh
+docker compose -p quorum --env-file deploy/.env.example \
+  -f deploy/compose.yaml -f deploy/compose.production.yaml config --images
+docker compose -p quorum --env-file deploy/.env \
+  -f deploy/compose.yaml -f deploy/compose.production.yaml config --quiet
+docker compose -p quorum --env-file deploy/.env \
+  -f deploy/compose.yaml -f deploy/compose.production.yaml pull
+docker compose -p quorum --env-file deploy/.env \
+  -f deploy/compose.yaml -f deploy/compose.production.yaml up -d --no-build --wait
+```
+
+## 本地源码构建
 
 ```sh
 cp deploy/.env.example deploy/.env

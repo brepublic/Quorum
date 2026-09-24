@@ -1,0 +1,11 @@
+services:
+  caddy:
+    build: !reset null
+    image: ghcr.io/brepublic/quorum-caddy@sha256:184fe67a51cd9d7546e5c947851831f48eaa00f71ef459366801dc8bccbf571a
+
+  app:
+    build: !reset null
+    image: ghcr.io/brepublic/quorum-app@sha256:7e01e7512f2e8ea92b0386fe44a725663f143ca6ad5c6bd5fbd41b2f71a134e1
+
+  postgres:
+    image: postgres@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
