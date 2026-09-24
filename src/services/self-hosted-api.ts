@@ -283,6 +283,12 @@ function openCommitteeEventStream(committeeId: string, initialAfter: number,
 }
 
 export const selfHostedApi = {
+  searchIndexStatus() {
+    return request<{version: string | null; count: number; updatedAt: string | null}>('/api/v1/admin/search-index');
+  },
+  rebuildSearchIndex() {
+    return request<{generation: number; count: number}>('/api/v1/admin/search-index', {method: 'POST'});
+  },
   operationsStatus() {
     return request<{database: {schemaCompatibility: number; serverTime: string};
       storage: {state: 'normal' | 'warning' | 'critical'; usageRatio: number; availableBytes: number};
@@ -485,6 +491,10 @@ export const selfHostedApi = {
   },
   committeeExportUrl(id: string) { return `/api/v1/committees/${encodeURIComponent(id)}/export`; },
   listCountryTemplates: async () => (await request<{countryTemplates: CountryTemplate[]}>('/api/v1/country-templates')).countryTemplates,
+  updateBuiltinCountrySearchCodes(stableKey: string, codes: string[]) {
+    return request<CountryTemplate>(`/api/v1/country-templates/builtin:default/countries/${encodeURIComponent(stableKey)}/search-codes`,
+      {method: 'PUT', body: {codes}});
+  },
   createCountryTemplate(input: CountryTemplateInput) {
     return request<CountryTemplate>('/api/v1/country-templates', {method: 'POST', body: input as unknown as Record<string, unknown>, idempotencyKey: key()});
   },

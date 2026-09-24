@@ -5,14 +5,15 @@ export function normalizeSearchTerm(value: string): string {
 
 export interface SearchableOption {
   searchTerms?: string[];
-  text?: string;
+  text?: unknown;
 }
 
 export function searchOptions<T extends SearchableOption>(options: T[], query: string): T[] {
   const needle = normalizeSearchTerm(query);
   if (!needle) return options;
   const score = (option: T): number => {
-    const terms = [option.text ?? '', ...(option.searchTerms ?? [])].map(normalizeSearchTerm);
+    const terms = [typeof option.text === 'string' ? option.text : '', ...(option.searchTerms ?? [])]
+      .map(normalizeSearchTerm);
     if (terms.some(term => term === needle)) return 0;
     if (terms.some(term => term.startsWith(needle))) return 1;
     if (terms.some(term => term.includes(needle))) return 2;

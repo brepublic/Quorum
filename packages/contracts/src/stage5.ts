@@ -317,6 +317,7 @@ export interface ProceedingDocument {
   kind: ProceedingDocumentKind;
   resolutionId: string | null;
   title: string;
+  searchTerms?: string[];
   status: ProceedingDocumentStatus;
   rulePackageVersionId: string;
   currentVersion: ProceedingDocumentVersion;

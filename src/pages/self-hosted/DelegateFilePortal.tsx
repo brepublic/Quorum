@@ -8,6 +8,7 @@ import {Button, Card, Container, Divider, Form, Icon, Menu, Message, Modal, Prog
 import {SelfHostedApiError, selfHostedApi, type SelfHostedApi} from '../../services/self-hosted-api';
 import {sha256File} from '../../services/sha256';
 import {CountryFlagDisplay} from '../../components/CountryFlagDisplay';
+import {searchOptions} from '@quorum/contracts';
 
 const FILE_TYPES: Array<{key: DelegateFileType; value: DelegateFileType; text: string}> = [
   {key: 'WORKING_PAPER', value: 'WORKING_PAPER', text: 'Working Paper'},
@@ -147,8 +148,9 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
   if (!portal.claimedSeat) return <Container className="delegate-file-claim-page">
     {error && <Message error content={error} />}
     <Card centered className="delegate-file-claim-card"><Card.Content><Card.Header>{t("Select a delegation")}</Card.Header>
-      <Form><Form.Select fluid selection search placeholder={t("Select a delegation")} value={seatId}
+      <Form><Form.Select fluid selection search={searchOptions} placeholder={t("Select a delegation")} value={seatId}
         options={portal.eligibleSeats.map(seat => ({key: seat.id, value: seat.id, text: seat.displayName,
+          searchTerms: seat.searchTerms,
           content: <span className="motion-seat-option"><CountryFlagDisplay flag={seat.flag} /><span>{seat.displayName}</span></span>}))}
         onChange={(_, data) => setSeatId(String(data.value))} /></Form>
     </Card.Content><Card.Content extra><Button primary fluid disabled={!seatId} onClick={() => setConfirming(true)}>{t("Confirm")}</Button></Card.Content></Card>

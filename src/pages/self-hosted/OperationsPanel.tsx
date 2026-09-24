@@ -20,6 +20,10 @@ export default function OperationsPanel({api}: {api: SelfHostedApi}) {
   const [cache, setCache] = React.useState<Awaited<ReturnType<SelfHostedApi['storageCacheStatus']>>>();
   const [published, setPublished] = React.useState<Awaited<ReturnType<SelfHostedApi['storageCacheFiles']>>>();
   const [pending, setPending] = React.useState<Awaited<ReturnType<SelfHostedApi['storageCacheFiles']>>>();
+  const [searchIndex, setSearchIndex] = React.useState<Awaited<ReturnType<SelfHostedApi['searchIndexStatus']>>>();
+  const [searchFailure, setSearchFailure] = React.useState<unknown>();
+  const [rebuildingSearch, setRebuildingSearch] = React.useState(false);
+  const [searchRebuilt, setSearchRebuilt] = React.useState(false);
   const [reload, setReload] = React.useState(0);
   const [loading, setLoading] = React.useState(true);
   React.useEffect(() => {
@@ -33,7 +37,9 @@ export default function OperationsPanel({api}: {api: SelfHostedApi}) {
     ]).then(([nextCache, nextPublished, nextPending]) => {
       if (active) {setCache(nextCache); setPublished(nextPublished); setPending(nextPending);}
     }, caught => {if (active) setCacheError(caught);}) : undefined;
-    void Promise.all([loadStatus, loadCache]).finally(() => {if (active) setLoading(false);});
+    const loadSearch = typeof api.searchIndexStatus === 'function' ? api.searchIndexStatus()
+      .then(value => {if (active) setSearchIndex(value);}, caught => {if (active) setSearchFailure(caught);}) : undefined;
+    void Promise.all([loadStatus, loadCache, loadSearch]).finally(() => {if (active) setLoading(false);});
     return () => {active = false;};
   }, [api, reload]);
   const percent = Math.round((status?.storage.usageRatio ?? 0) * 100);
@@ -67,6 +73,18 @@ export default function OperationsPanel({api}: {api: SelfHostedApi}) {
         <Segment><Statistic size="small" label={t("Active committees")} value={status.committees.active} /></Segment>
         <Segment><Statistic size="small" label={t("Database version")} value={status.database.schemaCompatibility} /></Segment>
       </div>
+      {searchIndex && <Segment>
+        <Header as="h2">{t('Search index')}</Header>
+        <p>{t('Indexed options')}: {searchIndex.count}</p>
+        <Button primary loading={rebuildingSearch} disabled={rebuildingSearch} onClick={() => {
+          setRebuildingSearch(true); setSearchFailure(undefined); setSearchRebuilt(false);
+          void api.rebuildSearchIndex().then(() => api.searchIndexStatus()).then(next => {
+            setSearchIndex(next); setSearchRebuilt(true);
+          }, caught => setSearchFailure(caught)).finally(() => setRebuildingSearch(false));
+        }}>{t('Rebuild search index')}</Button>
+        {searchRebuilt && <Message positive content={t('Search index rebuilt')} />}
+        {Boolean(searchFailure) && <Message error content={apiErrorText(searchFailure)} />}
+      </Segment>}
       <div className="operations-task-cards">
         <Segment>
           <Header as="h2">{t("Pending tasks")}</Header>

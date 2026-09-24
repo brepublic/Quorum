@@ -69,6 +69,7 @@ export interface CommitteeSeat {
   id: string;
   stableKey: string;
   displayName: string;
+  searchTerms?: string[];
   rank: string | null;
   canVote: boolean;
   hasVeto: boolean;

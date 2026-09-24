@@ -22,6 +22,10 @@ export interface CountryTemplateCountry {
   sortOrder: number;
   flag: FlagSnapshot;
   revision: number;
+  /** Read-only, generated search labels; never part of committee content history. */
+  searchTerms?: string[];
+  /** Account-maintained labels, returned only in the country template manager. */
+  searchCodes?: string[];
 }
 
 export interface CountryTemplate {
@@ -75,6 +79,7 @@ export interface CountryTemplateInput {
     continent?: string | null;
     sortOrder: number;
     flag: FlagSnapshot;
+    searchCodes?: string[];
   }>;
 }
 
@@ -295,8 +300,8 @@ export interface CommitteeRuleReadModel {
   activePhaseId: string | null;
   phases: Array<{id: string; names?: LocalizedNames}>;
   attendanceResponses: string[];
-  pointTypes: Array<{id: string; names?: LocalizedNames; interruptRequested: boolean}>;
-  motionTypes: Array<{id: string; names?: LocalizedNames; procedural: boolean; requiredSecondCount: number}>;
+  pointTypes: Array<{id: string; names?: LocalizedNames; searchTerms?: string[]; interruptRequested: boolean}>;
+  motionTypes: Array<{id: string; names?: LocalizedNames; searchTerms?: string[]; procedural: boolean; requiredSecondCount: number}>;
   speakerLists: Array<{id: string; defaultDurationSeconds?: number; defaultTotalDurationSeconds?: number;
     defaultSpeakerDurationSeconds?: number; allowDelegateRequests?: boolean; yieldTypes?: string[]}>;
   ballots: {delegateMayChangeVote: boolean; chairMayCorrectVote: boolean; anonymousStrawpoll: boolean;

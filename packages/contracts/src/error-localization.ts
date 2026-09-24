@@ -46,6 +46,8 @@ export const ERROR_TEXT = {
   INVALID_FLAG_TYPE: {en: "Choose a standard flag, emoji, or image.", 'zh-CN': "请选择标准旗帜、表情或图片。"},
   INVALID_COUNTRY_LANGUAGES: {en: "Declare 1–32 unique country languages, including the default language.", 'zh-CN': "请设置 1–32 种不重复的国家语言，并包含默认语言。"},
   TOO_MANY_COUNTRIES: {en: "A country template can contain at most 512 countries.", 'zh-CN': "国家模板最多包含 512 个国家。"},
+  INVALID_SEARCH_TERM: {en: "Enter a search term of at most 64 characters.", 'zh-CN': "检索词最多可输入 64 个字符。"},
+  TOO_MANY_SEARCH_TERMS: {en: "A country can have at most 20 extra search terms.", 'zh-CN': "每个国家最多可添加 20 个额外检索词。"},
   INVALID_STABLE_KEY: {en: "Identifiers must be unique, start with a letter or digit, and contain up to 128 letters, digits, dots, underscores, colons, or hyphens.", 'zh-CN': "标识必须唯一，以字母或数字开头，最多 128 个字符，只能使用字母、数字、点、下划线、冒号和连字符。"},
   UNDECLARED_COUNTRY_LANGUAGE: {en: "Country names must use languages declared in the template.", 'zh-CN': "国家名称必须使用模板中已声明的语言。"},
   INVALID_TEMPLATE_MEMBER_COUNT: {en: "A committee template must contain 1–512 members.", 'zh-CN': "委员会模板必须包含 1–512 个成员。"},

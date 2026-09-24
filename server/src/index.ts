@@ -10,6 +10,7 @@ import {PostgresIdentityStore} from './modules/identity/postgres.js';
 import {IdentityService} from './modules/identity/service.js';
 import {Stage3Service} from './modules/stage3/service.js';
 import {Stage4Service} from './modules/stage4/service.js';
+import {SearchIndexService} from './modules/search/service.js';
 import {RealtimeService} from './modules/realtime/service.js';
 import {Stage5Service} from './modules/stage5/service.js';
 import {DurableStagingStore} from './modules/storage/staging.js';
@@ -72,6 +73,7 @@ async function main(): Promise<void> {
     const identity = new IdentityService(new PostgresIdentityStore(pool));
     const stage3 = new Stage3Service(pool);
     const stage4 = new Stage4Service(pool);
+    const searchIndex = new SearchIndexService(pool);
     const realtime = new RealtimeService(pool);
     const stage5 = new Stage5Service(pool);
     const staging = new DurableStagingStore(join(config.storagePath, 'staging'),
@@ -118,6 +120,7 @@ async function main(): Promise<void> {
     const storageCacheOperations = new StorageCacheOperationsService(pool, cacheStore, cachePolicy, cacheRuntime, logger,
       capacity);
     await stage3.ensureBuiltins();
+    await searchIndex.ensureCurrent();
     const bootstrapSecret = await identity.ensureBootstrapSecret();
     if (bootstrapSecret) {
       process.stderr.write(`Quorum bootstrap secret (shown once): ${bootstrapSecret}\n`);
@@ -147,6 +150,7 @@ async function main(): Promise<void> {
       archives,
       committeeDeletions,
       operationsStatus,
+      searchIndex,
       storageCacheOperations,
       delegateFiles,
       allowedOrigins: config.allowedOrigins

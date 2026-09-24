@@ -12,6 +12,7 @@ import type {
   FileUpload,
   PendingHostCommit
 } from '@quorum/contracts';
+import type {CommitteeContentSnapshot} from '@quorum/contracts';
 import {committeeContentName, isAllowedDelegateFile, type DelegateFileSettings, type DefaultFileRejectionSettings} from '@quorum/contracts';
 import {assertExactBody} from '../stage4/validation.js';
 import {rejectionTypes, allowedExtensions} from './settings.js';
@@ -25,6 +26,7 @@ import type {Stage6ProviderCommitService} from '../storage/provider-commit-servi
 import type {Stage6FileService} from '../storage/file-service.js';
 import type {Stage6StorageService} from '../storage/service.js';
 import type {StorageCacheService} from '../storage/cache-service.js';
+import {indexedSearchTerms, manualCountryTerms, namesForSeat, termsFor} from '../search/index-service.js';
 
 const FILE_TYPES = new Set<DelegateFileType>(['WORKING_PAPER', 'DIRECTIVE_DRAFT', 'RESOLUTION_DRAFT']);
 const DELEGATE_SESSION_MS = 30 * 24 * 60 * 60 * 1000;
@@ -537,12 +539,30 @@ export class DelegateFileService {
     return row;
   }
 
-  private async eligibleSeats(client: PoolClient, committeeId: string): Promise<Array<{id: string; displayName: string; flag: FlagSnapshot}>> {
-    const result = await client.query<{id: string; display_name: string; flag_type: FlagSnapshot['type']; flag_value: string}>(`SELECT s.id,s.display_name,s.flag_type,s.flag_value FROM meeting_sessions ms
+  private async eligibleSeats(client: PoolClient, committeeId: string): Promise<DelegatePortalBootstrap['eligibleSeats']> {
+    const result = await client.query<{id: string; stable_key: string; display_name: string;
+      flag_type: FlagSnapshot['type']; flag_value: string}>(`SELECT s.id,s.stable_key,s.display_name,s.flag_type,s.flag_value FROM meeting_sessions ms
       JOIN current_attendance a ON a.meeting_session_id=ms.id AND a.state IN ('PRESENT','TEMPORARILY_LEFT')
       JOIN committee_seats s ON s.id=a.seat_id AND s.active=true
       WHERE ms.committee_id=$1 AND ms.status='OPEN' ORDER BY s.sort_order,s.stable_key,s.id`, [committeeId]);
-    return result.rows.map(row => ({id: row.id, displayName: row.display_name, flag: {type: row.flag_type, value: row.flag_value}}));
+    if (!result.rows.length) return [];
+    const committee = (await client.query<{content_snapshot: CommitteeContentSnapshot; committee_language: string;
+      owner_user_id: string}>('SELECT content_snapshot,committee_language,owner_user_id FROM committees WHERE id=$1',
+      [committeeId])).rows[0];
+    if (!committee) return [];
+    const content = committee.content_snapshot;
+    const subjects = result.rows.map(row => ({kind: 'seat', key: row.id,
+      names: namesForSeat(content, row.stable_key, row.display_name, committee.committee_language),
+      ...(content.countryTemplate.builtin && content.countryTemplate.countries.some(country => country.stableKey === row.stable_key)
+        ? {builtinCode: row.stable_key} : {})}));
+    const [index, manual] = await Promise.all([
+      indexedSearchTerms(this.pool, subjects),
+      content.countryTemplate.builtin ? new Map<string, string[]>() : manualCountryTerms(this.pool,
+        committee.owner_user_id, content.countryTemplate.key, result.rows.map(row => row.stable_key))
+    ]);
+    return result.rows.map(row => ({id: row.id, displayName: row.display_name,
+      flag: {type: row.flag_type, value: row.flag_value},
+      searchTerms: [...termsFor(index, {kind: 'seat', key: row.id}), ...(manual.get(row.stable_key) ?? [])]}));
   }
 
   private async portalSnapshot(client: PoolClient, share: ShareRow, session?: DelegateSessionRow): Promise<DelegatePortalBootstrap> {

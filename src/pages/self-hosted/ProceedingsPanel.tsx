@@ -1,6 +1,6 @@
 import {FileStatusLabel} from '../../components/FileStatusLabel';
 import {apiErrorText} from '../../i18n';
-import {delegateFileTypeName, motionContentName, type ContentLanguage} from '@quorum/contracts';
+import {delegateFileTypeName, motionContentName, searchOptions, type ContentLanguage} from '@quorum/contracts';
 import * as React from 'react';
 import {createPortal} from 'react-dom';
 import type {
@@ -31,7 +31,7 @@ const messageFadeDelayMs = 10_000;
 const messageFadeDurationMs = 180;
 
 type SpeakerSeatOption = {key: React.Key; value: string; text: string; content?: React.ReactNode; description?: React.ReactNode;
-  disabled?: boolean};
+  disabled?: boolean; searchTerms?: string[]};
 
 function SpeakerSeatDropdown({value, options, disabled = false, error = false, placeholder, onChange}: {
   value: string;
@@ -50,7 +50,7 @@ function SpeakerSeatDropdown({value, options, disabled = false, error = false, p
   const [activeIndex, setActiveIndex] = React.useState(0);
   const [menuStyle, setMenuStyle] = React.useState<React.CSSProperties>({});
   const selected = options.find(option => option.value === value);
-  const filtered = options.filter(option => option.text.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
+  const filtered = searchOptions(options, query);
   const firstEnabledIndex = () => filtered.findIndex(option => !option.disabled);
   const moveActiveIndex = (direction: 1 | -1) => setActiveIndex(current => {
     for (let index = current + direction; index >= 0 && index < filtered.length; index += direction) {
@@ -168,7 +168,8 @@ function seatOptionContent(seat: CommitteeWorkspaceSnapshot['seats'][number]) {
 
 function attendanceSeatOptions(snapshot: CommitteeWorkspaceSnapshot, presentSeatIds: Set<string>): SpeakerSeatOption[] {
   return snapshot.seats.map(seat => ({key: seat.id, value: seat.id, text: seat.displayName, content: seatOptionContent(seat),
-    disabled: !presentSeatIds.has(seat.id), description: presentSeatIds.has(seat.id) ? undefined : t('Absent')}));
+    searchTerms: seat.searchTerms, disabled: !presentSeatIds.has(seat.id),
+    description: presentSeatIds.has(seat.id) ? undefined : t('Absent')}));
 }
 
 function useTimerRemainingMs(timer: AuthoritativeTimer): number {
@@ -686,8 +687,9 @@ function Ballots({snapshot, run, api, canChair, subjectId, embedded = false, sto
       const choices = ballot.choices.filter(choice => choice !== 'ABSTAIN' || !eligible?.mustVote);
       const alreadyVoted = ballot.votes.some(vote => vote.seatId === seatId);
       return <List.Item key={ballot.id}><List.Header>{statusLabel(ballot.status)}</List.Header>
-      {canChair && ballot.status === 'OPEN' && <Form.Select label={t('Represented seat')} value={seatId ?? ''}
-        options={ballot.eligibility.map(seat => ({key: seat.seatId, value: seat.seatId, text: seat.seatDisplayName}))}
+      {canChair && ballot.status === 'OPEN' && <Form.Select label={t('Represented seat')} search={searchOptions} value={seatId ?? ''}
+        options={ballot.eligibility.map(seat => ({key: seat.seatId, value: seat.seatId, text: seat.seatDisplayName,
+          searchTerms: snapshot.seats.find(item => item.id === seat.seatId)?.searchTerms}))}
         onChange={(_, data) => setSelectedSeats(current => ({...current, [ballot.id]: String(data.value)}))} />}
       {eligible?.hasVeto && <Label>{t('Veto power')}</Label>}
       {ballot.status === 'OPEN' && canVote && eligible && !alreadyVoted && choices.map(choice => <Button key={choice} size="mini"
@@ -697,7 +699,7 @@ function Ballots({snapshot, run, api, canChair, subjectId, embedded = false, sto
       {canChair && ballot.status === 'CLOSED' && <Button size="mini" primary onClick={() => void run(() => api.publishBallot(ballot.id,
         ballot.revision))}>{t('Publish result')}</Button>}
       {canChair && ballot.chairMayCorrectVote && ballot.status === 'OPEN'
-        && <BallotCorrection ballot={ballot} run={run} api={api} />}
+        && <BallotCorrection ballot={ballot} snapshot={snapshot} run={run} api={api} />}
       {ballot.votes.length > 0 && <List.Description>{ballot.votes.map(vote => `${vote.seatDisplayName}: ${t(vote.choice)}`).join(' · ')}</List.Description>}
       {ballot.result && <List.Description>{statusLabel(ballot.result.outcome)} · {t('FOR')} {ballot.result.forCount} · {t('AGAINST')} {ballot.result.againstCount} · {t('ABSTAIN')} {ballot.result.abstainCount}</List.Description>}
       {canChair && ballot.status === 'OPEN' && stopAction && <Button className="motion-stop-voting" negative fluid
@@ -705,7 +707,8 @@ function Ballots({snapshot, run, api, canChair, subjectId, embedded = false, sto
     </List.Item>;})}</List></>;
 }
 
-function BallotCorrection({ballot, run, api}: {ballot: NonNullable<CommitteeWorkspaceSnapshot['ballots']>[number]; run: Run; api: SelfHostedApi}) {
+function BallotCorrection({ballot, snapshot, run, api}: {ballot: NonNullable<CommitteeWorkspaceSnapshot['ballots']>[number];
+  snapshot: CommitteeWorkspaceSnapshot; run: Run; api: SelfHostedApi}) {
   const [seatId, setSeatId] = React.useState(ballot.eligibility[0]?.seatId ?? '');
   const [choice, setChoice] = React.useState<'FOR' | 'AGAINST' | 'ABSTAIN'>(ballot.choices[0] ?? 'FOR');
   const [reason, setReason] = React.useState('');
@@ -713,8 +716,9 @@ function BallotCorrection({ballot, run, api}: {ballot: NonNullable<CommitteeWork
   const choices = ballot.choices.filter(value => value !== 'ABSTAIN' || !eligible?.mustVote);
   React.useEffect(() => {if (!choices.includes(choice)) setChoice(choices[0] ?? 'FOR');}, [choices, choice]);
   return <Form onSubmit={async () => {await run(() => api.correctVote(ballot.id, ballot.revision, seatId, choice, reason)); setReason('');}}>
-    <Form.Select label={t('Corrected seat')} value={seatId} options={ballot.eligibility.filter(seat => ballot.votes.some(vote => vote.seatId === seat.seatId)).map(seat => ({key: seat.seatId,
-      value: seat.seatId, text: seat.seatDisplayName}))} onChange={(_, data) => setSeatId(String(data.value))} />
+    <Form.Select label={t('Corrected seat')} search={searchOptions} value={seatId} options={ballot.eligibility.filter(seat => ballot.votes.some(vote => vote.seatId === seat.seatId)).map(seat => ({key: seat.seatId,
+      value: seat.seatId, text: seat.seatDisplayName, searchTerms: snapshot.seats.find(item => item.id === seat.seatId)?.searchTerms}))}
+      onChange={(_, data) => setSeatId(String(data.value))} />
     <Form.Select label={t('Corrected vote')} value={choice} options={choices.map(value => ({key: value, value, text: t(value)}))}
       onChange={(_, data) => setChoice(data.value as typeof choice)} />
     <Form.Input label={t('Correction reason')} value={reason} onChange={event => setReason(event.currentTarget.value)} />
@@ -827,7 +831,7 @@ function AmendmentCard({snapshot, amendment, run, api, canChair, representedSeat
         && void setResult(data.value as 'INCORPORATED' | 'REJECTED')} />
     <Button floated="right" icon="trash" negative basic disabled={!deletable} aria-label={t('Delete')}
       onClick={() => void run(() => api.deleteAmendment(amendment.id, amendment.revision))} />
-  </Card.Header><Card.Meta><Dropdown search selection fluid value={amendment.proposers[0]?.seatId || false}
+  </Card.Header><Card.Meta><Dropdown search={searchOptions} selection fluid value={amendment.proposers[0]?.seatId || false}
     placeholder={t('Amendment proposer')} options={seatOptions} disabled={!canChair}
     onChange={(_, data) => void run(() => api.updateDocumentSettings(amendment.id,
       {baseRevision: amendment.revision, proposerSeatIds: [String(data.value)]}))} /></Card.Meta>
@@ -1024,10 +1028,12 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
     .map(motion => String(motion.parameters.resolutionTarget)));
   const motionOptions = [
     ...availableTypes.map(type => ({key: type.id, value: type.id,
-      text: motionTypeName(type, type.id, snapshot.committee.committeeLanguage)})),
+      text: motionTypeName(type, type.id, snapshot.committee.committeeLanguage), searchTerms: type.searchTerms})),
     ...(types.some(type => type.id === 'open-moderated-caucus') ? caucusResolutionOptions.map(document => ({
       key: linkedResolutionMotionValue(document.id), value: linkedResolutionMotionValue(document.id),
-      text: `${t('Moderated Caucus')} - ${document.title}`})) : [])
+      text: `${t('Moderated Caucus')} - ${document.title}`,
+      searchTerms: [...(types.find(type => type.id === 'open-moderated-caucus')?.searchTerms ?? []),
+        ...(document.searchTerms ?? [])]})) : [])
   ];
   const targetResolutions = resolutions.filter(document => motionType === 'introduce-draft-resolution'
     ? document.status === 'DRAFT'
@@ -1091,7 +1097,7 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
   return <Container text className="motions-page">
     {canPropose && <Form className="motion-proposal-form"
       error={(!chairAdvisoryMode && !divisible) || identicalSeats} onSubmit={propose}>
-      <Form.Select placeholder={t('Select type')} search selection fluid label={t('Type')} icon="search"
+      <Form.Select placeholder={t('Select type')} search={searchOptions} selection fluid label={t('Type')} icon="search"
         options={motionOptions} value={motionOptions.some(option => option.value === motionChoice) ? motionChoice : ''} onChange={(_, data) => {
           const value = String(data.value); setMotionChoice(value);
           if (value.startsWith(linkedResolutionMotionPrefix)) {
@@ -1114,14 +1120,14 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
           label={t(motionDetailLabel(motionType))} placeholder={t(motionDetailLabel(motionType))}
           value={proposal} onChange={event => setProposal(event.currentTarget.value)} />}</Form.Group>}
       <Form.Group widths="equal">
-        <Form.Select key="proposer" icon="search" search selection fluid
+        <Form.Select key="proposer" icon="search" search={searchOptions} selection fluid
           className="motion-proposer-field"
           label={t('Proposer')}
           placeholder={t('Select a delegation')}
           value={proposerId || false} error={Boolean(proposerId) && (!presentSeatIds.has(proposerId) || identicalSeats)}
           options={seatOptions} disabled={!canChair}
           onChange={(_, data) => setProposerId(String(data.value))} />
-        {needsSeconder && <Form.Select key="seconder" icon="search" search selection fluid label={t('Seconder')}
+        {needsSeconder && <Form.Select key="seconder" icon="search" search={searchOptions} selection fluid label={t('Seconder')}
           value={seconderId || false} error={identicalSeats || !chairAdvisoryMode && (!seconderId || !presentSeatIds.has(seconderId))}
           options={seatOptions} disabled={!canChair}
           onChange={(_, data) => setSeconderId(String(data.value))} />}
@@ -1134,16 +1140,17 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
           icon="search" label={t('Target caucus')} value={caucusTarget}
           options={openCaucuses.map(list => ({key: list.id, value: list.id, text: list.topic || t('Moderated Caucus')}))}
           onChange={(_, data) => setCaucusTarget(String(data.value))} />}
-        {hasResolutionTarget(motionType) && <Form.Select required key="resolutionTarget" search selection fluid error={!resolutionTarget}
+        {hasResolutionTarget(motionType) && <Form.Select required key="resolutionTarget" search={searchOptions} selection fluid error={!resolutionTarget}
           icon="search" label={t('Target Draft Resolution')} value={resolutionTarget}
           options={targetResolutions.map(document => ({key: document.id, value: document.id,
-            text: document.title, ...(motionType === 'vote-on-resolution' && !discussedResolutionIds.has(document.id)
+            text: document.title, searchTerms: document.searchTerms,
+            ...(motionType === 'vote-on-resolution' && !discussedResolutionIds.has(document.id)
               ? {description: t('Not yet discussed')} : {})}))}
           onChange={(_, data) => setResolutionTarget(String(data.value))} />}
-        {hasAmendmentTarget(motionType) && <Form.Select required key="amendmentTarget" search selection fluid
+        {hasAmendmentTarget(motionType) && <Form.Select required key="amendmentTarget" search={searchOptions} selection fluid
           error={!amendmentTarget} icon="search" label={t('Target Amendment')} value={amendmentTarget}
           options={targetAmendments.map(document => ({key: document.id, value: document.id,
-            text: document.title}))}
+            text: document.title, searchTerms: document.searchTerms}))}
           onChange={(_, data) => {const id = String(data.value); const target = targetAmendments.find(item => item.id === id);
             setAmendmentTarget(id); setProposal(target?.currentVersion.content.trim()
               || target?.currentVersion.contentFile?.logicalName || target?.title || '');}} />}
@@ -1262,9 +1269,9 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
         </Card.Meta>
       </Card.Content>
       {canChair && motion.status === 'PENDING' && motion.seconds.length < motion.requiredSecondCount && <Card.Content>
-        <Form.Select search selection fluid label={t('Seconder')} value={additionalSeconder}
+        <Form.Select search={searchOptions} selection fluid label={t('Seconder')} value={additionalSeconder}
           options={availableSeconders.map(seat => ({key: seat.id, value: seat.id, text: seat.displayName,
-            content: seatOptionContent(seat)}))}
+            content: seatOptionContent(seat), searchTerms: seat.searchTerms}))}
           onChange={(_, data) => setSecondSeats(current => ({...current, [motion.id]: String(data.value)}))} />
         <Button size="mini" disabled={!additionalSeconder}
           onClick={() => void run(() => api.secondMotion(motion.id, additionalSeconder))}>{t('Second')}</Button>
@@ -1462,8 +1469,9 @@ function StrawpollWorkspace({snapshot, run, api, canChair, resourceId}: CommonPr
     </>}
     {poll.stage === 'VOTING' && <>
       {poll.medium === 'LINK' && poll.votingMode === 'SEAT_AUTHENTICATED' && canChair && <Form.Select
-        label={t('Represented seat')} value={seatId} options={snapshot.seats.map(seat =>
-          ({key: seat.id, value: seat.id, text: seat.displayName}))} onChange={(_, data) => setSeatId(String(data.value))} />}
+        label={t('Represented seat')} search={searchOptions} value={seatId} options={snapshot.seats.map(seat =>
+          ({key: seat.id, value: seat.id, text: seat.displayName, searchTerms: seat.searchTerms}))}
+        onChange={(_, data) => setSeatId(String(data.value))} />}
       {poll.medium === 'LINK' && poll.votingMode === 'ANONYMOUS' && canVote && <Form onSubmit={() => {
         if (!token || !anonymousChoices.length || anonymousSubmitted) return;
         void run(async () => {await api.voteStrawpoll(poll.id,
@@ -1615,10 +1623,11 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
   const presentSeatIds = new Set((snapshot.attendanceBySession?.[document.meetingSessionId] ?? snapshot.attendance)
     .filter(item => item.state === 'PRESENT').map(item => item.seatId));
   const seatOptions = snapshot.seats.map(seat => ({key: seat.id, value: seat.id, text: seat.displayName,
-    disabled: !presentSeatIds.has(seat.id)}));
+    searchTerms: seat.searchTerms, disabled: !presentSeatIds.has(seat.id)}));
   const selectedCountryIds = new Set([...document.proposers, ...document.seconders].map(country => country.seatId));
   const countryOptions = snapshot.seats.filter(seat => !selectedCountryIds.has(seat.id))
     .map(seat => ({key: seat.id, value: seat.id, text: seat.displayName, content: seatOptionContent(seat),
+      searchTerms: seat.searchTerms,
       disabled: !presentSeatIds.has(seat.id)}));
   const saveCountries = async (role: 'proposers' | 'seconders', ids: string[], added = false) => {
     if (!canChair || savingCountries.current) return;
@@ -1785,7 +1794,7 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
             aria-label={`${t('Remove')} ${country.seatDisplayName}`}
             onClick={() => void saveCountries(role, document[role].filter(item => item.seatId !== country.seatId).map(item => item.seatId))} />}
         </li>)}</ul>
-        {canChair && <><Form.Dropdown search selection fluid placeholder={t('Country or delegation')}
+        {canChair && <><Form.Dropdown search={searchOptions} selection fluid placeholder={t('Country or delegation')}
           aria-label={t(role === 'proposers' ? 'Resolution proposer' : 'Resolution seconder')}
           value={countrySelections[role] || false} options={countryOptions} disabled={countriesSaving}
           onChange={(_, data) => setCountrySelections(previous => ({...previous, [role]: String(data.value)}))} />

@@ -14,7 +14,7 @@ import type {
   CountryTemplate,
   Stage4CommitteeSeat
 } from '@quorum/contracts';
-import {formatCommitteeContent, committeeContentName, templateLanguageAvailability, intersectContentLanguages} from '@quorum/contracts';
+import {formatCommitteeContent, committeeContentName, templateLanguageAvailability, intersectContentLanguages, searchOptions} from '@quorum/contracts';
 import {Link, Redirect, Route, Switch, useHistory, useLocation, useParams} from 'react-router-dom';
 import {Button, Card, Checkbox, Confirm, Container, Divider, Form, Grid, Header, Icon, Label, List, Menu, Message, Modal, Pagination, Popup, Segment, Table} from 'semantic-ui-react';
 import Loading from '../components/Loading';
@@ -429,6 +429,7 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
     const seated = new Set(snapshot.seats.map(seat => seat.stableKey));
     return (snapshot.countryTemplate?.countries ?? []).filter(country => !seated.has(country.stableKey)).map(country => ({
       key: country.stableKey, value: country.stableKey,
+      searchTerms: country.searchTerms,
       text: <><Flag seat={{displayName: committeeContentName(country.names, snapshot.committee.committeeLanguage), flag: country.flag}} />
         <span>{committeeContentName(country.names, snapshot.committee.committeeLanguage)}</span></>,
       country
@@ -508,7 +509,7 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
       <Table.HeaderCell>{t('Seat')}</Table.HeaderCell><Table.HeaderCell>{t('Rank')}</Table.HeaderCell>
       <Table.HeaderCell>{t('Voting rights')}</Table.HeaderCell><Table.HeaderCell>{t('Veto power')}</Table.HeaderCell><Table.HeaderCell>{t('No abstention')}</Table.HeaderCell>
       {canChair && !readOnly && <Table.HeaderCell />}</Table.Row>
-      {canChair && !readOnly && <Table.Row className="add-seat-row"><Table.HeaderCell><Form.Select aria-label={t('Seat')} selection
+      {canChair && !readOnly && <Table.Row className="add-seat-row"><Table.HeaderCell><Form.Select aria-label={t('Seat')} search={searchOptions} selection
         value={selectedCountryStableKey} options={countryOptions} onChange={(_, data) => setSelectedCountryStableKey(String(data.value ?? ''))} /></Table.HeaderCell>
         <Table.HeaderCell><Form.Select aria-label={t('Rank')} search selection fluid value={seatRank} options={rankOptions}
           onChange={(_, data) => setSeatRank(data.value as typeof seatRank)} /></Table.HeaderCell>
@@ -615,8 +616,8 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
       <Card fluid><Card.Content><Header as="h2">{t('Seat assignments')}</Header>
       <Form onSubmit={async () => {await execute('assign-seat', () => api.assignSeat(snapshot.committee.id,
         assignmentSeatId, assignmentEmail.trim())); setAssignmentEmail('');}}>
-        <Form.Select label={t('Seat')} value={assignmentSeatId} options={displayedSeats.map(seat =>
-          ({key: seat.id, value: seat.id, text: seat.displayName}))} onChange={(_, data) => setAssignmentSeatId(String(data.value))} />
+        <Form.Select label={t('Seat')} search={searchOptions} value={assignmentSeatId} options={displayedSeats.map(seat =>
+          ({key: seat.id, value: seat.id, text: seat.displayName, searchTerms: seat.searchTerms}))} onChange={(_, data) => setAssignmentSeatId(String(data.value))} />
         <Form.Input label={t('Email')} required type="email" value={assignmentEmail} onChange={(_, data) => setAssignmentEmail(String(data.value ?? ""))} />
         <Button primary loading={pending === 'assign-seat'} disabled={!assignmentSeatId || !assignmentEmail.trim()}>{t('Assign seat')}</Button>
       </Form>
@@ -630,8 +631,8 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
       </Card.Content></Card>
       <Card fluid><Card.Content><Header as="h2">{t('One-time seat invitation')}</Header>
       <Form onSubmit={createInvitation}>
-        <Form.Select label={t('Seat')} value={invitationSeatId} options={displayedSeats.map(seat =>
-          ({key: seat.id, value: seat.id, text: seat.displayName}))} onChange={(_, data) => setInvitationSeatId(String(data.value))} />
+        <Form.Select label={t('Seat')} search={searchOptions} value={invitationSeatId} options={displayedSeats.map(seat =>
+          ({key: seat.id, value: seat.id, text: seat.displayName, searchTerms: seat.searchTerms}))} onChange={(_, data) => setInvitationSeatId(String(data.value))} />
         <Form.Input label={t('Expires at')} type="datetime-local" required value={invitationExpiresAt}
           onChange={event => setInvitationExpiresAt(event.currentTarget.value)} />
         <Button primary loading={pending === 'invitation'} disabled={!invitationSeatId || !invitationExpiresAt}>{t('Create invitation')}</Button>
@@ -936,13 +937,14 @@ function PointsPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspa
   return <Container text className="points-page">
     {canRaise && session?.status === 'OPEN' && types.length === 0 && <Message content={t('The current rules do not enable points.')} />}
     {canRaise && session?.status === 'OPEN' && types.length > 0 && <Form className="point-proposal-form" onSubmit={create}>
-      <Form.Select label={t('Point type')} placeholder={t('Select type')} search selection fluid icon="search"
+      <Form.Select label={t('Point type')} placeholder={t('Select type')} search={searchOptions} selection fluid icon="search"
         value={type} options={types.map(item => ({key: item.id, value: item.id,
-          text: item.names ? committeeContentName(item.names, snapshot.committee.committeeLanguage) : t(item.id)}))}
+          text: item.names ? committeeContentName(item.names, snapshot.committee.committeeLanguage) : t(item.id),
+          searchTerms: item.searchTerms}))}
         onChange={(_, data) => setType(String(data.value))} />
-      {canChair && <Form.Select label={t('Point proposer')} placeholder={t('Select point proposer')} search selection
+      {canChair && <Form.Select label={t('Point proposer')} placeholder={t('Select point proposer')} search={searchOptions} selection
         fluid icon="search" value={seatId || false} options={snapshot.seats.map(seat => ({key: seat.id,
-          value: seat.id, text: seat.displayName}))} onChange={(_, data) => setSeatId(String(data.value))} />}
+          value: seat.id, text: seat.displayName, searchTerms: seat.searchTerms}))} onChange={(_, data) => setSeatId(String(data.value))} />}
       <Form.TextArea label={chairOperated ? t('Reason (optional)') : t('Reason')} required={!chairOperated}
         value={content} onChange={(_, data) => setContent(String(data.value))} />
       <Button type="submit" icon="plus" basic primary fluid aria-label={t('Raise point')}

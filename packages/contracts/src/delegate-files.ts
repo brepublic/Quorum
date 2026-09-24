@@ -42,7 +42,7 @@ export interface DelegatePortalBootstrap {
   committeeName: string;
   shareId: string;
   claimedSeat: {id: string; displayName: string; flag?: FlagSnapshot} | null;
-  eligibleSeats: Array<{id: string; displayName: string; flag: FlagSnapshot}>;
+  eligibleSeats: Array<{id: string; displayName: string; flag: FlagSnapshot; searchTerms?: string[]}>;
   mayUpload: boolean;
   storageAvailable: boolean;
   eventSequence: number;

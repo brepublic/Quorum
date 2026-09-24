@@ -27,6 +27,7 @@ import type {Stage8ArchiveService} from '../modules/operations/archive-service.j
 import type {Stage8DeletionService} from '../modules/operations/deletion-service.js';
 import type {Stage8OperationsStatusService} from '../modules/operations/status-service.js';
 import type {StorageCacheOperationsService} from '../modules/operations/storage-cache-service.js';
+import type {SearchIndexService} from '../modules/search/service.js';
 import type {DelegateFileService} from '../modules/delegate-files/service.js';
 import {AppError, normalizeError} from './errors.js';
 import {
@@ -73,6 +74,7 @@ export interface AppDependencies {
   committeeDeletions?: Stage8DeletionService;
   operationsStatus?: Stage8OperationsStatusService;
   storageCacheOperations?: StorageCacheOperationsService;
+  searchIndex?: SearchIndexService;
   delegateFiles?: DelegateFileService;
   allowedOrigins?: string[];
 }
@@ -421,6 +423,12 @@ async function handleStage4Request(options: {
       const auth = await write(); const body = await readJson(request);
       sendJson(response, 201, success(await stage4.createCountryTemplate(auth, body, idempotencyKey(request), context), requestId)); return true;
     }
+  }
+  const builtinCountrySearch = /^\/api\/v1\/country-templates\/builtin:default\/countries\/([a-z]{2})\/search-codes$/.exec(pathname);
+  if (method === 'PUT' && builtinCountrySearch) {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 200, success(await stage4.updateBuiltinCountrySearchCodes(auth,
+      builtinCountrySearch[1] as string, body.codes, context), requestId)); return true;
   }
   const countryTemplate = /^\/api\/v1\/country-templates\/([^/]+?)(?:\/(clone))?$/.exec(pathname);
   if (countryTemplate) {
@@ -1248,9 +1256,10 @@ async function handleIdentityRequest(options: {
   identity: IdentityService;
   operationsStatus?: Stage8OperationsStatusService;
   storageCacheOperations?: StorageCacheOperationsService;
+  searchIndex?: SearchIndexService;
   allowedOrigins: readonly string[];
 }): Promise<boolean> {
-  const {request, response, pathname, requestId, identity, operationsStatus, storageCacheOperations, allowedOrigins} = options;
+  const {request, response, pathname, requestId, identity, operationsStatus, storageCacheOperations, searchIndex, allowedOrigins} = options;
   const method = request.method ?? 'GET';
   const context = identityContext(request, requestId);
   const cookies = identityCookies(request);
@@ -1361,6 +1370,17 @@ async function handleIdentityRequest(options: {
     sendJson(response, 200, success(await operationsStatus.status(auth), requestId));
     return true;
   }
+  if (pathname === '/api/v1/admin/search-index' && searchIndex) {
+    if (method === 'GET') {
+      const auth = await identity.authenticate(cookies.get(SESSION_COOKIE_NAME));
+      sendJson(response, 200, success(await searchIndex.status(auth), requestId)); return true;
+    }
+    if (method === 'POST') {
+      requireOrigin(request, allowedOrigins); const auth = await authenticatedWrite(request, identity);
+      sendJson(response, 200, success(await searchIndex.rebuild(auth, identityContext(request, requestId)), requestId));
+      return true;
+    }
+  }
   if (method === 'GET' && pathname === '/api/v1/admin/storage-cache' && storageCacheOperations) {
     const auth = await identity.authenticate(cookies.get(SESSION_COOKIE_NAME));
     sendJson(response, 200, success(await storageCacheOperations.status(auth), requestId)); return true;
@@ -1462,6 +1482,7 @@ export function createRequestHandler(dependencies: AppDependencies): RequestList
           identity: dependencies.identity,
           operationsStatus: dependencies.operationsStatus,
           storageCacheOperations: dependencies.storageCacheOperations,
+          searchIndex: dependencies.searchIndex,
           allowedOrigins: dependencies.allowedOrigins ?? []
         })) return;
 

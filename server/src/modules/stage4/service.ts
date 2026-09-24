@@ -38,6 +38,8 @@ import {formatCommitteeContent, type ContentLanguage, localizedDisplayName, isCo
   type CommitteeContentSnapshot} from '@quorum/contracts';
 import {ruleLanguageAvailability, validateRulePackage} from '@quorum/rule-schema';
 import {AppError} from '../../http/errors.js';
+import {indexedSearchTerms, manualCountryTerms, namesForSeat, searchKey, termsFor,
+  replaceManualCountryTerms, type SearchSubject} from '../search/index-service.js';
 import type {AuthenticatedSession} from '../identity/store.js';
 import {
   appendEvent,
@@ -94,7 +96,7 @@ function builtInCountryName(code: string, language: string): string {
   catch { return code.toUpperCase(); }
 }
 
-function builtinCountryTemplate(): CountryTemplate {
+export function builtinCountryTemplate(): CountryTemplate {
   return {
     id: 'builtin:default', key: 'builtin:default', builtin: true,
     names: {'zh-CN': '默认国家', en: 'Default countries'}, defaultLanguage: 'zh-CN',
@@ -106,6 +108,63 @@ function builtinCountryTemplate(): CountryTemplate {
       flag: code === 'un' ? {type: 'EMOJI', value: '🇺🇳'} : {type: 'STANDARD', value: code}, revision: 1
     }))
   };
+}
+
+async function searchableCountryTemplate(pool: Pool, template: CountryTemplate, userId: string): Promise<CountryTemplate> {
+  const subjects = template.countries.map(country => ({kind: 'country',
+    key: searchKey(template.key, country.stableKey), names: country.names,
+    ...(template.builtin ? {builtinCode: country.stableKey} : {})}));
+  const [index, manual] = await Promise.all([
+    indexedSearchTerms(pool, subjects),
+    manualCountryTerms(pool, userId, template.key, template.countries.map(country => country.stableKey))
+  ]);
+  return {...template, countries: template.countries.map(country => {
+    const codes = manual.get(country.stableKey) ?? [];
+    return {...country, searchCodes: codes,
+      searchTerms: [...termsFor(index, {kind: 'country', key: searchKey(template.key, country.stableKey)}), ...codes]};
+  })};
+}
+
+async function searchableWorkspace(pool: Pool, result: CommitteeWorkspaceSnapshot,
+  content: CommitteeContentSnapshot, ownerId: string, viewerId?: string): Promise<CommitteeWorkspaceSnapshot> {
+  const version = result.activeRules.versionId;
+  const countryKey = content.countryTemplate.key;
+  const subjects: SearchSubject[] = [
+    ...result.activeRules.motionTypes.filter(item => item.names).map(item => ({kind: 'motion',
+      key: searchKey(version, item.id), names: item.names as LocalizedNames})),
+    ...result.activeRules.pointTypes.filter(item => item.names).map(item => ({kind: 'point',
+      key: searchKey(version, item.id), names: item.names as LocalizedNames})),
+    ...result.seats.map(seat => ({kind: 'seat', key: seat.id,
+      names: namesForSeat(content, seat.stableKey, seat.displayName, result.committee.committeeLanguage),
+      ...(content.countryTemplate.builtin && content.countryTemplate.countries.some(country => country.stableKey === seat.stableKey)
+        ? {builtinCode: seat.stableKey} : {})})),
+    ...(result.countryTemplate?.countries ?? []).map(country => ({kind: 'country',
+      key: searchKey(countryKey, country.stableKey), names: country.names,
+      ...(content.countryTemplate.builtin ? {builtinCode: country.stableKey} : {})})),
+    ...(result.documents ?? []).map(document => ({kind: 'document-title', key: document.id,
+      names: {[result.committee.committeeLanguage]: document.title}}))
+  ];
+  const manualOwner = content.countryTemplate.builtin ? viewerId : ownerId;
+  const [index, manual] = await Promise.all([
+    indexedSearchTerms(pool, subjects),
+    manualOwner ? manualCountryTerms(pool, manualOwner, countryKey,
+      [...result.seats.map(seat => seat.stableKey), ...(result.countryTemplate?.countries ?? []).map(item => item.stableKey)])
+      : new Map<string, string[]>()
+  ]);
+  return {...result,
+    activeRules: {...result.activeRules,
+      motionTypes: result.activeRules.motionTypes.map(item => ({...item,
+        searchTerms: termsFor(index, {kind: 'motion', key: searchKey(version, item.id)})})),
+      pointTypes: result.activeRules.pointTypes.map(item => ({...item,
+        searchTerms: termsFor(index, {kind: 'point', key: searchKey(version, item.id)})}))},
+    seats: result.seats.map(seat => ({...seat,
+      searchTerms: [...termsFor(index, {kind: 'seat', key: seat.id}), ...(manual.get(seat.stableKey) ?? [])]})),
+    ...(result.countryTemplate ? {countryTemplate: {...result.countryTemplate,
+      countries: result.countryTemplate.countries.map(country => ({...country,
+        searchTerms: [...termsFor(index, {kind: 'country', key: searchKey(countryKey, country.stableKey)}),
+          ...(manual.get(country.stableKey) ?? [])]}))}} : {}),
+    ...(result.documents ? {documents: result.documents.map(document => ({...document,
+      searchTerms: termsFor(index, {kind: 'document-title', key: document.id})}))} : {})};
 }
 
 function builtinCommitteeTemplate(definition: BuiltinCommitteeTemplateDefinition): CommitteeTemplate {
@@ -485,14 +544,19 @@ async function resolveCountryTemplateReference(client: PoolClient, ownerId: stri
   return match[1] as string;
 }
 
-async function replaceCountries(client: PoolClient, templateId: string, value: CountryTemplateInput): Promise<void> {
+async function replaceCountries(client: PoolClient, ownerId: string, templateId: string,
+  value: CountryTemplateInput): Promise<void> {
   await client.query('DELETE FROM country_template_countries WHERE country_template_id=$1', [templateId]);
+  await client.query('DELETE FROM manual_country_search_terms WHERE owner_user_id=$1 AND country_template_key=$2',
+    [ownerId, `custom:${templateId}`]);
   for (const country of value.countries) {
     await client.query(`INSERT INTO country_template_countries
       (id,country_template_id,stable_key,names,default_language,continent,sort_order,flag_type,flag_value)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
     [randomUUID(), templateId, country.stableKey, country.names, country.defaultLanguage, country.continent ?? null,
       country.sortOrder, country.flag.type, country.flag.value]);
+    await replaceManualCountryTerms(client, ownerId, `custom:${templateId}`, country.stableKey,
+      country.searchCodes ?? []);
   }
 }
 
@@ -513,18 +577,40 @@ export class Stage4Service {
   async listCountryTemplates(auth: AuthenticatedSession): Promise<CountryTemplate[]> {
     requireBusinessIdentity(auth);
     const client = await this.pool.connect();
+    let templates: CountryTemplate[];
     try {
       const rows = await client.query<CountryTemplateRow>('SELECT * FROM country_templates WHERE owner_user_id=$1 ORDER BY created_at,id', [auth.user.id]);
-      return [builtinCountryTemplate(), ...await Promise.all(rows.rows.map(row => countryTemplate(client, row)))];
+      templates = [builtinCountryTemplate(), ...await Promise.all(rows.rows.map(row => countryTemplate(client, row)))];
     } finally { client.release(); }
+    return Promise.all(templates.map(template => searchableCountryTemplate(this.pool, template, auth.user.id)));
   }
 
   async getCountryTemplate(auth: AuthenticatedSession, id: string): Promise<CountryTemplate> {
     requireBusinessIdentity(auth);
-    if (id === 'builtin:default') return builtinCountryTemplate();
+    if (id === 'builtin:default') return searchableCountryTemplate(this.pool, builtinCountryTemplate(), auth.user.id);
     const client = await this.pool.connect();
-    try { return countryTemplate(client, await countryTemplateById(client, auth.user.id, id)); }
+    let template: CountryTemplate;
+    try { template = await countryTemplate(client, await countryTemplateById(client, auth.user.id, id)); }
     finally { client.release(); }
+    return searchableCountryTemplate(this.pool, template, auth.user.id);
+  }
+
+  async updateBuiltinCountrySearchCodes(auth: AuthenticatedSession, stableKey: string,
+    codes: unknown, context: Stage4Context): Promise<CountryTemplate> {
+    requireBusinessIdentity(auth);
+    if (!builtinCountryTemplate().countries.some(country => country.stableKey === stableKey)) {
+      throw new AppError({code: 'NOT_FOUND', message: 'Country not found.'});
+    }
+    if (!Array.isArray(codes) || codes.some(value => typeof value !== 'string')) {
+      throw new AppError({reason: 'INVALID_SEARCH_TERM', code: 'VALIDATION_FAILED', message: 'Search codes are invalid.'});
+    }
+    await transaction(this.pool, async client => {
+      await replaceManualCountryTerms(client, auth.user.id, 'builtin:default', stableKey, codes as string[]);
+      await audit(client, context, {actorUserId: auth.user.id, capabilities: ['ACCOUNT_OWNER'],
+        action: 'templates.builtin_country_search_codes_updated', resourceType: 'country',
+        after: {stableKey, count: codes.length}});
+    });
+    return this.getCountryTemplate(auth, 'builtin:default');
   }
 
   async createCountryTemplate(auth: AuthenticatedSession, input: unknown, idempotencyKey: string, context: Stage4Context): Promise<CountryTemplate> {
@@ -536,7 +622,7 @@ export class Stage4Service {
         const inserted = await client.query<CountryTemplateRow>(`INSERT INTO country_templates
           (id,owner_user_id,names,default_language,country_languages) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
         [id, auth.user.id, value.names, value.defaultLanguage, value.countryLanguages]);
-        await replaceCountries(client, id, value);
+        await replaceCountries(client, auth.user.id, id, value);
         await audit(client, context, {actorUserId: auth.user.id, capabilities: ['ACCOUNT_OWNER'],
           action: 'templates.country_created', resourceType: 'country_template', resourceId: id,
           after: {countryCount: value.countries.length}});
@@ -554,7 +640,7 @@ export class Stage4Service {
       const updated = await client.query<CountryTemplateRow>(`UPDATE country_templates SET names=$2,default_language=$3,
         country_languages=$4,revision=revision+1,updated_at=now() WHERE id=$1 RETURNING *`,
       [id, value.names, value.defaultLanguage, value.countryLanguages]);
-      await replaceCountries(client, id, value);
+      await replaceCountries(client, auth.user.id, id, value);
       await audit(client, context, {actorUserId: auth.user.id, capabilities: ['ACCOUNT_OWNER'],
         action: 'templates.country_updated', resourceType: 'country_template', resourceId: id,
         before: {revision: current.revision}, after: {revision: current.revision + 1, countryCount: value.countries.length}});
@@ -572,14 +658,15 @@ export class Stage4Service {
     const value: CountryTemplateInput = {names: localized.names, defaultLanguage: localized.defaultLanguage,
       countryLanguages: source.countryLanguages, countries: source.countries.map(item => ({stableKey: item.stableKey,
         names: item.names, defaultLanguage: item.defaultLanguage, continent: item.continent,
-        sortOrder: item.sortOrder, flag: item.flag}))};
+        sortOrder: item.sortOrder, flag: item.flag,
+        searchCodes: source.builtin ? [item.stableKey] : item.searchCodes ?? []}))};
     return idempotentTransaction({pool: this.pool, auth, route: `POST /api/v1/country-templates/${id}/clone`,
       key: idempotencyKey, request: input, status: 201, work: async client => {
         const cloneId = randomUUID();
         const inserted = await client.query<CountryTemplateRow>(`INSERT INTO country_templates
           (id,owner_user_id,names,default_language,country_languages) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
         [cloneId, auth.user.id, value.names, value.defaultLanguage, value.countryLanguages]);
-        await replaceCountries(client, cloneId, value);
+        await replaceCountries(client, auth.user.id, cloneId, value);
         await audit(client, context, {actorUserId: auth.user.id, capabilities: ['ACCOUNT_OWNER'],
           action: 'templates.country_cloned', resourceType: 'country_template', resourceId: cloneId,
           after: {sourceTemplateId: id, countryCount: value.countries.length}});
@@ -1069,7 +1156,7 @@ export class Stage4Service {
         result.memberships = memberships.rows; result.chairs = chairs.rows; result.assignments = assignments.rows;
       }
       await client.query('COMMIT');
-      return result;
+      return searchableWorkspace(this.pool, result, committee.content_snapshot, committee.owner_user_id, auth?.user.id);
     } catch (error) {
       await client.query('ROLLBACK'); throw error;
     } finally { client.release(); }

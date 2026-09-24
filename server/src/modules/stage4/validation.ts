@@ -141,7 +141,7 @@ export function validateCountryTemplate(value: unknown): CountryTemplateInput {
   const stableKeys = new Set<string>();
   const countries = raw.countries.map((candidate, index) => atField(`countries.${index}`, () => {
     const country = object(candidate, `Country ${index + 1}`);
-    exactKeys(country, ['stableKey', 'names', 'defaultLanguage', 'continent', 'sortOrder', 'flag'], 'Country');
+    exactKeys(country, ['stableKey', 'names', 'defaultLanguage', 'continent', 'sortOrder', 'flag', 'searchCodes'], 'Country');
     const stableKey = string(country.stableKey, 'Country stable key', 128);
     if (!STABLE_KEY.test(stableKey) || stableKeys.has(stableKey)) invalid('INVALID_STABLE_KEY', 'Country stable key is invalid or duplicated.');
     stableKeys.add(stableKey);
@@ -149,9 +149,15 @@ export function validateCountryTemplate(value: unknown): CountryTemplateInput {
     if (Object.keys(names.names).some(language => !countryLanguages.includes(language))) {
       invalid('UNDECLARED_COUNTRY_LANGUAGE', 'Country names must use declared country languages.');
     }
+    const searchCodes = country.searchCodes === undefined ? [] : country.searchCodes;
+    if (!Array.isArray(searchCodes) || searchCodes.length > 20
+      || searchCodes.some(value => typeof value !== 'string' || !value.trim() || value.trim().length > 64)) {
+      invalid('INVALID_SEARCH_TERM', 'Country search codes are invalid.');
+    }
     return {
       stableKey,
       ...names,
+      searchCodes: searchCodes.map(value => String(value).trim()),
       continent: country.continent == null ? null : string(country.continent, 'Continent', 80),
       sortOrder: integer(country.sortOrder, 'Country sort order'),
       flag: atField('flag', () => validateFlag(country.flag))

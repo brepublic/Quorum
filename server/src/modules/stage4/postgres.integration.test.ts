@@ -12,6 +12,7 @@ import type {AuthenticatedSession} from '../identity/store';
 import {Stage3Service} from '../stage3/service';
 import {DelegateFileService} from '../delegate-files/service';
 import {Stage4Service} from './service';
+import {SearchIndexService} from '../search/service';
 
 const {Client, Pool} = pg;
 const adminUrl = process.env.TEST_DATABASE_ADMIN_URL;
@@ -71,6 +72,47 @@ const committeeTemplate = (countryTemplateKey: string) => ({names: {en: 'Council
     canVote: true, hasVeto: true, mustVote: false, sortOrder: 1, flag: {type: 'STANDARD' as const, value: 'cn'}}]});
 
 integration('PostgreSQL stage 4 templates and seat snapshots', () => {
+  it('keeps manual country codes through rebuilds and scopes them to the right viewers', async () => {
+    const owner = await user('search-owner');
+    const other = await user('search-other');
+    await stage4.updateBuiltinCountrySearchCodes(owner, 'cn', ['CHN'], context('builtin-search'));
+    const builtinOwner = (await stage4.getCountryTemplate(owner, 'builtin:default')).countries.find(item => item.stableKey === 'cn');
+    const builtinOther = (await stage4.getCountryTemplate(other, 'builtin:default')).countries.find(item => item.stableKey === 'cn');
+    expect(builtinOwner?.searchTerms).toEqual(expect.arrayContaining(['zg', 'cn', 'CHN']));
+    expect(builtinOther?.searchTerms).not.toContain('CHN');
+
+    const custom = await stage4.createCountryTemplate(owner, {...countryTemplate, countries: [{
+      ...countryTemplate.countries[0], searchCodes: ['PRC', 'X-CN']}]}, 'custom-search', context('custom-search'));
+    expect((await stage4.getCountryTemplate(owner, custom.id)).countries[0]?.searchTerms)
+      .toEqual(expect.arrayContaining(['zg', 'PRC', 'X-CN']));
+
+    const committee = await stage4.createCommittee(owner, await testCommitteeInput(pool!, owner,
+      {name: 'Search council', visibility: 'PUBLIC', countryTemplateKey: custom.key}),
+    'search-committee', context('search-committee'));
+    await stage4.createSeat(owner, committee.id,
+      {stableKey: 'china', rank: 'STANDARD', canVote: true, hasVeto: false, mustVote: false, sortOrder: 0},
+      'search-seat', context('search-seat'));
+    expect((await stage4.snapshot(committee.id, other)).seats[0]?.searchTerms).toContain('PRC');
+    const stored = (await pool!.query<{content_snapshot: {countryTemplate: {countries: Array<Record<string, unknown>>}}}>(
+      'SELECT content_snapshot FROM committees WHERE id=$1', [committee.id])).rows[0];
+    expect(stored?.content_snapshot.countryTemplate.countries[0]).not.toHaveProperty('searchTerms');
+    expect(stored?.content_snapshot.countryTemplate.countries[0]).not.toHaveProperty('searchCodes');
+
+    const renamed = await stage4.updateCountryTemplate(owner, custom.id, {baseRevision: custom.revision,
+      template: {...countryTemplate, countries: [{...countryTemplate.countries[0],
+        names: {en: 'China', 'zh-CN': '中华'}, searchCodes: ['PRC', 'X-CN']}]}}, context('rename-search'));
+    expect(renamed.revision).toBe(custom.revision + 1);
+    expect((await stage4.getCountryTemplate(owner, custom.id)).countries[0]?.searchTerms)
+      .toEqual(expect.arrayContaining(['zh', 'PRC']));
+    expect((await stage4.snapshot(committee.id, other)).seats[0]?.searchTerms)
+      .toEqual(expect.arrayContaining(['zg', 'PRC']));
+
+    const search = new SearchIndexService(pool!);
+    await search.rebuild(administrator, context('rebuild-search'));
+    expect((await stage4.snapshot(committee.id, other)).seats[0]?.searchTerms).toContain('PRC');
+    expect((await stage4.getCountryTemplate(owner, 'builtin:default')).countries.find(item => item.stableKey === 'cn')?.searchCodes)
+      .toEqual(['CHN']);
+  });
   it('isolates file settings and copies administrator rejection defaults only into new committees', async () => {
     const owner = await user('file-settings');
     const service = new DelegateFileService(pool!, {} as never, {} as never, {} as never, {} as never);
@@ -194,7 +236,7 @@ integration('PostgreSQL stage 4 templates and seat snapshots', () => {
     const restored = await stage4.createSeat(owner, committee.id, input, 'restore-add', context('restore-add'));
     expect(restored).toMatchObject({id: original.id, stableKey: 'france', displayName: 'France',
       rank: 'STANDARD', canVote: true, hasVeto: true, mustVote: true, sortOrder: 4, active: true, revision: 3});
-    expect((await stage4.snapshot(committee.id, owner)).seats).toEqual([restored]);
+    expect((await stage4.snapshot(committee.id, owner)).seats).toEqual([expect.objectContaining(restored)]);
     expect((await pool!.query('SELECT count(*)::int AS count FROM committee_seats WHERE committee_id=$1 AND stable_key=$2',
       [committee.id, 'france'])).rows).toEqual([{count: 1}]);
     expect(await stage4.createSeat(owner, committee.id, input, 'restore-add', context('restore-retry'))).toEqual(restored);
