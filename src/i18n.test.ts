@@ -33,12 +33,12 @@ describe('i18n', () => {
   it('uses the requested Mainland China MUN terminology', () => {
     setLanguage('zh-CN');
 
-    expect(t('Unmoderated caucus')).toBe('自由磋商');
-    expect(t('Open moderated caucus')).toBe('开启有主持核心磋商');
-    expect(t('Introduce draft resolution')).toBe('展示决议草案');
-    expect(t('Introduce working paper')).toBe('展示工作文件');
+    expect(t('Unmoderated Caucus')).toBe('自由磋商');
+    expect(t('Open Moderated Caucus')).toBe('开启有主持核心磋商');
+    expect(t('Introduce Draft Resolution')).toBe('展示决议草案');
+    expect(t('Introduce Working Paper')).toBe('展示工作文件');
     expect(t('Veto')).toBe('一票否决');
-    expect(t('Roll call')).toBe('点名');
+    expect(t('Roll Call')).toBe('点名');
     expect(t('Absent')).toBe('缺席');
     expect(t('Voting delegation')).toBe('投票代表团');
     expect(t('Now voting')).toBe('当前表决国家');

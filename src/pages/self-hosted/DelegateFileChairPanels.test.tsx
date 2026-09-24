@@ -120,14 +120,14 @@ describe('delegate file chair review', () => {
     await act(async () => root.render(<DelegateFilePanels tab="review" api={api}
       snapshot={{...snapshot, committee: {...snapshot.committee, committeeLanguage}}} />));
     const input = host.querySelector('input') as HTMLInputElement;
-    expect(input.value).toBe(committeeLanguage === 'en' ? 'Working paper 2.3' : '工作文件 2.3');
+    expect(input.value).toBe(committeeLanguage === 'en' ? 'Working Paper 2.3' : '工作文件 2.3');
     await act(async () => setLanguage('en'));
     expect(host.textContent).toContain('Submitted at');
     expect(host.querySelector('input')).toBe(input);
-    expect(input.value).toBe(committeeLanguage === 'en' ? 'Working paper 2.3' : '工作文件 2.3');
+    expect(input.value).toBe(committeeLanguage === 'en' ? 'Working Paper 2.3' : '工作文件 2.3');
     await act(async () => setLanguage('zh-CN'));
     expect(host.textContent).toContain('提交时间');
-    expect(input.value).toBe(committeeLanguage === 'en' ? 'Working paper 2.3' : '工作文件 2.3');
+    expect(input.value).toBe(committeeLanguage === 'en' ? 'Working Paper 2.3' : '工作文件 2.3');
   });
 
   it('suggests names and retains rejected files without a deletion prompt', async () => {
