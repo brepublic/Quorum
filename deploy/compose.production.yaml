@@ -1,0 +1,101 @@
+name: quorum
+x-quorum-release-commit: 6aff9d384ed50fc15a2422089d8a9865fa47e24a
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  caddy:
+    image: ghcr.io/brepublic/quorum-caddy@sha256:184fe67a51cd9d7546e5c947851831f48eaa00f71ef459366801dc8bccbf571a
+    restart: unless-stopped
+    environment:
+      QUORUM_SITE_ADDRESS: ${QUORUM_SITE_ADDRESS}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+    mem_limit: 128m
+    logging: *default-logging
+
+  app:
+    image: ghcr.io/brepublic/quorum-app@sha256:7e01e7512f2e8ea92b0386fe44a725663f143ca6ad5c6bd5fbd41b2f71a134e1
+    restart: unless-stopped
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: ${POSTGRES_DB}
+      HOST: 0.0.0.0
+      PORT: 3000
+      QUORUM_VERSION: ${QUORUM_VERSION:-v1.0.0}
+      QUORUM_MIGRATIONS_DIR: /app/server/migrations
+      QUORUM_STORAGE_PATH: /var/lib/quorum/files
+      QUORUM_ALLOWED_ORIGINS: ${QUORUM_ALLOWED_ORIGINS}
+      QUORUM_MAX_FILE_BYTES: ${QUORUM_MAX_FILE_BYTES:-20971520}
+      QUORUM_MAX_UPLOAD_REQUEST_BYTES: ${QUORUM_MAX_UPLOAD_REQUEST_BYTES:-22020096}
+      QUORUM_UPLOAD_TTL_SECONDS: ${QUORUM_UPLOAD_TTL_SECONDS:-86400}
+      QUORUM_STORAGE_WARNING_PERCENT: ${QUORUM_STORAGE_WARNING_PERCENT:-80}
+      QUORUM_STORAGE_CRITICAL_PERCENT: ${QUORUM_STORAGE_CRITICAL_PERCENT:-90}
+      QUORUM_PUBLISHED_CACHE_HARD_MAX_BYTES: ${QUORUM_PUBLISHED_CACHE_HARD_MAX_BYTES:-16106127360}
+      QUORUM_PENDING_REVIEW_HARD_MAX_BYTES: ${QUORUM_PENDING_REVIEW_HARD_MAX_BYTES:-5368709120}
+      QUORUM_PENDING_REVIEW_COMMITTEE_HARD_MAX_BYTES: ${QUORUM_PENDING_REVIEW_COMMITTEE_HARD_MAX_BYTES:-1073741824}
+      QUORUM_STORAGE_HARD_MIN_FREE_BYTES: ${QUORUM_STORAGE_HARD_MIN_FREE_BYTES:-10737418240}
+      QUORUM_STORAGE_HARD_MIN_FREE_PERCENT: ${QUORUM_STORAGE_HARD_MIN_FREE_PERCENT:-20}
+      QUORUM_STORAGE_MASTER_KEY: ${QUORUM_STORAGE_MASTER_KEY:-}
+      QUORUM_STORAGE_MASTER_KEY_VERSION: ${QUORUM_STORAGE_MASTER_KEY_VERSION:-1}
+      QUORUM_RETENTION_SESSION_DAYS: ${QUORUM_RETENTION_SESSION_DAYS:-30}
+      QUORUM_RETENTION_IDEMPOTENCY_DAYS: ${QUORUM_RETENTION_IDEMPOTENCY_DAYS:-30}
+      QUORUM_RETENTION_SECRET_DAYS: ${QUORUM_RETENTION_SECRET_DAYS:-7}
+      QUORUM_RETENTION_REGISTRATION_DAYS: ${QUORUM_RETENTION_REGISTRATION_DAYS:-90}
+    volumes:
+      - quorum_files:/var/lib/quorum/files
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 15s
+    mem_limit: 512m
+    logging: *default-logging
+
+  postgres:
+    image: postgres@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    command:
+      - postgres
+      - -c
+      - shared_buffers=128MB
+      - -c
+      - max_connections=50
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    mem_limit: 768m
+    logging: *default-logging
+
+volumes:
+  caddy_data:
+  caddy_config:
+  quorum_files:
+  postgres_data:

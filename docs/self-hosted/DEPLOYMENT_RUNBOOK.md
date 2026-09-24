@@ -17,7 +17,7 @@
 - 一个已完成备案或符合实际接入地区要求的域名，例如 `quorum.example.com`。
 - 域名 DNS 管理权限、CVM 公网 IPv4 地址和腾讯云安全组管理权限。
 - 能保存恢复材料的独立位置。不要只把备份放在同一台 CVM 或同一块云硬盘。
-- 仓库的只读拉取凭据，以及准备部署的明确 tag 或 commit。不要直接部署一个不断移动的分支头。
+- 一份完整的生产 Compose 文件、环境文件模板，以及应用、Caddy 和 PostgreSQL 的固定镜像哈希。公开 GHCR 包可匿名拉取；生产服务器不需要仓库源码或 GitHub 凭据。
 
 记录部署参数，但不要把密码、master key、bootstrap secret、Session 或 CSRF token 写入工单、截图和普通日志。
 
@@ -25,7 +25,10 @@
 域名：
 公网 IPv4：
 Ubuntu 版本：
-部署 commit：
+生产 Compose 文件 SHA-256：
+应用镜像 SHA-256：
+Caddy 镜像 SHA-256：
+PostgreSQL 镜像 SHA-256：
 部署时间：
 验收人：
 异地备份位置：
@@ -33,7 +36,7 @@ Ubuntu 版本：
 
 ### 阶段 0 验收
 
-- [ ] 已确定唯一生产域名和固定部署 commit/tag。
+- [ ] 已确定唯一生产域名、生产 Compose 文件和三张镜像的内容哈希。
 - [ ] DNS、安全组和主机均由可联系的管理员控制。
 - [ ] 已准备与 CVM 故障域隔离的备份位置。
 - [ ] 已确认 2 vCPU、2 GiB 是最低起点，不是容量承诺。
@@ -85,7 +88,7 @@ uname -m
 ```sh
 sudo apt update
 sudo DEBIAN_FRONTEND=noninteractive apt full-upgrade -y
-sudo apt install -y ca-certificates curl git openssl jq dnsutils unattended-upgrades
+sudo apt install -y ca-certificates curl openssl jq dnsutils unattended-upgrades
 sudo systemctl enable --now unattended-upgrades
 sudo timedatectl set-timezone Asia/Hong_Kong
 sudo reboot
@@ -164,34 +167,40 @@ Docker 发布容器端口时可能绕过 UFW 规则，因此公网边界以腾�
 - [ ] `sudo docker compose version` 可用；不是旧的独立 `docker-compose`。
 - [ ] 腾讯云安全组仍未开放 3000、5432 或 Docker daemon 端口。
 
-## 4. 获取并固定 Quorum 版本
+## 4. 传送并核对生产配置
 
-选择仅运维账号可写的安装目录：
+在服务器创建仅运维账号可写的配置目录：
 
 ```sh
 sudo install -d -m 0750 -o "$USER" -g "$USER" /opt/quorum
-git clone <仓库URL> /opt/quorum/app
-cd /opt/quorum/app
-git fetch --tags --prune
-git checkout --detach <发布tag或完整commit>
-git status --short
-git rev-parse HEAD
+install -d -m 0750 /opt/quorum/deploy
 ```
 
-`git status --short` 必须为空。把 `git rev-parse HEAD` 的完整值写入变更记录。若仓库为私有仓库，使用只读 deploy key；部署完成后不要在主机保留可推送的个人凭据。
+在开发机的仓库目录执行，把配置文件和无秘密的模板传给服务器；不要传 `deploy/.env`：
+
+```sh
+sha256sum deploy/compose.production.yaml deploy/.env.production.example
+scp deploy/compose.production.yaml deploy/.env.production.example \
+  <运维账号>@<公网IPv4>:/opt/quorum/deploy/
+```
+
+回到服务器，核对两个文件的 `sha256sum` 与开发机一致，并记录完整校验值。服务器只需要这两个文件，不需要源码、Dockerfile 或 Caddyfile；Caddy 配置和网页已包含在发布镜像中。传送前，生产配置更新提交须通过 CI 的发布版本对齐检查。
 
 检查 Compose 将要使用的镜像、端口和卷：
 
 ```sh
-sudo docker compose --env-file deploy/.env.example -f deploy/compose.yaml config --images
-grep -nE '(^| )ports:|80:80|443:443|5432|3000' deploy/compose.yaml
-grep -nE 'postgres_data|quorum_files|caddy_data|caddy_config' deploy/compose.yaml
+cd /opt/quorum
+sha256sum deploy/compose.production.yaml deploy/.env.production.example
+sudo docker compose -p quorum --env-file deploy/.env.production.example -f deploy/compose.production.yaml config --images
+grep -nE '(^| )ports:|80:80|443:443|5432|3000' deploy/compose.production.yaml
+grep -nE 'postgres_data|quorum_files|caddy_data|caddy_config' deploy/compose.production.yaml
 ```
 
 ### 阶段 4 验收
 
-- [ ] HEAD 等于审批过的 tag/commit，而不是未固定的分支头。
-- [ ] 工作树无本地修改。
+- [ ] 生产 Compose 文件 SHA-256 与开发机一致，且不含 `build` 指令。
+- [ ] `config --images` 显示三张固定哈希的镜像。
+- [ ] 生产 Compose 的发布提交编号与对应的发布标签一致，CI 发布版本对齐检查通过。
 - [ ] Compose 包含 Caddy、app、PostgreSQL 16 和四个命名卷。
 - [ ] PostgreSQL 与 app 没有主机端口映射。
 
@@ -200,9 +209,9 @@ grep -nE 'postgres_data|quorum_files|caddy_data|caddy_config' deploy/compose.yam
 复制模板并限制权限：
 
 ```sh
-cd /opt/quorum/app
+cd /opt/quorum
 umask 077
-cp deploy/.env.example deploy/.env
+cp deploy/.env.production.example deploy/.env
 chmod 600 deploy/.env
 openssl rand -base64 36 | tr -d '\n' > /tmp/quorum-postgres-password
 openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n' > /tmp/quorum-master-key
@@ -213,7 +222,7 @@ openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n' > /tmp/quorum-master-key
 ```dotenv
 QUORUM_SITE_ADDRESS=https://quorum.example.com
 QUORUM_ALLOWED_ORIGINS=https://quorum.example.com
-QUORUM_VERSION=<发布tag或短commit>
+QUORUM_VERSION=v1.0.0
 QUORUM_MAX_FILE_BYTES=20971520
 QUORUM_MAX_UPLOAD_REQUEST_BYTES=22020096
 QUORUM_UPLOAD_TTL_SECONDS=86400
@@ -237,8 +246,14 @@ POSTGRES_DB=quorum
 
 ```sh
 test "$(stat -c %a deploy/.env)" = 600
+test "$(sed -n 's/^QUORUM_VERSION=//p' deploy/.env)" = "$(sed -n 's/^QUORUM_VERSION=//p' deploy/.env.production.example)"
+test "$(sed -n 's/^QUORUM_SITE_ADDRESS=//p' deploy/.env)" = "$(sed -n 's/^QUORUM_ALLOWED_ORIGINS=//p' deploy/.env)"
+! grep -q 'quorum.example.com' deploy/.env
+! grep -Eq '^(POSTGRES_PASSWORD|QUORUM_STORAGE_MASTER_KEY)=replace-with-' deploy/.env
+grep -Eq '^POSTGRES_PASSWORD=.+$' deploy/.env
+grep -Eq '^QUORUM_STORAGE_MASTER_KEY=.+$' deploy/.env
 grep -E '^(QUORUM_SITE_ADDRESS|QUORUM_ALLOWED_ORIGINS|QUORUM_VERSION)=' deploy/.env
-sudo docker compose --env-file deploy/.env -f deploy/compose.yaml config --quiet
+sudo docker compose -p quorum --env-file deploy/.env -f deploy/compose.production.yaml config --quiet
 ```
 
 ### 阶段 5 验收
@@ -249,7 +264,7 @@ sudo docker compose --env-file deploy/.env -f deploy/compose.yaml config --quiet
 - [ ] master key 和数据库密码已有 CVM 之外的安全副本。
 - [ ] `docker compose ... config --quiet` 退出码为 0。
 
-## 6. 首次构建和启动
+## 6. 首次拉取和启动
 
 先确认资源、端口和 DNS：
 
@@ -263,11 +278,12 @@ dig +short A quorum.example.com
 80/443 此时不应被其他程序占用。启动：
 
 ```sh
-cd /opt/quorum/app
-sudo docker compose --env-file deploy/.env -f deploy/compose.yaml up -d --build
-sudo docker compose --env-file deploy/.env -f deploy/compose.yaml ps
-sudo docker compose --env-file deploy/.env -f deploy/compose.yaml logs --tail=200 app
-sudo docker compose --env-file deploy/.env -f deploy/compose.yaml logs --tail=200 caddy
+cd /opt/quorum
+sudo docker compose -p quorum --env-file deploy/.env -f deploy/compose.production.yaml pull
+sudo docker compose -p quorum --env-file deploy/.env -f deploy/compose.production.yaml up -d --no-build --wait
+sudo docker compose -p quorum --env-file deploy/.env -f deploy/compose.production.yaml ps
+sudo docker compose -p quorum --env-file deploy/.env -f deploy/compose.production.yaml logs --tail=200 app
+sudo docker compose -p quorum --env-file deploy/.env -f deploy/compose.production.yaml logs --tail=200 caddy
 ```
 
 应用首次连接空库时执行带校验和的 migration，并在 app 标准错误中显示一次 bootstrap secret。立刻把 secret 放入密码管理器；不要复制到聊天、工单或 shell history。若日志已经轮转且 secret 丢失，不要尝试从数据库恢复明文；在尚未初始化且无业务数据时按受控重建流程重新创建实例。
@@ -276,7 +292,7 @@ sudo docker compose --env-file deploy/.env -f deploy/compose.yaml logs --tail=20
 
 ### 阶段 6 验收
 
-- [ ] Compose 构建成功，postgres、app 和 caddy 均持续运行；有 healthcheck 的服务为 healthy。
+- [ ] 三张固定镜像拉取成功，postgres、app 和 caddy 均持续运行；有 healthcheck 的服务为 healthy。
 - [ ] app 日志显示 migration 完成，没有 checksum、schema compatibility 或存储卷错误。
 - [ ] 首次 bootstrap secret 已安全保存，未进入工单或普通日志附件。
 - [ ] Caddy 日志显示已取得目标域名证书，没有持续 ACME 重试。
@@ -310,7 +326,7 @@ nc -vz -w 3 <公网IPv4> 5432
 
 ```sh
 sudo ss -ltnup | grep -E ':(80|443|3000|5432)\b'
-sudo docker compose --env-file deploy/.env -f deploy/compose.yaml ps
+sudo docker compose -p quorum --env-file deploy/.env -f deploy/compose.production.yaml ps
 ```
 
 当前 Caddy 配置会把 `/metrics` 通过 HTTPS 暴露，内容只应包含聚合存储指标。若组织政策不允许公网指标端点，应在上线前修改并评审 Caddy 访问边界，不能仅依赖 UFW。
@@ -385,8 +401,8 @@ curl -fsS https://quorum.example.com/api/v1/bootstrap/status | jq
 7. 重启容器而不是删除卷，再次确认数据库记录和文件仍存在：
 
 ```sh
-sudo docker compose --env-file deploy/.env -f deploy/compose.yaml restart
-sudo docker compose --env-file deploy/.env -f deploy/compose.yaml ps
+sudo docker compose -p quorum --env-file deploy/.env -f deploy/compose.production.yaml restart
+sudo docker compose -p quorum --env-file deploy/.env -f deploy/compose.production.yaml ps
 curl -fsS https://quorum.example.com/health/ready | jq
 ```
 
@@ -412,7 +428,7 @@ sudo docker stats --no-stream
 free -h
 df -h /var/lib/docker
 sudo docker system df
-sudo docker compose --env-file deploy/.env -f deploy/compose.yaml ps
+sudo docker compose -p quorum --env-file deploy/.env -f deploy/compose.production.yaml ps
 sudo journalctl -u docker --since '30 minutes ago' --no-pager
 ```
 
@@ -435,7 +451,7 @@ sudo reboot
 
 ## 12. 备份和恢复上线关卡
 
-仓库当前备份入口为：
+仓库当前备份入口如下，只能在另行准备、具备源码和工具链的运维环境中执行；最小生产服务器没有这些文件和工具：
 
 ```sh
 source scripts/wsl-env.sh
@@ -469,7 +485,7 @@ pnpm self-host:backup -- /absolute/new/backup-directory
 
 上线前汇总以下证据：
 
-- 部署 commit、Compose 构建结果和 `docker compose ps`。
+- 生产 Compose 文件校验值、三张镜像哈希、Compose 拉取结果和 `docker compose ps`。
 - TLS 证书、live/ready/version、外部端口探测结果。
 - 唯一管理员、Cookie/Origin/CSRF 和角色矩阵结果。
 - 核心业务、SSE、文件 SHA-256、重启持久性结果。
@@ -479,19 +495,19 @@ pnpm self-host:backup -- /absolute/new/backup-directory
 日常命令：
 
 ```sh
-cd /opt/quorum/app
-sudo docker compose --env-file deploy/.env -f deploy/compose.yaml ps
-sudo docker compose --env-file deploy/.env -f deploy/compose.yaml logs --tail=200 app
+cd /opt/quorum
+sudo docker compose -p quorum --env-file deploy/.env -f deploy/compose.production.yaml ps
+sudo docker compose -p quorum --env-file deploy/.env -f deploy/compose.production.yaml logs --tail=200 app
 curl -fsS https://quorum.example.com/health/ready | jq
 ```
 
-更新时先备份并在预生产环境验证目标 commit，然后显式 checkout、重新构建并观察 migration。不要使用 `git pull` 后不记录 commit 的方式更新生产。不要执行 `docker compose down -v`、`docker volume prune` 或 `docker system prune --volumes`。
+更新时先完成相应的发布验证，再更新并通过生产 Compose 对齐检查；传送并核对新版生产 Compose 文件、镜像哈希、发布提交编号和 `QUORUM_VERSION`，拉取镜像并观察 migration。不要执行 `docker compose down -v`、`docker volume prune` 或 `docker system prune --volumes`。
 
 ### 最终验收
 
 - [ ] 阶段 0–12 全部通过，或每项延期已有书面风险接受、负责人和截止日期。
 - [ ] 至少两人能够按本文恢复 SSH、域名、环境秘密和异地备份。
-- [ ] 发布记录能够把线上版本追溯到唯一 Git commit。
+- [ ] 发布记录能够把线上镜像哈希追溯到对应的 GitHub Release 和源码提交。
 - [ ] 已完成 `MANUAL_ACCEPTANCE.md` 中与实际启用功能对应的真实环境项目。
 - [ ] 未启用的 S3、Chair Agent 等 provider 明确标记为未启用，而不是误记为已验收。
 
