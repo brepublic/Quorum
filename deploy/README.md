@@ -8,19 +8,32 @@ Compose 同时启动 Caddy、Quorum TypeScript 后端和 PostgreSQL。PostgreSQL
 
 把已通过 `Integration Tests` 的提交合入 `master` 后，先把发布工作流所在提交推送到 GitHub，再为该提交创建形如 `v1.0.0` 的 GitHub Release。`Publish release images` 会重新运行前端、服务端、PostgreSQL 和镜像启动检查，再将检查过的 `linux/amd64` 应用与 Caddy 镜像发布到 `ghcr.io/<仓库所有者>/quorum-app` 和 `ghcr.io/<仓库所有者>/quorum-caddy`。工作流只在发布步骤使用 GitHub 自动提供的短期令牌；不需要把个人令牌写进仓库、工作流或聊天。
 
-工作流成功后，从该次 GitHub Actions 运行摘要复制两条带 `@sha256:` 的完整镜像地址。当前 `v1.0.0` 的应用与 Caddy 镜像均为公开包，生产服务器可匿名拉取。`deploy/compose.production.yaml` 固定这两张镜像和 PostgreSQL 16 镜像的内容哈希；与 `deploy/compose.yaml` 一起使用时会清除应用和 Caddy 的本地构建设置，继续使用原有端口、健康检查和命名卷。Compose 项目标识为小写 `quorum`。
+工作流成功后，从该次 GitHub Actions 运行摘要复制两条带 `@sha256:` 的完整镜像地址。当前 `v1.0.0` 的应用与 Caddy 镜像均为公开包，生产服务器可匿名拉取。`deploy/compose.production.yaml` 是独立的生产配置，固定这两张镜像和 PostgreSQL 16 镜像的内容哈希，并包含全部端口、健康检查和命名卷设置；服务器不需要仓库源码或 `deploy/compose.yaml`。Compose 项目标识为小写 `quorum`。
 
-把这两份 Compose 文件和 `deploy/.env.example` 从仓库复制到服务器；真正的 `deploy/.env` 只在服务器创建，不能提交到 Git 或放进镜像。若服务器从 Git 拉取，应固定包含生产覆盖文件的配置提交；它可以晚于 `v1.0.0` 镜像的源码提交。首次启动前检查展开结果，不要打印含密码的完整配置：
+在开发机把 `deploy/compose.production.yaml` 和 `deploy/.env.example` 复制到服务器的 `/opt/quorum/deploy/`。真正的 `deploy/.env` 只在服务器创建，不能提交到 Git、放进镜像或从开发机传输。保留所用 Compose 文件的 SHA-256 校验值和三张镜像地址，供日后核对。首次启动前检查展开结果，不要打印含密码的完整配置：
 
 ```sh
-docker compose -p quorum --env-file deploy/.env.example \
-  -f deploy/compose.yaml -f deploy/compose.production.yaml config --images
+# 在开发机执行；先按部署手册在服务器创建 /opt/quorum/deploy/
+sha256sum deploy/compose.production.yaml
+scp deploy/compose.production.yaml deploy/.env.example \
+  <运维账号>@<服务器IP>:/opt/quorum/deploy/
+```
+
+在服务器执行：
+
+```sh
+cd /opt/quorum
+umask 077
+cp deploy/.env.example deploy/.env
+# 在服务器编辑 deploy/.env 中的域名、数据库密码和 storage master key
 docker compose -p quorum --env-file deploy/.env \
-  -f deploy/compose.yaml -f deploy/compose.production.yaml config --quiet
+  -f deploy/compose.production.yaml config --images
 docker compose -p quorum --env-file deploy/.env \
-  -f deploy/compose.yaml -f deploy/compose.production.yaml pull
+  -f deploy/compose.production.yaml config --quiet
 docker compose -p quorum --env-file deploy/.env \
-  -f deploy/compose.yaml -f deploy/compose.production.yaml up -d --no-build --wait
+  -f deploy/compose.production.yaml pull
+docker compose -p quorum --env-file deploy/.env \
+  -f deploy/compose.production.yaml up -d --no-build --wait
 ```
 
 ## 本地源码构建
