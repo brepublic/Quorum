@@ -1808,7 +1808,8 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   align-self: center;
 }
 
-.motion-card .motion-metadata-table.ui.table {
+.motion-card .motion-metadata-table.ui.table,
+.point-card .motion-metadata-table.ui.table {
   color: inherit;
   margin-top: 1em;
 }

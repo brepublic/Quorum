@@ -953,17 +953,20 @@ function PointsPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspa
       {group.meetingSessionId !== snapshot.meetingSession?.id && <Divider horizontal className="history-session-divider">{sessionNames.get(group.meetingSessionId) ?? t('Meeting session')}</Divider>}
       <Card.Group itemsPerRow={1} className="point-list">{group.points.map(item => {
       const point = 'content' in item ? item as CommitteePoint : undefined;
+      const proposer = snapshot.seats.find(seat => seat.id === item.raisedBySeatId);
       return <Card className="point-card" key={item.id}><Card.Content>
         <div className="motion-heading"><Card.Header>{committeeContentName(item.typeNames, snapshot.committee.committeeLanguage)}</Card.Header>
           {item.status !== 'PENDING' && <time className={`motion-decision motion-decision-${['OVERRULED', 'REJECTED'].includes(item.status) ? 'failed' : 'passed'}`}
             dateTime={item.resolvedAt ?? undefined}>{point ? label(point) : t(item.status)}{item.resolvedAt
               ? ` · ${new Date(item.resolvedAt).toLocaleString(getLanguage())}` : ''}</time>}</div>
-        <Table compact celled unstackable className="motion-metadata-table">
+        <Card.Meta><Table compact celled unstackable className="motion-metadata-table">
           <Table.Body><Table.Row><Table.Cell className="motion-metadata-key">{t('Point proposer')}</Table.Cell>
-            <Table.Cell>{item.raisedBySeatDisplayName}</Table.Cell></Table.Row>
+            <Table.Cell><span className="motion-metadata-value">{proposer
+              ? <span className="motion-seat-option"><CountryFlagDisplay flag={proposer.flag} />
+                <span>{item.raisedBySeatDisplayName}</span></span> : item.raisedBySeatDisplayName}</span></Table.Cell></Table.Row>
           {point?.content && <Table.Row><Table.Cell className="motion-metadata-key">{t('Reason')}</Table.Cell>
             <Table.Cell>{point.content}</Table.Cell></Table.Row>}</Table.Body>
-        </Table>
+        </Table></Card.Meta>
       </Card.Content>
       {canChair && item.status === 'PENDING' && point && <Card.Content extra>
         {chairOperated ? actions(point) : <PointResolutionForm point={point} run={run} api={api} />}
