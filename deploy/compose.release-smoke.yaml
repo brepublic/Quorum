@@ -1,0 +1,59 @@
+name: quorum-release-smoke
+
+services:
+  caddy:
+    image: ${QUORUM_SMOKE_CADDY_IMAGE:?Set QUORUM_SMOKE_CADDY_IMAGE}
+    environment:
+      QUORUM_SITE_ADDRESS: localhost
+    ports:
+      - "127.0.0.1:${QUORUM_SMOKE_HTTPS_PORT:-18443}:443"
+    volumes:
+      - caddy_data:/data
+    depends_on:
+      app:
+        condition: service_healthy
+
+  app:
+    image: ${QUORUM_SMOKE_APP_IMAGE:?Set QUORUM_SMOKE_APP_IMAGE}
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: quorum_smoke
+      DB_PASSWORD: ${QUORUM_SMOKE_DB_PASSWORD:?Set QUORUM_SMOKE_DB_PASSWORD}
+      DB_NAME: quorum_smoke
+      HOST: 0.0.0.0
+      PORT: 3000
+      QUORUM_VERSION: release-smoke
+      QUORUM_MIGRATIONS_DIR: /app/server/migrations
+      QUORUM_STORAGE_PATH: /var/lib/quorum/files
+      QUORUM_ALLOWED_ORIGINS: https://localhost:${QUORUM_SMOKE_HTTPS_PORT:-18443}
+    volumes:
+      - quorum_files:/var/lib/quorum/files
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 15s
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: quorum_smoke
+      POSTGRES_PASSWORD: ${QUORUM_SMOKE_DB_PASSWORD:?Set QUORUM_SMOKE_DB_PASSWORD}
+      POSTGRES_DB: quorum_smoke
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+volumes:
+  caddy_data:
+  quorum_files:
+  postgres_data:
