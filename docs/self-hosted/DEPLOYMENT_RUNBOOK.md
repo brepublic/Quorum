@@ -179,19 +179,19 @@ install -d -m 0750 /opt/quorum/deploy
 在开发机的仓库目录执行，把配置文件和无秘密的模板传给服务器；不要传 `deploy/.env`：
 
 ```sh
-sha256sum deploy/compose.production.yaml
-scp deploy/compose.production.yaml deploy/.env.example \
+sha256sum deploy/compose.production.yaml deploy/.env.production.example
+scp deploy/compose.production.yaml deploy/.env.production.example \
   <运维账号>@<公网IPv4>:/opt/quorum/deploy/
 ```
 
-回到服务器，核对 `sha256sum` 与开发机一致，并记录完整校验值。服务器只需要这两个文件，不需要源码、Dockerfile 或 Caddyfile；Caddy 配置和网页已包含在发布镜像中。
+回到服务器，核对两个文件的 `sha256sum` 与开发机一致，并记录完整校验值。服务器只需要这两个文件，不需要源码、Dockerfile 或 Caddyfile；Caddy 配置和网页已包含在发布镜像中。传送前，生产配置更新提交须通过 CI 的发布版本对齐检查。
 
 检查 Compose 将要使用的镜像、端口和卷：
 
 ```sh
 cd /opt/quorum
-sha256sum deploy/compose.production.yaml
-sudo docker compose -p quorum --env-file deploy/.env.example -f deploy/compose.production.yaml config --images
+sha256sum deploy/compose.production.yaml deploy/.env.production.example
+sudo docker compose -p quorum --env-file deploy/.env.production.example -f deploy/compose.production.yaml config --images
 grep -nE '(^| )ports:|80:80|443:443|5432|3000' deploy/compose.production.yaml
 grep -nE 'postgres_data|quorum_files|caddy_data|caddy_config' deploy/compose.production.yaml
 ```
@@ -200,6 +200,7 @@ grep -nE 'postgres_data|quorum_files|caddy_data|caddy_config' deploy/compose.pro
 
 - [ ] 生产 Compose 文件 SHA-256 与开发机一致，且不含 `build` 指令。
 - [ ] `config --images` 显示三张固定哈希的镜像。
+- [ ] 生产 Compose 的发布提交编号与对应的发布标签一致，CI 发布版本对齐检查通过。
 - [ ] Compose 包含 Caddy、app、PostgreSQL 16 和四个命名卷。
 - [ ] PostgreSQL 与 app 没有主机端口映射。
 
@@ -210,7 +211,7 @@ grep -nE 'postgres_data|quorum_files|caddy_data|caddy_config' deploy/compose.pro
 ```sh
 cd /opt/quorum
 umask 077
-cp deploy/.env.example deploy/.env
+cp deploy/.env.production.example deploy/.env
 chmod 600 deploy/.env
 openssl rand -base64 36 | tr -d '\n' > /tmp/quorum-postgres-password
 openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n' > /tmp/quorum-master-key
@@ -245,6 +246,12 @@ POSTGRES_DB=quorum
 
 ```sh
 test "$(stat -c %a deploy/.env)" = 600
+test "$(sed -n 's/^QUORUM_VERSION=//p' deploy/.env)" = "$(sed -n 's/^QUORUM_VERSION=//p' deploy/.env.production.example)"
+test "$(sed -n 's/^QUORUM_SITE_ADDRESS=//p' deploy/.env)" = "$(sed -n 's/^QUORUM_ALLOWED_ORIGINS=//p' deploy/.env)"
+! grep -q 'quorum.example.com' deploy/.env
+! grep -Eq '^(POSTGRES_PASSWORD|QUORUM_STORAGE_MASTER_KEY)=replace-with-' deploy/.env
+grep -Eq '^POSTGRES_PASSWORD=.+$' deploy/.env
+grep -Eq '^QUORUM_STORAGE_MASTER_KEY=.+$' deploy/.env
 grep -E '^(QUORUM_SITE_ADDRESS|QUORUM_ALLOWED_ORIGINS|QUORUM_VERSION)=' deploy/.env
 sudo docker compose -p quorum --env-file deploy/.env -f deploy/compose.production.yaml config --quiet
 ```
@@ -494,7 +501,7 @@ sudo docker compose -p quorum --env-file deploy/.env -f deploy/compose.productio
 curl -fsS https://quorum.example.com/health/ready | jq
 ```
 
-更新时先完成相应的发布验证，再传送并核对新版生产 Compose 文件、镜像哈希和 `QUORUM_VERSION`，拉取镜像并观察 migration。不要执行 `docker compose down -v`、`docker volume prune` 或 `docker system prune --volumes`。
+更新时先完成相应的发布验证，再更新并通过生产 Compose 对齐检查；传送并核对新版生产 Compose 文件、镜像哈希、发布提交编号和 `QUORUM_VERSION`，拉取镜像并观察 migration。不要执行 `docker compose down -v`、`docker volume prune` 或 `docker system prune --volumes`。
 
 ### 最终验收
 

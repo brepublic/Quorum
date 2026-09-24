@@ -43,6 +43,9 @@ jobs:
           test "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")" = "$GITHUB_SHA"
           git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/master
 
+      - name: Verify existing production Compose against its release
+        run: bash scripts/verify-production-compose.sh --check-registry
+
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
 

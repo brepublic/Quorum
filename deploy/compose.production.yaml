@@ -1,4 +1,5 @@
 name: quorum
+x-quorum-release-commit: 6aff9d384ed50fc15a2422089d8a9865fa47e24a
 
 x-logging: &default-logging
   driver: json-file

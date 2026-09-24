@@ -10,12 +10,14 @@ Compose 同时启动 Caddy、Quorum TypeScript 后端和 PostgreSQL。PostgreSQL
 
 工作流成功后，从该次 GitHub Actions 运行摘要复制两条带 `@sha256:` 的完整镜像地址。当前 `v1.0.0` 的应用与 Caddy 镜像均为公开包，生产服务器可匿名拉取。`deploy/compose.production.yaml` 是独立的生产配置，固定这两张镜像和 PostgreSQL 16 镜像的内容哈希，并包含全部端口、健康检查和命名卷设置；服务器不需要仓库源码或 `deploy/compose.yaml`。Compose 项目标识为小写 `quorum`。
 
-在开发机把 `deploy/compose.production.yaml` 和 `deploy/.env.example` 复制到服务器的 `/opt/quorum/deploy/`。真正的 `deploy/.env` 只在服务器创建，不能提交到 Git、放进镜像或从开发机传输。保留所用 Compose 文件的 SHA-256 校验值和三张镜像地址，供日后核对。首次启动前检查展开结果，不要打印含密码的完整配置：
+发布镜像后，再更新生产 Compose 中的镜像哈希、版本、发布提交编号和 `deploy/.env.production.example`。`Integration Tests` 会核对发布标签仍指向该提交，把生产 Compose 的运行设置与该提交中的 `deploy/compose.yaml` 对比，并确认固定镜像可拉取、适用于 `linux/amd64`；当前开发版 Compose 后续变化不会要求立即改动生产文件。更新生产配置的提交须通过这项检查后再传送到服务器。
+
+在开发机把 `deploy/compose.production.yaml` 和 `deploy/.env.production.example` 复制到服务器的 `/opt/quorum/deploy/`。真正的 `deploy/.env` 只在服务器创建，不能提交到 Git、放进镜像或从开发机传输。保留所用配置文件的 SHA-256 校验值和三张镜像地址，供日后核对。首次启动前检查展开结果，不要打印含密码的完整配置：
 
 ```sh
 # 在开发机执行；先按部署手册在服务器创建 /opt/quorum/deploy/
-sha256sum deploy/compose.production.yaml
-scp deploy/compose.production.yaml deploy/.env.example \
+sha256sum deploy/compose.production.yaml deploy/.env.production.example
+scp deploy/compose.production.yaml deploy/.env.production.example \
   <运维账号>@<服务器IP>:/opt/quorum/deploy/
 ```
 
@@ -24,7 +26,7 @@ scp deploy/compose.production.yaml deploy/.env.example \
 ```sh
 cd /opt/quorum
 umask 077
-cp deploy/.env.example deploy/.env
+cp deploy/.env.production.example deploy/.env
 # 在服务器编辑 deploy/.env 中的域名、数据库密码和 storage master key
 docker compose -p quorum --env-file deploy/.env \
   -f deploy/compose.production.yaml config --images

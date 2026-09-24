@@ -113,7 +113,7 @@ jobs:
         run: pnpm test:self-host:integration
 
   release_images:
-    name: Build and smoke-test release images
+    name: Verify production Compose and release images
     needs: [frontend, server, postgres]
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -121,6 +121,11 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify production Compose against its release
+        run: bash scripts/verify-production-compose.sh --check-registry
 
       - name: Build and smoke-test app and Caddy images
         run: bash scripts/test-release-images.sh
