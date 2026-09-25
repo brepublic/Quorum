@@ -170,7 +170,18 @@ integration('PostgreSQL stage 4 templates and seat snapshots', () => {
     const clonedCountries = await stage4.cloneCountryTemplate(owner, 'builtin:default', {}, 'clone-default-countries',
       context('clone-default-countries'));
     expect(clonedCountries).toEqual(expect.objectContaining({builtin: false, revision: 1}));
-    expect(clonedCountries.countries).toHaveLength(250);
+    expect(clonedCountries.countries).toHaveLength(198);
+    const countryByCode = new Map(clonedCountries.countries.map(country => [country.stableKey, country]));
+    expect(countryByCode.get('xk')?.names).toEqual({en: 'Kosovo', 'zh-CN': '科索沃'});
+    expect(['as', 'ai', 'aq', 'aw', 'bm', 'bq', 'bv', 'io', 'ky', 'cx', 'cc', 'cw', 'fk', 'fo', 'gf', 'pf',
+      'tf', 'gi', 'gl', 'gp', 'gu', 'gg', 'hm', 'hk', 'im', 'je', 'mo', 'mq', 'yt', 'ms', 'nc', 'nf', 'mp',
+      'pn', 'pr', 're', 'bl', 'sh', 'mf', 'pm', 'sx', 'gs', 'sj', 'tk', 'tc', 'um', 'vg', 'vi', 'wf', 'eh',
+      'tw', 'eu', 'un'].filter(code => countryByCode.has(code))).toEqual([]);
+    expect(countryByCode.get('bs')?.names).toEqual({en: 'Bahamas (The)', 'zh-CN': '巴哈马'});
+    expect(countryByCode.get('cn')?.names).toEqual({en: 'China (the People’s Republic of)', 'zh-CN': '中国'});
+    expect(countryByCode.get('gb')?.names).toEqual({en: 'United Kingdom of Great Britain and Northern Ireland',
+      'zh-CN': '大不列颠及北爱尔兰联合王国'});
+    expect(countryByCode.get('va')?.names).toEqual({en: 'Holy See', 'zh-CN': '罗马教廷'});
 
     const emptyCountries = await stage4.createCountryTemplate(owner, {names: {'zh-CN': '空白国家模板'},
       defaultLanguage: 'zh-CN', countryLanguages: ['zh-CN'], countries: []}, 'empty-countries', context('empty-countries'));

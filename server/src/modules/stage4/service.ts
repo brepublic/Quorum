@@ -87,7 +87,42 @@ interface TemplateMemberRow extends QueryResultRow {
   flag_type: FlagSnapshot['type']; flag_value: string; revision: number;
 }
 
-const BUILTIN_COUNTRY_CODES = (`af al dz as ad ao ai aq ag ar am aw au at az bs bh bd bb by be bz bj bm bt bo bq ba bw bv br io bn bg bf bi cv kh cm ca ky cf td cl cn cx cc co km cg cd ck cr ci hr cu cw cy cz dk dj dm do ec eg sv gq er ee sz et fk fo fj fi fr gf pf tf ga gm ge de gh gi gr gl gd gp gu gt gg gn gw gy ht hm va hn hk hu is in id ir iq ie im il it jm jp je jo kz ke ki kp kr kw kg la lv lb ls lr ly li lt lu mo mg mw my mv ml mt mh mq mr mu yt mx fm md mc mn me ms ma mz mm na nr np nl nc nz ni ne ng nu nf mk mp no om pk pw ps pa pg py pe ph pn pl pt pr qa re ro ru rw bl sh kn lc mf pm vc ws sm st sa sn rs sc sl sg sx sk si sb so za gs ss es lk sd sr sj se ch sy tw tj tz th tl tg tk to tt tn tr tm tc tv ug ua ae gb us um uy uz vu ve vn vg vi wf eh ye zm zw eu un`).split(' ');
+const BUILTIN_COUNTRY_CODES = (`af al dz ad ao ag ar am au at az bs bh bd bb by be bz bj bt bo ba bw br bn bg bf bi cv kh cm ca cf td cl cn co km cg cd ck cr ci hr cu cy cz dk dj dm do ec eg sv gq er ee sz et fj fi fr ga gm ge de gh gr gd gt gn gw gy ht va hn hu is in id ir iq ie il it jm jp jo kz ke ki kp kr xk kw kg la lv lb ls lr ly li lt lu mg mw my mv ml mt mh mr mu mx fm md mc mn me ma mz mm na nr np nl nz ni ne ng nu mk no om pk pw ps pa pg py pe ph pl pt qa ro ru rw kn lc vc ws sm st sa sn rs sc sl sg sk si sb so za ss es lk sd sr se ch sy tj tz th tl tg to tt tn tr tm tv ug ua ae gb us uy uz vu ve vn ye zm zw`).split(' ');
+
+const BUILTIN_COUNTRY_NAME_OVERRIDES: Record<string, LocalizedNames> = {
+  xk: {en: 'Kosovo', 'zh-CN': '科索沃'},
+  ag: {en: 'Antigua and Barbuda', 'zh-CN': '安提瓜和巴布达'},
+  bs: {en: 'Bahamas (The)', 'zh-CN': '巴哈马'},
+  ba: {en: 'Bosnia and Herzegovina', 'zh-CN': '波斯尼亚和黑塞哥维那'},
+  bo: {en: 'Bolivia (Plurinational State of)', 'zh-CN': '多民族玻利维亚国'},
+  bn: {en: 'Brunei Darussalam', 'zh-CN': '文莱达鲁萨兰国'},
+  cv: {en: 'Cabo Verde', 'zh-CN': '佛得角'},
+  cn: {en: 'China (the People’s Republic of)', 'zh-CN': '中国'},
+  cg: {en: 'Congo', 'zh-CN': '刚果（布）'},
+  cd: {en: 'Democratic Republic of the Congo', 'zh-CN': '刚果民主共和国'},
+  gm: {en: 'Gambia (Republic of The)', 'zh-CN': '冈比亚'},
+  ir: {en: 'Islamic Republic of Iran', 'zh-CN': '伊朗伊斯兰共和国'},
+  kp: {en: 'Democratic People’s Republic of Korea', 'zh-CN': '朝鲜民主主义人民共和国'},
+  kr: {en: 'Republic of Korea', 'zh-CN': '大韩民国'},
+  la: {en: 'Lao People’s Democratic Republic', 'zh-CN': '老挝人民民主共和国'},
+  mm: {en: 'Myanmar', 'zh-CN': '缅甸'},
+  kn: {en: 'Saint Kitts and Nevis', 'zh-CN': '圣基茨和尼维斯'},
+  lc: {en: 'Saint Lucia', 'zh-CN': '圣卢西亚'},
+  st: {en: 'Sao Tome and Principe', 'zh-CN': '圣多美和普林西比'},
+  vc: {en: 'Saint Vincent and the Grenadines', 'zh-CN': '圣文森特和格林纳丁斯'},
+  fm: {en: 'Micronesia (Federated States of)', 'zh-CN': '密克罗尼西亚联邦'},
+  md: {en: 'Republic of Moldova', 'zh-CN': '摩尔多瓦共和国'},
+  nl: {en: 'Netherlands (Kingdom of the)', 'zh-CN': '荷兰王国'},
+  ru: {en: 'Russian Federation', 'zh-CN': '俄罗斯联邦'},
+  sy: {en: 'Syrian Arab Republic', 'zh-CN': '阿拉伯叙利亚共和国'},
+  tz: {en: 'United Republic of Tanzania', 'zh-CN': '坦桑尼亚联合共和国'},
+  gb: {en: 'United Kingdom of Great Britain and Northern Ireland', 'zh-CN': '大不列颠及北爱尔兰联合王国'},
+  us: {en: 'United States of America', 'zh-CN': '美国'},
+  ve: {en: 'Venezuela, Bolivarian Republic of', 'zh-CN': '委内瑞拉玻利瓦尔共和国'},
+  vn: {en: 'Viet Nam', 'zh-CN': '越南'},
+  va: {en: 'Holy See', 'zh-CN': '罗马教廷'},
+  ps: {en: 'State of Palestine', 'zh-CN': '巴勒斯坦国'}
+};
 
 function builtInCountryName(code: string, language: string): string {
   if (code === 'un') return language === 'zh-CN' ? '联合国' : 'United Nations';
@@ -103,7 +138,7 @@ export function builtinCountryTemplate(): CountryTemplate {
     countryLanguages: ['zh-CN', 'en'], revision: 1, createdAt: null, updatedAt: null,
     countries: BUILTIN_COUNTRY_CODES.map((code, sortOrder) => ({
       id: `builtin:${code}`, stableKey: code,
-      names: {'zh-CN': builtInCountryName(code, 'zh-CN'), en: builtInCountryName(code, 'en')},
+      names: BUILTIN_COUNTRY_NAME_OVERRIDES[code] ?? {'zh-CN': builtInCountryName(code, 'zh-CN'), en: builtInCountryName(code, 'en')},
       defaultLanguage: 'en', continent: null, sortOrder,
       flag: code === 'un' ? {type: 'EMOJI', value: '🇺🇳'} : {type: 'STANDARD', value: code}, revision: 1
     }))
