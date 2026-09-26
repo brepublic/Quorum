@@ -340,6 +340,7 @@ export const ERROR_TEXT = {
   ROLL_CALL_NOT_ACTIVE: {en: "Roll Call has not started or has ended. Refresh its status.", 'zh-CN': "当前点名尚未开始或已经结束，请刷新点名状态。"},
   ROLL_CALL_RESPONSE_REQUIRED: {en: "Record the current seat's roll-call response first.", 'zh-CN': "请先记录当前席位的点名回答。"},
   INVALID_ROLL_CALL_RESPONSE: {en: "Choose a response allowed in this Roll Call.", 'zh-CN': "请选择本次点名允许的回答。"},
+  INVALID_ROLL_CALL_RESPONSES: {en: "Submit exactly one response for every seat in this Roll Call.", 'zh-CN': "请提交本次点名全部席位的回答，每席只能有一个回答。"},
   SEAT_NOT_IN_ROLL_CALL: {en: "This seat is not part of this Roll Call. Select a listed seat.", 'zh-CN': "该席位不在本次点名名单中，请选择名单内席位。"},
   ROLL_CALL_NOTHING_TO_UNDO: {en: "This Roll Call has no response to undo.", 'zh-CN': "本次点名没有可撤销的回答。"},
   INVALID_ATTENDANCE_EVENT: {en: "Select a valid attendance change, such as arrival, temporary leave, or return.", 'zh-CN': "请选择出席、暂离或返回等有效出席变更。"},

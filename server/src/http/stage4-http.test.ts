@@ -213,6 +213,17 @@ describe('stage 4 template and seat HTTP boundary', () => {
     expect(stage4.startRollCall).not.toHaveBeenCalled();
   });
 
+  it('routes complete roll-call submissions with revision and a required idempotency key', async () => {
+    const submitRollCall = vi.fn(async () => ({id: 'roll-call', revision: 2, status: 'COMPLETED'}));
+    const stage4 = domain({submitRollCall}); const rollCallId = '50000000-0000-4000-8000-000000000001';
+    const body = {baseRevision: 1, responses: [{seatId: '60000000-0000-4000-8000-000000000001', response: 'PRESENT'}]};
+    const path = `/api/v1/roll-calls/${rollCallId}/submit`;
+    expect((await request(stage4, {path, method: 'POST', headers: {...protectedHeaders, 'idempotency-key': ''}, body})).status).toBe(400);
+    expect(submitRollCall).not.toHaveBeenCalled();
+    expect((await request(stage4, {path, method: 'POST', headers: {...protectedHeaders, 'idempotency-key': 'batch-submit'}, body})).status).toBe(200);
+    expect(submitRollCall).toHaveBeenCalledWith(authenticated, rollCallId, body, 'batch-submit', expect.objectContaining({requestId: expect.any(String)}));
+  });
+
   it('rejects client-supplied point actor identity at the domain boundary', async () => {
     const createPoint = vi.fn(async () => { throw new AppError({code: 'VALIDATION_FAILED', message: 'Unexpected field.'}); });
     const stage4 = domain({createPoint}); const committeeId = '20000000-0000-4000-8000-000000000001';

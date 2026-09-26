@@ -351,6 +351,68 @@ integration('PostgreSQL stage 4 templates and seat snapshots', () => {
     expect(auditRows?.rows[0]?.before_summary).toEqual(expect.objectContaining({characterCount: 11, sha256: expect.any(String)}));
   });
 
+  it('submits a complete roll call atomically, retries once, and preserves subsequent corrections', async () => {
+    const chair = await user('batch-chair'); const outsider = await user('batch-outsider');
+    const committee = await stage4.createCommittee(chair, await testCommitteeInput(pool!, chair,
+      {name: 'Batch Council', visibility: 'PRIVATE', countryTemplateKey: 'builtin:default'}), randomUUID(), context('batch-committee'));
+    await stage3.setChair(chair, committee.id, chair.user.email, true, 1, context('batch-chair'));
+    const first = await stage4.createSeat(chair, committee.id, {stableKey: 'first', sortOrder: 10}, randomUUID(), context('batch-first'));
+    const second = await stage4.createSeat(chair, committee.id, {stableKey: 'second', sortOrder: 20}, randomUUID(), context('batch-second'));
+    const session = await stage4.startMeetingSession(chair, committee.id, {}, context('batch-session'), randomUUID());
+    const roll = await stage4.startRollCall(chair, committee.id, {meetingSessionId: session.id}, randomUUID(), context('batch-start'));
+    const responses = [{seatId: first.id, response: 'PRESENT'}, {seatId: second.id, response: 'ABSENT'}];
+    const body = {baseRevision: roll.revision, responses}; const key = randomUUID();
+    for (const invalid of [[], [responses[0]], [responses[0], responses[0]],
+      [responses[0], {seatId: randomUUID(), response: 'ABSENT'}],
+      [responses[0], {...responses[1], response: 'INVALID'}]]) {
+      await expect(stage4.submitRollCall(chair, roll.id, {...body, responses: invalid}, randomUUID(), context('batch-invalid')))
+        .rejects.toMatchObject({code: 'VALIDATION_FAILED'});
+    }
+    await expect(stage4.submitRollCall(outsider, roll.id, body, randomUUID(), context('batch-forbidden'))).rejects.toBeTruthy();
+    // Force a failure after the first seat was written: no partial entries, attendance, or audit may survive.
+    await pool!.query(`CREATE FUNCTION reject_batch_absent() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN IF NEW.type='ABSENT' THEN RAISE EXCEPTION 'test rollback'; END IF; RETURN NEW; END $$;
+      CREATE TRIGGER reject_batch_absent BEFORE INSERT ON attendance_events FOR EACH ROW EXECUTE FUNCTION reject_batch_absent()`);
+    await expect(stage4.submitRollCall(chair, roll.id, body, key, context('batch-rollback'))).rejects.toBeTruthy();
+    expect((await pool!.query('SELECT id FROM roll_call_entries WHERE roll_call_id=$1', [roll.id])).rowCount).toBe(0);
+    expect((await pool!.query('SELECT seat_id FROM current_attendance WHERE meeting_session_id=$1', [session.id])).rowCount).toBe(0);
+    expect((await pool!.query("SELECT id FROM audit_log WHERE committee_id=$1 AND action='proceedings.roll_call_response_recorded'", [committee.id])).rowCount).toBe(0);
+    await pool!.query('DROP TRIGGER reject_batch_absent ON attendance_events; DROP FUNCTION reject_batch_absent()');
+    const completed = await stage4.submitRollCall(chair, roll.id, body, key, context('batch-submit'));
+    expect(completed).toMatchObject({status: 'COMPLETED', currentSeatId: null, revision: roll.revision + 1});
+    expect(completed.entries).toHaveLength(2);
+    expect((await pool!.query('SELECT seat_id,state FROM current_attendance WHERE meeting_session_id=$1', [session.id])).rows)
+      .toEqual(expect.arrayContaining([{seat_id: first.id, state: 'PRESENT'}, {seat_id: second.id, state: 'ABSENT'}]));
+    expect(await stage4.submitRollCall(chair, roll.id, body, key, context('batch-retry'))).toEqual(completed);
+    await expect(stage4.submitRollCall(chair, roll.id, {...body, responses: responses.map(entry => ({...entry, response: 'PRESENT'}))},
+      key, context('batch-key-conflict'))).rejects.toMatchObject({code: 'IDEMPOTENCY_CONFLICT'});
+    await expect(stage4.submitRollCall(chair, roll.id, body, randomUUID(), context('batch-stale')))
+      .rejects.toMatchObject({code: 'REVISION_CONFLICT'});
+    const corrected = await stage4.setRollCallResponse(chair, roll.id,
+      {baseRevision: completed.revision, seatId: second.id, response: 'PRESENT'}, context('batch-correct'));
+    expect(corrected).toMatchObject({status: 'COMPLETED', completedAt: completed.completedAt});
+    expect((await pool!.query('SELECT state FROM current_attendance WHERE meeting_session_id=$1 AND seat_id=$2',
+      [session.id, second.id])).rows).toEqual([{state: 'PRESENT'}]);
+    await stage4.submitRollCall(chair, roll.id, body, key, context('batch-retry-after-correction'));
+    expect((await pool!.query('SELECT id FROM attendance_events WHERE meeting_session_id=$1', [session.id])).rowCount).toBe(3);
+
+    const replacement = await stage4.resetRollCall(chair, roll.id, {baseRevision: corrected.revision}, context('batch-reset'));
+    const partial = await stage4.recordRollCallResponse(chair, replacement.id,
+      {baseRevision: replacement.revision, ...responses[0]}, context('batch-old-client'));
+    await expect(stage4.submitRollCall(chair, replacement.id, {baseRevision: replacement.revision, responses}, randomUUID(), context('batch-competing')))
+      .rejects.toMatchObject({code: 'REVISION_CONFLICT'});
+    const competing = await Promise.allSettled([1, 2].map(() => stage4.submitRollCall(chair, replacement.id,
+      {baseRevision: partial.revision, responses}, randomUUID(), context('batch-race'))));
+    expect(competing.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+    expect(competing.filter(result => result.status === 'rejected')).toHaveLength(1);
+    expect((await pool!.query('SELECT id FROM roll_call_entries WHERE roll_call_id=$1 AND undone_at IS NOT NULL', [replacement.id])).rowCount).toBe(1);
+    const latest = (await stage4.snapshot(committee.id, chair)).rollCall!;
+    const abandoned = await stage4.resetRollCall(chair, latest.id, {baseRevision: latest.revision}, context('batch-reset-again'));
+    await stage4.updateSeat(chair, committee.id, second.id, {baseRevision: second.revision, patch: {active: false}}, context('batch-seat-change'));
+    await expect(stage4.submitRollCall(chair, abandoned.id, {baseRevision: abandoned.revision, responses}, randomUUID(), context('batch-abandoned')))
+      .rejects.toMatchObject({code: 'REVISION_CONFLICT'});
+  }, 30_000);
+
   it('serializes roll calls, freezes seat and rule snapshots, and materializes append-only attendance', async () => {
     const owner = await user('rollowner'); const chair = await user('rollchair');
     const committee = await stage4.createCommittee(owner, await testCommitteeInput(pool!, owner, {name: 'Roll Call Council', visibility: 'PRIVATE',

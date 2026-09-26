@@ -3,6 +3,8 @@ import {useLanguage} from '../i18n';
 import * as React from 'react';
 import type {
   ContentLanguage,
+  RollCall,
+  SubmitRollCallRequest,
   RulePackageSummary,
   CommitteeNote,
   CommitteePoint,
@@ -15,7 +17,7 @@ import type {
   Stage4CommitteeSeat
 } from '@quorum/contracts';
 import {formatCommitteeContent, committeeContentName, templateLanguageAvailability, intersectContentLanguages, searchOptions} from '@quorum/contracts';
-import {Link, Redirect, Route, Switch, useHistory, useLocation, useParams} from 'react-router-dom';
+import {Link, Prompt, Redirect, Route, Switch, useHistory, useLocation, useParams} from 'react-router-dom';
 import {Button, Card, Checkbox, Confirm, Container, Divider, Form, Grid, Header, Icon, Label, List, Menu, Message, Modal, Pagination, Popup, Segment, Table} from 'semantic-ui-react';
 import Loading from '../components/Loading';
 import {CountryFlagDisplay} from '../components/CountryFlagDisplay';
@@ -718,10 +720,39 @@ function SettingsPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
   </Container>;
 }
 
+type RollCallDraft = {
+  baseline: RollCall;
+  responses: SubmitRollCallRequest['responses'];
+  history: SubmitRollCallRequest['responses'][];
+  submissionKey?: string;
+  failure?: unknown;
+  rejected?: boolean;
+};
+
 function RollCallPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspaceSnapshot; run(operation: () => Promise<unknown>): Promise<void>;
   api: SelfHostedApi; canChair: boolean}) {
   useLanguage();
-  const chair = canChair; const session = snapshot.meetingSession; const rollCall = snapshot.rollCall;
+  const chair = canChair; const session = snapshot.meetingSession;
+  const [draft, setDraft] = React.useState<RollCallDraft>();
+  const draftRef = React.useRef<RollCallDraft>();
+  const [saved, setSaved] = React.useState<RollCall>();
+  const history = useHistory();
+  const [leaveTarget, setLeaveTarget] = React.useState<{location: ReturnType<typeof useLocation>; replace: boolean}>();
+  const [discardOpen, setDiscardOpen] = React.useState(false);
+  const allowNavigation = React.useRef(false);
+  const submitting = React.useRef(false);
+  const latest = saved && saved.id === snapshot.rollCall?.id && saved.revision > snapshot.rollCall.revision
+    ? saved : snapshot.rollCall;
+  const rollCall = draft?.baseline ?? latest;
+  const conflict = !!draft && (draft.rejected || (!draft.submissionKey && (latest?.id !== draft.baseline.id
+    || latest.revision !== draft.baseline.revision || session?.status !== 'OPEN')));
+  const updateDraft = (next: RollCallDraft | undefined) => {draftRef.current = next; setDraft(next);};
+  React.useEffect(() => {
+    if (!draft) return;
+    const beforeUnload = (event: BeforeUnloadEvent) => {event.preventDefault(); event.returnValue = '';};
+    window.addEventListener('beforeunload', beforeUnload);
+    return () => window.removeEventListener('beforeunload', beforeUnload);
+  }, [!!draft]);
   const nextOrdinal = session?.status === 'PENDING' ? session.ordinal : snapshot.nextMeetingSessionOrdinal;
   const sessionName = nextOrdinal ? formatCommitteeContent({kind: 'SESSION', ordinal: nextOrdinal}, snapshot.committee.committeeLanguage) : '';
   const [pending, setPending] = React.useState<string>();
@@ -732,12 +763,13 @@ function RollCallPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
     setPending(key); try {await run(operation);} finally {setPending(undefined);}
   }, [run]);
   const seats = rollCall?.seats ?? snapshot.seats;
-  const entryBySeat = React.useMemo(() => new Map(rollCall?.entries.map(entry => [entry.seatId, entry]) ?? []), [rollCall?.entries]);
-  const currentSeat = seats.find(seat => seat.id === rollCall?.currentSeatId);
+  const entries = draft?.responses ?? rollCall?.entries ?? [];
+  const entryBySeat = new Map(entries.map(entry => [entry.seatId, entry]));
+  const currentSeat = rollCall?.status === 'IN_PROGRESS' ? seats.find(seat => !entryBySeat.has(seat.id)) : undefined;
   React.useEffect(() => {
-    const index = seats.findIndex(seat => seat.id === rollCall?.currentSeatId);
+    const index = seats.findIndex(seat => seat.id === currentSeat?.id);
     if (index >= 0) setPage(Math.floor(index / ROLL_CALL_PAGE_SIZE));
-  }, [rollCall?.currentSeatId, seats]);
+  }, [currentSeat?.id, seats]);
   React.useEffect(() => {
     if (rollCall) autoStartedSessionId.current = undefined;
   }, [rollCall?.id]);
@@ -779,14 +811,58 @@ function RollCallPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
   const totalPages = Math.max(1, Math.ceil(seats.length / ROLL_CALL_PAGE_SIZE));
   const activePage = Math.min(page, totalPages - 1);
   const visibleSeats = seats.slice(activePage * ROLL_CALL_PAGE_SIZE, (activePage + 1) * ROLL_CALL_PAGE_SIZE);
+  const submit = (next: RollCallDraft) => {
+    if (submitting.current) return;
+    submitting.current = true;
+    const submittingDraft = {...next, submissionKey: next.submissionKey ?? crypto.randomUUID(), failure: undefined};
+    updateDraft(submittingDraft);
+    void execute('submit', async () => {
+      try {
+        const result = await api.submitRollCall(next.baseline.id, {
+          baseRevision: next.baseline.revision, responses: next.responses
+        }, submittingDraft.submissionKey);
+        setSaved(result); updateDraft(undefined);
+      } catch (caught) {
+        updateDraft({...submittingDraft, failure: caught, rejected: caught instanceof SelfHostedApiError
+          && caught.status >= 400 && caught.status < 500 && ![408, 429].includes(caught.status)});
+        // Keep submission errors beside the retry control; run still refreshes the workspace.
+      } finally {submitting.current = false;}
+    });
+  };
+  const answer = (seatId: string, response: string) => {
+    if (!chair || pending || submitting.current || conflict || draftRef.current?.submissionKey) return;
+    if (rollCall.status === 'COMPLETED') {
+      void execute(`seat:${seatId}`, async () => {
+        const result = await api.setRollCallResponse(rollCall.id, rollCall.revision, seatId, response);
+        setSaved(result);
+      });
+      return;
+    }
+    const previous = draftRef.current;
+    const responses = previous?.responses ?? rollCall.entries.map(({seatId, response}) => ({seatId, response}));
+    const bySeat = new Map(responses.map(entry => [entry.seatId, entry.response]));
+    bySeat.set(seatId, response);
+    const next: RollCallDraft = {baseline: previous?.baseline ?? rollCall,
+      responses: seats.filter(seat => bySeat.has(seat.id)).map(seat => ({seatId: seat.id, response: bySeat.get(seat.id)!})),
+      history: [...(previous?.history ?? []), responses]};
+    updateDraft(next);
+    if (next.responses.length === seats.length) submit(next);
+  };
   const setSeat = (seatId: string) => {
     const existing = entryBySeat.get(seatId);
     const next = existing?.response === 'ABSENT' ? 'PRESENT' : existing ? 'ABSENT' : 'PRESENT';
-    if (!rollCall.allowedResponses.includes(next)) return;
-    return execute(`seat:${seatId}`, () => api.setRollCallResponse(rollCall.id, rollCall.revision, seatId, next));
+    if (rollCall.allowedResponses.includes(next)) answer(seatId, next);
   };
+  const undo = () => {
+    if (draft) {
+      const previous = draft.history.at(-1);
+      if (previous) updateDraft(draft.history.length === 1 ? undefined
+        : {...draft, responses: previous, history: draft.history.slice(0, -1)});
+    } else void execute('undo', () => api.undoRollCall(rollCall.id, rollCall.revision));
+  };
+  const locked = !!pending || !!draft?.submissionKey || conflict;
   const presentSeatIds = new Set(seats.filter(seat => {
-    const attendance = rollCall.status === 'IN_PROGRESS' ? undefined
+    const attendance = rollCall.status === 'IN_PROGRESS' || rollCall.revision !== snapshot.rollCall?.revision ? undefined
       : snapshot.attendance.find(item => item.seatId === seat.id)?.state;
     if (attendance) return attendance === 'PRESENT';
     return entryBySeat.get(seat.id)?.response !== 'ABSENT' && entryBySeat.has(seat.id);
@@ -802,10 +878,14 @@ function RollCallPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
   const rollCallFailed = quorumNotMet && (rollCall.status === 'COMPLETED' || quorumImpossible);
   const rollCallCompletedWithQuorum = rollCall.status === 'COMPLETED' && !quorumNotMet;
   return <Container fluid className="roll-call-page">
+    <Prompt when={!!draft} message={(location, action) => {
+      if (allowNavigation.current) return true;
+      setLeaveTarget({location, replace: action === 'REPLACE'}); return false;
+    }} />
     <div className="roll-call-heading"><Header as="h1">{t('Roll Call')}</Header><div className="roll-call-heading-actions">
       {chair && rollCall.status === 'COMPLETED' && <Button basic color="orange" icon="refresh" content={t('Restart Roll Call')}
         loading={pending === 'reset'} disabled={!!pending} onClick={() => setResetOpen(true)} />}
-      <Label basic size="large">{t('{called} of {total} called', {called: rollCall.entries.length, total: seats.length})}</Label>
+      <Label basic size="large">{t('{called} of {total} called', {called: entries.length, total: seats.length})}</Label>
     </div></div>
     {seats.length === 0 ? <Message warning content={t('Add at least one committee member to proceed')} /> : <>
       <Segment className="roll-call-board">
@@ -818,9 +898,9 @@ function RollCallPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
           const entry = entryBySeat.get(seat.id); const status = !entry ? 'uncalled' : entry.response === 'ABSENT' ? 'absent' : 'present';
           const label = !entry ? t('Not called') : rollCallResponseLabel(entry.response);
           return <button type="button" key={seat.id} data-roll-call-seat={seat.id}
-            className={`roll-call-member status-${status}${seat.id === rollCall.currentSeatId ? ' is-current' : ''}`}
+            className={`roll-call-member status-${status}${seat.id === currentSeat?.id ? ' is-current' : ''}`}
             aria-label={`${seat.displayName}: ${label}`} aria-pressed={entry ? entry.response !== 'ABSENT' : undefined}
-            disabled={!chair || !!pending} onClick={() => void setSeat(seat.id)}>
+            disabled={!chair || locked} onClick={() => void setSeat(seat.id)}>
             <span className="roll-call-status-light" aria-hidden="true" /><span className="roll-call-member-name">{seat.displayName}</span>
           </button>;
         })}</div>
@@ -829,7 +909,13 @@ function RollCallPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
       </Segment>
       <Segment className="roll-call-current" textAlign="center">
         <div className="roll-call-current-status">
-        {rollCallFailed ? <Header as="h2" color="red">{t('Quorum not reached')}</Header>
+        {draft?.submissionKey || conflict ? <div className="roll-call-submission" role="status" aria-live="polite">
+          <Icon name={conflict || draft?.failure ? 'warning circle' : 'cloud upload'} size="big"
+            color={conflict || draft?.failure ? 'orange' : 'blue'} />
+          <Header as="h2">{t(draft?.failure ? 'Submission failed' : conflict ? 'Roll Call changed' : 'Submitting Roll Call')}</Header>
+          {(conflict || !!draft?.failure) && <p>{draft?.failure ? errorText(draft.failure)
+            : t('This Roll Call changed elsewhere. Reload it before continuing.')}</p>}
+        </div> : rollCallFailed ? <Header as="h2" color="red">{t('Quorum not reached')}</Header>
           : currentSeat ? <div className="roll-call-current-seat"><div className="roll-call-current-label">{t('Now calling')}</div>
             <div className="roll-call-flag-stage"><Flag seat={currentSeat} /></div>
             <Header as="h2" className="roll-call-current-name"><span>{currentSeat.displayName}</span></Header>
@@ -837,15 +923,17 @@ function RollCallPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
           : rollCallCompletedWithQuorum ? <Header as="h2" color="green">{t('Roll Call complete')}</Header>
           : <Header as="h2">{t('Roll Call')}</Header>}</div>
         {chair && <div className="roll-call-actions">
-          {currentSeat && rollCall.allowedResponses.map(response => <Button key={response}
+          {conflict ? <Button primary icon="refresh" content={t('Reload Roll Call')} disabled={!!pending}
+            onClick={() => setDiscardOpen(true)} /> : draft?.failure ? <Button primary icon="cloud upload" content={t('Retry submission')}
+              disabled={!!pending} onClick={() => submit(draft)} /> : null}
+          {!draft?.submissionKey && !conflict && currentSeat && rollCall.allowedResponses.map(response => <Button key={response}
             positive={response !== 'ABSENT'} negative={response === 'ABSENT'}
             icon={response === 'ABSENT' ? 'close' : 'check'} content={rollCallResponseLabel(response)}
-            loading={pending === `response:${response}`} disabled={!!pending}
-            onClick={() => void execute(`response:${response}`,
-              () => api.recordRollCallResponse(rollCall.id, rollCall.revision, currentSeat.id, response))} />)}
-          {rollCall.status === 'IN_PROGRESS' && <><Button basic icon="undo" content={t('Undo')}
-            loading={pending === 'undo'} disabled={rollCall.entries.length === 0 || !!pending}
-            onClick={() => void execute('undo', () => api.undoRollCall(rollCall.id, rollCall.revision))} />
+            disabled={locked}
+            onClick={() => answer(currentSeat.id, response)} />)}
+          {rollCall.status === 'IN_PROGRESS' && !draft?.submissionKey && !conflict && <><Button basic icon="undo" content={t('Undo')}
+            loading={pending === 'undo'} disabled={entries.length === 0 || locked}
+            onClick={undo} />
             <Button basic color="orange" icon="refresh" content={t('Reset')} loading={pending === 'reset'}
               disabled={!!pending} onClick={() => setResetOpen(true)} /></>}
         </div>}
@@ -864,10 +952,23 @@ function RollCallPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
         </div>{rollCallCompletedWithQuorum && <Button as={Link} to={`/committees/${snapshot.committee.id}/motions`} primary fluid size="large">
           {t('Go to motions')}<Icon name="arrow right" /></Button>}</Segment>}
     </>}
+    <Confirm open={!!leaveTarget || discardOpen} header={t('Discard unsubmitted roll-call answers?')} content={null}
+      cancelButton={t('Cancel')} confirmButton={t(leaveTarget ? 'Leave page' : 'Reload Roll Call')}
+      onCancel={() => {setLeaveTarget(undefined); setDiscardOpen(false);}}
+      onConfirm={() => {
+        updateDraft(undefined); setSaved(undefined); setDiscardOpen(false);
+        if (leaveTarget) {
+          allowNavigation.current = true;
+          if (leaveTarget.replace) history.replace(leaveTarget.location); else history.push(leaveTarget.location);
+          setLeaveTarget(undefined); allowNavigation.current = false;
+        }
+      }} />
     <Confirm open={resetOpen} header={t(rollCall.status === 'COMPLETED' ? 'Restart Roll Call?' : 'Reset Roll Call?')}
       content={t('This will start a new Roll Call for this meeting session.')}
       cancelButton={t('Cancel')} confirmButton={t(rollCall.status === 'COMPLETED' ? 'Restart Roll Call' : 'Reset')} onCancel={() => setResetOpen(false)}
-      onConfirm={() => {setResetOpen(false); void execute('reset', () => api.resetRollCall(rollCall.id, rollCall.revision));}} />
+      onConfirm={() => {setResetOpen(false); void execute('reset', async () => {
+        await api.resetRollCall(rollCall.id, rollCall.revision); updateDraft(undefined); setSaved(undefined);
+      });}} />
   </Container>;
 }
 

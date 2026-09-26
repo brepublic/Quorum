@@ -219,6 +219,10 @@ export interface RollCall {
 }
 
 export interface StartRollCallRequest {meetingSessionId: string}
+export interface SubmitRollCallRequest {
+  baseRevision: number;
+  responses: {seatId: string; response: string}[];
+}
 export interface RecordRollCallResponseRequest {
   baseRevision: number;
   seatId: string;

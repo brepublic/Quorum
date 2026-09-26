@@ -103,6 +103,20 @@ describe('self-hosted stage 4 API client', () => {
     }));
   });
 
+  it('submits every roll-call answer with a caller-owned retry key', async () => {
+    const fetchMock = vi.fn(async () => ({ok: true, status: 200,
+      json: async () => ({data: {id: 'roll-call', status: 'COMPLETED'}, meta: {requestId: 'roll-call'}})}));
+    vi.stubGlobal('fetch', fetchMock);
+    const body = {baseRevision: 1, responses: [{seatId: 'first', response: 'PRESENT'}, {seatId: 'second', response: 'ABSENT'}]};
+    await selfHostedApi.submitRollCall('roll-call', body, 'same-submission');
+    await selfHostedApi.submitRollCall('roll-call', body, 'same-submission');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/v1/roll-calls/roll-call/submit', expect.objectContaining({
+      method: 'POST', body: JSON.stringify(body), credentials: 'same-origin',
+      headers: expect.objectContaining({'idempotency-key': 'same-submission', 'x-csrf-token': 'csrf-token'})
+    }));
+  });
+
   it('withdraws a pending motion with its loaded revision', async () => {
     const fetchMock = vi.fn(async () => ({ok: true, status: 200,
       json: async () => ({data: {id: 'motion', status: 'WITHDRAWN'}, meta: {requestId: 'motion'}})}));

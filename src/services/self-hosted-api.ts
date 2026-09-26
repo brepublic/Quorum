@@ -22,6 +22,7 @@ import type {
   MeetingSession,
   PendingHostCommit,
   RollCall,
+  SubmitRollCallRequest,
   Stage4CommitteeSeat,
   AttendanceEvent,
   CommitteePoint,
@@ -606,6 +607,9 @@ export const selfHostedApi = {
   },
   recordRollCallResponse(id: string, baseRevision: number, seatId: string, response: string) {
     return request<RollCall>(`/api/v1/roll-calls/${id}/record-response`, {method: 'POST', body: {baseRevision, seatId, response}});
+  },
+  submitRollCall(id: string, body: SubmitRollCallRequest, idempotencyKey: string) {
+    return request<RollCall>(`/api/v1/roll-calls/${id}/submit`, {method: 'POST', body, idempotencyKey});
   },
   setRollCallResponse(id: string, baseRevision: number, seatId: string, response: string) {
     return request<RollCall>(`/api/v1/roll-calls/${id}/set-response`, {method: 'POST', body: {baseRevision, seatId, response}});

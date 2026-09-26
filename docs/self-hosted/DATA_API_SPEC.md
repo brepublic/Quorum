@@ -444,6 +444,7 @@ POST /api/v1/committees/:id/status
 
 ```text
 POST /api/v1/committees/:id/roll-calls
+POST /api/v1/roll-calls/:id/submit
 POST /api/v1/roll-calls/:id/record-response
 POST /api/v1/roll-calls/:id/set-response
 POST /api/v1/committees/:id/attendance-events
@@ -680,6 +681,7 @@ DELETE /api/v1/text-posts/:id
 POST /api/v1/committees/:id/meeting-sessions
 POST /api/v1/meeting-sessions/:id/close
 POST /api/v1/committees/:id/roll-calls
+POST /api/v1/roll-calls/:id/submit
 POST /api/v1/roll-calls/:id/record-response
 POST /api/v1/roll-calls/:id/set-response
 POST /api/v1/roll-calls/:id/undo
@@ -690,6 +692,8 @@ POST /api/v1/committees/:id/attendance-events
 每个委员会最多一个 `OPEN` meeting session。创建请求可省略 `phaseId`；服务端选择活动规则包的第一项 phase，若规则包没有 phase 则使用稳定值 `open-debate`。会期冻结创建时的活动规则版本。关闭使用会期 `baseRevision`，只允许没有进行中点名的会期。
 
 开始点名请求为 `{meetingSessionId}`，要求 `Idempotency-Key`。同一会期最多一个 `IN_PROGRESS` 点名。点名冻结规则版本、`attendance.responses`、开始时的活动席位顺序和每个席位显示名。规则响应为空、重复或包含未知值时返回 422。
+
+整批提交 `submit` 接受 `{baseRevision, responses: [{seatId, response}]}`，要求 `Idempotency-Key`。仅 Chair 可提交当前开放会期中的 `IN_PROGRESS` 点名。名单必须与冻结席位完全一致、每席恰有一个合法回答；缺少、重复或额外席位均拒绝。一个事务保存全体回答、正式出席、审计和完成事件，revision 只递增一次。已由旧接口保存的部分回答标记撤销并保留历史。相同请求和幂等键重试返回原结果，不重复出席事件；陈旧 revision 拒绝覆盖。网页在最后一席回答后自动调用此接口，之前的答案只在页面内存保存；完成后的更正仍使用 `set-response`。
 
 记录请求为 `{baseRevision, seatId, response}`。只接受冻结名单中尚未记录的席位和冻结回答；每次成功递增 roll call revision 并移动 `currentSeatId`。北京学术标准第 6 版的回答只有 `PRESENT` 和 `ABSENT`。最后一席成功后把点名标记为 `COMPLETED`，并为每席追加来源为 roll-call entry 的 `PRESENT` 或 `ABSENT` attendance event。旧版本的 `PRESENT_AND_VOTING` 历史回答仍映射为当前出席 `PRESENT`，但 entry 保留原回答。并发请求以 roll call 行锁和 revision 保证只有一个成功。
 

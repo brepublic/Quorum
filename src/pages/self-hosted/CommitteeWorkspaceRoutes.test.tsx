@@ -5,7 +5,7 @@ import {MemoryRouter} from 'react-router-dom';
 import {afterEach, describe, expect, it, vi} from 'vitest';
 import type {CommitteePoint, CommitteeWorkspaceSnapshot, CreatedStrawpoll, ProceedingDocument, ProceedingMotion, RollCall,
   SpeakerList, Strawpoll} from '@quorum/contracts';
-import type {SelfHostedApi} from '../../services/self-hosted-api';
+import {SelfHostedApiError, type SelfHostedApi} from '../../services/self-hosted-api';
 import type {SelfHostedUser} from '../../services/self-hosted-identity';
 import {setLanguage} from '../../i18n';
 import SelfHostedWorkspace from '../SelfHostedWorkspace';
@@ -367,7 +367,74 @@ describe('committee workspace routes and roles', () => {
     expect(page.textContent).not.toContain('Present and voting');
     const secondSeat = page.querySelector<HTMLButtonElement>('[data-roll-call-seat="seat-1"]');
     await act(async () => {secondSeat?.click(); await Promise.resolve();});
-    expect(setRollCallResponse).toHaveBeenCalledWith('roll-call', 3, 'seat-1', 'ABSENT');
+    expect(setRollCallResponse).not.toHaveBeenCalled();
+    expect(secondSeat?.getAttribute('aria-label')).toBe('Seat 19: Absent');
+  });
+
+  it('keeps answers local through undo and refresh, submits once, retries the same payload, then corrects one seat', async () => {
+    const seats = ['China', 'France'].map((displayName, index) => ({...snapshot('CHAIR').seats[0], id: `seat-${index}`, displayName}));
+    let roll: RollCall = {id: 'roll', committeeId: 'committee', meetingSessionId: 'meeting', status: 'IN_PROGRESS',
+      currentSeatId: seats[0].id, seats, entries: [], allowedResponses: ['PRESENT', 'ABSENT'], rulePackageVersionId: 'rules',
+      revision: 1, startedAt: '2026-09-26T00:00:00.000Z', completedAt: null};
+    const submitRollCall = vi.fn().mockRejectedValueOnce(new SelfHostedApiError(503, 'SERVICE_NOT_READY', 'Try again'))
+      .mockImplementationOnce(async (_id, body) => {
+        roll = {...roll, revision: 2, status: 'COMPLETED', currentSeatId: null, completedAt: '2026-09-26T00:01:00.000Z',
+          entries: body.responses.map((entry: {seatId: string; response: string}, index: number) => ({...entry, id: `entry-${index}`,
+            seatDisplayName: seats[index].displayName, actorUserId: 'user', onBehalfOfSeatId: entry.seatId,
+            rulePackageVersionId: 'rules', recordedAt: '2026-09-26T00:01:00.000Z', revision: 1}))};
+        return roll;
+      });
+    const setRollCallResponse = vi.fn(async () => roll);
+    const page = await render('CHAIR', '/committees/committee/roll-call', user, value => ({...value, seats, rollCall: roll,
+      meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: 'Session 1', phaseId: 'formal-debate',
+        activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1, createdAt: roll.startedAt, closedAt: null}}),
+      {submitRollCall, setRollCallResponse});
+    const click = async (text: string) => act(async () => {Array.from(page.querySelectorAll('button')).find(button => button.textContent === text)?.click();});
+    await click('Present');
+    expect(page.textContent).toContain('1 of 2 called');
+    expect(submitRollCall).not.toHaveBeenCalled();
+    await act(async () => {page.querySelector<HTMLAnchorElement>('a[href="/committees/committee/motions"]')?.click();});
+    expect(document.body.textContent).toContain('Discard unsubmitted roll-call answers?');
+    await act(async () => {Array.from(document.body.querySelectorAll('button')).find(button => button.textContent === 'Cancel')?.click();});
+    expect(page.textContent).toContain('1 of 2 called');
+    const unloading = new Event('beforeunload', {cancelable: true}); window.dispatchEvent(unloading);
+    expect(unloading.defaultPrevented).toBe(true);
+    await act(async () => {window.dispatchEvent(new Event('focus'));});
+    expect(page.textContent).toContain('1 of 2 called');
+    await click('Undo'); expect(page.textContent).toContain('0 of 2 called');
+    await click('Present'); await click('Absent');
+    expect(submitRollCall).toHaveBeenCalledTimes(1);
+    expect(page.textContent).toContain('Submission failed');
+    expect(page.textContent).not.toContain('Roll Call complete');
+    expect(submitRollCall.mock.calls[0].slice(0, 2)).toEqual(['roll', {baseRevision: 1,
+      responses: [{seatId: 'seat-0', response: 'PRESENT'}, {seatId: 'seat-1', response: 'ABSENT'}]}]);
+    expect(page.querySelector<HTMLButtonElement>('[data-roll-call-seat]')?.disabled).toBe(true);
+    await click('Retry submission');
+    expect(submitRollCall.mock.calls[1]).toEqual(submitRollCall.mock.calls[0]);
+    expect(page.textContent).toContain('Roll Call complete');
+    const afterSave = new Event('beforeunload', {cancelable: true}); window.dispatchEvent(afterSave);
+    expect(afterSave.defaultPrevented).toBe(false);
+    await act(async () => {page.querySelector<HTMLButtonElement>('[data-roll-call-seat="seat-1"]')?.click();});
+    expect(setRollCallResponse).toHaveBeenCalledWith('roll', 2, 'seat-1', 'PRESENT');
+  });
+
+  it('preserves a local draft and blocks submission when another Chair changes the roll call', async () => {
+    const seats = ['China', 'France'].map((displayName, index) => ({...snapshot('CHAIR').seats[0], id: `seat-${index}`, displayName}));
+    let revision = 1;
+    const submitRollCall = vi.fn();
+    const page = await render('CHAIR', '/committees/committee/roll-call', user, value => ({...value, seats,
+      meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: 'Session 1', phaseId: 'formal-debate',
+        activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1, createdAt: '2026-09-26T00:00:00Z', closedAt: null},
+      rollCall: {id: 'roll', committeeId: 'committee', meetingSessionId: 'meeting', status: 'IN_PROGRESS',
+        currentSeatId: seats[0].id, seats, entries: [], allowedResponses: ['PRESENT', 'ABSENT'], rulePackageVersionId: 'rules',
+        revision, startedAt: '2026-09-26T00:00:00Z', completedAt: null}}), {submitRollCall});
+    await act(async () => {page.querySelector<HTMLButtonElement>('[data-roll-call-seat="seat-0"]')?.click();});
+    revision = 2;
+    await act(async () => {window.dispatchEvent(new Event('focus'));});
+    expect(page.textContent).toContain('Roll Call changed');
+    expect(page.textContent).toContain('1 of 2 called');
+    expect(page.querySelector<HTMLButtonElement>('[data-roll-call-seat="seat-1"]')?.disabled).toBe(true);
+    expect(submitRollCall).not.toHaveBeenCalled();
   });
 
   it('keeps general-list dividers anchored to three-person slots as speakers advance and the queue reorders', () => {

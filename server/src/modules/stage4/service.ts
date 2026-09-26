@@ -1739,6 +1739,72 @@ export class Stage4Service {
       }});
   }
 
+  async submitRollCall(auth: AuthenticatedSession, rollCallId: string, input: Record<string, unknown>,
+    idempotencyKey: string, context: Stage4Context): Promise<RollCall> {
+    requireBusinessIdentity(auth); assertExactBody(input, ['baseRevision', 'responses']);
+    const baseRevision = positiveRevision(input.baseRevision);
+    if (!Array.isArray(input.responses) || !input.responses.length) throw new AppError({
+      reason: 'INVALID_ROLL_CALL_RESPONSES', code: 'VALIDATION_FAILED', message: 'A complete roll-call response list is required.'});
+    const responses = input.responses.map((value: unknown) => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) throw new AppError({
+        reason: 'INVALID_ROLL_CALL_RESPONSES', code: 'VALIDATION_FAILED', message: 'Invalid roll-call response list.'});
+      const entry = value as Record<string, unknown>; assertExactBody(entry, ['seatId', 'response']);
+      return {seatId: requiredText(entry.seatId, 'Seat ID'), response: requiredText(entry.response, 'Response', 128)};
+    });
+    return idempotentTransaction({pool: this.pool, auth, route: `POST /api/v1/roll-calls/${rollCallId}/submit`,
+      key: idempotencyKey, request: input, status: 200, work: async client => {
+        const located = await client.query<{committee_id: string}>('SELECT committee_id FROM roll_calls WHERE id=$1', [rollCallId]);
+        if (!located.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Roll Call not found.'});
+        const committee = await lockedCommittee(client, located.rows[0].committee_id);
+        await requireChair(client, committee, auth.user.id); requireProceedingsActive(committee);
+        const found = await client.query<RollCallRow>('SELECT * FROM roll_calls WHERE id=$1 FOR UPDATE', [rollCallId]);
+        const current = found.rows[0] as RollCallRow;
+        if (current.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT',
+          message: 'This Roll Call changed since it was loaded.', details: {currentRevision: current.revision}});
+        if (current.status !== 'IN_PROGRESS') throw new AppError({reason: 'ROLL_CALL_NOT_ACTIVE', code: 'RESOURCE_CONFLICT',
+          message: 'Only an active Roll Call can be submitted.'});
+        const session = await client.query<{status: string}>('SELECT status FROM meeting_sessions WHERE id=$1 FOR UPDATE',
+          [current.meeting_session_id]);
+        if (session.rows[0]?.status !== 'OPEN') throw new AppError({reason: 'MEETING_CLOSED', code: 'RESOURCE_CONFLICT',
+          message: 'Meeting session is closed.'});
+        const frozen = await client.query<{seat_id: string; seat_display_name: string}>(
+          'SELECT seat_id,seat_display_name FROM roll_call_seats WHERE roll_call_id=$1 ORDER BY sort_order', [rollCallId]);
+        const bySeat = new Map(responses.map(entry => [entry.seatId, entry.response]));
+        if (responses.length !== frozen.rows.length || bySeat.size !== responses.length
+          || frozen.rows.some(seat => !bySeat.has(seat.seat_id))) throw new AppError({
+          reason: 'INVALID_ROLL_CALL_RESPONSES', code: 'VALIDATION_FAILED', message: 'Responses must match every frozen seat exactly once.'});
+        if (responses.some(entry => !current.allowed_responses.includes(entry.response))) throw new AppError({
+          reason: 'INVALID_ROLL_CALL_RESPONSE', code: 'VALIDATION_FAILED', message: 'Roll-call response is not allowed.'});
+        // Older clients may have already saved some answers. Preserve them as history when replacing the full list.
+        await client.query('UPDATE roll_call_entries SET undone_at=now() WHERE roll_call_id=$1 AND undone_at IS NULL', [rollCallId]);
+        for (const seat of frozen.rows) {
+          const response = bySeat.get(seat.seat_id) as string; const entryId = randomUUID();
+          await client.query(`INSERT INTO roll_call_entries
+            (id,committee_id,roll_call_id,seat_id,seat_display_name,response,actor_user_id,on_behalf_of_seat_id,rule_package_version_id)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$4,$8)`,
+          [entryId, current.committee_id, rollCallId, seat.seat_id, seat.seat_display_name, response,
+            auth.user.id, current.rule_package_version_id]);
+          await insertAttendanceEvent(client, {committeeId: current.committee_id, meetingSessionId: current.meeting_session_id,
+            seatId: seat.seat_id, seatDisplayName: seat.seat_display_name, type: response === 'ABSENT' ? 'ABSENT' : 'PRESENT',
+            actorUserId: auth.user.id, sourceRollCallEntryId: entryId});
+          await audit(client, context, {committeeId: current.committee_id, actorUserId: auth.user.id, capabilities: ['CHAIR'],
+            onBehalfOfSeatId: seat.seat_id, action: 'proceedings.roll_call_response_recorded', resourceType: 'roll_call_entry',
+            resourceId: entryId, after: {rollCallId, seatId: seat.seat_id, response, rulePackageVersionId: current.rule_package_version_id}});
+        }
+        const updated = await client.query<RollCallRow>(`UPDATE roll_calls SET current_seat_id=NULL,status='COMPLETED',
+          completed_at=now(),revision=revision+1 WHERE id=$1 RETURNING *`, [rollCallId]);
+        await appendEvent(client, committee, {type: 'roll_call.completed', resourceType: 'roll_call', resourceId: rollCallId,
+          revision: current.revision + 1, payload: {meetingSessionId: current.meeting_session_id, seatCount: responses.length}});
+        await appendEvent(client, committee, {type: 'attendance.changed', resourceType: 'meeting_session',
+          resourceId: current.meeting_session_id, revision: current.revision + 1,
+          payload: {source: 'ROLL_CALL', rollCallId, seatCount: responses.length}});
+        await audit(client, context, {committeeId: current.committee_id, actorUserId: auth.user.id, capabilities: ['CHAIR'],
+          action: 'proceedings.roll_call_completed', resourceType: 'roll_call', resourceId: rollCallId,
+          after: {meetingSessionId: current.meeting_session_id, seatCount: responses.length}});
+        return rollCall(client, updated.rows[0] as RollCallRow);
+      }});
+  }
+
   async recordRollCallResponse(auth: AuthenticatedSession, rollCallId: string, input: Record<string, unknown>,
     context: Stage4Context): Promise<RollCall> {
     requireBusinessIdentity(auth); assertExactBody(input, ['baseRevision', 'seatId', 'response']);

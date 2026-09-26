@@ -542,10 +542,12 @@ async function handleStage4Request(options: {
     sendJson(response, 201, success(await stage4.startRollCall(auth, rollCalls[1] as string, body,
       idempotencyKey(request), context), requestId)); return true;
   }
-  const rollCallCommand = /^\/api\/v1\/roll-calls\/([0-9a-f-]{36})\/(record-response|set-response|undo|reset)$/.exec(pathname);
+  const rollCallCommand = /^\/api\/v1\/roll-calls\/([0-9a-f-]{36})\/(record-response|set-response|undo|reset|submit)$/.exec(pathname);
   if (rollCallCommand && method === 'POST') {
     const auth = await write(); const body = await readJson(request); const id = rollCallCommand[1] as string;
-    const result = rollCallCommand[2] === 'record-response'
+    const result = rollCallCommand[2] === 'submit'
+      ? await stage4.submitRollCall(auth, id, body, idempotencyKey(request), context)
+      : rollCallCommand[2] === 'record-response'
       ? await stage4.recordRollCallResponse(auth, id, body, context)
       : rollCallCommand[2] === 'set-response'
         ? await stage4.setRollCallResponse(auth, id, body, context)

@@ -2056,6 +2056,25 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   min-width: 8rem;
 }
 
+.roll-call-submission {
+  padding: 2rem 1rem;
+  max-width: 32rem;
+  margin: auto;
+  overflow-wrap: anywhere;
+}
+
+.roll-call-submission > .icon {
+  margin: 0 0 0.75rem;
+}
+
+.roll-call-submission .ui.header {
+  margin: 0 0 0.75rem;
+}
+
+.roll-call-submission p {
+  margin: 0;
+}
+
 .ui.segment.roll-call-summary {
   margin-top: 1.5rem;
 }
