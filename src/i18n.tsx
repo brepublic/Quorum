@@ -925,7 +925,6 @@ const zhCN: Record<string, string> = {
   'Template to skip manual member creation (optional)': '使用模板免去手动添加成员（可选）',
   'Select a template to add': '选择要添加的模板',
   'Select a template to see which members will be added': '选择模板以查看将添加的成员',
-  'Add members from a template (e.g. G20)': '从模板添加成员（例如 G20）',
   'Select preset member': '选择预设成员',
   'Rank': '席位类型',
   'Standard': '普通成员国',

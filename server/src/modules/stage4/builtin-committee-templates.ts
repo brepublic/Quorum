@@ -27,11 +27,6 @@ export const BUILTIN_COMMITTEE_TEMPLATE_DEFINITIONS: readonly BuiltinCommitteeTe
     members: codes('at be bg hr cy cz dk ee fi fr de gr hu ie it lv lt lu mt nl pl pt ro sk si es se')
   },
   {
-    key: 'builtin:g20', names: {'zh-CN': '二十国集团', en: 'G20'},
-    members: ['organization:african-union', ...codes('ar au br ca cn'), 'organization:european-union',
-      ...codes('fr de in id it jp mx ru sa za kr tr gb us')]
-  },
-  {
     key: 'builtin:nato', names: {'zh-CN': '北大西洋公约组织', en: 'North Atlantic Treaty Organization'},
     members: codes('al be bg ca hr cz dk gb ee fi fr de gr hu is it lv lt lu mk me nl no pl pt ro sk si es se tr us')
   },
