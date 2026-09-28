@@ -1681,7 +1681,8 @@ describe('committee workspace routes and roles', () => {
           versionNumber: 1, content: 'Operative text', contentFile: null,
           createdAt: '2026-08-14T00:00:00.000Z'}, votingVersionId: null,
         public: true, proposers: [], seconders: [], delegatesCanAmend: false,
-        directVote: {majority: 'SIMPLE_MAJORITY', startedAt: null, settingsRevision: 1, eligibility: [], threshold: 0,
+        directVote: {majority: 'SIMPLE_MAJORITY', startedAt: null, completedAt: null, castRevision: 0,
+          settingsRevision: 1, eligibility: [], threshold: 0,
           automaticResult: null, votes: []}, resultDecisions: [], revision: 2, discussion: [],
         createdAt: '2026-08-14T00:00:00.000Z', updatedAt: '2026-08-14T00:00:00.000Z'}]}));
     expect(page.textContent).toContain('Text');
@@ -1927,12 +1928,65 @@ describe('committee workspace routes and roles', () => {
     expect(lists()[1].querySelectorAll('li .country-flag-display')).toHaveLength(1);
   });
 
-  it('serializes rapid resolution votes and changes the cursor and undo history only after success', async () => {
+  it('updates an unfinished resolution vote locally and submits all seats once', async () => {
+    let document: ProceedingDocument = {id: 'resolution', committeeId: 'committee', meetingSessionId: 'meeting',
+      kind: 'RESOLUTION', resolutionId: null, ordinal: 1, customTitle: null, title: 'A/RES/1', status: 'PUBLISHED',
+      rulePackageVersionId: 'rules', currentVersion: {id: 'version', versionNumber: 1, content: 'Text', contentFile: null,
+        createdAt: '2026-08-14T00:00:00.000Z'}, votingVersionId: null, public: true, proposers: [], seconders: [],
+      delegatesCanAmend: false, directVote: {majority: 'SIMPLE_MAJORITY', startedAt: null, completedAt: null,
+        castRevision: 0, settingsRevision: 1, eligibility: [
+          {seatId: 'seat', seatDisplayName: 'China', mustVote: false, hasVeto: false},
+          {seatId: 'second', seatDisplayName: 'France', mustVote: false, hasVeto: false}],
+        threshold: 2, automaticResult: null, votes: []}, resultDecisions: [], revision: 2, discussion: [],
+      createdAt: '2026-08-14T00:00:00.000Z', updatedAt: '2026-08-14T00:00:00.000Z'};
+    let finish: () => void = () => undefined;
+    let fail: () => void = () => undefined;
+    const submitResolutionDirectVote = vi.fn((_id: string, body: {votes: Array<{seatId: string; choice: string}>}, _key: string) =>
+      new Promise<ProceedingDocument>((resolve, reject) => {fail = () => reject(new Error('connection lost')); finish = () => {
+        document = {...document, directVote: {...document.directVote!, startedAt: '2026-09-28T00:00:00Z',
+          completedAt: '2026-09-28T00:00:00Z', castRevision: 1, automaticResult: 'FAILED',
+          votes: body.votes.map((vote, index) => ({id: `vote-${index}`, castAt: '2026-09-28T00:00:00Z',
+            seatId: vote.seatId, seatDisplayName: vote.seatId, choice: vote.choice as 'FOR' | 'AGAINST', revision: 1}))}};
+        resolve(document);
+      };}));
+    const setResolutionDirectVote = vi.fn(async () => document);
+    const page = await render('CHAIR', '/committees/committee/resolutions/resolution/voting', user,
+      value => ({...value, documents: [document]}), {submitResolutionDirectVote, setResolutionDirectVote});
+    const button = (label: string) => [...page.querySelectorAll<HTMLButtonElement>('button')]
+      .find(item => item.textContent?.trim() === label)!;
+    const current = () => page.querySelector('.resolution-voting-current .header')?.textContent;
+    await act(async () => {button('Yes').click();});
+    expect(submitResolutionDirectVote).not.toHaveBeenCalled();
+    expect(current()).toBe('France');
+    expect(page.querySelector('.resolution-vote-counts')?.textContent).toContain('1');
+    await act(async () => {button('Undo').click();});
+    expect(current()).toBe('China');
+    await act(async () => {button('Yes').click();});
+    await act(async () => {button('No').click();});
+    expect(submitResolutionDirectVote).toHaveBeenCalledTimes(1);
+    expect(submitResolutionDirectVote.mock.calls[0]?.[1].votes).toEqual([
+      {seatId: 'seat', choice: 'FOR'}, {seatId: 'second', choice: 'AGAINST'}]);
+    expect(button('Yes').disabled).toBe(true);
+    await act(async () => fail());
+    expect(page.textContent).toContain('Submission failed');
+    expect(page.querySelector('.resolution-vote-counts')?.textContent).toContain('1');
+    await act(async () => {button('Retry submission').click();});
+    expect(submitResolutionDirectVote).toHaveBeenCalledTimes(2);
+    expect(submitResolutionDirectVote.mock.calls[1]?.[2]).toBe(submitResolutionDirectVote.mock.calls[0]?.[2]);
+    await act(async () => finish());
+    expect(page.textContent).toContain('Failed');
+    await act(async () => {page.querySelector<HTMLButtonElement>('.resolution-voting-member')?.click();});
+    await act(async () => {button('No').click();});
+    expect(setResolutionDirectVote).toHaveBeenCalledWith('resolution', 'seat', 'AGAINST');
+  });
+
+  it('serializes completed resolution vote corrections and changes the cursor only after success', async () => {
     let document: ProceedingDocument = {id: 'resolution', committeeId: 'committee', meetingSessionId: 'meeting',
       kind: 'RESOLUTION', resolutionId: null, ordinal: 1, customTitle: null, title: 'A/RES/1', status: 'PUBLISHED',
       rulePackageVersionId: 'rules', currentVersion: {id: 'version', versionNumber: 1, content: 'Text', contentFile: null,
         createdAt: '2026-08-14T00:00:00.000Z'}, votingVersionId: null, public: true, proposers: [{seatId: 'seat', seatDisplayName: 'China', flag: {type: 'STANDARD', value: 'cn'}}],
       seconders: [], delegatesCanAmend: false, directVote: {majority: 'SIMPLE_MAJORITY', startedAt: null,
+        completedAt: '2026-09-22T00:00:00Z', castRevision: 1,
         settingsRevision: 1, eligibility: [{seatId: 'seat', seatDisplayName: 'China', mustVote: false, hasVeto: false},
           {seatId: 'second', seatDisplayName: 'France', mustVote: false, hasVeto: false}], threshold: 2,
         automaticResult: null, votes: []}, resultDecisions: [], revision: 2, discussion: [],
@@ -1991,7 +2045,9 @@ describe('committee workspace routes and roles', () => {
         currentVersion: {id: 'version', versionNumber: 1, content: '', contentFile: null,
           createdAt: '2026-08-14T00:00:00.000Z'},
         votingVersionId: null, public: true, proposers: [{seatId: 'seat', seatDisplayName: 'China', flag: {type: 'STANDARD', value: 'cn'}}], seconders: [], delegatesCanAmend: false,
-        directVote: {majority: 'SIMPLE_MAJORITY', startedAt: null, settingsRevision: 1,
+        directVote: {majority: 'SIMPLE_MAJORITY', startedAt: null,
+          completedAt: '2026-09-22T00:00:00Z', castRevision: 1,
+          settingsRevision: 1,
           eligibility: [{seatId: 'seat', seatDisplayName: 'China', mustVote: false, hasVeto: true}], threshold: 1,
           automaticResult, votes: []}, resultDecisions: [], revision: 2, discussion: [],
         createdAt: '2026-08-14T00:00:00.000Z', updatedAt: '2026-08-14T00:00:00.000Z'}]}),

@@ -188,6 +188,37 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
       .rejects.toMatchObject({code: 'RESOURCE_CONFLICT', reason: 'NO_VOTE_TO_UNDO'});
   });
 
+  it('submits a complete resolution vote atomically, retries once, and keeps later corrections separate', async () => {
+    const f = await meetingFixture();
+    const document = await stage5.createResolution(f.firstChair, f.committee.id,
+      {meetingSessionId: f.session.id, customTitle: null, content: 'Text'}, randomUUID(), context('batch-document'));
+    const direct = document.directVote!;
+    const request = {baseDocumentRevision: document.revision, baseSettingsRevision: direct.settingsRevision,
+      baseCastRevision: direct.castRevision, eligibility: direct.eligibility,
+      votes: [{seatId: f.firstSeat.id, choice: 'FOR'}, {seatId: f.secondSeat.id, choice: 'AGAINST'}]};
+    await expect(stage5.submitResolutionDirectVote(f.firstChair, document.id,
+      {...request, votes: request.votes.slice(0, 1)}, randomUUID(), context('batch-incomplete')))
+      .rejects.toMatchObject({code: 'REVISION_CONFLICT'});
+    expect((await pool!.query('SELECT 1 FROM resolution_direct_votes WHERE resolution_document_id=$1',
+      [document.id])).rowCount).toBe(0);
+    const key = randomUUID();
+    const submitted = await stage5.submitResolutionDirectVote(f.firstChair, document.id,
+      request, key, context('batch-submit'));
+    expect(submitted.directVote).toMatchObject({castRevision: 1, completedAt: expect.any(String),
+      votes: expect.arrayContaining([{seatId: f.firstSeat.id, choice: 'FOR',
+        id: expect.any(String), seatDisplayName: expect.any(String), revision: 1, castAt: expect.any(String)}])});
+    await stage5.submitResolutionDirectVote(f.firstChair, document.id, request, key, context('batch-retry'));
+    expect((await pool!.query('SELECT 1 FROM resolution_direct_vote_revisions WHERE resolution_document_id=$1',
+      [document.id])).rowCount).toBe(2);
+    await expect(stage5.submitResolutionDirectVote(f.secondChair, document.id,
+      request, randomUUID(), context('batch-stale'))).rejects.toMatchObject({code: 'REVISION_CONFLICT'});
+    const corrected = await stage5.setResolutionDirectVote(f.firstChair, document.id,
+      {seatId: f.firstSeat.id, choice: 'AGAINST'}, context('batch-correction'));
+    expect(corrected.directVote).toMatchObject({castRevision: 2, completedAt: submitted.directVote?.completedAt});
+    expect((await pool!.query('SELECT 1 FROM resolution_direct_vote_revisions WHERE resolution_document_id=$1',
+      [document.id])).rowCount).toBe(3);
+  });
+
   it('purges direct voting histories and linked caucuses without touching another committee', async () => {
     const f = await meetingFixture(); const other = await meetingFixture();
     const document = await stage5.createResolution(f.firstChair, f.committee.id,

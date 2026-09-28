@@ -88,6 +88,7 @@ interface DocumentRow extends QueryResultRow {
 interface ResolutionRow extends QueryResultRow {
   document_id: string; delegates_can_amend: boolean;
   direct_vote_majority: ResolutionDirectVoteMajority; direct_vote_started_at: Date | null; direct_vote_revision: number;
+  direct_vote_cast_revision: number; direct_vote_completed_at: Date | null;
 }
 
 function positiveInteger(value: unknown, name: string): number {
@@ -376,7 +377,9 @@ async function resolutionDirectVoteState(client: PoolClient, document: DocumentR
     else if (forCount + remaining < threshold) automaticResult = 'FAILED';
   }
   return {majority: resolution.direct_vote_majority, startedAt: resolution.direct_vote_started_at?.toISOString() ?? null,
-    settingsRevision: resolution.direct_vote_revision, eligibility: eligibility.rows.map(item => ({seatId: item.seat_id,
+    completedAt: resolution.direct_vote_completed_at?.toISOString() ?? null,
+    castRevision: resolution.direct_vote_cast_revision, settingsRevision: resolution.direct_vote_revision,
+    eligibility: eligibility.rows.map(item => ({seatId: item.seat_id,
       seatDisplayName: item.seat_display_name, mustVote: item.must_vote, hasVeto: item.has_veto})), threshold,
     automaticResult, votes: currentVotes.map(vote => ({id: vote.id, seatId: vote.seat_id,
       seatDisplayName: vote.seat_display_name, choice: vote.current_choice, revision: vote.revision,
@@ -3309,6 +3312,119 @@ export class Stage5Service {
     });
   }
 
+  async submitResolutionDirectVote(auth: AuthenticatedSession, documentId: string, input: Record<string, unknown>,
+    key: string, context: Stage4Context): Promise<ProceedingDocument> {
+    requireBusinessIdentity(auth);
+    assertExactBody(input, ['baseDocumentRevision', 'baseSettingsRevision', 'baseCastRevision', 'eligibility', 'votes']);
+    const baseDocumentRevision = positiveInteger(input.baseDocumentRevision, 'Document revision');
+    const baseSettingsRevision = positiveInteger(input.baseSettingsRevision, 'Vote settings revision');
+    const baseCastRevision = input.baseCastRevision;
+    if (!Number.isSafeInteger(baseCastRevision) || Number(baseCastRevision) < 0) throw new AppError({
+      code: 'VALIDATION_FAILED', message: 'Vote revision is invalid.'});
+    if (!Array.isArray(input.eligibility) || !Array.isArray(input.votes) || !input.votes.length) throw new AppError({
+      code: 'VALIDATION_FAILED', message: 'A complete vote list is required.'});
+    const eligibility = input.eligibility.map((value: unknown) => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) throw new AppError({
+        code: 'VALIDATION_FAILED', message: 'Voting eligibility is invalid.'});
+      const item = value as Record<string, unknown>;
+      assertExactBody(item, ['seatId', 'seatDisplayName', 'mustVote', 'hasVeto']);
+      if (typeof item.seatDisplayName !== 'string' || typeof item.mustVote !== 'boolean'
+        || typeof item.hasVeto !== 'boolean') throw new AppError({code: 'VALIDATION_FAILED',
+        message: 'Voting eligibility is invalid.'});
+      return {seatId: uuid(item.seatId, 'Voting seat ID'), seatDisplayName: item.seatDisplayName,
+        mustVote: item.mustVote, hasVeto: item.hasVeto};
+    });
+    const votes = input.votes.map((value: unknown) => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) throw new AppError({
+        code: 'VALIDATION_FAILED', message: 'Vote list is invalid.'});
+      const item = value as Record<string, unknown>; assertExactBody(item, ['seatId', 'choice']);
+      if (!['FOR', 'AGAINST', 'ABSTAIN'].includes(item.choice as string)) throw new AppError({
+        code: 'VALIDATION_FAILED', message: 'Vote choice is invalid.'});
+      return {seatId: uuid(item.seatId, 'Voting seat ID'), choice: item.choice as BallotChoice};
+    });
+    return idempotentTransaction({pool: this.pool, auth, route: `POST /api/v1/resolutions/${documentId}/direct-vote/submit`,
+      key, request: input, status: 200, work: async client => {
+        const located = await client.query<{committee_id: string}>(
+          'SELECT committee_id FROM documents WHERE id=$1 AND kind=$2 AND deleted_at IS NULL',
+          [documentId, 'RESOLUTION']);
+        if (!located.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Resolution not found.'});
+        const committee = await lockedCommittee(client, located.rows[0].committee_id);
+        requireProceedingsActive(committee); await requireChair(client, committee, auth.user.id);
+        const found = await client.query<DocumentRow>(`SELECT d.*,NULL::uuid AS resolution_document_id FROM documents d
+          WHERE d.id=$1 AND d.kind='RESOLUTION' AND d.deleted_at IS NULL FOR UPDATE`, [documentId]);
+        const document = found.rows[0] as DocumentRow;
+        const metadata = await client.query<ResolutionRow>('SELECT * FROM resolutions WHERE document_id=$1 FOR UPDATE', [documentId]);
+        const resolution = metadata.rows[0] as ResolutionRow;
+        if (document.revision !== baseDocumentRevision || resolution.direct_vote_revision !== baseSettingsRevision
+          || resolution.direct_vote_cast_revision !== baseCastRevision) throw new AppError({
+            code: 'REVISION_CONFLICT', message: 'This resolution vote changed since it was loaded.'});
+        if (resolution.direct_vote_completed_at) throw new AppError({code: 'RESOURCE_CONFLICT',
+          message: 'This resolution vote has already been submitted.'});
+        if (document.status === 'POSTPONED') throw new AppError({reason: 'DOCUMENT_STATE_CHANGED',
+          code: 'RESOURCE_CONFLICT', message: 'The Draft Resolution is postponed.'});
+        const session = await client.query<{status: string}>('SELECT status FROM meeting_sessions WHERE id=$1 FOR UPDATE',
+          [document.meeting_session_id]);
+        if (session.rows[0]?.status !== 'OPEN') throw new AppError({reason: 'MEETING_CLOSED',
+          code: 'RESOURCE_CONFLICT', message: 'Meeting session is closed.'});
+        await requirePublishedDocumentFile(client, document.current_version_id);
+        const currentEligibility = await client.query<{seat_id: string; seat_display_name: string;
+          must_vote: boolean; has_veto: boolean}>(`SELECT s.id AS seat_id,s.display_name AS seat_display_name,
+          s.must_vote,s.has_veto FROM committee_seats s JOIN current_attendance a
+          ON a.seat_id=s.id AND a.meeting_session_id=$2 AND a.state='PRESENT'
+          WHERE s.committee_id=$1 AND s.active=true AND s.can_vote=true ORDER BY s.sort_order,s.stable_key,s.id`,
+        [committee.id, document.meeting_session_id]);
+        const bySeat = new Map(votes.map(vote => [vote.seatId, vote.choice]));
+        if (votes.length !== currentEligibility.rows.length || bySeat.size !== votes.length
+          || eligibility.length !== currentEligibility.rows.length
+          || currentEligibility.rows.some((seat, index) => {
+            const expected = eligibility[index];
+            return !expected || expected.seatId !== seat.seat_id || expected.seatDisplayName !== seat.seat_display_name
+              || expected.mustVote !== seat.must_vote || expected.hasVeto !== seat.has_veto || !bySeat.has(seat.seat_id)
+              || seat.must_vote && bySeat.get(seat.seat_id) === 'ABSTAIN';
+          })) throw new AppError({code: 'REVISION_CONFLICT',
+          message: 'Voting eligibility changed or the vote list is incomplete.'});
+        const existing = await client.query<{id: string; seat_id: string; current_choice: BallotChoice;
+          revision: number; retracted_at: Date | null}>(`SELECT id,seat_id,current_choice,revision,retracted_at
+          FROM resolution_direct_votes WHERE resolution_document_id=$1 FOR UPDATE`, [documentId]);
+        const previousBySeat = new Map(existing.rows.map(vote => [vote.seat_id, vote]));
+        const now = this.now();
+        for (const seat of currentEligibility.rows) {
+          const choice = bySeat.get(seat.seat_id) as BallotChoice;
+          const previous = previousBySeat.get(seat.seat_id);
+          if (previous && !previous.retracted_at && previous.current_choice === choice) continue;
+          const voteId = previous?.id ?? randomUUID();
+          if (previous) await client.query(`UPDATE resolution_direct_votes SET current_choice=$2,actor_user_id=$3,
+            on_behalf_of_seat_id=$4,cast_at=$5,retracted_at=NULL,retracted_by_user_id=NULL,revision=revision+1
+            WHERE id=$1`, [voteId, choice, auth.user.id, seat.seat_id, now]);
+          else await client.query(`INSERT INTO resolution_direct_votes
+            (id,committee_id,resolution_document_id,seat_id,seat_display_name,current_choice,actor_user_id,
+              on_behalf_of_seat_id,cast_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$4,$8)`,
+          [voteId, committee.id, documentId, seat.seat_id, seat.seat_display_name, choice, auth.user.id, now]);
+          await client.query(`INSERT INTO resolution_direct_vote_revisions
+            (id,committee_id,resolution_document_id,vote_id,seat_id,previous_choice,new_choice,actor_user_id,
+              on_behalf_of_seat_id,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$5,$9)`,
+          [randomUUID(), committee.id, documentId, voteId, seat.seat_id,
+            previous && !previous.retracted_at ? previous.current_choice : null, choice, auth.user.id, now]);
+          await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id, capabilities: ['CHAIR'],
+            onBehalfOfSeatId: seat.seat_id, action: 'documents.direct_vote_changed', resourceType: 'document',
+            resourceId: documentId, before: {seatId: seat.seat_id,
+              choice: previous && !previous.retracted_at ? previous.current_choice : null,
+              voteRevision: previous?.revision ?? 0},
+            after: {seatId: seat.seat_id, choice, voteRevision: (previous?.revision ?? 0) + 1}});
+        }
+        await client.query(`UPDATE resolutions SET direct_vote_started_at=coalesce(direct_vote_started_at,$2),
+          direct_vote_completed_at=$2,direct_vote_cast_revision=direct_vote_cast_revision+1 WHERE document_id=$1`,
+        [documentId, now]);
+        await appendEvent(client, committee, {type: 'document.direct_vote_changed', resourceType: 'document',
+          resourceId: documentId, revision: document.revision,
+          payload: {seatCount: votes.length, completed: true}, audience: 'PUBLIC'});
+        await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id, capabilities: ['CHAIR'],
+          action: 'documents.direct_vote_submitted', resourceType: 'document', resourceId: documentId,
+          after: {seatCount: votes.length}});
+        return documentState(client, document);
+      }});
+  }
+
   async setResolutionDirectVote(auth: AuthenticatedSession, documentId: string, input: Record<string, unknown>,
     context: Stage4Context): Promise<ProceedingDocument> {
     requireBusinessIdentity(auth); assertExactBody(input, ['seatId', 'choice']);
@@ -3364,8 +3480,18 @@ export class Stage5Service {
         (id,committee_id,resolution_document_id,vote_id,seat_id,previous_choice,new_choice,actor_user_id,on_behalf_of_seat_id,created_at)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$5,$9)`, [randomUUID(), committee.id, documentId, voteId, seatId,
         previousChoice, choice, auth.user.id, now]);
-      await client.query(`UPDATE resolutions SET direct_vote_started_at=coalesce(direct_vote_started_at,$2)
-        WHERE document_id=$1`, [documentId, now]);
+      await client.query(`UPDATE resolutions SET direct_vote_started_at=coalesce(direct_vote_started_at,$2),
+        direct_vote_cast_revision=direct_vote_cast_revision+1,
+        direct_vote_completed_at=CASE WHEN direct_vote_completed_at IS NOT NULL THEN direct_vote_completed_at
+          WHEN EXISTS (SELECT 1 FROM committee_seats s JOIN current_attendance a
+            ON a.seat_id=s.id AND a.meeting_session_id=$3 AND a.state='PRESENT'
+            WHERE s.committee_id=$4 AND s.active=true AND s.can_vote=true)
+            AND NOT EXISTS (SELECT 1 FROM committee_seats s JOIN current_attendance a
+              ON a.seat_id=s.id AND a.meeting_session_id=$3 AND a.state='PRESENT'
+              WHERE s.committee_id=$4 AND s.active=true AND s.can_vote=true
+                AND NOT EXISTS (SELECT 1 FROM resolution_direct_votes v
+                  WHERE v.resolution_document_id=$1 AND v.seat_id=s.id AND v.retracted_at IS NULL))
+          THEN $2 ELSE NULL END WHERE document_id=$1`, [documentId, now, document.meeting_session_id, committee.id]);
       await appendEvent(client, committee, {type: 'document.direct_vote_changed', resourceType: 'document',
         resourceId: documentId, revision: document.revision, payload: {seatId, hasCurrentVote: choice !== null}, audience: 'PUBLIC'});
       await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id, capabilities: ['CHAIR'],

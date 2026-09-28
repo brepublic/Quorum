@@ -132,6 +132,18 @@ describe('stage 5 timer HTTP boundary', () => {
       {baseRevision: 1, includeNonVotingSeats: false}, expect.any(Object));
   });
 
+  it('routes the complete resolution vote with its idempotency key', async () => {
+    const submitResolutionDirectVote = vi.fn(async () => ({id: 'resolution'}));
+    const stage5 = {submitResolutionDirectVote} as unknown as Stage5Service;
+    const body = {baseDocumentRevision: 2, baseSettingsRevision: 1, baseCastRevision: 0,
+      eligibility: [], votes: []};
+    const response = await send(stage5,
+      '/api/v1/resolutions/30000000-0000-4000-8000-000000000001/direct-vote/submit', body);
+    expect(response.statusCode).toBe(200);
+    expect(submitResolutionDirectVote).toHaveBeenCalledWith(authenticated,
+      '30000000-0000-4000-8000-000000000001', body, 'timer-key', expect.any(Object));
+  });
+
   it('uses idempotency for the first vote from a seat', async () => {
     const castVote = vi.fn(async () => ({id: 'ballot'})); const stage5 = {castVote} as unknown as Stage5Service;
     await send(stage5, '/api/v1/ballots/30000000-0000-4000-8000-000000000001/votes', {choice: 'FOR'});

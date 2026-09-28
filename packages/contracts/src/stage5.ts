@@ -286,11 +286,21 @@ export type ResolutionDirectVoteMajority = 'SIMPLE_MAJORITY' | 'TWO_THIRDS' | 'T
 export interface ResolutionDirectVoteState {
   majority: ResolutionDirectVoteMajority;
   startedAt: string | null;
+  completedAt: string | null;
+  castRevision: number;
   settingsRevision: number;
   eligibility: Array<{seatId: string; seatDisplayName: string; mustVote: boolean; hasVeto: boolean}>;
   threshold: number;
   automaticResult: 'PASSED' | 'FAILED' | 'VETOED' | null;
   votes: BallotVote[];
+}
+
+export interface SubmitResolutionDirectVoteRequest {
+  baseDocumentRevision: number;
+  baseSettingsRevision: number;
+  baseCastRevision: number;
+  eligibility: ResolutionDirectVoteState['eligibility'];
+  votes: Array<{seatId: string; choice: BallotChoice}>;
 }
 
 export interface DocumentResultDecision {

@@ -1102,7 +1102,9 @@ export class Stage4Service {
         let delegatesCanAmend = false; let directVote: ProceedingDocument['directVote'] = null;
         if (row.kind === 'RESOLUTION') {
           const metadata = await client.query<{delegates_can_amend: boolean; direct_vote_majority: NonNullable<ProceedingDocument['directVote']>['majority'];
-            direct_vote_started_at: Date | null; direct_vote_revision: number}>('SELECT * FROM resolutions WHERE document_id=$1', [row.id]);
+            direct_vote_started_at: Date | null; direct_vote_completed_at: Date | null;
+            direct_vote_revision: number; direct_vote_cast_revision: number}>(
+            'SELECT * FROM resolutions WHERE document_id=$1', [row.id]);
           const resolution = metadata.rows[0];
           if (!resolution) throw new AppError({code: 'INTERNAL_ERROR', message: 'Resolution metadata is unavailable.'});
           delegatesCanAmend = resolution.delegates_can_amend;
@@ -1142,6 +1144,8 @@ export class Stage4Service {
           }
           directVote = {majority: resolution.direct_vote_majority,
             startedAt: resolution.direct_vote_started_at?.toISOString() ?? null,
+            completedAt: resolution.direct_vote_completed_at?.toISOString() ?? null,
+            castRevision: resolution.direct_vote_cast_revision,
             settingsRevision: resolution.direct_vote_revision,
             eligibility: eligibility.rows.map(item => ({seatId: item.seat_id, seatDisplayName: item.seat_display_name,
               mustVote: item.must_vote, hasVeto: item.has_veto})), threshold, automaticResult,

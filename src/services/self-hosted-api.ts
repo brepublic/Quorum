@@ -23,6 +23,7 @@ import type {
   PendingHostCommit,
   RollCall,
   SubmitRollCallRequest,
+  SubmitResolutionDirectVoteRequest,
   Stage4CommitteeSeat,
   AttendanceEvent,
   CommitteePoint,
@@ -474,6 +475,10 @@ export const selfHostedApi = {
   setResolutionDirectVote(id: string, seatId: string, choice: 'FOR' | 'AGAINST' | 'ABSTAIN' | null) {
     return request<ProceedingDocument>(`/api/v1/resolutions/${id}/direct-vote`, {method: 'POST',
       body: {seatId, choice}});
+  },
+  submitResolutionDirectVote(id: string, body: SubmitResolutionDirectVoteRequest, idempotencyKey: string) {
+    return request<ProceedingDocument>(`/api/v1/resolutions/${id}/direct-vote/submit`, {method: 'POST',
+      body, idempotencyKey});
   },
   recordDocumentResult(id: string, baseRevision: number,
     outcome: 'PASSED' | 'FAILED' | 'INCORPORATED' | 'REJECTED', reason?: string) {

@@ -11,6 +11,8 @@ import type {
   SpeakerQueueEntry,
   SpeakerStance,
   SpeechRecord,
+  ResolutionDirectVoteState,
+  SubmitResolutionDirectVoteRequest,
   YieldType
 } from '@quorum/contracts';
 import {DragDropContext, Draggable, Droppable, type DropResult} from 'react-beautiful-dnd';
@@ -20,7 +22,7 @@ import {Link, useHistory} from 'react-router-dom';
 import {CountryFlagDisplay} from '../../components/CountryFlagDisplay';
 import Loading from '../../components/Loading';
 import {getLanguage, t} from "../../i18n";
-import {newIdempotencyKey, type SelfHostedApi} from '../../services/self-hosted-api';
+import {newIdempotencyKey, SelfHostedApiError, type SelfHostedApi} from '../../services/self-hosted-api';
 import {localizedDisplayName} from './TemplateManagers';
 
 type Run = (operation: () => Promise<unknown>) => Promise<void>;
@@ -1508,6 +1510,16 @@ function StrawpollWorkspace({snapshot, run, api, canChair, resourceId}: CommonPr
   </Container>;
 }
 
+type ResolutionVoteDraft = {
+  baseline: ResolutionDirectVoteState;
+  documentRevision: number;
+  votes: SubmitResolutionDirectVoteRequest['votes'];
+  history: SubmitResolutionDirectVoteRequest['votes'][];
+  submissionKey?: string;
+  failure?: unknown;
+  rejected?: boolean;
+};
+
 function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: CommonProps & {resourceId?: string; tab?: string}) {
   const history = useHistory();
   const session = snapshot.meetingSession?.status === 'OPEN' ? snapshot.meetingSession : undefined;
@@ -1538,6 +1550,9 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
   const [votingPage, setVotingPage] = React.useState(0);
   const [currentVotingSeatId, setCurrentVotingSeatId] = React.useState(selectedDocument?.directVote?.eligibility[0]?.seatId ?? '');
   const [votingHistory, setVotingHistory] = React.useState<Array<{seatId: string; previousChoice: 'FOR' | 'AGAINST' | 'ABSTAIN' | null}>>([]);
+  const [voteDraft, setVoteDraft] = React.useState<ResolutionVoteDraft>();
+  const voteDraftRef = React.useRef<ResolutionVoteDraft>();
+  const [savedDirectVote, setSavedDirectVote] = React.useState<ResolutionDirectVoteState>();
   const submittingVote = React.useRef(false);
   const [voteSaving, setVoteSaving] = React.useState(false);
   const creatingDraft = React.useRef(false);
@@ -1573,9 +1588,18 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
     return () => {active = false;};
   }, [api, snapshot.committee.id, snapshot.sync.committeeEventSequence, contentSource, filesRetry]);
   React.useEffect(() => {
-    setVotingPage(0); setVotingHistory([]);
+    setVotingPage(0); setVotingHistory([]); setVoteDraft(undefined); voteDraftRef.current = undefined;
+    setSavedDirectVote(undefined);
     setCurrentVotingSeatId(selectedDocument?.directVote?.eligibility[0]?.seatId ?? '');
   }, [selectedDocument?.id]);
+  const updateVoteDraft = (next: ResolutionVoteDraft | undefined) => {voteDraftRef.current = next; setVoteDraft(next);};
+  React.useEffect(() => {
+    if (!voteDraft) return;
+    const beforeUnload = (event: BeforeUnloadEvent) => {event.preventDefault(); event.returnValue = '';};
+    window.addEventListener('beforeunload', beforeUnload);
+    const unblock = history.block(() => window.confirm(t('Discard unsubmitted votes?')) ? undefined : false);
+    return () => {window.removeEventListener('beforeunload', beforeUnload); unblock();};
+  }, [!!voteDraft, history]);
   if (resourceId === 'new') return canParticipate && session ? <Loading />
     : <Message content={session ? t('An active seat assignment is required.') : t('Start a meeting first.')} />;
   const document = selectedDocument;
@@ -1640,8 +1664,16 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
       });
     } finally {savingCountries.current = false; setCountriesSaving(false);}
   };
-  const directVote = document.directVote;
-  const directVotes = directVote?.votes ?? [];
+  const snapshotDirectVote = document.directVote;
+  const latestDirectVote = savedDirectVote && snapshotDirectVote
+    && savedDirectVote.castRevision > snapshotDirectVote.castRevision ? savedDirectVote : snapshotDirectVote;
+  const directVote = voteDraft?.baseline ?? latestDirectVote;
+  const voteConflict = !!voteDraft && (voteDraft.rejected || !voteDraft.submissionKey && (
+    document.revision !== voteDraft.documentRevision
+    || snapshotDirectVote?.castRevision !== voteDraft.baseline.castRevision
+    || snapshotDirectVote?.settingsRevision !== voteDraft.baseline.settingsRevision
+    || JSON.stringify(snapshotDirectVote?.eligibility) !== JSON.stringify(voteDraft.baseline.eligibility)));
+  const directVotes = voteDraft?.votes ?? directVote?.votes ?? [];
   const directVoteBySeat = new Map(directVotes.map(vote => [vote.seatId, vote]));
   const directEligibility = directVote?.eligibility ?? [];
   const directTotalPages = Math.max(1, Math.ceil(directEligibility.length / 18));
@@ -1651,15 +1683,53 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
   const directCounts = {FOR: directVotes.filter(vote => vote.choice === 'FOR').length,
     AGAINST: directVotes.filter(vote => vote.choice === 'AGAINST').length,
     ABSTAIN: directVotes.filter(vote => vote.choice === 'ABSTAIN').length};
+  const submitDirectVotes = (next: ResolutionVoteDraft) => {
+    if (submittingVote.current) return;
+    submittingVote.current = true; setVoteSaving(true);
+    const submittingDraft = {...next, submissionKey: next.submissionKey ?? newIdempotencyKey(), failure: undefined};
+    updateVoteDraft(submittingDraft);
+    void run(async () => {
+      try {
+        const result = await api.submitResolutionDirectVote(document.id, {
+          baseDocumentRevision: next.documentRevision, baseSettingsRevision: next.baseline.settingsRevision,
+          baseCastRevision: next.baseline.castRevision, eligibility: next.baseline.eligibility, votes: next.votes
+        }, submittingDraft.submissionKey);
+        if (result.directVote) setSavedDirectVote(result.directVote);
+        updateVoteDraft(undefined); setVotingHistory([]);
+      } catch (caught) {
+        updateVoteDraft({...submittingDraft, failure: caught, rejected: caught instanceof SelfHostedApiError
+          && caught.status >= 400 && caught.status < 500 && ![408, 429].includes(caught.status)});
+      } finally {submittingVote.current = false; setVoteSaving(false);}
+    });
+  };
   const setDirectResolutionVote = async (choice: 'FOR' | 'AGAINST' | 'ABSTAIN' | null,
     targetSeatId = currentVotingSeatId, recordHistory = true) => {
-    if (!canChair || !targetSeatId || submittingVote.current) return;
+    if (!canChair || !directVote || !targetSeatId || submittingVote.current || voteConflict || voteDraftRef.current?.submissionKey) return;
     const previousChoice = directVoteBySeat.get(targetSeatId)?.choice ?? null;
     if (previousChoice === choice) return;
+    if (!directVote?.completedAt) {
+      if (choice === null) return;
+      const previous = voteDraftRef.current;
+      const votes = previous?.votes ?? directVote?.votes.map(vote => ({seatId: vote.seatId, choice: vote.choice})) ?? [];
+      const bySeat = new Map(votes.map(vote => [vote.seatId, vote.choice]));
+      bySeat.set(targetSeatId, choice);
+      const next: ResolutionVoteDraft = {baseline: previous?.baseline ?? directVote,
+        documentRevision: previous?.documentRevision ?? document.revision,
+        votes: directEligibility.filter(item => bySeat.has(item.seatId))
+          .map(item => ({seatId: item.seatId, choice: bySeat.get(item.seatId)!})),
+        history: [...(previous?.history ?? []), votes]};
+      updateVoteDraft(next);
+      const index = directEligibility.findIndex(item => item.seatId === targetSeatId);
+      const nextSeat = directEligibility.slice(index + 1).find(item => !bySeat.has(item.seatId));
+      if (nextSeat) {setCurrentVotingSeatId(nextSeat.seatId); setVotingPage(Math.floor(directEligibility.indexOf(nextSeat) / 18));}
+      if (next.votes.length === directEligibility.length) submitDirectVotes(next);
+      return;
+    }
     submittingVote.current = true; setVoteSaving(true);
     try {
       await run(async () => {
-        await api.setResolutionDirectVote(document.id, targetSeatId, choice);
+        const result = await api.setResolutionDirectVote(document.id, targetSeatId, choice);
+        if (result.directVote) setSavedDirectVote(result.directVote);
         if (recordHistory) {
           setVotingHistory(current => [...current, {seatId: targetSeatId, previousChoice}]);
           const index = directEligibility.findIndex(item => item.seatId === targetSeatId);
@@ -1676,6 +1746,17 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
     } finally {submittingVote.current = false; setVoteSaving(false);}
   };
   const undoDirectVote = async () => {
+    if (voteDraft && !voteDraft.submissionKey && !voteConflict) {
+      const previous = voteDraft.history.at(-1);
+      if (previous) {
+        const last = voteDraft.votes.find(vote => !previous.some(item => item.seatId === vote.seatId && item.choice === vote.choice));
+        updateVoteDraft(voteDraft.history.length === 1 ? undefined
+          : {...voteDraft, votes: previous, history: voteDraft.history.slice(0, -1)});
+        if (last) {setCurrentVotingSeatId(last.seatId);
+          setVotingPage(Math.floor(Math.max(0, directEligibility.findIndex(item => item.seatId === last.seatId)) / 18));}
+      }
+      return;
+    }
     const previous = votingHistory.at(-1); if (!previous) return;
     await setDirectResolutionVote(previous.previousChoice, previous.seatId, false);
   };
@@ -1740,7 +1821,7 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
       </aside><div className="resolution-voting-matrix-wrap"><div className="resolution-voting-grid">
         {visibleDirectSeats.map(item => {const vote = directVoteBySeat.get(item.seatId); return <button type="button" key={item.seatId}
           className={`resolution-voting-member${vote ? ` vote-${vote.choice === 'ABSTAIN' ? 'abstaining' : vote.choice.toLowerCase()}` : ''}${item.seatId === currentVotingSeatId ? ' is-current' : ''}`}
-          disabled={voteSaving} aria-pressed={item.seatId === currentVotingSeatId}
+          disabled={voteSaving || !!voteDraft?.submissionKey || voteConflict} aria-pressed={item.seatId === currentVotingSeatId}
           onClick={() => canChair && !submittingVote.current && setCurrentVotingSeatId(item.seatId)}>
           <span className="resolution-voting-status-light" aria-hidden="true" />
           <span className="resolution-voting-member-name"><span>{item.seatDisplayName}</span>
@@ -1753,24 +1834,34 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
           <div className="resolution-voting-metric metric-for"><span>{t('yes')}</span><strong>{directCounts.FOR}</strong></div>
           <div className="resolution-voting-metric metric-against"><span>{t('no')}</span><strong>{directCounts.AGAINST}</strong></div>
           <div className="resolution-voting-metric metric-abstaining"><span>{t('abstaining')}</span><strong>{directCounts.ABSTAIN}</strong></div>
-        </aside></div>
+      </aside></div>
       <div className="resolution-voting-current"><div className="resolution-voting-current-label">{t('Now voting')}</div>
-        <Header as="h2">{currentVotingSeat?.seatDisplayName ?? t('No eligible delegations')}</Header>
+        {voteDraft?.submissionKey || voteConflict ? <div role="status" aria-live="polite">
+          <Header as="h2">{t(voteDraft?.failure ? 'Submission failed' : voteConflict
+            ? 'Resolution vote changed' : 'Submitting votes')}</Header>
+          {!!voteDraft?.failure && <p>{apiErrorText(voteDraft.failure)}</p>}
+        </div> : <Header as="h2">{currentVotingSeat?.seatDisplayName ?? t('No eligible delegations')}</Header>}
         {canChair && <div className="resolution-voting-actions"><div className="resolution-voting-primary-actions">
-          <Button positive content={t('yes')} icon="plus" disabled={!currentVotingSeat || voteSaving}
+          {voteConflict ? <Button primary content={t('Reload voting')} icon="refresh"
+            onClick={() => {updateVoteDraft(undefined); setSavedDirectVote(undefined);}} />
+            : voteDraft?.failure ? <Button primary content={t('Retry submission')} icon="cloud upload"
+              disabled={voteSaving || voteDraft.rejected} onClick={() => submitDirectVotes(voteDraft)} /> : null}
+          <Button positive content={t('yes')} icon="plus" disabled={!currentVotingSeat || voteSaving || !!voteDraft?.submissionKey || voteConflict}
             onClick={() => void setDirectResolutionVote('FOR')} />
-          <Button negative content={t('no')} icon="remove" disabled={!currentVotingSeat || voteSaving}
+          <Button negative content={t('no')} icon="remove" disabled={!currentVotingSeat || voteSaving || !!voteDraft?.submissionKey || voteConflict}
             onClick={() => void setDirectResolutionVote('AGAINST')} />
           <Button color="yellow" content={t('abstaining')} icon="minus"
-            disabled={!currentVotingSeat || currentVotingSeat.mustVote || voteSaving} onClick={() => void setDirectResolutionVote('ABSTAIN')} />
-        </div>{directVote.automaticResult === null && <Button basic className="resolution-voting-undo" content={t('Undo')} icon="undo"
-          disabled={votingHistory.length === 0 || voteSaving} onClick={() => void undoDirectVote()} />}</div>}
+            disabled={!currentVotingSeat || currentVotingSeat.mustVote || voteSaving || !!voteDraft?.submissionKey || voteConflict}
+            onClick={() => void setDirectResolutionVote('ABSTAIN')} />
+        </div>{(!directVote.completedAt || directVote.automaticResult === null) && <Button basic className="resolution-voting-undo"
+          content={t('Undo')} icon="undo" disabled={(voteDraft ? voteDraft.history.length : votingHistory.length) === 0
+            || voteSaving || !!voteDraft?.submissionKey || voteConflict} onClick={() => void undoDirectVote()} />}</div>}
       </div><div className="resolution-voting-outcome">
-        {directVote.automaticResult === 'PASSED' && <Statistic className="resolution-result outcome-passed">
+        {directVote.completedAt && directVote.automaticResult === 'PASSED' && <Statistic className="resolution-result outcome-passed">
           <Statistic.Value>{t('Passed')}</Statistic.Value></Statistic>}
-        {directVote.automaticResult === 'FAILED' && <Statistic className="resolution-result outcome-failed">
+        {directVote.completedAt && directVote.automaticResult === 'FAILED' && <Statistic className="resolution-result outcome-failed">
           <Statistic.Value>{t('Failed')}</Statistic.Value></Statistic>}
-        {directVote.automaticResult === 'VETOED' && <Statistic className="resolution-result outcome-vetoed">
+        {directVote.completedAt && directVote.automaticResult === 'VETOED' && <Statistic className="resolution-result outcome-vetoed">
           <Statistic.Value>{t('Vetoed')}</Statistic.Value></Statistic>}
       </div>{canChair && <Segment secondary textAlign="center"><Select value={directVote.majority}
         options={[{key: 'simple', value: 'SIMPLE_MAJORITY', text: t('Simple (50%) majority required')},
