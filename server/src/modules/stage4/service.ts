@@ -127,6 +127,8 @@ const BUILTIN_COUNTRY_NAME_OVERRIDES: Record<string, LocalizedNames> = {
 function builtInCountryName(code: string, language: string): string {
   if (code === 'un') return language === 'zh-CN' ? '联合国' : 'United Nations';
   if (code === 'eu') return language === 'zh-CN' ? '欧洲联盟' : 'European Union';
+  const override = BUILTIN_COUNTRY_NAME_OVERRIDES[code]?.[language];
+  if (override) return override;
   try { return new Intl.DisplayNames([language], {type: 'region'}).of(code.toUpperCase()) || code.toUpperCase(); }
   catch { return code.toUpperCase(); }
 }
@@ -138,7 +140,7 @@ export function builtinCountryTemplate(): CountryTemplate {
     countryLanguages: ['zh-CN', 'en'], revision: 1, createdAt: null, updatedAt: null,
     countries: BUILTIN_COUNTRY_CODES.map((code, sortOrder) => ({
       id: `builtin:${code}`, stableKey: code,
-      names: BUILTIN_COUNTRY_NAME_OVERRIDES[code] ?? {'zh-CN': builtInCountryName(code, 'zh-CN'), en: builtInCountryName(code, 'en')},
+      names: {'zh-CN': builtInCountryName(code, 'zh-CN'), en: builtInCountryName(code, 'en')},
       defaultLanguage: 'en', continent: null, sortOrder,
       flag: code === 'un' ? {type: 'EMOJI', value: '🇺🇳'} : {type: 'STANDARD', value: code}, revision: 1
     }))

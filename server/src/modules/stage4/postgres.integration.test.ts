@@ -190,8 +190,17 @@ integration('PostgreSQL stage 4 templates and seat snapshots', () => {
     const builtins = (await stage4.listCommitteeTemplates(owner)).filter(template => template.builtin);
     expect(builtins.map(template => template.key)).toEqual([
       'builtin:african-union', 'builtin:asean', 'builtin:brics', 'builtin:european-union',
-      'builtin:g20', 'builtin:nato', 'builtin:un-security-council'
+      'builtin:nato', 'builtin:un-security-council'
     ]);
+    const builtinCountries = await stage4.getCountryTemplate(owner, 'builtin:default');
+    const builtinCountriesByCode = new Map(builtinCountries.countries.map(country => [country.stableKey, country]));
+    for (const template of builtins) {
+      for (const member of template.members) {
+        const country = builtinCountriesByCode.get(member.stableKey);
+        if (country) expect(member.names).toEqual(country.names);
+      }
+    }
+
     const securityCouncil = builtins.find(template => template.key === 'builtin:un-security-council')!;
     expect(securityCouncil.members.filter(member => member.hasVeto)).toHaveLength(5);
 
@@ -203,6 +212,11 @@ integration('PostgreSQL stage 4 templates and seat snapshots', () => {
       active_rule_package_version_id: expect.any(String), source_committee_template_id: null, temporary_template: false})]);
     expect((await pool?.query('SELECT count(*)::int AS count FROM committee_seats WHERE committee_id=$1', [committee.id]))?.rows)
       .toEqual([{count: securityCouncil.members.length}]);
+    const snapshot = await stage4.snapshot(committee.id, owner);
+    for (const seat of snapshot.seats) {
+      const member = securityCouncil.members.find(item => item.stableKey === seat.stableKey)!;
+      expect(seat.displayName).toBe(member.names[snapshot.committee.committeeLanguage]);
+    }
   });
 
   it('round-trips every capability through template update, clone and committee creation', async () => {
