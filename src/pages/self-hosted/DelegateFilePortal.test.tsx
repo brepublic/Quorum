@@ -24,7 +24,7 @@ beforeEach(() => {setLanguage('zh-CN');
   vi.stubGlobal('EventSource', FakeEventSource);
   (globalThis as {IS_REACT_ACT_ENVIRONMENT?: boolean}).IS_REACT_ACT_ENVIRONMENT = true;
 });
-afterEach(async () => {await act(async () => root.unmount()); host.remove(); vi.unstubAllGlobals(); vi.restoreAllMocks();});
+afterEach(async () => {await act(async () => root.unmount()); host.remove(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks();});
 
 function client(overrides: Partial<SelfHostedApi>): SelfHostedApi {return overrides as SelfHostedApi;}
 
@@ -203,5 +203,29 @@ describe('delegate file portal', () => {
     download.addEventListener('click', event => event.preventDefault(), {once: true});
     await act(async () => download.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true})));
     expect(host.textContent).not.toContain('中国 代表提交的 决议草案 1.1 现已可用。');
+  });
+
+  it('shows the same chair banner when polling finds a publication missed by the stream', async () => {
+    vi.useFakeTimers();
+    const files = [{id: 'existing', submissionSource: 'CHAIR' as const, logicalName: '新闻 1.1',
+      submitterDisplayName: null, fileType: 'NEWS' as const, submittedAt: null,
+      publishedAt: '2026-09-29T01:00:00Z', revision: 1}];
+    const bootstrapDelegatePortal = vi.fn(async () => ({committeeId: 'committee', committeeLanguage: 'zh-CN' as const,
+      committeeName: '委员会', shareId: 'share', claimedSeat: {id: 'seat', displayName: '中国'},
+      eligibleSeats: [], mayUpload: true, storageAvailable: true, eventSequence: 1, files: [...files],
+      categoryOpenedAt: {}, maxUploadSizeBytes: 20 * 1024 * 1024}));
+    await act(async () => root.render(<DelegateFilePortal api={client({bootstrapDelegatePortal})} />));
+    expect(host.querySelector('.info.message')).toBeNull();
+    files.push({id: 'new', submissionSource: 'CHAIR', logicalName: '即时消息 1.1',
+      submitterDisplayName: null, fileType: 'NEWS', submittedAt: null,
+      publishedAt: '2026-09-29T02:00:00Z', revision: 1});
+    await act(async () => {await vi.advanceTimersByTimeAsync(15_000);});
+    expect(host.querySelector('.info.message')?.textContent).toBe('主席 代表提交的 即时消息 1.1 现已可用。');
+    expect(host.textContent).toContain('即时消息 1.1');
+    await act(async () => {await vi.advanceTimersByTimeAsync(15_000);});
+    expect(host.querySelectorAll('.info.message')).toHaveLength(1);
+    files[0] = {...files[0], logicalName: '新闻 1.2', publishedAt: '2026-09-29T03:00:00Z'};
+    await act(async () => {await vi.advanceTimersByTimeAsync(15_000);});
+    expect(host.textContent).toContain('主席 代表提交的 新闻 1.2 现已可用。');
   });
 });

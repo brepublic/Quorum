@@ -77,25 +77,45 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
   const [navigationLevel, setNavigationLevel] = React.useState(0);
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
   const navigationMeasurementRef = React.useRef<HTMLDivElement | null>(null);
+  const knownPublications = React.useRef<Map<string, string> | null>(null);
 
   const load = React.useCallback(async () => {
     if (!capability) { setError({code: 'LINK_EXPIRED'}); return; }
-    try { setPortal(await api.bootstrapDelegatePortal(capability)); setError(undefined); }
+    try { const next = await api.bootstrapDelegatePortal(capability);
+      knownPublications.current = new Map(next.files.map(file => [file.id, file.publishedAt]));
+      setPortal(next); setError(undefined); }
     catch (caught) { setError(caught); }
   }, [api, capability]);
   React.useEffect(() => { void load(); }, [load]);
 
   const refreshFiles = React.useCallback(async () => {
-    try { const next = await api.bootstrapDelegatePortal(capability); setPortal(current => {
-      if (!current) return current;
-      const categoryOpenedAt = {...next.categoryOpenedAt};
-      for (const category of CATEGORIES) {
-        const local = current.categoryOpenedAt?.[category];
-        const remote = categoryOpenedAt[category];
-        if (local && (!remote || local > remote)) categoryOpenedAt[category] = local;
+    try { const next = await api.bootstrapDelegatePortal(capability);
+      const known = knownPublications.current;
+      if (known) {
+        const newlyPublished = next.files.filter(file => {
+          const previous = known.get(file.id);
+          return (!previous || file.publishedAt > previous) &&
+            (file.submissionSource === 'CHAIR' || file.submissionSource === 'DELEGATE_PORTAL');
+        });
+        if (newlyPublished.length) setNotices(current => {
+          const others = current.filter(item => !newlyPublished.some(file => file.id === item.fileId));
+          return [...others, ...newlyPublished.map(file => ({id: 0, fileId: file.id,
+            submissionSource: file.submissionSource as 'CHAIR' | 'DELEGATE_PORTAL',
+            submitterDisplayName: file.submitterDisplayName, logicalName: file.logicalName,
+            publishedAt: file.publishedAt, expiresAt: Date.now() + 60_000}))];
+        });
       }
-      return {...next, categoryOpenedAt, eventSequence: current.eventSequence};
-    }); }
+      knownPublications.current = new Map(next.files.map(file => [file.id, file.publishedAt]));
+      setPortal(current => {
+        if (!current) return current;
+        const categoryOpenedAt = {...next.categoryOpenedAt};
+        for (const category of CATEGORIES) {
+          const local = current.categoryOpenedAt?.[category];
+          const remote = categoryOpenedAt[category];
+          if (local && (!remote || local > remote)) categoryOpenedAt[category] = local;
+        }
+        return {...next, categoryOpenedAt, eventSequence: current.eventSequence};
+      }); }
     catch { /* The stream state communicates loss of service. */ }
   }, [api, capability]);
 
@@ -126,7 +146,9 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
 
   const claim = async () => {
     setWorking(true); setError(undefined);
-    try { setPortal(await api.claimDelegatePortal(capability, seatId)); setConfirming(false); }
+    try { const next = await api.claimDelegatePortal(capability, seatId);
+      knownPublications.current = new Map(next.files.map(file => [file.id, file.publishedAt]));
+      setPortal(next); setConfirming(false); }
     catch (caught) { setError(caught); }
     finally { setWorking(false); }
   };
