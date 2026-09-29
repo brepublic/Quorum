@@ -13,7 +13,7 @@ import type {
   PendingHostCommit
 } from '@quorum/contracts';
 import type {CommitteeContentSnapshot} from '@quorum/contracts';
-import {committeeContentName, isAllowedDelegateFile, type DelegateFileSettings, type DefaultFileRejectionSettings} from '@quorum/contracts';
+import {committeeContentName, DELEGATE_FILE_TYPES, isAllowedDelegateFile, isCustomDelegateFileType, type DelegateFileSettings, type DefaultFileRejectionSettings} from '@quorum/contracts';
 import {assertExactBody} from '../stage4/validation.js';
 import {rejectionTypes, allowedExtensions} from './settings.js';
 import {AppError} from '../../http/errors.js';
@@ -28,7 +28,7 @@ import type {Stage6StorageService} from '../storage/service.js';
 import type {StorageCacheService} from '../storage/cache-service.js';
 import {indexedSearchTerms, manualCountryTerms, namesForSeat, termsFor} from '../search/index-service.js';
 
-const FILE_TYPES = new Set<DelegateFileType>(['WORKING_PAPER', 'DIRECTIVE_DRAFT', 'RESOLUTION_DRAFT']);
+const FILE_TYPES = new Set<string>(DELEGATE_FILE_TYPES);
 const DELEGATE_SESSION_MS = 30 * 24 * 60 * 60 * 1000;
 
 interface ShareRow extends QueryResultRow {
@@ -65,7 +65,8 @@ function bounded(value: unknown, name: string, maximum: number): string {
   return value.trim();
 }
 function fileType(value: unknown): DelegateFileType {
-  if (!FILE_TYPES.has(value as DelegateFileType)) {
+  if (typeof value !== 'string' || !(FILE_TYPES.has(value) ||
+    (value.startsWith('CUSTOM:') && value.slice(7).trim().length > 0 && Array.from(value.slice(7)).length <= 100))) {
     throw new AppError({reason: 'INVALID_FILE_TYPE', code: 'VALIDATION_FAILED', message: 'File type is invalid.'});
   }
   return value as DelegateFileType;
@@ -240,7 +241,7 @@ export class DelegateFileService {
     await this.assertMayUpload(session);
     const type = fileType(body.fileType); const uploadBody = {...body}; delete uploadBody.fileType;
     const settings = (await this.pool.query('SELECT delegate_file_settings FROM committees WHERE id=$1', [session.committee_id])).rows[0].delegate_file_settings as DelegateFileSettings;
-    const extensions = settings.allowedExtensions[type];
+    const extensions = settings.allowedExtensions[isCustomDelegateFileType(type) ? 'OTHER' : type];
     if (typeof body.originalName !== 'string' || !isAllowedDelegateFile(body.originalName, extensions)) {
       throw new AppError({code: 'VALIDATION_FAILED', reason: 'INVALID_FILE_EXTENSION', params: {formats: extensions.map(ext => '.' + ext).join(', ')}, message: 'The file extension is not allowed.',
         details: {allowedExtensions: extensions}});
@@ -341,6 +342,9 @@ export class DelegateFileService {
       [fileId, logicalName, now, auth.user.id, target?.id ?? null]);
       if (target) {
         const versionId = randomUUID();
+        await client.query(`INSERT INTO delegate_file_metadata(file_entry_id,submission_source,file_type,submitted_at)
+          VALUES ($1,'LEGACY',$2,$3) ON CONFLICT (file_entry_id) DO UPDATE SET file_type=EXCLUDED.file_type`,
+        [target.id, type, existing?.submitted_at ?? entry.submitted_at ?? entry.created_at]);
         await client.query(`INSERT INTO file_versions
           (id,committee_id,file_entry_id,version_number,blob_id,original_name,media_type,size_bytes,sha256,created_by_user_id,source_file_entry_id)
           SELECT $1,$2,$3,coalesce(max(version_number),0)+1,$4,$5,$6,$7,$8,$9,$10 FROM file_versions WHERE file_entry_id=$3`,
@@ -642,7 +646,7 @@ export class DelegateFileService {
       rejectionReason: metadata?.rejection_reason ?? null, reviewedAt: metadata?.rejected_at?.toISOString() ?? file.publishedAt};
   }
 
-  private async suggestedNames(committeeId: string, submittedDates: Date[]): Promise<Record<DelegateFileType, {sessionOrdinal: number; ordinal: number}>[]> {
+  private async suggestedNames(committeeId: string, submittedDates: Date[]): Promise<Record<string, {sessionOrdinal: number; ordinal: number}>[]> {
     if (!submittedDates.length) return [];
     const sessions = await this.pool.query<{id: string; ordinal: string; created_at: Date}>(`SELECT id,created_at,
       ordinal::text AS ordinal FROM meeting_sessions WHERE committee_id=$1 ORDER BY created_at,id`, [committeeId]);
@@ -657,13 +661,13 @@ export class DelegateFileService {
       JOIN file_entries e ON e.id=m.file_entry_id WHERE e.committee_id=$1 AND e.published_at IS NOT NULL
       GROUP BY bounds.ordinal,m.file_type`, [committeeId, starts, ends]);
     const totals = new Map(counts.rows.map(row => [`${row.ordinal}:${row.file_type}`, Number(row.count)]));
-    const types: DelegateFileType[] = ['WORKING_PAPER', 'DIRECTIVE_DRAFT', 'RESOLUTION_DRAFT'];
+    const types = [...new Set<string>([...DELEGATE_FILE_TYPES, ...counts.rows.map(row => row.file_type)])];
     return submittedDates.map(submittedAt => {
       const session = sessions.rows.filter(row => row.created_at <= submittedAt).at(-1) ?? sessions.rows[0];
       const sessionOrdinal = Number(session?.ordinal ?? 1);
       const boundsOrdinal = session ? sessions.rows.indexOf(session) + 1 : 1;
       return Object.fromEntries(types.map(type => [type, {sessionOrdinal,
-        ordinal: (totals.get(`${boundsOrdinal}:${type}`) ?? 0) + 1}])) as Record<DelegateFileType, {sessionOrdinal: number; ordinal: number}>;
+        ordinal: (totals.get(`${boundsOrdinal}:${type}`) ?? 0) + 1}]));
     });
   }
 

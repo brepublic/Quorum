@@ -687,6 +687,10 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   padding: 1.5rem 0 0.5rem;
 }
 
+.delegate-file-category-menu.ui.menu {
+  flex-wrap: wrap;
+}
+
 .delegate-file-review-divider + .delegate-file-card-list {
   padding-bottom: 3rem;
 }

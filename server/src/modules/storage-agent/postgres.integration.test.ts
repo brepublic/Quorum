@@ -253,7 +253,10 @@ integration('PostgreSQL stage 7 storage Agent identity', () => {
         {date: '2026-01-20', type: 'WORKING_PAPER', published: true},
         {date: '2026-02-01', type: 'DIRECTIVE_DRAFT', published: true},
         {date: '2026-02-15', type: 'WORKING_PAPER', published: false},
-        {date: '2026-01-15', type: 'RESOLUTION_DRAFT', published: false}
+        {date: '2026-01-15', type: 'RESOLUTION_DRAFT', published: false},
+        {date: '2026-01-02', type: 'CUSTOM:快讯', published: true},
+        {date: '2026-01-03', type: 'CUSTOM:快讯', published: true},
+        {date: '2026-01-04', type: 'CUSTOM:快訊', published: true}
       ];
       const ids: string[] = [];
       for (const item of records) {
@@ -272,8 +275,10 @@ integration('PostgreSQL stage 7 storage Agent identity', () => {
       const noSessions = await service.listReview(value.chair, value.committee.id);
       expect(query.mock.calls.length).toBe(singleReads);
       expect(noSessions).toHaveLength(records.length);
-      for (const file of noSessions) expect(file.suggestedNames).toEqual({
+      for (const file of noSessions) expect(file.suggestedNames).toMatchObject({
         WORKING_PAPER: {sessionOrdinal: 1, ordinal: 4}, DIRECTIVE_DRAFT: {sessionOrdinal: 1, ordinal: 2}, RESOLUTION_DRAFT: {sessionOrdinal: 1, ordinal: 1}});
+      expect(noSessions[0]?.suggestedNames).toMatchObject({NEWS: {sessionOrdinal: 1, ordinal: 1},
+        'CUSTOM:快讯': {sessionOrdinal: 1, ordinal: 3}, 'CUSTOM:快訊': {sessionOrdinal: 1, ordinal: 2}});
       for (const date of ['2026-01-01', '2026-02-01']) {
         await pool!.query(`INSERT INTO meeting_sessions(id,committee_id,phase_id,active_rule_package_version_id,
           status,created_by_user_id,created_at,closed_at) VALUES ($1,$2,'formal-debate',$3,'CLOSED',$4,$5,$5)`,
@@ -282,9 +287,9 @@ integration('PostgreSQL stage 7 storage Agent identity', () => {
       query.mockClear();
       const withSessions = await service.listReview(value.chair, value.committee.id);
       expect(query.mock.calls.length).toBe(singleReads);
-      for (const index of [0, 1, 2, 5]) expect(withSessions.find(file => file.id === ids[index])?.suggestedNames).toEqual({
+      for (const index of [0, 1, 2, 5]) expect(withSessions.find(file => file.id === ids[index])?.suggestedNames).toMatchObject({
         WORKING_PAPER: {sessionOrdinal: 1, ordinal: 3}, DIRECTIVE_DRAFT: {sessionOrdinal: 1, ordinal: 1}, RESOLUTION_DRAFT: {sessionOrdinal: 1, ordinal: 1}});
-      for (const index of [3, 4]) expect(withSessions.find(file => file.id === ids[index])?.suggestedNames).toEqual({
+      for (const index of [3, 4]) expect(withSessions.find(file => file.id === ids[index])?.suggestedNames).toMatchObject({
         WORKING_PAPER: {sessionOrdinal: 2, ordinal: 1}, DIRECTIVE_DRAFT: {sessionOrdinal: 2, ordinal: 2}, RESOLUTION_DRAFT: {sessionOrdinal: 2, ordinal: 1}});
     } finally {query.mockRestore();}
   });
@@ -345,7 +350,7 @@ integration('PostgreSQL stage 7 storage Agent identity', () => {
       cache_state: 'REVIEW_PINNED'});
 
     const [firstFile] = await service.listReview(value.chair,value.committee.id);
-    expect(firstFile?.suggestedNames).toEqual({WORKING_PAPER:{sessionOrdinal: 1, ordinal: 1},DIRECTIVE_DRAFT:{sessionOrdinal: 1, ordinal: 1},RESOLUTION_DRAFT:{sessionOrdinal: 1, ordinal: 1}});
+    expect(firstFile?.suggestedNames).toMatchObject({WORKING_PAPER:{sessionOrdinal: 1, ordinal: 1},DIRECTIVE_DRAFT:{sessionOrdinal: 1, ordinal: 1},RESOLUTION_DRAFT:{sessionOrdinal: 1, ordinal: 1}});
     await service.approve(value.chair,firstFile!.id,{baseRevision:firstFile!.revision,logicalName:'工作文件 1.1',fileType:'WORKING_PAPER'},context('approve'));
     expect((await service.bootstrap(capability,claimed.sessionToken)).submissions).toEqual([expect.objectContaining({status:'PUBLISHED',logicalName:'工作文件 1.1'})]);
     expect((await service.bootstrap(capability,claimed.sessionToken)).maxUploadSizeBytes).toBe(staging.maxFileBytes);
@@ -405,6 +410,13 @@ integration('PostgreSQL stage 7 storage Agent identity', () => {
       [randomUUID(),ordinal,meeting.id]);
     const fourth = await submit();
     expect(fourth.suggestedNames?.RESOLUTION_DRAFT).toEqual({sessionOrdinal: 1, ordinal: 1});
+
+    const customBody = {logicalName: 'custom.txt', originalName: 'custom.txt', mediaType: 'text/plain',
+      expectedSizeBytes: content.length, sha256, fileType: 'CUSTOM:快讯'};
+    const customUpload = await service.createUpload(claimed.sessionToken, customBody, randomUUID(), context('custom-upload'));
+    expect((await pool!.query('SELECT file_type FROM delegate_file_upload_contexts WHERE upload_id=$1', [customUpload.id])).rows[0].file_type).toBe('CUSTOM:快讯');
+    await expect(service.createUpload(claimed.sessionToken, {...customBody, fileType: 'CUSTOM:  '}, randomUUID(),
+      context('blank-custom-type'))).rejects.toMatchObject({reason: 'INVALID_FILE_TYPE'});
 
     await stage3.setOperationMode(value.owner, value.committee.id, 'DELEGATE_OPERATED',
       await committeeRevision(value.committee.id), context('delegate-file-mode-change'));

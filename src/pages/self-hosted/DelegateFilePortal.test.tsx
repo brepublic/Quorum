@@ -29,6 +29,24 @@ afterEach(async () => {await act(async () => root.unmount()); host.remove(); vi.
 function client(overrides: Partial<SelfHostedApi>): SelfHostedApi {return overrides as SelfHostedApi;}
 
 describe('delegate file portal', () => {
+  it('filters published files by fixed type and groups exact custom types under Other', async () => {
+    const makeFile = (id: string, fileType: 'NEWS' | 'CRISIS_NOTICE' | `CUSTOM:${string}`) => ({
+      id, logicalName: id, fileType, submissionSource: 'DELEGATE_PORTAL' as const, submitterDisplayName: '中国',
+      submittedAt: '2026-09-29T00:00:00Z', publishedAt: '2026-09-29T01:00:00Z', revision: 1});
+    const files = [makeFile('news', 'NEWS'), makeFile('crisis', 'CRISIS_NOTICE'),
+      makeFile('alpha', 'CUSTOM:快讯'), makeFile('beta', 'CUSTOM:快讯'), makeFile('gamma', 'CUSTOM:快訊')];
+    await act(async () => root.render(<DelegateFilePortal api={client({bootstrapDelegatePortal: async () => ({
+      committeeId: 'committee', committeeLanguage: 'zh-CN' as const, committeeName: '委员会', shareId: 'share',
+      claimedSeat: {id: 'seat', displayName: '中国'}, eligibleSeats: [], mayUpload: true, storageAvailable: true,
+      eventSequence: 0, files, maxUploadSizeBytes: 20 * 1024 * 1024})})} />));
+    const menu = host.querySelector('[aria-label="已发布文件分类"]')!;
+    expect(host.querySelectorAll('.delegate-file-card-list .card')).toHaveLength(5);
+    await act(async () => (Array.from(menu.querySelectorAll('a')).find(item => item.textContent === '新闻') as HTMLElement).click());
+    expect(Array.from(host.querySelectorAll('.delegate-file-card-list .card')).map(item => item.textContent)).toEqual([expect.stringContaining('news')]);
+    await act(async () => (Array.from(menu.querySelectorAll('a')).find(item => item.textContent === '其他') as HTMLElement).click());
+    expect(Array.from(host.querySelectorAll('.delegate-file-card-list .card')).map(item => item.querySelector('.header')?.textContent)).toEqual(['alpha', 'beta', 'gamma']);
+    expect(host.textContent).toContain('快讯'); expect(host.textContent).toContain('快訊');
+  });
   it('keeps unsaved and failed uploads out of the reviewed file history', async () => {
     await act(async () => root.render(<DelegateFilePortal api={client({bootstrapDelegatePortal: async () => ({
       committeeId: 'committee', committeeLanguage: 'zh-CN' as const, committeeName: '委员会', shareId: 'share',

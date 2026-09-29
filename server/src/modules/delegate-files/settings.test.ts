@@ -17,8 +17,9 @@ describe('delegate file settings validation', () => {
       expect(() => rejectionTypes(rows)).toThrow();
     }
   });
-  it('requires all three format lists and rejects wildcards and paths', () => {
-    const value = {WORKING_PAPER: ['pdf'], DIRECTIVE_DRAFT: ['doc'], RESOLUTION_DRAFT: ['docx']};
+  it('requires every format list and rejects wildcards and paths', () => {
+    const value = {WORKING_PAPER: ['pdf'], DIRECTIVE_DRAFT: ['doc'], RESOLUTION_DRAFT: ['docx'],
+      NEWS: ['pdf'], CRISIS_NOTICE: ['pdf'], INSTANT_MESSAGE: ['pdf'], OTHER: ['pdf']};
     expect(allowedExtensions(value)).toEqual(value);
     for (const list of [[], ['*'], ['../pdf'], ['pdf,doc'], ['.pdf']]) {
       expect(() => allowedExtensions({...value, WORKING_PAPER: list})).toThrow();

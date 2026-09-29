@@ -58,10 +58,14 @@ export function motionContentName(names: LocalizedNames, interfaceLanguage: Cont
 }
 
 export function delegateFileTypeName(type: import('./delegate-files.js').DelegateFileType, language: ContentLanguage): string {
+  if (type.startsWith('CUSTOM:')) return type.slice('CUSTOM:'.length);
   const names = {WORKING_PAPER: {en: 'Working Paper', 'zh-CN': '工作文件'},
     DIRECTIVE_DRAFT: {en: 'Draft Directive', 'zh-CN': '指令草案'},
-    RESOLUTION_DRAFT: {en: 'Draft Resolution', 'zh-CN': '决议草案'}};
-  return names[type][language];
+    RESOLUTION_DRAFT: {en: 'Draft Resolution', 'zh-CN': '决议草案'},
+    NEWS: {en: 'News', 'zh-CN': '新闻'},
+    CRISIS_NOTICE: {en: 'Crisis Notice', 'zh-CN': '危机通告'},
+    INSTANT_MESSAGE: {en: 'Instant Message', 'zh-CN': '即时消息'}};
+  return names[type as import('./delegate-files.js').StandardDelegateFileType][language];
 }
 
 export type AutomaticContentName =

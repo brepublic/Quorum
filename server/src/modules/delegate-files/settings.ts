@@ -41,7 +41,7 @@ export function rejectionTypes(value: unknown, language?: ContentLanguage): File
 }
 export function allowedExtensions(value: unknown): DelegateFileSettings['allowedExtensions'] {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return invalid('FILE_EXTENSIONS_REQUIRED', '请设置每种文件类型允许的后缀名。');
-  return Object.fromEntries(DELEGATE_FILE_TYPES.map(type => {
+  return Object.fromEntries([...DELEGATE_FILE_TYPES, 'OTHER'].map(type => {
     const list = (value as Record<string, unknown>)[type];
     if (!Array.isArray(list) || !list.length || list.length > 50
       || list.some(ext => typeof ext !== 'string' || !/^[a-z0-9]{1,16}$/.test(ext))) {

@@ -1,7 +1,11 @@
 import type {FlagSnapshot, LocalizedNames} from './stage4.js';
 
-export const DELEGATE_FILE_TYPES = ['WORKING_PAPER', 'DIRECTIVE_DRAFT', 'RESOLUTION_DRAFT'] as const;
-export type DelegateFileType = typeof DELEGATE_FILE_TYPES[number];
+export const DELEGATE_FILE_TYPES = ['WORKING_PAPER', 'DIRECTIVE_DRAFT', 'RESOLUTION_DRAFT', 'NEWS', 'CRISIS_NOTICE', 'INSTANT_MESSAGE'] as const;
+export type StandardDelegateFileType = typeof DELEGATE_FILE_TYPES[number];
+export type DelegateFileType = StandardDelegateFileType | `CUSTOM:${string}`;
+export type DelegateFileExtensionType = StandardDelegateFileType | 'OTHER';
+export const customDelegateFileType = (name: string): DelegateFileType => `CUSTOM:${name}`;
+export const isCustomDelegateFileType = (type: DelegateFileType): type is `CUSTOM:${string}` => type.startsWith('CUSTOM:');
 
 export interface DelegateFileShare {
   id: string;
@@ -30,7 +34,7 @@ export interface DelegateReviewFile extends DelegatePublishedFile {
   rejectionReason?: string | null;
   reviewedAt?: string | null;
   deleted?: boolean;
-  suggestedNames?: Record<DelegateFileType, {sessionOrdinal: number; ordinal: number}>;
+  suggestedNames?: Record<string, {sessionOrdinal: number; ordinal: number}>;
   submissionSource: 'DELEGATE_PORTAL' | 'CHAIR' | 'ACCOUNT' | 'LEGACY';
   originalName: string;
   sizeBytes: number;
@@ -50,7 +54,7 @@ export interface DelegatePortalBootstrap {
   maxUploadSizeBytes: number;
   submissions?: DelegateReviewFile[];
   pendingUploads?: Array<{id: string; logicalName: string; status: 'SAVING' | 'FAILED'}>;
-  allowedExtensions?: Record<DelegateFileType, string[]>;
+  allowedExtensions?: Record<DelegateFileExtensionType, string[]>;
 }
 
 export interface DelegatePortalClaimResult extends DelegatePortalBootstrap {
@@ -77,7 +81,7 @@ export interface FileRejectionType {
 }
 export interface DelegateFileSettings {
   rejectionTypes: FileRejectionType[];
-  allowedExtensions: Record<DelegateFileType, string[]>;
+  allowedExtensions: Record<DelegateFileExtensionType, string[]>;
   revision: number;
 }
 export interface DefaultFileRejectionSettings {

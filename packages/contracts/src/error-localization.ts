@@ -59,7 +59,7 @@ export const ERROR_TEXT = {
   FILE_EXTENSIONS_REQUIRED: {en: "Set the allowed extensions for each file type.", 'zh-CN': "请为每种文件类型设置允许的后缀名。"},
   INVALID_EXTENSION_SETTINGS: {en: "Enter 1–50 extensions per type, each containing 1–16 letters or digits without a dot.", 'zh-CN': "每种类型请填写 1–50 个后缀，每个后缀使用 1–16 位字母或数字，不含点号。"},
   INVALID_REVISION: {en: "The page version is invalid. Reload and try again.", 'zh-CN': "页面版本信息无效，请刷新后重试。"},
-  INVALID_FILE_TYPE: {en: "Choose a Working Paper, Amendment, or Draft Resolution.", 'zh-CN': "请选择工作文件、修正案或决议草案。"},
+  INVALID_FILE_TYPE: {en: "Choose a valid file type or enter a custom type (up to 100 characters).", 'zh-CN': "请选择有效文件类型，或填写不超过 100 字的自定义类型。"},
   COMMITTEE_READ_ONLY: {en: "This committee is archived or being deleted and cannot be edited.", 'zh-CN': "委员会已归档或正在删除，不能修改内容。"},
   STORAGE_NOT_CONFIGURED: {en: "File storage is not configured. Ask a Chair to configure it in file settings.", 'zh-CN': "尚未配置文件存储，请联系主席在文件设置中配置。"},
   MEETING_REQUIRED_FOR_SHARING: {en: "Start the first meeting session before sharing files.", 'zh-CN': "请先开始首个会期，再分享文件。"},

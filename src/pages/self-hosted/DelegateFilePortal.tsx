@@ -1,8 +1,8 @@
 import {apiErrorText} from '../../i18n';
 import {t, useLanguage, getLanguage} from '../../i18n';
 import * as React from 'react';
-import {delegateFileTypeName, type ContentLanguage, isAllowedDelegateFile} from '@quorum/contracts';
-import type {DelegateFileAvailableEvent, DelegateFileType, DelegatePortalBootstrap,
+import {customDelegateFileType, DELEGATE_FILE_TYPES, delegateFileTypeName, isCustomDelegateFileType, type ContentLanguage, isAllowedDelegateFile} from '@quorum/contracts';
+import type {DelegateFileAvailableEvent, DelegateFileType, StandardDelegateFileType, DelegatePortalBootstrap,
   DelegatePublishedFile} from '@quorum/contracts';
 import {Button, Card, Container, Divider, Form, Icon, Menu, Message, Modal, Progress, Sidebar, Table} from 'semantic-ui-react';
 import {SelfHostedApiError, selfHostedApi, type SelfHostedApi} from '../../services/self-hosted-api';
@@ -10,11 +10,7 @@ import {sha256File} from '../../services/sha256';
 import {CountryFlagDisplay} from '../../components/CountryFlagDisplay';
 import {searchOptions} from '@quorum/contracts';
 
-const FILE_TYPES: Array<{key: DelegateFileType; value: DelegateFileType; text: string}> = [
-  {key: 'WORKING_PAPER', value: 'WORKING_PAPER', text: 'Working Paper'},
-  {key: 'DIRECTIVE_DRAFT', value: 'DIRECTIVE_DRAFT', text: 'Draft Directive'},
-  {key: 'RESOLUTION_DRAFT', value: 'RESOLUTION_DRAFT', text: 'Draft Resolution'}
-];
+const FILE_TYPES = DELEGATE_FILE_TYPES;
 
 function dateTime(value: string | null): string { return value ? new Date(value).toLocaleString(getLanguage()) : '—'; }
 function portalError(error: unknown): string {
@@ -64,7 +60,9 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
   const error = failure ? portalError(failure) : undefined; const [working, setWorking] = React.useState(false);
   const [connection, setConnection] = React.useState<'LIVE' | 'OFFLINE'>('OFFLINE');
   const [notices, setNotices] = React.useState<Array<DelegateFileAvailableEvent & {expiresAt: number}>>([]);
-  const [file, setFile] = React.useState<File>(); const [fileType, setFileType] = React.useState<DelegateFileType>('WORKING_PAPER');
+  const [file, setFile] = React.useState<File>(); const [fileType, setFileType] = React.useState<StandardDelegateFileType | 'OTHER'>('WORKING_PAPER');
+  const [customType, setCustomType] = React.useState('');
+  const [publishedCategory, setPublishedCategory] = React.useState<DelegateFileType | 'ALL' | 'OTHER'>('ALL');
   const [progress, setProgress] = React.useState<number>(); const [submitted, setSubmitted] = React.useState(false);
   const [awaitingSave, setAwaitingSave] = React.useState(false);
   const [preparingDownload, setPreparingDownload] = React.useState<string>();
@@ -120,13 +118,15 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
     ? t('Choose a file no larger than {size} MiB.', {size: fileSizeMiB(portal.maxUploadSizeBytes)}) : undefined;
   const upload = async () => {
     if (!file || uploadSizeError || working) return;
+    const type = fileType === 'OTHER' ? customDelegateFileType(customType) : fileType;
+    if (fileType === 'OTHER' && (!customType.trim() || Array.from(customType).length > 100)) return;
     const extensions = portal?.allowedExtensions?.[fileType];
     if (extensions && !isAllowedDelegateFile(file.name, extensions)) {setError({code: 'INVALID_FILE_EXTENSION', params: {formats: extensions.map(ext => '.' + ext).join(', ')}}); return;}
     setWorking(true); setSubmitted(false); setError(undefined); setProgress(0);
     try {
       const sha256 = await sha256File(file, {onProgress: (done, total) => setProgress(total ? done / total * 20 : 0)});
       const created = await api.createDelegateFileUpload({logicalName: file.name, originalName: file.name,
-        mediaType: file.type || 'application/octet-stream', expectedSizeBytes: file.size, sha256, fileType});
+        mediaType: file.type || 'application/octet-stream', expectedSizeBytes: file.size, sha256, fileType: type});
       await api.uploadDelegateFileContent(created.id, file, (done, total) => setProgress(20 + (total ? done / total * 75 : 0)));
       setProgress(98); const result = await api.commitDelegateFileUpload(created.id); setAwaitingSave('kind' in result); setProgress(100); setSubmitted(true); setFile(undefined); await refreshFiles();
     } catch (caught) { setProgress(undefined); setError(caught); }
@@ -191,6 +191,8 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
 
   const isLive = portal.storageAvailable && connection === 'LIVE';
   const claimedSeat = portal.claimedSeat;
+  const publishedFiles = portal.files.filter(item => publishedCategory === 'ALL' ||
+    (publishedCategory === 'OTHER' ? Boolean(item.fileType && isCustomDelegateFileType(item.fileType)) : item.fileType === publishedCategory));
   const status = isLive ? t("Live") : !portal.storageAvailable ? t("File storage unavailable") : t("Offline");
   const maxUploadSizeMiB = fileSizeMiB(portal.maxUploadSizeBytes);
   const statusItem = (compact: boolean) => <Menu.Item className={isLive ? 'realtime-status-live' : undefined}
@@ -238,25 +240,32 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
             ? <strong key={index}>{item.submitterDisplayName}</strong> : part === '{file}'
               ? <strong key={index}>{item.logicalName}</strong> : part)}{item.rejectionReason && <div>{item.rejectionReason}</div>}</>} />)}
       {error && <Message error content={error} />}
-      {active === 'files' && <div className="delegate-file-card-list">{portal.files.length
-        ? portal.files.map(item => <PublishedCard committeeLanguage={portal.committeeLanguage} key={item.id} file={item} preparing={preparingDownload === item.id}
+      {active === 'files' && <><Menu pointing secondary className="delegate-file-category-menu" aria-label={t('Published file categories')}>
+        <Menu.Item active={publishedCategory === 'ALL'} onClick={() => setPublishedCategory('ALL')}>{t('All files')}</Menu.Item>
+        {FILE_TYPES.map(type => <Menu.Item key={type} active={publishedCategory === type} onClick={() => setPublishedCategory(type)}>{delegateFileTypeName(type, portal.committeeLanguage)}</Menu.Item>)}
+        <Menu.Item active={publishedCategory === 'OTHER'} onClick={() => setPublishedCategory('OTHER')}>{t('Other')}</Menu.Item>
+      </Menu><div className="delegate-file-card-list">{publishedFiles.length
+        ? publishedFiles.map(item => <PublishedCard committeeLanguage={portal.committeeLanguage} key={item.id} file={item} preparing={preparingDownload === item.id}
           onDownload={id => void download(id)} />)
-        : <Message content={t("No published files")} />}</div>}
+        : <Message content={t(publishedCategory === 'ALL' ? 'No published files' : 'No files in this category')} />}</div></>}
         {active === 'upload' && <><Card centered fluid className="delegate-file-upload-card"><Card.Content>
         <Form onSubmit={() => void upload()}>
-        <Form.Select label={t("File type")} options={FILE_TYPES.map(item => ({...item, text: delegateFileTypeName(item.value, portal.committeeLanguage)}))} value={fileType} disabled={working}
-          onChange={(_, data) => {setFileType(data.value as DelegateFileType); setError(undefined);}} />
+        <Form.Select label={t("File type")} options={[...FILE_TYPES.map(type => ({key: type, value: type, text: delegateFileTypeName(type, portal.committeeLanguage)})),
+          {key: 'OTHER', value: 'OTHER', text: t('Other')}]} value={fileType} disabled={working}
+          onChange={(_, data) => {setFileType(data.value as StandardDelegateFileType | 'OTHER'); setError(undefined);}} />
+        {fileType === 'OTHER' && <Form.Input label={t('Custom file type')} value={customType} required maxLength={100} disabled={working}
+          onChange={(_, data) => setCustomType(String(data.value))} />}
         <Form.Field>
           <label>{t("Choose file")}</label>
           {maxUploadSizeMiB === '—'
             ? null
             : <small className="ui tiny text delegate-file-upload-limit-note">{t('Maximum file size: {size} MiB', {size: maxUploadSizeMiB})}</small>}
-          <input type="file" disabled={working} accept={portal.allowedExtensions?.[fileType].map(ext => `.${ext}`).join(',')} onChange={(event: React.ChangeEvent<HTMLInputElement>) => {setFile(event.currentTarget.files?.[0]);
+          <input type="file" disabled={working} accept={portal.allowedExtensions?.[fileType]?.map(ext => `.${ext}`).join(',')} onChange={(event: React.ChangeEvent<HTMLInputElement>) => {setFile(event.currentTarget.files?.[0]);
             setSubmitted(false); setProgress(undefined);}} aria-label={t("Choose file")} />
         </Form.Field>
         {uploadSizeError && <Message negative role="alert" content={uploadSizeError} />}
-        {portal.allowedExtensions && <p className="delegate-file-allowed-formats">{t("Allowed formats:")}{portal.allowedExtensions[fileType].join('、')}</p>}
-        {!submitted && progress === undefined && <Button primary fluid disabled={!file || working || !portal.mayUpload || Boolean(uploadSizeError)}>
+        {portal.allowedExtensions && <p className="delegate-file-allowed-formats">{t("Allowed formats:")}{portal.allowedExtensions[fileType]?.join('、')}</p>}
+        {!submitted && progress === undefined && <Button primary fluid disabled={!file || working || !portal.mayUpload || Boolean(uploadSizeError) || (fileType === 'OTHER' && !customType.trim())}>
 
           {t("Submit")} <Icon name="arrow up" /></Button>}
         {progress !== undefined && !submitted && <Progress percent={Math.round(progress)} progress color="blue">{progress >= 98 ? t("Saving files") : t("Uploading")}</Progress>}

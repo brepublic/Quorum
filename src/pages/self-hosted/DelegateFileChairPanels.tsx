@@ -1,5 +1,5 @@
 import {t, useLanguage, getLanguage} from '../../i18n';
-import {delegateFileTypeName, committeeContentName, formatCommitteeContent} from '@quorum/contracts';
+import {customDelegateFileType, DELEGATE_FILE_TYPES, delegateFileTypeName, isCustomDelegateFileType, committeeContentName, formatCommitteeContent} from '@quorum/contracts';
 import * as React from 'react';
 import type {CommitteeWorkspaceSnapshot, DelegateFileType, DelegateReviewFile, DelegateFileSettings} from '@quorum/contracts';
 import QRCode from 'qrcode';
@@ -9,11 +9,7 @@ import {sha256File} from '../../services/sha256';
 import FilesPanel, {storageErrorText} from './FilesPanel';
 import {Link} from 'react-router-dom';
 
-const FILE_TYPES: Array<{key: DelegateFileType; value: DelegateFileType; text: string}> = [
-  {key: 'WORKING_PAPER', value: 'WORKING_PAPER', text: 'Working Paper'},
-  {key: 'DIRECTIVE_DRAFT', value: 'DIRECTIVE_DRAFT', text: 'Draft Directive'},
-  {key: 'RESOLUTION_DRAFT', value: 'RESOLUTION_DRAFT', text: 'Draft Resolution'}
-];
+const FILE_TYPES = DELEGATE_FILE_TYPES;
 
 function dateTime(value: string | null): string { return value ? new Date(value).toLocaleString(getLanguage()) : '—'; }
 const toSubmissionTime = (value: string | null): number => {
@@ -212,7 +208,9 @@ function DelegateFileReviewPanel({snapshot, api, files, refresh}: {
   const nameFor = (file: DelegateReviewFile) => {
     const fileType = types[file.id] ?? file.fileType ?? 'WORKING_PAPER';
     const suggestion = file.suggestedNames?.[fileType];
-    return names[file.id] ?? (suggestion ? formatCommitteeContent({kind: 'FILE', fileType, ...suggestion},
+    const fallback = isCustomDelegateFileType(fileType) && fileType.slice(7).trim()
+      ? {sessionOrdinal: Object.values(file.suggestedNames ?? {})[0]?.sessionOrdinal ?? 1, ordinal: 1} : undefined;
+    return names[file.id] ?? (suggestion || fallback ? formatCommitteeContent({kind: 'FILE', fileType, ...(suggestion ?? fallback)!},
       snapshot.committee.committeeLanguage) : file.logicalName);
   };
   const approve = (file: DelegateReviewFile) => run(async () => {
@@ -251,17 +249,24 @@ function DelegateFileReviewPanel({snapshot, api, files, refresh}: {
           && existing.logicalName === nameFor(file).trim()) && <div className="file-name-conflict-hint">{t("This name already exists. Approval will update the existing file.")}</div>}</Card.Header><Label basic color="blue" icon="clock outline" className="self-hosted-file-status" content={t("Pending review")} /></div>
         <Card.Meta><Table compact celled unstackable className="motion-metadata-table delegate-file-metadata"><Table.Body>
           <Table.Row><Table.Cell className="motion-metadata-key">{t("File source")}</Table.Cell><Table.Cell>{file.submissionSource === 'CHAIR' ? t('Chair') : file.submitterDisplayName ?? '—'}</Table.Cell></Table.Row>
-          <Table.Row><Table.Cell className="motion-metadata-key">{t("File type")}</Table.Cell><Table.Cell><Form.Select compact options={FILE_TYPES.map(item => ({...item, text: delegateFileTypeName(item.value, snapshot.committee.committeeLanguage)}))}
-            disabled={working || readOnly || Boolean(replacing)} value={types[file.id]} onChange={(_, data) => setTypes(current => ({...current,
-              [file.id]: data.value as DelegateFileType}))} /></Table.Cell></Table.Row>
+          <Table.Row><Table.Cell className="motion-metadata-key">{t("File type")}</Table.Cell><Table.Cell><Form.Select compact options={[...FILE_TYPES.map(type => ({key: type, value: type, text: delegateFileTypeName(type, snapshot.committee.committeeLanguage)})),
+            {key: 'OTHER', value: 'OTHER', text: t('Other')}]} disabled={working || readOnly || Boolean(replacing)}
+            value={isCustomDelegateFileType(types[file.id] ?? file.fileType ?? 'WORKING_PAPER') ? 'OTHER' : types[file.id]}
+            onChange={(_, data) => setTypes(current => ({...current,
+              [file.id]: data.value === 'OTHER' ? customDelegateFileType('') : data.value as DelegateFileType}))} />
+            {isCustomDelegateFileType(types[file.id] ?? file.fileType ?? 'WORKING_PAPER') && <Form.Input fluid aria-label={t('Custom file type')}
+              value={(types[file.id] ?? file.fileType ?? '').slice(7)} maxLength={100} disabled={working || readOnly || Boolean(replacing)}
+              onChange={event => setTypes(current => ({...current, [file.id]: customDelegateFileType(event.currentTarget.value)}))} />}</Table.Cell></Table.Row>
           <Table.Row><Table.Cell className="motion-metadata-key">{t("Submitted at")}</Table.Cell><Table.Cell>{dateTime(file.submittedAt)}</Table.Cell></Table.Row>
           <Table.Row><Table.Cell className="motion-metadata-key">{t("Original file")}</Table.Cell><Table.Cell>{file.originalName}</Table.Cell></Table.Row>
         </Table.Body></Table></Card.Meta>
       </Card.Content><Card.Content extra className="delegate-file-review-actions">
         <Button primary fluid loading={downloading === file.id} disabled={Boolean(downloading)}
           onClick={() => void download(file.id)}>{t('Download file')} <Icon name="arrow down" /></Button>
-        <Button.Group fluid widths={2} className="delegate-file-decisions"><Button positive disabled={working || readOnly || Boolean(replacing) || !nameFor(file).trim()} onClick={() => void approve(file)}>{t("Approve file")}</Button>
-        <Button negative disabled={working || readOnly || Boolean(replacing)} onClick={() => {setRejecting(file); setReason(''); setSettings(undefined); setRejectionTypeId(''); setError(undefined);
+        <Button.Group fluid widths={2} className="delegate-file-decisions"><Button positive disabled={working || readOnly || Boolean(replacing) || !nameFor(file).trim() ||
+          (isCustomDelegateFileType(types[file.id] ?? file.fileType ?? 'WORKING_PAPER') && !(types[file.id] ?? file.fileType ?? '').slice(7).trim())} onClick={() => void approve(file)}>{t("Approve file")}</Button>
+        <Button negative disabled={working || readOnly || Boolean(replacing) ||
+          (isCustomDelegateFileType(types[file.id] ?? file.fileType ?? 'WORKING_PAPER') && !(types[file.id] ?? file.fileType ?? '').slice(7).trim())} onClick={() => {setRejecting(file); setReason(''); setSettings(undefined); setRejectionTypeId(''); setError(undefined);
           void api.getDelegateFileSettings(snapshot.committee.id).then(next => {setSettings(next); setRejectionTypeId(next.rejectionTypes[0]?.id ?? '');})
             .catch(caught => setError(caught));}}>{t("Reject file")}</Button></Button.Group>
       </Card.Content></Card>) : <Message content={t("No files awaiting review")} />}</div>

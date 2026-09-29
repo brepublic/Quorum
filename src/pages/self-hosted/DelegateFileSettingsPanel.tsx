@@ -1,17 +1,15 @@
 import {useApiFieldErrors} from '../../components/useApiFieldErrors';
 import {apiErrorText} from '../../i18n';
-import {delegateFileTypeName, isContentLanguage, type ContentLanguage} from '@quorum/contracts';
+import {DELEGATE_FILE_TYPES, delegateFileTypeName, isContentLanguage, type ContentLanguage} from '@quorum/contracts';
 import {t, useLanguage} from '../../i18n';
 import {getLanguage, LANGUAGE_OPTIONS} from '../../i18n';
 import * as React from 'react';
 import {Prompt} from 'react-router-dom';
-import type {DefaultFileRejectionSettings, DelegateFileSettings, DelegateFileType} from '@quorum/contracts';
+import type {DefaultFileRejectionSettings, DelegateFileSettings, DelegateFileExtensionType} from '@quorum/contracts';
 import {Button, Form, Header, Icon, Message, Modal, Segment} from 'semantic-ui-react';
 import {selfHostedApi, SelfHostedApiError, type SelfHostedApi} from '../../services/self-hosted-api';
 
-const FILE_TYPES: Array<[DelegateFileType, string]> = [
-  ['WORKING_PAPER', 'Working Paper'], ['DIRECTIVE_DRAFT', 'Draft Directive'], ['RESOLUTION_DRAFT', 'Draft Resolution']
-];
+const FILE_TYPES: DelegateFileExtensionType[] = [...DELEGATE_FILE_TYPES, 'OTHER'];
 
 export function DelegateFileSettingsPanel({committeeId, committeeLanguage, api = selfHostedApi, readOnly = false}: {
   committeeId?: string; committeeLanguage?: ContentLanguage; api?: SelfHostedApi; readOnly?: boolean;
@@ -30,7 +28,7 @@ export function DelegateFileSettingsPanel({committeeId, committeeLanguage, api =
     try {
       const next = committeeId ? await api.getDelegateFileSettings(committeeId) : await api.getDefaultFileRejectionTypes();
       setSettings(next); setDirty(false); setSaved(false);
-      if (committeeId) setExtensions(Object.fromEntries(FILE_TYPES.map(([type]) => [type, (next as DelegateFileSettings).allowedExtensions[type].join(', ')])));
+      if (committeeId) setExtensions(Object.fromEntries(FILE_TYPES.map(type => [type, (next as DelegateFileSettings).allowedExtensions[type].join(', ')])));
     } catch (caught) {
       if (caught instanceof SelfHostedApiError) {
         const missingLanguage = caught.localization?.fieldErrors?.[0]?.params?.language;
@@ -51,11 +49,11 @@ export function DelegateFileSettingsPanel({committeeId, committeeLanguage, api =
     setWorking(true); setError(undefined); setSaved(false);
     try {
       const next = committeeId ? await api.updateDelegateFileSettings(committeeId, {...settings,
-        allowedExtensions: Object.fromEntries(FILE_TYPES.map(([type]) => [type,
+        allowedExtensions: Object.fromEntries(FILE_TYPES.map(type => [type,
           [...new Set(extensions[type].split(/[,，、;；\s]+/).map(value => value.replace(/^\./, '').toLowerCase()).filter(Boolean))]])) as DelegateFileSettings['allowedExtensions']})
         : await api.updateDefaultFileRejectionTypes(settings);
       setSettings(next); setDirty(false); setSaved(true);
-      if (committeeId) setExtensions(Object.fromEntries(FILE_TYPES.map(([type]) => [type, (next as DelegateFileSettings).allowedExtensions[type].join(', ')])));
+      if (committeeId) setExtensions(Object.fromEntries(FILE_TYPES.map(type => [type, (next as DelegateFileSettings).allowedExtensions[type].join(', ')])));
     } catch (caught) {
       if (caught instanceof SelfHostedApiError) {
         const missingLanguage = caught.localization?.fieldErrors?.[0]?.params?.language;
@@ -95,7 +93,7 @@ export function DelegateFileSettingsPanel({committeeId, committeeLanguage, api =
           {id: crypto.randomUUID(), label: {}, message: {}, custom: false}]});}} />}
       {committeeId && <>
         <Header as="h2">{t("File format settings")}</Header>
-        {FILE_TYPES.map(([type]) => <Form.Input key={type} {...field(`allowedExtensions.${type}`)} label={t('Allowed extensions for {type}', {type: delegateFileTypeName(type, committeeLanguage ?? contentLanguage)})} value={extensions[type] ?? ''}
+        {FILE_TYPES.map(type => <Form.Input key={type} {...field(`allowedExtensions.${type}`)} label={t('Allowed extensions for {type}', {type: type === 'OTHER' ? t('Other') : delegateFileTypeName(type, committeeLanguage ?? contentLanguage)})} value={extensions[type] ?? ''}
           disabled={readOnly} required placeholder="docx, doc, pdf" onChange={(_, data) => {changed(); setExtensions({...extensions, [type]: data.value});}} />)}
       </>}
       <div className="delegate-file-settings-actions">
