@@ -67,7 +67,8 @@ export interface DelegatePortalClaimResult extends DelegatePortalBootstrap {
 export interface DelegateFileAvailableEvent {
   id: number;
   fileId: string;
-  submitterDisplayName: string;
+  submissionSource: 'DELEGATE_PORTAL' | 'CHAIR';
+  submitterDisplayName: string | null;
   logicalName: string;
   publishedAt: string;
   kind?: 'available' | 'rejected';

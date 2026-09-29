@@ -64,9 +64,11 @@ describe('delegate file portal', () => {
     expect(hasDot('其他')).toBe(false);
     snapshot.files.push(makeFile('later-custom', 'CUSTOM:另一类', '2026-09-29T03:00:00Z'));
     await act(async () => FakeEventSource.latest!.emit('file.available', {
-      id: 1, fileId: 'later-custom', submitterDisplayName: '中国', logicalName: 'later-custom', publishedAt: '2026-09-29T03:00:00Z'}));
+      id: 1, fileId: 'later-custom', submissionSource: 'CHAIR', submitterDisplayName: null,
+      logicalName: 'later-custom', publishedAt: '2026-09-29T03:00:00Z'}));
     expect(hasDot('其他')).toBe(true);
     expect(hasDot('全部文件')).toBe(false);
+    expect(host.textContent).toContain('主席 代表提交的 later-custom 现已可用。');
   });
 
   it('filters published files by fixed type and groups exact custom types under Other', async () => {
@@ -195,7 +197,7 @@ describe('delegate file portal', () => {
     expect(host.textContent).toMatch(/选择文件\s*文件大小上限为 20 MiB/);
     await act(async () => (Array.from(host.querySelectorAll('a')).find(item => item.textContent === '已发布文件') as HTMLElement).click());
     await act(async () => FakeEventSource.latest?.emit('file.available', {id: 10, fileId: 'file',
-      submitterDisplayName: '中国', logicalName: '决议草案 1.1', publishedAt: file.publishedAt}));
+      submissionSource: 'DELEGATE_PORTAL', submitterDisplayName: '中国', logicalName: '决议草案 1.1', publishedAt: file.publishedAt}));
     expect(host.textContent).toContain('中国 代表提交的 决议草案 1.1 现已可用。');
     const download = Array.from(host.querySelectorAll('a')).find(item => item.textContent?.includes('下载')) as HTMLAnchorElement;
     download.addEventListener('click', event => event.preventDefault(), {once: true});

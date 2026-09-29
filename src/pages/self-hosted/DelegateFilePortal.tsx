@@ -267,7 +267,7 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
         current.filter(candidate => candidate.fileId !== item.fileId))}
         content={<>{t(item.kind === 'rejected' ? '{seat} submitted {file}, which was rejected by the chair.' : '{seat} submitted {file}, which is now available.',
           {}).split(/(\{seat\}|\{file\})/).map((part, index) => part === '{seat}'
-            ? <strong key={index}>{item.submitterDisplayName}</strong> : part === '{file}'
+            ? <strong key={index}>{item.submissionSource === 'CHAIR' ? t('Chair') : item.submitterDisplayName}</strong> : part === '{file}'
               ? <strong key={index}>{item.logicalName}</strong> : part)}{item.rejectionReason && <div>{item.rejectionReason}</div>}</>} />)}
       {error && <Message error content={error} />}
       {active === 'files' && <><Menu pointing secondary className="delegate-file-category-menu" aria-label={t('Published file categories')}>

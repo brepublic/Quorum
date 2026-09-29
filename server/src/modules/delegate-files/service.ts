@@ -469,7 +469,8 @@ export class DelegateFileService {
   }
 
   async events(credential: string | undefined, after: number): Promise<{cursor: number; rows: Array<{
-    id: number; fileId: string; logicalName: string; submitterDisplayName: string; publishedAt: string;
+    id: number; fileId: string; logicalName: string; submissionSource: 'DELEGATE_PORTAL' | 'CHAIR';
+    submitterDisplayName: string | null; publishedAt: string;
     kind: 'available' | 'rejected'; rejectionReason: string | null;
   }>}> {
     const session = await this.authenticate(credential);
@@ -478,14 +479,17 @@ export class DelegateFileService {
       WHERE committee_id=$1 AND sequence>$2 ORDER BY sequence LIMIT 250`,
     [session.committee_id, after]);
     const cursor = result.rows.length ? Number(result.rows[result.rows.length - 1]?.sequence) : after;
-    return {cursor, rows: result.rows.filter(row => (row.event_type === 'file.published' || (row.event_type === 'file.rejected'
-        && row.payload.submittedBySeatId === session.seat_id))
-      && row.payload.submissionSource === 'DELEGATE_PORTAL'
-      && typeof row.payload.logicalName === 'string' && typeof row.payload.submitterDisplayName === 'string')
+    return {cursor, rows: result.rows.filter(row => typeof row.payload.logicalName === 'string' && (
+      (row.event_type === 'file.published' && (row.payload.submissionSource === 'CHAIR' ||
+        (row.payload.submissionSource === 'DELEGATE_PORTAL' && typeof row.payload.submitterDisplayName === 'string'))) ||
+      (row.event_type === 'file.rejected' && row.payload.submissionSource === 'DELEGATE_PORTAL' &&
+        row.payload.submittedBySeatId === session.seat_id && typeof row.payload.submitterDisplayName === 'string')))
       .map(row => ({id: Number(row.sequence), fileId: row.resource_id,
         kind: row.event_type === 'file.rejected' ? 'rejected' as const : 'available' as const,
         rejectionReason: typeof row.payload.rejectionReason === 'string' ? row.payload.rejectionReason : null,
-        logicalName: String(row.payload.logicalName), submitterDisplayName: String(row.payload.submitterDisplayName),
+        logicalName: String(row.payload.logicalName),
+        submissionSource: row.payload.submissionSource === 'CHAIR' ? 'CHAIR' as const : 'DELEGATE_PORTAL' as const,
+        submitterDisplayName: typeof row.payload.submitterDisplayName === 'string' ? row.payload.submitterDisplayName : null,
         publishedAt: typeof row.payload.publishedAt === 'string' ? row.payload.publishedAt : row.created_at.toISOString()}))};
   }
 

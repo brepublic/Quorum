@@ -436,6 +436,12 @@ integration('PostgreSQL stage 6 file metadata', () => {
       const migratedChunks = []; for await (const chunk of migratedDownload.content) migratedChunks.push(chunk);
       expect(Buffer.concat(migratedChunks).toString()).toBe(content);
     }
+    const beforeChairApproval = (await portal.bootstrap(capability, claimed.sessionToken)).eventSequence;
+    const approvedChair = await portal.approve(fixture.chair, chairFile.id,
+      {baseRevision: chairFile.revision, logicalName: 'Chair publication', fileType: 'NEWS'}, context('chair-approve'));
+    const chairEvent = (await portal.events(claimed.sessionToken, beforeChairApproval)).rows;
+    expect(chairEvent).toContainEqual(expect.objectContaining({fileId: approvedChair.id, kind: 'available',
+      submissionSource: 'CHAIR', submitterDisplayName: null, logicalName: 'Chair publication'}));
     await portal.endShare(fixture.chair, fixture.committee.id, share.revision, context('end'));
     await expect(portal.authenticate(claimed.sessionToken)).rejects.toMatchObject({code: 'AUTHENTICATION_REQUIRED'});
     await expect(portal.bootstrap(capability)).rejects.toMatchObject({code: 'LINK_EXPIRED'});
