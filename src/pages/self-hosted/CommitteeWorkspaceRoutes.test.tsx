@@ -1972,9 +1972,17 @@ describe('committee workspace routes and roles', () => {
     expect(submitResolutionDirectVote).toHaveBeenCalledTimes(1);
     expect(submitResolutionDirectVote.mock.calls[0]?.[1].votes).toEqual([
       {seatId: 'seat', choice: 'FOR'}, {seatId: 'second', choice: 'AGAINST'}]);
-    expect(button('Yes').disabled).toBe(true);
+    expect(current()).toBe('France');
+    expect(page.textContent).toContain('Failed');
+    expect(page.textContent).not.toContain('Submitting votes');
+    expect(page.querySelector('.resolution-voting-member:disabled')).toBeNull();
+    expect(button('Yes').disabled).toBe(false);
+    expect(button('Yes').getAttribute('aria-disabled')).toBe('true');
+    await act(async () => {button('Yes').click();});
+    expect(submitResolutionDirectVote).toHaveBeenCalledTimes(1);
     await act(async () => fail());
     expect(page.textContent).toContain('Submission failed');
+    expect(page.textContent).toContain('Failed');
     expect(page.querySelector('.resolution-vote-counts')?.textContent).toContain('1');
     await act(async () => {button('Retry submission').click();});
     expect(submitResolutionDirectVote).toHaveBeenCalledTimes(2);
@@ -1984,6 +1992,76 @@ describe('committee workspace routes and roles', () => {
     await act(async () => {page.querySelector<HTMLButtonElement>('.resolution-voting-member')?.click();});
     await act(async () => {button('No').click();});
     expect(setResolutionDirectVote).toHaveBeenCalledWith('resolution', 'seat', 'AGAINST');
+  });
+
+  it.each([
+    {majority: 'TWO_THIRDS', choices: ['FOR', 'FOR'], veto: false, expected: 'Passed'},
+    {majority: 'TWO_THIRDS', choices: ['FOR', 'AGAINST'], veto: false, expected: 'Failed'},
+    {majority: 'TWO_THIRDS_NON_ABSTAINING', choices: ['FOR', 'ABSTAIN'], veto: false, expected: 'Passed'},
+    {majority: 'TWO_THIRDS_NON_ABSTAINING', choices: ['ABSTAIN', 'ABSTAIN'], veto: false, expected: null},
+    {majority: 'SIMPLE_MAJORITY', choices: ['FOR', 'AGAINST'], veto: true, expected: 'Vetoed'}
+  ] as const)('shows the local $majority result after the last $choices vote', async ({majority, choices, veto, expected}) => {
+    let document: ProceedingDocument = {id: 'resolution', committeeId: 'committee', meetingSessionId: 'meeting',
+      kind: 'RESOLUTION', resolutionId: null, ordinal: 1, customTitle: null, title: 'A/RES/1', status: 'PUBLISHED',
+      rulePackageVersionId: 'rules', currentVersion: {id: 'version', versionNumber: 1, content: 'Text', contentFile: null,
+        createdAt: '2026-08-14T00:00:00.000Z'}, votingVersionId: null, public: true, proposers: [], seconders: [],
+      delegatesCanAmend: false, directVote: {majority, startedAt: null, completedAt: null, castRevision: 0,
+        settingsRevision: 1, eligibility: [
+          {seatId: 'seat', seatDisplayName: 'China', mustVote: false, hasVeto: false},
+          {seatId: 'second', seatDisplayName: 'France', mustVote: false, hasVeto: veto}],
+        threshold: 2, automaticResult: null, votes: []}, resultDecisions: [], revision: 2, discussion: [],
+      createdAt: '2026-08-14T00:00:00.000Z', updatedAt: '2026-08-14T00:00:00.000Z'};
+    let finish: () => void = () => undefined;
+    const submitResolutionDirectVote = vi.fn((_id: string, body: {votes: Array<{seatId: string;
+      choice: 'FOR' | 'AGAINST' | 'ABSTAIN'}>}) => new Promise<ProceedingDocument>(resolve => {finish = () => {
+      document = {...document, directVote: {...document.directVote!, completedAt: '2026-09-28T00:00:00Z',
+        castRevision: 1, automaticResult: expected === 'Passed' ? 'PASSED' : expected === 'Failed' ? 'FAILED'
+          : expected === 'Vetoed' ? 'VETOED' : null,
+        votes: body.votes.map((vote, index) => ({id: `vote-${index}`, castAt: '2026-09-28T00:00:00Z',
+          seatId: vote.seatId, seatDisplayName: vote.seatId, choice: vote.choice, revision: 1}))}};
+      resolve(document);
+    };}));
+    const page = await render('CHAIR', '/committees/committee/resolutions/resolution/voting', user,
+      value => ({...value, documents: [document]}), {submitResolutionDirectVote});
+    const button = (label: string) => [...page.querySelectorAll<HTMLButtonElement>('button')]
+      .find(item => item.textContent?.trim() === label)!;
+    await act(async () => {button(choices[0] === 'FOR' ? 'Yes' : 'Abstain').click();});
+    await act(async () => {button(choices[1] === 'FOR' ? 'Yes' : choices[1] === 'AGAINST' ? 'No' : 'Abstain').click();});
+    expect(submitResolutionDirectVote).toHaveBeenCalledTimes(1);
+    expect(page.querySelector('.resolution-result')?.textContent ?? null).toBe(expected);
+    expect(page.querySelector('.resolution-voting-member:disabled')).toBeNull();
+    expect(page.textContent).not.toContain('Submitting votes');
+    await act(async () => finish());
+    expect(page.querySelector('.resolution-result')?.textContent ?? null).toBe(expected);
+    expect(page.textContent).not.toContain('Resolution vote result changed on the server.');
+  });
+
+  it('replaces a local result when the server reports a different one', async () => {
+    let document: ProceedingDocument = {id: 'resolution', committeeId: 'committee', meetingSessionId: 'meeting',
+      kind: 'RESOLUTION', resolutionId: null, ordinal: 1, customTitle: null, title: 'A/RES/1', status: 'PUBLISHED',
+      rulePackageVersionId: 'rules', currentVersion: {id: 'version', versionNumber: 1, content: 'Text', contentFile: null,
+        createdAt: '2026-08-14T00:00:00.000Z'}, votingVersionId: null, public: true, proposers: [], seconders: [],
+      delegatesCanAmend: false, directVote: {majority: 'SIMPLE_MAJORITY', startedAt: null, completedAt: null,
+        castRevision: 0, settingsRevision: 1, eligibility: [
+          {seatId: 'seat', seatDisplayName: 'China', mustVote: false, hasVeto: false}],
+        threshold: 1, automaticResult: null, votes: []}, resultDecisions: [], revision: 2, discussion: [],
+      createdAt: '2026-08-14T00:00:00.000Z', updatedAt: '2026-08-14T00:00:00.000Z'};
+    let finish: () => void = () => undefined;
+    const submitResolutionDirectVote = vi.fn(() => new Promise<ProceedingDocument>(resolve => {finish = () => {
+      document = {...document, directVote: {...document.directVote!, completedAt: '2026-09-28T00:00:00Z',
+        castRevision: 1, automaticResult: 'FAILED', votes: [{id: 'vote', seatId: 'seat', seatDisplayName: 'China',
+          choice: 'FOR', revision: 1, castAt: '2026-09-28T00:00:00Z'}]}};
+      resolve(document);
+    };}));
+    const page = await render('CHAIR', '/committees/committee/resolutions/resolution/voting', user,
+      value => ({...value, documents: [document]}), {submitResolutionDirectVote});
+    await act(async () => {([...page.querySelectorAll<HTMLButtonElement>('button')]
+      .find(item => item.textContent?.trim() === 'Yes'))?.click();});
+    expect(page.querySelector('.resolution-result')?.textContent).toBe('Passed');
+    await act(async () => finish());
+    expect(page.querySelector('.resolution-result')?.textContent).toBe('Failed');
+    expect(page.textContent).toContain('Resolution vote result changed on the server.');
+    expect(page.textContent).not.toContain('Retry submission');
   });
 
   it('serializes completed resolution vote corrections and changes the cursor only after success', async () => {
