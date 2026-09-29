@@ -29,6 +29,52 @@ afterEach(async () => {await act(async () => root.unmount()); host.remove(); vi.
 function client(overrides: Partial<SelfHostedApi>): SelfHostedApi {return overrides as SelfHostedApi;}
 
 describe('delegate file portal', () => {
+  it('clears the dot before the server replies and keeps later publications unread', async () => {
+    const file = (id: string, publishedAt: string) => ({id, logicalName: id, fileType: 'NEWS' as const,
+      publishedAt, submissionSource: 'CHAIR' as const, submitterDisplayName: null, submittedAt: null, revision: 1});
+    const snapshot = {committeeId: 'committee', committeeLanguage: 'zh-CN' as const, committeeName: '委员会',
+      shareId: 'share', claimedSeat: {id: 'seat', displayName: '中国'}, eligibleSeats: [], mayUpload: true,
+      storageAvailable: true, eventSequence: 0, maxUploadSizeBytes: 20 * 1024 * 1024,
+      files: [file('first', '2026-09-29T01:00:00Z')], categoryOpenedAt: {}};
+    const open = vi.fn(() => new Promise<{category: 'NEWS'; openedAt: string}>(() => {}));
+    await act(async () => root.render(<DelegateFilePortal api={client({
+      bootstrapDelegatePortal: async () => snapshot,
+      openDelegatePublishedCategory: open as SelfHostedApi['openDelegatePublishedCategory']})} />));
+    const menu = host.querySelector('[aria-label="已发布文件分类"]')!;
+    const news = () => Array.from(menu.querySelectorAll('a')).find(item => item.textContent === '新闻') as HTMLElement;
+    expect(news().querySelector('.delegate-file-category-dot')).not.toBeNull();
+    await act(async () => news().click());
+    expect(open).toHaveBeenCalledWith('NEWS', 'first', expect.any(AbortSignal));
+    expect(news().querySelector('.delegate-file-category-dot')).toBeNull();
+    await act(async () => FakeEventSource.latest!.emit('file.available', {id: 1, fileId: 'first',
+      submissionSource: 'CHAIR', logicalName: 'first', publishedAt: '2026-09-29T01:00:00Z'}));
+    expect(news().querySelector('.delegate-file-category-dot')).toBeNull();
+    snapshot.files.push(file('second', '2026-09-29T02:00:00Z'));
+    await act(async () => FakeEventSource.latest!.emit('file.available', {id: 2, fileId: 'second',
+      submissionSource: 'CHAIR', logicalName: 'second', publishedAt: '2026-09-29T02:00:00Z'}));
+    expect(news().querySelector('.delegate-file-category-dot')).not.toBeNull();
+  });
+
+  it('silently stops after five failed read updates without restoring the dot', async () => {
+    const open = vi.fn(async () => {throw new Error('network');});
+    await act(async () => root.render(<DelegateFilePortal api={client({bootstrapDelegatePortal: async () => ({
+      committeeId: 'committee', committeeLanguage: 'zh-CN' as const, committeeName: '委员会', shareId: 'share',
+      claimedSeat: {id: 'seat', displayName: '中国'}, eligibleSeats: [], mayUpload: true, storageAvailable: true,
+      eventSequence: 0, maxUploadSizeBytes: 20 * 1024 * 1024, categoryOpenedAt: {},
+      files: [{id: 'news', logicalName: 'news', fileType: 'NEWS' as const, publishedAt: '2026-09-29T01:00:00Z',
+        submissionSource: 'CHAIR' as const, submitterDisplayName: null, submittedAt: null, revision: 1}]}),
+      openDelegatePublishedCategory: open as SelfHostedApi['openDelegatePublishedCategory']})} />));
+    vi.useFakeTimers();
+    const menu = host.querySelector('[aria-label="已发布文件分类"]')!;
+    const news = Array.from(menu.querySelectorAll('a')).find(item => item.textContent === '新闻') as HTMLElement;
+    await act(async () => news.click());
+    expect(news.querySelector('.delegate-file-category-dot')).toBeNull();
+    await act(async () => {await vi.advanceTimersByTimeAsync(16_000);});
+    expect(open).toHaveBeenCalledTimes(5);
+    expect(news.querySelector('.delegate-file-category-dot')).toBeNull();
+    expect(host.querySelector('.error.message')).toBeNull();
+  });
+
   it('marks only categories with approvals since their last opening and groups custom types under Other', async () => {
     const makeFile = (id: string, fileType: 'NEWS' | 'DIRECTIVE_DRAFT' | `CUSTOM:${string}`, publishedAt: string) => ({
       id, logicalName: id, fileType, publishedAt, submissionSource: 'CHAIR' as const,
@@ -56,11 +102,11 @@ describe('delegate file portal', () => {
     expect(hasDot('指令草案')).toBe(false);
     expect(hasDot('其他')).toBe(true);
     await act(async () => item('新闻').click());
-    expect(opened).toHaveBeenCalledWith('NEWS');
+    expect(opened).toHaveBeenCalledWith('NEWS', 'news', expect.any(AbortSignal));
     expect(hasDot('新闻')).toBe(false);
     expect(hasDot('其他')).toBe(true);
     await act(async () => item('其他').click());
-    expect(opened).toHaveBeenCalledWith('OTHER');
+    expect(opened).toHaveBeenCalledWith('OTHER', 'custom-a', expect.any(AbortSignal));
     expect(hasDot('其他')).toBe(false);
     snapshot.files.push(makeFile('later-custom', 'CUSTOM:另一类', '2026-09-29T03:00:00Z'));
     await act(async () => FakeEventSource.latest!.emit('file.available', {

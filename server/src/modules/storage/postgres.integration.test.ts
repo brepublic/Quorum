@@ -379,16 +379,18 @@ integration('PostgreSQL stage 6 file metadata', () => {
       {baseRevision: pending.revision, logicalName: 'Approved', fileType: 'WORKING_PAPER'}, context('approve'));
     expect(approved).toMatchObject({status: 'PUBLISHED', submissionSource: 'DELEGATE_PORTAL', fileType: 'WORKING_PAPER'});
     expect((await portal.bootstrap(capability, claimed.sessionToken)).categoryOpenedAt).toEqual({});
-    await expect(portal.openPublishedCategory(claimed.sessionToken, 'ALL')).rejects.toMatchObject({code: 'VALIDATION_FAILED'});
-    const opened = await portal.openPublishedCategory(claimed.sessionToken, 'WORKING_PAPER');
-    expect(opened.openedAt > approved.publishedAt!).toBe(true);
+    await expect(portal.openPublishedCategory(claimed.sessionToken, 'ALL', approved.id)).rejects.toMatchObject({code: 'VALIDATION_FAILED'});
+    await expect(portal.openPublishedCategory(claimed.sessionToken, 'NEWS', approved.id)).rejects.toMatchObject({code: 'VALIDATION_FAILED'});
+    const opened = await portal.openPublishedCategory(claimed.sessionToken, 'WORKING_PAPER', approved.id);
+    expect(opened.openedAt).toBe(approved.publishedAt);
     const otherBrowser = await portal.claim(capability, seat.id, context('claim-other-browser'));
     expect(otherBrowser.categoryOpenedAt).toEqual({WORKING_PAPER: opened.openedAt});
     expect((await portal.bootstrap(capability, otherBrowser.sessionToken)).categoryOpenedAt)
       .toEqual({WORKING_PAPER: opened.openedAt});
-    const otherOpened = await portal.openPublishedCategory(otherBrowser.sessionToken, 'OTHER');
+    await expect(portal.openPublishedCategory(otherBrowser.sessionToken, 'OTHER', approved.id))
+      .rejects.toMatchObject({code: 'VALIDATION_FAILED'});
     expect((await portal.bootstrap(capability, claimed.sessionToken)).categoryOpenedAt)
-      .toEqual({WORKING_PAPER: opened.openedAt, OTHER: otherOpened.openedAt});
+      .toEqual({WORKING_PAPER: opened.openedAt});
     await expect(reader.download(undefined, approved.id)).rejects.toMatchObject({code: 'NOT_FOUND'});
     const download = await portal.download(claimed.sessionToken, approved.id);
     const chunks = []; for await (const chunk of download.content) chunks.push(chunk);

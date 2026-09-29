@@ -797,7 +797,9 @@ async function handleDelegateFileRequest(options: {
   const openedCategory = /^\/api\/v1\/delegate-files\/categories\/([^/]+)\/open$/.exec(pathname);
   if (method === 'POST' && openedCategory) {
     delegateWrite();
-    sendJson(response, 200, success(await service.openPublishedCategory(credential, openedCategory[1]), requestId)); return true;
+    const body = await readJson(request);
+    sendJson(response, 200, success(await service.openPublishedCategory(credential, openedCategory[1],
+      stringField(body, 'latestSeenFileId')), requestId)); return true;
   }
   if (method === 'GET' && pathname === '/api/v1/delegate-files/events') {
     await streamDelegateFileEvents({request, response, url, service}); return true;

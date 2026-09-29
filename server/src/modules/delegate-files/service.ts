@@ -237,17 +237,26 @@ export class DelegateFileService {
     });
   }
 
-  async openPublishedCategory(credential: string | undefined, value: unknown): Promise<{category: DelegateFileCategory; openedAt: string}> {
+  async openPublishedCategory(credential: string | undefined, value: unknown, latestSeenFileId: unknown): Promise<{category: DelegateFileCategory; openedAt: string}> {
     if (typeof value !== 'string' || !FILE_CATEGORIES.has(value)) throw new AppError({
       reason: 'INVALID_FILE_TYPE', code: 'VALIDATION_FAILED', message: 'File category is invalid.'});
     if (!credential) throw new AppError({code: 'AUTHENTICATION_REQUIRED', message: 'Delegate file session is required.'});
+    const fileId = uuid(latestSeenFileId, 'File ID');
     return transaction(this.pool, async client => {
       const session = await this.sessionByCredential(client, credential);
+      const file = (await client.query<{published_at: Date; file_type: DelegateFileType | null}>(`SELECT e.published_at,m.file_type
+        FROM file_entries e JOIN delegate_file_metadata m ON m.file_entry_id=e.id
+        WHERE e.id=$1 AND e.committee_id=$2 AND e.status='PUBLISHED' AND e.deleted_at IS NULL`,
+      [fileId, session!.committee_id])).rows[0];
+      if (!file || !file.published_at || (value === 'OTHER'
+        ? !file.file_type || !isCustomDelegateFileType(file.file_type) : file.file_type !== value)) {
+        throw new AppError({reason: 'INVALID_REFERENCE', code: 'VALIDATION_FAILED', message: 'File is not in this category.'});
+      }
       const row = (await client.query<{opened_at: Date}>(`INSERT INTO delegate_file_category_reads
-        (committee_id,seat_id,category,opened_at) VALUES ($1,$2,$3,clock_timestamp())
+        (committee_id,seat_id,category,opened_at) VALUES ($1,$2,$3,$4)
         ON CONFLICT (committee_id,seat_id,category) DO UPDATE
         SET opened_at=GREATEST(delegate_file_category_reads.opened_at,EXCLUDED.opened_at)
-        RETURNING opened_at`, [session!.committee_id, session!.seat_id, value])).rows[0]!;
+        RETURNING opened_at`, [session!.committee_id, session!.seat_id, value, file.published_at])).rows[0]!;
       return {category: value as DelegateFileCategory, openedAt: row.opened_at.toISOString()};
     });
   }

@@ -150,7 +150,7 @@ function uploadContentRequest(uploadId: string, file: File, idempotencyKey: stri
 }
 
 async function delegateRequest<T>(path: string, options: {
-  method?: Method; body?: object; idempotencyKey?: string;
+  method?: Method; body?: object; idempotencyKey?: string; signal?: AbortSignal;
 } = {}): Promise<T> {
   const method = options.method ?? 'GET'; const headers: Record<string, string> = {};
   if (options.body) headers['content-type'] = 'application/json';
@@ -160,7 +160,7 @@ async function delegateRequest<T>(path: string, options: {
   if (options.idempotencyKey) headers['idempotency-key'] = options.idempotencyKey;
   let response: Response;
   try {
-    response = await fetch(path, {method, credentials: 'same-origin', headers,
+    response = await fetch(path, {method, credentials: 'same-origin', headers, signal: options.signal,
       ...(options.body ? {body: JSON.stringify(options.body)} : {})});
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') throw error;
@@ -812,9 +812,10 @@ export const selfHostedApi = {
   listDelegatePublishedFiles() {
     return delegateRequest<DelegatePublishedFile[]>('/api/v1/delegate-files/portal');
   },
-  openDelegatePublishedCategory(category: import('@quorum/contracts').DelegateFileCategory) {
+  openDelegatePublishedCategory(category: import('@quorum/contracts').DelegateFileCategory, latestSeenFileId: string,
+    signal?: AbortSignal) {
     return delegateRequest<{category: import('@quorum/contracts').DelegateFileCategory; openedAt: string}>(
-      `/api/v1/delegate-files/categories/${category}/open`, {method: 'POST'});
+      `/api/v1/delegate-files/categories/${category}/open`, {method: 'POST', body: {latestSeenFileId}, signal});
   },
   createDelegateFileUpload(input: {logicalName: string; originalName: string; mediaType: string;
     expectedSizeBytes: number; sha256: string; fileType: DelegateFileType}) {

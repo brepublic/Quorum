@@ -13,8 +13,11 @@ import {searchOptions} from '@quorum/contracts';
 const FILE_TYPES = DELEGATE_FILE_TYPES;
 const CATEGORIES: DelegateFileCategory[] = [...FILE_TYPES, 'OTHER'];
 
-function categoryHasNewFile(portal: DelegatePortalBootstrap, category: DelegateFileCategory): boolean {
-  const openedAt = portal.categoryOpenedAt?.[category];
+function categoryHasNewFile(portal: DelegatePortalBootstrap, category: DelegateFileCategory,
+  localOpenedAt: Partial<Record<DelegateFileCategory, string>>): boolean {
+  const confirmed = portal.categoryOpenedAt?.[category];
+  const local = localOpenedAt[category];
+  const openedAt = local && (!confirmed || local > confirmed) ? local : confirmed;
   return portal.files.some(file => (category === 'OTHER'
     ? Boolean(file.fileType && isCustomDelegateFileType(file.fileType)) : file.fileType === category)
     && (!openedAt || Date.parse(file.publishedAt) > Date.parse(openedAt)));
@@ -71,6 +74,7 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
   const [file, setFile] = React.useState<File>(); const [fileType, setFileType] = React.useState<StandardDelegateFileType | 'OTHER'>('WORKING_PAPER');
   const [customType, setCustomType] = React.useState('');
   const [publishedCategory, setPublishedCategory] = React.useState<DelegateFileCategory | 'ALL'>('ALL');
+  const [localOpenedAt, setLocalOpenedAt] = React.useState<Partial<Record<DelegateFileCategory, string>>>({});
   const [progress, setProgress] = React.useState<number>(); const [submitted, setSubmitted] = React.useState(false);
   const [awaitingSave, setAwaitingSave] = React.useState(false);
   const [preparingDownload, setPreparingDownload] = React.useState<string>();
@@ -184,18 +188,33 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
     } catch (caught) { setError(caught); }
     finally { setPreparingDownload(undefined); }
   };
-  const openCategory = async (category: DelegateFileCategory | 'ALL') => {
+  const openCategory = (category: DelegateFileCategory | 'ALL') => {
     setPublishedCategory(category);
     if (category === 'ALL') return;
-    try {
-      const opened = await api.openDelegatePublishedCategory(category);
-      setPortal(current => {
-        if (!current) return current;
-        const previous = current.categoryOpenedAt[category];
-        return {...current, categoryOpenedAt: {
-          ...current.categoryOpenedAt, [category]: previous && previous > opened.openedAt ? previous : opened.openedAt}};
-      });
-    } catch (caught) {setError(caught);}
+    const latest = portal?.files.filter(file => category === 'OTHER'
+      ? Boolean(file.fileType && isCustomDelegateFileType(file.fileType)) : file.fileType === category)
+      .reduce<DelegatePublishedFile | undefined>((newest, file) => !newest || file.publishedAt > newest.publishedAt ? file : newest, undefined);
+    if (!latest) return;
+    setLocalOpenedAt(current => ({...current, [category]: current[category] && current[category]! > latest.publishedAt
+      ? current[category] : latest.publishedAt}));
+    void (async () => {
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const controller = new AbortController();
+        const timeout = window.setTimeout(() => controller.abort(), 10_000);
+        try {
+          const opened = await api.openDelegatePublishedCategory(category, latest.id, controller.signal);
+          setPortal(current => {
+            if (!current) return current;
+            const previous = current.categoryOpenedAt[category];
+            return {...current, categoryOpenedAt: {...current.categoryOpenedAt,
+              [category]: previous && previous > opened.openedAt ? previous : opened.openedAt}};
+          });
+          return;
+        } catch { /* Keep the local read state while retrying silently. */ }
+        finally {window.clearTimeout(timeout);}
+        if (attempt < 4) await new Promise(resolve => window.setTimeout(resolve, 1000 * 2 ** attempt));
+      }
+    })();
   };
 
   React.useLayoutEffect(() => {
@@ -295,11 +314,11 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
       {active === 'files' && <><Menu pointing secondary className="delegate-file-category-menu" aria-label={t('Published file categories')}>
         <Menu.Item active={publishedCategory === 'ALL'} onClick={() => void openCategory('ALL')}>{t('All files')}</Menu.Item>
         {FILE_TYPES.map(type => <Menu.Item key={type} active={publishedCategory === type} onClick={() => void openCategory(type)}>
-          {delegateFileTypeName(type, portal.committeeLanguage)}{categoryHasNewFile(portal, type) &&
+          {delegateFileTypeName(type, portal.committeeLanguage)}{categoryHasNewFile(portal, type, localOpenedAt) &&
             <span className="delegate-file-category-dot" role="img" aria-label={t('New files')} />}
         </Menu.Item>)}
         <Menu.Item active={publishedCategory === 'OTHER'} onClick={() => void openCategory('OTHER')}>{t('Other')}
-          {categoryHasNewFile(portal, 'OTHER') && <span className="delegate-file-category-dot" role="img" aria-label={t('New files')} />}
+          {categoryHasNewFile(portal, 'OTHER', localOpenedAt) && <span className="delegate-file-category-dot" role="img" aria-label={t('New files')} />}
         </Menu.Item>
       </Menu><div className="delegate-file-card-list">{publishedFiles.length
         ? publishedFiles.map(item => <PublishedCard committeeLanguage={portal.committeeLanguage} key={item.id} file={item} preparing={preparingDownload === item.id}
