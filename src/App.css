@@ -645,6 +645,23 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   cursor: default;
 }
 
+.delegate-file-navigation-desktop .delegate-file-menu { flex-wrap: nowrap; min-width: 0; }
+.delegate-file-menu > .item, .delegate-file-menu > .right.menu > .item { white-space: nowrap; flex-shrink: 0; }
+.delegate-file-menu > .delegate-file-committee-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.delegate-file-menu > .right.menu { flex-shrink: 0; }
+.delegate-file-navigation-measurement { height: 0; overflow: hidden; visibility: hidden; pointer-events: none; }
+.delegate-file-navigation-measurement > .ui.menu { width: max-content; margin: 0; }
+.delegate-file-navigation-mobile, .delegate-file-mobile-sidebar { display: none !important; }
+.delegate-file-navigation-desktop[data-navigation-mode='sidebar'] { display: none; }
+.delegate-file-navigation-pushable.pushable { min-height: calc(100vh - 51px); overflow: visible; }
+.delegate-file-navigation-pushable.pushable > .pusher { min-height: inherit; }
+.delegate-file-navigation-pushable[data-navigation-mode='sidebar'] .delegate-file-navigation-mobile { display: block !important; }
+.delegate-file-navigation-pushable[data-navigation-mode='sidebar'] .delegate-file-mobile-sidebar { display: flex !important; width: min(24rem, 90vw); max-height: 100vh; overflow-y: auto; }
+.delegate-file-navigation-pushable[data-navigation-mode='sidebar'].pushable { min-height: 100vh; overflow: hidden; }
+.delegate-file-mobile-menu.ui.menu { flex-wrap: nowrap; margin: 0; }
+.delegate-file-mobile-menu > .header.item { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.delegate-file-mobile-sidebar > .item { white-space: nowrap; }
+
 .delegate-file-claim-page,
 .delegate-file-claim-page.ui.container {
   display: flex;
@@ -780,9 +797,7 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
 }
 
 @media (max-width: 767px) {
-  .delegate-file-menu.ui.menu { flex-wrap: wrap; }
-  .delegate-file-menu.ui.menu .right.menu { margin-left: auto !important; }
-  .delegate-file-portal > .ui.container { width: auto !important; margin: 0 1rem !important; }
+  .delegate-file-portal .delegate-file-navigation-pushable > .pusher > .ui.container { width: auto !important; margin: 0 1rem !important; }
 }
 
 .self-hosted-file-card .description,

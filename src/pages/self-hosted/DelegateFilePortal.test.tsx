@@ -67,7 +67,7 @@ describe('delegate file portal', () => {
     };
     await choose(limit + 1);
     expect(host.querySelector('.negative.message[role="alert"]')?.textContent).toContain('文件大小超出上限，请选择不超过 32 MiB 的文件。');
-    expect((host.querySelector('button') as HTMLButtonElement).disabled).toBe(true);
+    expect((host.querySelector('form button') as HTMLButtonElement).disabled).toBe(true);
     await act(async () => host.querySelector('form')!.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true})));
     expect(hash).not.toHaveBeenCalled();
     expect(createDelegateFileUpload).not.toHaveBeenCalled();
@@ -75,8 +75,8 @@ describe('delegate file portal', () => {
     expect(commitDelegateFileUpload).not.toHaveBeenCalled();
     await choose(limit);
     expect(host.textContent).not.toContain('文件大小超出上限');
-    expect((host.querySelector('button') as HTMLButtonElement).disabled).toBe(false);
-    await act(async () => (host.querySelector('button') as HTMLButtonElement).click());
+    expect((host.querySelector('form button') as HTMLButtonElement).disabled).toBe(false);
+    await act(async () => (host.querySelector('form button') as HTMLButtonElement).click());
     expect(hash).toHaveBeenCalledTimes(1);
     expect(createDelegateFileUpload).toHaveBeenCalledWith(expect.objectContaining({expectedSizeBytes:limit}));
     expect(uploadDelegateFileContent).toHaveBeenCalledTimes(1);

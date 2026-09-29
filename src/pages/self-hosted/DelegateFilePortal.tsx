@@ -4,7 +4,7 @@ import * as React from 'react';
 import {delegateFileTypeName, type ContentLanguage, isAllowedDelegateFile} from '@quorum/contracts';
 import type {DelegateFileAvailableEvent, DelegateFileType, DelegatePortalBootstrap,
   DelegatePublishedFile} from '@quorum/contracts';
-import {Button, Card, Container, Divider, Form, Icon, Menu, Message, Modal, Progress, Table} from 'semantic-ui-react';
+import {Button, Card, Container, Divider, Form, Icon, Menu, Message, Modal, Progress, Sidebar, Table} from 'semantic-ui-react';
 import {SelfHostedApiError, selfHostedApi, type SelfHostedApi} from '../../services/self-hosted-api';
 import {sha256File} from '../../services/sha256';
 import {CountryFlagDisplay} from '../../components/CountryFlagDisplay';
@@ -55,7 +55,7 @@ function PublishedCard({file, committeeLanguage, preparing, onDownload}: {
 }
 
 export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHostedApi}) {
-  useLanguage();
+  const language = useLanguage();
   const capability = window.location.hash.replace(/^#/, '');
   const [portal, setPortal] = React.useState<DelegatePortalBootstrap>();
   const [active, setActive] = React.useState<'files' | 'upload'>('files');
@@ -68,6 +68,9 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
   const [progress, setProgress] = React.useState<number>(); const [submitted, setSubmitted] = React.useState(false);
   const [awaitingSave, setAwaitingSave] = React.useState(false);
   const [preparingDownload, setPreparingDownload] = React.useState<string>();
+  const [navigationLevel, setNavigationLevel] = React.useState(0);
+  const [sidebarOpen, setSidebarOpen] = React.useState(false);
+  const navigationMeasurementRef = React.useRef<HTMLDivElement | null>(null);
 
   const load = React.useCallback(async () => {
     if (!capability) { setError({code: 'LINK_EXPIRED'}); return; }
@@ -143,6 +146,32 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
     finally { setPreparingDownload(undefined); }
   };
 
+  React.useLayoutEffect(() => {
+    const container = navigationMeasurementRef.current;
+    if (!container || typeof ResizeObserver === 'undefined') return;
+    const menu = container.querySelector<HTMLElement>('.delegate-file-menu')!;
+    const measure = () => {
+      const available = container.getBoundingClientRect().width;
+      if (!available) return;
+      const width = (selector: string) => menu.querySelector(selector)?.getBoundingClientRect().width ?? 0;
+      const full = menu.getBoundingClientRect().width;
+      const required = [full, full - width('.delegate-file-status-label')];
+      if (portal?.claimedSeat?.flag) required.push(required[1] - width('.delegate-file-seat-name'));
+      setNavigationLevel(previous => {
+        const next = required.findIndex((needed, index) => needed + (index < previous ? 4 : 0) <= available);
+        return next < 0 ? 3 : next;
+      });
+    };
+    const observer = new ResizeObserver(measure);
+    observer.observe(container);
+    observer.observe(menu);
+    menu.querySelectorAll('.delegate-file-status-label, .delegate-file-seat-name').forEach(element => observer.observe(element));
+    measure();
+    return () => observer.disconnect();
+  }, [portal?.committeeName, portal?.claimedSeat?.displayName, portal?.claimedSeat?.flag,
+    portal?.storageAvailable, connection, language]);
+  React.useEffect(() => {setSidebarOpen(false);}, [navigationLevel]);
+
   if (!portal) return <Container className="delegate-file-portal">{error
     ? <Message error content={error} /> : <Message content={t("Loading…")} />}</Container>;
   if (!portal.claimedSeat) return <Container className="delegate-file-claim-page">
@@ -161,16 +190,46 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
   </Container>;
 
   const isLive = portal.storageAvailable && connection === 'LIVE';
+  const claimedSeat = portal.claimedSeat;
   const status = isLive ? t("Live") : !portal.storageAvailable ? t("File storage unavailable") : t("Offline");
   const maxUploadSizeMiB = fileSizeMiB(portal.maxUploadSizeBytes);
+  const statusItem = (compact: boolean) => <Menu.Item className={isLive ? 'realtime-status-live' : undefined}
+    title={status} aria-label={status}>
+    <Icon name={isLive ? 'check circle' : 'warning sign'} aria-hidden="true" />
+    {!compact && <span className="delegate-file-status-label">{status}</span>}
+  </Menu.Item>;
+  const seatItem = (compact: boolean) => <Menu.Item className="delegate-file-seat" title={claimedSeat.displayName}
+    aria-label={claimedSeat.displayName}>
+    {claimedSeat.flag && <CountryFlagDisplay flag={claimedSeat.flag} />}
+    {!compact && <span className="delegate-file-seat-name">{claimedSeat.displayName}</span>}
+  </Menu.Item>;
+  const navigationItems = (close = false) => <>
+    <Menu.Item active={active === 'files'} onClick={() => {setActive('files'); if (close) setSidebarOpen(false);}}>{t("Published files")}</Menu.Item>
+    <Menu.Item active={active === 'upload'} onClick={() => {setActive('upload'); if (close) setSidebarOpen(false);}}>{t("Upload files")}</Menu.Item>
+  </>;
   return <div className="delegate-file-portal">
-    <Menu className="delegate-file-menu"><Menu.Item header className="delegate-file-committee-name">{portal.committeeName}</Menu.Item>
-      <Menu.Item active={active === 'files'} onClick={() => setActive('files')}>{t("Published files")}</Menu.Item>
-      <Menu.Item active={active === 'upload'} onClick={() => setActive('upload')}>{t("Upload files")}</Menu.Item>
-      <Menu.Menu position="right"><Menu.Item className={isLive ? 'realtime-status-live' : undefined}>
-        {isLive && <Icon name="check circle" />} {status}
-      </Menu.Item><Menu.Item className="delegate-file-seat">{portal.claimedSeat.flag && <CountryFlagDisplay flag={portal.claimedSeat.flag} />}<span>{portal.claimedSeat.displayName}</span></Menu.Item></Menu.Menu>
-    </Menu>
+    <nav className="delegate-file-navigation-desktop" data-navigation-mode={navigationLevel === 3 ? 'sidebar' : 'desktop'}>
+      <Menu className="delegate-file-menu"><Menu.Item header className="delegate-file-committee-name">{portal.committeeName}</Menu.Item>
+        {navigationItems()}<Menu.Menu position="right">{statusItem(navigationLevel >= 1)}{seatItem(navigationLevel >= 2 && Boolean(claimedSeat.flag))}</Menu.Menu>
+      </Menu>
+    </nav>
+    <div className="delegate-file-navigation-measurement" aria-hidden="true" ref={element => {
+      navigationMeasurementRef.current = element;
+      element?.setAttribute('inert', '');
+    }}><Menu className="delegate-file-menu"><Menu.Item header className="delegate-file-committee-name">{portal.committeeName}</Menu.Item>
+      {navigationItems()}<Menu.Menu position="right">{statusItem(false)}{seatItem(false)}</Menu.Menu>
+    </Menu></div>
+    <Sidebar.Pushable className="delegate-file-navigation-pushable" data-navigation-mode={navigationLevel === 3 ? 'sidebar' : 'desktop'}>
+      <Sidebar className="delegate-file-mobile-sidebar" as={Menu} animation="uncover" vertical visible={sidebarOpen}
+        onHide={() => setSidebarOpen(false)}>
+        {statusItem(false)}{seatItem(false)}{navigationItems(true)}
+      </Sidebar>
+      <Sidebar.Pusher dimmed={sidebarOpen} onClick={() => sidebarOpen && setSidebarOpen(false)}>
+        <nav className="delegate-file-navigation-mobile"><Menu className="delegate-file-mobile-menu">
+          <Menu.Item as="button" type="button" aria-expanded={sidebarOpen} aria-label={t('Open committee navigation')}
+            onClick={() => setSidebarOpen(open => !open)}><Icon name="sidebar" /></Menu.Item>
+          <Menu.Item header className="delegate-file-committee-name">{portal.committeeName}</Menu.Item>
+        </Menu></nav>
     <Container>
       {notices.map(item => <Message info={item.kind !== 'rejected'} negative={item.kind === 'rejected'} key={item.fileId} onDismiss={() => setNotices(current =>
         current.filter(candidate => candidate.fileId !== item.fileId))}
@@ -222,5 +281,7 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
           </Table.Body></Table></Card.Meta>
         </Card.Content></Card>) : <Message content={t("No uploads")} />}</div></>}
     </Container>
+      </Sidebar.Pusher>
+    </Sidebar.Pushable>
   </div>;
 }
