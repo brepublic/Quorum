@@ -16,7 +16,7 @@ import type {
   YieldType
 } from '@quorum/contracts';
 import {DragDropContext, Draggable, Droppable, type DropResult} from 'react-beautiful-dnd';
-import {Button, Card, Checkbox, Container, Divider, Dropdown, Feed, Form, Grid, Header, Icon, Input, Label, List,
+import {Button, Card, Checkbox, Confirm, Container, Divider, Dropdown, Feed, Form, Grid, Header, Icon, Input, Label, List,
   Menu, Message, Pagination, Popup, Progress, Segment, Select, Statistic, Table, TextArea} from 'semantic-ui-react';
 import {Link, useHistory} from 'react-router-dom';
 import {CountryFlagDisplay} from '../../components/CountryFlagDisplay';
@@ -1548,11 +1548,16 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
   const fileError = fileFailure ? apiErrorText(fileFailure) : undefined;
   const [seatId, setSeatId] = React.useState(snapshot.viewer.seatId ?? snapshot.seats[0]?.id ?? '');
   const [votingPage, setVotingPage] = React.useState(0);
-  const [currentVotingSeatId, setCurrentVotingSeatId] = React.useState(selectedDocument?.directVote?.eligibility[0]?.seatId ?? '');
+  const [currentVotingSeatId, setCurrentVotingSeatId] = React.useState(
+    selectedDocument?.directVote?.eligibility.find(item => !selectedDocument.directVote?.votes.some(vote => vote.seatId === item.seatId))?.seatId
+      ?? selectedDocument?.directVote?.eligibility[0]?.seatId ?? '');
   const [votingHistory, setVotingHistory] = React.useState<Array<{seatId: string; previousChoice: 'FOR' | 'AGAINST' | 'ABSTAIN' | null}>>([]);
   const [voteDraft, setVoteDraft] = React.useState<ResolutionVoteDraft>();
   const voteDraftRef = React.useRef<ResolutionVoteDraft>();
   const [savedDirectVote, setSavedDirectVote] = React.useState<ResolutionDirectVoteState>();
+  const [voteLeaveTarget, setVoteLeaveTarget] = React.useState<{
+    location: typeof history.location; action: 'PUSH' | 'REPLACE' | 'POP'}>();
+  const allowVoteNavigation = React.useRef(false);
   const submittingVote = React.useRef(false);
   const [voteSaving, setVoteSaving] = React.useState(false);
   const creatingDraft = React.useRef(false);
@@ -1590,14 +1595,19 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
   React.useEffect(() => {
     setVotingPage(0); setVotingHistory([]); setVoteDraft(undefined); voteDraftRef.current = undefined;
     setSavedDirectVote(undefined);
-    setCurrentVotingSeatId(selectedDocument?.directVote?.eligibility[0]?.seatId ?? '');
+    setCurrentVotingSeatId(selectedDocument?.directVote?.eligibility.find(item =>
+      !selectedDocument.directVote?.votes.some(vote => vote.seatId === item.seatId))?.seatId
+      ?? selectedDocument?.directVote?.eligibility[0]?.seatId ?? '');
   }, [selectedDocument?.id]);
   const updateVoteDraft = (next: ResolutionVoteDraft | undefined) => {voteDraftRef.current = next; setVoteDraft(next);};
   React.useEffect(() => {
     if (!voteDraft) return;
     const beforeUnload = (event: BeforeUnloadEvent) => {event.preventDefault(); event.returnValue = '';};
     window.addEventListener('beforeunload', beforeUnload);
-    const unblock = history.block(() => window.confirm(t('Discard unsubmitted votes?')) ? undefined : false);
+    const unblock = history.block((location, action) => {
+      if (allowVoteNavigation.current) return;
+      setVoteLeaveTarget({location, action}); return false;
+    });
     return () => {window.removeEventListener('beforeunload', beforeUnload); unblock();};
   }, [!!voteDraft, history]);
   if (resourceId === 'new') return canParticipate && session ? <Loading />
@@ -1695,7 +1705,7 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
           baseCastRevision: next.baseline.castRevision, eligibility: next.baseline.eligibility, votes: next.votes
         }, submittingDraft.submissionKey);
         if (result.directVote) setSavedDirectVote(result.directVote);
-        updateVoteDraft(undefined); setVotingHistory([]);
+        updateVoteDraft(undefined); setVoteLeaveTarget(undefined); setVotingHistory([]);
       } catch (caught) {
         updateVoteDraft({...submittingDraft, failure: caught, rejected: caught instanceof SelfHostedApiError
           && caught.status >= 400 && caught.status < 500 && ![408, 429].includes(caught.status)});
@@ -1843,7 +1853,12 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
         </div> : <Header as="h2">{currentVotingSeat?.seatDisplayName ?? t('No eligible delegations')}</Header>}
         {canChair && <div className="resolution-voting-actions"><div className="resolution-voting-primary-actions">
           {voteConflict ? <Button primary content={t('Reload voting')} icon="refresh"
-            onClick={() => {updateVoteDraft(undefined); setSavedDirectVote(undefined);}} />
+            onClick={() => {updateVoteDraft(undefined); setSavedDirectVote(undefined);
+              const next = snapshotDirectVote?.eligibility.find(item =>
+                !snapshotDirectVote.votes.some(vote => vote.seatId === item.seatId));
+              setCurrentVotingSeatId(next?.seatId ?? snapshotDirectVote?.eligibility[0]?.seatId ?? '');
+              setVotingPage(Math.floor(Math.max(0, snapshotDirectVote?.eligibility.findIndex(item => item.seatId === next?.seatId) ?? 0) / 18));
+            }} />
             : voteDraft?.failure ? <Button primary content={t('Retry submission')} icon="cloud upload"
               disabled={voteSaving || voteDraft.rejected} onClick={() => submitDirectVotes(voteDraft)} /> : null}
           <Button positive content={t('yes')} icon="plus" disabled={!currentVotingSeat || voteSaving || !!voteDraft?.submissionKey || voteConflict}
@@ -1897,7 +1912,17 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
         onChange={(_, data) => void run(() => api.updateDocumentSettings(document.id,
           {baseRevision: document.revision, delegatesCanAmend: data.checked ?? false}))} />}
     </Form></Segment></Grid.Column>}
-  </Grid.Row></Grid></Container>;
+  </Grid.Row></Grid><Confirm open={!!voteLeaveTarget} header={t('Discard unsubmitted votes?')} content={null}
+    cancelButton={t('Cancel')} confirmButton={{content: t('Leave page'), disabled: voteSaving}}
+    onCancel={() => setVoteLeaveTarget(undefined)}
+    onConfirm={() => {if (!voteLeaveTarget || submittingVote.current) return;
+      updateVoteDraft(undefined); setSavedDirectVote(undefined);
+      allowVoteNavigation.current = true;
+      if (voteLeaveTarget.action === 'POP') history.goBack();
+      else if (voteLeaveTarget.action === 'REPLACE') history.replace(voteLeaveTarget.location);
+      else history.push(voteLeaveTarget.location);
+      setVoteLeaveTarget(undefined); allowVoteNavigation.current = false;
+    }} /></Container>;
 }
 
 interface CommonProps {snapshot: CommitteeWorkspaceSnapshot; run: Run; api: SelfHostedApi; canChair: boolean}

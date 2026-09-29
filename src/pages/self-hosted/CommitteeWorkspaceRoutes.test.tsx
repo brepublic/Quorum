@@ -1959,6 +1959,12 @@ describe('committee workspace routes and roles', () => {
     expect(submitResolutionDirectVote).not.toHaveBeenCalled();
     expect(current()).toBe('France');
     expect(page.querySelector('.resolution-vote-counts')?.textContent).toContain('1');
+    await act(async () => {([...page.querySelectorAll<HTMLAnchorElement>('a')]
+      .find(item => item.textContent?.trim() === 'Text'))?.click();});
+    expect(globalThis.document.body.textContent).toContain('Discard unsubmitted votes?');
+    expect(current()).toBe('France');
+    await act(async () => {([...globalThis.document.querySelectorAll<HTMLButtonElement>('button')]
+      .find(item => item.textContent?.trim() === 'Cancel'))?.click();});
     await act(async () => {button('Undo').click();});
     expect(current()).toBe('China');
     await act(async () => {button('Yes').click();});
