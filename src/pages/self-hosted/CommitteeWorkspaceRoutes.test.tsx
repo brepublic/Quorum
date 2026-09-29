@@ -1951,13 +1951,18 @@ describe('committee workspace routes and roles', () => {
       };}));
     const setResolutionDirectVote = vi.fn(async () => document);
     const page = await render('CHAIR', '/committees/committee/resolutions/resolution/voting', user,
-      value => ({...value, documents: [document]}), {submitResolutionDirectVote, setResolutionDirectVote});
+      value => ({...value, seats: [...value.seats, {...value.seats[0], id: 'second', displayName: 'France',
+        flag: {type: 'STANDARD', value: 'fr'}}], documents: [document]}),
+      {submitResolutionDirectVote, setResolutionDirectVote});
     const button = (label: string) => [...page.querySelectorAll<HTMLButtonElement>('button')]
       .find(item => item.textContent?.trim() === label)!;
     const current = () => page.querySelector('.resolution-voting-current .header')?.textContent;
+    const currentFlag = () => page.querySelector<HTMLImageElement>('.resolution-voting-flag-stage img')?.getAttribute('src');
+    expect(currentFlag()).toBe('/flags/cn.svg');
     await act(async () => {button('Yes').click();});
     expect(submitResolutionDirectVote).not.toHaveBeenCalled();
     expect(current()).toBe('France');
+    expect(currentFlag()).toBe('/flags/fr.svg');
     expect(page.querySelector('.resolution-vote-counts')?.textContent).toContain('1');
     await act(async () => {([...page.querySelectorAll<HTMLAnchorElement>('a')]
       .find(item => item.textContent?.trim() === 'Text'))?.click();});
@@ -1967,6 +1972,7 @@ describe('committee workspace routes and roles', () => {
       .find(item => item.textContent?.trim() === 'Cancel'))?.click();});
     await act(async () => {button('Undo').click();});
     expect(current()).toBe('China');
+    expect(currentFlag()).toBe('/flags/cn.svg');
     await act(async () => {button('Yes').click();});
     await act(async () => {button('No').click();});
     expect(submitResolutionDirectVote).toHaveBeenCalledTimes(1);

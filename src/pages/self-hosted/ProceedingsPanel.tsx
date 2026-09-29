@@ -1709,6 +1709,7 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
   const directVotingPage = Math.min(votingPage, directTotalPages - 1);
   const visibleDirectSeats = directEligibility.slice(directVotingPage * 18, (directVotingPage + 1) * 18);
   const currentVotingSeat = directEligibility.find(item => item.seatId === currentVotingSeatId);
+  const currentVotingFlag = snapshot.seats.find(seat => seat.id === currentVotingSeatId)?.flag;
   const directCounts = {FOR: directVotes.filter(vote => vote.choice === 'FOR').length,
     AGAINST: directVotes.filter(vote => vote.choice === 'AGAINST').length,
     ABSTAIN: directVotes.filter(vote => vote.choice === 'ABSTAIN').length};
@@ -1869,6 +1870,9 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
           <div className="resolution-voting-metric metric-abstaining"><span>{t('abstaining')}</span><strong>{directCounts.ABSTAIN}</strong></div>
       </aside></div>
       <div className="resolution-voting-current"><div className="resolution-voting-current-label">{t('Now voting')}</div>
+        {currentVotingSeat && currentVotingFlag && <div className="roll-call-flag-stage resolution-voting-flag-stage">
+          <CountryFlagDisplay flag={currentVotingFlag} />
+        </div>}
         <Header as="h2">{currentVotingSeat?.seatDisplayName ?? t('No eligible delegations')}</Header>
         {(voteDraft?.failure || voteConflict) && <Message error role="alert"
           header={t(voteConflict ? 'Resolution vote changed' : 'Submission failed')}

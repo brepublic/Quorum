@@ -2429,6 +2429,10 @@ html[lang='zh-CN'] .ui {
   text-transform: uppercase;
 }
 
+.resolution-voting-flag-stage {
+  margin: 0.75rem auto 0;
+}
+
 .resolution-voting-veto-badge {
   background: #fff5df;
   border: 1px solid #e8d3a7;
