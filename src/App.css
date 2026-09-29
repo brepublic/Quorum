@@ -213,12 +213,12 @@
   display: none !important;
 }
 
-.committee-navigation-pushable.ui.pushable {
+.committee-navigation-pushable.pushable {
   min-height: calc(100vh - 51px);
   overflow: visible;
 }
 
-.committee-navigation-pushable > .pusher {
+.committee-navigation-pushable.pushable > .pusher {
   min-height: inherit;
 }
 
@@ -334,7 +334,7 @@
   margin-bottom: 0 !important;
 }
 
-.committee-navigation-pushable.ui.pushable[data-navigation-mode="sidebar"] {
+.committee-navigation-pushable.pushable[data-navigation-mode="sidebar"] {
   min-height: 100vh;
   overflow: hidden;
 }
