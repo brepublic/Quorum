@@ -1808,12 +1808,13 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
     </Button.Group><Divider hidden />
     {contentSource === 'TEXT' ? <Form><TextArea value={versionContent} rows={3} placeholder={t('Resolution text')}
       disabled={!editable} onChange={(_, data) => {setVersionContent(String(data.value)); setBodyDirty(true);}} onBlur={() => void saveVersion()} /></Form>
-    : <Segment className="resolution-file-body">
+    : <Segment className="resolution-file-body resolution-document-file-body">
       {fileError && <Message error content={fileError} />}
       {Boolean(downloadFailure) && <Message error content={apiErrorText(downloadFailure)} />}
-      {document.currentVersion.contentFile && <><Header as="h4">{document.currentVersion.contentFile.logicalName}</Header>
-        {document.currentVersion.contentFile.fileType && <Label>{delegateFileTypeName(document.currentVersion.contentFile.fileType!, snapshot.committee.committeeLanguage)}</Label>}
+      {document.currentVersion.contentFile && <><div className="resolution-document-file-heading">
+        <Header as="h4">{document.currentVersion.contentFile.logicalName}</Header>
         <FileStatusLabel status={document.currentVersion.contentFile.status} />
+      </div>
         {document.currentVersion.contentFile.status === 'PUBLISHED'
           ? <Button type="button" primary fluid loading={preparingDownload} disabled={preparingDownload}
             onClick={() => void downloadFile()}>{t('Download')} <Icon name="arrow down" /></Button>
@@ -1832,7 +1833,7 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
               options={availableFiles.map(file => ({key: file.id, value: file.id,
                 text: file.logicalName, description: file.fileType ? delegateFileTypeName(file.fileType, snapshot.committee.committeeLanguage) : undefined}))}
               onChange={(_, data) => setSelectedExistingFileId(String(data.value))} />
-            <Button primary fluid loading={fileSaving} disabled={fileSaving || !selectedExistingFileId || !availableFiles.some(file => file.id === selectedExistingFileId)}
+            <Button fluid loading={fileSaving} disabled={fileSaving || !selectedExistingFileId || !availableFiles.some(file => file.id === selectedExistingFileId)}
               ><Icon name="check" />{t('Use this file')}</Button>
           </Form>}
       </>}
