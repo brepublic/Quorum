@@ -2,6 +2,7 @@ import {createHash, randomUUID} from 'node:crypto';
 import type {Pool, PoolClient, QueryResultRow} from 'pg';
 import type {
   DelegateFileShare,
+  DelegateFileCategory,
   DelegateFileType,
   FlagSnapshot,
   DelegatePortalBootstrap,
@@ -29,6 +30,7 @@ import type {StorageCacheService} from '../storage/cache-service.js';
 import {indexedSearchTerms, manualCountryTerms, namesForSeat, termsFor} from '../search/index-service.js';
 
 const FILE_TYPES = new Set<string>(DELEGATE_FILE_TYPES);
+const FILE_CATEGORIES = new Set<string>([...DELEGATE_FILE_TYPES, 'OTHER']);
 const DELEGATE_SESSION_MS = 30 * 24 * 60 * 60 * 1000;
 
 interface ShareRow extends QueryResultRow {
@@ -232,6 +234,21 @@ export class DelegateFileService {
     return transaction(this.pool, async client => {
       const session = await this.sessionByCredential(client, credential);
       return session as DelegateSessionRow;
+    });
+  }
+
+  async openPublishedCategory(credential: string | undefined, value: unknown): Promise<{category: DelegateFileCategory; openedAt: string}> {
+    if (typeof value !== 'string' || !FILE_CATEGORIES.has(value)) throw new AppError({
+      reason: 'INVALID_FILE_TYPE', code: 'VALIDATION_FAILED', message: 'File category is invalid.'});
+    if (!credential) throw new AppError({code: 'AUTHENTICATION_REQUIRED', message: 'Delegate file session is required.'});
+    return transaction(this.pool, async client => {
+      const session = await this.sessionByCredential(client, credential);
+      const row = (await client.query<{opened_at: Date}>(`INSERT INTO delegate_file_category_reads
+        (committee_id,seat_id,category,opened_at) VALUES ($1,$2,$3,clock_timestamp())
+        ON CONFLICT (committee_id,seat_id,category) DO UPDATE
+        SET opened_at=GREATEST(delegate_file_category_reads.opened_at,EXCLUDED.opened_at)
+        RETURNING opened_at`, [session!.committee_id, session!.seat_id, value])).rows[0]!;
+      return {category: value as DelegateFileCategory, openedAt: row.opened_at.toISOString()};
     });
   }
 
@@ -577,6 +594,9 @@ export class DelegateFileService {
     const settings = await this.readSettings(client, share.committee_id) as DelegateFileSettings;
     const seat = session ? (await client.query('SELECT flag_type,flag_value FROM committee_seats WHERE id=$1 AND committee_id=$2',
       [session.seat_id, share.committee_id])).rows[0] : undefined;
+    const categoryRows = session ? (await client.query<{category: DelegateFileCategory; opened_at: Date}>(
+      'SELECT category,opened_at FROM delegate_file_category_reads WHERE committee_id=$1 AND seat_id=$2',
+      [share.committee_id, session.seat_id])).rows : [];
     return {committeeId: share.committee_id, committeeName: committee.name, committeeLanguage: committee.committee_language, shareId: share.id,
       claimedSeat: session ? {id: session.seat_id, displayName: session.seat_display_name,
         flag: seat ? {type: seat.flag_type, value: seat.flag_value} : undefined} : null,
@@ -586,6 +606,7 @@ export class DelegateFileService {
       storageAvailable: await this.storageHealthy(share.committee_id, client),
       eventSequence: Number(committee.next_event_sequence) - 1,
       files: session ? await this.publishedForSession(session) : [],
+      categoryOpenedAt: Object.fromEntries(categoryRows.map(row => [row.category, row.opened_at.toISOString()])),
       maxUploadSizeBytes: this.uploads.staging.maxFileBytes,
       pendingUploads: session ? (await client.query<{id: string; logical_name: string; status: string;
         agent_commit_state: string | null; task_status: string | null; provider_commit_failed: boolean}>(`SELECT u.id,u.logical_name,u.status,u.agent_commit_state,u.provider_commit_failed,task.status AS task_status

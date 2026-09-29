@@ -29,6 +29,46 @@ afterEach(async () => {await act(async () => root.unmount()); host.remove(); vi.
 function client(overrides: Partial<SelfHostedApi>): SelfHostedApi {return overrides as SelfHostedApi;}
 
 describe('delegate file portal', () => {
+  it('marks only categories with approvals since their last opening and groups custom types under Other', async () => {
+    const makeFile = (id: string, fileType: 'NEWS' | 'DIRECTIVE_DRAFT' | `CUSTOM:${string}`, publishedAt: string) => ({
+      id, logicalName: id, fileType, publishedAt, submissionSource: 'CHAIR' as const,
+      submitterDisplayName: null, submittedAt: null, revision: 1});
+    const snapshot = {committeeId: 'committee', committeeLanguage: 'zh-CN' as const, committeeName: '委员会',
+      shareId: 'share', claimedSeat: {id: 'seat', displayName: '中国'}, eligibleSeats: [], mayUpload: true,
+      storageAvailable: true, eventSequence: 0, maxUploadSizeBytes: 20 * 1024 * 1024,
+      files: [makeFile('news', 'NEWS', '2026-09-29T01:00:00Z'),
+        makeFile('directive', 'DIRECTIVE_DRAFT', '2026-09-29T01:00:00Z'),
+        makeFile('custom-a', 'CUSTOM:快讯', '2026-09-29T01:00:00Z'),
+        makeFile('custom-b', 'CUSTOM:快訊', '2026-09-29T01:00:00Z')],
+      categoryOpenedAt: {DIRECTIVE_DRAFT: '2026-09-29T02:00:00Z'} as Record<string, string>};
+    const opened = vi.fn(async (category: string) => {
+      snapshot.categoryOpenedAt[category] = '2026-09-29T02:00:00Z';
+      return {category, openedAt: snapshot.categoryOpenedAt[category]!};
+    });
+    await act(async () => root.render(<DelegateFilePortal api={client({
+      bootstrapDelegatePortal: async () => snapshot,
+      openDelegatePublishedCategory: opened as SelfHostedApi['openDelegatePublishedCategory']})} />));
+    const menu = host.querySelector('[aria-label="已发布文件分类"]')!;
+    const item = (label: string) => Array.from(menu.querySelectorAll('a')).find(link => link.textContent === label) as HTMLElement;
+    const hasDot = (label: string) => Boolean(item(label).querySelector('.delegate-file-category-dot'));
+    expect(hasDot('全部文件')).toBe(false);
+    expect(hasDot('新闻')).toBe(true);
+    expect(hasDot('指令草案')).toBe(false);
+    expect(hasDot('其他')).toBe(true);
+    await act(async () => item('新闻').click());
+    expect(opened).toHaveBeenCalledWith('NEWS');
+    expect(hasDot('新闻')).toBe(false);
+    expect(hasDot('其他')).toBe(true);
+    await act(async () => item('其他').click());
+    expect(opened).toHaveBeenCalledWith('OTHER');
+    expect(hasDot('其他')).toBe(false);
+    snapshot.files.push(makeFile('later-custom', 'CUSTOM:另一类', '2026-09-29T03:00:00Z'));
+    await act(async () => FakeEventSource.latest!.emit('file.available', {
+      id: 1, fileId: 'later-custom', submitterDisplayName: '中国', logicalName: 'later-custom', publishedAt: '2026-09-29T03:00:00Z'}));
+    expect(hasDot('其他')).toBe(true);
+    expect(hasDot('全部文件')).toBe(false);
+  });
+
   it('filters published files by fixed type and groups exact custom types under Other', async () => {
     const makeFile = (id: string, fileType: 'NEWS' | 'CRISIS_NOTICE' | `CUSTOM:${string}`) => ({
       id, logicalName: id, fileType, submissionSource: 'DELEGATE_PORTAL' as const, submitterDisplayName: '中国',
@@ -38,7 +78,8 @@ describe('delegate file portal', () => {
     await act(async () => root.render(<DelegateFilePortal api={client({bootstrapDelegatePortal: async () => ({
       committeeId: 'committee', committeeLanguage: 'zh-CN' as const, committeeName: '委员会', shareId: 'share',
       claimedSeat: {id: 'seat', displayName: '中国'}, eligibleSeats: [], mayUpload: true, storageAvailable: true,
-      eventSequence: 0, files, maxUploadSizeBytes: 20 * 1024 * 1024})})} />));
+      eventSequence: 0, files, categoryOpenedAt: {}, maxUploadSizeBytes: 20 * 1024 * 1024}),
+      openDelegatePublishedCategory: async category => ({category, openedAt: '2026-09-29T02:00:00.000Z'})})} />));
     const menu = host.querySelector('[aria-label="已发布文件分类"]')!;
     expect(host.querySelectorAll('.delegate-file-card-list .card')).toHaveLength(5);
     await act(async () => (Array.from(menu.querySelectorAll('a')).find(item => item.textContent === '新闻') as HTMLElement).click());
@@ -51,7 +92,7 @@ describe('delegate file portal', () => {
     await act(async () => root.render(<DelegateFilePortal api={client({bootstrapDelegatePortal: async () => ({
       committeeId: 'committee', committeeLanguage: 'zh-CN' as const, committeeName: '委员会', shareId: 'share',
       claimedSeat: {id: 'seat', displayName: '中国'}, eligibleSeats: [], mayUpload: true, storageAvailable: false,
-      eventSequence: 0, files: [], submissions: [], maxUploadSizeBytes: 20 * 1024 * 1024,
+      eventSequence: 0, files: [], categoryOpenedAt: {}, submissions: [], maxUploadSizeBytes: 20 * 1024 * 1024,
       pendingUploads: [{id: 'saving', logicalName: '保存中.txt', status: 'SAVING'},
         {id: 'failed', logicalName: '失败.txt', status: 'FAILED'}]
     })})} />));
@@ -72,7 +113,7 @@ describe('delegate file portal', () => {
     await act(async () => root.render(<DelegateFilePortal api={client({
       bootstrapDelegatePortal:async () => ({committeeId:'committee',committeeLanguage: 'zh-CN' as const, committeeName:'委员会',shareId:'share',
         claimedSeat:{id:'seat',displayName:'中国'},eligibleSeats:[],mayUpload:true,storageAvailable:true,
-        eventSequence:0,files:[],maxUploadSizeBytes:limit}),
+        eventSequence:0,files:[],categoryOpenedAt:{},maxUploadSizeBytes:limit}),
       createDelegateFileUpload,uploadDelegateFileContent,commitDelegateFileUpload
     } as unknown as Partial<SelfHostedApi>)} />));
     await act(async () => (Array.from(host.querySelectorAll('a')).find(item => item.textContent === '上传文件') as HTMLElement).click());
@@ -103,11 +144,11 @@ describe('delegate file portal', () => {
   it('requires a second confirmation before binding the browser to a delegation', async () => {
     const claimDelegatePortal = vi.fn(async () => ({committeeId: 'committee', committeeLanguage: 'zh-CN' as const, committeeName: '裁军委员会', shareId: 'share',
       claimedSeat: {id: 'seat', displayName: '中国'}, eligibleSeats: [], mayUpload: true, storageAvailable: true,
-      eventSequence: 0, files: [], maxUploadSizeBytes: 20 * 1024 * 1024}));
+      eventSequence: 0, files: [], categoryOpenedAt: {}, maxUploadSizeBytes: 20 * 1024 * 1024}));
     await act(async () => root.render(<DelegateFilePortal api={client({bootstrapDelegatePortal: async () => ({
       committeeId: 'committee', committeeLanguage: 'zh-CN' as const, committeeName: '裁军委员会', shareId: 'share', claimedSeat: null,
       eligibleSeats: [{id: 'seat', displayName: '中国', flag: {type: 'STANDARD', value: 'cn'}}], mayUpload: false, storageAvailable: true,
-      eventSequence: 0, files: [], maxUploadSizeBytes: 20 * 1024 * 1024}), claimDelegatePortal})} />));
+      eventSequence: 0, files: [], categoryOpenedAt: {}, maxUploadSizeBytes: 20 * 1024 * 1024}), claimDelegatePortal})} />));
     const select = host.querySelector('[role="listbox"]') as HTMLElement;
     await act(async () => select.dispatchEvent(new MouseEvent('click', {bubbles: true})));
     const option = Array.from(document.querySelectorAll('[role="option"]')).find(item => item.textContent === '中国') as HTMLElement;
@@ -129,7 +170,7 @@ describe('delegate file portal', () => {
       rejectionReason:'请补充签署国',reviewedAt:'2026-09-06T01:00:00Z'};
     await act(async () => root.render(<DelegateFilePortal api={client({bootstrapDelegatePortal:async () => ({
       committeeId:'committee',committeeLanguage: 'zh-CN' as const, committeeName:'委员会',shareId:'share',claimedSeat:{id:'seat',displayName:'新加坡'},
-      eligibleSeats:[],mayUpload:true,storageAvailable:true,eventSequence:9,files:[],submissions:[submission],maxUploadSizeBytes:32*1024*1024})})} />));
+      eligibleSeats:[],mayUpload:true,storageAvailable:true,eventSequence:9,files:[],categoryOpenedAt:{},submissions:[submission],maxUploadSizeBytes:32*1024*1024})})} />));
     await act(async () => FakeEventSource.latest?.onopen?.());
     expect(host.querySelector('.right.menu')?.textContent).toMatch(/实时.*新加坡/);
     await act(async () => (Array.from(host.querySelectorAll('a')).find(item => item.textContent === '上传文件') as HTMLElement).click());
@@ -147,7 +188,7 @@ describe('delegate file portal', () => {
       submittedAt: '2026-08-27T10:00:00.000Z', publishedAt: '2026-08-27T10:01:00.000Z', revision: 2};
     await act(async () => root.render(<DelegateFilePortal api={client({bootstrapDelegatePortal: async () => ({
       committeeId: 'committee', committeeLanguage: 'zh-CN' as const, committeeName: '裁军委员会', shareId: 'share', claimedSeat: {id: 'seat', displayName: '法国'},
-      eligibleSeats: [], mayUpload: true, storageAvailable: true, eventSequence: 9, files: [file], maxUploadSizeBytes: 20 * 1024 * 1024}),
+      eligibleSeats: [], mayUpload: true, storageAvailable: true, eventSequence: 9, files: [file], categoryOpenedAt: {}, maxUploadSizeBytes: 20 * 1024 * 1024}),
       listDelegatePublishedFiles: async () => [file]})} />));
     await act(async () => (Array.from(host.querySelectorAll('a')).find(item => item.textContent === '上传文件') as HTMLElement).click());
     expect(host.textContent).toContain('文件大小上限为 20 MiB');

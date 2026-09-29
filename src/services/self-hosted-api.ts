@@ -812,6 +812,10 @@ export const selfHostedApi = {
   listDelegatePublishedFiles() {
     return delegateRequest<DelegatePublishedFile[]>('/api/v1/delegate-files/portal');
   },
+  openDelegatePublishedCategory(category: import('@quorum/contracts').DelegateFileCategory) {
+    return delegateRequest<{category: import('@quorum/contracts').DelegateFileCategory; openedAt: string}>(
+      `/api/v1/delegate-files/categories/${category}/open`, {method: 'POST'});
+  },
   createDelegateFileUpload(input: {logicalName: string; originalName: string; mediaType: string;
     expectedSizeBytes: number; sha256: string; fileType: DelegateFileType}) {
     return delegateRequest<FileUpload>('/api/v1/delegate-files/uploads', {method: 'POST', body: input,

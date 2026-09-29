@@ -691,6 +691,16 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   flex-wrap: wrap;
 }
 
+.delegate-file-category-dot {
+  display: inline-block;
+  width: 0.5rem;
+  height: 0.5rem;
+  margin-left: 0.45rem;
+  border-radius: 50%;
+  background: #db2828;
+  vertical-align: middle;
+}
+
 .delegate-file-review-divider + .delegate-file-card-list {
   padding-bottom: 3rem;
 }

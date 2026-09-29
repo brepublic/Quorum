@@ -2,7 +2,7 @@ import {apiErrorText} from '../../i18n';
 import {t, useLanguage, getLanguage} from '../../i18n';
 import * as React from 'react';
 import {customDelegateFileType, DELEGATE_FILE_TYPES, delegateFileTypeName, isCustomDelegateFileType, type ContentLanguage, isAllowedDelegateFile} from '@quorum/contracts';
-import type {DelegateFileAvailableEvent, DelegateFileType, StandardDelegateFileType, DelegatePortalBootstrap,
+import type {DelegateFileAvailableEvent, DelegateFileCategory, DelegateFileType, StandardDelegateFileType, DelegatePortalBootstrap,
   DelegatePublishedFile} from '@quorum/contracts';
 import {Button, Card, Container, Divider, Form, Icon, Menu, Message, Modal, Progress, Sidebar, Table} from 'semantic-ui-react';
 import {SelfHostedApiError, selfHostedApi, type SelfHostedApi} from '../../services/self-hosted-api';
@@ -11,6 +11,14 @@ import {CountryFlagDisplay} from '../../components/CountryFlagDisplay';
 import {searchOptions} from '@quorum/contracts';
 
 const FILE_TYPES = DELEGATE_FILE_TYPES;
+const CATEGORIES: DelegateFileCategory[] = [...FILE_TYPES, 'OTHER'];
+
+function categoryHasNewFile(portal: DelegatePortalBootstrap, category: DelegateFileCategory): boolean {
+  const openedAt = portal.categoryOpenedAt?.[category];
+  return portal.files.some(file => (category === 'OTHER'
+    ? Boolean(file.fileType && isCustomDelegateFileType(file.fileType)) : file.fileType === category)
+    && (!openedAt || Date.parse(file.publishedAt) > Date.parse(openedAt)));
+}
 
 function dateTime(value: string | null): string { return value ? new Date(value).toLocaleString(getLanguage()) : '—'; }
 function portalError(error: unknown): string {
@@ -62,7 +70,7 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
   const [notices, setNotices] = React.useState<Array<DelegateFileAvailableEvent & {expiresAt: number}>>([]);
   const [file, setFile] = React.useState<File>(); const [fileType, setFileType] = React.useState<StandardDelegateFileType | 'OTHER'>('WORKING_PAPER');
   const [customType, setCustomType] = React.useState('');
-  const [publishedCategory, setPublishedCategory] = React.useState<DelegateFileType | 'ALL' | 'OTHER'>('ALL');
+  const [publishedCategory, setPublishedCategory] = React.useState<DelegateFileCategory | 'ALL'>('ALL');
   const [progress, setProgress] = React.useState<number>(); const [submitted, setSubmitted] = React.useState(false);
   const [awaitingSave, setAwaitingSave] = React.useState(false);
   const [preparingDownload, setPreparingDownload] = React.useState<string>();
@@ -78,7 +86,16 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
   React.useEffect(() => { void load(); }, [load]);
 
   const refreshFiles = React.useCallback(async () => {
-    try { const next = await api.bootstrapDelegatePortal(capability); setPortal(current => current ? {...next, eventSequence: current.eventSequence} : current); }
+    try { const next = await api.bootstrapDelegatePortal(capability); setPortal(current => {
+      if (!current) return current;
+      const categoryOpenedAt = {...next.categoryOpenedAt};
+      for (const category of CATEGORIES) {
+        const local = current.categoryOpenedAt?.[category];
+        const remote = categoryOpenedAt[category];
+        if (local && (!remote || local > remote)) categoryOpenedAt[category] = local;
+      }
+      return {...next, categoryOpenedAt, eventSequence: current.eventSequence};
+    }); }
     catch { /* The stream state communicates loss of service. */ }
   }, [api, capability]);
 
@@ -144,6 +161,19 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
       window.location.assign(api.delegateFileDownloadUrl(id));
     } catch (caught) { setError(caught); }
     finally { setPreparingDownload(undefined); }
+  };
+  const openCategory = async (category: DelegateFileCategory | 'ALL') => {
+    setPublishedCategory(category);
+    if (category === 'ALL') return;
+    try {
+      const opened = await api.openDelegatePublishedCategory(category);
+      setPortal(current => {
+        if (!current) return current;
+        const previous = current.categoryOpenedAt[category];
+        return {...current, categoryOpenedAt: {
+          ...current.categoryOpenedAt, [category]: previous && previous > opened.openedAt ? previous : opened.openedAt}};
+      });
+    } catch (caught) {setError(caught);}
   };
 
   React.useLayoutEffect(() => {
@@ -241,9 +271,14 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
               ? <strong key={index}>{item.logicalName}</strong> : part)}{item.rejectionReason && <div>{item.rejectionReason}</div>}</>} />)}
       {error && <Message error content={error} />}
       {active === 'files' && <><Menu pointing secondary className="delegate-file-category-menu" aria-label={t('Published file categories')}>
-        <Menu.Item active={publishedCategory === 'ALL'} onClick={() => setPublishedCategory('ALL')}>{t('All files')}</Menu.Item>
-        {FILE_TYPES.map(type => <Menu.Item key={type} active={publishedCategory === type} onClick={() => setPublishedCategory(type)}>{delegateFileTypeName(type, portal.committeeLanguage)}</Menu.Item>)}
-        <Menu.Item active={publishedCategory === 'OTHER'} onClick={() => setPublishedCategory('OTHER')}>{t('Other')}</Menu.Item>
+        <Menu.Item active={publishedCategory === 'ALL'} onClick={() => void openCategory('ALL')}>{t('All files')}</Menu.Item>
+        {FILE_TYPES.map(type => <Menu.Item key={type} active={publishedCategory === type} onClick={() => void openCategory(type)}>
+          {delegateFileTypeName(type, portal.committeeLanguage)}{categoryHasNewFile(portal, type) &&
+            <span className="delegate-file-category-dot" role="img" aria-label={t('New files')} />}
+        </Menu.Item>)}
+        <Menu.Item active={publishedCategory === 'OTHER'} onClick={() => void openCategory('OTHER')}>{t('Other')}
+          {categoryHasNewFile(portal, 'OTHER') && <span className="delegate-file-category-dot" role="img" aria-label={t('New files')} />}
+        </Menu.Item>
       </Menu><div className="delegate-file-card-list">{publishedFiles.length
         ? publishedFiles.map(item => <PublishedCard committeeLanguage={portal.committeeLanguage} key={item.id} file={item} preparing={preparingDownload === item.id}
           onDownload={id => void download(id)} />)

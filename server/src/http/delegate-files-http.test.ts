@@ -73,4 +73,18 @@ describe('delegate file HTTP boundary', () => {
     expect(accepted.statusCode).toBe(201);
     expect(createUpload).toHaveBeenCalledWith('credential', body, 'delegate-key', expect.anything());
   });
+
+  it('requires the delegate CSRF cookie when recording a category opening', async () => {
+    const openPublishedCategory = vi.fn(async () => ({category: 'OTHER', openedAt: '2026-09-29T02:00:00Z'}));
+    const service = {openPublishedCategory} as unknown as DelegateFileService;
+    const path = '/api/v1/delegate-files/categories/OTHER/open';
+    const rejected = await send(service, {path, method: 'POST',
+      cookie: '__Host-quorum_delegate_files=credential; __Host-quorum_delegate_files_csrf=right', csrf: 'wrong'});
+    expect(rejected.statusCode).toBe(403);
+    expect(openPublishedCategory).not.toHaveBeenCalled();
+    const accepted = await send(service, {path, method: 'POST',
+      cookie: '__Host-quorum_delegate_files=credential; __Host-quorum_delegate_files_csrf=right', csrf: 'right'});
+    expect(accepted.statusCode).toBe(200);
+    expect(openPublishedCategory).toHaveBeenCalledWith('credential', 'OTHER');
+  });
 });

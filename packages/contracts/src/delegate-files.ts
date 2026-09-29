@@ -2,6 +2,7 @@ import type {FlagSnapshot, LocalizedNames} from './stage4.js';
 
 export const DELEGATE_FILE_TYPES = ['WORKING_PAPER', 'DIRECTIVE_DRAFT', 'RESOLUTION_DRAFT', 'NEWS', 'CRISIS_NOTICE', 'INSTANT_MESSAGE'] as const;
 export type StandardDelegateFileType = typeof DELEGATE_FILE_TYPES[number];
+export type DelegateFileCategory = StandardDelegateFileType | 'OTHER';
 export type DelegateFileType = StandardDelegateFileType | `CUSTOM:${string}`;
 export type DelegateFileExtensionType = StandardDelegateFileType | 'OTHER';
 export const customDelegateFileType = (name: string): DelegateFileType => `CUSTOM:${name}`;
@@ -51,6 +52,7 @@ export interface DelegatePortalBootstrap {
   storageAvailable: boolean;
   eventSequence: number;
   files: DelegatePublishedFile[];
+  categoryOpenedAt: Partial<Record<DelegateFileCategory, string>>;
   maxUploadSizeBytes: number;
   submissions?: DelegateReviewFile[];
   pendingUploads?: Array<{id: string; logicalName: string; status: 'SAVING' | 'FAILED'}>;

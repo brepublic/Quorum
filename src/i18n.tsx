@@ -282,6 +282,7 @@ const zhCN: Record<string, string> = {
   "Uploading": "正在上传",
   "Committing": "正在提交",
   "No files": "暂无文件",
+  "New files": "有新文件",
   "Waiting for chair computer sync": "等待主席电脑同步",
   "Download file": "下载文件",
   "Delete permanently": "永久删除",
