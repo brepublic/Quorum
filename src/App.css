@@ -2800,6 +2800,8 @@ html[lang='zh-CN'] .ui.grid > .column {
   background: transparent !important;
   box-shadow: none !important;
 }
+.new-document-vote-selector.ui.dropdown > .text,
+.new-document-vote-selector.ui.dropdown .menu > .item.draft-group-option { font-weight: 400; }
 .new-document-vote-selector.ui.dropdown .menu > .item.draft-group-option { padding-left: 2.5rem !important; }
 .document-voting-heading { text-align: center; margin: 1.5rem 0 2rem; }
 .document-voting-heading > span { font-size: .9rem; color: var(--quorum-muted-text, #767676); }
