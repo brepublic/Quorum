@@ -2823,7 +2823,7 @@ html[lang='zh-CN'] .ui.grid > .column {
 .crisis-metadata.ui.table td { overflow-wrap: anywhere; }
 .crisis-metadata .field { margin: 0; }
 .crisis-duration-editor { display: flex; align-items: center; gap: 0.5rem; }
-.crisis-card .crisis-metadata .crisis-duration-editor .field { flex: 0 1 6rem; min-width: 0; margin: 0; }
+.crisis-card .crisis-metadata .crisis-duration-editor .field { flex: 1; min-width: 0; margin: 0; }
 .crisis-duration-unit { white-space: nowrap; }
 .crisis-metadata .ui.selection.dropdown { min-width: 0; }
 .crisis-metadata .ui.selection.dropdown > .text { white-space: normal; overflow-wrap: anywhere; }
