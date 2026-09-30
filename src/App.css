@@ -2816,9 +2816,18 @@ html[lang='zh-CN'] .ui.grid > .column {
 .crisis-card-list { display: grid; gap: 1rem; margin-top: 1rem; }
 .crisis-card-list .ui.card { margin: 0; }
 .crisis-card-heading { align-items: flex-start; gap: 1rem; margin-bottom: 1rem; }
-.crisis-card-title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.crisis-card-title { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: 1.28571429em; font-weight: 700; line-height: 1.4; }
 .crisis-card-title .ui.input { margin-top: 0.6rem; }
-.crisis-notice-name { overflow-wrap: anywhere; }
+.crisis-card-title .ui.input > input { font-size: inherit; font-weight: inherit; }
+.crisis-metadata.ui.table { table-layout: fixed; }
+.crisis-card .crisis-metadata.ui.table td.motion-metadata-key { width: 11rem; }
+.crisis-metadata.ui.table td { overflow-wrap: anywhere; }
+.crisis-metadata .field { margin: 0; }
+.crisis-metadata .ui.selection.dropdown { min-width: 0; }
+.crisis-metadata .ui.selection.dropdown > .text { white-space: normal; overflow-wrap: anywhere; }
+@media (max-width: 480px) {
+  .crisis-card .crisis-metadata.ui.table td.motion-metadata-key { width: 5.5rem; white-space: normal; }
+}
 .crisis-settings.ui.form { margin: 1.5rem 0; }
 .crisis-time-dot { display: inline-block; width: 0.6rem; height: 0.6rem; border-radius: 50%; margin-left: 0.65rem; vertical-align: middle; flex-shrink: 0; }
 .crisis-time-dot.orange { background-color: #e57d12; }

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import {useHistory} from 'react-router-dom';
-import {Button, Card, Form, Icon, Input, Label, Message, Modal} from 'semantic-ui-react';
+import {Button, Card, Form, Icon, Input, Label, Message, Modal, Table} from 'semantic-ui-react';
 import {parseCrisisNoticeName, type CommitteeWorkspaceSnapshot, type CrisisGroup, type CrisisUpdate, type DelegateReviewFile} from '@quorum/contracts';
 import {t, useLanguage} from '../../i18n';
 import {newIdempotencyKey, type SelfHostedApi} from '../../services/self-hosted-api';
@@ -107,19 +107,27 @@ function CrisisCard({group,card,files,api,run,editable}: {
     </Card.Header><Label basic color={card.status==='PENDING' ? 'orange' : card.status==='UNPUBLISHED' ? 'blue' : card.status==='ENDED' ? 'green' : 'grey'}>{t(statusLabels[card.status])}</Label></div>
     {Boolean(failure) && <Message error content={storageErrorText(failure)} />}
     {editable ? <Form>
-      <Form.Select fluid selection label={t('Crisis notice')} aria-label={t('Crisis notice')} value={draft.fileId ?? ''} disabled={working}
+      <Table compact celled unstackable className="motion-metadata-table crisis-metadata"><Table.Body>
+      <Table.Row><Table.Cell className="motion-metadata-key">{t('Crisis notice')}</Table.Cell><Table.Cell>
+      <Form.Select fluid selection aria-label={t('Crisis notice')} value={draft.fileId ?? ''} disabled={working}
         options={choices.map(file=>({key:file.id,value:file.id,text:file.logicalName,description:file.originalName}))}
         onChange={(_,data)=> {
           const id=String(data.value);
           if (draft.fileId && id!==draft.fileId) setReplacement(id);
           else setDraft(current=>({...current,fileId:id}));
         }} />
-      <Form.Input fluid type="number" step="any" min={0} label={t('Handling time (minutes)')} aria-label={t('Handling time (minutes)')}
+      </Table.Cell></Table.Row>
+      <Table.Row><Table.Cell className="motion-metadata-key">{t('Handling time (minutes)')}</Table.Cell><Table.Cell>
+      <Form.Input fluid type="number" step="any" min={0} aria-label={t('Handling time (minutes)')}
         value={draft.minutes} error={Boolean(draft.minutes && !validTime)} disabled={working}
         onChange={event=> {const minutes=event.currentTarget.value;setDraft(current=>({...current,minutes}));}} />
+      </Table.Cell></Table.Row>
+      </Table.Body></Table>
       <Button type="button" positive fluid loading={working} disabled={working || !validTime || !draft.fileId || !choices.some(file=>file.id===draft.fileId)} onClick={()=>void publish()}>{t('Publish crisis')}</Button>
-    </Form> : <><p className="crisis-notice-name">{card.notice?.logicalName ?? '—'}</p>
-      {card.handlingDurationMs!==null && <p>{t('Handling time (minutes)')}: {card.handlingDurationMs/60000}</p>}
+    </Form> : <><Table compact celled unstackable className="motion-metadata-table crisis-metadata"><Table.Body>
+      <Table.Row><Table.Cell className="motion-metadata-key">{t('Crisis notice')}</Table.Cell><Table.Cell>{card.notice?.logicalName ?? '—'}</Table.Cell></Table.Row>
+      {card.handlingDurationMs!==null && <Table.Row><Table.Cell className="motion-metadata-key">{t('Handling time (minutes)')}</Table.Cell><Table.Cell>{card.handlingDurationMs/60000}</Table.Cell></Table.Row>}
+      </Table.Body></Table>
       {card.notice && <Button fluid primary loading={working} disabled={working || card.notice.status==='DELETED'} onClick={()=>void download()}>{t('Download file')} <Icon name="arrow down" /></Button>}</>}
   </Card.Content>
     <Modal size="tiny" open={Boolean(replacement)} onClose={()=>setReplacement(undefined)} closeOnDimmerClick={!working} closeOnEscape={!working}>
