@@ -2791,7 +2791,16 @@ html[lang='zh-CN'] .ui.grid > .column {
 
 .new-document-vote-page { padding: 3rem 1rem; }
 .new-document-vote-card.ui.card { width: 28rem; max-width: 100%; }
-.new-document-vote-card select { width: 100%; }
+.new-document-vote-selector.ui.dropdown .menu > .item.draft-group-heading,
+.new-document-vote-selector.ui.dropdown .menu > .item.draft-group-heading:hover {
+  opacity: 1;
+  color: inherit;
+  font-weight: 700;
+  cursor: default;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+.new-document-vote-selector.ui.dropdown .menu > .item.draft-group-option { padding-left: 2.5rem !important; }
 .document-voting-heading { text-align: center; margin: 1.5rem 0 2rem; }
 .document-voting-heading > span { font-size: .9rem; color: var(--quorum-muted-text, #767676); }
 .document-voting-heading .ui.header { margin-top: .5rem; overflow-wrap: anywhere; }

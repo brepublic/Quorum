@@ -91,9 +91,9 @@ describe('committee workspace routes and roles', () => {
       discussion: [], createdAt: '2026-09-30T00:00:00Z', updatedAt: '2026-09-30T00:00:00Z'});
     const documents = [make('directive10', 10, 'DIRECTIVE'), make('resolution10', 10), make('directive2', 2, 'DIRECTIVE'),
       make('resolution2', 2), {...make('amendment10', 10), kind: 'AMENDMENT' as const, amendmentType: 'UNFRIENDLY' as const,
-        status: 'VOTING' as const, amendmentOrdinal: 10, resolutionId: 'resolution2'},
+        title: 'UNFRIENDLY AMENDMENT 1.2.10', status: 'VOTING' as const, amendmentOrdinal: 10, resolutionId: 'resolution2'},
       {...make('amendment2', 2), kind: 'AMENDMENT' as const, amendmentType: 'UNFRIENDLY' as const,
-        status: 'VOTING' as const, amendmentOrdinal: 2, resolutionId: 'resolution2'},
+        title: 'UNFRIENDLY AMENDMENT 1.2.2', status: 'VOTING' as const, amendmentOrdinal: 2, resolutionId: 'resolution2'},
       {...make('friendly', 1), kind: 'AMENDMENT' as const, amendmentType: 'FRIENDLY' as const, resolutionId: 'resolution2'},
       {...make('postponed', 1), status: 'POSTPONED' as const},
       {...make('created', 1), directVote: {...make('created', 1).directVote!, startedAt: '2026-09-30T00:00:00Z'}}];
@@ -111,14 +111,31 @@ describe('committee workspace routes and roles', () => {
       meetingSessions: [{id: 'meeting', committeeId: 'committee', ordinal: 1, name: 'Session 1', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1, createdAt: '2026-09-30T00:00:00Z', closedAt: null}]}),
       {startDocumentVote, listFiles});
-    expect([...page.querySelectorAll('optgroup')].map(group => group.label)).toEqual(['Draft Directives', 'Unfriendly Amendments', 'Draft Resolutions']);
-    expect([...page.querySelectorAll('optgroup option')].map(option => (option as HTMLOptionElement).value))
-      .toEqual(['directive2','directive10','amendment2','amendment10','resolution2','resolution10']);
+    expect([...page.querySelectorAll('.draft-group-heading')].map(group => group.textContent))
+      .toEqual(['Draft Directives', 'Unfriendly Amendments', 'Draft Resolutions']);
+    expect([...page.querySelectorAll('.draft-group-option')].map(option => option.textContent))
+      .toEqual(['DIRECTIVE 1.2','DIRECTIVE 1.10','UNFRIENDLY AMENDMENT 1.2.2','UNFRIENDLY AMENDMENT 1.2.10','RESOLUTION 1.2','RESOLUTION 1.10']);
     expect(listFiles).not.toHaveBeenCalled();
-    const select = page.querySelector<HTMLSelectElement>('select[aria-label="Choose draft"]')!;
+    const select = page.querySelector<HTMLElement>('[aria-label="Choose draft"]')!;
     const confirm = page.querySelector<HTMLButtonElement>('.new-document-vote-card button')!;
     expect(confirm.disabled).toBe(true);
-    await act(async () => {select.value = 'directive2'; select.dispatchEvent(new Event('change', {bubbles: true}));});
+    await act(async () => {select.click();});
+    await act(async () => {page.querySelector<HTMLElement>('.draft-group-heading')!.click();});
+    expect(confirm.disabled).toBe(true);
+    expect(startDocumentVote).not.toHaveBeenCalled();
+    await act(async () => {select.dispatchEvent(new KeyboardEvent('keydown', {key: 'ArrowDown', keyCode: 40, bubbles: true}));});
+    expect(page.querySelector('.draft-group-option.selected')?.textContent).toBe('DIRECTIVE 1.10');
+    await act(async () => {select.dispatchEvent(new KeyboardEvent('keydown', {key: 'ArrowDown', keyCode: 40, bubbles: true}));});
+    expect(page.querySelector('.draft-group-option.selected')?.textContent).toBe('UNFRIENDLY AMENDMENT 1.2.2');
+    await act(async () => {
+      select.dispatchEvent(new KeyboardEvent('keydown', {key: 'ArrowUp', keyCode: 38, bubbles: true}));
+    });
+    await act(async () => {
+      select.dispatchEvent(new KeyboardEvent('keydown', {key: 'ArrowUp', keyCode: 38, bubbles: true}));
+    });
+    expect(page.querySelector('.draft-group-option.selected')?.textContent).toBe('DIRECTIVE 1.2');
+    await act(async () => {select.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', keyCode: 13, bubbles: true}));});
+    expect(confirm.disabled).toBe(false);
     await act(async () => {confirm.click(); confirm.click();});
     expect(startDocumentVote).toHaveBeenCalledTimes(1);
     expect(startDocumentVote).toHaveBeenCalledWith('directive2', 1);

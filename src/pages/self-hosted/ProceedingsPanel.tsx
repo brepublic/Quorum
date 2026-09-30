@@ -1786,16 +1786,17 @@ function VotingWorkspace({snapshot, run, api, canChair, resourceId}: CommonProps
   };
   if (!resourceId || resourceId === 'new') return <Container className="new-document-vote-page">
     <Card centered className="new-document-vote-card"><Card.Content><Form onSubmit={() => void create()}>
-      <Form.Field><select aria-label={t('Choose draft')} value={draftId} disabled={!canChair || saving}
-        onChange={event => setDraftId(event.currentTarget.value)}>
-        <option value="">{t('Choose draft')}</option>
-        {groups.map(group => <optgroup key={group.label} label={t(group.label)}>
-          {candidates.filter(group.matches).sort((a, b) => {
+      <Form.Field><Dropdown aria-label={t('Choose draft')} placeholder={t('Choose draft')} selection fluid
+        className="new-document-vote-selector" selectOnBlur={false}
+        value={candidates.some(item => item.id === draftId) ? draftId : ''} disabled={!canChair || saving}
+        onChange={(_, data) => {if (candidates.some(item => item.id === data.value)) setDraftId(String(data.value));}}
+        options={groups.flatMap(group => [
+          {key: group.label, value: `group:${group.label}`, text: t(group.label), disabled: true, className: 'draft-group-heading'},
+          ...candidates.filter(group.matches).sort((a, b) => {
             const first = numbering(a), second = numbering(b);
             return first[0] - second[0] || first[1] - second[1] || first[2] - second[2];
-          }).map(item => <option key={item.id} value={item.id}>{item.title}</option>)}
-        </optgroup>)}
-      </select></Form.Field>
+          }).map(item => ({key: item.id, value: item.id, text: item.title, className: 'draft-group-option'}))
+        ])} /></Form.Field>
       <Button primary fluid loading={saving} disabled={!canChair || saving || !candidates.some(item => item.id === draftId)}>{t('Confirm vote')}</Button>
     </Form></Card.Content></Card>
   </Container>;
