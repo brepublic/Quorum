@@ -16,7 +16,7 @@ export default function CrisisNoticeReviewCard({file,snapshot,api,refresh,downlo
   const [focused,setFocused]=React.useState(false); const [working,setWorking]=React.useState(false);
   const [failure,setFailure]=React.useState<unknown>(); const [retry,setRetry]=React.useState(0);
   const [checked,setChecked]=React.useState<{name: string; revision: number; preview: CrisisNoticePreview}>();
-  const [replacing,setReplacing]=React.useState(false); const input=React.useRef<HTMLInputElement>(null);
+  const [replacing,setReplacing]=React.useState(false);
   const sequence=React.useRef(0); const readOnly=snapshot.committee.status!=='ACTIVE';
   React.useEffect(()=> {
     if (file.crisisNameEdited && !manuallyEdited.current) {manuallyEdited.current=true;setName(file.logicalName);}
@@ -37,7 +37,8 @@ export default function CrisisNoticeReviewCard({file,snapshot,api,refresh,downlo
     void verify().catch(error=> {if(request===sequence.current) setFailure(error);});
     return ()=> {++sequence.current;};
   },[api,file.id,file.revision,file.logicalName,file.crisisNameEdited,name,focused,readOnly,retry,refresh]);
-  const valid=parseCrisisNoticeName(name)!==null;
+  const number=parseCrisisNoticeName(name);
+  const valid=number!==null;
   const enabled=!readOnly && !focused && !working && checked?.name===name && checked.revision===file.revision;
   const importNotice=async(replaceNoticeId?: string)=> {
     if (!checked || working) return;
@@ -48,16 +49,35 @@ export default function CrisisNoticeReviewCard({file,snapshot,api,refresh,downlo
     } catch(error) {setFailure(error);setChecked(undefined);} finally {setWorking(false);}
   };
   const correctable=failure instanceof SelfHostedApiError && failure.localization?.reason?.startsWith('CRISIS_NUMBER')
-    || failure instanceof SelfHostedApiError && failure.localization?.reason==='CRISIS_SESSION_MISSING';
+    || failure instanceof SelfHostedApiError && ['CRISIS_SESSION_MISSING','CRISIS_GROUP_ENDED'].includes(failure.localization?.reason ?? '');
+  const preview=!focused && checked?.name===name && checked.revision===file.revision ? checked.preview : undefined;
+  const session=number?.sessionOrdinal ?? snapshot.meetingSession?.ordinal ?? 1;
+  const groups=(snapshot.crises ?? []).filter(group=>group.committeeId===snapshot.committee.id && group.sessionOrdinal===session)
+    .sort((a,b)=>a.ordinal-b.ordinal);
+  const nextGroup=Math.max(0,...groups.map(group=>group.ordinal))+1;
+  const numberMismatch=failure instanceof SelfHostedApiError && failure.localization?.reason==='CRISIS_NUMBER_MISMATCH';
+  const alternatives=groups.filter(group=>!group.endedAt && (Boolean(failure) || group.ordinal!==number?.groupOrdinal));
+  const sessionExists=snapshot.meetingSession?.ordinal===session || snapshot.meetingSessions?.some(item=>item.ordinal===session);
+  const showChoices=sessionExists && (Boolean(failure) && correctable || !valid || preview?.groupId===null);
   return <Card fluid className="delegate-file-card motion-card crisis-notice-review-card"><Card.Content>
     <div className="motion-heading delegate-file-heading"><Card.Header><Form onSubmit={event=>event.preventDefault()}>
       <Form.Input fluid aria-label={t('File name')} value={name} error={!valid || Boolean(failure)} disabled={working || readOnly}
-        input={{ref:input}} onFocus={()=> {setFocused(true);++sequence.current;setChecked(undefined);}}
+        onFocus={()=> {setFocused(true);++sequence.current;setChecked(undefined);}}
         onChange={event=> {manuallyEdited.current=true;setName(event.currentTarget.value);setFailure(undefined);setChecked(undefined);}}
         onBlur={()=> {setFocused(false);setRetry(current=>current+1);}} />
-      {!valid && !failure && <div className="file-name-conflict-hint">{t('Complete crisis number')}</div>}
     </Form></Card.Header><Label basic color="blue" icon="clock outline" className="self-hosted-file-status" content={t('Pending review')} /></div>
-    {Boolean(failure) && <Message error><p>{storageErrorText(failure)}</p><Button basic onClick={()=>correctable ? input.current?.focus() : setRetry(current=>current+1)}>{t(correctable ? 'Correct file name' : 'Retry')}</Button></Message>}
+    {(Boolean(failure) || !valid || preview) && <Message error={Boolean(failure) || !valid} color={preview?.groupId===null && !failure ? 'blue' : undefined}>
+      {Boolean(failure) ? <p>{numberMismatch ? t('Crisis numbers must be consecutive. Edit the file name above using one of these numbers:') : storageErrorText(failure)}</p> : !valid ? <p>{t('Complete crisis number')}</p>
+        : preview && <p>{t(preview.groupId===null ? 'This action will create a new crisis group' : 'This notice will be linked to')}{' '}
+          <strong>{t('Crisis')} {preview.sessionOrdinal}.{preview.groupOrdinal}{preview.groupId===null ? '' : `.${preview.updateOrdinal}`}</strong></p>}
+      {showChoices && <ul className="crisis-number-choices">
+        {alternatives.map(group=><li key={group.id}>{t('To update crisis {group}, use number {number}.',{
+          group:`${session}.${group.ordinal}`,number:`${session}.${group.ordinal}.${group.updates.find(update=>update.status==='UNPUBLISHED')?.ordinal ?? group.nextUpdateOrdinal}`})}</li>)}
+        {preview?.groupId!==null && <li>{t('To create crisis group {group}, use number {number}.',{
+          group:`${session}.${nextGroup}`,number:`${session}.${nextGroup}.1`})}</li>}
+      </ul>}
+      {Boolean(failure) && !correctable && <Button basic onClick={()=>setRetry(current=>current+1)}>{t('Retry')}</Button>}
+    </Message>}
     <Card.Meta><Table compact celled unstackable className="motion-metadata-table delegate-file-metadata"><Table.Body>
       <Table.Row><Table.Cell className="motion-metadata-key">{t('File source')}</Table.Cell><Table.Cell>{t('Chair')}</Table.Cell></Table.Row>
       <Table.Row><Table.Cell className="motion-metadata-key">{t('File type')}</Table.Cell><Table.Cell>{t('Crisis notice')}</Table.Cell></Table.Row>

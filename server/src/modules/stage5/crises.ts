@@ -105,13 +105,14 @@ export async function crisisNoticePreview(client: PoolClient, committeeId: strin
   const number = parseCrisisNoticeName(file.logical_name);
   if (!number) throw new AppError({code: 'VALIDATION_FAILED',reason: 'CRISIS_NUMBER_REQUIRED',message: 'Complete crisis number.'});
   const mismatch = (params: ApiErrorParams): never => {throw new AppError({code: 'RESOURCE_CONFLICT',reason: 'CRISIS_NUMBER_MISMATCH',params,message: 'Use the next crisis number.'});};
-  const linked=(await client.query(`SELECT u.id,u.group_id,u.ordinal,g.ordinal AS group_ordinal,s.ordinal AS session_ordinal
+  const linked=(await client.query(`SELECT u.id,u.group_id,u.ordinal,u.status,g.ended_at,g.ordinal AS group_ordinal,s.ordinal AS session_ordinal
     FROM crisis_updates u JOIN crisis_groups g ON g.id=u.group_id JOIN meeting_sessions s ON s.id=g.meeting_session_id
     WHERE u.notice_file_id=$1 AND u.committee_id=$2`,[fileId,committeeId])).rows[0];
   if(linked) {
-    if(linked.session_ordinal!==number.sessionOrdinal || linked.group_ordinal!==number.groupOrdinal || linked.ordinal!==number.updateOrdinal)
-      mismatch({session:linked.session_ordinal,group:linked.group_ordinal,update:linked.ordinal});
-    return {...number,groupId:linked.group_id,updateId:linked.id,replacement:null};
+    if (linked.ended_at || linked.status !== 'UNPUBLISHED')
+      throw new AppError({code: 'RESOURCE_CONFLICT',reason: 'CRISIS_GROUP_ENDED',message: 'Crisis is locked.'});
+    if(linked.session_ordinal===number.sessionOrdinal && linked.group_ordinal===number.groupOrdinal && linked.ordinal===number.updateOrdinal)
+      return {...number,groupId:linked.group_id,updateId:linked.id,replacement:null};
   }
   const session = (await client.query('SELECT * FROM meeting_sessions WHERE committee_id=$1 AND ordinal=$2', [committeeId,number.sessionOrdinal])).rows[0];
   if (!session) throw new AppError({code: 'VALIDATION_FAILED',reason: 'CRISIS_SESSION_MISSING',message: 'Session not found.'});

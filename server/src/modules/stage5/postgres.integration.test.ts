@@ -198,8 +198,8 @@ integration('PostgreSQL crisis lifecycle', () => {
     const first = await stage5.importCrisisNotice(f.firstChair,file.id,{baseRevision: renamed.revision},'repeat-import',context('first-import'));
     expect(await stage5.importCrisisNotice(f.firstChair,file.id,{baseRevision: renamed.revision},'repeat-import',context('repeat-import'))).toEqual(first);
     expect(await stage5.importCrisisNotice(f.firstChair,file.id,{baseRevision: renamed.revision},'another-import',context('duplicate-import'))).toEqual(first);
-    const moved=await stage5.saveCrisisNoticeName(f.firstChair,file.id,{baseRevision:renamed.revision,logicalName:'Crisis Notice 1.2.1'},context('cannot-move-notice'));
-    await expect(stage5.importCrisisNotice(f.firstChair,file.id,{baseRevision:moved.revision},randomUUID(),context('reject-moved-notice'))).rejects.toMatchObject({reason:'CRISIS_NUMBER_MISMATCH',params:{session:1,group:1,update:1}});
+    const moved=await stage5.saveCrisisNoticeName(f.firstChair,file.id,{baseRevision:renamed.revision,logicalName:'Crisis Notice 1.3.1'},context('cannot-skip-group'));
+    await expect(stage5.importCrisisNotice(f.firstChair,file.id,{baseRevision:moved.revision},randomUUID(),context('reject-skipped-group'))).rejects.toMatchObject({reason:'CRISIS_NUMBER_MISMATCH',params:{session:1,group:2,update:1}});
     await stage5.saveCrisisNoticeName(f.firstChair,file.id,{baseRevision:moved.revision,logicalName:'Crisis Notice 1.1.1'},context('restore-notice-number'));
     expect((await pool!.query('SELECT count(*)::int AS n FROM crisis_groups WHERE committee_id=$1',[f.committee.id])).rows[0].n).toBe(1);
     let group = (await stage4.snapshot(f.committee.id,f.firstChair)).crises![0]!;
@@ -215,6 +215,45 @@ integration('PostgreSQL crisis lifecycle', () => {
     await expect(stage5.previewCrisisNotice(f.firstChair,file.id)).rejects.toMatchObject({reason: 'CRISIS_NUMBER_MISMATCH',params: {update: 2}});
     const missing = await testCrisisNotice(f,'Crisis Notice 99.1.1');
     await expect(stage5.previewCrisisNotice(f.firstChair,missing.id)).rejects.toMatchObject({reason: 'CRISIS_SESSION_MISSING'});
+  });
+
+  it('imports into existing or next groups and moves only unpublished associations after validation',async () => {
+    const f=await meetingEndFixture();
+    const first=await publishedTestCrisis(f);
+    await stage5.createCrisisUpdate(f.firstChair,first.id,{baseRevision:first.revision},randomUUID(),context('first-draft'));
+    const file=await testCrisisNotice(f,'Crisis Notice 1.1.2');
+    const original=await stage5.importCrisisNotice(f.firstChair,file.id,{baseRevision:file.revision},randomUUID(),context('original-association'));
+    const originalCard=(await stage4.snapshot(f.committee.id,f.firstChair)).crises!.find(group=>group.id===first.id)!.updates[0]!;
+    await stage5.updateCrisisCard(f.firstChair,original.updateId,{baseRevision:originalCard.revision,title:'Preserved draft',handlingDurationMs:60000},context('original-draft-content'));
+    const second=await stage5.createCrisis(f.firstChair,f.committee.id,{meetingSessionId:f.session.id},randomUUID(),context('second-group'));
+    let renamed=await stage5.saveCrisisNoticeName(f.firstChair,file.id,{baseRevision:file.revision,logicalName:'Crisis Notice 1.2.1'},context('existing-group-name'));
+    expect(await stage5.previewCrisisNotice(f.firstChair,file.id)).toMatchObject({groupId:second.id,updateId:second.updates[0]!.id,replacement:null});
+    expect((await pool!.query('SELECT notice_file_id FROM crisis_updates WHERE id=$1',[original.updateId])).rows[0].notice_file_id).toBe(file.id);
+    const imported=await stage5.importCrisisNotice(f.firstChair,file.id,{baseRevision:renamed.revision},randomUUID(),context('move-to-existing'));
+    expect(imported).toEqual({groupId:second.id,updateId:second.updates[0]!.id});
+    expect((await pool!.query('SELECT status,notice_file_id,title,handling_duration_ms FROM crisis_updates WHERE id=$1',[original.updateId])).rows[0])
+      .toMatchObject({status:'UNPUBLISHED',notice_file_id:null,title:'Preserved draft',handling_duration_ms:'60000'});
+    for (const name of ['Crisis Notice 1.4.1','Crisis Notice 1.3.2']) {
+      renamed=await stage5.saveCrisisNoticeName(f.firstChair,file.id,{baseRevision:renamed.revision,logicalName:name},context('skipped-number'));
+      await expect(stage5.importCrisisNotice(f.firstChair,file.id,{baseRevision:renamed.revision},randomUUID(),context('reject-skip')))
+        .rejects.toMatchObject({reason:'CRISIS_NUMBER_MISMATCH',params:{session:1,group:3,update:1}});
+      expect((await pool!.query('SELECT notice_file_id FROM crisis_updates WHERE id=$1',[imported.updateId])).rows[0].notice_file_id).toBe(file.id);
+    }
+    renamed=await stage5.saveCrisisNoticeName(f.firstChair,file.id,{baseRevision:renamed.revision,logicalName:'Crisis Notice 1.3.1'},context('new-group-name'));
+    expect(await stage5.previewCrisisNotice(f.firstChair,file.id)).toMatchObject({groupId:null,updateId:null});
+    const third=await stage5.importCrisisNotice(f.firstChair,file.id,{baseRevision:renamed.revision},randomUUID(),context('create-third-group'));
+    expect(await stage5.importCrisisNotice(f.firstChair,file.id,{baseRevision:renamed.revision},randomUUID(),context('repeat-third-import'))).toEqual(third);
+    expect((await stage4.snapshot(f.committee.id,f.firstChair)).crises).toHaveLength(3);
+    const jump=await testCrisisNotice(f,'Crisis Notice 1.1.4');
+    await expect(stage5.previewCrisisNotice(f.firstChair,jump.id)).rejects.toMatchObject({reason:'CRISIS_NUMBER_MISMATCH',params:{session:1,group:1,update:2}});
+    renamed=await stage5.saveCrisisNoticeName(f.firstChair,file.id,{baseRevision:renamed.revision,logicalName:'Crisis Notice 1.1.2'},context('card-association-name'));
+    const emptyCard=(await stage4.snapshot(f.committee.id,f.firstChair)).crises!.find(group=>group.id===first.id)!.updates[0]!;
+    await stage5.updateCrisisCard(f.firstChair,emptyCard.id,{baseRevision:emptyCard.revision,fileId:file.id},context('move-from-card'));
+    expect((await pool!.query('SELECT notice_file_id FROM crisis_updates WHERE id=$1',[third.updateId])).rows[0].notice_file_id).toBeNull();
+    await pool!.query('UPDATE crisis_groups SET ended_at=now() WHERE id=$1',[second.id]);
+    const ended=await testCrisisNotice(f,'Crisis Notice 1.2.2');
+    await expect(stage5.importCrisisNotice(f.firstChair,ended.id,{baseRevision:ended.revision},randomUUID(),context('ended-group')))
+      .rejects.toMatchObject({reason:'CRISIS_GROUP_ENDED'});
   });
 
   it('rolls publication back completely and does not reset a timer on retry',async () => {

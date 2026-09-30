@@ -598,6 +598,12 @@ export class Stage5Service {
         const preview = await crisisNoticePreview(client,committee.id,fileId);
         if (preview.groupId !== card.group_id || preview.updateId !== card.id) throw new AppError({code: 'VALIDATION_FAILED',reason: 'CRISIS_NOTICE_REQUIRED',message: 'Matching notice required.'});
         if (card.notice_file_id && input.replaceNoticeId !== card.notice_file_id) throw new AppError({code: 'RESOURCE_CONFLICT',reason: 'CRISIS_NOTICE_CONFLICT',message: 'Confirm notice replacement.'});
+        const detached=(await client.query(`UPDATE crisis_updates SET notice_file_id=NULL,revision=revision+1
+          WHERE notice_file_id=$1 AND id<>$2 AND status='UNPUBLISHED' RETURNING group_id`,[fileId,updateId])).rows;
+        for (const previous of detached) {
+          await client.query('UPDATE crisis_groups SET revision=revision+1 WHERE id=$1',[previous.group_id]);
+          await recordCrisisChange(client,committee,previous.group_id,'NOTICE_DETACHED',auth.user.id,context,'CHAIR');
+        }
       }
       await client.query(`UPDATE crisis_updates SET title=$2,handling_duration_ms=$3,notice_file_id=$4,revision=revision+1 WHERE id=$1`,[updateId,title,duration,fileId]);
       if (fileId) await client.query('UPDATE delegate_file_metadata SET crisis_name_edited=true WHERE file_entry_id=$1',[fileId]);
@@ -651,6 +657,12 @@ export class Stage5Service {
       const preview = await crisisNoticePreview(client,committee.id,fileId);
       if (preview.replacement && input.replaceNoticeId !== preview.replacement.id) throw new AppError({code: 'RESOURCE_CONFLICT',reason: 'CRISIS_NOTICE_CONFLICT',message: 'Confirm replacement.'});
       let groupId = preview.groupId; let updateId = preview.updateId;
+      const detached = (await client.query(`UPDATE crisis_updates SET notice_file_id=NULL,revision=revision+1
+        WHERE notice_file_id=$1 AND id IS DISTINCT FROM $2::uuid AND status='UNPUBLISHED' RETURNING group_id`,[fileId,updateId])).rows;
+      for (const previous of detached) {
+        await client.query('UPDATE crisis_groups SET revision=revision+1 WHERE id=$1',[previous.group_id]);
+        await recordCrisisChange(client,committee,previous.group_id,'NOTICE_DETACHED',auth.user.id,context,'CHAIR');
+      }
       if (!groupId) {
         const session = (await client.query('SELECT id FROM meeting_sessions WHERE committee_id=$1 AND ordinal=$2',[committee.id,preview.sessionOrdinal])).rows[0]!;
         groupId = await insertCrisisGroup(client,committee.id,session.id,auth.user.id);

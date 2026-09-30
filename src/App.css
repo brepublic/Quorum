@@ -2823,6 +2823,9 @@ html[lang='zh-CN'] .ui.grid > .column {
 .crisis-time-dot { display: inline-block; width: 0.6rem; height: 0.6rem; border-radius: 50%; margin-left: 0.65rem; vertical-align: middle; flex-shrink: 0; }
 .crisis-time-dot.orange { background-color: #e57d12; }
 .crisis-time-dot.red { background-color: #db2828; }
+.crisis-number-choices { padding-left: 1.4em; margin-bottom: 0; }
+.crisis-number-choices li + li { margin-top: 0.45em; }
+.crisis-notice-review-card .message strong { white-space: nowrap; }
 .ui.menu[data-crisis-reminder='red'] .crisis-awaiting > .text,
 .ui.menu[data-crisis-reminder='red'] .crisis-awaiting > .crisis-entry-label { color: #db2828; }
 .ui.menu[data-crisis-reminder='black'] .crisis-awaiting > .text,

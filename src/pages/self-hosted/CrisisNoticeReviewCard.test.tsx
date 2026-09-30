@@ -4,7 +4,7 @@ import {createRoot,type Root} from 'react-dom/client';
 import {MemoryRouter} from 'react-router-dom';
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 import type {CommitteeWorkspaceSnapshot,DelegateReviewFile} from '@quorum/contracts';
-import type {SelfHostedApi} from '../../services/self-hosted-api';
+import {SelfHostedApiError, type SelfHostedApi} from '../../services/self-hosted-api';
 import {setLanguage} from '../../i18n';
 import CrisisNoticeReviewCard from './CrisisNoticeReviewCard';
 
@@ -40,5 +40,35 @@ describe('crisis review gating',()=> {
     expect(host.querySelector('input')!.value).toBe('危机通告 1.');expect(host.querySelector('.field.error')).not.toBeNull();
     expect(host.textContent).toContain('补全危机编号');expect(host.querySelector<HTMLButtonElement>('button:last-child')!.disabled).toBe(true);
     expect(host.textContent).not.toContain('批准');expect(host.textContent).not.toContain('驳回');
+  });
+  it('explains new groups in blue with a bold group number and distinct update choices',async()=> {
+    const value={...snapshot,nextCrisisGroupOrdinal:2,crises:[{id:'first',committeeId:'committee',ordinal:1,sessionOrdinal:1,
+      endedAt:null,nextUpdateOrdinal:3,updates:[{status:'PENDING',ordinal:1},{status:'UNPUBLISHED',ordinal:2}]}]} as unknown as CommitteeWorkspaceSnapshot;
+    const api={previewCrisisNotice:vi.fn(async()=>({...preview,groupOrdinal:2}))} as unknown as SelfHostedApi;
+    await act(async()=>root.render(<MemoryRouter><CrisisNoticeReviewCard file={{...file,logicalName:'危机通告 1.2.1',crisisNameEdited:true}}
+      snapshot={value} api={api} refresh={async()=>{}} download={async()=>{}}/></MemoryRouter>));
+    expect(host.querySelector('.blue.message strong')?.textContent).toBe('危机 1.2');
+    expect(host.textContent).toContain('此操作将创建新危机组');
+    expect(host.textContent).toContain('如要更新危机 1.1，请使用编号 1.1.2。');
+    expect(host.textContent).not.toContain('如要创建危机组 1.2');
+    expect(host.textContent).not.toContain('修正文件名称');
+  });
+  it('shows the existing card target without claiming to create its group',async()=> {
+    const api={previewCrisisNotice:vi.fn(async()=>({...preview,groupOrdinal:2,groupId:'second',updateId:'draft'}))} as unknown as SelfHostedApi;
+    await act(async()=>root.render(<MemoryRouter><CrisisNoticeReviewCard file={{...file,logicalName:'危机通告 1.2.1',crisisNameEdited:true}}
+      snapshot={snapshot} api={api} refresh={async()=>{}} download={async()=>{}}/></MemoryRouter>));
+    expect(host.querySelector('.message strong')?.textContent).toBe('危机 1.2.1');
+    expect(host.textContent).toContain('此通告将关联至');expect(host.textContent).not.toContain('创建新危机组');
+    expect(host.querySelector('.blue.message')).toBeNull();
+  });
+  it('explains invalid numbers once and omits the redundant correction button',async()=> {
+    const error=new SelfHostedApiError(409,'RESOURCE_CONFLICT','invalid',undefined,undefined,{reason:'CRISIS_NUMBER_MISMATCH',params:{session:1,group:1,update:1}});
+    const api={previewCrisisNotice:vi.fn().mockRejectedValue(error)} as unknown as SelfHostedApi;
+    await act(async()=>root.render(<MemoryRouter><CrisisNoticeReviewCard file={file} snapshot={snapshot}
+      api={api} refresh={async()=>{}} download={async()=>{}}/></MemoryRouter>));
+    expect(host.textContent).toContain('危机编号不能跳号，请在上方文件名称中使用以下编号之一：');
+    expect(host.textContent?.match(/编号 1\.1\.1/g)).toHaveLength(1);
+    expect(host.querySelectorAll('.error.message')).toHaveLength(1);
+    expect([...host.querySelectorAll('button')].map(button=>button.textContent)).not.toContain('修正文件名称');
   });
 });

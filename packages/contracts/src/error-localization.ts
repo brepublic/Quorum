@@ -416,7 +416,7 @@ export const ERROR_TEXT = {
   INVALID_RESPONSE: {en: "The server returned an invalid response. Try again later.", 'zh-CN': "服务器返回了无效响应，请稍后重试。"},
   ABORTED: {en: "The operation was cancelled.", 'zh-CN': "操作已取消。"},
   CRISIS_NUMBER_REQUIRED: {en: 'Complete the crisis number: X.Y.Z.', 'zh-CN': '请补全危机编号：X.Y.Z。'},
-  CRISIS_NUMBER_MISMATCH: {en: 'Use crisis number {session}.{group}.{update}. Correct the system file name.', 'zh-CN': '应使用危机编号 {session}.{group}.{update}，请修正系统文件名称。'},
+  CRISIS_NUMBER_MISMATCH: {en: 'Crisis numbers must be consecutive. Use {session}.{group}.{update} in the file name above.', 'zh-CN': '危机编号不能跳号，请在上方文件名称中使用 {session}.{group}.{update}。'},
   CRISIS_SESSION_MISSING: {en: 'The numbered meeting session does not exist. Correct the system file name.', 'zh-CN': '编号对应的会期不存在，请修正系统文件名称。'},
   CRISIS_GROUP_ENDED: {en: 'This crisis group has ended.', 'zh-CN': '该危机组已结束。'},
   CRISIS_UNPUBLISHED_EXISTS: {en: 'Publish the existing update before creating another.', 'zh-CN': '请先发布已有的未发布卡片。'},
