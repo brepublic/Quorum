@@ -2826,6 +2826,7 @@ html[lang='zh-CN'] .ui.grid > .column {
 .crisis-number-choices { padding-left: 1.4em; margin-bottom: 0; }
 .crisis-number-choices li + li { margin-top: 0.45em; }
 .crisis-notice-review-card .message strong { white-space: nowrap; }
+.crisis-notice-review-card .crisis-target-group-number { color: #db2828; }
 .ui.menu[data-crisis-reminder='red'] .crisis-awaiting > .text,
 .ui.menu[data-crisis-reminder='red'] .crisis-awaiting > .crisis-entry-label { color: #db2828; }
 .ui.menu[data-crisis-reminder='black'] .crisis-awaiting > .text,

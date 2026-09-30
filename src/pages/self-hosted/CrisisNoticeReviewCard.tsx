@@ -69,7 +69,8 @@ export default function CrisisNoticeReviewCard({file,snapshot,api,refresh,downlo
     {(Boolean(failure) || !valid || preview) && <Message error={Boolean(failure) || !valid} color={preview?.groupId===null && !failure ? 'blue' : undefined}>
       {Boolean(failure) ? <p>{numberMismatch ? t('Crisis numbers must be consecutive. Edit the file name above using one of these numbers:') : storageErrorText(failure)}</p> : !valid ? <p>{t('Complete crisis number')}</p>
         : preview && <p>{t(preview.groupId===null ? 'This action will create a new crisis group' : 'This notice will be linked to')}{' '}
-          <strong>{t('Crisis')} {preview.sessionOrdinal}.{preview.groupOrdinal}{preview.groupId===null ? '' : `.${preview.updateOrdinal}`}</strong></p>}
+          <strong>{t('Crisis')} {preview.sessionOrdinal}.{preview.groupId===null ? preview.groupOrdinal
+            : <span className="crisis-target-group-number">{preview.groupOrdinal}</span>}{preview.groupId===null ? '' : `.${preview.updateOrdinal}`}</strong></p>}
       {showChoices && <ul className="crisis-number-choices">
         {alternatives.map(group=><li key={group.id}>{t('To update crisis {group}, use number {number}.',{
           group:`${session}.${group.ordinal}`,number:`${session}.${group.ordinal}.${group.updates.find(update=>update.status==='UNPUBLISHED')?.ordinal ?? group.nextUpdateOrdinal}`})}</li>)}
