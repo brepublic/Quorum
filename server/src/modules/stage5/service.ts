@@ -289,11 +289,11 @@ async function documentState(client: PoolClient, row: DocumentRow): Promise<Proc
     `SELECT c.committee_language,s.ordinal FROM committees c JOIN meeting_sessions s ON s.committee_id=c.id
       WHERE c.id=$1 AND s.id=$2`, [row.committee_id, row.meeting_session_id])).rows[0]!;
   const amendment = row.kind === 'AMENDMENT' ? (await client.query<{amendment_type: 'FRIENDLY' | 'UNFRIENDLY';
-    type_ordinal: number; resolution_ordinal: number}>(`SELECT a.amendment_type,a.type_ordinal,r.ordinal AS resolution_ordinal
+    type_ordinal: number; resolution_ordinal: number; resolution_draft_type: DocumentRow['draft_type']}>(`SELECT a.amendment_type,a.type_ordinal,r.ordinal AS resolution_ordinal,r.draft_type AS resolution_draft_type
     FROM amendments a JOIN documents r ON r.id=a.resolution_document_id WHERE a.document_id=$1`, [row.id])).rows[0]! : undefined;
   const title = formatCommitteeContent(row.kind === 'AMENDMENT'
     ? {kind: 'AMENDMENT', ordinal: amendment!.type_ordinal, sessionOrdinal: context.ordinal,
-      resolutionOrdinal: amendment!.resolution_ordinal, amendmentType: amendment!.amendment_type, customTitle: row.custom_title}
+      resolutionOrdinal: amendment!.resolution_ordinal, resolutionDraftType: amendment!.resolution_draft_type, amendmentType: amendment!.amendment_type, customTitle: row.custom_title}
     : {kind: row.draft_type, ordinal: row.ordinal, sessionOrdinal: context.ordinal, customTitle: row.custom_title}, context.committee_language);
   const version = await client.query<{id: string; version_number: number; content: string; content_file_entry_id: string | null;
     logical_name: string | null; original_name: string | null; media_type: string | null;
@@ -413,7 +413,7 @@ async function requireDirectVoteDocument(client: PoolClient, document: DocumentR
   if (ballot.rowCount) throw new AppError({code: 'RESOURCE_CONFLICT', reason: 'BALLOT_ALREADY_EXISTS', message: 'The draft already has a formal ballot.'});
 }
 
-async function updateAmendmentDirectResult(client: PoolClient, document: DocumentRow, auth: AuthenticatedSession,
+async function updateAmendmentDirectResult(client: PoolClient, document: DocumentRow, committee: Stage4CommitteeRow, auth: AuthenticatedSession,
   context: Stage4Context, now: Date): Promise<void> {
   if (document.kind !== 'AMENDMENT') return;
   const metadata = (await client.query<ResolutionRow>('SELECT * FROM document_voting WHERE document_id=$1', [document.id])).rows[0]!;
@@ -429,6 +429,8 @@ async function updateAmendmentDirectResult(client: PoolClient, document: Documen
   await client.query('UPDATE documents SET status=$2,revision=revision+1,updated_at=$3 WHERE id=$1', [document.id,outcome,now]);
   await audit(client, context, {committeeId: document.committee_id, actorUserId: auth.user.id, capabilities: ['CHAIR'],
     action: 'documents.result_recorded', resourceType: 'document', resourceId: document.id, before: {status: document.status}, after: {status: outcome}});
+  await appendEvent(client, committee, {type: 'document.result_recorded', resourceType: 'document', resourceId: document.id,
+    revision: document.revision + 1, payload: {previousStatus: document.status, outcome, corrected: Boolean(previous)}, audience: 'PUBLIC'});
   document.status = outcome; document.revision += 1; document.updated_at = now;
 }
 
@@ -2024,7 +2026,7 @@ export class Stage5Service {
       }
       if (document.status !== 'DRAFT') throw new AppError({reason: 'AMENDMENT_ALREADY_INTRODUCED', code: 'RESOURCE_CONFLICT',
         message: 'Only a Draft Amendment can be introduced.'});
-      const parent = await client.query<{status: ProceedingDocumentStatus}>(`SELECT status FROM documents
+      const parent = await client.query<{status: ProceedingDocumentStatus; draft_type: string}>(`SELECT status,draft_type FROM documents
         WHERE id=$1 AND committee_id=$2 AND kind='RESOLUTION' AND deleted_at IS NULL FOR UPDATE`,
       [document.resolution_document_id, committeeId]);
       if (parent.rows[0]?.status !== 'PUBLISHED') throw new AppError({reason: 'AMENDMENTS_NOT_ACCEPTED', code: 'RESOURCE_CONFLICT',
@@ -2053,7 +2055,7 @@ export class Stage5Service {
         resourceType: 'document', resourceId: documentId,
         before: {status: 'DRAFT', revision: document.revision},
         after: {status: 'PUBLISHED', motionId: motion.id, revision: document.revision + 1}});
-      return `/committees/${committeeId}/resolutions/${document.resolution_document_id}/amendments`;
+      return `/committees/${committeeId}/${parent.rows[0]?.draft_type === 'DIRECTIVE' ? 'directives' : 'resolutions'}/${document.resolution_document_id}/amendments`;
     }
 
     if (motion.motion_type_id === 'vote-on-amendment') {
@@ -2068,7 +2070,7 @@ export class Stage5Service {
       }
       if (document.status !== 'PUBLISHED') throw new AppError({reason: 'AMENDMENT_NOT_INTRODUCED', code: 'RESOURCE_CONFLICT',
         message: 'Only an introduced Amendment can enter voting.'});
-      const parent = await client.query<{status: ProceedingDocumentStatus}>(`SELECT status FROM documents
+      const parent = await client.query<{status: ProceedingDocumentStatus; draft_type: string}>(`SELECT status,draft_type FROM documents
         WHERE id=$1 AND committee_id=$2 AND kind='RESOLUTION' AND deleted_at IS NULL FOR UPDATE`,
       [document.resolution_document_id, committeeId]);
       if (parent.rows[0]?.status === 'POSTPONED') throw new AppError({reason: 'DOCUMENT_STATE_CHANGED', code: 'RESOURCE_CONFLICT',
@@ -2089,7 +2091,7 @@ export class Stage5Service {
         before: {status: document.status, revision: document.revision},
         after: {status: 'VOTING', votingVersionId: document.current_version_id,
           motionId: motion.id, revision: document.revision + 1}});
-      return `/committees/${committeeId}/resolutions/${document.resolution_document_id}/amendments`;
+      return `/committees/${committeeId}/votes/new?draft=${documentId}`;
     }
 
     if (motion.motion_type_id === 'vote-on-resolution') {
@@ -2120,7 +2122,7 @@ export class Stage5Service {
         before: {status: document.status, votingVersionId: document.voting_version_id, revision: document.revision},
         after: {status: 'VOTING', votingVersionId: document.current_version_id,
           revision: document.revision + 1, motionId: motion.id}});
-      return `/committees/${committeeId}/resolutions/${resolutionId}/voting`;
+      return `/committees/${committeeId}/votes/new?draft=${resolutionId}`;
     }
 
     if (motion.motion_type_id === 'propose-strawpoll') {
@@ -3088,10 +3090,10 @@ export class Stage5Service {
       ? ['meetingSessionId', 'customTitle', 'content', 'onBehalfOfSeatId', 'draftType']
       : ['meetingSessionId', 'customTitle', 'content', 'onBehalfOfSeatId', 'resolutionId', 'amendmentType']);
     const draftType = input.draftType ?? 'RESOLUTION';
-    if (kind === 'RESOLUTION' && !['RESOLUTION', 'DIRECTIVE'].includes(String(draftType))) throw new AppError({code: 'VALIDATION_FAILED', message: 'Draft type is invalid.'});
+    if (kind === 'RESOLUTION' && !['RESOLUTION', 'DIRECTIVE'].includes(String(draftType))) throw new AppError({code: 'VALIDATION_FAILED', reason: 'INVALID_DRAFT_TYPE', message: 'Draft type is invalid.'});
     const amendmentType = input.amendmentType;
     if (kind === 'AMENDMENT' && !['FRIENDLY', 'UNFRIENDLY'].includes(String(amendmentType))) {
-      throw new AppError({code: 'VALIDATION_FAILED', message: 'Amendment type is invalid.'});
+      throw new AppError({code: 'VALIDATION_FAILED', reason: 'INVALID_AMENDMENT_TYPE', message: 'Amendment type is invalid.'});
     }
     const meetingSessionId = uuid(input.meetingSessionId, 'Meeting session ID');
     const customTitle = input.customTitle === null ? null : text(input.customTitle, 'Title', 500);
@@ -3384,6 +3386,7 @@ export class Stage5Service {
         revision: document.revision + 1, payload: {kind: document.kind}, audience: document.is_public ? 'PUBLIC' : 'MEMBER'});
       await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id, capabilities: ['CHAIR'],
         action: 'documents.settings_changed', resourceType: 'document', resourceId: documentId, before, after});
+      if (majority !== undefined) await updateAmendmentDirectResult(client, updated.rows[0] as DocumentRow, committee, auth, context, now);
       return documentState(client, updated.rows[0] as DocumentRow);
     });
   }
@@ -3435,26 +3438,26 @@ export class Stage5Service {
     const baseSettingsRevision = positiveInteger(input.baseSettingsRevision, 'Vote settings revision');
     const baseCastRevision = input.baseCastRevision;
     if (!Number.isSafeInteger(baseCastRevision) || Number(baseCastRevision) < 0) throw new AppError({
-      code: 'VALIDATION_FAILED', message: 'Vote revision is invalid.'});
+      code: 'VALIDATION_FAILED', reason: 'INVALID_VOTE_SUBMISSION', message: 'Vote revision is invalid.'});
     if (!Array.isArray(input.eligibility) || !Array.isArray(input.votes) || !input.votes.length) throw new AppError({
-      code: 'VALIDATION_FAILED', message: 'A complete vote list is required.'});
+      code: 'VALIDATION_FAILED', reason: 'INVALID_VOTE_SUBMISSION', message: 'A complete vote list is required.'});
     const eligibility = input.eligibility.map((value: unknown) => {
       if (!value || typeof value !== 'object' || Array.isArray(value)) throw new AppError({
-        code: 'VALIDATION_FAILED', message: 'Voting eligibility is invalid.'});
+        code: 'VALIDATION_FAILED', reason: 'INVALID_VOTE_SUBMISSION', message: 'Voting eligibility is invalid.'});
       const item = value as Record<string, unknown>;
       assertExactBody(item, ['seatId', 'seatDisplayName', 'mustVote', 'hasVeto']);
       if (typeof item.seatDisplayName !== 'string' || typeof item.mustVote !== 'boolean'
-        || typeof item.hasVeto !== 'boolean') throw new AppError({code: 'VALIDATION_FAILED',
+        || typeof item.hasVeto !== 'boolean') throw new AppError({code: 'VALIDATION_FAILED', reason: 'INVALID_VOTE_SUBMISSION',
         message: 'Voting eligibility is invalid.'});
       return {seatId: uuid(item.seatId, 'Voting seat ID'), seatDisplayName: item.seatDisplayName,
         mustVote: item.mustVote, hasVeto: item.hasVeto};
     });
     const votes = input.votes.map((value: unknown) => {
       if (!value || typeof value !== 'object' || Array.isArray(value)) throw new AppError({
-        code: 'VALIDATION_FAILED', message: 'Vote list is invalid.'});
+        code: 'VALIDATION_FAILED', reason: 'INVALID_VOTE_SUBMISSION', message: 'Vote list is invalid.'});
       const item = value as Record<string, unknown>; assertExactBody(item, ['seatId', 'choice']);
       if (!['FOR', 'AGAINST', 'ABSTAIN'].includes(item.choice as string)) throw new AppError({
-        code: 'VALIDATION_FAILED', message: 'Vote choice is invalid.'});
+        code: 'VALIDATION_FAILED', reason: 'INVALID_VOTE_CHOICE', message: 'Vote choice is invalid.'});
       return {seatId: uuid(item.seatId, 'Voting seat ID'), choice: item.choice as BallotChoice};
     });
     return idempotentTransaction({pool: this.pool, auth, route: `POST /api/v1/resolutions/${documentId}/direct-vote/submit`,
@@ -3473,7 +3476,7 @@ export class Stage5Service {
         if (document.revision !== baseDocumentRevision || resolution.direct_vote_revision !== baseSettingsRevision
           || resolution.direct_vote_cast_revision !== baseCastRevision) throw new AppError({
             code: 'REVISION_CONFLICT', message: 'This resolution vote changed since it was loaded.'});
-        if (resolution.direct_vote_completed_at) throw new AppError({code: 'RESOURCE_CONFLICT',
+        if (resolution.direct_vote_completed_at) throw new AppError({code: 'RESOURCE_CONFLICT', reason: 'VOTE_ALREADY_SUBMITTED',
           message: 'This resolution vote has already been submitted.'});
         if (document.status === 'POSTPONED') throw new AppError({reason: 'DOCUMENT_STATE_CHANGED',
           code: 'RESOURCE_CONFLICT', message: 'The Draft Resolution is postponed.'});
@@ -3536,7 +3539,7 @@ export class Stage5Service {
         await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id, capabilities: ['CHAIR'],
           action: 'documents.direct_vote_submitted', resourceType: 'document', resourceId: documentId,
           after: {seatCount: votes.length}});
-        await updateAmendmentDirectResult(client, document, auth, context, now);
+        await updateAmendmentDirectResult(client, document, committee, auth, context, now);
         return documentState(client, document);
       }});
   }
@@ -3614,7 +3617,7 @@ export class Stage5Service {
         onBehalfOfSeatId: seatId, action: 'documents.direct_vote_changed', resourceType: 'document', resourceId: documentId,
         before: {seatId, choice: previousChoice, voteRevision: current?.revision ?? 0},
         after: {seatId, choice, voteRevision}});
-      await updateAmendmentDirectResult(client, document, auth, context, now);
+      await updateAmendmentDirectResult(client, document, committee, auth, context, now);
         return documentState(client, document);
     });
   }

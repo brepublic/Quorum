@@ -43,6 +43,11 @@ describe('committee content language', () => {
     expect(formatCommitteeContent({kind: 'AMENDMENT', sessionOrdinal: 2, resolutionOrdinal: 3,
       amendmentType: 'FRIENDLY', ordinal: 4, customTitle: null}, 'zh-CN')).toBe('决议草案友好修正案 2.3.4');
   });
+  it.each(['en', 'zh-CN'] as const)('names directive amendments using their parent draft type in %s', language => {
+    expect(formatCommitteeContent({kind: 'AMENDMENT', sessionOrdinal: 1, resolutionOrdinal: 2,
+      resolutionDraftType: 'DIRECTIVE', amendmentType: 'UNFRIENDLY', ordinal: 3, customTitle: null}, language))
+      .toBe(language === 'en' ? 'Draft Directive Unfriendly Amendment 1.2.3' : '指令草案非友好修正案 1.2.3');
+  });
   it('formats each resource using its explicit committee language and number', () => {
     expect(formatCommitteeContent({kind: 'GENERAL_SPEAKERS_LIST', customTitle: null}, 'en')).toBe("General Speaker's List");
     expect(formatCommitteeContent({kind: 'GENERAL_SPEAKERS_LIST', customTitle: null}, 'zh-CN')).toBe('主发言名单');

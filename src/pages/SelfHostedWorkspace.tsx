@@ -1299,6 +1299,10 @@ function CommitteeWorkspaceContent({id, api, user, logout}: {
             snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} />} />
           <Route path={`${base}/resolutions/:documentId/:tab?`} render={({match}) => <ProceedingsPanel view="resolution"
             resourceId={match.params.documentId} tab={match.params.tab} snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} />} />
+          <Route path={`${base}/directives/:documentId/:tab?`} render={({match}) => <ProceedingsPanel view="directive"
+            resourceId={match.params.documentId} tab={match.params.tab} snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} />} />
+          <Route path={`${base}/votes/:documentId?`} render={({match}) => <ProceedingsPanel view="voting"
+            resourceId={match.params.documentId} snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} />} />
           <Route path={`${base}/strawpolls/:pollId`} render={({match}) => <ProceedingsPanel view="strawpoll" resourceId={match.params.pollId}
             snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} />} />
           <Route path={`${base}/stats`}><StatisticsPanel snapshot={snapshot} /></Route>

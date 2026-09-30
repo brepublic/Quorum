@@ -18,7 +18,7 @@ import type {
 import {DragDropContext, Draggable, Droppable, type DropResult} from 'react-beautiful-dnd';
 import {Button, Card, Checkbox, Confirm, Container, Divider, Dropdown, Feed, Form, Grid, Header, Icon, Input, Label, List,
   Menu, Message, Pagination, Popup, Progress, Segment, Select, Statistic, Table, TextArea} from 'semantic-ui-react';
-import {Link, useHistory} from 'react-router-dom';
+import {Link, Redirect, useHistory} from 'react-router-dom';
 import {CountryFlagDisplay} from '../../components/CountryFlagDisplay';
 import Loading from '../../components/Loading';
 import {getLanguage, t} from "../../i18n";
@@ -26,7 +26,7 @@ import {newIdempotencyKey, SelfHostedApiError, type SelfHostedApi} from '../../s
 import {localizedDisplayName} from './TemplateManagers';
 
 type Run = (operation: () => Promise<unknown>) => Promise<void>;
-type View = 'motions' | 'unmod' | 'caucus' | 'strawpoll' | 'resolution';
+type View = 'motions' | 'unmod' | 'caucus' | 'strawpoll' | 'resolution' | 'directive' | 'voting';
 export const questionContributionTemplate = 'Q:\n\nA:';
 const contributionSaveTimeoutMs = 10_000;
 const messageFadeDelayMs = 10_000;
@@ -750,7 +750,6 @@ function AmendmentCard({snapshot, amendment, run, api, canChair, representedSeat
   const [filesRetry, setFilesRetry] = React.useState(0);
   const [fileFailure, setFileError] = React.useState<unknown>();
   const fileError = fileFailure ? apiErrorText(fileFailure) : undefined;
-  const [ballotThreshold, setBallotThreshold] = React.useState<'SIMPLE_MAJORITY' | 'TWO_THIRDS'>('SIMPLE_MAJORITY');
   const represented = canChair && representedSeatId ? {onBehalfOfSeatId: representedSeatId} : {};
   const editable = snapshot.viewer.audience !== 'PUBLIC' && snapshot.committee.status === 'ACTIVE'
     && (canChair || Boolean(snapshot.viewer.seatId) && amendment.createdOnBehalfOfSeatId === snapshot.viewer.seatId)
@@ -871,18 +870,6 @@ function AmendmentCard({snapshot, amendment, run, api, canChair, representedSeat
       </>}
     </Segment>}
   </Card.Content>
-  {canChair && !friendly && amendment.status === 'VOTING' && !hasBallot && snapshot.meetingSession?.status === 'OPEN'
-    && <Card.Content extra><Form className="amendment-ballot-controls"><Form.Select value={ballotThreshold}
-      options={[{key: 'simple', value: 'SIMPLE_MAJORITY', text: t('Simple majority')},
-        {key: 'two-thirds', value: 'TWO_THIRDS', text: t('Two-thirds majority')} ]}
-      onChange={(_, data) => setBallotThreshold(data.value as typeof ballotThreshold)} />
-      <Button primary onClick={() => void run(() => api.createBallot(snapshot.committee.id, {
-        meetingSessionId: amendment.meetingSessionId, subjectType: 'AMENDMENT', subjectId: amendment.id,
-        procedural: false, thresholdKind: ballotThreshold}))}>{t('Open substantive ballot')}</Button>
-    </Form></Card.Content>}
-  {!friendly && hasBallot && <Card.Content extra><Header as="h4">{t('Formal Ballot')}</Header>
-    <Ballots snapshot={snapshot} run={run} api={api} canChair={canChair} subjectId={amendment.id} embedded />
-  </Card.Content>}
   </Card>;
 }
 
@@ -1537,40 +1524,14 @@ function completedResolutionVoteResult(draft: ResolutionVoteDraft): ResolutionDi
   return forCount >= threshold ? 'PASSED' : 'FAILED';
 }
 
-function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: CommonProps & {resourceId?: string; tab?: string}) {
+function DocumentVoting({snapshot, run, api, canChair, document}: CommonProps & {
+  document: NonNullable<CommitteeWorkspaceSnapshot['documents']>[number];
+}) {
   const history = useHistory();
-  const session = snapshot.meetingSession?.status === 'OPEN' ? snapshot.meetingSession : undefined;
-  const selectedDocument = (snapshot.documents ?? []).find(item => item.id === resourceId && item.kind === 'RESOLUTION');
-  const [selectedAmendmentId, setSelectedAmendmentId] = React.useState('');
-  React.useEffect(() => {setSelectedAmendmentId('');}, [resourceId, tab]);
-  const [versionTitle, setVersionTitle] = React.useState(selectedDocument?.title ?? '');
-  const [versionTitleDirty, setVersionTitleDirty] = React.useState(false);
-  const [versionContent, setVersionContent] = React.useState(selectedDocument?.currentVersion.content ?? '');
-  const [contentSource, setContentSource] = React.useState<'TEXT' | 'FILE'>('FILE');
-  const [versionFileId, setVersionFileId] = React.useState(selectedDocument?.currentVersion.contentFile?.id ?? '');
-  const [availableFiles, setAvailableFiles] = React.useState<FileEntry[]>([]);
-  const [selectedExistingFileId, setSelectedExistingFileId] = React.useState('');
-  const [filesLoading, setFilesLoading] = React.useState(true);
-  const [bodyDirty, setBodyDirty] = React.useState(false);
-  const [downloadFailure, setDownloadFailure] = React.useState<unknown>();
-  const [countrySelections, setCountrySelections] = React.useState({proposers: '', seconders: ''});
-  React.useEffect(() => {setCountrySelections({proposers: '', seconders: ''});}, [selectedAmendmentId]);
-  const [countriesSaving, setCountriesSaving] = React.useState(false);
-  const savingCountries = React.useRef(false);
-  const [fileSaving, setFileSaving] = React.useState(false);
-  const savingFile = React.useRef(false);
-  const [preparingDownload, setPreparingDownload] = React.useState(false);
-  const downloadingFile = React.useRef(false);
-  const downloadGeneration = React.useRef(0);
-  React.useEffect(() => () => {downloadGeneration.current += 1;}, []);
-  const [filesRetry, setFilesRetry] = React.useState(0);
-  const [fileFailure, setFileError] = React.useState<unknown>();
-  const fileError = fileFailure ? apiErrorText(fileFailure) : undefined;
-  const [seatId, setSeatId] = React.useState(snapshot.viewer.seatId ?? snapshot.seats[0]?.id ?? '');
   const [votingPage, setVotingPage] = React.useState(0);
   const [currentVotingSeatId, setCurrentVotingSeatId] = React.useState(
-    selectedDocument?.directVote?.eligibility.find(item => !selectedDocument.directVote?.votes.some(vote => vote.seatId === item.seatId))?.seatId
-      ?? selectedDocument?.directVote?.eligibility[0]?.seatId ?? '');
+    document?.directVote?.eligibility.find(item => !document.directVote?.votes.some(vote => vote.seatId === item.seatId))?.seatId
+      ?? document?.directVote?.eligibility[0]?.seatId ?? '');
   const [votingHistory, setVotingHistory] = React.useState<Array<{seatId: string; previousChoice: 'FOR' | 'AGAINST' | 'ABSTAIN' | null}>>([]);
   const [voteDraft, setVoteDraft] = React.useState<ResolutionVoteDraft>();
   const voteDraftRef = React.useRef<ResolutionVoteDraft>();
@@ -1581,46 +1542,14 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
   const allowVoteNavigation = React.useRef(false);
   const submittingVote = React.useRef(false);
   const [voteSaving, setVoteSaving] = React.useState(false);
-  const creatingDraft = React.useRef(false);
-  const represented = canChair && seatId ? {onBehalfOfSeatId: seatId} : {};
-  const canParticipate = snapshot.viewer.audience !== 'PUBLIC' && snapshot.committee.status === 'ACTIVE';
-  React.useEffect(() => {
-    if (resourceId !== 'new' || creatingDraft.current || !canParticipate || !session) return;
-    creatingDraft.current = true;
-    void (async () => {
-      let created: Awaited<ReturnType<SelfHostedApi['createResolution']>> | undefined;
-      await run(async () => {created = await api.createResolution(snapshot.committee.id,
-        {meetingSessionId: session.id, customTitle: null, content: ''});});
-      if (created) history.replace(`/committees/${snapshot.committee.id}/resolutions/${created.id}`);
-      else creatingDraft.current = false;
-    })();
-  }, [api, canParticipate, history, resourceId, run, session, snapshot.committee.id]);
-  React.useEffect(() => {
-    if (!selectedDocument) return;
-    setVersionTitle(selectedDocument.title); setVersionTitleDirty(false); setBodyDirty(false); setVersionContent(selectedDocument.currentVersion.content);
-    setVersionFileId(selectedDocument.currentVersion.contentFile?.id ?? '');
-  }, [selectedDocument?.id, selectedDocument?.revision]);
-  React.useEffect(() => {setContentSource('FILE'); setCountrySelections({proposers: '', seconders: ''});}, [selectedDocument?.id]);
-  React.useEffect(() => {
-    if (contentSource !== 'FILE') return;
-    let active = true; setFileError(undefined); setFilesLoading(true);
-    void api.listFiles(snapshot.committee.id).then(items => {
-      if (!active) return;
-      const published = items.filter(file => file.committeeId === snapshot.committee.id && file.status === 'PUBLISHED');
-      setAvailableFiles(published);
-      setSelectedExistingFileId(current => published.some(file => file.id === current) ? current : '');
-    }).catch(caught => {if (active) {setFileError(caught); setAvailableFiles([]);}})
-      .finally(() => {if (active) setFilesLoading(false);});
-    return () => {active = false;};
-  }, [api, snapshot.committee.id, snapshot.sync.committeeEventSequence, contentSource, filesRetry]);
   React.useEffect(() => {
     setVotingPage(0); setVotingHistory([]); setVoteDraft(undefined); voteDraftRef.current = undefined;
     setSavedDirectVote(undefined);
     setVoteResultMismatch(false);
-    setCurrentVotingSeatId(selectedDocument?.directVote?.eligibility.find(item =>
-      !selectedDocument.directVote?.votes.some(vote => vote.seatId === item.seatId))?.seatId
-      ?? selectedDocument?.directVote?.eligibility[0]?.seatId ?? '');
-  }, [selectedDocument?.id]);
+    setCurrentVotingSeatId(document?.directVote?.eligibility.find(item =>
+      !document.directVote?.votes.some(vote => vote.seatId === item.seatId))?.seatId
+      ?? document?.directVote?.eligibility[0]?.seatId ?? '');
+  }, [document?.id]);
   const updateVoteDraft = (next: ResolutionVoteDraft | undefined) => {voteDraftRef.current = next; setVoteDraft(next);};
   React.useEffect(() => {
     if (!voteDraft) return;
@@ -1632,72 +1561,6 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
     });
     return () => {window.removeEventListener('beforeunload', beforeUnload); unblock();};
   }, [!!voteDraft, history]);
-  if (resourceId === 'new') return canParticipate && session ? <Loading />
-    : <Message content={session ? t('An active seat assignment is required.') : t('Start a meeting first.')} />;
-  const document = selectedDocument;
-  if (!document) return <Message error content={t('Draft Resolution not found.')} />;
-  const amendments = (snapshot.documents ?? []).filter(item => item.resolutionId === document.id);
-  const activeTab = ({activity: 'text', body: 'text', ballot: 'voting'}[tab ?? '']
-    ?? (tab && ['text', 'amendments', 'voting'].includes(tab) ? tab : 'text')) as 'text' | 'amendments' | 'voting';
-  const selectedAmendment = amendments.find(item => item.id === selectedAmendmentId);
-  const countryDocument = activeTab === 'text' ? document : activeTab === 'amendments' ? selectedAmendment : undefined;
-  const canEditCountries = canChair && (countryDocument?.kind !== 'AMENDMENT'
-    || ['DRAFT', 'PUBLISHED'].includes(countryDocument.status));
-  const base = `/committees/${snapshot.committee.id}/resolutions/${document.id}`;
-  const editable = canParticipate && !['VOTING', 'PASSED', 'FAILED'].includes(document.status);
-  const saveVersion = (requestedSource?: 'TEXT' | 'FILE', nextFileId = versionFileId) => {
-    if (!requestedSource && !bodyDirty && !versionTitleDirty) return;
-    const nextSource = requestedSource ?? (bodyDirty ? contentSource : document.currentVersion.contentFile ? 'FILE' : 'TEXT');
-    const nextContent = nextSource === 'TEXT' ? versionContent : '';
-    const contentFileEntryId = nextSource === 'FILE' ? nextFileId : null;
-    if (!editable || nextSource === 'FILE' && !contentFileEntryId
-      || !versionTitleDirty && nextContent === document.currentVersion.content
-        && contentFileEntryId === (document.currentVersion.contentFile?.id ?? null)) return;
-    return run(() => api.createDocumentVersion(document.id, {baseRevision: document.revision,
-      customTitle: versionTitleDirty ? versionTitle.trim() || null : document.customTitle, content: nextContent, contentFileEntryId, ...represented}));
-  };
-  const useFile = async () => {
-    if (savingFile.current || filesLoading || !availableFiles.some(file => file.id === selectedExistingFileId)) return;
-    savingFile.current = true; setFileSaving(true);
-    try {await saveVersion('FILE', selectedExistingFileId);}
-    finally {savingFile.current = false; setFileSaving(false);}
-  };
-  const downloadFile = async () => {
-    const id = document.currentVersion.contentFile?.id;
-    if (!id || downloadingFile.current) return;
-    const generation = downloadGeneration.current;
-    downloadingFile.current = true; setPreparingDownload(true); setDownloadFailure(undefined);
-    try {
-      let readiness = await api.prepareFileDownload(id);
-      while (readiness.status === 'PREPARING' && generation === downloadGeneration.current) {
-        await new Promise(resolve => window.setTimeout(resolve, (readiness.retryAfterSeconds ?? 2) * 1000));
-        if (generation !== downloadGeneration.current) return;
-        readiness = await api.fileDownloadReadiness(id);
-      }
-      if (generation !== downloadGeneration.current) return;
-      if (readiness.status !== 'READY') throw Object.assign(new Error(), {code: readiness.code ?? 'NOT_FOUND'});
-      window.location.assign(api.fileDownloadUrl(id));
-    } catch (caught) {if (generation === downloadGeneration.current) setDownloadFailure(caught);}
-    finally {downloadingFile.current = false; if (generation === downloadGeneration.current) setPreparingDownload(false);}
-  };
-  const presentSeatIds = new Set((snapshot.attendanceBySession?.[document.meetingSessionId] ?? snapshot.attendance)
-    .filter(item => item.state === 'PRESENT').map(item => item.seatId));
-  const selectedCountryIds = new Set([...(countryDocument?.proposers ?? []), ...(countryDocument?.seconders ?? [])].map(country => country.seatId));
-  const countryOptions = snapshot.seats.filter(seat => !selectedCountryIds.has(seat.id))
-    .map(seat => ({key: seat.id, value: seat.id, text: seat.displayName, content: seatOptionContent(seat),
-      searchTerms: seat.searchTerms,
-      disabled: !presentSeatIds.has(seat.id)}));
-  const saveCountries = async (role: 'proposers' | 'seconders', ids: string[], added = false) => {
-    if (!canEditCountries || !countryDocument || savingCountries.current) return;
-    savingCountries.current = true; setCountriesSaving(true);
-    try {
-      await run(async () => {
-        await api.updateDocumentSettings(countryDocument.id, {baseRevision: countryDocument.revision,
-          [role === 'proposers' ? 'proposerSeatIds' : 'seconderSeatIds']: ids});
-        if (added) setCountrySelections(previous => ({...previous, [role]: ''}));
-      });
-    } finally {savingCountries.current = false; setCountriesSaving(false);}
-  };
   const snapshotDirectVote = document.directVote;
   const latestDirectVote = savedDirectVote && snapshotDirectVote
     && savedDirectVote.castRevision > snapshotDirectVote.castRevision ? savedDirectVote : snapshotDirectVote;
@@ -1802,72 +1665,9 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
     const previous = votingHistory.at(-1); if (!previous) return;
     await setDirectResolutionVote(previous.previousChoice, previous.seatId, false);
   };
-  return <Container className="resolution-page" fluid style={{paddingBottom: '2em'}}><Grid columns="equal" stackable>
-    <Grid.Row><Grid.Column><Input value={versionTitle} loading={!document} labelPosition="right"
-      label={<Label>{statusLabel(document.status)}</Label>} size="massive" fluid placeholder={t('Set resolution name')}
-      disabled={!editable} onChange={event => {setVersionTitle(event.currentTarget.value); setVersionTitleDirty(true);}} onBlur={() => void saveVersion()} /></Grid.Column></Grid.Row>
-    <Grid.Row><Grid.Column><Menu pointing secondary>
-      {[['text', 'Text'], ['amendments', 'Amendments'], ['voting', 'Voting']].map(([path, label]) =>
-        <Menu.Item key={path} as={Link} to={path === 'text' ? base : `${base}/${path}`}
-          active={activeTab === path}>{t(label)}</Menu.Item>)}</Menu></Grid.Column></Grid.Row>
-    <Grid.Row><Grid.Column width={activeTab === 'voting' ? 16 : 11}>
-    {activeTab === 'text' && <><Button.Group basic compact className="resolution-content-source">
-      <Button active={contentSource === 'FILE'} onClick={() => setContentSource('FILE')}>{t('File')}</Button>
-      <Button active={contentSource === 'TEXT'} onClick={() => setContentSource('TEXT')}>{t('Text')}</Button>
-    </Button.Group><Divider hidden />
-    {contentSource === 'TEXT' ? <Form><TextArea value={versionContent} rows={3} placeholder={t('Resolution text')}
-      disabled={!editable} onChange={(_, data) => {setVersionContent(String(data.value)); setBodyDirty(true);}} onBlur={() => void saveVersion()} /></Form>
-    : <Segment className="resolution-file-body resolution-document-file-body">
-      {fileError && <Message error content={fileError} />}
-      {Boolean(downloadFailure) && <Message error content={apiErrorText(downloadFailure)} />}
-      {document.currentVersion.contentFile && <><div className="resolution-document-file-heading">
-        <Header as="h4">{document.currentVersion.contentFile.logicalName}</Header>
-        <FileStatusLabel status={document.currentVersion.contentFile.status} />
-      </div>
-        {document.currentVersion.contentFile.status === 'PUBLISHED'
-          ? <Button type="button" primary fluid loading={preparingDownload} disabled={preparingDownload}
-            onClick={() => void downloadFile()}>{t('Download')} <Icon name="arrow down" /></Button>
-          : <Message content={t('The referenced file is unavailable.')} />}
-        {canChair && document.currentVersion.contentFile.status !== 'PUBLISHED'
-          && document.currentVersion.contentFile.status !== 'DELETED'
-          && <Button as={Link} to={`/committees/${snapshot.committee.id}/posts/review`}>{t('Review files')}</Button>}
-        <Divider /></>}
-      {editable && <>
-        {filesLoading ? <Loading /> : fileError ? <Button type="button" onClick={() => setFilesRetry(value => value + 1)}>{t('Retry')}</Button>
-          : availableFiles.length === 0 ? <><Message content={t('No published files')} />
-            <Button as={Link} to={`/committees/${snapshot.committee.id}/posts`}>{t('Files')}</Button></>
-          : <Form onSubmit={() => void useFile()}>
-            <Form.Select label={t('Choose file')} selection fluid search={availableFiles.length > 10}
-              value={selectedExistingFileId || false} disabled={fileSaving}
-              options={availableFiles.map(file => ({key: file.id, value: file.id,
-                text: file.logicalName, description: file.fileType ? delegateFileTypeName(file.fileType, snapshot.committee.committeeLanguage) : undefined}))}
-              onChange={(_, data) => setSelectedExistingFileId(String(data.value))} />
-            <Button fluid loading={fileSaving} disabled={fileSaving || !selectedExistingFileId || !availableFiles.some(file => file.id === selectedExistingFileId)}
-              ><Icon name="check" />{t('Use this file')}</Button>
-          </Form>}
-      </>}
-    </Segment>}</>}
-    {activeTab === 'amendments' && <>
-      <Segment className="amendment-list-panel">
-      {amendments.length === 0 ? <Message content={t('No Amendments')} /> : <List selection divided className="amendment-list">
-        {[...amendments].reverse().map(amendment => <List.Item key={amendment.id} as="button" type="button" role="button"
-          active={amendment.id === selectedAmendmentId} aria-pressed={amendment.id === selectedAmendmentId}
-          disabled={countriesSaving} onClick={() => setSelectedAmendmentId(amendment.id)}>
-          <Icon name="file text outline" /><List.Content><span className="amendment-list-name">{amendment.title}</span></List.Content>
-          <span className="amendment-list-status">{statusLabel(amendment.status)}</span><Icon name="angle right" />
-        </List.Item>)}
-      </List>}
-      {canParticipate && session && document.status === 'PUBLISHED' && <div className="amendment-create-buttons">
-        {(['FRIENDLY', 'UNFRIENDLY'] as const).map(amendmentType => <Button key={amendmentType} icon="plus"
-          content={t(amendmentType === 'FRIENDLY' ? 'Friendly Amendment' : 'Unfriendly Amendment')}
-          onClick={() => void run(() => api.createAmendment(document.id,
-            {meetingSessionId: session.id, amendmentType, customTitle: null, content: '', ...represented}))} />)}
-      </div>}
-      </Segment>
-      {selectedAmendment && <AmendmentCard key={selectedAmendment.id} snapshot={snapshot}
-        amendment={selectedAmendment} run={run} api={api} canChair={canChair} representedSeatId={seatId} />}
-    </>}
-    {activeTab === 'voting' && <>{directVote && <Segment className="resolution-voting-board">
+  return <Container fluid className="document-voting-page">
+    <div className="document-voting-heading"><span>{t('Voting in progress')}</span><Header as="h1">{document.title}</Header></div>
+    {directVote && <Segment className="resolution-voting-board">
       <div className="resolution-voting-dashboard"><aside className="resolution-voting-metrics resolution-voting-thresholds">
         <div className="resolution-voting-metric metric-present"><span>{t('Present')}</span><strong>{directEligibility.length}</strong></div>
         <div className="resolution-voting-metric metric-simple"><span>{t('Simple majority')}</span>
@@ -1936,12 +1736,271 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
           {key: 'two-thirds-no-abstain', value: 'TWO_THIRDS_NON_ABSTAINING', text: t('Two-thirds majority required, ignoring abstentions')}]}
         onChange={(_, data) => void run(() => api.updateDocumentSettings(document.id,
           {baseRevision: document.revision, majority: data.value as 'SIMPLE_MAJORITY' | 'TWO_THIRDS' | 'TWO_THIRDS_NON_ABSTAINING'}))} />
-      </Segment>}</Segment>}{snapshot.committee.operationMode !== 'CHAIR_OPERATED' && <>
-        <Divider horizontal>{t('Formal Ballot')}</Divider>
-        <Ballots snapshot={snapshot} run={run} api={api} canChair={canChair} subjectId={document.id} />
-        {canChair && document.status === 'VOTING' && session && <Button onClick={() => void run(() => api.createBallot(snapshot.committee.id,
-          {meetingSessionId: session.id, subjectType: 'RESOLUTION', subjectId: document.id, procedural: false,
-            thresholdKind: 'TWO_THIRDS'}))}>{t('Open Formal Ballot')}</Button>}</>}</>}</Grid.Column>
+      </Segment>}</Segment>}<Confirm open={!!voteLeaveTarget} header={t('Discard unsubmitted votes?')} content={null}
+    cancelButton={t('Cancel')} confirmButton={{content: t('Leave page'), disabled: voteSaving}}
+    onCancel={() => setVoteLeaveTarget(undefined)}
+    onConfirm={() => {if (!voteLeaveTarget || submittingVote.current) return;
+      updateVoteDraft(undefined); setSavedDirectVote(undefined);
+      allowVoteNavigation.current = true;
+      if (voteLeaveTarget.action === 'POP') history.goBack();
+      else if (voteLeaveTarget.action === 'REPLACE') history.replace(voteLeaveTarget.location);
+      else history.push(voteLeaveTarget.location);
+      setVoteLeaveTarget(undefined); allowVoteNavigation.current = false;
+    }} /></Container>;
+}
+
+function VotingWorkspace({snapshot, run, api, canChair, resourceId}: CommonProps & {resourceId?: string}) {
+  const history = useHistory();
+  const [draftId, setDraftId] = React.useState(() => new URLSearchParams(history.location.search).get('draft') ?? '');
+  const [saving, setSaving] = React.useState(false);
+  const savingRef = React.useRef(false);
+  const documents = snapshot.documents ?? [];
+  const document = documents.find(item => item.id === resourceId);
+  const hasBallot = (id: string) => (snapshot.ballots ?? []).some(ballot => ballot.subjectId === id);
+  const session = snapshot.meetingSession?.status === 'OPEN' ? snapshot.meetingSession : undefined;
+  const candidates = documents.filter(item => item.meetingSessionId === session?.id && !item.directVote?.startedAt && !hasBallot(item.id)
+    && (item.kind === 'RESOLUTION' && ['DRAFT', 'PUBLISHED', 'VOTING'].includes(item.status)
+      || item.kind === 'AMENDMENT' && item.amendmentType === 'UNFRIENDLY' && item.status === 'VOTING'
+        && documents.some(parent => parent.id === item.resolutionId && parent.status !== 'POSTPONED')));
+  const numbering = (item: typeof documents[number]) => {
+    const session = snapshot.meetingSessions?.find(session => session.id === item.meetingSessionId)?.ordinal ?? 0;
+    const parent = documents.find(parent => parent.id === item.resolutionId);
+    return [session, parent?.ordinal ?? item.ordinal, item.amendmentOrdinal ?? 0];
+  };
+  const groups = [
+    {label: 'Draft Directives', matches: (item: typeof documents[number]) => item.kind === 'RESOLUTION' && item.draftType === 'DIRECTIVE'},
+    {label: 'Unfriendly Amendments', matches: (item: typeof documents[number]) => item.kind === 'AMENDMENT'},
+    {label: 'Draft Resolutions', matches: (item: typeof documents[number]) => item.kind === 'RESOLUTION' && item.draftType !== 'DIRECTIVE'}
+  ];
+  const create = async () => {
+    const draft = candidates.find(item => item.id === draftId);
+    if (!draft || !canChair || savingRef.current) return;
+    savingRef.current = true; setSaving(true);
+    try {
+      let createdId: string | undefined;
+      await run(async () => {
+        createdId = (await api.startDocumentVote(draft.id, draft.revision)).id;
+      });
+      if (createdId) history.push(`/committees/${snapshot.committee.id}/votes/${createdId}`);
+    } finally {savingRef.current = false; setSaving(false);}
+  };
+  if (!resourceId || resourceId === 'new') return <Container className="new-document-vote-page">
+    <Card centered className="new-document-vote-card"><Card.Content><Form onSubmit={() => void create()}>
+      <Form.Field><select aria-label={t('Choose draft')} value={draftId} disabled={!canChair || saving}
+        onChange={event => setDraftId(event.currentTarget.value)}>
+        <option value="">{t('Choose draft')}</option>
+        {groups.map(group => <optgroup key={group.label} label={t(group.label)}>
+          {candidates.filter(group.matches).sort((a, b) => {
+            const first = numbering(a), second = numbering(b);
+            return first[0] - second[0] || first[1] - second[1] || first[2] - second[2];
+          }).map(item => <option key={item.id} value={item.id}>{item.title}</option>)}
+        </optgroup>)}
+      </select></Form.Field>
+      <Button primary fluid loading={saving} disabled={!canChair || saving || !candidates.some(item => item.id === draftId)}>{t('Confirm vote')}</Button>
+    </Form></Card.Content></Card>
+  </Container>;
+  if (!document) return <Message error content={t('Draft not found.')} />;
+  if (!document.directVote?.startedAt && !hasBallot(document.id)) return <Redirect to={`/committees/${snapshot.committee.id}/votes/new?draft=${document.id}`} />;
+  if (hasBallot(document.id)) return <Container fluid><div className="document-voting-heading">
+    <span>{t('Voting in progress')}</span><Header as="h1">{document.title}</Header></div>
+    <Ballots snapshot={snapshot} run={run} api={api} canChair={canChair} subjectId={document.id} /></Container>;
+  return <DocumentVoting snapshot={snapshot} run={run} api={api} canChair={canChair} document={document} />;
+}
+
+function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab, draftType = 'RESOLUTION'}: CommonProps & {resourceId?: string; tab?: string; draftType?: 'RESOLUTION' | 'DIRECTIVE'}) {
+  const history = useHistory();
+  const session = snapshot.meetingSession?.status === 'OPEN' ? snapshot.meetingSession : undefined;
+  const selectedDocument = (snapshot.documents ?? []).find(item => item.id === resourceId && item.kind === 'RESOLUTION' && (item.draftType ?? 'RESOLUTION') === draftType);
+  const [selectedAmendmentId, setSelectedAmendmentId] = React.useState('');
+  React.useEffect(() => {setSelectedAmendmentId('');}, [resourceId, tab]);
+  const [versionTitle, setVersionTitle] = React.useState(selectedDocument?.title ?? '');
+  const [versionTitleDirty, setVersionTitleDirty] = React.useState(false);
+  const [versionContent, setVersionContent] = React.useState(selectedDocument?.currentVersion.content ?? '');
+  const [contentSource, setContentSource] = React.useState<'TEXT' | 'FILE'>('FILE');
+  const [versionFileId, setVersionFileId] = React.useState(selectedDocument?.currentVersion.contentFile?.id ?? '');
+  const [availableFiles, setAvailableFiles] = React.useState<FileEntry[]>([]);
+  const [selectedExistingFileId, setSelectedExistingFileId] = React.useState('');
+  const [filesLoading, setFilesLoading] = React.useState(true);
+  const [bodyDirty, setBodyDirty] = React.useState(false);
+  const [downloadFailure, setDownloadFailure] = React.useState<unknown>();
+  const [countrySelections, setCountrySelections] = React.useState({proposers: '', seconders: ''});
+  React.useEffect(() => {setCountrySelections({proposers: '', seconders: ''});}, [selectedAmendmentId]);
+  const [countriesSaving, setCountriesSaving] = React.useState(false);
+  const savingCountries = React.useRef(false);
+  const [fileSaving, setFileSaving] = React.useState(false);
+  const savingFile = React.useRef(false);
+  const [preparingDownload, setPreparingDownload] = React.useState(false);
+  const downloadingFile = React.useRef(false);
+  const downloadGeneration = React.useRef(0);
+  React.useEffect(() => () => {downloadGeneration.current += 1;}, []);
+  const [filesRetry, setFilesRetry] = React.useState(0);
+  const [fileFailure, setFileError] = React.useState<unknown>();
+  const fileError = fileFailure ? apiErrorText(fileFailure) : undefined;
+  const [seatId, setSeatId] = React.useState(snapshot.viewer.seatId ?? snapshot.seats[0]?.id ?? '');
+  const creatingDraft = React.useRef(false);
+  const represented = canChair && seatId ? {onBehalfOfSeatId: seatId} : {};
+  const canParticipate = snapshot.viewer.audience !== 'PUBLIC' && snapshot.committee.status === 'ACTIVE';
+  React.useEffect(() => {
+    if (resourceId !== 'new') {creatingDraft.current = false; return;}
+    if (creatingDraft.current || !canParticipate || !session) return;
+    creatingDraft.current = true;
+    void (async () => {
+      let created: Awaited<ReturnType<SelfHostedApi['createResolution']>> | undefined;
+      await run(async () => {created = await api.createResolution(snapshot.committee.id,
+        {meetingSessionId: session.id, customTitle: null, content: '', ...(draftType === 'DIRECTIVE' ? {draftType} : {})});});
+      if (created) history.replace(`/committees/${snapshot.committee.id}/${draftType === 'DIRECTIVE' ? 'directives' : 'resolutions'}/${created.id}`);
+      else creatingDraft.current = false;
+    })();
+  }, [api, canParticipate, history, resourceId, run, session, snapshot.committee.id, draftType]);
+  React.useEffect(() => {
+    if (!selectedDocument) return;
+    setVersionTitle(selectedDocument.title); setVersionTitleDirty(false); setBodyDirty(false); setVersionContent(selectedDocument.currentVersion.content);
+    setVersionFileId(selectedDocument.currentVersion.contentFile?.id ?? '');
+  }, [selectedDocument?.id, selectedDocument?.revision]);
+  React.useEffect(() => {setContentSource('FILE'); setCountrySelections({proposers: '', seconders: ''});}, [selectedDocument?.id]);
+  React.useEffect(() => {
+    if (contentSource !== 'FILE') return;
+    let active = true; setFileError(undefined); setFilesLoading(true);
+    void api.listFiles(snapshot.committee.id).then(items => {
+      if (!active) return;
+      const published = items.filter(file => file.committeeId === snapshot.committee.id && file.status === 'PUBLISHED');
+      setAvailableFiles(published);
+      setSelectedExistingFileId(current => published.some(file => file.id === current) ? current : '');
+    }).catch(caught => {if (active) {setFileError(caught); setAvailableFiles([]);}})
+      .finally(() => {if (active) setFilesLoading(false);});
+    return () => {active = false;};
+  }, [api, snapshot.committee.id, snapshot.sync.committeeEventSequence, contentSource, filesRetry]);
+  if (resourceId === 'new') return canParticipate && session ? <Loading />
+    : <Message content={session ? t('An active seat assignment is required.') : t('Start a meeting first.')} />;
+  const document = selectedDocument;
+  if (!document) return <Message error content={t(draftType === 'DIRECTIVE' ? 'Draft not found.' : 'Draft Resolution not found.')} />;
+  const amendments = (snapshot.documents ?? []).filter(item => item.resolutionId === document.id);
+  const activeTab = tab === 'amendments' ? 'amendments' : 'text';
+  const selectedAmendment = amendments.find(item => item.id === selectedAmendmentId);
+  const countryDocument = activeTab === 'text' ? document : activeTab === 'amendments' ? selectedAmendment : undefined;
+  const canEditCountries = canChair && (countryDocument?.kind !== 'AMENDMENT'
+    || ['DRAFT', 'PUBLISHED'].includes(countryDocument.status));
+  const base = `/committees/${snapshot.committee.id}/${draftType === 'DIRECTIVE' ? 'directives' : 'resolutions'}/${document.id}`;
+  const editable = canParticipate && !document.votingVersionId && !['VOTING', 'PASSED', 'FAILED'].includes(document.status);
+  const saveVersion = (requestedSource?: 'TEXT' | 'FILE', nextFileId = versionFileId) => {
+    if (!requestedSource && !bodyDirty && !versionTitleDirty) return;
+    const nextSource = requestedSource ?? (bodyDirty ? contentSource : document.currentVersion.contentFile ? 'FILE' : 'TEXT');
+    const nextContent = nextSource === 'TEXT' ? versionContent : '';
+    const contentFileEntryId = nextSource === 'FILE' ? nextFileId : null;
+    if (!editable || nextSource === 'FILE' && !contentFileEntryId
+      || !versionTitleDirty && nextContent === document.currentVersion.content
+        && contentFileEntryId === (document.currentVersion.contentFile?.id ?? null)) return;
+    return run(() => api.createDocumentVersion(document.id, {baseRevision: document.revision,
+      customTitle: versionTitleDirty ? versionTitle.trim() || null : document.customTitle, content: nextContent, contentFileEntryId, ...represented}));
+  };
+  const useFile = async () => {
+    if (savingFile.current || filesLoading || !availableFiles.some(file => file.id === selectedExistingFileId)) return;
+    savingFile.current = true; setFileSaving(true);
+    try {await saveVersion('FILE', selectedExistingFileId);}
+    finally {savingFile.current = false; setFileSaving(false);}
+  };
+  const downloadFile = async () => {
+    const id = document.currentVersion.contentFile?.id;
+    if (!id || downloadingFile.current) return;
+    const generation = downloadGeneration.current;
+    downloadingFile.current = true; setPreparingDownload(true); setDownloadFailure(undefined);
+    try {
+      let readiness = await api.prepareFileDownload(id);
+      while (readiness.status === 'PREPARING' && generation === downloadGeneration.current) {
+        await new Promise(resolve => window.setTimeout(resolve, (readiness.retryAfterSeconds ?? 2) * 1000));
+        if (generation !== downloadGeneration.current) return;
+        readiness = await api.fileDownloadReadiness(id);
+      }
+      if (generation !== downloadGeneration.current) return;
+      if (readiness.status !== 'READY') throw Object.assign(new Error(), {code: readiness.code ?? 'NOT_FOUND'});
+      window.location.assign(api.fileDownloadUrl(id));
+    } catch (caught) {if (generation === downloadGeneration.current) setDownloadFailure(caught);}
+    finally {downloadingFile.current = false; if (generation === downloadGeneration.current) setPreparingDownload(false);}
+  };
+  const presentSeatIds = new Set((snapshot.attendanceBySession?.[document.meetingSessionId] ?? snapshot.attendance)
+    .filter(item => item.state === 'PRESENT').map(item => item.seatId));
+  const selectedCountryIds = new Set([...(countryDocument?.proposers ?? []), ...(countryDocument?.seconders ?? [])].map(country => country.seatId));
+  const countryOptions = snapshot.seats.filter(seat => !selectedCountryIds.has(seat.id))
+    .map(seat => ({key: seat.id, value: seat.id, text: seat.displayName, content: seatOptionContent(seat),
+      searchTerms: seat.searchTerms,
+      disabled: !presentSeatIds.has(seat.id)}));
+  const saveCountries = async (role: 'proposers' | 'seconders', ids: string[], added = false) => {
+    if (!canEditCountries || !countryDocument || savingCountries.current) return;
+    savingCountries.current = true; setCountriesSaving(true);
+    try {
+      await run(async () => {
+        await api.updateDocumentSettings(countryDocument.id, {baseRevision: countryDocument.revision,
+          [role === 'proposers' ? 'proposerSeatIds' : 'seconderSeatIds']: ids});
+        if (added) setCountrySelections(previous => ({...previous, [role]: ''}));
+      });
+    } finally {savingCountries.current = false; setCountriesSaving(false);}
+  };
+  return <Container className="resolution-page" fluid style={{paddingBottom: '2em'}}><Grid columns="equal" stackable>
+    <Grid.Row><Grid.Column><Input value={versionTitle} loading={!document} labelPosition="right"
+      label={<Label>{statusLabel(document.status)}</Label>} size="massive" fluid placeholder={t(draftType === 'DIRECTIVE' ? 'Set directive name' : 'Set resolution name')}
+      disabled={!editable} onChange={event => {setVersionTitle(event.currentTarget.value); setVersionTitleDirty(true);}} onBlur={() => void saveVersion()} /></Grid.Column></Grid.Row>
+    <Grid.Row><Grid.Column><Menu pointing secondary>
+      {[['text', 'Text'], ['amendments', 'Amendments']].map(([path, label]) =>
+        <Menu.Item key={path} as={Link} to={path === 'text' ? base : `${base}/${path}`}
+          active={activeTab === path}>{t(label)}</Menu.Item>)}</Menu></Grid.Column></Grid.Row>
+    <Grid.Row><Grid.Column width={11}>
+    {activeTab === 'text' && <><Button.Group basic compact className="resolution-content-source">
+      <Button active={contentSource === 'FILE'} onClick={() => setContentSource('FILE')}>{t('File')}</Button>
+      <Button active={contentSource === 'TEXT'} onClick={() => setContentSource('TEXT')}>{t('Text')}</Button>
+    </Button.Group><Divider hidden />
+    {contentSource === 'TEXT' ? <Form><TextArea value={versionContent} rows={3} placeholder={t(draftType === 'DIRECTIVE' ? 'Directive text' : 'Resolution text')}
+      disabled={!editable} onChange={(_, data) => {setVersionContent(String(data.value)); setBodyDirty(true);}} onBlur={() => void saveVersion()} /></Form>
+    : <Segment className="resolution-file-body resolution-document-file-body">
+      {fileError && <Message error content={fileError} />}
+      {Boolean(downloadFailure) && <Message error content={apiErrorText(downloadFailure)} />}
+      {document.currentVersion.contentFile && <><div className="resolution-document-file-heading">
+        <Header as="h4">{document.currentVersion.contentFile.logicalName}</Header>
+        <FileStatusLabel status={document.currentVersion.contentFile.status} />
+      </div>
+        {document.currentVersion.contentFile.status === 'PUBLISHED'
+          ? <Button type="button" primary fluid loading={preparingDownload} disabled={preparingDownload}
+            onClick={() => void downloadFile()}>{t('Download')} <Icon name="arrow down" /></Button>
+          : <Message content={t('The referenced file is unavailable.')} />}
+        {canChair && document.currentVersion.contentFile.status !== 'PUBLISHED'
+          && document.currentVersion.contentFile.status !== 'DELETED'
+          && <Button as={Link} to={`/committees/${snapshot.committee.id}/posts/review`}>{t('Review files')}</Button>}
+        <Divider /></>}
+      {editable && <>
+        {filesLoading ? <Loading /> : fileError ? <Button type="button" onClick={() => setFilesRetry(value => value + 1)}>{t('Retry')}</Button>
+          : availableFiles.length === 0 ? <><Message content={t('No published files')} />
+            <Button as={Link} to={`/committees/${snapshot.committee.id}/posts`}>{t('Files')}</Button></>
+          : <Form onSubmit={() => void useFile()}>
+            <Form.Select label={t('Choose file')} selection fluid search={availableFiles.length > 10}
+              value={selectedExistingFileId || false} disabled={fileSaving}
+              options={availableFiles.map(file => ({key: file.id, value: file.id,
+                text: file.logicalName, description: file.fileType ? delegateFileTypeName(file.fileType, snapshot.committee.committeeLanguage) : undefined}))}
+              onChange={(_, data) => setSelectedExistingFileId(String(data.value))} />
+            <Button fluid loading={fileSaving} disabled={fileSaving || !selectedExistingFileId || !availableFiles.some(file => file.id === selectedExistingFileId)}
+              ><Icon name="check" />{t('Use this file')}</Button>
+          </Form>}
+      </>}
+    </Segment>}</>}
+    {activeTab === 'amendments' && <>
+      <Segment className="amendment-list-panel">
+      {amendments.length === 0 ? <Message content={t('No Amendments')} /> : <List selection divided className="amendment-list">
+        {[...amendments].reverse().map(amendment => <List.Item key={amendment.id} as="button" type="button" role="button"
+          active={amendment.id === selectedAmendmentId} aria-pressed={amendment.id === selectedAmendmentId}
+          disabled={countriesSaving} onClick={() => setSelectedAmendmentId(amendment.id)}>
+          <Icon name="file text outline" /><List.Content><span className="amendment-list-name">{amendment.title}</span></List.Content>
+          <span className="amendment-list-status">{statusLabel(amendment.status)}</span><Icon name="angle right" />
+        </List.Item>)}
+      </List>}
+      {canParticipate && session && document.status === 'PUBLISHED' && <div className="amendment-create-buttons">
+        {(['FRIENDLY', 'UNFRIENDLY'] as const).map(amendmentType => <Button key={amendmentType} icon="plus"
+          content={t(amendmentType === 'FRIENDLY' ? 'Friendly Amendment' : 'Unfriendly Amendment')}
+          onClick={() => void run(() => api.createAmendment(document.id,
+            {meetingSessionId: session.id, amendmentType, customTitle: null, content: '', ...represented}))} />)}
+      </div>}
+      </Segment>
+      {selectedAmendment && <AmendmentCard key={selectedAmendment.id} snapshot={snapshot}
+        amendment={selectedAmendment} run={run} api={api} canChair={canChair} representedSeatId={seatId} />}
+    </>}
+</Grid.Column>
     {countryDocument && <Grid.Column width={5}><Segment className="resolution-countries-card"><Form>
       {(['proposers', 'seconders'] as const).map(role => <section className="resolution-country-list" key={role}
         aria-label={t(role === 'proposers' ? 'Resolution proposer' : 'Resolution seconder')}>
@@ -1964,17 +2023,7 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
         onChange={(_, data) => void run(() => api.updateDocumentSettings(document.id,
           {baseRevision: document.revision, delegatesCanAmend: data.checked ?? false}))} />}
     </Form></Segment></Grid.Column>}
-  </Grid.Row></Grid><Confirm open={!!voteLeaveTarget} header={t('Discard unsubmitted votes?')} content={null}
-    cancelButton={t('Cancel')} confirmButton={{content: t('Leave page'), disabled: voteSaving}}
-    onCancel={() => setVoteLeaveTarget(undefined)}
-    onConfirm={() => {if (!voteLeaveTarget || submittingVote.current) return;
-      updateVoteDraft(undefined); setSavedDirectVote(undefined);
-      allowVoteNavigation.current = true;
-      if (voteLeaveTarget.action === 'POP') history.goBack();
-      else if (voteLeaveTarget.action === 'REPLACE') history.replace(voteLeaveTarget.location);
-      else history.push(voteLeaveTarget.location);
-      setVoteLeaveTarget(undefined); allowVoteNavigation.current = false;
-    }} /></Container>;
+  </Grid.Row></Grid></Container>;
 }
 
 interface CommonProps {snapshot: CommitteeWorkspaceSnapshot; run: Run; api: SelfHostedApi; canChair: boolean}
@@ -1985,6 +2034,9 @@ export default function ProceedingsPanel({snapshot, run, api, canChair, view, re
   if (view === 'unmod') return <UnmoderatedCaucus snapshot={snapshot} run={run} api={api} canChair={canChair} />;
   if (view === 'caucus') return <SpeakerWorkspace snapshot={snapshot} run={run} api={api} canChair={canChair} resourceId={resourceId} />;
   if (view === 'strawpoll') return <StrawpollWorkspace snapshot={snapshot} run={run} api={api} canChair={canChair} resourceId={resourceId} />;
+  if ((view === 'resolution' || view === 'directive') && ['voting', 'ballot'].includes(tab ?? '')) return <Redirect to={`/committees/${snapshot.committee.id}/votes/${resourceId}`} />;
+  if (view === 'voting') return <VotingWorkspace snapshot={snapshot} run={run} api={api} canChair={canChair} resourceId={resourceId} />;
+  if (view === 'directive') return <DocumentWorkspace snapshot={snapshot} run={run} api={api} canChair={canChair} resourceId={resourceId} tab={tab} draftType="DIRECTIVE" />;
   if (view === 'resolution') return <DocumentWorkspace snapshot={snapshot} run={run} api={api} canChair={canChair} resourceId={resourceId} tab={tab} />;
   return <Motions snapshot={snapshot} run={run} api={api} canChair={canChair} />;
 }

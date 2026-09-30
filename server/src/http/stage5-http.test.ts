@@ -132,6 +132,19 @@ describe('stage 5 timer HTTP boundary', () => {
       {baseRevision: 1, includeNonVotingSeats: false}, expect.any(Object));
   });
 
+  it('creates a persistent document vote with CSRF and idempotency', async () => {
+    const startDocumentVote = vi.fn(async () => ({id: 'draft'}));
+    const stage5 = {startDocumentVote} as unknown as Stage5Service;
+    const path = '/api/v1/documents/30000000-0000-4000-8000-000000000001/vote';
+    const response = await send(stage5, path, {baseRevision: 2});
+    expect(response.statusCode).toBe(200);
+    expect(startDocumentVote).toHaveBeenCalledWith(authenticated, '30000000-0000-4000-8000-000000000001',
+      {baseRevision: 2}, 'timer-key', expect.any(Object));
+    const {['idempotency-key']: _key, ...withoutKey} = headers;
+    expect((await send(stage5, path, {baseRevision: 2}, withoutKey as typeof headers)).statusCode).toBe(400);
+    expect(startDocumentVote).toHaveBeenCalledTimes(1);
+  });
+
   it('routes the complete resolution vote with its idempotency key', async () => {
     const submitResolutionDirectVote = vi.fn(async () => ({id: 'resolution'}));
     const stage5 = {submitResolutionDirectVote} as unknown as Stage5Service;

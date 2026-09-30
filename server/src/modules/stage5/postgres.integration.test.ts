@@ -513,7 +513,7 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
       {seatId: f.secondSeat.id, choice: 'FOR'}, context('direct-for'));
     expect(direct.directVote?.automaticResult).toBe('VETOED');
     const create = async (key: string) => {
-      const subject = key === 'cap-ballot' ? document : await stage5.createResolution(f.firstChair, f.committee.id,
+      const subject = await stage5.createResolution(f.firstChair, f.committee.id,
         {meetingSessionId: f.session.id, customTitle: key, content: 'Vote'}, key + '-document', context(key));
       // Introduction is covered separately; enter voting through the actual command and frozen rule.
       await pool!.query("UPDATE documents SET status='PUBLISHED' WHERE id=$1", [subject.id]);
@@ -849,7 +849,7 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
     const votePassed = await stage5.decideMotion(fixture.firstChair, voteMotion.id,
       {baseRevision: voteMotion.revision, result: 'PASSED'}, context('vote-on-amendment-passed'));
     expect(votePassed.destinationPath).toBe(
-      `/committees/${fixture.committee.id}/resolutions/${resolution.id}/amendments`);
+      `/committees/${fixture.committee.id}/votes/new?draft=${formal.id}`);
     formal = (await stage4.snapshot(fixture.committee.id, fixture.firstChair)).documents!
       .find(document => document.id === formal.id)!;
     expect(formal).toMatchObject({status: 'VOTING', votingVersionId: formal.currentVersion.id});
@@ -1270,7 +1270,7 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
     const passedVoteMotion = await stage5.decideMotion(fixture.firstChair, voteMotion.id,
       {baseRevision: voteMotion.revision, result: 'PASSED'}, context('pass-vote-on-resolution'));
     expect(passedVoteMotion.destinationPath).toBe(
-      `/committees/${fixture.committee.id}/resolutions/${resolution.id}/voting`);
+      `/committees/${fixture.committee.id}/votes/new?draft=${resolution.id}`);
     const votingSnapshot = await stage4.snapshot(fixture.committee.id, fixture.firstChair);
     resolution = votingSnapshot.documents?.find(document => document.id === resolution.id) as typeof resolution;
     expect(resolution.status).toBe('VOTING');

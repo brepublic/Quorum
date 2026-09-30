@@ -377,7 +377,7 @@ interface SnapshotStrawpollRow extends QueryResultRow {
 }
 
 interface SnapshotDocumentRow extends QueryResultRow {
-  amendment_type: 'FRIENDLY' | 'UNFRIENDLY'; type_ordinal: number; resolution_ordinal: number;
+  amendment_type: 'FRIENDLY' | 'UNFRIENDLY'; type_ordinal: number; resolution_ordinal: number; resolution_draft_type: 'RESOLUTION' | 'DIRECTIVE';
   id: string; committee_id: string; meeting_session_id: string; kind: ProceedingDocument['kind']; draft_type: 'RESOLUTION' | 'DIRECTIVE'; custom_title: string | null; ordinal: number;
   status: ProceedingDocument['status']; rule_package_version_id: string; current_version_id: string;
   voting_version_id: string | null; is_public: boolean; revision: number; created_at: Date; updated_at: Date;
@@ -1065,7 +1065,7 @@ export class Stage4Service {
           closedAt: row.closed_at?.toISOString() ?? null};
       }));
       const documentRows = await client.query<SnapshotDocumentRow>(`SELECT d.*,a.resolution_document_id,a.amendment_type,a.type_ordinal,
-        r.ordinal AS resolution_ordinal FROM documents d
+        r.ordinal AS resolution_ordinal,r.draft_type AS resolution_draft_type FROM documents d
         LEFT JOIN amendments a ON a.document_id=d.id LEFT JOIN documents r ON r.id=a.resolution_document_id WHERE d.committee_id=$1 AND d.deleted_at IS NULL
         ORDER BY d.created_at,d.id`, [committeeId]);
       const visibleDocuments = viewer.audience === 'PUBLIC' ? documentRows.rows.filter(row => row.is_public) : documentRows.rows;
@@ -1158,7 +1158,7 @@ export class Stage4Service {
           ...(row.kind === 'AMENDMENT' ? {amendmentType: row.amendment_type, amendmentOrdinal: row.type_ordinal} : {}),
           resolutionId: row.resolution_document_id, ordinal: row.ordinal, customTitle: row.custom_title,
           title: formatCommitteeContent({kind: row.kind === 'RESOLUTION' ? row.draft_type : row.kind, ordinal: row.kind === 'AMENDMENT' ? row.type_ordinal : row.ordinal,
-            amendmentType: row.amendment_type, resolutionOrdinal: row.resolution_ordinal, customTitle: row.custom_title,
+            amendmentType: row.amendment_type, resolutionOrdinal: row.resolution_ordinal, resolutionDraftType: row.resolution_draft_type, customTitle: row.custom_title,
             sessionOrdinal: meetingSessionsResult.rows.find(session => session.id === row.meeting_session_id)!.ordinal}, committee.committee_language), status: row.status,
           rulePackageVersionId: row.rule_package_version_id,
           currentVersion: {id: current.id, versionNumber: current.version_number, content: current.content,

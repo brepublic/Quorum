@@ -51,7 +51,7 @@ function render(node: React.ReactNode, path = '/') {
 
 describe('self-hosted workspace navigation', () => {
   it('folds only as much as needed, restores items, and preserves the workspace', () => {
-    let available = 1800;
+    let available = 2000;
     let resize = () => {};
     vi.stubGlobal('ResizeObserver', class {
       constructor(callback: () => void) { resize = callback; }
@@ -76,10 +76,10 @@ describe('self-hosted workspace navigation', () => {
       expect(page.querySelector('input')).toBe(draft);
       expect(draft.value).toBe('unsaved draft');
     };
-    for (const [width, level] of [[1800, 0], [1680, 1], [1600, 2], [1500, 3], [1400, 4], [1300, 5], [1200, 6]]) {
+    for (const [width, level] of [[2000, 0], [1880, 1], [1800, 2], [1700, 3], [1600, 4], [1500, 5], [1400, 6], [1300, 7], [1200, 8], [1100, 9], [1000, 10]]) {
       assertLevel(width, level);
       expect(Boolean(nav.querySelector('.realtime-status-label'))).toBe(level === 0);
-      for (const [path, minimum] of [['/settings', 2], ['/help', 2], ['/stats', 3], ['/posts', 4], ['/notes', 5], ['/strawpolls', 6]] as const) {
+      for (const [path, minimum] of [['/settings', 2], ['/help', 2], ['/stats', 3], ['/posts', 4], ['/notes', 5], ['/strawpolls', 6], ['/votes', 7], ['/directives', 8], ['/resolutions', 9], ['/caucuses', 10]] as const) {
         expect(Boolean(nav.querySelector(`.committee-primary-navigation > [data-navigation-key="${path}"]`))).toBe(level < minimum);
       }
     }
@@ -90,15 +90,15 @@ describe('self-hosted workspace navigation', () => {
     act(() => more.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true})));
     expect(more.classList.contains('visible')).toBe(false);
     act(() => more.click());
-    const poll = more.querySelector<HTMLElement>('.committee-overflow-poll')!;
+    const poll = more.querySelector<HTMLElement>('[data-navigation-key="/strawpolls"]')!;
     act(() => poll.click());
     expect(poll.querySelector('.visible.menu a[href="/committees/committee/strawpolls/new"]')).not.toBeNull();
     expect(poll.querySelector('a.active')?.getAttribute('href')).toBe('/committees/committee/strawpolls/poll');
     act(() => poll.querySelector<HTMLElement>('a.active')?.click());
     expect(more.classList.contains('visible')).toBe(false);
-    assertLevel(1000, 7);
+    assertLevel(800, 11);
     expect(nav.getAttribute('data-navigation-mode')).toBe('sidebar');
-    for (const [width, level] of [[1200, 6], [1300, 5], [1400, 4], [1500, 3], [1600, 2], [1680, 1], [1800, 0]]) assertLevel(width, level);
+    for (const [width, level] of [[1000, 10], [1100, 9], [1200, 8], [1300, 7], [1400, 6], [1500, 5], [1600, 4], [1700, 3], [1800, 2], [1880, 1], [2000, 0]]) assertLevel(width, level);
     expect(page.querySelector('.committee-navigation-measurement')?.hasAttribute('inert')).toBe(true);
     expect(nav.querySelector('a[href="/committees/committee/setup"]')?.textContent).toBe('Seats');
     act(() => setLanguage('zh-CN'));

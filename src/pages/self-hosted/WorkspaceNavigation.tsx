@@ -74,12 +74,12 @@ function PrimaryItems({snapshot, onNavigate, onCreateCaucus, level = 0}: {
   useLanguage();
   const location = useLocation();
   const [moreOpen, setMoreOpen] = React.useState(false);
-  const [pollOpen, setPollOpen] = React.useState(false);
+  const [pollOpen, setPollOpen] = React.useState<string | null>(null);
   const [pollDirection, setPollDirection] = React.useState<'left' | 'right'>('left');
   const moreRef = React.useRef<HTMLSpanElement>(null);
   React.useLayoutEffect(() => {
     if (!pollOpen) return;
-    const trigger = moreRef.current?.querySelector<HTMLElement>('.committee-overflow-poll');
+    const trigger = moreRef.current?.querySelector<HTMLElement>(`[data-navigation-key="/${pollOpen}"]`);
     const menu = trigger?.querySelector<HTMLElement>(':scope > .menu');
     if (!trigger || !menu) return;
     const position = () => {
@@ -91,18 +91,22 @@ function PrimaryItems({snapshot, onNavigate, onCreateCaucus, level = 0}: {
     window.addEventListener('resize', position);
     return () => window.removeEventListener('resize', position);
   }, [pollOpen]);
-  React.useEffect(() => { setMoreOpen(false); setPollOpen(false); }, [level, location.pathname]);
-  const navigate = () => { setMoreOpen(false); setPollOpen(false); onNavigate?.(); };
+  React.useEffect(() => { setMoreOpen(false); setPollOpen(null); }, [level, location.pathname]);
+  const navigate = () => { setMoreOpen(false); setPollOpen(null); onNavigate?.(); };
   const handleOverflowKey = (event: React.KeyboardEvent<HTMLSpanElement>) => {
     const target = event.target as HTMLElement;
     const trigger = target.closest<HTMLElement>('.dropdown');
     if (!trigger) return;
     const nested = trigger.classList.contains('committee-overflow-poll');
-    const setOpen = nested ? setPollOpen : setMoreOpen;
+    const nestedKey = trigger.getAttribute('data-navigation-key')?.slice(1) ?? '';
+    const setOpen = (value: boolean | ((open: boolean) => boolean)) => {
+      if (nested) setPollOpen(current => (typeof value === 'function' ? value(current === nestedKey) : value) ? nestedKey : null);
+      else setMoreOpen(value);
+    };
     if (event.key === 'Escape') {
       event.preventDefault(); event.stopPropagation();
       setOpen(false);
-      if (!nested) setPollOpen(false);
+      if (!nested) setPollOpen(null);
       trigger.focus();
     } else if ((event.key === 'Enter' || event.key === ' ') && target === trigger) {
       event.preventDefault(); event.stopPropagation();
@@ -126,17 +130,17 @@ function PrimaryItems({snapshot, onNavigate, onCreateCaucus, level = 0}: {
   const base = `/committees/${snapshot.committee.id}`;
   const item = (path: string, label: string) => <Menu.Item key={path} data-navigation-key={path} as={Link} to={`${base}${path}`}
     active={routeActive(location.pathname, `${base}${path}`, true)} onClick={onNavigate}>{t(label)}</Menu.Item>;
-  const dynamic = (kind: 'caucuses' | 'resolutions' | 'strawpolls', label: string, createLabel: string,
+  const dynamic = (kind: 'caucuses' | 'resolutions' | 'directives' | 'votes' | 'strawpolls', label: string, createLabel: string,
     resources: Array<{id: string; label: string}>, activeOverride?: boolean, nested = false) => {
     const destination = `${base}/${kind}`;
     const isActive = activeOverride !== undefined ? activeOverride : routeActive(location.pathname, destination, true);
     return <Dropdown key={kind} item text={t(label)} data-navigation-key={`/${kind}`}
       className={[isActive ? 'active' : '', nested ? 'committee-overflow-poll' : ''].join(' ')}
-      {...(nested ? {direction: pollDirection, open: pollOpen, closeOnBlur: false, openOnFocus: false, onOpen: () => setPollOpen(true),
-        onClose: () => setPollOpen(false), icon: pollDirection === 'left' ? 'angle left' : 'angle right'} : {})}>
+      {...(nested ? {direction: pollDirection, open: pollOpen === kind, closeOnBlur: false, openOnFocus: false, onOpen: () => setPollOpen(kind),
+        onClose: () => setPollOpen(null), icon: pollDirection === 'left' ? 'angle left' : 'angle right'} : {})}>
       <Dropdown.Menu>
         {kind === 'caucuses' && onCreateCaucus
-          ? <Dropdown.Item icon="add" text={t(createLabel)} onClick={() => {onNavigate?.(); onCreateCaucus();}} />
+          ? <Dropdown.Item icon="add" text={t(createLabel)} onClick={() => {navigate(); onCreateCaucus();}} />
           : <Dropdown.Item as={Link} to={`${destination}/new`} icon="add" text={t(createLabel)} onClick={navigate} />}
         {resources.map(resource => <Dropdown.Item key={resource.id} as={Link} to={`${destination}/${resource.id}`}
           active={location.pathname === `${destination}/${resource.id}` || location.pathname.startsWith(`${destination}/${resource.id}/`)}
@@ -149,8 +153,13 @@ function PrimaryItems({snapshot, onNavigate, onCreateCaucus, level = 0}: {
   const gslPathActive = gslPath !== undefined && routeActive(location.pathname, gslPath, true);
   const caucuses = (snapshot.speakerLists ?? []).filter(list => list.kind === 'MODERATED_CAUCUS').map(list => ({id: list.id,
     label: list.name}));
-  const resolutions = (snapshot.documents ?? []).filter(document => document.kind === 'RESOLUTION')
+  const resolutions = (snapshot.documents ?? []).filter(document => document.kind === 'RESOLUTION' && document.draftType !== 'DIRECTIVE')
     .map(document => ({id: document.id, label: document.title}));
+  const directives = (snapshot.documents ?? []).filter(document => document.kind === 'RESOLUTION' && document.draftType === 'DIRECTIVE')
+    .map(document => ({id: document.id, label: document.title}));
+  const votes = (snapshot.documents ?? []).filter(document => document.directVote?.startedAt
+    || (snapshot.ballots ?? []).some(ballot => ballot.subjectId === document.id))
+    .map(document => ({id: document.id, label: t('Vote - {name}', {name: document.title})}));
   const strawpolls = (snapshot.strawpolls ?? []).filter(poll => !poll.supersededById)
     .map(poll => ({id: poll.id, label: formatCommitteeContent({kind: 'STRAWPOLL', ordinal: poll.ordinal, question: poll.question}, snapshot.committee.committeeLanguage)}));
 
@@ -165,8 +174,10 @@ function PrimaryItems({snapshot, onNavigate, onCreateCaucus, level = 0}: {
       active={routeActive(location.pathname, `${base}/caucuses/${generalSpeakerList.id}`)} onClick={onNavigate}>
       {t("General Speaker's List")}</Menu.Item>}
     {item('/unmod', 'Unmoderated Caucus')}
-    {dynamic('caucuses', 'Moderated Caucuses', 'New Moderated Caucus', caucuses, gslPathActive ? false : undefined)}
-    {dynamic('resolutions', 'Draft Resolutions', 'New Draft Resolution', resolutions)}
+    {level < 10 && dynamic('caucuses', 'Moderated Caucuses', 'New Moderated Caucus', caucuses, gslPathActive ? false : undefined)}
+    {level < 9 && dynamic('resolutions', 'Draft Resolutions', 'New Draft Resolution', resolutions)}
+    {level < 8 && dynamic('directives', 'Draft Directives', 'New Draft Directive', directives)}
+    {level < 7 && dynamic('votes', 'Voting', 'New Vote', votes)}
     {level < 6 && dynamic('strawpolls', 'Strawpolls', 'New Strawpoll', strawpolls)}
     {level < 5 && item('/notes', 'Notes')}
     {level < 4 && item('/posts', 'Files')}
@@ -175,16 +186,20 @@ function PrimaryItems({snapshot, onNavigate, onCreateCaucus, level = 0}: {
     {level < 2 && item('/help', 'Help')}
     {level >= 2 && <span ref={moreRef} className="committee-navigation-more-wrapper" onKeyDownCapture={handleOverflowKey}
       onBlur={event => {
-        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {setMoreOpen(false); setPollOpen(false);}
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {setMoreOpen(false); setPollOpen(null);}
       }}>
       <Dropdown item closeOnBlur={false} openOnFocus={false} icon="ellipsis horizontal" aria-label={t('More options')} title={t('More options')}
         className={[
           'committee-navigation-more',
-          [['/settings', 2], ['/help', 2], ['/stats', 3], ['/posts', 4], ['/notes', 5], ['/strawpolls', 6]]
+          [['/settings', 2], ['/help', 2], ['/stats', 3], ['/posts', 4], ['/notes', 5], ['/strawpolls', 6], ['/votes', 7], ['/directives', 8], ['/resolutions', 9], ['/caucuses', 10]]
             .some(([path, minimum]) => level >= Number(minimum) && routeActive(location.pathname, `${base}${path}`, true)) ? 'active' : ''
         ].join(' ')} open={moreOpen} onOpen={() => setMoreOpen(true)}
-        onClose={() => {setMoreOpen(false); setPollOpen(false);}}>
+        onClose={() => {setMoreOpen(false); setPollOpen(null);}}>
         <Dropdown.Menu>
+          {level >= 10 && dynamic('caucuses', 'Moderated Caucuses', 'New Moderated Caucus', caucuses, gslPathActive ? false : undefined, true)}
+          {level >= 9 && dynamic('resolutions', 'Draft Resolutions', 'New Draft Resolution', resolutions, undefined, true)}
+          {level >= 8 && dynamic('directives', 'Draft Directives', 'New Draft Directive', directives, undefined, true)}
+          {level >= 7 && dynamic('votes', 'Voting', 'New Vote', votes, undefined, true)}
           {level >= 6 && dynamic('strawpolls', 'Strawpolls', 'New Strawpoll', strawpolls, undefined, true)}
           {level >= 5 && <Dropdown.Item as={Link} to={`${base}/notes`} active={routeActive(location.pathname, `${base}/notes`, true)} text={t('Notes')} onClick={navigate} />}
           {level >= 4 && <Dropdown.Item as={Link} to={`${base}/posts`} active={routeActive(location.pathname, `${base}/posts`, true)} text={t('Files')} onClick={navigate} />}
@@ -220,12 +235,12 @@ export function CommitteeNavigation({snapshot, user, logout, realtimeStatus = 'C
       const required = [full - more];
       required.push(required[0] - width('.realtime-status-label'));
       required.push(required[1] - width('[data-navigation-key="/settings"]') - width('[data-navigation-key="/help"]') + more);
-      for (const path of ['/stats', '/posts', '/notes', '/strawpolls']) {
+      for (const path of ['/stats', '/posts', '/notes', '/strawpolls', '/votes', '/directives', '/resolutions', '/caucuses']) {
         required.push(required[required.length - 1] - width(`[data-navigation-key="${path}"]`));
       }
       setLevel(previous => {
         const next = required.findIndex((needed, index) => needed + (index < previous ? 4 : 0) <= available);
-        return next < 0 ? 7 : next;
+        return next < 0 ? 11 : next;
       });
     };
     const observer = new ResizeObserver(measure);
@@ -236,7 +251,7 @@ export function CommitteeNavigation({snapshot, user, logout, realtimeStatus = 'C
     return () => observer.disconnect();
   }, [snapshot, user, realtimeStatus, language]);
   React.useEffect(() => { setSidebarOpen(false); }, [level]);
-  const mode = level === 7 ? 'sidebar' : 'desktop';
+  const mode = level === 11 ? 'sidebar' : 'desktop';
   return <>
     <nav data-navigation-mode={mode} data-collapse-level={level} className="committee-navigation-desktop" aria-label={t('Committee navigation')}>
       <Menu className="committee-primary-navigation" size="large" fluid>

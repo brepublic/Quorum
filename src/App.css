@@ -2784,3 +2784,10 @@ html[lang='zh-CN'] .ui.grid > .column {
 .template-editor-actions .template-delete-action { margin-left: auto; }
 .committee-files-page > .ui.menu { flex-wrap: wrap; }
 .committee-files-page > .ui.menu .item { flex-shrink: 0; }
+
+.new-document-vote-page { padding: 3rem 1rem; }
+.new-document-vote-card.ui.card { width: 28rem; max-width: 100%; }
+.new-document-vote-card select { width: 100%; }
+.document-voting-heading { text-align: center; margin: 1.5rem 0 2rem; }
+.document-voting-heading > span { font-size: .9rem; color: var(--quorum-muted-text, #767676); }
+.document-voting-heading .ui.header { margin-top: .5rem; overflow-wrap: anywhere; }

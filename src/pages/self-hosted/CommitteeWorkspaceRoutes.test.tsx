@@ -70,6 +70,62 @@ function clickSemanticCheckbox(element?: Element | null) {
 }
 
 describe('committee workspace routes and roles', () => {
+  it('creates a directive entry through the shared draft flow', async () => {
+    const createResolution = vi.fn(async () => ({id: 'directive'} as ProceedingDocument));
+    await render('CHAIR', '/committees/committee/directives/new', user, value => ({...value,
+      meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: 'Session 1', phaseId: 'formal-debate',
+        activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1, createdAt: '2026-09-30T00:00:00Z', closedAt: null}}), {createResolution});
+    expect(createResolution).toHaveBeenCalledTimes(1);
+    expect(createResolution).toHaveBeenCalledWith('committee', {meetingSessionId: 'meeting', customTitle: null,
+      content: '', draftType: 'DIRECTIVE'});
+  });
+
+  it('groups draft entries numerically and creates the selected vote once', async () => {
+    const make = (id: string, ordinal: number, draftType: 'RESOLUTION' | 'DIRECTIVE' = 'RESOLUTION'): ProceedingDocument => ({
+      id, committeeId: 'committee', meetingSessionId: 'meeting', kind: 'RESOLUTION', draftType, resolutionId: null, ordinal,
+      customTitle: null, title: `${draftType} 1.${ordinal}`, status: 'PUBLISHED', rulePackageVersionId: 'rules',
+      currentVersion: {id: `${id}-body`, versionNumber: 1, content: 'Text', contentFile: null, createdAt: '2026-09-30T00:00:00Z'},
+      votingVersionId: null, public: true, proposers: [], seconders: [], delegatesCanAmend: false, directVote: {
+        majority: 'TWO_THIRDS', startedAt: null, completedAt: null, settingsRevision: 1, castRevision: 0,
+        eligibility: [], threshold: 0, automaticResult: null, votes: []}, resultDecisions: [], revision: 1,
+      discussion: [], createdAt: '2026-09-30T00:00:00Z', updatedAt: '2026-09-30T00:00:00Z'});
+    const documents = [make('directive10', 10, 'DIRECTIVE'), make('resolution10', 10), make('directive2', 2, 'DIRECTIVE'),
+      make('resolution2', 2), {...make('amendment10', 10), kind: 'AMENDMENT' as const, amendmentType: 'UNFRIENDLY' as const,
+        status: 'VOTING' as const, amendmentOrdinal: 10, resolutionId: 'resolution2'},
+      {...make('amendment2', 2), kind: 'AMENDMENT' as const, amendmentType: 'UNFRIENDLY' as const,
+        status: 'VOTING' as const, amendmentOrdinal: 2, resolutionId: 'resolution2'},
+      {...make('friendly', 1), kind: 'AMENDMENT' as const, amendmentType: 'FRIENDLY' as const, resolutionId: 'resolution2'},
+      {...make('postponed', 1), status: 'POSTPONED' as const},
+      {...make('created', 1), directVote: {...make('created', 1).directVote!, startedAt: '2026-09-30T00:00:00Z'}}];
+    const startDocumentVote = vi.fn(async (id: string) => {
+      const index = documents.findIndex(item => item.id === id);
+      const draft = documents[index];
+      const created = {...draft, directVote: {...draft.directVote!, startedAt: '2026-09-30T00:00:00Z'}};
+      documents[index] = created;
+      return created;
+    });
+    const listFiles = vi.fn(async () => []);
+    const page = await render('CHAIR', '/committees/committee/votes/new', user, value => ({...value, documents,
+      meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: 'Session 1', phaseId: 'formal-debate',
+        activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1, createdAt: '2026-09-30T00:00:00Z', closedAt: null},
+      meetingSessions: [{id: 'meeting', committeeId: 'committee', ordinal: 1, name: 'Session 1', phaseId: 'formal-debate',
+        activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1, createdAt: '2026-09-30T00:00:00Z', closedAt: null}]}),
+      {startDocumentVote, listFiles});
+    expect([...page.querySelectorAll('optgroup')].map(group => group.label)).toEqual(['Draft Directives', 'Unfriendly Amendments', 'Draft Resolutions']);
+    expect([...page.querySelectorAll('optgroup option')].map(option => (option as HTMLOptionElement).value))
+      .toEqual(['directive2','directive10','amendment2','amendment10','resolution2','resolution10']);
+    expect(listFiles).not.toHaveBeenCalled();
+    const select = page.querySelector<HTMLSelectElement>('select[aria-label="Choose draft"]')!;
+    const confirm = page.querySelector<HTMLButtonElement>('.new-document-vote-card button')!;
+    expect(confirm.disabled).toBe(true);
+    await act(async () => {select.value = 'directive2'; select.dispatchEvent(new Event('change', {bubbles: true}));});
+    await act(async () => {confirm.click(); confirm.click();});
+    expect(startDocumentVote).toHaveBeenCalledTimes(1);
+    expect(startDocumentVote).toHaveBeenCalledWith('directive2', 1);
+    expect(page.querySelector('.document-voting-heading')?.textContent).toBe('Voting in progressDIRECTIVE 1.2');
+    expect(page.querySelector('[data-navigation-key="/votes"]')?.textContent).toContain('Vote - DIRECTIVE 1.2');
+  });
+
   it.each(['start', 'set'] as const)('shows the unmoderated timer immediately and creates it on %s', async action => {
     const timer = {id: 'unmod-timer', committeeId: 'committee', ownerType: 'COMMITTEE' as const, ownerId: 'committee',
       running: false, startedAt: null, remainingAtStartMs: 600_000, remainingMs: 600_000,
@@ -1686,7 +1742,7 @@ describe('committee workspace routes and roles', () => {
     expect(results.textContent).toContain('Reopen voting');
   });
 
-  it('keeps only text, amendments, and voting after the resolution feed is removed', async () => {
+  it('keeps text and amendments in the draft and moves voting to the navigation', async () => {
     const page = await render('PUBLIC', '/committees/committee/resolutions/resolution/text', user, value => ({...value,
       documents: [{id: 'resolution', committeeId: 'committee', meetingSessionId: 'meeting', kind: 'RESOLUTION', resolutionId: null, ordinal: 1, customTitle: null,
         title: 'Climate resolution', status: 'PUBLISHED', rulePackageVersionId: 'rules', currentVersion: {id: 'version',
@@ -1704,11 +1760,8 @@ describe('committee workspace routes and roles', () => {
     expect(page.querySelector('.resolution-content-source .active.button')?.textContent).toBe('File');
     await act(async () => {page.querySelectorAll<HTMLButtonElement>('.resolution-content-source button')[1].click();});
     expect(page.textContent).toContain('Operative text');
-    await act(async () => {page.querySelector<HTMLAnchorElement>('a[href="/committees/committee/resolutions/resolution/voting"]')?.click();});
-    expect(page.textContent).toContain('No eligible delegations');
-    expect(page.querySelector('.metric-simple strong')?.textContent).toBe('—');
-    expect(page.querySelector('.metric-two-thirds strong')?.textContent).toBe('—');
-    expect(page.querySelector('.resolution-result')).toBeNull();
+    expect(page.querySelector('a[href="/committees/committee/resolutions/resolution/voting"]')).toBeNull();
+    expect(page.querySelector('.resolution-voting-board')).toBeNull();
   });
 
   it('shows only the selected amendment countries and targets its settings independently', async () => {
@@ -1797,7 +1850,7 @@ describe('committee workspace routes and roles', () => {
     } else expect(recordDocumentResult).not.toHaveBeenCalled();
   });
 
-  it('opens and embeds the retained formal ballot from a voting amendment card', async () => {
+  it('removes voting from amendment cards and opens retained formal ballots in the voting page', async () => {
     const createBallot = vi.fn(async () => ({}));
     const resolution: ProceedingDocument = {id: 'resolution', committeeId: 'committee', meetingSessionId: 'meeting',
       kind: 'RESOLUTION', resolutionId: null, ordinal: 1, customTitle: null, title: 'New draft resolution 1', status: 'PUBLISHED',
@@ -1821,14 +1874,12 @@ describe('committee workspace routes and roles', () => {
     await act(async () => {page.querySelector<HTMLButtonElement>('.amendment-list button')?.click();});
     const open = [...page.querySelectorAll<HTMLButtonElement>('button')]
       .find(button => button.textContent?.trim() === 'Open substantive ballot');
-    expect(open).toBeDefined();
+    expect(open).toBeUndefined();
     expect(page.querySelector<HTMLButtonElement>('.amendment-card button[aria-label="Delete"]')?.disabled).toBe(true);
-    await act(async () => {open?.click(); await Promise.resolve();});
-    expect(createBallot).toHaveBeenCalledWith('committee', {meetingSessionId: 'meeting', subjectType: 'AMENDMENT',
-      subjectId: 'amendment', procedural: false, thresholdKind: 'SIMPLE_MAJORITY'});
+    expect(createBallot).not.toHaveBeenCalled();
 
     act(() => root?.unmount()); root = undefined; container?.remove(); container = undefined;
-    const ballotPage = await render('CHAIR', '/committees/committee/resolutions/resolution/amendments', user,
+    const ballotPage = await render('CHAIR', '/committees/committee/votes/amendment', user,
       value => ({...base(value), ballots: [{id: 'ballot', committeeId: 'committee', meetingSessionId: 'meeting',
         subjectType: 'AMENDMENT', subjectId: 'amendment', status: 'OPEN', procedural: false,
         choices: ['FOR', 'AGAINST', 'ABSTAIN'], rulePackageVersionId: 'rules',
@@ -1836,8 +1887,7 @@ describe('committee workspace routes and roles', () => {
           frozenAt: '2026-08-14T00:00:00.000Z'}, eligibility: [{seatId: 'seat', seatDisplayName: 'China',
           mustVote: false, hasVeto: true}], threshold: {kind: 'SIMPLE_MAJORITY', value: 1}, votes: [], result: null,
         revision: 1, openedAt: '2026-08-14T00:00:00.000Z', closedAt: null, publishedAt: null}]}));
-    await act(async () => {ballotPage.querySelector<HTMLButtonElement>('.amendment-list button')?.click();});
-    expect(ballotPage.textContent).toContain('Formal Ballot');
+    expect(ballotPage.querySelector('.document-voting-heading')?.textContent).toContain('New amendment 1');
     expect(ballotPage.textContent).toContain('For');
     expect(ballotPage.textContent).toContain('Against');
   });
@@ -1999,7 +2049,7 @@ describe('committee workspace routes and roles', () => {
       kind: 'RESOLUTION', resolutionId: null, ordinal: 1, customTitle: null, title: 'A/RES/1', status: 'PUBLISHED',
       rulePackageVersionId: 'rules', currentVersion: {id: 'version', versionNumber: 1, content: 'Text', contentFile: null,
         createdAt: '2026-08-14T00:00:00.000Z'}, votingVersionId: null, public: true, proposers: [], seconders: [],
-      delegatesCanAmend: false, directVote: {majority: 'SIMPLE_MAJORITY', startedAt: null, completedAt: null,
+      delegatesCanAmend: false, directVote: {majority: 'SIMPLE_MAJORITY', startedAt: '2026-09-30T00:00:00Z', completedAt: null,
         castRevision: 0, settingsRevision: 1, eligibility: [
           {seatId: 'seat', seatDisplayName: 'China', mustVote: false, hasVeto: false},
           {seatId: 'second', seatDisplayName: 'France', mustVote: false, hasVeto: false}],
@@ -2031,7 +2081,7 @@ describe('committee workspace routes and roles', () => {
     expect(currentFlag()).toBe('/flags/fr.svg');
     expect(page.querySelector('.resolution-vote-counts')?.textContent).toContain('1');
     await act(async () => {([...page.querySelectorAll<HTMLAnchorElement>('a')]
-      .find(item => item.textContent?.trim() === 'Text'))?.click();});
+      .find(item => item.textContent?.trim() === 'Seats'))?.click();});
     expect(globalThis.document.body.textContent).toContain('Discard unsubmitted votes?');
     expect(current()).toBe('France');
     await act(async () => {([...globalThis.document.querySelectorAll<HTMLButtonElement>('button')]
@@ -2077,7 +2127,7 @@ describe('committee workspace routes and roles', () => {
       kind: 'RESOLUTION', resolutionId: null, ordinal: 1, customTitle: null, title: 'A/RES/1', status: 'PUBLISHED',
       rulePackageVersionId: 'rules', currentVersion: {id: 'version', versionNumber: 1, content: 'Text', contentFile: null,
         createdAt: '2026-08-14T00:00:00.000Z'}, votingVersionId: null, public: true, proposers: [], seconders: [],
-      delegatesCanAmend: false, directVote: {majority, startedAt: null, completedAt: null, castRevision: 0,
+      delegatesCanAmend: false, directVote: {majority, startedAt: '2026-09-30T00:00:00Z', completedAt: null, castRevision: 0,
         settingsRevision: 1, eligibility: [
           {seatId: 'seat', seatDisplayName: 'China', mustVote: false, hasVeto: false},
           {seatId: 'second', seatDisplayName: 'France', mustVote: false, hasVeto: veto}],
@@ -2113,7 +2163,7 @@ describe('committee workspace routes and roles', () => {
       kind: 'RESOLUTION', resolutionId: null, ordinal: 1, customTitle: null, title: 'A/RES/1', status: 'PUBLISHED',
       rulePackageVersionId: 'rules', currentVersion: {id: 'version', versionNumber: 1, content: 'Text', contentFile: null,
         createdAt: '2026-08-14T00:00:00.000Z'}, votingVersionId: null, public: true, proposers: [], seconders: [],
-      delegatesCanAmend: false, directVote: {majority: 'SIMPLE_MAJORITY', startedAt: null, completedAt: null,
+      delegatesCanAmend: false, directVote: {majority: 'SIMPLE_MAJORITY', startedAt: '2026-09-30T00:00:00Z', completedAt: null,
         castRevision: 0, settingsRevision: 1, eligibility: [
           {seatId: 'seat', seatDisplayName: 'China', mustVote: false, hasVeto: false}],
         threshold: 1, automaticResult: null, votes: []}, resultDecisions: [], revision: 2, discussion: [],
@@ -2141,7 +2191,7 @@ describe('committee workspace routes and roles', () => {
       kind: 'RESOLUTION', resolutionId: null, ordinal: 1, customTitle: null, title: 'A/RES/1', status: 'PUBLISHED',
       rulePackageVersionId: 'rules', currentVersion: {id: 'version', versionNumber: 1, content: 'Text', contentFile: null,
         createdAt: '2026-08-14T00:00:00.000Z'}, votingVersionId: null, public: true, proposers: [{seatId: 'seat', seatDisplayName: 'China', flag: {type: 'STANDARD', value: 'cn'}}],
-      seconders: [], delegatesCanAmend: false, directVote: {majority: 'SIMPLE_MAJORITY', startedAt: null,
+      seconders: [], delegatesCanAmend: false, directVote: {majority: 'SIMPLE_MAJORITY', startedAt: '2026-09-30T00:00:00Z',
         completedAt: '2026-09-22T00:00:00Z', castRevision: 1,
         settingsRevision: 1, eligibility: [{seatId: 'seat', seatDisplayName: 'China', mustVote: false, hasVeto: false},
           {seatId: 'second', seatDisplayName: 'France', mustVote: false, hasVeto: false}], threshold: 2,
@@ -2201,7 +2251,7 @@ describe('committee workspace routes and roles', () => {
         currentVersion: {id: 'version', versionNumber: 1, content: '', contentFile: null,
           createdAt: '2026-08-14T00:00:00.000Z'},
         votingVersionId: null, public: true, proposers: [{seatId: 'seat', seatDisplayName: 'China', flag: {type: 'STANDARD', value: 'cn'}}], seconders: [], delegatesCanAmend: false,
-        directVote: {majority: 'SIMPLE_MAJORITY', startedAt: null,
+        directVote: {majority: 'SIMPLE_MAJORITY', startedAt: '2026-09-30T00:00:00Z',
           completedAt: '2026-09-22T00:00:00Z', castRevision: 1,
           settingsRevision: 1,
           eligibility: [{seatId: 'seat', seatDisplayName: 'China', mustVote: false, hasVeto: true}], threshold: 1,
@@ -2211,7 +2261,7 @@ describe('committee workspace routes and roles', () => {
     expect(page.querySelector('.resolution-voting-board')).not.toBeNull();
     expect(page.querySelectorAll('.resolution-voting-member')).toHaveLength(1);
     expect(page.textContent).toContain('Now voting');
-    expect(page.textContent).toContain('Formal Ballot');
+    expect(page.textContent).not.toContain('Open Formal Ballot');
     const undo = [...page.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.trim() === 'Undo');
     expect(Boolean(undo)).toBe(automaticResult === null);
     if (automaticResult === null) expect(undo?.disabled).toBe(true);
