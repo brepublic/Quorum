@@ -15,7 +15,7 @@ const reviewFile: DelegateReviewFile = {id: 'file', logicalName: '原文件.md',
   submittedAt: '2026-08-28T00:00:00.000Z', publishedAt: '', revision: 1};
 const publishedFile: DelegateReviewFile = {...reviewFile, id: 'published-file', logicalName: 'approved-file.pdf',
   originalName: 'approved.pdf', status: 'PUBLISHED', publishedAt: '2026-08-28T01:00:00.000Z', revision: 2};
-const snapshot = {committee: {id: 'committee', status: 'ACTIVE', committeeLanguage: 'zh-CN'}, sync: {committeeEventSequence: 1}} as CommitteeWorkspaceSnapshot;
+const snapshot = {committee: {id: 'committee', status: 'ACTIVE', committeeLanguage: 'zh-CN'},viewer:{audience:'CHAIR'}, sync: {committeeEventSequence: 1}} as CommitteeWorkspaceSnapshot;
 
 let host: HTMLDivElement; let root: Root;
 beforeEach(() => {setLanguage('zh-CN');host = document.createElement('div'); document.body.append(host); root = createRoot(host);

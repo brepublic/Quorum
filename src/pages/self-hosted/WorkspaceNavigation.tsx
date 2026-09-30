@@ -130,12 +130,12 @@ function PrimaryItems({snapshot, onNavigate, onCreateCaucus, level = 0}: {
   const base = `/committees/${snapshot.committee.id}`;
   const item = (path: string, label: string) => <Menu.Item key={path} data-navigation-key={path} as={Link} to={`${base}${path}`}
     active={routeActive(location.pathname, `${base}${path}`, true)} onClick={onNavigate}>{t(label)}</Menu.Item>;
-  const dynamic = (kind: 'caucuses' | 'resolutions' | 'directives' | 'votes' | 'strawpolls', label: string, createLabel: string,
-    resources: Array<{id: string; label: string}>, activeOverride?: boolean, nested = false) => {
+  const dynamic = (kind: 'caucuses' | 'crises' | 'resolutions' | 'directives' | 'votes' | 'strawpolls', label: string, createLabel: string,
+    resources: Array<{id: string; label: string; awaiting?: boolean; dot?: string}>, activeOverride?: boolean, nested = false) => {
     const destination = `${base}/${kind}`;
     const isActive = activeOverride !== undefined ? activeOverride : routeActive(location.pathname, destination, true);
-    return <Dropdown key={kind} item text={t(label)} data-navigation-key={`/${kind}`}
-      className={[isActive ? 'active' : '', nested ? 'committee-overflow-poll' : ''].join(' ')}
+    return <Dropdown key={kind} item trigger={<span className="text">{t(label)}{kind==='crises' && crisisDot && <span className={`crisis-time-dot ${crisisDot}`} aria-label={t(crisisDot==='red' ? 'Crisis time expired' : 'Crisis time below five minutes')} />}</span>} data-navigation-key={`/${kind}`}
+      className={[isActive ? 'active' : '', nested ? 'committee-overflow-poll' : '',kind==='crises' && crises.some(group=>group.awaiting) ? 'crisis-awaiting' : ''].join(' ')}
       {...(nested ? {direction: pollDirection, open: pollOpen === kind, closeOnBlur: false, openOnFocus: false, onOpen: () => setPollOpen(kind),
         onClose: () => setPollOpen(null), icon: pollDirection === 'left' ? 'angle left' : 'angle right'} : {})}>
       <Dropdown.Menu>
@@ -144,11 +144,26 @@ function PrimaryItems({snapshot, onNavigate, onCreateCaucus, level = 0}: {
           : <Dropdown.Item as={Link} to={`${destination}/new`} icon="add" text={t(createLabel)} onClick={navigate} />}
         {resources.map(resource => <Dropdown.Item key={resource.id} as={Link} to={`${destination}/${resource.id}`}
           active={location.pathname === `${destination}/${resource.id}` || location.pathname.startsWith(`${destination}/${resource.id}/`)}
-          text={resource.label} onClick={navigate} />)}
+          className={resource.awaiting ? 'crisis-awaiting' : undefined}
+          text={<>{resource.label}{resource.dot && <span className={`crisis-time-dot ${resource.dot}`} aria-label={t(resource.dot==='red' ? 'Crisis time expired' : 'Crisis time below five minutes')} />}</>} onClick={navigate} />)}
       </Dropdown.Menu>
     </Dropdown>;
   };
   const generalSpeakerList = (snapshot.speakerLists ?? []).find(list => list.kind === 'GENERAL');
+  const [elapsed,setElapsed] = React.useState(0);
+  React.useEffect(()=> {
+    const started=performance.now(); setElapsed(0);
+    const timer=window.setInterval(()=>setElapsed(performance.now()-started),250);
+    return ()=>window.clearInterval(timer);
+  },[snapshot.crises]);
+  const crises=(snapshot.crises ?? []).filter(group=>group.committeeId===snapshot.committee.id)
+    .sort((a,b)=>b.sessionOrdinal-a.sessionOrdinal || b.ordinal-a.ordinal).map(group=> {
+      const awaiting=!group.endedAt && group.updates.some(update=>update.status==='PENDING');
+      const remaining=Math.max(0,group.timer.remainingMs-(group.timer.running ? elapsed : 0));
+      return {id:group.id,label:`${t('Crisis')} ${group.sessionOrdinal}.${group.ordinal}`,awaiting,
+        dot: awaiting ? remaining<=0 ? 'red' : remaining<300000 ? 'orange' : undefined : undefined};
+    });
+  const crisisDot=crises.some(group=>group.dot==='red') ? 'red' : crises.some(group=>group.dot==='orange') ? 'orange' : undefined;
   const gslPath = generalSpeakerList ? `${base}/caucuses/${generalSpeakerList.id}` : undefined;
   const gslPathActive = gslPath !== undefined && routeActive(location.pathname, gslPath, true);
   const caucuses = (snapshot.speakerLists ?? []).filter(list => list.kind === 'MODERATED_CAUCUS').map(list => ({id: list.id,
@@ -174,9 +189,10 @@ function PrimaryItems({snapshot, onNavigate, onCreateCaucus, level = 0}: {
       active={routeActive(location.pathname, `${base}/caucuses/${generalSpeakerList.id}`)} onClick={onNavigate}>
       {t("General Speaker's List")}</Menu.Item>}
     {item('/unmod', 'Unmoderated Caucus')}
-    {level < 10 && dynamic('caucuses', 'Moderated Caucuses', 'New Moderated Caucus', caucuses, gslPathActive ? false : undefined)}
-    {level < 9 && dynamic('resolutions', 'Draft Resolutions', 'New Draft Resolution', resolutions)}
-    {level < 8 && dynamic('directives', 'Draft Directives', 'New Draft Directive', directives)}
+    {level < 11 && dynamic('caucuses', 'Moderated Caucuses', 'New Moderated Caucus', caucuses, gslPathActive ? false : undefined)}
+    {level < 10 && dynamic('crises', 'Crisis', 'New crisis', crises)}
+    {level < 9 && dynamic('directives', 'Directives', 'New Draft Directive', directives)}
+    {level < 8 && dynamic('resolutions', 'Resolutions', 'New Draft Resolution', resolutions)}
     {level < 7 && dynamic('votes', 'Voting', 'New Vote', votes)}
     {level < 6 && dynamic('strawpolls', 'Strawpolls', 'New Strawpoll', strawpolls)}
     {level < 5 && item('/notes', 'Notes')}
@@ -191,14 +207,16 @@ function PrimaryItems({snapshot, onNavigate, onCreateCaucus, level = 0}: {
       <Dropdown item closeOnBlur={false} openOnFocus={false} icon="ellipsis horizontal" aria-label={t('More options')} title={t('More options')}
         className={[
           'committee-navigation-more',
-          [['/settings', 2], ['/help', 2], ['/stats', 3], ['/posts', 4], ['/notes', 5], ['/strawpolls', 6], ['/votes', 7], ['/directives', 8], ['/resolutions', 9], ['/caucuses', 10]]
+          [['/settings', 2], ['/help', 2], ['/stats', 3], ['/posts', 4], ['/notes', 5], ['/strawpolls', 6], ['/votes', 7], ['/resolutions', 8], ['/directives', 9], ['/crises', 10], ['/caucuses', 11]]
             .some(([path, minimum]) => level >= Number(minimum) && routeActive(location.pathname, `${base}${path}`, true)) ? 'active' : ''
         ].join(' ')} open={moreOpen} onOpen={() => setMoreOpen(true)}
+        trigger={level>=10 && crisisDot ? <span className={`crisis-time-dot ${crisisDot}`} aria-label={t(crisisDot==='red' ? 'Crisis time expired' : 'Crisis time below five minutes')} /> : undefined}
         onClose={() => {setMoreOpen(false); setPollOpen(null);}}>
         <Dropdown.Menu>
-          {level >= 10 && dynamic('caucuses', 'Moderated Caucuses', 'New Moderated Caucus', caucuses, gslPathActive ? false : undefined, true)}
-          {level >= 9 && dynamic('resolutions', 'Draft Resolutions', 'New Draft Resolution', resolutions, undefined, true)}
-          {level >= 8 && dynamic('directives', 'Draft Directives', 'New Draft Directive', directives, undefined, true)}
+          {level >= 11 && dynamic('caucuses', 'Moderated Caucuses', 'New Moderated Caucus', caucuses, gslPathActive ? false : undefined, true)}
+          {level >= 10 && dynamic('crises', 'Crisis', 'New crisis', crises, undefined, true)}
+          {level >= 9 && dynamic('directives', 'Directives', 'New Draft Directive', directives, undefined, true)}
+          {level >= 8 && dynamic('resolutions', 'Resolutions', 'New Draft Resolution', resolutions, undefined, true)}
           {level >= 7 && dynamic('votes', 'Voting', 'New Vote', votes, undefined, true)}
           {level >= 6 && dynamic('strawpolls', 'Strawpolls', 'New Strawpoll', strawpolls, undefined, true)}
           {level >= 5 && <Dropdown.Item as={Link} to={`${base}/notes`} active={routeActive(location.pathname, `${base}/notes`, true)} text={t('Notes')} onClick={navigate} />}
@@ -235,12 +253,12 @@ export function CommitteeNavigation({snapshot, user, logout, realtimeStatus = 'C
       const required = [full - more];
       required.push(required[0] - width('.realtime-status-label'));
       required.push(required[1] - width('[data-navigation-key="/settings"]') - width('[data-navigation-key="/help"]') + more);
-      for (const path of ['/stats', '/posts', '/notes', '/strawpolls', '/votes', '/directives', '/resolutions', '/caucuses']) {
+      for (const path of ['/stats', '/posts', '/notes', '/strawpolls', '/votes', '/resolutions', '/directives', '/crises', '/caucuses']) {
         required.push(required[required.length - 1] - width(`[data-navigation-key="${path}"]`));
       }
       setLevel(previous => {
         const next = required.findIndex((needed, index) => needed + (index < previous ? 4 : 0) <= available);
-        return next < 0 ? 11 : next;
+        return next < 0 ? 12 : next;
       });
     };
     const observer = new ResizeObserver(measure);
@@ -251,7 +269,7 @@ export function CommitteeNavigation({snapshot, user, logout, realtimeStatus = 'C
     return () => observer.disconnect();
   }, [snapshot, user, realtimeStatus, language]);
   React.useEffect(() => { setSidebarOpen(false); }, [level]);
-  const mode = level === 11 ? 'sidebar' : 'desktop';
+  const mode = level === 12 ? 'sidebar' : 'desktop';
   return <>
     <nav data-navigation-mode={mode} data-collapse-level={level} className="committee-navigation-desktop" aria-label={t('Committee navigation')}>
       <Menu className="committee-primary-navigation" size="large" fluid>

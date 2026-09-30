@@ -25,6 +25,7 @@ import {apiErrorText, LanguageMenuItem, LANGUAGE_OPTIONS, getLanguage, t} from '
 import {selfHostedApi, SelfHostedApiError, type SelfHostedApi} from '../services/self-hosted-api';
 import {selfHostedIdentityClient, type SelfHostedIdentityClient, type SelfHostedUser} from '../services/self-hosted-identity';
 import ProceedingsPanel from './self-hosted/ProceedingsPanel';
+import CrisisPanel from './self-hosted/CrisisPanel';
 import FilesPanel from './self-hosted/FilesPanel';
 import SystemSettings from './self-hosted/SystemSettings';
 import {DelegateFileSettingsPanel} from './self-hosted/DelegateFileSettingsPanel';
@@ -653,6 +654,9 @@ function SettingsPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
   const [conference, setConference] = React.useState(snapshot.committee.conference);
   const [visibility, setVisibility] = React.useState(snapshot.committee.visibility); const [pending, setPending] = React.useState<string>();
   const [operationMode, setOperationMode] = React.useState(snapshot.committee.operationMode);
+  const [crisisDelay,setCrisisDelay] = React.useState(String(snapshot.crisisAutoStartDelayMinutes ?? 5));
+  const [pauseRevision,setPauseRevision] = React.useState<number>();
+  const [pauseFailure,setPauseFailure] = React.useState<unknown>();
   const [rulePackages, setRulePackages] = React.useState<Awaited<ReturnType<SelfHostedApi['listRulePackages']>>>([]);
   const [ruleVersionId, setRuleVersionId] = React.useState(snapshot.committee.activeRulePackageVersionId);
   const [deleteName, setDeleteName] = React.useState('');
@@ -680,6 +684,12 @@ function SettingsPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
       <Button primary loading={pending === 'general-speaker-duration'} disabled={readOnly || generalSpeakerSeconds < 1}><Icon name="save" />{t('Save changes')}</Button>
     </Form>}
   </Segment></>}
+    {canChair && <Form className="crisis-settings" onSubmit={()=>execute('crisis-delay',()=>api.setCrisisAutoStartDelay(snapshot.committee.id,snapshot.committee.revision,Number(crisisDelay)))}>
+      <Form.Input type="number" step="any" label={t('Crisis auto-start delay (minutes)')} value={crisisDelay}
+        disabled={snapshot.committee.status!=='ACTIVE'} onChange={event=>setCrisisDelay(event.currentTarget.value)} />
+      <p>{t('0: start immediately; negative: do not start automatically.')}</p>
+      <Button primary loading={pending==='crisis-delay'} disabled={snapshot.committee.status!=='ACTIVE' || crisisDelay.trim()==='' || !Number.isSafeInteger(Number(crisisDelay)*60000)}>{t('Save changes')}</Button>
+    </Form>}
     <Header as="h2">{t('Committee profile')}</Header>
     <p>{t('Committee language')}: {LANGUAGE_OPTIONS.find(option => option.value === snapshot.committee.committeeLanguage)?.text}</p>{owner && !readOnly ? <Form onSubmit={() => execute('profile',
     () => api.updateCommittee(snapshot.committee.id, snapshot.committee.revision, {name, topic, conference, visibility}))}>
@@ -703,9 +713,22 @@ function SettingsPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
         <Button primary loading={pending === 'rules'} disabled={!ruleVersionId}>{t('Activate rule version')}</Button></Form>
       </>}
     {(canChair || owner) && <section className="committee-lifecycle-actions"><Header as="h2">{t('Committee status')}</Header>
-      {canChair && <Button loading={pending === 'status'} onClick={() => void execute('status', () => api.setCommitteeStatus(snapshot.committee.id,
-        snapshot.committee.status === 'PAUSED' ? 'ACTIVE' : 'PAUSED', snapshot.committee.revision))}>
+      {canChair && <Button disabled={readOnly} loading={pending === 'status'} onClick={() => {
+        if (snapshot.committee.status!=='PAUSED' && snapshot.crises?.some(group=>!group.endedAt)) {setPauseRevision(snapshot.committee.revision);setPauseFailure(undefined);return;}
+        void execute('status', () => api.setCommitteeStatus(snapshot.committee.id,
+          snapshot.committee.status === 'PAUSED' ? 'ACTIVE' : 'PAUSED', snapshot.committee.revision));
+      }}>
         {t(snapshot.committee.status === 'PAUSED' ? 'Resume committee' : 'Pause committee')}</Button>}
+    <Modal size="tiny" open={pauseRevision!==undefined} onClose={()=>setPauseRevision(undefined)} closeOnDimmerClick={pending!=='status'} closeOnEscape={pending!=='status'}>
+      <Modal.Header>{t('End all crises and pause committee?')}</Modal.Header><Modal.Content>
+        <List>{snapshot.crises?.filter(group=>!group.endedAt).map(group=><List.Item key={group.id}>{t('Crisis')} {group.sessionOrdinal}.{group.ordinal}</List.Item>)}</List>
+        {Boolean(pauseFailure) && <Message error content={apiErrorText(pauseFailure)} />}
+      </Modal.Content><Modal.Actions><Button disabled={pending==='status'} onClick={()=>setPauseRevision(undefined)}>{t('Cancel')}</Button>
+        <Button primary loading={pending==='status'} disabled={pending==='status'} onClick={()=>void execute('status',async()=> {
+          try {await api.setCommitteeStatus(snapshot.committee.id,'PAUSED',pauseRevision!,true);setPauseRevision(undefined);}
+          catch(error) {setPauseFailure(error);throw error;}
+        })}>{t('End crises and pause')}</Button></Modal.Actions>
+    </Modal>
     {owner && snapshot.committee.status === 'ARCHIVED' && <><Button as="a" href={api.committeeExportUrl(snapshot.committee.id)} download>{t('Export records')}</Button>
       <Form onSubmit={() => run(async () => {await api.requestCommitteeDeletion(snapshot.committee.id,
         snapshot.committee.revision, deleteName); history.replace('/committees');})}>
@@ -1294,6 +1317,8 @@ function CommitteeWorkspaceContent({id, api, user, logout}: {
           <Route exact path={`${base}/files`}><Redirect to={`${base}/posts/attachments`} /></Route>
           <Route path={`${base}/motions`}><ProceedingsPanel view="motions" snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} /></Route>
           <Route path={`${base}/unmod`}><ProceedingsPanel view="unmod" snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} /></Route>
+          <Route path={`${base}/crises/:groupId`} render={({match})=><CrisisPanel resourceId={match.params.groupId}
+            snapshot={interactionSnapshot} api={api} run={run} canChair={canChair} />} />
           <Route exact path={newCaucusPath}><Redirect to={`${base}/motions`} /></Route>
           <Route path={`${base}/caucuses/:listId`} render={({match}) => <ProceedingsPanel view="caucus" resourceId={match.params.listId}
             snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} />} />

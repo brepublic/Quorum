@@ -1,5 +1,5 @@
 import {t, useLanguage, getLanguage} from '../../i18n';
-import {customDelegateFileType, DELEGATE_FILE_TYPES, delegateFileTypeName, isCustomDelegateFileType, committeeContentName, formatCommitteeContent} from '@quorum/contracts';
+import {customDelegateFileType, DELEGATE_FILE_TYPES, delegateFileTypeName, isCustomDelegateFileType, committeeContentName, formatCommitteeContent, suggestCrisisNoticeName} from '@quorum/contracts';
 import * as React from 'react';
 import type {CommitteeWorkspaceSnapshot, DelegateFileType, DelegateReviewFile, DelegateFileSettings} from '@quorum/contracts';
 import QRCode from 'qrcode';
@@ -7,6 +7,7 @@ import {Button, Card, Form, Header, Icon, Image, Label, Message, Modal, Progress
 import {newIdempotencyKey, SelfHostedApiError, type SelfHostedApi} from '../../services/self-hosted-api';
 import {sha256File} from '../../services/sha256';
 import FilesPanel, {storageErrorText} from './FilesPanel';
+import CrisisNoticeReviewCard from './CrisisNoticeReviewCard';
 import {Link} from 'react-router-dom';
 
 const FILE_TYPES = DELEGATE_FILE_TYPES;
@@ -117,6 +118,8 @@ function DelegateFileSharePanel({snapshot, api, share, setShare, qr}: {
 export function DelegateFileUploadPanel({snapshot, api}: {snapshot: CommitteeWorkspaceSnapshot; api: SelfHostedApi}) {
   useLanguage();
   const [selected, setSelected] = React.useState<File>();
+  const [uploadType,setUploadType]=React.useState<DelegateFileType>('WORKING_PAPER');
+  const chair=snapshot.viewer.audience==='CHAIR' || snapshot.viewer.audience==='OWNER';
   const [pending, setPending] = React.useState<Awaited<ReturnType<SelfHostedApi['listPendingHostCommits']>>>([]);
   const [saved, setSaved] = React.useState<string>();
   const [trackedUpload, setTrackedUpload] = React.useState<{id: string; name: string}>();
@@ -155,8 +158,9 @@ export function DelegateFileUploadPanel({snapshot, api}: {snapshot: CommitteeWor
     if (!selected || working) return; setWorking(true); setSaved(undefined); setTrackedUpload(undefined); setProgress(0); setError(undefined);
     try {
       const sha256 = await sha256File(selected, {onProgress: (done, total) => setProgress(total ? done / total * 20 : 0)});
-      const created = await api.createFileUpload(snapshot.committee.id, {logicalName: selected.name,
-        originalName: selected.name, mediaType: selected.type || 'application/octet-stream', expectedSizeBytes: selected.size, sha256});
+      const logicalName=uploadType==='CRISIS_NOTICE' ? suggestCrisisNoticeName(snapshot.crises ?? [],snapshot.meetingSession?.ordinal ?? 1,snapshot.nextCrisisGroupOrdinal ?? 1,snapshot.committee.committeeLanguage) : selected.name;
+      const created = await api.createFileUpload(snapshot.committee.id, {logicalName,
+        originalName: selected.name, mediaType: selected.type || 'application/octet-stream', expectedSizeBytes: selected.size, sha256,fileType: uploadType});
       await api.uploadFileContent(created.id, selected, newIdempotencyKey(), {onProgress: (done, total) => setProgress(20 + (total ? done / total * 75 : 0))});
       setProgress(98); const result = await api.commitFileUpload(created.id);
       if ('kind' in result) setTrackedUpload({id: created.id, name: selected.name}); else setSaved(selected.name);
@@ -175,6 +179,10 @@ export function DelegateFileUploadPanel({snapshot, api}: {snapshot: CommitteeWor
     </Segment>}
     {error && <Message error content={error} />}
     <Card centered fluid className="delegate-file-chair-upload"><Card.Content><Form onSubmit={() => void upload()}>
+      <Form.Select fluid label={t('File type')} value={isCustomDelegateFileType(uploadType) ? 'OTHER' : uploadType} disabled={working || snapshot.committee.status!=='ACTIVE'}
+        options={[...FILE_TYPES.filter(type=>chair || type!=='CRISIS_NOTICE').map(type=>({key:type,value:type,text:delegateFileTypeName(type,snapshot.committee.committeeLanguage)})),{key:'OTHER',value:'OTHER',text:t('Other')}]}
+        onChange={(_,data)=>setUploadType(data.value==='OTHER' ? customDelegateFileType('') : data.value as DelegateFileType)} />
+      {isCustomDelegateFileType(uploadType) && <Form.Input label={t('Custom file type')} required maxLength={100} disabled={working} value={uploadType.slice(7)} onChange={event=>setUploadType(customDelegateFileType(event.currentTarget.value))} />}
       <Form.Input disabled={working || snapshot.committee.status !== 'ACTIVE'} type="file" label={t("Choose file")} input={{ref: fileInput, onChange: (event: React.ChangeEvent<HTMLInputElement>) =>
         {setSelected(event.currentTarget.files?.[0]); setSaved(undefined);}, 'aria-label': t("Choose file")}} />
       {progress === undefined ? <Button primary disabled={!selected || working || snapshot.committee.status !== 'ACTIVE'}>{t("Upload files")} <Icon name="arrow up" /></Button>
@@ -242,14 +250,16 @@ function DelegateFileReviewPanel({snapshot, api, files, refresh}: {
     .sort((first, second) => toSubmissionTime(first.submittedAt) - toSubmissionTime(second.submittedAt));
   return <div className="delegate-file-review-panel">
     {error && <Message error content={error} />}
-    <div className="delegate-file-card-list">{pendingFiles.length ? pendingFiles.map(file => <Card fluid key={file.id} className="delegate-file-card motion-card">
+    <div className="delegate-file-card-list">{pendingFiles.length ? pendingFiles.map(file => file.fileType==='CRISIS_NOTICE'
+      ? <CrisisNoticeReviewCard key={file.id} file={file} snapshot={snapshot} api={api} refresh={refresh} download={download} downloading={downloading} />
+      : <Card fluid key={file.id} className="delegate-file-card motion-card">
       <Card.Content><div className="motion-heading delegate-file-heading"><Card.Header><Form.Input fluid aria-label={t("File name")} disabled={working || readOnly || Boolean(replacing)} value={nameFor(file)}
         onChange={event => { const value = event.currentTarget.value; setNames(current => ({...current, [file.id]: value})); setReplacing(undefined); }} />
         {files.some(existing => existing.id !== file.id && existing.status === 'PUBLISHED' && !existing.publishedFileId
           && existing.logicalName === nameFor(file).trim()) && <div className="file-name-conflict-hint">{t("This name already exists. Approval will update the existing file.")}</div>}</Card.Header><Label basic color="blue" icon="clock outline" className="self-hosted-file-status" content={t("Pending review")} /></div>
         <Card.Meta><Table compact celled unstackable className="motion-metadata-table delegate-file-metadata"><Table.Body>
           <Table.Row><Table.Cell className="motion-metadata-key">{t("File source")}</Table.Cell><Table.Cell>{file.submissionSource === 'CHAIR' ? t('Chair') : file.submitterDisplayName ?? '—'}</Table.Cell></Table.Row>
-          <Table.Row><Table.Cell className="motion-metadata-key">{t("File type")}</Table.Cell><Table.Cell><Form.Select compact options={[...FILE_TYPES.map(type => ({key: type, value: type, text: delegateFileTypeName(type, snapshot.committee.committeeLanguage)})),
+          <Table.Row><Table.Cell className="motion-metadata-key">{t("File type")}</Table.Cell><Table.Cell><Form.Select compact options={[...FILE_TYPES.filter(type=>type!=='CRISIS_NOTICE').map(type => ({key: type, value: type, text: delegateFileTypeName(type, snapshot.committee.committeeLanguage)})),
             {key: 'OTHER', value: 'OTHER', text: t('Other')}]} disabled={working || readOnly || Boolean(replacing)}
             value={isCustomDelegateFileType(types[file.id] ?? file.fileType ?? 'WORKING_PAPER') ? 'OTHER' : types[file.id]}
             onChange={(_, data) => setTypes(current => ({...current,

@@ -1,5 +1,6 @@
 import type {
   CreateCommitteeFromTemplateRequest, ApiErrorReason, ApiErrorParams, ApiFieldError,
+  CrisisGroup, CrisisNoticePreview,
   DelegateFileSettings, DefaultFileRejectionSettings,
   CommitteeEventEnvelope,
   AuthoritativeTimer,
@@ -468,7 +469,7 @@ export const selfHostedApi = {
       body: {baseRevision, action, ruleStableId}});
   },
   updateDocumentSettings(id: string, input: {baseRevision: number; proposerSeatIds?: string[];
-    seconderSeatIds?: string[]; delegatesCanAmend?: boolean;
+    seconderSeatIds?: string[]; delegatesCanAmend?: boolean; crisisGroupId?: string | null;
     majority?: 'SIMPLE_MAJORITY' | 'TWO_THIRDS' | 'TWO_THIRDS_NON_ABSTAINING'}) {
     return request<ProceedingDocument>(`/api/v1/documents/${id}/settings`, {method: 'POST', body: input});
   },
@@ -577,8 +578,32 @@ export const selfHostedApi = {
     return request<{moveQueueUp: boolean; timersInSeparateColumns: boolean; revision: number}>(
       `/api/v1/committees/${committeeId}/layout-settings`, {method: 'POST', body: {settings, baseRevision}});
   },
-  setCommitteeStatus(committeeId: string, status: Extract<CommitteeStatus, 'ACTIVE' | 'PAUSED'>, baseRevision: number) {
-    return request<CommitteeSummary>(`/api/v1/committees/${committeeId}/status`, {method: 'POST', body: {status, baseRevision}});
+  setCommitteeStatus(committeeId: string, status: Extract<CommitteeStatus, 'ACTIVE' | 'PAUSED'>, baseRevision: number, endCrises = false) {
+    return request<CommitteeSummary>(`/api/v1/committees/${committeeId}/status`, {method: 'POST', body: {status, baseRevision, ...(endCrises ? {endCrises:true} : {})}});
+  },
+  createCrisis(committeeId: string, meetingSessionId: string, idempotencyKey = key()) {
+    return request<CrisisGroup>(`/api/v1/committees/${committeeId}/crises`,{method: 'POST',body: {meetingSessionId},idempotencyKey});
+  },
+  createCrisisUpdate(groupId: string, baseRevision: number, idempotencyKey = key()) {
+    return request<CrisisGroup>(`/api/v1/crises/${groupId}/updates`,{method: 'POST',body: {baseRevision},idempotencyKey});
+  },
+  updateCrisisCard(updateId: string, body: {baseRevision: number; title?: string; handlingDurationMs?: number | null; fileId?: string | null; replaceNoticeId?: string}) {
+    return request<CrisisGroup>(`/api/v1/crisis-updates/${updateId}`,{method: 'POST',body});
+  },
+  publishCrisis(updateId: string, baseRevision: number, idempotencyKey: string) {
+    return request<CrisisGroup>(`/api/v1/crisis-updates/${updateId}/publish`,{method: 'POST',body: {baseRevision},idempotencyKey});
+  },
+  saveCrisisNoticeName(fileId: string, baseRevision: number, logicalName: string, manuallyEdited = true) {
+    return request<{revision: number}>(`/api/v1/files/${fileId}/crisis-name`,{method: 'POST',body: {baseRevision,logicalName,manuallyEdited}});
+  },
+  previewCrisisNotice(fileId: string) {
+    return request<CrisisNoticePreview>(`/api/v1/files/${fileId}/crisis-preview`,{method: 'POST',body: {}});
+  },
+  importCrisisNotice(fileId: string, baseRevision: number, replaceNoticeId?: string) {
+    return request<{groupId: string; updateId: string}>(`/api/v1/files/${fileId}/crisis`,{method: 'POST',body: {baseRevision,replaceNoticeId},idempotencyKey: key()});
+  },
+  setCrisisAutoStartDelay(committeeId: string, baseRevision: number, minutes: number) {
+    return request<{minutes: number}>(`/api/v1/committees/${committeeId}/crisis-settings`,{method: 'POST',body: {baseRevision,minutes}});
   },
   listRulePackages: async () => (await request<{rulePackages: RulePackageSummary[]}>('/api/v1/rule-packages')).rulePackages,
   activateRules(committeeId: string, rulePackageVersionId: string, baseRevision: number) {
@@ -651,7 +676,7 @@ export const selfHostedApi = {
     return request<FileUpload[]>(`/api/v1/committees/${committeeId}/file-uploads/pending-host-commit`);
   },
   createFileUpload(committeeId: string, input: {logicalName: string; originalName: string; mediaType: string;
-    expectedSizeBytes: number; sha256: string}, idempotencyKey = key()) {
+    expectedSizeBytes: number; sha256: string; fileType?: DelegateFileType}, idempotencyKey = key()) {
     return request<FileUpload>(`/api/v1/committees/${committeeId}/file-uploads`, {method: 'POST',
       body: input, idempotencyKey});
   },

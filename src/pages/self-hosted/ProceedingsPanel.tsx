@@ -207,7 +207,7 @@ type TimerControlsProps = {name: string; timer?: AuthoritativeTimer; run: Run; a
   onCreate?: (durationMs: number) => Promise<AuthoritativeTimer>;
   onToggle?: () => Promise<void>; toggleKey?: string; children?: React.ReactNode};
 
-function TimerControls(props: TimerControlsProps) {
+export function TimerControls(props: TimerControlsProps) {
   return props.timer ? <ReadyTimerControls {...props} timer={props.timer} /> : <Message content={t('No timer')} />;
 }
 
@@ -1542,6 +1542,10 @@ function DocumentVoting({snapshot, run, api, canChair, document}: CommonProps & 
   const allowVoteNavigation = React.useRef(false);
   const submittingVote = React.useRef(false);
   const [voteSaving, setVoteSaving] = React.useState(false);
+  React.useEffect(()=> {
+    if (!document.directVote?.invalidatedAt) return;
+    setVoteDraft(undefined);voteDraftRef.current=undefined;setSavedDirectVote(undefined);setVotingHistory([]);setVoteLeaveTarget(undefined);
+  },[document.directVote?.invalidatedAt]);
   React.useEffect(() => {
     setVotingPage(0); setVotingHistory([]); setVoteDraft(undefined); voteDraftRef.current = undefined;
     setSavedDirectVote(undefined);
@@ -1600,6 +1604,7 @@ function DocumentVoting({snapshot, run, api, canChair, document}: CommonProps & 
         if (result.directVote) setSavedDirectVote(result.directVote);
         updateVoteDraft(undefined); setVoteLeaveTarget(undefined); setVotingHistory([]);
       } catch (caught) {
+        if (caught instanceof SelfHostedApiError && caught.localization?.reason==='CRISIS_UPDATED') {updateVoteDraft(undefined);return;}
         updateVoteDraft({...submittingDraft, failure: caught, rejected: caught instanceof SelfHostedApiError
           && caught.status >= 400 && caught.status < 500 && ![408, 429].includes(caught.status)});
       } finally {submittingVote.current = false; setVoteSaving(false);}
@@ -1752,6 +1757,7 @@ function DocumentVoting({snapshot, run, api, canChair, document}: CommonProps & 
 function VotingWorkspace({snapshot, run, api, canChair, resourceId}: CommonProps & {resourceId?: string}) {
   const history = useHistory();
   const [draftId, setDraftId] = React.useState(() => new URLSearchParams(history.location.search).get('draft') ?? '');
+  const [crisisId,setCrisisId] = React.useState('');
   const [saving, setSaving] = React.useState(false);
   const savingRef = React.useRef(false);
   const documents = snapshot.documents ?? [];
@@ -1762,6 +1768,9 @@ function VotingWorkspace({snapshot, run, api, canChair, resourceId}: CommonProps
     && (item.kind === 'RESOLUTION' && ['DRAFT', 'PUBLISHED', 'VOTING'].includes(item.status)
       || item.kind === 'AMENDMENT' && item.amendmentType === 'UNFRIENDLY' && item.status === 'VOTING'
         && documents.some(parent => parent.id === item.resolutionId && parent.status !== 'POSTPONED')));
+  const selectedDraft=candidates.find(item=>item.id===draftId);
+  const activeCrises=(snapshot.crises ?? []).filter(group=>!group.endedAt && group.updates.some(update=>update.status==='PENDING'));
+  React.useEffect(()=> {setCrisisId(selectedDraft?.directVote?.crisisGroupId ?? '');},[selectedDraft?.id,selectedDraft?.directVote?.crisisGroupId]);
   const numbering = (item: typeof documents[number]) => {
     const session = snapshot.meetingSessions?.find(session => session.id === item.meetingSessionId)?.ordinal ?? 0;
     const parent = documents.find(parent => parent.id === item.resolutionId);
@@ -1779,7 +1788,12 @@ function VotingWorkspace({snapshot, run, api, canChair, resourceId}: CommonProps
     try {
       let createdId: string | undefined;
       await run(async () => {
-        createdId = (await api.startDocumentVote(draft.id, draft.revision)).id;
+        let revision=draft.revision;
+        if (draft.draftType==='DIRECTIVE') {
+          if (!activeCrises.some(group=>group.id===crisisId)) return;
+          revision=(await api.updateDocumentSettings(draft.id,{baseRevision:revision,crisisGroupId:crisisId})).revision;
+        }
+        createdId = (await api.startDocumentVote(draft.id, revision)).id;
       });
       if (createdId) history.push(`/committees/${snapshot.committee.id}/votes/${createdId}`);
     } finally {savingRef.current = false; setSaving(false);}
@@ -1798,7 +1812,11 @@ function VotingWorkspace({snapshot, run, api, canChair, resourceId}: CommonProps
           }).map(item => ({key: item.id, value: item.id, text: item.title, className: 'draft-group-option',
             description: !item.currentVersion.contentFile && !item.currentVersion.content.trim() ? t('No content') : undefined}))
         ]) : [{key: 'empty', value: 'empty', text: t('(Empty)'), disabled: true, className: 'draft-empty'}]} /></Form.Field>
-      <Button primary fluid loading={saving} disabled={!canChair || saving || !candidates.some(item => item.id === draftId)}>{t('Confirm vote')}</Button>
+      {selectedDraft?.draftType==='DIRECTIVE' && <Form.Select fluid selection label={t('Responding crisis')} aria-label={t('Responding crisis')}
+        value={crisisId} disabled={!canChair || saving} options={activeCrises.map(group=>({key:group.id,value:group.id,
+          text:`${t('Crisis')} ${group.sessionOrdinal}.${group.ordinal}.${group.updates.find(update=>update.status==='PENDING')!.ordinal}`}))}
+        onChange={(_,data)=>setCrisisId(String(data.value))} />}
+      <Button primary fluid loading={saving} disabled={!canChair || snapshot.committee.status!=='ACTIVE' || saving || !selectedDraft || selectedDraft.draftType==='DIRECTIVE' && !activeCrises.some(group=>group.id===crisisId)}>{t('Confirm vote')}</Button>
     </Form></Card.Content></Card>
   </Container>;
   if (!document) return <Message error content={t('Draft not found.')} />;
@@ -1806,7 +1824,8 @@ function VotingWorkspace({snapshot, run, api, canChair, resourceId}: CommonProps
   if (hasBallot(document.id)) return <Container fluid><div className="document-voting-heading">
     <span>{t('Voting in progress')}</span><Header as="h1">{document.title}</Header></div>
     <Ballots snapshot={snapshot} run={run} api={api} canChair={canChair} subjectId={document.id} /></Container>;
-  return <DocumentVoting snapshot={snapshot} run={run} api={api} canChair={canChair} document={document} />;
+  return <>{document.directVote?.invalidatedAt && <Message error content={t('Crisis updated')} />}
+    <DocumentVoting snapshot={snapshot} run={run} api={api} canChair={canChair && !document.directVote?.invalidatedAt && snapshot.committee.status==='ACTIVE'} document={document} /></>;
 }
 
 function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab, draftType = 'RESOLUTION'}: CommonProps & {resourceId?: string; tab?: string; draftType?: 'RESOLUTION' | 'DIRECTIVE'}) {
@@ -1877,7 +1896,7 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab, draft
   const document = selectedDocument;
   if (!document) return <Message error content={t(draftType === 'DIRECTIVE' ? 'Draft not found.' : 'Draft Resolution not found.')} />;
   const amendments = (snapshot.documents ?? []).filter(item => item.resolutionId === document.id);
-  const activeTab = tab === 'amendments' ? 'amendments' : 'text';
+  const activeTab = tab === 'amendments' && draftType!=='DIRECTIVE' ? 'amendments' : 'text';
   const selectedAmendment = amendments.find(item => item.id === selectedAmendmentId);
   const countryDocument = activeTab === 'text' ? document : activeTab === 'amendments' ? selectedAmendment : undefined;
   const canEditCountries = canChair && (countryDocument?.kind !== 'AMENDMENT'
@@ -1942,10 +1961,18 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab, draft
       label={<Label>{statusLabel(document.status)}</Label>} size="massive" fluid placeholder={t(draftType === 'DIRECTIVE' ? 'Set directive name' : 'Set resolution name')}
       disabled={!editable} onChange={event => {setVersionTitle(event.currentTarget.value); setVersionTitleDirty(true);}} onBlur={() => void saveVersion()} /></Grid.Column></Grid.Row>
     <Grid.Row><Grid.Column><Menu pointing secondary>
-      {[['text', 'Text'], ['amendments', 'Amendments']].map(([path, label]) =>
+      {(draftType==='DIRECTIVE' ? [['text','Text']] : [['text', 'Text'], ['amendments', 'Amendments']]).map(([path, label]) =>
         <Menu.Item key={path} as={Link} to={path === 'text' ? base : `${base}/${path}`}
           active={activeTab === path}>{t(label)}</Menu.Item>)}</Menu></Grid.Column></Grid.Row>
     <Grid.Row><Grid.Column width={11}>
+    {draftType==='DIRECTIVE' && <Form><Form.Select fluid selection label={t('Responding to crisis')} aria-label={t('Responding to crisis')}
+      value={document.directVote?.crisisGroupId ?? ''} disabled={!canChair || !canParticipate || Boolean(document.directVote?.startedAt || document.directVote?.invalidatedAt)}
+      options={(snapshot.crises ?? []).flatMap(group=> {
+        const update=group.updates.find(update=>update.id===document.directVote?.crisisUpdateId)
+          ?? group.updates.find(update=>update.status==='PENDING');
+        return update && (!group.endedAt || group.id===document.directVote?.crisisGroupId) ? [{key:group.id,value:group.id,text:`${t('Crisis')} ${group.sessionOrdinal}.${group.ordinal}.${update.ordinal}`}] : [];
+      })} onChange={(_,data)=>void run(()=>api.updateDocumentSettings(document.id,{baseRevision:document.revision,crisisGroupId:String(data.value)}))} />
+      {document.directVote?.invalidatedAt && <Message error content={t('Crisis updated')} />}</Form>}
     {activeTab === 'text' && <><Button.Group basic compact className="resolution-content-source">
       <Button active={contentSource === 'FILE'} onClick={() => setContentSource('FILE')}>{t('File')}</Button>
       <Button active={contentSource === 'TEXT'} onClick={() => setContentSource('TEXT')}>{t('Text')}</Button>

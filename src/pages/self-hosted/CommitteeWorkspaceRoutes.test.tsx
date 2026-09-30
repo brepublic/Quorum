@@ -110,12 +110,14 @@ describe('committee workspace routes and roles', () => {
       return created;
     });
     const listFiles = vi.fn(async () => []);
+    const updateDocumentSettings=vi.fn(async(id:string)=>documents.find(item=>item.id===id)!);
     const page = await render('CHAIR', '/committees/committee/votes/new', user, value => ({...value, documents,
       meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: 'Session 1', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1, createdAt: '2026-09-30T00:00:00Z', closedAt: null},
+      crises:[{id:'crisis',committeeId:'committee',sessionOrdinal:1,ordinal:1,endedAt:null,timer:{remainingMs:1800000,running:false},updates:[{status:'PENDING',ordinal:1}]}] as CommitteeWorkspaceSnapshot['crises'],
       meetingSessions: [{id: 'meeting', committeeId: 'committee', ordinal: 1, name: 'Session 1', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1, createdAt: '2026-09-30T00:00:00Z', closedAt: null}]}),
-      {startDocumentVote, listFiles});
+      {startDocumentVote, listFiles,updateDocumentSettings});
     expect([...page.querySelectorAll('.draft-group-heading')].map(group => group.textContent))
       .toEqual(['Draft Directives', 'Unfriendly Amendments', 'Draft Resolutions']);
     expect([...page.querySelectorAll('.draft-group-option > .text')].map(option => option.textContent))
@@ -143,10 +145,15 @@ describe('committee workspace routes and roles', () => {
     });
     expect(page.querySelector('.draft-group-option.selected')?.textContent).toBe('DIRECTIVE 1.2');
     await act(async () => {select.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', keyCode: 13, bubbles: true}));});
+    expect(confirm.disabled).toBe(true);
+    const crisis=page.querySelector<HTMLElement>('[aria-label="Responding crisis"]')!;
+    await act(async()=>crisis.click());
+    await act(async()=>crisis.querySelector<HTMLElement>('.item')!.click());
     expect(confirm.disabled).toBe(false);
     await act(async () => {confirm.click(); confirm.click();});
     expect(startDocumentVote).toHaveBeenCalledTimes(1);
     expect(startDocumentVote).toHaveBeenCalledWith('directive2', 1);
+    expect(updateDocumentSettings).toHaveBeenCalledWith('directive2',{baseRevision:1,crisisGroupId:'crisis'});
     expect(page.querySelector('.document-voting-heading')?.textContent).toBe('Voting in progressDIRECTIVE 1.2');
     expect(page.querySelector('[data-navigation-key="/votes"]')?.textContent).toContain('Vote - DIRECTIVE 1.2');
   });

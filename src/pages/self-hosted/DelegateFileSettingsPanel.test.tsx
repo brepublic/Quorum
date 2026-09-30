@@ -46,7 +46,7 @@ describe('file settings editor', () => {
   });
 
   it('normalizes suffixes and sends all three lists only to the current committee', async () => {
-    const settings = {...defaults,allowedExtensions:{WORKING_PAPER:['pdf'],DIRECTIVE_DRAFT:['doc'],RESOLUTION_DRAFT:['txt']}};
+    const settings = {...defaults,allowedExtensions:{WORKING_PAPER:['pdf'],DIRECTIVE_DRAFT:['doc'],RESOLUTION_DRAFT:['txt'],NEWS:['pdf'],CRISIS_NOTICE:['pdf'],INSTANT_MESSAGE:['txt'],OTHER:['pdf']}};
     const updateDelegateFileSettings = vi.fn(async (_id, value) => ({...value,revision:2}));
     const api = {getDelegateFileSettings:async () => settings,updateDelegateFileSettings} as unknown as SelfHostedApi;
     await act(async () => root.render(<MemoryRouter><DelegateFileSettingsPanel committeeId="one" api={api} /></MemoryRouter>));

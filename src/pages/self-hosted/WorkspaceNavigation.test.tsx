@@ -76,10 +76,10 @@ describe('self-hosted workspace navigation', () => {
       expect(page.querySelector('input')).toBe(draft);
       expect(draft.value).toBe('unsaved draft');
     };
-    for (const [width, level] of [[2000, 0], [1880, 1], [1800, 2], [1700, 3], [1600, 4], [1500, 5], [1400, 6], [1300, 7], [1200, 8], [1100, 9], [1000, 10]]) {
+    for (const [width, level] of [[2100, 0], [1980, 1], [1900, 2], [1800, 3], [1700, 4], [1600, 5], [1500, 6], [1400, 7], [1300, 8], [1200, 9], [1100, 10], [1000, 11]]) {
       assertLevel(width, level);
       expect(Boolean(nav.querySelector('.realtime-status-label'))).toBe(level === 0);
-      for (const [path, minimum] of [['/settings', 2], ['/help', 2], ['/stats', 3], ['/posts', 4], ['/notes', 5], ['/strawpolls', 6], ['/votes', 7], ['/directives', 8], ['/resolutions', 9], ['/caucuses', 10]] as const) {
+      for (const [path, minimum] of [['/settings', 2], ['/help', 2], ['/stats', 3], ['/posts', 4], ['/notes', 5], ['/strawpolls', 6], ['/votes', 7], ['/resolutions', 8], ['/directives', 9], ['/crises', 10], ['/caucuses', 11]] as const) {
         expect(Boolean(nav.querySelector(`.committee-primary-navigation > [data-navigation-key="${path}"]`))).toBe(level < minimum);
       }
     }
@@ -96,9 +96,9 @@ describe('self-hosted workspace navigation', () => {
     expect(poll.querySelector('a.active')?.getAttribute('href')).toBe('/committees/committee/strawpolls/poll');
     act(() => poll.querySelector<HTMLElement>('a.active')?.click());
     expect(more.classList.contains('visible')).toBe(false);
-    assertLevel(800, 11);
+    assertLevel(800, 12);
     expect(nav.getAttribute('data-navigation-mode')).toBe('sidebar');
-    for (const [width, level] of [[1000, 10], [1100, 9], [1200, 8], [1300, 7], [1400, 6], [1500, 5], [1600, 4], [1700, 3], [1800, 2], [1880, 1], [2000, 0]]) assertLevel(width, level);
+    for (const [width, level] of [[1000, 11], [1100, 10], [1200, 9], [1300, 8], [1400, 7], [1500, 6], [1600, 5], [1700, 4], [1800, 3], [1900, 2], [1980, 1], [2100, 0]]) assertLevel(width, level);
     expect(page.querySelector('.committee-navigation-measurement')?.hasAttribute('inert')).toBe(true);
     expect(nav.querySelector('a[href="/committees/committee/setup"]')?.textContent).toBe('Seats');
     act(() => setLanguage('zh-CN'));

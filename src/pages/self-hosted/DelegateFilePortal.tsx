@@ -326,7 +326,7 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
         : <Message content={t(publishedCategory === 'ALL' ? 'No published files' : 'No files in this category')} />}</div></>}
         {active === 'upload' && <><Card centered fluid className="delegate-file-upload-card"><Card.Content>
         <Form onSubmit={() => void upload()}>
-        <Form.Select label={t("File type")} options={[...FILE_TYPES.map(type => ({key: type, value: type, text: delegateFileTypeName(type, portal.committeeLanguage)})),
+        <Form.Select label={t("File type")} options={[...FILE_TYPES.filter(type=>type!=='CRISIS_NOTICE').map(type => ({key: type, value: type, text: delegateFileTypeName(type, portal.committeeLanguage)})),
           {key: 'OTHER', value: 'OTHER', text: t('Other')}]} value={fileType} disabled={working}
           onChange={(_, data) => {setFileType(data.value as StandardDelegateFileType | 'OTHER'); setError(undefined);}} />
         {fileType === 'OTHER' && <Form.Input label={t('Custom file type')} value={customType} required maxLength={100} disabled={working}
