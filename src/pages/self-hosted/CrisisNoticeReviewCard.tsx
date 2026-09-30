@@ -55,7 +55,7 @@ export default function CrisisNoticeReviewCard({file,snapshot,api,refresh,downlo
         input={{ref:input}} onFocus={()=> {setFocused(true);++sequence.current;setChecked(undefined);}}
         onChange={event=> {manuallyEdited.current=true;setName(event.currentTarget.value);setFailure(undefined);setChecked(undefined);}}
         onBlur={()=> {setFocused(false);setRetry(current=>current+1);}} />
-      {!valid && <div className="file-name-conflict-hint">{t('Complete crisis number')}</div>}
+      {!valid && !failure && <div className="file-name-conflict-hint">{t('Complete crisis number')}</div>}
     </Form></Card.Header><Label basic color="blue" icon="clock outline" className="self-hosted-file-status" content={t('Pending review')} /></div>
     {Boolean(failure) && <Message error><p>{storageErrorText(failure)}</p><Button basic onClick={()=>correctable ? input.current?.focus() : setRetry(current=>current+1)}>{t(correctable ? 'Correct file name' : 'Retry')}</Button></Message>}
     <Card.Meta><Table compact celled unstackable className="motion-metadata-table delegate-file-metadata"><Table.Body>
@@ -69,8 +69,9 @@ export default function CrisisNoticeReviewCard({file,snapshot,api,refresh,downlo
     <Button primary fluid loading={working} disabled={!enabled || !valid} onClick={()=>checked?.preview.replacement ? setReplacing(true) : void importNotice()}>{t('Crisis')} <Icon name="arrow right" /></Button>
   </Card.Content>
     <Modal size="tiny" open={replacing} onClose={()=>setReplacing(false)} closeOnDimmerClick={!working} closeOnEscape={!working}>
-      <Modal.Header>{t('Replace notice')}</Modal.Header><Modal.Content><p>{checked?.preview.replacement?.logicalName}</p>
-        <Icon name="arrow down" /><p>{name}</p>{Boolean(failure) && <Message error content={storageErrorText(failure)} />}
+      <Modal.Header>{t('Replace notice')}</Modal.Header><Modal.Content><strong>{t('Current notice')}</strong><p>{checked?.preview.replacement?.logicalName}</p>
+        <p>{checked?.preview.replacement?.originalName}</p><strong>{t('New notice')}</strong><p>{name}</p><p>{file.originalName}</p>
+        {Boolean(failure) && <Message error content={storageErrorText(failure)} />}
       </Modal.Content><Modal.Actions><Button disabled={working} onClick={()=>setReplacing(false)}>{t('Cancel')}</Button>
         <Button primary loading={working} disabled={working} onClick={()=>void importNotice(checked?.preview.replacement?.id)}>{t('Replace notice')}</Button>
       </Modal.Actions></Modal>

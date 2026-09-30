@@ -42,7 +42,8 @@ export default function CrisisPanel({snapshot,api,run,canChair,resourceId}: {
   const pending = group.updates.some(update=>update.status==='PENDING');
   return <div className="crisis-panel">
     {Boolean(failure) && <Message error content={storageErrorText(failure)} />}
-    <TimerControls name="Crisis timer" timer={group.timer} run={run} api={api} canChair={editable && !group.endedAt && pending} />
+    <TimerControls key={`${group.timer.id}:${group.updates.find(update=>update.publishedAt)?.id ?? ''}`}
+      name="Crisis timer" timer={group.timer} run={run} api={api} canChair={editable && !group.endedAt && pending} />
     <Button basic color="blue" fluid disabled={!editable || Boolean(group.endedAt) || group.updates.some(update=>update.status==='UNPUBLISHED')}
       onClick={()=>void run(()=>api.createCrisisUpdate(group.id,group.revision))}><Icon name="plus" />{t('Update crisis')}</Button>
     <div className="crisis-card-list">{group.updates.map(update=><CrisisCard key={update.id} group={group} card={update} files={files} api={api}
@@ -107,7 +108,7 @@ function CrisisCard({group,card,files,api,run,editable}: {
     {Boolean(failure) && <Message error content={storageErrorText(failure)} />}
     {editable ? <Form>
       <Form.Select fluid selection label={t('Crisis notice')} aria-label={t('Crisis notice')} value={draft.fileId ?? ''} disabled={working}
-        options={choices.map(file=>({key:file.id,value:file.id,text:file.logicalName}))}
+        options={choices.map(file=>({key:file.id,value:file.id,text:file.logicalName,description:file.originalName}))}
         onChange={(_,data)=> {
           const id=String(data.value);
           if (card.notice && id!==card.notice.id) setReplacement(id);
@@ -124,7 +125,8 @@ function CrisisCard({group,card,files,api,run,editable}: {
   </Card.Content>
     <Modal size="tiny" open={Boolean(replacement)} onClose={()=>setReplacement(undefined)} closeOnDimmerClick={!working} closeOnEscape={!working}>
       <Modal.Header>{t('Replace notice')}</Modal.Header><Modal.Content>
-        <p>{card.notice?.logicalName}</p><Icon name="arrow down" /><p>{files.find(file=>file.id===replacement)?.logicalName}</p>
+        <strong>{t('Current notice')}</strong><p>{card.notice?.logicalName}</p><p>{files.find(file=>file.id===card.notice?.id)?.originalName}</p>
+        <strong>{t('New notice')}</strong><p>{files.find(file=>file.id===replacement)?.logicalName}</p><p>{files.find(file=>file.id===replacement)?.originalName}</p>
       </Modal.Content><Modal.Actions><Button disabled={working} onClick={()=>setReplacement(undefined)}>{t('Cancel')}</Button>
         <Button primary loading={working} disabled={working} onClick={()=>void perform(async()=> {await save(replacement,card.notice?.id);setReplacement(undefined);})}>{t('Replace notice')}</Button>
       </Modal.Actions></Modal>

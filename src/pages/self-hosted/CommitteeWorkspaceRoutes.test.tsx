@@ -80,6 +80,27 @@ describe('committee workspace routes and roles', () => {
       content: '', draftType: 'DIRECTIVE'});
   });
 
+  it('shows an invalidated directive as failed and prevents further voting', async () => {
+    const document: ProceedingDocument = {
+      id: 'directive', committeeId: 'committee', meetingSessionId: 'meeting', kind: 'RESOLUTION', draftType: 'DIRECTIVE',
+      resolutionId: null, ordinal: 1, customTitle: null, title: 'Directive 1.1', status: 'FAILED', rulePackageVersionId: 'rules',
+      currentVersion: {id: 'body', versionNumber: 1, content: 'Text', contentFile: null, createdAt: '2026-09-30T00:00:00Z'},
+      votingVersionId: 'body', public: true, proposers: [], seconders: [], delegatesCanAmend: false,
+      directVote: {majority: 'TWO_THIRDS', startedAt: '2026-09-30T00:00:00Z', completedAt: null,
+        invalidatedAt: '2026-09-30T00:01:00Z', settingsRevision: 1, castRevision: 0,
+        eligibility: [{seatId: 'seat', seatDisplayName: 'China', hasVeto: false, mustVote: false}],
+        threshold: 1, automaticResult: null, votes: []}, resultDecisions: [], revision: 2, discussion: [],
+      createdAt: '2026-09-30T00:00:00Z', updatedAt: '2026-09-30T00:01:00Z'};
+    const submitResolutionDirectVote = vi.fn();
+    const page = await render('CHAIR', '/committees/committee/votes/directive', user,
+      value => ({...value, documents: [document]}), {submitResolutionDirectVote});
+    expect(page.textContent).toContain('Crisis updated');
+    expect(page.querySelector('.document-voting-heading')?.textContent).toBe('FailedDirective 1.1');
+    expect(page.querySelector('.outcome-failed')?.textContent).toBe('Failed');
+    expect(page.querySelector('.resolution-voting-actions')).toBeNull();
+    expect(submitResolutionDirectVote).not.toHaveBeenCalled();
+  });
+
   it('groups draft entries numerically and creates the selected vote once', async () => {
     const make = (id: string, ordinal: number, draftType: 'RESOLUTION' | 'DIRECTIVE' = 'RESOLUTION'): ProceedingDocument => ({
       id, committeeId: 'committee', meetingSessionId: 'meeting', kind: 'RESOLUTION', draftType, resolutionId: null, ordinal,
@@ -146,7 +167,7 @@ describe('committee workspace routes and roles', () => {
     expect(page.querySelector('.draft-group-option.selected')?.textContent).toBe('DIRECTIVE 1.2');
     await act(async () => {select.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', keyCode: 13, bubbles: true}));});
     expect(confirm.disabled).toBe(true);
-    const crisis=page.querySelector<HTMLElement>('[aria-label="Responding crisis"]')!;
+    const crisis=page.querySelector<HTMLElement>('[aria-label="Responding to crisis"]')!;
     await act(async()=>crisis.click());
     await act(async()=>crisis.querySelector<HTMLElement>('.item')!.click());
     expect(confirm.disabled).toBe(false);

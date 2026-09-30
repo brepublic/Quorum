@@ -730,7 +730,8 @@ export class Stage5Service {
 
   async processCrisisAutoStarts(): Promise<void> {
     const now = this.now();
-    const due = (await this.pool.query(`SELECT id,committee_id FROM crisis_groups WHERE auto_start_at<=$1 ORDER BY auto_start_at LIMIT 100`,[now])).rows;
+    const due = (await this.pool.query(`SELECT g.id,g.committee_id FROM crisis_groups g JOIN committees c ON c.id=g.committee_id
+      WHERE g.auto_start_at<=$1 AND c.status='ACTIVE' ORDER BY g.auto_start_at LIMIT 100`,[now])).rows;
     for (const candidate of due) await transaction(this.pool,async client => {
       const committee = await lockedCommittee(client,candidate.committee_id);
       const group = (await client.query('SELECT * FROM crisis_groups WHERE id=$1 FOR UPDATE',[candidate.id])).rows[0];

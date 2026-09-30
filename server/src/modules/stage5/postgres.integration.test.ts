@@ -184,6 +184,9 @@ integration('PostgreSQL crisis lifecycle', () => {
   it('restores overdue automatic starts from durable plans and handles all three settings',async () => {
     const f = await meetingEndFixture(); let clock = new Date(); stage5 = new Stage5Service(pool!,()=>clock);
     const group = await publishedTestCrisis(f); expect(group.autoStartAt).not.toBeNull();
+    const archivedFixture=await meetingEndFixture();const archivedGroup=await publishedTestCrisis(archivedFixture);
+    const archivedRevision=(await stage4.snapshot(archivedFixture.committee.id,archivedFixture.firstChair)).committee.revision;
+    await stage3.archiveCommittee(archivedFixture.firstChair,archivedFixture.committee.id,archivedRevision,context('archive-crisis-plan'));
     let snapshot = await stage4.snapshot(f.committee.id,f.firstChair);
     await stage5.setCrisisAutoStartDelay(f.firstChair,f.committee.id,{baseRevision: snapshot.committee.revision,minutes: 0},context('immediate-setting'));
     expect((await stage4.snapshot(f.committee.id,f.firstChair)).crises![0]!.autoStartAt).toBe(group.autoStartAt);
@@ -192,6 +195,8 @@ integration('PostgreSQL crisis lifecycle', () => {
     const restored = (await pool!.query('SELECT running,started_at,remaining_at_start_ms FROM timer_states WHERE id=$1',[group.timer.id])).rows[0];
     expect(restored).toMatchObject({running: true,remaining_at_start_ms: '1800000'});
     expect(restored.started_at.toISOString()).toBe(group.autoStartAt);
+    expect((await pool!.query('SELECT running FROM timer_states WHERE id=$1',[archivedGroup.timer.id])).rows[0].running).toBe(false);
+    expect((await pool!.query('SELECT auto_start_at FROM crisis_groups WHERE id=$1',[archivedGroup.id])).rows[0].auto_start_at.toISOString()).toBe(archivedGroup.autoStartAt);
     const immediate = await publishedTestCrisis(f,'Crisis Notice 1.2.1'); expect(immediate.timer.running).toBe(true);
     snapshot = await stage4.snapshot(f.committee.id,f.firstChair);
     await stage5.setCrisisAutoStartDelay(f.firstChair,f.committee.id,{baseRevision: snapshot.committee.revision,minutes: -1},context('manual-setting'));

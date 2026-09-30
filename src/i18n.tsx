@@ -119,6 +119,8 @@ const zhCN: Record<string, string> = {
   'Superseded by update': '被更新覆盖',
   'Ended': '已结束',
   'Replace notice': '替换通告',
+  'Current notice': '当前通告',
+  'New notice': '新通告',
   'Crisis not found.': '危机不存在。',
   'Crisis updated': '危机已更新',
   'Responding to crisis': '应对危机',

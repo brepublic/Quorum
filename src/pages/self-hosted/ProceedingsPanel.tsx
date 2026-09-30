@@ -1576,8 +1576,9 @@ function DocumentVoting({snapshot, run, api, canChair, document}: CommonProps & 
     || JSON.stringify(snapshotDirectVote?.eligibility) !== JSON.stringify(voteDraft.baseline.eligibility)));
   const directVotes = voteDraft?.votes ?? directVote?.votes ?? [];
   const predictedResult = voteDraft ? completedResolutionVoteResult(voteDraft) : undefined;
-  const displayedResult = predictedResult !== undefined ? predictedResult : directVote?.automaticResult;
-  const resultComplete = predictedResult !== undefined || !!directVote?.completedAt;
+  const displayedResult = document.directVote?.invalidatedAt ? 'FAILED'
+    : predictedResult !== undefined ? predictedResult : directVote?.automaticResult;
+  const resultComplete = !!document.directVote?.invalidatedAt || predictedResult !== undefined || !!directVote?.completedAt;
   const directVoteBySeat = new Map(directVotes.map(vote => [vote.seatId, vote]));
   const directEligibility = directVote?.eligibility ?? [];
   const directTotalPages = Math.max(1, Math.ceil(directEligibility.length / 18));
@@ -1671,7 +1672,7 @@ function DocumentVoting({snapshot, run, api, canChair, document}: CommonProps & 
     await setDirectResolutionVote(previous.previousChoice, previous.seatId, false);
   };
   return <Container fluid className="document-voting-page">
-    <div className="document-voting-heading"><span>{t('Voting in progress')}</span><Header as="h1">{document.title}</Header></div>
+    <div className="document-voting-heading"><span>{t(document.directVote?.invalidatedAt ? 'Failed' : 'Voting in progress')}</span><Header as="h1">{document.title}</Header></div>
     {directVote && <Segment className="resolution-voting-board">
       <div className="resolution-voting-dashboard"><aside className="resolution-voting-metrics resolution-voting-thresholds">
         <div className="resolution-voting-metric metric-present"><span>{t('Present')}</span><strong>{directEligibility.length}</strong></div>
@@ -1812,7 +1813,7 @@ function VotingWorkspace({snapshot, run, api, canChair, resourceId}: CommonProps
           }).map(item => ({key: item.id, value: item.id, text: item.title, className: 'draft-group-option',
             description: !item.currentVersion.contentFile && !item.currentVersion.content.trim() ? t('No content') : undefined}))
         ]) : [{key: 'empty', value: 'empty', text: t('(Empty)'), disabled: true, className: 'draft-empty'}]} /></Form.Field>
-      {selectedDraft?.draftType==='DIRECTIVE' && <Form.Select fluid selection label={t('Responding crisis')} aria-label={t('Responding crisis')}
+      {selectedDraft?.draftType==='DIRECTIVE' && <Form.Select fluid selection label={t('Responding to crisis')} aria-label={t('Responding to crisis')}
         value={crisisId} disabled={!canChair || saving} options={activeCrises.map(group=>({key:group.id,value:group.id,
           text:`${t('Crisis')} ${group.sessionOrdinal}.${group.ordinal}.${group.updates.find(update=>update.status==='PENDING')!.ordinal}`}))}
         onChange={(_,data)=>setCrisisId(String(data.value))} />}

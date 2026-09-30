@@ -2820,4 +2820,4 @@ html[lang='zh-CN'] .ui.grid > .column {
 .crisis-time-dot.orange { background-color: #e57d12; }
 .crisis-time-dot.red { background-color: #db2828; }
 @keyframes crisis-awaiting { 0%, 49.999% { color: #db2828; } 50%, 100% { color: #1b1c1d; } }
-.ui.menu .crisis-awaiting > .text, .ui.menu .crisis-awaiting > a, .ui.menu .crisis-awaiting .crisis-entry-label { animation: crisis-awaiting 2s steps(1, end) infinite; }
+.ui.menu .crisis-awaiting > .text, .ui.menu .crisis-awaiting .crisis-entry-label { animation: crisis-awaiting 2s steps(1, end) infinite; }

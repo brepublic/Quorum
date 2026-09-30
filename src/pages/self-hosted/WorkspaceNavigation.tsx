@@ -145,7 +145,7 @@ function PrimaryItems({snapshot, onNavigate, onCreateCaucus, level = 0}: {
         {resources.map(resource => <Dropdown.Item key={resource.id} as={Link} to={`${destination}/${resource.id}`}
           active={location.pathname === `${destination}/${resource.id}` || location.pathname.startsWith(`${destination}/${resource.id}/`)}
           className={resource.awaiting ? 'crisis-awaiting' : undefined}
-          text={<>{resource.label}{resource.dot && <span className={`crisis-time-dot ${resource.dot}`} aria-label={t(resource.dot==='red' ? 'Crisis time expired' : 'Crisis time below five minutes')} />}</>} onClick={navigate} />)}
+          text={<>{kind==='crises' ? <span className="crisis-entry-label">{resource.label}</span> : resource.label}{resource.dot && <span className={`crisis-time-dot ${resource.dot}`} aria-label={t(resource.dot==='red' ? 'Crisis time expired' : 'Crisis time below five minutes')} />}</>} onClick={navigate} />)}
       </Dropdown.Menu>
     </Dropdown>;
   };
