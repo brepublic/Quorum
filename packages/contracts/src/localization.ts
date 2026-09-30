@@ -74,7 +74,7 @@ export type AutomaticContentName =
   | {kind: 'GENERAL_SPEAKERS_LIST'}
   | {kind: 'MODERATED_CAUCUS'; topic: string; customTitle: string | null}
   | {kind: 'RESOLUTION'; sessionOrdinal: number; ordinal: number; customTitle: string | null}
-  | {kind: 'AMENDMENT'; ordinal: number; customTitle: string | null}
+  | {kind: 'AMENDMENT'; ordinal: number; sessionOrdinal: number; resolutionOrdinal: number; amendmentType: 'FRIENDLY' | 'UNFRIENDLY'; customTitle: string | null}
   | {kind: 'STRAWPOLL'; ordinal: number; question: string};
 
 function positiveOrdinal(value: number): string {
@@ -92,7 +92,8 @@ export function formatCommitteeContent(resource: AutomaticContentName, language:
     case 'GENERAL_SPEAKERS_LIST': return zh ? '主发言名单' : "General Speaker's List";
     case 'MODERATED_CAUCUS': return resource.topic || (zh ? '未命名有主持核心磋商' : 'Untitled caucus');
     case 'RESOLUTION': return `${zh ? '决议草案' : 'Draft Resolution'} ${positiveOrdinal(resource.sessionOrdinal)}.${positiveOrdinal(resource.ordinal)}`;
-    case 'AMENDMENT': return `${zh ? '新修正案' : 'New Amendment '}${positiveOrdinal(resource.ordinal)}`;
+    case 'AMENDMENT': return `${zh ? resource.amendmentType === 'FRIENDLY' ? '决议草案友好修正案' : '决议草案非友好修正案'
+      : resource.amendmentType === 'FRIENDLY' ? 'Draft Resolution Friendly Amendment' : 'Draft Resolution Unfriendly Amendment'} ${positiveOrdinal(resource.sessionOrdinal)}.${positiveOrdinal(resource.resolutionOrdinal)}.${positiveOrdinal(resource.ordinal)}`;
     case 'STRAWPOLL': return resource.question || `${zh ? '新意向性投票' : 'New Strawpoll '}${positiveOrdinal(resource.ordinal)}`;
   }
 }

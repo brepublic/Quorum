@@ -728,14 +728,13 @@ function BallotCorrection({ballot, snapshot, run, api}: {ballot: NonNullable<Com
   </Form>;
 }
 
-function AmendmentCard({snapshot, amendment, run, api, canChair, representedSeatId, seatOptions}: CommonProps & {
+function AmendmentCard({snapshot, amendment, run, api, canChair, representedSeatId}: CommonProps & {
   amendment: NonNullable<CommitteeWorkspaceSnapshot['documents']>[number]; representedSeatId: string;
-  seatOptions: Array<{key: string; value: string; text: string; disabled: boolean}>;
 }) {
   const [title, setTitle] = React.useState(amendment.title);
   const [titleDirty, setTitleDirty] = React.useState(false);
   const [content, setContent] = React.useState(amendment.currentVersion.content);
-  const [source, setSource] = React.useState<'TEXT' | 'FILE'>(amendment.currentVersion.contentFile ? 'FILE' : 'TEXT');
+  const [source, setSource] = React.useState<'TEXT' | 'FILE'>('FILE');
   const [fileId, setFileId] = React.useState(amendment.currentVersion.contentFile?.id ?? '');
   const [files, setFiles] = React.useState<FileEntry[]>([]);
   const [selectedFileId, setSelectedFileId] = React.useState('');
@@ -754,7 +753,7 @@ function AmendmentCard({snapshot, amendment, run, api, canChair, representedSeat
   const [ballotThreshold, setBallotThreshold] = React.useState<'SIMPLE_MAJORITY' | 'TWO_THIRDS'>('SIMPLE_MAJORITY');
   const represented = canChair && representedSeatId ? {onBehalfOfSeatId: representedSeatId} : {};
   const editable = snapshot.viewer.audience !== 'PUBLIC' && snapshot.committee.status === 'ACTIVE'
-    && (canChair || Boolean(snapshot.viewer.seatId) && amendment.proposers.some(country => country.seatId === snapshot.viewer.seatId))
+    && (canChair || Boolean(snapshot.viewer.seatId) && amendment.createdOnBehalfOfSeatId === snapshot.viewer.seatId)
     && !['VOTING', 'INCORPORATED', 'REJECTED'].includes(amendment.status);
   const amendmentBallots = (snapshot.ballots ?? []).filter(ballot => ballot.subjectType === 'AMENDMENT'
     && ballot.subjectId === amendment.id);
@@ -763,7 +762,6 @@ function AmendmentCard({snapshot, amendment, run, api, canChair, representedSeat
     && !['VOTING', 'INCORPORATED', 'REJECTED'].includes(amendment.status);
   React.useEffect(() => {
     setTitle(amendment.title); setTitleDirty(false); setBodyDirty(false); setContent(amendment.currentVersion.content);
-    setSource(amendment.currentVersion.contentFile ? 'FILE' : 'TEXT');
     setFileId(amendment.currentVersion.contentFile?.id ?? '');
   }, [amendment.id, amendment.revision]);
   React.useEffect(() => {
@@ -814,42 +812,41 @@ function AmendmentCard({snapshot, amendment, run, api, canChair, representedSeat
     } catch (caught) {if (generation === downloadGeneration.current) setDownloadFailure(caught);}
     finally {downloadingFile.current = false; if (generation === downloadGeneration.current) setPreparingDownload(false);}
   };
-  const proposed = !['INCORPORATED', 'REJECTED'].includes(amendment.status);
-  const setResult = async (outcome: 'INCORPORATED' | 'REJECTED') => {
-    let reason: string | undefined;
-    if (!proposed) {
-      const entered = window.prompt(t('Correction reason'));
-      if (entered === null || !entered.trim()) return;
-      reason = entered.trim();
-    }
-    await run(() => api.recordDocumentResult(amendment.id, amendment.revision, outcome, reason));
+  const friendly = amendment.amendmentType === 'FRIENDLY';
+  const [adopting, setAdopting] = React.useState(false);
+  const adoptingRef = React.useRef(false);
+  const parent = snapshot.documents?.find(document => document.id === amendment.resolutionId);
+  const readyToAdopt = canChair && friendly && amendment.status === 'DRAFT'
+    && parent?.status === 'PUBLISHED' && snapshot.meetingSession?.status === 'OPEN'
+    && !titleDirty && !bodyDirty && !fileSaving
+    && Boolean(amendment.currentVersion.contentFile
+      ? amendment.currentVersion.contentFile.status === 'PUBLISHED' : amendment.currentVersion.content.trim());
+  const adopt = async () => {
+    if (!readyToAdopt || adoptingRef.current) return;
+    adoptingRef.current = true; setAdopting(true);
+    try {await run(() => api.recordDocumentResult(amendment.id, amendment.revision, 'INCORPORATED'));}
+    finally {adoptingRef.current = false; setAdopting(false);}
   };
-  return <Card className="amendment-card"><Card.Content><Card.Header>
-    <Dropdown selection compact value={proposed ? 'PROPOSED' : amendment.status}
-      options={[{key: 'proposed', value: 'PROPOSED', text: t('Proposed'), disabled: !proposed},
-        {key: 'incorporated', value: 'INCORPORATED', text: t('Incorporated'), disabled: amendment.status === 'DRAFT'},
-        {key: 'rejected', value: 'REJECTED', text: t('Rejected'), disabled: amendment.status === 'DRAFT'}]}
-      disabled={!canChair || amendment.status === 'VOTING' || hasBallot} onChange={(_, data) => data.value !== 'PROPOSED'
-        && void setResult(data.value as 'INCORPORATED' | 'REJECTED')} />
-    <Button floated="right" icon="trash" negative basic disabled={!deletable} aria-label={t('Delete')}
+  return <Card fluid className="amendment-card"><Card.Content className="amendment-editor-content"><div className="amendment-editor-toolbar">
+    <Input value={title} disabled={!editable} placeholder={t('Amendment title')}
+      onChange={event => {setTitle(event.currentTarget.value); setTitleDirty(true);}} onBlur={() => void save()} />
+    {friendly && amendment.status === 'DRAFT' && canChair
+      ? <Button disabled={!readyToAdopt || adopting} loading={adopting} onClick={() => void adopt()}>{t('Adopt')}</Button>
+      : <Label basic>{statusLabel(amendment.status)}</Label>}
+    <Button className="amendment-delete-button" icon="trash" negative basic disabled={!deletable || adopting} aria-label={t('Delete')}
       onClick={() => void run(() => api.deleteAmendment(amendment.id, amendment.revision))} />
-  </Card.Header><Card.Meta><Dropdown search={searchOptions} selection fluid value={amendment.proposers[0]?.seatId || false}
-    placeholder={t('Amendment proposer')} options={seatOptions} disabled={!canChair}
-    onChange={(_, data) => void run(() => api.updateDocumentSettings(amendment.id,
-      {baseRevision: amendment.revision, proposerSeatIds: [String(data.value)]}))} /></Card.Meta>
-  <Input fluid value={title} disabled={!editable} placeholder={t('Amendment title')}
-    onChange={event => {setTitle(event.currentTarget.value); setTitleDirty(true);}} onBlur={() => void save()} />
-  <Divider hidden /><Button.Group basic compact><Button active={source === 'TEXT'}
-    onClick={() => setSource('TEXT')}>{t('Text')}</Button><Button active={source === 'FILE'}
-    onClick={() => setSource('FILE')}>{t('File')}</Button></Button.Group><Divider hidden />
+  </div>
+  <Button.Group basic compact className="amendment-source-buttons"><Button active={source === 'FILE'}
+    onClick={() => setSource('FILE')}>{t('File')}</Button><Button active={source === 'TEXT'}
+    onClick={() => setSource('TEXT')}>{t('Text')}</Button></Button.Group>
   {source === 'TEXT' ? <Form><TextArea rows={3} value={content} disabled={!editable} placeholder={t('Amendment body')}
     onChange={(_, data) => {setContent(String(data.value)); setBodyDirty(true);}} onBlur={() => void save()} /></Form>
-    : <Segment className="resolution-file-body">
+    : (editable || amendment.currentVersion.contentFile) && <Segment className="resolution-file-body resolution-document-file-body">
       {fileError && <Message error content={fileError} />}
       {Boolean(downloadFailure) && <Message error content={apiErrorText(downloadFailure)} />}
-      {amendment.currentVersion.contentFile && <><Header as="h4">{amendment.currentVersion.contentFile.logicalName}</Header>
-        {amendment.currentVersion.contentFile.fileType && <Label>{delegateFileTypeName(amendment.currentVersion.contentFile.fileType!, snapshot.committee.committeeLanguage)}</Label>}
-        <FileStatusLabel status={amendment.currentVersion.contentFile.status} />
+      {amendment.currentVersion.contentFile && <><div className="resolution-document-file-heading">
+        <Header as="h4">{amendment.currentVersion.contentFile.logicalName}</Header>
+        <FileStatusLabel status={amendment.currentVersion.contentFile.status} /></div>
         {amendment.currentVersion.contentFile.status === 'PUBLISHED'
           ? <Button type="button" primary fluid loading={preparingDownload} disabled={preparingDownload}
             onClick={() => void downloadFile()}>{t('Download')} <Icon name="arrow down" /></Button>
@@ -857,33 +854,33 @@ function AmendmentCard({snapshot, amendment, run, api, canChair, representedSeat
         {canChair && amendment.currentVersion.contentFile.status !== 'PUBLISHED'
           && amendment.currentVersion.contentFile.status !== 'DELETED'
           && <Button as={Link} to={`/committees/${snapshot.committee.id}/posts/review`}>{t('Review files')}</Button>}
-        <Divider /></>}
+        {editable && <Divider />}</>}
       {editable && <>
         {filesLoading ? <Loading /> : fileError ? <Button type="button" onClick={() => setFilesRetry(value => value + 1)}>{t('Retry')}</Button>
           : files.length === 0 ? <><Message content={t('No published files')} />
             <Button as={Link} to={`/committees/${snapshot.committee.id}/posts`}>{t('Files')}</Button></>
           : <Form onSubmit={() => void useFile()}>
-            <Form.Select label={t('Published file')} selection fluid search={files.length > 10}
+            <Form.Select label={t('Choose file')} selection fluid search={files.length > 10}
               value={selectedFileId || false} disabled={fileSaving}
               options={files.map(file => ({key: file.id, value: file.id,
                 text: file.logicalName, description: file.fileType ? delegateFileTypeName(file.fileType, snapshot.committee.committeeLanguage) : undefined}))}
               onChange={(_, data) => setSelectedFileId(String(data.value))} />
-            <Button primary loading={fileSaving} disabled={fileSaving || !selectedFileId || !files.some(file => file.id === selectedFileId)}
-              >{t('Use this file')}</Button>
+            <Button fluid loading={fileSaving} disabled={fileSaving || !selectedFileId || !files.some(file => file.id === selectedFileId)}
+              ><Icon name="check" />{t('Use this file')}</Button>
           </Form>}
       </>}
     </Segment>}
   </Card.Content>
-  {canChair && amendment.status === 'VOTING' && !hasBallot && snapshot.meetingSession?.status === 'OPEN'
-    && <Card.Content extra><Form.Group widths="equal"><Form.Select value={ballotThreshold}
+  {canChair && !friendly && amendment.status === 'VOTING' && !hasBallot && snapshot.meetingSession?.status === 'OPEN'
+    && <Card.Content extra><Form className="amendment-ballot-controls"><Form.Select value={ballotThreshold}
       options={[{key: 'simple', value: 'SIMPLE_MAJORITY', text: t('Simple majority')},
         {key: 'two-thirds', value: 'TWO_THIRDS', text: t('Two-thirds majority')} ]}
       onChange={(_, data) => setBallotThreshold(data.value as typeof ballotThreshold)} />
       <Button primary onClick={() => void run(() => api.createBallot(snapshot.committee.id, {
         meetingSessionId: amendment.meetingSessionId, subjectType: 'AMENDMENT', subjectId: amendment.id,
         procedural: false, thresholdKind: ballotThreshold}))}>{t('Open substantive ballot')}</Button>
-    </Form.Group></Card.Content>}
-  {hasBallot && <Card.Content extra><Header as="h4">{t('Formal Ballot')}</Header>
+    </Form></Card.Content>}
+  {!friendly && hasBallot && <Card.Content extra><Header as="h4">{t('Formal Ballot')}</Header>
     <Ballots snapshot={snapshot} run={run} api={api} canChair={canChair} subjectId={amendment.id} embedded />
   </Card.Content>}
   </Card>;
@@ -1007,7 +1004,8 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
   const openCaucuses = (snapshot.speakerLists ?? []).filter(list => list.kind === 'MODERATED_CAUCUS' && list.status === 'OPEN');
   const resolutions = (snapshot.documents ?? []).filter(document => document.kind === 'RESOLUTION'
     && document.meetingSessionId === session.id);
-  const amendments = (snapshot.documents ?? []).filter(document => document.kind === 'AMENDMENT');
+  const amendments = (snapshot.documents ?? []).filter(document => document.kind === 'AMENDMENT'
+    && document.amendmentType === 'UNFRIENDLY' && document.meetingSessionId === session.id);
   const eligibleResolutions = resolutions.filter(document => document.status === 'PUBLISHED');
   const postponableResolutions = eligibleResolutions.filter(document => !document.directVote?.startedAt);
   const postponedResolutions = resolutions.filter(document => document.status === 'POSTPONED');
@@ -1028,8 +1026,15 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
   const discussedResolutionIds = new Set((snapshot.motions ?? []).filter(motion => motion.status === 'PASSED'
     && motion.motionTypeId === 'open-moderated-caucus' && typeof motion.parameters.resolutionTarget === 'string')
     .map(motion => String(motion.parameters.resolutionTarget)));
+  const amendmentMotionOptions = availableTypes.filter(type => hasAmendmentTarget(type.id)).flatMap(type => amendments
+    .filter(document => eligibleResolutions.some(parent => parent.id === document.resolutionId)
+      && document.status === (type.id === 'introduce-amendment' ? 'DRAFT' : 'PUBLISHED'))
+    .map(document => ({key: `${type.id}:${document.id}`, value: `${type.id}:${document.id}`, typeId: type.id,
+      document, text: `${t(type.id === 'introduce-amendment' ? 'Introduce Amendment' : 'Vote on Amendment')} - ${document.title}`,
+      searchTerms: [...(type.searchTerms ?? []), ...(document.searchTerms ?? [])]})));
   const motionOptions = [
-    ...availableTypes.map(type => ({key: type.id, value: type.id,
+    ...amendmentMotionOptions,
+    ...availableTypes.filter(type => !hasAmendmentTarget(type.id)).map(type => ({key: type.id, value: type.id,
       text: motionTypeName(type, type.id, snapshot.committee.committeeLanguage), searchTerms: type.searchTerms})),
     ...(types.some(type => type.id === 'open-moderated-caucus') ? caucusResolutionOptions.map(document => ({
       key: linkedResolutionMotionValue(document.id), value: linkedResolutionMotionValue(document.id),
@@ -1054,7 +1059,7 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
   const divisible = !hasMotionSpeakers(motionType)
     || caucusDurationValue !== undefined && speakerDurationValue !== undefined
       && motionSeconds(caucusDurationValue, caucusUnit) % motionSeconds(speakerDurationValue, speakerUnit) === 0;
-  const formValid = Boolean(selectedType && proposerId && presentSeatIds.has(proposerId)
+  const formValid = Boolean(selectedType && motionOptions.some(option => option.value === motionChoice) && proposerId && presentSeatIds.has(proposerId)
     && (chairAdvisoryMode || !needsSeconder || seconderId && presentSeatIds.has(seconderId)) && !identicalSeats
     && durationsValid && (chairAdvisoryMode || divisible)
     && (!hasMotionDetail(motionType) || proposal.trim())
@@ -1102,7 +1107,12 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
       <Form.Select placeholder={t('Select type')} search={searchOptions} selection fluid label={t('Type')} icon="search"
         options={motionOptions} value={motionOptions.some(option => option.value === motionChoice) ? motionChoice : ''} onChange={(_, data) => {
           const value = String(data.value); setMotionChoice(value);
-          if (value.startsWith(linkedResolutionMotionPrefix)) {
+          const amendmentOption = amendmentMotionOptions.find(option => option.value === value);
+          if (amendmentOption) {
+            setMotionType(amendmentOption.typeId); setAmendmentTarget(amendmentOption.document.id); setResolutionTarget('');
+            setProposal(amendmentOption.document.currentVersion.content.trim()
+              || amendmentOption.document.currentVersion.contentFile?.logicalName || amendmentOption.document.title);
+          } else if (value.startsWith(linkedResolutionMotionPrefix)) {
             const targetId = value.slice(linkedResolutionMotionPrefix.length);
             const target = caucusResolutionOptions.find(document => document.id === targetId);
             setMotionType('open-moderated-caucus'); setResolutionTarget(targetId);
@@ -1112,7 +1122,7 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
             setMotionType(value); setResolutionTarget(''); setAmendmentTarget(''); setProposal('');
           }
         }} />
-      {hasMotionDetail(motionType) && <Form.Group widths="equal">{hasMotionTextArea(motionType)
+      {hasMotionDetail(motionType) && !hasAmendmentTarget(motionType) && <Form.Group widths="equal">{hasMotionTextArea(motionType)
         ? <Form.TextArea required rows={2}
           className={motionDetailLabel(motionType) === 'Topic' ? 'motion-topic-field' : undefined}
           label={t(motionDetailLabel(motionType))} placeholder={t(motionDetailLabel(motionType))}
@@ -1136,7 +1146,7 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
       </Form.Group>
       {canChair && presentSeats.length === 0 && <Message info content={t('No delegations are marked present. Check Roll Call.')} />}
       {(hasMotionSpeakers(motionType) || hasMotionDuration(motionType) || hasCaucusTarget(motionType)
-        || hasResolutionTarget(motionType) || hasAmendmentTarget(motionType)) && <Form.Group widths="equal"
+        || hasResolutionTarget(motionType)) && <Form.Group widths="equal"
           className={hasMotionDuration(motionType) && hasMotionSpeakers(motionType) ? 'motion-time-fields' : undefined}>
         {hasCaucusTarget(motionType) && <Form.Select required key="caucusTarget" search selection fluid error={!caucusTarget}
           icon="search" label={t('Target caucus')} value={caucusTarget}
@@ -1149,13 +1159,6 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
             ...(motionType === 'vote-on-resolution' && !discussedResolutionIds.has(document.id)
               ? {description: t('Not yet discussed')} : {})}))}
           onChange={(_, data) => setResolutionTarget(String(data.value))} />}
-        {hasAmendmentTarget(motionType) && <Form.Select required key="amendmentTarget" search={searchOptions} selection fluid
-          error={!amendmentTarget} icon="search" label={t('Target Amendment')} value={amendmentTarget}
-          options={targetAmendments.map(document => ({key: document.id, value: document.id,
-            text: document.title, searchTerms: document.searchTerms}))}
-          onChange={(_, data) => {const id = String(data.value); const target = targetAmendments.find(item => item.id === id);
-            setAmendmentTarget(id); setProposal(target?.currentVersion.content.trim()
-              || target?.currentVersion.contentFile?.logicalName || target?.title || '');}} />}
         {hasMotionDuration(motionType) && <Form.Field className="motion-time-field" error={!durationsValid || !divisible}>
           <label>{t(hasMotionSpeakers(motionType) ? 'Total duration' : 'Duration')}</label><Form.Group className="motion-time-inputs"><Form.Input className="motion-time-value"
             type="number" min={1} value={caucusDuration} onChange={event => setCaucusDuration(event.currentTarget.value)} />
@@ -1538,6 +1541,8 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
   const history = useHistory();
   const session = snapshot.meetingSession?.status === 'OPEN' ? snapshot.meetingSession : undefined;
   const selectedDocument = (snapshot.documents ?? []).find(item => item.id === resourceId && item.kind === 'RESOLUTION');
+  const [selectedAmendmentId, setSelectedAmendmentId] = React.useState('');
+  React.useEffect(() => {setSelectedAmendmentId('');}, [resourceId, tab]);
   const [versionTitle, setVersionTitle] = React.useState(selectedDocument?.title ?? '');
   const [versionTitleDirty, setVersionTitleDirty] = React.useState(false);
   const [versionContent, setVersionContent] = React.useState(selectedDocument?.currentVersion.content ?? '');
@@ -1549,6 +1554,7 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
   const [bodyDirty, setBodyDirty] = React.useState(false);
   const [downloadFailure, setDownloadFailure] = React.useState<unknown>();
   const [countrySelections, setCountrySelections] = React.useState({proposers: '', seconders: ''});
+  React.useEffect(() => {setCountrySelections({proposers: '', seconders: ''});}, [selectedAmendmentId]);
   const [countriesSaving, setCountriesSaving] = React.useState(false);
   const savingCountries = React.useRef(false);
   const [fileSaving, setFileSaving] = React.useState(false);
@@ -1633,6 +1639,10 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
   const amendments = (snapshot.documents ?? []).filter(item => item.resolutionId === document.id);
   const activeTab = ({activity: 'text', body: 'text', ballot: 'voting'}[tab ?? '']
     ?? (tab && ['text', 'amendments', 'voting'].includes(tab) ? tab : 'text')) as 'text' | 'amendments' | 'voting';
+  const selectedAmendment = amendments.find(item => item.id === selectedAmendmentId);
+  const countryDocument = activeTab === 'text' ? document : activeTab === 'amendments' ? selectedAmendment : undefined;
+  const canEditCountries = canChair && (countryDocument?.kind !== 'AMENDMENT'
+    || ['DRAFT', 'PUBLISHED'].includes(countryDocument.status));
   const base = `/committees/${snapshot.committee.id}/resolutions/${document.id}`;
   const editable = canParticipate && !['VOTING', 'PASSED', 'FAILED'].includes(document.status);
   const saveVersion = (requestedSource?: 'TEXT' | 'FILE', nextFileId = versionFileId) => {
@@ -1672,19 +1682,17 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
   };
   const presentSeatIds = new Set((snapshot.attendanceBySession?.[document.meetingSessionId] ?? snapshot.attendance)
     .filter(item => item.state === 'PRESENT').map(item => item.seatId));
-  const seatOptions = snapshot.seats.map(seat => ({key: seat.id, value: seat.id, text: seat.displayName,
-    searchTerms: seat.searchTerms, disabled: !presentSeatIds.has(seat.id)}));
-  const selectedCountryIds = new Set([...document.proposers, ...document.seconders].map(country => country.seatId));
+  const selectedCountryIds = new Set([...(countryDocument?.proposers ?? []), ...(countryDocument?.seconders ?? [])].map(country => country.seatId));
   const countryOptions = snapshot.seats.filter(seat => !selectedCountryIds.has(seat.id))
     .map(seat => ({key: seat.id, value: seat.id, text: seat.displayName, content: seatOptionContent(seat),
       searchTerms: seat.searchTerms,
       disabled: !presentSeatIds.has(seat.id)}));
   const saveCountries = async (role: 'proposers' | 'seconders', ids: string[], added = false) => {
-    if (!canChair || savingCountries.current) return;
+    if (!canEditCountries || !countryDocument || savingCountries.current) return;
     savingCountries.current = true; setCountriesSaving(true);
     try {
       await run(async () => {
-        await api.updateDocumentSettings(document.id, {baseRevision: document.revision,
+        await api.updateDocumentSettings(countryDocument.id, {baseRevision: countryDocument.revision,
           [role === 'proposers' ? 'proposerSeatIds' : 'seconderSeatIds']: ids});
         if (added) setCountrySelections(previous => ({...previous, [role]: ''}));
       });
@@ -1798,10 +1806,11 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
     <Grid.Row><Grid.Column><Input value={versionTitle} loading={!document} labelPosition="right"
       label={<Label>{statusLabel(document.status)}</Label>} size="massive" fluid placeholder={t('Set resolution name')}
       disabled={!editable} onChange={event => {setVersionTitle(event.currentTarget.value); setVersionTitleDirty(true);}} onBlur={() => void saveVersion()} /></Grid.Column></Grid.Row>
-    <Grid.Row><Grid.Column width={activeTab === 'voting' ? 16 : 11}><Menu pointing secondary>
+    <Grid.Row><Grid.Column><Menu pointing secondary>
       {[['text', 'Text'], ['amendments', 'Amendments'], ['voting', 'Voting']].map(([path, label]) =>
         <Menu.Item key={path} as={Link} to={path === 'text' ? base : `${base}/${path}`}
-          active={activeTab === path}>{t(label)}</Menu.Item>)}</Menu>
+          active={activeTab === path}>{t(label)}</Menu.Item>)}</Menu></Grid.Column></Grid.Row>
+    <Grid.Row><Grid.Column width={activeTab === 'voting' ? 16 : 11}>
     {activeTab === 'text' && <><Button.Group basic compact className="resolution-content-source">
       <Button active={contentSource === 'FILE'} onClick={() => setContentSource('FILE')}>{t('File')}</Button>
       <Button active={contentSource === 'TEXT'} onClick={() => setContentSource('TEXT')}>{t('Text')}</Button>
@@ -1838,14 +1847,26 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
           </Form>}
       </>}
     </Segment>}</>}
-    {activeTab === 'amendments' && <>{amendments.length === 0 && <Message content={t('No Amendments')} />}<Card.Group itemsPerRow={1}>
-      {canParticipate && session && document.status === 'PUBLISHED' && <Card><Button icon="plus"
-        primary fluid basic aria-label={t('Create Amendment')} onClick={() => void run(() => api.createAmendment(document.id,
-          {meetingSessionId: session.id, customTitle: null, content: '', ...represented}))} /></Card>}
-      {[...amendments].reverse().map(amendment => <AmendmentCard key={amendment.id} snapshot={snapshot}
-        amendment={amendment} run={run} api={api} canChair={canChair} representedSeatId={seatId}
-        seatOptions={seatOptions} />)}
-    </Card.Group></>}
+    {activeTab === 'amendments' && <>
+      <Segment className="amendment-list-panel">
+      {amendments.length === 0 ? <Message content={t('No Amendments')} /> : <List selection divided className="amendment-list">
+        {[...amendments].reverse().map(amendment => <List.Item key={amendment.id} as="button" type="button" role="button"
+          active={amendment.id === selectedAmendmentId} aria-pressed={amendment.id === selectedAmendmentId}
+          disabled={countriesSaving} onClick={() => setSelectedAmendmentId(amendment.id)}>
+          <Icon name="file text outline" /><List.Content><span className="amendment-list-name">{amendment.title}</span></List.Content>
+          <span className="amendment-list-status">{statusLabel(amendment.status)}</span><Icon name="angle right" />
+        </List.Item>)}
+      </List>}
+      {canParticipate && session && document.status === 'PUBLISHED' && <div className="amendment-create-buttons">
+        {(['FRIENDLY', 'UNFRIENDLY'] as const).map(amendmentType => <Button key={amendmentType} icon="plus"
+          content={t(amendmentType === 'FRIENDLY' ? 'Friendly Amendment' : 'Unfriendly Amendment')}
+          onClick={() => void run(() => api.createAmendment(document.id,
+            {meetingSessionId: session.id, amendmentType, customTitle: null, content: '', ...represented}))} />)}
+      </div>}
+      </Segment>
+      {selectedAmendment && <AmendmentCard key={selectedAmendment.id} snapshot={snapshot}
+        amendment={selectedAmendment} run={run} api={api} canChair={canChair} representedSeatId={seatId} />}
+    </>}
     {activeTab === 'voting' && <>{directVote && <Segment className="resolution-voting-board">
       <div className="resolution-voting-dashboard"><aside className="resolution-voting-metrics resolution-voting-thresholds">
         <div className="resolution-voting-metric metric-present"><span>{t('Present')}</span><strong>{directEligibility.length}</strong></div>
@@ -1921,25 +1942,25 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab}: Comm
         {canChair && document.status === 'VOTING' && session && <Button onClick={() => void run(() => api.createBallot(snapshot.committee.id,
           {meetingSessionId: session.id, subjectType: 'RESOLUTION', subjectId: document.id, procedural: false,
             thresholdKind: 'TWO_THIRDS'}))}>{t('Open Formal Ballot')}</Button>}</>}</>}</Grid.Column>
-    {activeTab !== 'voting' && <Grid.Column width={5}><Segment><Form>
+    {countryDocument && <Grid.Column width={5}><Segment className="resolution-countries-card"><Form>
       {(['proposers', 'seconders'] as const).map(role => <section className="resolution-country-list" key={role}
         aria-label={t(role === 'proposers' ? 'Resolution proposer' : 'Resolution seconder')}>
         <Header size="small">{t(role === 'proposers' ? 'Resolution proposer' : 'Resolution seconder')}</Header>
-        <ul>{document[role].map(country => <li key={country.seatId}>
+        <ul>{countryDocument[role].map(country => <li key={country.seatId}>
           <CountryFlagDisplay flag={country.flag} /><span className="resolution-country-name">{country.seatDisplayName}</span>
-          {canChair && <Button basic icon="remove" size="mini" disabled={countriesSaving}
+          {canEditCountries && <Button basic icon="remove" size="mini" disabled={countriesSaving}
             aria-label={`${t('Remove')} ${country.seatDisplayName}`}
-            onClick={() => void saveCountries(role, document[role].filter(item => item.seatId !== country.seatId).map(item => item.seatId))} />}
+            onClick={() => void saveCountries(role, countryDocument[role].filter(item => item.seatId !== country.seatId).map(item => item.seatId))} />}
         </li>)}</ul>
-        {canChair && <><Form.Dropdown search={searchOptions} selection fluid placeholder={t('Country or delegation')}
+        {canEditCountries && <><Form.Dropdown search={searchOptions} selection fluid placeholder={t('Country or delegation')}
           aria-label={t(role === 'proposers' ? 'Resolution proposer' : 'Resolution seconder')}
           value={countrySelections[role] || false} options={countryOptions} disabled={countriesSaving}
           onChange={(_, data) => setCountrySelections(previous => ({...previous, [role]: String(data.value)}))} />
           <Button fluid icon="plus" content={t('Add country')} disabled={countriesSaving || !countrySelections[role]
             || !countryOptions.some(option => option.value === countrySelections[role] && !option.disabled)}
-            onClick={() => void saveCountries(role, [...document[role].map(country => country.seatId), countrySelections[role]], true)} /></>}
+            onClick={() => void saveCountries(role, [...countryDocument[role].map(country => country.seatId), countrySelections[role]], true)} /></>}
       </section>)}
-      {canChair && <Form.Checkbox label={t('Delegates can amend')} toggle disabled={countriesSaving} checked={document.delegatesCanAmend}
+      {activeTab === 'text' && canChair && snapshot.committee.operationMode !== 'CHAIR_OPERATED' && <Form.Checkbox label={t('Delegates can amend')} toggle disabled={countriesSaving} checked={document.delegatesCanAmend}
         onChange={(_, data) => void run(() => api.updateDocumentSettings(document.id,
           {baseRevision: document.revision, delegatesCanAmend: data.checked ?? false}))} />}
     </Form></Segment></Grid.Column>}

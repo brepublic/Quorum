@@ -253,6 +253,7 @@ export interface CreatedStrawpoll extends Strawpoll {
   anonymousAccessToken?: string;
 }
 
+export type AmendmentType = 'FRIENDLY' | 'UNFRIENDLY';
 export type ProceedingDocumentKind = 'RESOLUTION' | 'AMENDMENT';
 export type ProceedingDocumentStatus = 'DRAFT' | 'PUBLISHED' | 'POSTPONED' | 'VOTING'
   | 'PASSED' | 'FAILED' | 'INCORPORATED' | 'REJECTED';
@@ -326,6 +327,8 @@ export interface ProceedingDocument {
   meetingSessionId: string;
   kind: ProceedingDocumentKind;
   resolutionId: string | null;
+  amendmentType?: AmendmentType;
+  amendmentOrdinal?: number;
   title: string;
   searchTerms?: string[];
   status: ProceedingDocumentStatus;
@@ -333,6 +336,7 @@ export interface ProceedingDocument {
   currentVersion: ProceedingDocumentVersion;
   votingVersionId: string | null;
   public: boolean;
+  createdOnBehalfOfSeatId?: string | null;
   proposers: DocumentCountry[];
   seconders: DocumentCountry[];
   delegatesCanAmend: boolean;

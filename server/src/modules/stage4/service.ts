@@ -377,6 +377,7 @@ interface SnapshotStrawpollRow extends QueryResultRow {
 }
 
 interface SnapshotDocumentRow extends QueryResultRow {
+  amendment_type: 'FRIENDLY' | 'UNFRIENDLY'; type_ordinal: number; resolution_ordinal: number;
   id: string; committee_id: string; meeting_session_id: string; kind: ProceedingDocument['kind']; custom_title: string | null; ordinal: number;
   status: ProceedingDocument['status']; rule_package_version_id: string; current_version_id: string;
   voting_version_id: string | null; is_public: boolean; revision: number; created_at: Date; updated_at: Date;
@@ -1063,8 +1064,9 @@ export class Stage4Service {
             castAt: vote.created_at.toISOString()})), revision: row.revision, createdAt: row.created_at.toISOString(),
           closedAt: row.closed_at?.toISOString() ?? null};
       }));
-      const documentRows = await client.query<SnapshotDocumentRow>(`SELECT d.*,a.resolution_document_id FROM documents d
-        LEFT JOIN amendments a ON a.document_id=d.id WHERE d.committee_id=$1 AND d.deleted_at IS NULL
+      const documentRows = await client.query<SnapshotDocumentRow>(`SELECT d.*,a.resolution_document_id,a.amendment_type,a.type_ordinal,
+        r.ordinal AS resolution_ordinal FROM documents d
+        LEFT JOIN amendments a ON a.document_id=d.id LEFT JOIN documents r ON r.id=a.resolution_document_id WHERE d.committee_id=$1 AND d.deleted_at IS NULL
         ORDER BY d.created_at,d.id`, [committeeId]);
       const visibleDocuments = viewer.audience === 'PUBLIC' ? documentRows.rows.filter(row => row.is_public) : documentRows.rows;
       result.documents = await Promise.all(visibleDocuments.map(async row => {
@@ -1094,7 +1096,7 @@ export class Stage4Service {
           flag_type: ProceedingDocument['proposers'][number]['flag']['type']; flag_value: string; role: string}>(`
           SELECT s.id AS seat_id,s.display_name,s.flag_type,s.flag_value,c.role
           FROM (SELECT seat_id,role FROM resolution_countries WHERE resolution_document_id=$1
-            UNION ALL SELECT proposer_seat_id,'PROPOSER' FROM amendments WHERE document_id=$1) c
+            UNION ALL SELECT seat_id,role FROM amendment_countries WHERE amendment_document_id=$1) c
           JOIN committee_seats s ON s.id=c.seat_id ORDER BY s.sort_order,s.stable_key,s.id`, [row.id]);
         const countryList = (role: string): ProceedingDocument['proposers'] => countries.rows.filter(item => item.role === role)
           .map(item => ({seatId: item.seat_id, seatDisplayName: item.display_name,
@@ -1153,8 +1155,10 @@ export class Stage4Service {
               choice: vote.current_choice, revision: vote.revision, castAt: vote.cast_at.toISOString()}))};
         }
         return {id: row.id, committeeId: row.committee_id, meetingSessionId: row.meeting_session_id, kind: row.kind,
+          ...(row.kind === 'AMENDMENT' ? {amendmentType: row.amendment_type, amendmentOrdinal: row.type_ordinal} : {}),
           resolutionId: row.resolution_document_id, ordinal: row.ordinal, customTitle: row.custom_title,
-          title: formatCommitteeContent({kind: row.kind, ordinal: row.ordinal, customTitle: row.custom_title,
+          title: formatCommitteeContent({kind: row.kind, ordinal: row.kind === 'AMENDMENT' ? row.type_ordinal : row.ordinal,
+            amendmentType: row.amendment_type, resolutionOrdinal: row.resolution_ordinal, customTitle: row.custom_title,
             sessionOrdinal: meetingSessionsResult.rows.find(session => session.id === row.meeting_session_id)!.ordinal}, committee.committee_language), status: row.status,
           rulePackageVersionId: row.rule_package_version_id,
           currentVersion: {id: current.id, versionNumber: current.version_number, content: current.content,
@@ -1163,6 +1167,7 @@ export class Stage4Service {
               originalName: current.original_name ?? '', mediaType: current.media_type ?? '',
               status: current.file_status ?? 'DELETED', fileType: current.file_type ?? null} : null,
             createdAt: current.created_at.toISOString()}, votingVersionId: row.voting_version_id, public: row.is_public,
+          createdOnBehalfOfSeatId: row.created_on_behalf_of_seat_id,
           proposers: countryList('PROPOSER'), seconders: countryList('SECONDER'), delegatesCanAmend, directVote,
           resultDecisions: decisions.rows.map(item => ({id: item.id, previousStatus: item.previous_status,
             newStatus: item.new_status, reason: item.reason, correctsDecisionId: item.corrects_decision_id,

@@ -756,6 +756,7 @@ describe('committee workspace routes and roles', () => {
   });
 
   it('targets an existing amendment draft instead of creating one from the introduction motion', async () => {
+    const proposeMotion = vi.fn(async () => ({}));
     const baseDocument = {committeeId: 'committee', meetingSessionId: 'meeting', rulePackageVersionId: 'rules',
       votingVersionId: null, public: false, proposers: [{seatId: 'seat', seatDisplayName: 'China', flag: {type: 'STANDARD', value: 'cn'}}], seconders: [], delegatesCanAmend: false,
       directVote: null, resultDecisions: [], revision: 1, discussion: [], createdAt: '2026-08-14T00:00:00.000Z',
@@ -770,25 +771,35 @@ describe('committee workspace routes and roles', () => {
         {...baseDocument, id: 'resolution', kind: 'RESOLUTION', resolutionId: null, ordinal: 1, customTitle: null, title: 'New draft resolution 1',
           status: 'PUBLISHED', public: true, currentVersion: {id: 'resolution-version', versionNumber: 1,
             content: 'Resolution body', contentFile: null, createdAt: '2026-08-14T00:00:00.000Z'}},
-        {...baseDocument, id: 'amendment', kind: 'AMENDMENT', resolutionId: 'resolution', ordinal: 1, customTitle: null, title: 'New amendment 1',
+        {...baseDocument, id: 'amendment', kind: 'AMENDMENT', amendmentType: 'UNFRIENDLY', resolutionId: 'resolution', ordinal: 1, customTitle: null, title: 'New amendment 1',
           status: 'DRAFT', currentVersion: {id: 'amendment-version', versionNumber: 1,
             content: 'Replace clause 1', contentFile: null, createdAt: '2026-08-14T00:00:00.000Z'}}
       ] as ProceedingDocument[],
       activeRules: {...value.activeRules, motionTypes: [{id: 'introduce-amendment',
-        names: {en: 'Introduce amendment', 'zh-CN': '展示修正案'}, procedural: true, requiredSecondCount: 1}]}}));
-    expect(page.textContent).toContain('Target Amendment');
+        names: {en: 'Introduce amendment', 'zh-CN': '展示修正案'}, procedural: true, requiredSecondCount: 0}]}}), {proposeMotion: proposeMotion as unknown as SelfHostedApi['proposeMotion']});
+    expect(page.textContent).not.toContain('Target Amendment');
     expect(page.textContent).toContain('New amendment 1');
     expect(page.textContent).not.toContain('Target Draft Resolution');
+    const option = [...page.querySelectorAll<HTMLElement>('.motion-proposal-form .menu .item')]
+      .find(item => item.textContent === 'Introduce Amendment - New amendment 1');
+    expect(option).toBeDefined();
+    await act(async () => {option!.click();});
+    const proposer = page.querySelector<HTMLElement>('.motion-proposer-field .ui.dropdown');
+    await act(async () => {proposer?.click();});
+    await act(async () => {proposer?.querySelector<HTMLElement>('[role="option"]')?.click();});
+    await act(async () => {page.querySelector<HTMLButtonElement>('button[aria-label="Propose motion"]')?.click();});
+    expect(proposeMotion).toHaveBeenCalledWith('committee', expect.objectContaining({motionTypeId: 'introduce-amendment',
+      parameters: {amendmentTarget: 'amendment', proposal: 'Replace clause 1'}}));
   });
 
   it.each([
     {status: 'PUBLISHED', debate: [] as string[], visible: ['Postpone Draft Resolution', 'Vote on Draft Resolution',
-      'Introduce Amendment', 'Moderated Caucus - Draft A'], hidden: ['Resume the Draft Resolution']},
+      'Introduce Amendment - Amendment A', 'Moderated Caucus - Draft A'], hidden: ['Resume the Draft Resolution']},
     {status: 'POSTPONED', debate: [] as string[], visible: ['Resume the Draft Resolution'],
-      hidden: ['Postpone Draft Resolution', 'Vote on Draft Resolution', 'Introduce Amendment', 'Moderated Caucus - Draft A']},
+      hidden: ['Postpone Draft Resolution', 'Vote on Draft Resolution', 'Introduce Amendment - Amendment A', 'Moderated Caucus - Draft A']},
     {status: 'PUBLISHED', debate: ['close-debate'], visible: ['Postpone Draft Resolution', 'Vote on Draft Resolution'],
       hidden: ['Introduce Amendment', 'Resume the Draft Resolution']},
-    {status: 'PUBLISHED', debate: ['close-debate', 'open-debate'], visible: ['Introduce Amendment'],
+    {status: 'PUBLISHED', debate: ['close-debate', 'open-debate'], visible: ['Introduce Amendment - Amendment A'],
       hidden: ['Resume the Draft Resolution']}
   ] as const)('filters resolution motions for $status after $debate', async ({status, debate, visible, hidden}) => {
     document.documentElement.lang = 'en';
@@ -803,7 +814,7 @@ describe('committee workspace routes and roles', () => {
       documents: [{...base, id: 'resolution', kind: 'RESOLUTION', resolutionId: null, ordinal: 1, customTitle: 'Draft A',
         title: 'Draft A', status, currentVersion: {id: 'resolution-version', versionNumber: 1,
           content: 'Body', contentFile: null, createdAt: '2026-08-14T00:00:00.000Z'}},
-      {...base, id: 'amendment', kind: 'AMENDMENT', resolutionId: 'resolution', ordinal: 1, customTitle: null,
+      {...base, id: 'amendment', kind: 'AMENDMENT', amendmentType: 'UNFRIENDLY', resolutionId: 'resolution', ordinal: 1, customTitle: null,
         title: 'Amendment A', status: 'DRAFT', currentVersion: {id: 'amendment-version', versionNumber: 1,
           content: 'Replace clause', contentFile: null, createdAt: '2026-08-14T00:00:00.000Z'}}] as ProceedingDocument[],
       motions: debate.map((motionTypeId, index) => ({id: `debate-${index}`, committeeId: 'committee',
@@ -849,12 +860,12 @@ describe('committee workspace routes and roles', () => {
       documents: [{...document, id: 'resolution', kind: 'RESOLUTION', resolutionId: null, ordinal: 1, customTitle: null,
         title: 'Draft resolution 1', status: 'PUBLISHED', currentVersion: {id: 'resolution-version', versionNumber: 1,
           content: 'Resolution body', contentFile: null, createdAt: '2026-08-14T00:00:00.000Z'}},
-      {...document, id: 'amendment', kind: 'AMENDMENT', resolutionId: 'resolution', ordinal: 1, customTitle: null,
+      {...document, id: 'amendment', kind: 'AMENDMENT', amendmentType: 'UNFRIENDLY', resolutionId: 'resolution', ordinal: 1, customTitle: null,
         title: 'New amendment 1', status: 'PUBLISHED', currentVersion: {id: 'amendment-version', versionNumber: 1,
           content: 'Replace clause 1', contentFile: null, createdAt: '2026-08-14T00:00:00.000Z'}}] as ProceedingDocument[],
       activeRules: {...value.activeRules, motionTypes: [{id: 'vote-on-amendment',
         names: {en: 'Vote on amendment', 'zh-CN': '对修正案投票'}, procedural: false, requiredSecondCount: 0}]}}));
-    expect(page.textContent).toContain('Target Amendment');
+    expect(page.textContent).not.toContain('Target Amendment');
     expect(page.textContent).toContain('New amendment 1');
     expect(page.textContent).not.toContain('Text');
   });
@@ -1019,6 +1030,7 @@ describe('committee workspace routes and roles', () => {
         names: {en: 'Introduce draft resolution', 'zh-CN': '展示决议草案'}, procedural: false,
         requiredSecondCount: 1}]}});
     const page = await render('CHAIR', '/committees/committee/motions', user, customize, {createBallot});
+    await act(async () => {page.querySelector<HTMLButtonElement>('.amendment-list button')?.click();});
     const open = [...page.querySelectorAll<HTMLButtonElement>('button')]
       .find(button => button.textContent?.trim() === 'Open substantive ballot');
     await act(async () => {open?.click(); await Promise.resolve();});
@@ -1699,8 +1711,9 @@ describe('committee workspace routes and roles', () => {
     expect(page.querySelector('.resolution-result')).toBeNull();
   });
 
-  it('restores the legacy amendment cards, immediate plus, and guarded trash action', async () => {
+  it('shows only the selected amendment countries and targets its settings independently', async () => {
     const createAmendment = vi.fn(async (): Promise<ProceedingDocument> => ({} as ProceedingDocument));
+    const updateDocumentSettings = vi.fn(async (): Promise<ProceedingDocument> => ({} as ProceedingDocument));
     const deleteAmendment = vi.fn(async () => ({id: 'amendment', deleted: true as const}));
     const resolution: ProceedingDocument = {id: 'resolution', committeeId: 'committee', meetingSessionId: 'meeting',
       kind: 'RESOLUTION', resolutionId: null, ordinal: 1, customTitle: null, title: 'New draft resolution 1', status: 'PUBLISHED',
@@ -1709,8 +1722,9 @@ describe('committee workspace routes and roles', () => {
       public: true, proposers: [{seatId: 'seat', seatDisplayName: 'China', flag: {type: 'STANDARD', value: 'cn'}}], seconders: [], delegatesCanAmend: false, directVote: null,
       resultDecisions: [], revision: 2, discussion: [], createdAt: '2026-08-14T00:00:00.000Z',
       updatedAt: '2026-08-14T00:00:00.000Z'};
-    const amendment: ProceedingDocument = {...resolution, id: 'amendment', kind: 'AMENDMENT',
+    const amendment: ProceedingDocument = {...resolution, id: 'amendment', kind: 'AMENDMENT', amendmentType: 'UNFRIENDLY',
       resolutionId: 'resolution', ordinal: 1, customTitle: null, title: 'New amendment 1', status: 'DRAFT', public: false,
+      proposers: [], seconders: [], createdOnBehalfOfSeatId: 'seat',
       currentVersion: {id: 'amendment-version', versionNumber: 1, content: 'Replace clause 1', contentFile: null,
         createdAt: '2026-08-14T00:00:00.000Z'}, revision: 1};
     const page = await render('CHAIR', '/committees/committee/resolutions/resolution/amendments', user, value => ({...value,
@@ -1718,20 +1732,69 @@ describe('committee workspace routes and roles', () => {
         activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1,
         createdAt: '2026-08-14T00:00:00.000Z', closedAt: null},
       attendance: [{seatId: 'seat', state: 'PRESENT', lastEventId: 'attendance',
-        updatedAt: '2026-08-14T00:00:00.000Z'}], documents: [resolution, amendment]}),
-    {createAmendment, deleteAmendment});
+        updatedAt: '2026-08-14T00:00:00.000Z'}], documents: [resolution, amendment, {...amendment, id: 'amendment-two', title: 'New amendment 2', revision: 4,
+          proposers: [{seatId: 'seat', seatDisplayName: 'Brazil', flag: {type: 'STANDARD', value: 'br'}}]}]}),
+    {createAmendment, deleteAmendment, updateDocumentSettings});
+    expect(page.querySelectorAll('.amendment-card')).toHaveLength(0);
+    expect(page.querySelectorAll('.resolution-country-list')).toHaveLength(0);
+    const items = page.querySelectorAll<HTMLButtonElement>('.amendment-list button');
+    expect(items).toHaveLength(2);
+    await act(async () => {items[0].click();});
+    expect(page.querySelector('.resolution-countries-card')?.textContent).toContain('Brazil');
+    expect(page.querySelector('.resolution-countries-card')?.textContent).not.toContain('China');
+    await act(async () => {page.querySelector<HTMLButtonElement>('.resolution-countries-card button[aria-label="Remove Brazil"]')?.click();});
+    expect(updateDocumentSettings).toHaveBeenCalledWith('amendment-two', {baseRevision: 4, proposerSeatIds: []});
+    await act(async () => {items[1].click();});
     expect(page.querySelectorAll('.amendment-card')).toHaveLength(1);
+    expect(page.querySelectorAll('.resolution-countries-card .resolution-country-list')).toHaveLength(2);
+    expect(page.querySelectorAll('.resolution-countries-card .resolution-country-list li')).toHaveLength(0);
     expect([...page.querySelectorAll<HTMLInputElement>('.amendment-card input')]
       .some(input => input.value === 'New amendment 1')).toBe(true);
+    const sourceButtons = page.querySelectorAll<HTMLButtonElement>('.amendment-card .ui.buttons > button');
+    expect([...sourceButtons].map(button => button.textContent)).toEqual(['File', 'Text']);
+    expect(sourceButtons[0].classList.contains('active')).toBe(true);
+    await act(async () => {sourceButtons[1].click();});
     expect(page.textContent).toContain('Replace clause 1');
-    const add = page.querySelector<HTMLButtonElement>('button[aria-label="Create Amendment"]');
+    const add = [...page.querySelectorAll<HTMLButtonElement>('.amendment-create-buttons button')]
+      .find(button => button.textContent === 'Unfriendly Amendment');
     await act(async () => {add?.click(); await Promise.resolve();});
     expect(createAmendment).toHaveBeenCalledWith('resolution',
-      {meetingSessionId: 'meeting', customTitle: null, content: '', onBehalfOfSeatId: 'seat'});
+      {meetingSessionId: 'meeting', amendmentType: 'UNFRIENDLY', customTitle: null, content: '', onBehalfOfSeatId: 'seat'});
     const trash = page.querySelector<HTMLButtonElement>('.amendment-card button[aria-label="Delete"]');
     expect(trash?.disabled).toBe(false);
     await act(async () => {trash?.click(); await Promise.resolve();});
     expect(deleteAmendment).toHaveBeenCalledWith('amendment', 1);
+  });
+
+  it.each(['', 'Friendly correction'])('adopts a friendly amendment only after its content is ready: %s', async content => {
+    const recordDocumentResult = vi.fn(async (): Promise<ProceedingDocument> => ({} as ProceedingDocument));
+    const createAmendment = vi.fn(async (): Promise<ProceedingDocument> => ({} as ProceedingDocument));
+    const resolution: ProceedingDocument = {id: 'resolution', committeeId: 'committee', meetingSessionId: 'meeting',
+      kind: 'RESOLUTION', resolutionId: null, ordinal: 1, customTitle: null, title: 'Draft Resolution 1.1', status: 'PUBLISHED',
+      rulePackageVersionId: 'rules', currentVersion: {id: 'version', versionNumber: 1,
+        content: 'Parent', contentFile: null, createdAt: '2026-08-14T00:00:00.000Z'}, votingVersionId: null,
+      public: true, proposers: [], seconders: [], delegatesCanAmend: false, directVote: null,
+      resultDecisions: [], revision: 2, discussion: [], createdAt: '2026-08-14T00:00:00.000Z', updatedAt: '2026-08-14T00:00:00.000Z'};
+    const amendment: ProceedingDocument = {...resolution, id: 'friendly', kind: 'AMENDMENT', amendmentType: 'FRIENDLY',
+      resolutionId: 'resolution', status: 'DRAFT', title: 'Draft Resolution Friendly Amendment 1.1.1',
+      currentVersion: {...resolution.currentVersion, content}};
+    const page = await render('CHAIR', '/committees/committee/resolutions/resolution/amendments', user, value => ({...value,
+      meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: 'Session 1', phaseId: 'formal-debate',
+        activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1, createdAt: '2026-08-14T00:00:00.000Z', closedAt: null},
+      documents: [resolution, amendment]}), {recordDocumentResult, createAmendment});
+    const creators = page.querySelectorAll<HTMLButtonElement>('.amendment-create-buttons button');
+    expect([...creators].map(button => button.textContent)).toEqual(['Friendly Amendment', 'Unfriendly Amendment']);
+    await act(async () => {creators[0].click();});
+    expect(createAmendment).toHaveBeenCalledWith('resolution', expect.objectContaining({amendmentType: 'FRIENDLY'}));
+    await act(async () => {page.querySelector<HTMLButtonElement>('.amendment-list button')?.click();});
+    expect(page.querySelector('.amendment-card .dropdown')).toBeNull();
+    expect(page.querySelector('.amendment-card')?.textContent).not.toContain('Open substantive ballot');
+    const adopt = [...page.querySelectorAll<HTMLButtonElement>('.amendment-card button')].find(button => button.textContent === 'Adopt')!;
+    expect(adopt.disabled).toBe(!content);
+    if (content) {
+      await act(async () => {adopt.click();});
+      expect(recordDocumentResult).toHaveBeenCalledWith('friendly', 2, 'INCORPORATED');
+    } else expect(recordDocumentResult).not.toHaveBeenCalled();
   });
 
   it('opens and embeds the retained formal ballot from a voting amendment card', async () => {
@@ -1743,7 +1806,7 @@ describe('committee workspace routes and roles', () => {
       public: true, proposers: [{seatId: 'seat', seatDisplayName: 'China', flag: {type: 'STANDARD', value: 'cn'}}], seconders: [], delegatesCanAmend: false, directVote: null,
       resultDecisions: [], revision: 2, discussion: [], createdAt: '2026-08-14T00:00:00.000Z',
       updatedAt: '2026-08-14T00:00:00.000Z'};
-    const amendment: ProceedingDocument = {...resolution, id: 'amendment', kind: 'AMENDMENT',
+    const amendment: ProceedingDocument = {...resolution, id: 'amendment', kind: 'AMENDMENT', amendmentType: 'UNFRIENDLY',
       resolutionId: 'resolution', ordinal: 1, customTitle: null, title: 'New amendment 1', status: 'VOTING', votingVersionId: 'amendment-version',
       currentVersion: {id: 'amendment-version', versionNumber: 1, content: 'Replace clause 1', contentFile: null,
         createdAt: '2026-08-14T00:00:00.000Z'}, revision: 3};
@@ -1755,6 +1818,7 @@ describe('committee workspace routes and roles', () => {
         updatedAt: '2026-08-14T00:00:00.000Z'}], documents: [resolution, amendment]});
     const page = await render('CHAIR', '/committees/committee/resolutions/resolution/amendments', user, base,
       {createBallot: createBallot as unknown as SelfHostedApi['createBallot']});
+    await act(async () => {page.querySelector<HTMLButtonElement>('.amendment-list button')?.click();});
     const open = [...page.querySelectorAll<HTMLButtonElement>('button')]
       .find(button => button.textContent?.trim() === 'Open substantive ballot');
     expect(open).toBeDefined();
@@ -1772,6 +1836,7 @@ describe('committee workspace routes and roles', () => {
           frozenAt: '2026-08-14T00:00:00.000Z'}, eligibility: [{seatId: 'seat', seatDisplayName: 'China',
           mustVote: false, hasVeto: true}], threshold: {kind: 'SIMPLE_MAJORITY', value: 1}, votes: [], result: null,
         revision: 1, openedAt: '2026-08-14T00:00:00.000Z', closedAt: null, publishedAt: null}]}));
+    await act(async () => {ballotPage.querySelector<HTMLButtonElement>('.amendment-list button')?.click();});
     expect(ballotPage.textContent).toContain('Formal Ballot');
     expect(ballotPage.textContent).toContain('For');
     expect(ballotPage.textContent).toContain('Against');
@@ -1814,6 +1879,7 @@ describe('committee workspace routes and roles', () => {
       value => ({...value, documents: kind === 'RESOLUTION' ? [document] : [{...document, id: 'resolution', kind: 'RESOLUTION', resolutionId: null, status: 'PUBLISHED'}, document]}), {listFiles: vi.fn(async () => [uploadedFile, ...(['PENDING_REVIEW', 'REJECTED', 'DELETED'] as const).map(status => ({...uploadedFile, id: status, logicalName: status, status})), {...uploadedFile, id: 'foreign', logicalName: 'foreign', committeeId: 'other'}]), createFileUpload,
         uploadFileContent, commitFileUpload, createDocumentVersion});
 
+    if (kind === 'AMENDMENT') await act(async () => {page.querySelector<HTMLButtonElement>('.amendment-list button')?.click();});
     const fileMode = kind === 'RESOLUTION' ? page.querySelectorAll<HTMLButtonElement>('.resolution-content-source button')[0]
       : [...page.querySelectorAll<HTMLButtonElement>('.amendment-card button')].find(button => button.textContent === 'File');
     await act(async () => {fileMode?.click(); await Promise.resolve();});

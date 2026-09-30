@@ -278,12 +278,23 @@ async function requirePublishedDocumentFile(client: PoolClient, versionId: strin
     message: 'Publish the document content file before continuing.', details: {reason: 'DOCUMENT_FILE_NOT_PUBLISHED'}});
 }
 
+async function requireUnfriendlyAmendment(client: PoolClient, documentId: string): Promise<void> {
+  const result = await client.query<{amendment_type: string}>('SELECT amendment_type FROM amendments WHERE document_id=$1', [documentId]);
+  if (result.rows[0]?.amendment_type !== 'UNFRIENDLY') throw new AppError({reason: 'AMENDMENTS_NOT_ACCEPTED',
+    code: 'RESOURCE_CONFLICT', message: 'Friendly amendments are adopted without introduction or voting.'});
+}
+
 async function documentState(client: PoolClient, row: DocumentRow): Promise<ProceedingDocument> {
   const context = (await client.query<{committee_language: ContentLanguage; ordinal: number}>(
     `SELECT c.committee_language,s.ordinal FROM committees c JOIN meeting_sessions s ON s.committee_id=c.id
       WHERE c.id=$1 AND s.id=$2`, [row.committee_id, row.meeting_session_id])).rows[0]!;
-  const title = formatCommitteeContent({kind: row.kind, ordinal: row.ordinal, sessionOrdinal: context.ordinal,
-    customTitle: row.custom_title}, context.committee_language);
+  const amendment = row.kind === 'AMENDMENT' ? (await client.query<{amendment_type: 'FRIENDLY' | 'UNFRIENDLY';
+    type_ordinal: number; resolution_ordinal: number}>(`SELECT a.amendment_type,a.type_ordinal,r.ordinal AS resolution_ordinal
+    FROM amendments a JOIN documents r ON r.id=a.resolution_document_id WHERE a.document_id=$1`, [row.id])).rows[0]! : undefined;
+  const title = formatCommitteeContent(row.kind === 'AMENDMENT'
+    ? {kind: 'AMENDMENT', ordinal: amendment!.type_ordinal, sessionOrdinal: context.ordinal,
+      resolutionOrdinal: amendment!.resolution_ordinal, amendmentType: amendment!.amendment_type, customTitle: row.custom_title}
+    : {kind: 'RESOLUTION', ordinal: row.ordinal, sessionOrdinal: context.ordinal, customTitle: row.custom_title}, context.committee_language);
   const version = await client.query<{id: string; version_number: number; content: string; content_file_entry_id: string | null;
     logical_name: string | null; original_name: string | null; media_type: string | null;
     file_status: 'UPLOAD_COMPLETE' | 'PENDING_REVIEW' | 'PUBLISHED' | 'REJECTED' | 'DELETED' | null;
@@ -309,7 +320,7 @@ async function documentState(client: PoolClient, row: DocumentRow): Promise<Proc
     flag_type: ProceedingDocument['proposers'][number]['flag']['type']; flag_value: string; role: string}>(`
     SELECT s.id AS seat_id,s.display_name,s.flag_type,s.flag_value,c.role
     FROM (SELECT seat_id,role FROM resolution_countries WHERE resolution_document_id=$1
-      UNION ALL SELECT proposer_seat_id,'PROPOSER' FROM amendments WHERE document_id=$1) c
+      UNION ALL SELECT seat_id,role FROM amendment_countries WHERE amendment_document_id=$1) c
     JOIN committee_seats s ON s.id=c.seat_id ORDER BY s.sort_order,s.stable_key,s.id`, [row.id]);
   const countryList = (role: string): ProceedingDocument['proposers'] => countries.rows.filter(item => item.role === role)
     .map(item => ({seatId: item.seat_id, seatDisplayName: item.display_name,
@@ -323,6 +334,7 @@ async function documentState(client: PoolClient, row: DocumentRow): Promise<Proc
     directVote = await resolutionDirectVoteState(client, row, metadata);
   }
   return {id: row.id, committeeId: row.committee_id, meetingSessionId: row.meeting_session_id, kind: row.kind,
+    ...(amendment ? {amendmentType: amendment.amendment_type, amendmentOrdinal: amendment.type_ordinal} : {}),
     resolutionId: row.resolution_document_id, title, ordinal: row.ordinal, customTitle: row.custom_title, status: row.status,
     rulePackageVersionId: row.rule_package_version_id,
     currentVersion: {id: current.id, versionNumber: current.version_number, content: current.content,
@@ -331,6 +343,7 @@ async function documentState(client: PoolClient, row: DocumentRow): Promise<Proc
         originalName: current.original_name ?? '', mediaType: current.media_type ?? '',
         status: current.file_status ?? 'DELETED', fileType: current.file_type ?? null} : null,
       createdAt: current.created_at.toISOString()}, votingVersionId: row.voting_version_id, public: row.is_public,
+    createdOnBehalfOfSeatId: row.created_on_behalf_of_seat_id,
     proposers: countryList('PROPOSER'), seconders: countryList('SECONDER'), delegatesCanAmend, directVote,
     resultDecisions: resultDecisions.rows.map(item => ({id: item.id, previousStatus: item.previous_status,
       newStatus: item.new_status, reason: item.reason, correctsDecisionId: item.corrects_decision_id,
@@ -1444,6 +1457,7 @@ export class Stage5Service {
         }
         if (motionTypeId === 'introduce-amendment' || motionTypeId === 'vote-on-amendment') {
           const targetId = motionId(parameters as Record<string, unknown>, 'amendmentTarget', 'Target amendment ID');
+          await requireUnfriendlyAmendment(client, targetId);
           const parent = await client.query<{status: ProceedingDocumentStatus}>(`SELECT r.status FROM documents a
             JOIN amendments m ON m.document_id=a.id JOIN documents r ON r.id=m.resolution_document_id
             WHERE a.id=$1 AND a.committee_id=$2 AND a.meeting_session_id=$3 AND a.kind='AMENDMENT'
@@ -1967,6 +1981,7 @@ export class Stage5Service {
         code: 'RESOURCE_CONFLICT', message: 'Formal Debate has ended for this meeting session.'});
       motionText(parameters, 'proposal', 'Amendment text', 200_000);
       const documentId = motionId(parameters, 'amendmentTarget', 'Target amendment ID');
+      await requireUnfriendlyAmendment(client, documentId);
       const found = await client.query<DocumentRow>(`SELECT d.*,a.resolution_document_id FROM documents d
         JOIN amendments a ON a.document_id=d.id WHERE d.id=$1 AND d.committee_id=$2 AND d.kind='AMENDMENT'
         AND d.deleted_at IS NULL FOR UPDATE OF d`, [documentId, committeeId]);
@@ -1991,11 +2006,6 @@ export class Stage5Service {
         message: 'Add Amendment text or a file before introducing it.'});
       if (source.content_file_entry_id && source.file_status !== 'PUBLISHED') throw new AppError({reason: 'DOCUMENT_FILE_NOT_PUBLISHED', code: 'RESOURCE_CONFLICT',
         message: 'Publish the Amendment content file before introducing it.'});
-      const amendment = await client.query<{proposer_seat_id: string}>(
-        'SELECT proposer_seat_id FROM amendments WHERE document_id=$1 FOR UPDATE', [documentId]);
-      const previousProposer = amendment.rows[0]?.proposer_seat_id ?? null;
-      await client.query('UPDATE amendments SET proposer_seat_id=$2 WHERE document_id=$1',
-        [documentId, motion.proposed_by_seat_id]);
       await client.query(`UPDATE documents SET status='PUBLISHED',is_public=true,revision=revision+1,updated_at=$2
         WHERE id=$1`, [documentId, now]);
       await client.query(`INSERT INTO document_actions
@@ -2008,14 +2018,14 @@ export class Stage5Service {
       await audit(client, context, {committeeId, actorUserId, capabilities: ['CHAIR'],
         onBehalfOfSeatId: motion.proposed_by_seat_id, action: 'documents.status_changed',
         resourceType: 'document', resourceId: documentId,
-        before: {status: 'DRAFT', proposerSeatId: previousProposer, revision: document.revision},
-        after: {status: 'PUBLISHED', proposerSeatId: motion.proposed_by_seat_id,
-          motionId: motion.id, revision: document.revision + 1}});
+        before: {status: 'DRAFT', revision: document.revision},
+        after: {status: 'PUBLISHED', motionId: motion.id, revision: document.revision + 1}});
       return `/committees/${committeeId}/resolutions/${document.resolution_document_id}/amendments`;
     }
 
     if (motion.motion_type_id === 'vote-on-amendment') {
       const documentId = motionId(parameters, 'amendmentTarget', 'Target amendment ID');
+      await requireUnfriendlyAmendment(client, documentId);
       const found = await client.query<DocumentRow>(`SELECT d.*,a.resolution_document_id FROM documents d
         JOIN amendments a ON a.document_id=d.id WHERE d.id=$1 AND d.committee_id=$2 AND d.kind='AMENDMENT'
         AND d.deleted_at IS NULL FOR UPDATE OF d`, [documentId, committeeId]);
@@ -2326,6 +2336,7 @@ export class Stage5Service {
           if (existing.rowCount) throw new AppError({reason: 'BALLOT_ALREADY_EXISTS', code: 'RESOURCE_CONFLICT', message: 'The motion already has a ballot.'});
         } else {
           const kind = subjectType === 'RESOLUTION' ? 'RESOLUTION' : 'AMENDMENT';
+          if (kind === 'AMENDMENT') await requireUnfriendlyAmendment(client, subjectId);
           const document = await client.query<{status: ProceedingDocumentStatus; voting_version_id: string | null}>(
             `SELECT status,voting_version_id FROM documents WHERE id=$1 AND committee_id=$2 AND kind=$3
               AND deleted_at IS NULL FOR UPDATE`,
@@ -3040,7 +3051,11 @@ export class Stage5Service {
     requireBusinessIdentity(auth);
     assertExactBody(input, kind === 'RESOLUTION'
       ? ['meetingSessionId', 'customTitle', 'content', 'onBehalfOfSeatId']
-      : ['meetingSessionId', 'customTitle', 'content', 'onBehalfOfSeatId', 'resolutionId']);
+      : ['meetingSessionId', 'customTitle', 'content', 'onBehalfOfSeatId', 'resolutionId', 'amendmentType']);
+    const amendmentType = input.amendmentType;
+    if (kind === 'AMENDMENT' && !['FRIENDLY', 'UNFRIENDLY'].includes(String(amendmentType))) {
+      throw new AppError({code: 'VALIDATION_FAILED', message: 'Amendment type is invalid.'});
+    }
     const meetingSessionId = uuid(input.meetingSessionId, 'Meeting session ID');
     const customTitle = input.customTitle === null ? null : text(input.customTitle, 'Title', 500);
     const content = text(input.content, 'Content', 200_000, true); const resolutionId = kind === 'AMENDMENT'
@@ -3083,8 +3098,12 @@ export class Stage5Service {
         if (actor.seatId) await client.query(`INSERT INTO resolution_countries (resolution_document_id,seat_id,role)
           VALUES ($1,$2,'PROPOSER')`, [id, actor.seatId]);
       }
-      else await client.query(`INSERT INTO amendments (document_id,resolution_document_id,proposer_seat_id)
-        VALUES ($1,$2,$3)`, [id, resolutionId, actor.seatId]);
+      else {
+        await client.query(`INSERT INTO amendments (document_id,resolution_document_id,amendment_type)
+          VALUES ($1,$2,$3)`, [id, resolutionId, amendmentType]);
+        if (amendmentType === 'FRIENDLY') await client.query(`INSERT INTO amendment_countries (amendment_document_id,seat_id,role)
+          SELECT $1,seat_id,'SECONDER' FROM resolution_countries WHERE resolution_document_id=$2 AND role='PROPOSER'`, [id, resolutionId]);
+      }
       const eventAudience = isPublic ? 'PUBLIC' : 'MEMBER';
       await appendEvent(client, committee, {type: 'document.created', resourceType: 'document', resourceId: id, revision: 1,
         payload: {kind, resolutionId, customTitle, ordinal: inserted.rows[0]!.ordinal, status: 'DRAFT', currentVersionId: versionId,
@@ -3179,6 +3198,7 @@ export class Stage5Service {
       if (document.status !== 'PUBLISHED') throw new AppError({reason: 'DOCUMENT_STATE_CHANGED', code: 'RESOURCE_CONFLICT',
         message: 'The document is not in the required state.'});
       if (document.kind === 'AMENDMENT') {
+        await requireUnfriendlyAmendment(client, documentId);
         const parent = await client.query<{status: ProceedingDocumentStatus}>(`SELECT status FROM documents
           WHERE id=$1 FOR UPDATE`, [document.resolution_document_id]);
         if (parent.rows[0]?.status === 'POSTPONED') throw new AppError({reason: 'DOCUMENT_STATE_CHANGED',
@@ -3227,8 +3247,10 @@ export class Stage5Service {
       if (!document) throw new AppError({code: 'NOT_FOUND', message: 'Document not found.'});
       if (document.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT',
         message: 'This document changed since it was loaded.', details: {currentRevision: document.revision}});
-      if (document.kind === 'AMENDMENT' && supplied.some(key => key !== 'proposerSeatIds')) throw new AppError({reason: 'RESOLUTION_SETTING_ONLY',
+      if (document.kind === 'AMENDMENT' && supplied.some(key => key !== 'proposerSeatIds' && key !== 'seconderSeatIds')) throw new AppError({reason: 'RESOLUTION_SETTING_ONLY',
         code: 'VALIDATION_FAILED', message: 'This setting is only available for resolutions.'});
+      if (document.kind === 'AMENDMENT' && !['DRAFT', 'PUBLISHED'].includes(document.status)) throw new AppError({
+        reason: 'DOCUMENT_STATE_CHANGED', code: 'RESOURCE_CONFLICT', message: 'The Amendment can no longer be edited.'});
       const seat = async (value: unknown, name: string): Promise<string> => {
         const seatId = uuid(value, name);
         const present = await client.query(`SELECT 1 FROM committee_seats s JOIN current_attendance a ON a.seat_id=s.id
@@ -3237,8 +3259,10 @@ export class Stage5Service {
         if (!present.rowCount) throw new AppError({code: 'VALIDATION_FAILED', reason: 'SEAT_NOT_PRESENT', message: `${name} is not present.`});
         return seatId;
       };
+      const countryTable = document.kind === 'RESOLUTION' ? 'resolution_countries' : 'amendment_countries';
+      const countryDocumentColumn = document.kind === 'RESOLUTION' ? 'resolution_document_id' : 'amendment_document_id';
       const existingCountries = await client.query<{seat_id: string; role: string}>(
-        `SELECT seat_id,role FROM resolution_countries WHERE resolution_document_id=$1 ORDER BY seat_id`, [documentId]);
+        `SELECT seat_id,role FROM ${countryTable} WHERE ${countryDocumentColumn}=$1 ORDER BY seat_id`, [documentId]);
       const previousIds = (role: string) => existingCountries.rows.filter(item => item.role === role).map(item => item.seat_id);
       const countries = async (key: string, previous: string[]): Promise<string[] | undefined> => {
         if (!Object.prototype.hasOwnProperty.call(input, key)) return undefined;
@@ -3280,22 +3304,31 @@ export class Stage5Service {
           WHERE document_id=$1`, [documentId, after.delegatesCanAmend, after.majority]);
         for (const [role, ids] of [['PROPOSER', proposerSeatIds], ['SECONDER', seconderSeatIds]] as const) {
           if (ids === undefined) continue;
-          await client.query('DELETE FROM resolution_countries WHERE resolution_document_id=$1 AND role=$2', [documentId, role]);
+          await client.query(`DELETE FROM ${countryTable} WHERE ${countryDocumentColumn}=$1 AND role=$2`, [documentId, role]);
         }
         for (const [role, ids] of [['PROPOSER', proposerSeatIds], ['SECONDER', seconderSeatIds]] as const) {
           if (ids === undefined) continue;
-          await client.query(`INSERT INTO resolution_countries (resolution_document_id,seat_id,role)
+          await client.query(`INSERT INTO ${countryTable} (${countryDocumentColumn},seat_id,role)
             SELECT $1,unnest($2::uuid[]),$3`, [documentId, ids, role]);
         }
       } else {
-        if (proposerSeatIds?.length !== 1) throw new AppError({reason: 'AMENDMENT_PROPOSER_REQUIRED',
-          code: 'VALIDATION_FAILED', message: 'Select one Amendment proposer.'});
-        const proposerSeatId = proposerSeatIds[0];
-        const metadata = await client.query<{proposer_seat_id: string}>('SELECT proposer_seat_id FROM amendments WHERE document_id=$1 FOR UPDATE', [documentId]);
-        before = {proposerSeatIds: [metadata.rows[0]?.proposer_seat_id]}; after = {proposerSeatIds};
-        if (metadata.rows[0]?.proposer_seat_id === proposerSeatId) throw new AppError({reason: 'DOCUMENT_SETTINGS_UNCHANGED', code: 'RESOURCE_CONFLICT',
+        const nextProposers = proposerSeatIds ?? previousIds('PROPOSER');
+        const nextSeconders = seconderSeatIds ?? previousIds('SECONDER');
+        before = {proposerSeatIds: previousIds('PROPOSER'), seconderSeatIds: previousIds('SECONDER')};
+        after = {proposerSeatIds: nextProposers, seconderSeatIds: nextSeconders};
+        if (nextProposers.some(id => nextSeconders.includes(id))) throw new AppError({reason: 'DOCUMENT_COUNTRY_ROLES_OVERLAP',
+          code: 'VALIDATION_FAILED', message: 'Drafting and seconding countries must be different.'});
+        if (JSON.stringify(before) === JSON.stringify(after)) throw new AppError({reason: 'DOCUMENT_SETTINGS_UNCHANGED', code: 'RESOURCE_CONFLICT',
           message: 'The document settings are unchanged.'});
-        await client.query('UPDATE amendments SET proposer_seat_id=$2 WHERE document_id=$1', [documentId, proposerSeatId]);
+        for (const [role, ids] of [['PROPOSER', proposerSeatIds], ['SECONDER', seconderSeatIds]] as const) {
+          if (ids === undefined) continue;
+          await client.query(`DELETE FROM ${countryTable} WHERE ${countryDocumentColumn}=$1 AND role=$2`, [documentId, role]);
+        }
+        for (const [role, ids] of [['PROPOSER', proposerSeatIds], ['SECONDER', seconderSeatIds]] as const) {
+          if (ids === undefined) continue;
+          await client.query(`INSERT INTO ${countryTable} (${countryDocumentColumn},seat_id,role)
+            SELECT $1,unnest($2::uuid[]),$3`, [documentId, ids, role]);
+        }
       }
       const updated = await client.query<DocumentRow>(`UPDATE documents SET revision=revision+1,updated_at=$2 WHERE id=$1
         RETURNING *,(SELECT resolution_document_id FROM amendments WHERE document_id=$1) AS resolution_document_id`,
@@ -3519,10 +3552,23 @@ export class Stage5Service {
         message: 'The Draft Resolution is postponed.'});
       const allowed = document.kind === 'RESOLUTION' ? ['PASSED', 'FAILED'] : ['INCORPORATED', 'REJECTED'];
       if (!allowed.includes(outcome)) throw new AppError({reason: 'INVALID_DOCUMENT_RESULT', code: 'VALIDATION_FAILED', message: 'Document result is invalid.'});
-      if (document.kind === 'AMENDMENT' && document.status === 'DRAFT') throw new AppError({reason: 'AMENDMENT_NOT_INTRODUCED', code: 'RESOURCE_CONFLICT',
-        message: 'Introduce the Amendment before recording its result.'});
-      if (document.kind === 'AMENDMENT' && (document.status === 'VOTING' || document.voting_version_id)) {
-        throw new AppError({reason: 'AMENDMENT_BALLOT_RESULT_REQUIRED', code: 'RESOURCE_CONFLICT', message: 'Publish the Formal Ballot result for this Amendment.'});
+      if (document.kind === 'AMENDMENT') {
+        const amendment = (await client.query<{amendment_type: string}>(
+          'SELECT amendment_type FROM amendments WHERE document_id=$1', [documentId])).rows[0]!;
+        if (amendment.amendment_type !== 'FRIENDLY') throw new AppError({reason: 'AMENDMENT_BALLOT_RESULT_REQUIRED',
+          code: 'RESOURCE_CONFLICT', message: 'Publish the Formal Ballot result for this Amendment.'});
+        if (document.status !== 'DRAFT' || outcome !== 'INCORPORATED') throw new AppError({reason: 'DOCUMENT_STATE_CHANGED',
+          code: 'RESOURCE_CONFLICT', message: 'Only a draft friendly amendment can be adopted.'});
+        const parent = (await client.query<{status: string; session_status: string}>(`SELECT d.status,s.status AS session_status
+          FROM documents d JOIN meeting_sessions s ON s.id=d.meeting_session_id
+          WHERE d.id=$1 AND d.deleted_at IS NULL FOR UPDATE OF d`, [document.resolution_document_id])).rows[0];
+        if (parent?.status !== 'PUBLISHED' || parent.session_status !== 'OPEN') throw new AppError({reason: 'AMENDMENTS_NOT_ACCEPTED',
+          code: 'RESOURCE_CONFLICT', message: 'The Draft Resolution does not accept Amendments.'});
+        const version = (await client.query<{content: string; content_file_entry_id: string | null}>(
+          'SELECT content,content_file_entry_id FROM document_versions WHERE id=$1', [document.current_version_id])).rows[0]!;
+        if (!version.content.trim() && !version.content_file_entry_id) throw new AppError({reason: 'AMENDMENT_BODY_REQUIRED',
+          code: 'VALIDATION_FAILED', message: 'Add Amendment text or a file before adopting it.'});
+        await requirePublishedDocumentFile(client, document.current_version_id);
       }
       if (document.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT',
         message: 'This document changed since it was loaded.', details: {currentRevision: document.revision}});

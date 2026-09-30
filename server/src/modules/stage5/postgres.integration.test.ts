@@ -686,8 +686,8 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
       .find(document => document.id === resolution.id)!;
 
     const deletedDraft = await stage5.createAmendment(fixture.firstDelegate, resolution.id,
-      {meetingSessionId: fixture.session.id, customTitle: null, content: ''}, 'empty-amendment', context('empty-amendment'));
-    expect(deletedDraft).toMatchObject({title: 'New Amendment 1', status: 'DRAFT', currentVersion: {content: ''}});
+      {amendmentType: 'UNFRIENDLY', meetingSessionId: fixture.session.id, customTitle: null, content: ''}, 'empty-amendment', context('empty-amendment'));
+    expect(deletedDraft).toMatchObject({title: 'Draft Resolution Unfriendly Amendment 1.1.1', status: 'DRAFT', currentVersion: {content: ''}});
     await stage5.deleteAmendment(fixture.firstDelegate, deletedDraft.id, {baseRevision: deletedDraft.revision},
       context('delete-empty-amendment'));
     const retained = await pool?.query(`SELECT deleted_at,deleted_by_user_id FROM documents WHERE id=$1`, [deletedDraft.id]);
@@ -698,7 +698,16 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
       WHERE resource_id=$1 AND action='documents.deleted'`, [deletedDraft.id]))?.rows[0]).toEqual({count: 1});
 
     let amendment = await stage5.createAmendment(fixture.firstDelegate, resolution.id,
-      {meetingSessionId: fixture.session.id, customTitle: null, content: ''}, 'introduced-amendment', context('introduced-amendment'));
+      {amendmentType: 'UNFRIENDLY', meetingSessionId: fixture.session.id, customTitle: null, content: ''}, 'introduced-amendment', context('introduced-amendment'));
+    expect(amendment).toMatchObject({proposers: [], seconders: [],
+      createdOnBehalfOfSeatId: fixture.firstSeat.id});
+    amendment = await stage5.updateDocumentSettings(fixture.firstChair, amendment.id,
+      {baseRevision: amendment.revision, proposerSeatIds: [fixture.secondSeat.id],
+        seconderSeatIds: [fixture.firstSeat.id]}, context('amendment-countries'));
+    expect(amendment).toMatchObject({proposers: [expect.objectContaining({seatId: fixture.secondSeat.id})],
+      seconders: [expect.objectContaining({seatId: fixture.firstSeat.id})]});
+    expect(resolution.proposers).toEqual([]);
+    expect(resolution.seconders).toEqual([]);
     amendment = await stage5.createDocumentVersion(fixture.firstDelegate, amendment.id,
       {baseRevision: amendment.revision, customTitle: amendment.customTitle, content: 'Replace operative clause 1.'},
       context('amendment-body'));
@@ -715,25 +724,51 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
     expect(passed.destinationPath).toBe(`/committees/${fixture.committee.id}/resolutions/${resolution.id}/amendments`);
     const introduced = (await stage4.snapshot(fixture.committee.id, fixture.firstChair)).documents!
       .find(document => document.id === amendment.id)!;
-    expect(introduced).toMatchObject({status: 'PUBLISHED', public: true, proposers: [expect.objectContaining({seatId: fixture.firstSeat.id})]});
-    const recorded = await stage5.recordDocumentResult(fixture.firstChair, amendment.id,
-      {baseRevision: introduced.revision, outcome: 'INCORPORATED'}, context('incorporate-amendment'));
-    expect(recorded).toMatchObject({status: 'INCORPORATED', resultDecisions: [expect.objectContaining({
-      previousStatus: 'PUBLISHED', newStatus: 'INCORPORATED'})], votingVersionId: null});
-    const corrected = await stage5.recordDocumentResult(fixture.firstChair, amendment.id,
-      {baseRevision: recorded.revision, outcome: 'REJECTED', reason: 'Chair corrected the announced result.'},
-      context('correct-amendment-result'));
-    expect(corrected).toMatchObject({status: 'REJECTED', votingVersionId: null, resultDecisions: [
-      expect.objectContaining({previousStatus: 'PUBLISHED', newStatus: 'INCORPORATED', reason: null}),
-      expect.objectContaining({previousStatus: 'INCORPORATED', newStatus: 'REJECTED',
-        reason: 'Chair corrected the announced result.', correctsDecisionId: recorded.resultDecisions[0]?.id}),
-    ]});
-    await expect(stage5.deleteAmendment(fixture.firstChair, amendment.id, {baseRevision: corrected.revision},
-      context('delete-voted-amendment'))).rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
+    expect(introduced).toMatchObject({status: 'PUBLISHED', public: true,
+      proposers: [expect.objectContaining({seatId: fixture.secondSeat.id})],
+      seconders: [expect.objectContaining({seatId: fixture.firstSeat.id})]});
+    await expect(stage5.recordDocumentResult(fixture.firstChair, amendment.id,
+      {baseRevision: introduced.revision, outcome: 'INCORPORATED'}, context('incorporate-without-ballot')))
+      .rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
+
+    resolution = await stage5.updateDocumentSettings(fixture.firstChair, resolution.id,
+      {baseRevision: resolution.revision, proposerSeatIds: [fixture.firstSeat.id, fixture.secondSeat.id]}, context('parent-countries'));
+    let friendly = await stage5.createAmendment(fixture.firstDelegate, resolution.id,
+      {amendmentType: 'FRIENDLY', meetingSessionId: fixture.session.id, customTitle: null, content: ''},
+      'friendly', context('friendly'));
+    expect(friendly).toMatchObject({amendmentType: 'FRIENDLY', amendmentOrdinal: 1,
+      title: 'Draft Resolution Friendly Amendment 1.1.1', status: 'DRAFT', proposers: []});
+    expect(friendly.seconders.map(country => country.seatId).sort()).toEqual([fixture.firstSeat.id, fixture.secondSeat.id].sort());
+    await expect(stage5.recordDocumentResult(fixture.firstChair, friendly.id,
+      {baseRevision: friendly.revision, outcome: 'INCORPORATED'}, context('empty-friendly')))
+      .rejects.toMatchObject({code: 'VALIDATION_FAILED', reason: 'AMENDMENT_BODY_REQUIRED'});
+    for (const motionTypeId of ['introduce-amendment', 'vote-on-amendment']) {
+      await expect(stage5.proposeMotion(fixture.firstDelegate, fixture.committee.id,
+        {meetingSessionId: fixture.session.id, motionTypeId, parameters: {amendmentTarget: friendly.id, proposal: 'Friendly'}},
+        `friendly-${motionTypeId}`, context('friendly-motion'))).rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
+    }
+    await expect(stage5.createBallot(fixture.firstChair, fixture.committee.id,
+      {meetingSessionId: fixture.session.id, subjectType: 'AMENDMENT', subjectId: friendly.id,
+        procedural: false, thresholdKind: 'SIMPLE_MAJORITY'}, 'friendly-ballot', context('friendly-ballot')))
+      .rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
+    friendly = await stage5.createDocumentVersion(fixture.firstDelegate, friendly.id,
+      {baseRevision: friendly.revision, customTitle: null, content: 'Friendly correction'}, context('friendly-body'));
+    friendly = await stage5.recordDocumentResult(fixture.firstChair, friendly.id,
+      {baseRevision: friendly.revision, outcome: 'INCORPORATED'}, context('adopt-friendly'));
+    expect(friendly).toMatchObject({status: 'INCORPORATED', public: true, votingVersionId: null,
+      resultDecisions: [expect.objectContaining({previousStatus: 'DRAFT', newStatus: 'INCORPORATED'})]});
+    expect((await stage4.snapshot(fixture.committee.id, fixture.firstChair)).documents?.find(item => item.id === friendly.id))
+      .toMatchObject({amendmentType: 'FRIENDLY', amendmentOrdinal: 1, title: friendly.title, seconders: friendly.seconders});
+    const secondFriendly = await stage5.createAmendment(fixture.firstDelegate, resolution.id,
+      {amendmentType: 'FRIENDLY', meetingSessionId: fixture.session.id, customTitle: null, content: ''},
+      'friendly-second', context('friendly-second'));
+    expect(secondFriendly.title).toBe('Draft Resolution Friendly Amendment 1.1.2');
 
     let formal = await stage5.createAmendment(fixture.firstDelegate, resolution.id,
-      {meetingSessionId: fixture.session.id, customTitle: null, content: 'Delete operative clause 2.'},
+      {amendmentType: 'UNFRIENDLY', meetingSessionId: fixture.session.id, customTitle: null, content: 'Delete operative clause 2.'},
       'formal-amendment', context('formal-amendment'));
+    expect(formal).toMatchObject({amendmentType: 'UNFRIENDLY', amendmentOrdinal: 3,
+      title: 'Draft Resolution Unfriendly Amendment 1.1.3', proposers: [], seconders: []});
     const formalIntroduction = await stage5.proposeMotion(fixture.firstDelegate, fixture.committee.id,
       {meetingSessionId: fixture.session.id, motionTypeId: 'introduce-amendment',
         parameters: {amendmentTarget: formal.id, proposal: formal.currentVersion.content}},
@@ -755,13 +790,19 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
     await expect(stage5.recordDocumentResult(fixture.firstChair, formal.id,
       {baseRevision: formal.revision, outcome: 'INCORPORATED'}, context('manual-result-after-formal-motion')))
       .rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
-    const ballot = await stage5.createBallot(fixture.firstChair, fixture.committee.id,
+    let ballot = await stage5.createBallot(fixture.firstChair, fixture.committee.id,
       {meetingSessionId: fixture.session.id, subjectType: 'AMENDMENT', subjectId: formal.id,
         procedural: false, thresholdKind: 'SIMPLE_MAJORITY'}, 'formal-amendment-ballot', context('formal-amendment-ballot'));
     expect(ballot).toMatchObject({subjectType: 'AMENDMENT', subjectId: formal.id, status: 'OPEN',
       ruleEvaluation: {facts: {subjectVersionId: formal.currentVersion.id}}});
     await expect(stage5.deleteAmendment(fixture.firstChair, formal.id, {baseRevision: formal.revision},
       context('delete-formal-amendment'))).rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
+    ballot = await stage5.castVote(fixture.firstDelegate, ballot.id, {choice: 'FOR'}, 'amendment-vote-one', context('amendment-vote-one'));
+    ballot = await stage5.castVote(fixture.secondDelegate, ballot.id, {choice: 'FOR'}, 'amendment-vote-two', context('amendment-vote-two'));
+    ballot = await stage5.closeBallot(fixture.firstChair, ballot.id, {baseRevision: ballot.revision}, context('close-amendment-ballot'));
+    await stage5.publishBallot(fixture.firstChair, ballot.id, {baseRevision: ballot.revision}, context('publish-amendment-ballot'));
+    expect((await stage4.snapshot(fixture.committee.id, fixture.firstChair)).documents?.find(item => item.id === formal.id))
+      .toMatchObject({status: 'INCORPORATED', votingVersionId: formal.currentVersion.id});
   });
 
   it('opens a resolution-linked caucus empty and lets the Chair add speakers', async () => {
@@ -850,7 +891,7 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
       caucusDuration: 10, caucusUnit: 'min', speakerDuration: 1, speakerUnit: 'min'}))
       .rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
     await expect(stage5.createAmendment(f.firstDelegate, draft.id,
-      {meetingSessionId: f.session.id, customTitle: null, content: ''}, randomUUID(), context('blocked-amendment')))
+      {amendmentType: 'UNFRIENDLY', meetingSessionId: f.session.id, customTitle: null, content: ''}, randomUUID(), context('blocked-amendment')))
       .rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
     await expect(stage5.setResolutionDirectVote(f.firstChair, draft.id,
       {seatId: f.firstSeat.id, choice: 'FOR'}, context('blocked-vote'))).rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
@@ -885,7 +926,7 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
       {baseRevision: motion.revision, result: 'PASSED'}, context(`pass-${motion.motionTypeId}`));
     await pass(await propose('introduce-draft-resolution', {resolutionTarget: draft.id}));
     const amendment = await stage5.createAmendment(f.firstDelegate, draft.id,
-      {meetingSessionId: f.session.id, customTitle: null, content: 'Replace clause'}, randomUUID(), context('amendment'));
+      {amendmentType: 'UNFRIENDLY', meetingSessionId: f.session.id, customTitle: null, content: 'Replace clause'}, randomUUID(), context('amendment'));
     await pass(await propose('close-debate', {}));
     await expect(propose('introduce-amendment', {amendmentTarget: amendment.id, proposal: 'Replace clause'}))
       .rejects.toMatchObject({reason: 'FORMAL_DEBATE_CLOSED'});
@@ -968,7 +1009,7 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
     expect(passed).toMatchObject({status: 'PASSED', destinationPath:
       `/committees/${fixture.committee.id}/resolutions/${draft.id}`});
     let amendment = await stage5.createAmendment(fixture.firstDelegate, draft.id,
-      {meetingSessionId: fixture.session.id, customTitle: null, content: ''},
+      {amendmentType: 'UNFRIENDLY', meetingSessionId: fixture.session.id, customTitle: null, content: ''},
       'file-amendment-draft', context('file-amendment-draft'));
     amendment = await stage5.createDocumentVersion(fixture.firstDelegate, amendment.id,
       {baseRevision: amendment.revision, customTitle: amendment.customTitle, content: '', contentFileEntryId: fileId},

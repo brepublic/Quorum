@@ -71,6 +71,7 @@ export const COMMITTEE_PURGE_QUERIES = [
   `DELETE FROM resolution_direct_votes WHERE committee_id=$1`,
   `DELETE FROM document_result_decisions WHERE committee_id=$1`,
   `UPDATE speaker_lists SET linked_resolution_document_id=NULL WHERE committee_id=$1`,
+  `DELETE FROM amendment_countries WHERE amendment_document_id IN (SELECT id FROM documents WHERE committee_id=$1)`,
   `DELETE FROM amendments WHERE document_id IN (SELECT id FROM documents WHERE committee_id=$1)`,
   `DELETE FROM resolution_countries WHERE resolution_document_id IN (SELECT id FROM documents WHERE committee_id=$1)`,
   `DELETE FROM resolutions WHERE document_id IN (SELECT id FROM documents WHERE committee_id=$1)`,

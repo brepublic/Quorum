@@ -450,7 +450,7 @@ export const selfHostedApi = {
     return request<ProceedingDocument>(`/api/v1/committees/${committeeId}/resolutions`, {method: 'POST',
       body: input, idempotencyKey: key()});
   },
-  createAmendment(resolutionId: string, input: {meetingSessionId: string; customTitle: string | null; content: string;
+  createAmendment(resolutionId: string, input: {amendmentType: 'FRIENDLY' | 'UNFRIENDLY'; meetingSessionId: string; customTitle: string | null; content: string;
     onBehalfOfSeatId?: string}) {
     return request<ProceedingDocument>(`/api/v1/resolutions/${resolutionId}/amendments`, {method: 'POST',
       body: input, idempotencyKey: key()});

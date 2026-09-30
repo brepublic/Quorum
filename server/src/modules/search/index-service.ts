@@ -140,12 +140,15 @@ async function allSubjects(client: PoolClient): Promise<SearchSubject[]> {
     ...(row.content_snapshot.countryTemplate.builtin && builtinCodes.has(row.stable_key)
       ? {builtinCode: row.stable_key} : {})});
   const documents = await client.query<{id: string; kind: 'RESOLUTION' | 'AMENDMENT'; ordinal: number;
+    amendment_type: 'FRIENDLY' | 'UNFRIENDLY'; type_ordinal: number; resolution_ordinal: number;
     custom_title: string | null; session_ordinal: number; committee_language: ContentLanguage}>(
-    `SELECT d.id,d.kind,d.ordinal,d.custom_title,ms.ordinal AS session_ordinal,c.committee_language
+    `SELECT d.id,d.kind,d.ordinal,d.custom_title,a.amendment_type,a.type_ordinal,r.ordinal AS resolution_ordinal,ms.ordinal AS session_ordinal,c.committee_language
      FROM documents d JOIN committees c ON c.id=d.committee_id
-     JOIN meeting_sessions ms ON ms.id=d.meeting_session_id`);
+     JOIN meeting_sessions ms ON ms.id=d.meeting_session_id
+     LEFT JOIN amendments a ON a.document_id=d.id LEFT JOIN documents r ON r.id=a.resolution_document_id`);
   for (const row of documents.rows) subjects.push({kind: 'document-title', key: row.id,
-    names: {[row.committee_language]: formatCommitteeContent({kind: row.kind, ordinal: row.ordinal,
+    names: {[row.committee_language]: formatCommitteeContent({kind: row.kind, ordinal: row.kind === 'AMENDMENT' ? row.type_ordinal : row.ordinal,
+      amendmentType: row.amendment_type, resolutionOrdinal: row.resolution_ordinal,
       customTitle: row.custom_title, sessionOrdinal: row.session_ordinal}, row.committee_language)}});
   return subjects;
 }

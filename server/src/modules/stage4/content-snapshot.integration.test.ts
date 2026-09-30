@@ -247,16 +247,33 @@ integration('immutable committee content', () => {
       customTitle: null, content: 'Body', onBehalfOfSeatId: seat.id}, context('restore-default'));
     expect(changed).toMatchObject({ordinal: 2, customTitle: null, title: '决议草案 1.2'});
     await pool!.query("UPDATE documents SET status='PUBLISHED',is_public=true WHERE id=$1", [first.id]);
-    const amendment = await stage5.createAmendment(owner, first.id, {...request, onBehalfOfSeatId: seat.id}, randomUUID(), context('amendment'));
-    expect(amendment).toMatchObject({ordinal: 1, customTitle: null, title: '新修正案1'});
+    const amendment = await stage5.createAmendment(owner, first.id, {...request, amendmentType: 'UNFRIENDLY', onBehalfOfSeatId: seat.id}, randomUUID(), context('amendment'));
+    expect(amendment).toMatchObject({ordinal: 1, customTitle: null, title: '决议草案非友好修正案 1.1.1'});
     await stage5.deleteAmendment(owner, amendment.id, {baseRevision: amendment.revision}, context('delete'));
-    const next = await stage5.createAmendment(owner, first.id, {...request, customTitle: '第1会期', onBehalfOfSeatId: seat.id}, randomUUID(), context('amendment-next'));
+    const next = await stage5.createAmendment(owner, first.id, {...request, amendmentType: 'UNFRIENDLY', customTitle: '第1会期', onBehalfOfSeatId: seat.id}, randomUUID(), context('amendment-next'));
     expect(next).toMatchObject({ordinal: 2, customTitle: '第1会期', title: '第1会期'});
     await expect(pool!.query('UPDATE documents SET ordinal=10 WHERE id=$1', [next.id])).rejects.toMatchObject({code: '23514'});
     await expect(pool!.query('UPDATE committees SET next_amendment_ordinal=1 WHERE id=$1', [committee.id])).rejects.toMatchObject({code: '23514'});
     await expect(pool!.query('UPDATE meeting_sessions SET next_resolution_ordinal=1 WHERE id=$1', [session.id])).rejects.toMatchObject({code: '23514'});
     const snapshot = await stage4.snapshot(committee.id, owner);
     expect(snapshot.documents?.find(item => item.id === next.id)?.title).toBe('第1会期');
+    await pool!.query("UPDATE documents SET status='PUBLISHED',is_public=true WHERE id=$1", [custom.id]);
+    const friendlyRequest = {...request, amendmentType: 'FRIENDLY', onBehalfOfSeatId: seat.id};
+    const friendlyKey = randomUUID();
+    const [friendly, friendlyReplay] = await Promise.all([
+      stage5.createAmendment(owner, first.id, friendlyRequest, friendlyKey, context('friendly')),
+      stage5.createAmendment(owner, first.id, friendlyRequest, friendlyKey, context('friendly-replay'))
+    ]);
+    expect(friendlyReplay).toEqual(friendly);
+    expect(friendly).toMatchObject({amendmentOrdinal: 1, title: '决议草案友好修正案 1.1.1'});
+    const other = await stage5.createAmendment(owner, custom.id, {...friendlyRequest, amendmentType: 'UNFRIENDLY'},
+      randomUUID(), context('other-parent'));
+    expect(other).toMatchObject({amendmentOrdinal: 1, title: '决议草案非友好修正案 1.2.1'});
+    const pair = await Promise.all([0, 1].map(index => stage5.createAmendment(owner, first.id, friendlyRequest,
+      randomUUID(), context(`concurrent-friendly-${index}`))));
+    expect(pair.map(item => item.amendmentOrdinal).sort()).toEqual([2, 3]);
+    await expect(pool!.query("UPDATE amendments SET amendment_type='FRIENDLY' WHERE document_id=$1", [other.id]))
+      .rejects.toMatchObject({code: '23514'});
   });
 
   it('allocates permanent session ordinals and replays concurrent start requests', async () => {
