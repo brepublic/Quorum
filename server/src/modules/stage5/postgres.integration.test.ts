@@ -127,6 +127,56 @@ async function publishedTestCrisis(f: Awaited<ReturnType<typeof meetingEndFixtur
 }
 
 integration('PostgreSQL crisis lifecycle', () => {
+  it('preserves every timer owner across database reconnection without browser ticks', async () => {
+    const f = await meetingFixture();
+    let list = await stage5.createSpeakerList(f.firstChair, f.committee.id, {meetingSessionId: f.session.id,
+      kind: 'MODERATED_CAUCUS', topic: 'Background timers', defaultSpeechMs: 60_000, totalDurationMs: 120_000},
+      'background-list', context('background-list'));
+    list = await stage5.joinSpeakerQueue(f.firstChair, list.id, {seatId: f.firstSeat.id, stance: 'FOR'},
+      'background-join', context('background-join'));
+    list = await stage5.advanceSpeakerQueue(f.firstChair, list.id, {baseRevision: list.revision}, context('background-stage'));
+    const speech = await stage5.commandSpeech(f.firstChair, list.id, 'start', {baseRevision: list.revision}, context('background-speech'));
+    const crisis = await publishedTestCrisis(f);
+    const timers = [crisis.timer, ...(await stage4.snapshot(f.committee.id, f.firstChair)).timers!
+      .filter(timer => [f.generalList.speechTimerId, list.totalTimerId].includes(timer.id))];
+    for (const [ownerType, ownerId] of [['COMMITTEE', f.committee.id], ['SPEECH', speech.id]]) {
+      timers.push(await stage5.createTimer(f.firstChair, f.committee.id, {ownerType, ownerId, durationMs: 60_000},
+        `background-${ownerType}`, context(`background-${ownerType}`)));
+    }
+    const startedAt = new Date(Date.now() - 10_000);
+    const starter = new Stage5Service(pool!, () => startedAt);
+    const ids = timers.map(timer => timer.id);
+    for (const timer of timers) {
+      const reset = await stage5.commandTimer(f.firstChair, timer.id, 'reset',
+        {baseRevision: timer.revision, durationMs: 60_000}, context(`background-reset-${timer.ownerType}`));
+      await starter.commandTimer(f.firstChair, timer.id, 'start',
+        {baseRevision: reset.revision}, context(`background-start-${timer.ownerType}`));
+    }
+    const before = (await pool!.query('SELECT id,running,started_at,remaining_at_start_ms,revision FROM timer_states WHERE id=ANY($1::uuid[]) ORDER BY id', [ids])).rows;
+
+    await pool!.end();
+    const url = new URL(adminUrl!); url.pathname = `/${databaseName}`;
+    pool = new Pool({connectionString: url.toString()});
+    const reopened = new Stage4Service(pool);
+    const read = async () => {
+      const view = await reopened.snapshot(f.committee.id, f.firstChair);
+      return [...view.timers!.filter(timer => timer.ownerType !== 'CRISIS'), ...view.crises!.map(group => group.timer)]
+        .filter(timer => ids.includes(timer.id));
+    };
+    const restored = await read();
+    expect(restored.map(timer => timer.ownerType).sort()).toEqual(['CAUCUS', 'COMMITTEE', 'CRISIS', 'SPEAKER_LIST', 'SPEECH']);
+    for (const timer of restored) {
+      expect(timer.running).toBe(true);
+      expect(timer.startedAt).toBe(startedAt.toISOString());
+      expect(timer.remainingMs).toBe(60_000 - (Date.parse(timer.serverTime) - startedAt.getTime()));
+      expect(timer.remainingMs).toBeLessThanOrEqual(50_000);
+    }
+    expect((await pool.query('SELECT id,running,started_at,remaining_at_start_ms,revision FROM timer_states WHERE id=ANY($1::uuid[]) ORDER BY id', [ids])).rows).toEqual(before);
+    // Simulate a longer browser absence with persisted start times already in the past.
+    await pool.query("UPDATE timer_states SET started_at=started_at-interval '2 minutes' WHERE id=ANY($1::uuid[])", [ids]);
+    expect((await read()).every(timer => !timer.running && timer.remainingMs === 0)).toBe(true);
+  });
+
   it('serializes two chairs creating updates and hides unpublished notices from public snapshots',async () => {
     const f = await meetingEndFixture();
     const second = await user('crisis-second-chair');
