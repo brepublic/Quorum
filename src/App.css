@@ -1394,6 +1394,10 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   min-width: 4.4ch;
 }
 
+.ui.segment.legacy-timer > .ui.progress {
+  margin-top: 1em;
+}
+
 .legacy-speaker-workspace .speaker-timer-actions {
   margin-top: 1rem;
 }
