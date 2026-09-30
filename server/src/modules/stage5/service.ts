@@ -2372,8 +2372,10 @@ export class Stage5Service {
         } else {
           const kind = subjectType === 'RESOLUTION' ? 'RESOLUTION' : 'AMENDMENT';
           if (kind === 'AMENDMENT') await requireUnfriendlyAmendment(client, subjectId);
-          const direct = await client.query('SELECT 1 FROM document_voting WHERE document_id=$1 AND direct_vote_started_at IS NOT NULL', [subjectId]);
-          if (direct.rowCount) throw new AppError({code: 'RESOURCE_CONFLICT', reason: 'BALLOT_ALREADY_EXISTS', message: 'The draft already has a vote.'});
+          const existingVote = await client.query(`SELECT 1 FROM document_voting
+            WHERE document_id=$1 AND direct_vote_started_at IS NOT NULL
+            UNION ALL SELECT 1 FROM ballots WHERE subject_id=$1 AND subject_type=$2 LIMIT 1`, [subjectId, subjectType]);
+          if (existingVote.rowCount) throw new AppError({code: 'RESOURCE_CONFLICT', reason: 'BALLOT_ALREADY_EXISTS', message: 'The draft already has a vote.'});
           const document = await client.query<{status: ProceedingDocumentStatus; voting_version_id: string | null}>(
             `SELECT status,voting_version_id FROM documents WHERE id=$1 AND committee_id=$2 AND kind=$3
               AND deleted_at IS NULL FOR UPDATE`,

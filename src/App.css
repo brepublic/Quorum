@@ -405,6 +405,10 @@
   right: 0 !important;
 }
 
+.committee-primary-navigation .committee-overflow-poll:not(.visible) > .menu {
+  display: none !important;
+}
+
 .committee-primary-navigation .committee-overflow-poll > .menu {
   width: max-content;
   max-width: min(24rem, 45vw);

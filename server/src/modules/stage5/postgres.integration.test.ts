@@ -861,6 +861,10 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
         procedural: false, thresholdKind: 'SIMPLE_MAJORITY'}, 'formal-amendment-ballot', context('formal-amendment-ballot'));
     expect(ballot).toMatchObject({subjectType: 'AMENDMENT', subjectId: formal.id, status: 'OPEN',
       ruleEvaluation: {facts: {subjectVersionId: formal.currentVersion.id}}});
+    await expect(stage5.createBallot(fixture.firstChair, fixture.committee.id,
+      {meetingSessionId: fixture.session.id, subjectType: 'AMENDMENT', subjectId: formal.id,
+        procedural: false, thresholdKind: 'SIMPLE_MAJORITY'}, 'duplicate-formal-amendment-ballot', context('duplicate-formal-amendment-ballot')))
+      .rejects.toMatchObject({code: 'RESOURCE_CONFLICT', reason: 'BALLOT_ALREADY_EXISTS'});
     await expect(stage5.deleteAmendment(fixture.firstChair, formal.id, {baseRevision: formal.revision},
       context('delete-formal-amendment'))).rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
     ballot = await stage5.castVote(fixture.firstDelegate, ballot.id, {choice: 'FOR'}, 'amendment-vote-one', context('amendment-vote-one'));
