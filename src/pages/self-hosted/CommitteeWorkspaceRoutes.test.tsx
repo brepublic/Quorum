@@ -97,6 +97,11 @@ describe('committee workspace routes and roles', () => {
       {...make('friendly', 1), kind: 'AMENDMENT' as const, amendmentType: 'FRIENDLY' as const, resolutionId: 'resolution2'},
       {...make('postponed', 1), status: 'POSTPONED' as const},
       {...make('created', 1), directVote: {...make('created', 1).directVote!, startedAt: '2026-09-30T00:00:00Z'}}];
+    documents[0].currentVersion.content = '';
+    documents[1].currentVersion.content = '';
+    documents[1].currentVersion.contentFile = {id: 'file', logicalName: 'draft.pdf', originalName: 'draft.pdf',
+      mediaType: 'application/pdf', status: 'PUBLISHED', fileType: null};
+    documents[4].currentVersion.content = '   \n';
     const startDocumentVote = vi.fn(async (id: string) => {
       const index = documents.findIndex(item => item.id === id);
       const draft = documents[index];
@@ -113,8 +118,11 @@ describe('committee workspace routes and roles', () => {
       {startDocumentVote, listFiles});
     expect([...page.querySelectorAll('.draft-group-heading')].map(group => group.textContent))
       .toEqual(['Draft Directives', 'Unfriendly Amendments', 'Draft Resolutions']);
-    expect([...page.querySelectorAll('.draft-group-option')].map(option => option.textContent))
+    expect([...page.querySelectorAll('.draft-group-option > .text')].map(option => option.textContent))
       .toEqual(['DIRECTIVE 1.2','DIRECTIVE 1.10','UNFRIENDLY AMENDMENT 1.2.2','UNFRIENDLY AMENDMENT 1.2.10','RESOLUTION 1.2','RESOLUTION 1.10']);
+    expect([...page.querySelectorAll('.draft-group-option')].filter(option => option.querySelector('.description'))
+      .map(option => ({title: option.querySelector('.text')?.textContent, hint: option.querySelector('.description')?.textContent})))
+      .toEqual([{title: 'DIRECTIVE 1.10', hint: 'No content'}, {title: 'UNFRIENDLY AMENDMENT 1.2.10', hint: 'No content'}]);
     expect(listFiles).not.toHaveBeenCalled();
     const select = page.querySelector<HTMLElement>('[aria-label="Choose draft"]')!;
     const confirm = page.querySelector<HTMLButtonElement>('.new-document-vote-card button')!;
@@ -124,7 +132,7 @@ describe('committee workspace routes and roles', () => {
     expect(confirm.disabled).toBe(true);
     expect(startDocumentVote).not.toHaveBeenCalled();
     await act(async () => {select.dispatchEvent(new KeyboardEvent('keydown', {key: 'ArrowDown', keyCode: 40, bubbles: true}));});
-    expect(page.querySelector('.draft-group-option.selected')?.textContent).toBe('DIRECTIVE 1.10');
+    expect(page.querySelector('.draft-group-option.selected > .text')?.textContent).toBe('DIRECTIVE 1.10');
     await act(async () => {select.dispatchEvent(new KeyboardEvent('keydown', {key: 'ArrowDown', keyCode: 40, bubbles: true}));});
     expect(page.querySelector('.draft-group-option.selected')?.textContent).toBe('UNFRIENDLY AMENDMENT 1.2.2');
     await act(async () => {

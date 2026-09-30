@@ -2790,7 +2790,7 @@ html[lang='zh-CN'] .ui.grid > .column {
 .committee-files-page > .ui.menu .item { flex-shrink: 0; }
 
 .new-document-vote-page { padding: 3rem 1rem; }
-.new-document-vote-card.ui.card { width: 28rem; max-width: 100%; }
+.new-document-vote-card.ui.card { width: calc(700px + 2em); max-width: 100%; }
 .new-document-vote-selector.ui.dropdown .menu > .item.draft-group-heading,
 .new-document-vote-selector.ui.dropdown .menu > .item.draft-group-heading:hover {
   opacity: 1;

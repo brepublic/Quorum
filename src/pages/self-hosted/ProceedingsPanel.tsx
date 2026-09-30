@@ -1795,7 +1795,8 @@ function VotingWorkspace({snapshot, run, api, canChair, resourceId}: CommonProps
           ...candidates.filter(group.matches).sort((a, b) => {
             const first = numbering(a), second = numbering(b);
             return first[0] - second[0] || first[1] - second[1] || first[2] - second[2];
-          }).map(item => ({key: item.id, value: item.id, text: item.title, className: 'draft-group-option'}))
+          }).map(item => ({key: item.id, value: item.id, text: item.title, className: 'draft-group-option',
+            description: !item.currentVersion.contentFile && !item.currentVersion.content.trim() ? t('No content') : undefined}))
         ])} /></Form.Field>
       <Button primary fluid loading={saving} disabled={!canChair || saving || !candidates.some(item => item.id === draftId)}>{t('Confirm vote')}</Button>
     </Form></Card.Content></Card>

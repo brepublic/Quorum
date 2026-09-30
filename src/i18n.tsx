@@ -169,6 +169,7 @@ const zhCN: Record<string, string> = {
   "New Vote": "新建表决",
   "Vote - {name}": "表决 - {name}",
   "Choose draft": "选择草案",
+  "No content": "无内容",
   "Draft not found.": "草案不存在。",
   "Unfriendly Amendments": "非友好修正案",
   "Draft Directive": "指令草案",
