@@ -103,7 +103,7 @@ function CrisisCard({group,card,files,api,run,editable}: {
   return <Card fluid className="crisis-card motion-card"><Card.Content>
     <div className="motion-heading crisis-card-heading"><Card.Header className="crisis-card-title"><strong>{t('Crisis')} {numberFor(group,card)}</strong>
       {editable ? <Input fluid aria-label={t('Crisis title')} placeholder={t('Title')} value={draft.title} disabled={working}
-        onChange={event=>setDraft(current=>({...current,title: event.currentTarget.value}))} onBlur={autosave} /> : card.title && <span> — {card.title}</span>}
+        onChange={event=> {const title=event.currentTarget.value;setDraft(current=>({...current,title}));}} onBlur={autosave} /> : card.title && <span> — {card.title}</span>}
     </Card.Header><Label basic color={card.status==='PENDING' ? 'orange' : card.status==='UNPUBLISHED' ? 'blue' : card.status==='ENDED' ? 'green' : 'grey'}>{t(statusLabels[card.status])}</Label></div>
     {Boolean(failure) && <Message error content={storageErrorText(failure)} />}
     {editable ? <Form>
@@ -116,7 +116,7 @@ function CrisisCard({group,card,files,api,run,editable}: {
         }} />
       <Form.Input fluid type="number" step="any" min={0} label={t('Handling time (minutes)')} aria-label={t('Handling time (minutes)')}
         value={draft.minutes} error={Boolean(draft.minutes && !validTime)} disabled={working}
-        onChange={event=>setDraft(current=>({...current,minutes:event.currentTarget.value}))} onBlur={autosave} />
+        onChange={event=> {const minutes=event.currentTarget.value;setDraft(current=>({...current,minutes}));}} onBlur={autosave} />
       {draft.revision!==card.revision && dirty && <Button type="button" onClick={()=>setDraft(fromCard(card))}>{t('Reload')}</Button>}
       <Button type="button" positive fluid loading={working} disabled={working || !validTime || !draft.fileId || !choices.some(file=>file.id===draft.fileId)} onClick={()=>void publish()}>{t('Publish crisis')}</Button>
     </Form> : <><p className="crisis-notice-name">{card.notice?.logicalName ?? '—'}</p>
