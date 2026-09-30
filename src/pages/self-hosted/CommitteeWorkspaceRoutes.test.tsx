@@ -150,7 +150,12 @@ describe('committee workspace routes and roles', () => {
     expect(submitResolutionDirectVote).not.toHaveBeenCalled();
   });
 
-  it('groups draft entries numerically and creates the selected vote once', async () => {
+  it.each([
+    {association: 'unlinked', savedGroup: null, savedUpdate: null, savesAssociation: true},
+    {association: 'already current', savedGroup: 'crisis', savedUpdate: 'crisis-update', savesAssociation: false},
+    {association: 'another group', savedGroup: 'other-crisis', savedUpdate: 'other-update', savesAssociation: true},
+    {association: 'an older update', savedGroup: 'crisis', savedUpdate: 'previous-update', savesAssociation: true}
+  ])('groups draft entries numerically and creates the selected vote once when $association', async ({savedGroup, savedUpdate, savesAssociation}) => {
     const make = (id: string, ordinal: number, draftType: 'RESOLUTION' | 'DIRECTIVE' = 'RESOLUTION'): ProceedingDocument => ({
       id, committeeId: 'committee', meetingSessionId: 'meeting', kind: 'RESOLUTION', draftType, resolutionId: null, ordinal,
       customTitle: null, title: `${draftType} 1.${ordinal}`, status: 'PUBLISHED', rulePackageVersionId: 'rules',
@@ -172,6 +177,7 @@ describe('committee workspace routes and roles', () => {
     documents[1].currentVersion.contentFile = {id: 'file', logicalName: 'draft.pdf', originalName: 'draft.pdf',
       mediaType: 'application/pdf', status: 'PUBLISHED', fileType: null};
     documents[4].currentVersion.content = '   \n';
+    documents[2].directVote = {...documents[2].directVote!, crisisGroupId: savedGroup, crisisUpdateId: savedUpdate};
     const startDocumentVote = vi.fn(async (id: string) => {
       const index = documents.findIndex(item => item.id === id);
       const draft = documents[index];
@@ -180,11 +186,18 @@ describe('committee workspace routes and roles', () => {
       return created;
     });
     const listFiles = vi.fn(async () => []);
-    const updateDocumentSettings=vi.fn(async(id:string)=>documents.find(item=>item.id===id)!);
+    const updateDocumentSettings=vi.fn(async(id:string)=> {
+      const draft=documents.find(item=>item.id===id)!;
+      if (!savesAssociation) throw new SelfHostedApiError(409,'RESOURCE_CONFLICT','The document settings are unchanged.',
+        undefined,undefined,{reason:'DOCUMENT_SETTINGS_UNCHANGED'});
+      const saved={...draft,revision:draft.revision+1,directVote:{...draft.directVote!,crisisGroupId:'crisis',crisisUpdateId:'crisis-update'}};
+      documents[documents.indexOf(draft)]=saved;
+      return saved;
+    });
     const page = await render('CHAIR', '/committees/committee/votes/new', user, value => ({...value, documents,
       meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: 'Session 1', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1, createdAt: '2026-09-30T00:00:00Z', closedAt: null},
-      crises:[{id:'crisis',committeeId:'committee',sessionOrdinal:1,ordinal:1,endedAt:null,timer:{remainingMs:1800000,running:false},updates:[{status:'PENDING',ordinal:1}]}] as CommitteeWorkspaceSnapshot['crises'],
+      crises:[{id:'crisis',committeeId:'committee',sessionOrdinal:1,ordinal:1,endedAt:null,timer:{remainingMs:1800000,running:false},updates:[{id:'crisis-update',status:'PENDING',ordinal:1}]}] as CommitteeWorkspaceSnapshot['crises'],
       meetingSessions: [{id: 'meeting', committeeId: 'committee', ordinal: 1, name: 'Session 1', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1, createdAt: '2026-09-30T00:00:00Z', closedAt: null}]}),
       {startDocumentVote, listFiles,updateDocumentSettings});
@@ -215,15 +228,16 @@ describe('committee workspace routes and roles', () => {
     });
     expect(page.querySelector('.draft-group-option.selected')?.textContent).toBe('DIRECTIVE 1.2');
     await act(async () => {select.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', keyCode: 13, bubbles: true}));});
-    expect(confirm.disabled).toBe(true);
+    expect(confirm.disabled).toBe(savedGroup!=='crisis');
     const crisis=page.querySelector<HTMLElement>('[aria-label="Responding to crisis"]')!;
     await act(async()=>crisis.click());
     await act(async()=>crisis.querySelector<HTMLElement>('.item')!.click());
     expect(confirm.disabled).toBe(false);
     await act(async () => {confirm.click(); confirm.click();});
     expect(startDocumentVote).toHaveBeenCalledTimes(1);
-    expect(startDocumentVote).toHaveBeenCalledWith('directive2', 1);
-    expect(updateDocumentSettings).toHaveBeenCalledWith('directive2',{baseRevision:1,crisisGroupId:'crisis'});
+    expect(startDocumentVote).toHaveBeenCalledWith('directive2', savesAssociation ? 2 : 1);
+    if (savesAssociation) expect(updateDocumentSettings).toHaveBeenCalledWith('directive2',{baseRevision:1,crisisGroupId:'crisis'});
+    else expect(updateDocumentSettings).not.toHaveBeenCalled();
     expect(page.querySelector('.document-voting-heading')?.textContent).toBe('Voting in progressDIRECTIVE 1.2');
     expect(page.querySelector('[data-navigation-key="/votes"]')?.textContent).toContain('Vote - DIRECTIVE 1.2');
   });

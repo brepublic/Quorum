@@ -1793,8 +1793,11 @@ function VotingWorkspace({snapshot, run, api, canChair, resourceId}: CommonProps
       await run(async () => {
         let revision=draft.revision;
         if (draft.draftType==='DIRECTIVE') {
-          if (!activeCrises.some(group=>group.id===crisisId)) return;
-          revision=(await api.updateDocumentSettings(draft.id,{baseRevision:revision,crisisGroupId:crisisId})).revision;
+          const crisis=activeCrises.find(group=>group.id===crisisId);
+          if (!crisis) return;
+          const update=crisis.updates.find(update=>update.status==='PENDING')!;
+          if (draft.directVote?.crisisGroupId!==crisis.id || draft.directVote?.crisisUpdateId!==update.id)
+            revision=(await api.updateDocumentSettings(draft.id,{baseRevision:revision,crisisGroupId:crisisId})).revision;
         }
         createdId = (await api.startDocumentVote(draft.id, revision)).id;
       });
