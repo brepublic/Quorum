@@ -2792,14 +2792,16 @@ html[lang='zh-CN'] .ui.grid > .column {
 .new-document-vote-page { padding: 3rem 1rem; }
 .new-document-vote-card.ui.card { width: calc(700px + 2em); max-width: 100%; }
 .new-document-vote-selector.ui.dropdown .menu > .item.draft-group-heading,
-.new-document-vote-selector.ui.dropdown .menu > .item.draft-group-heading:hover {
+.new-document-vote-selector.ui.dropdown .menu > .item.draft-group-heading:hover,
+.new-document-vote-selector.ui.dropdown .menu > .item.draft-empty,
+.new-document-vote-selector.ui.dropdown .menu > .item.draft-empty:hover {
   opacity: 1;
-  color: inherit;
-  font-weight: 700;
   cursor: default;
   background: transparent !important;
   box-shadow: none !important;
 }
+.new-document-vote-selector.ui.dropdown .menu > .item.draft-group-heading { color: inherit; font-weight: 700; }
+.new-document-vote-selector.ui.dropdown .menu > .item.draft-empty { color: rgba(0, 0, 0, .4); font-weight: 400; text-align: center; }
 .new-document-vote-selector.ui.dropdown > .text,
 .new-document-vote-selector.ui.dropdown .menu > .item.draft-group-option { font-weight: 400; }
 .new-document-vote-selector.ui.dropdown .menu > .item.draft-group-option { padding-left: 2.5rem !important; }

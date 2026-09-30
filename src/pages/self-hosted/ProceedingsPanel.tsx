@@ -1790,14 +1790,14 @@ function VotingWorkspace({snapshot, run, api, canChair, resourceId}: CommonProps
         className="new-document-vote-selector" selectOnBlur={false}
         value={candidates.some(item => item.id === draftId) ? draftId : ''} disabled={!canChair || saving}
         onChange={(_, data) => {if (candidates.some(item => item.id === data.value)) setDraftId(String(data.value));}}
-        options={groups.flatMap(group => [
+        options={candidates.length ? groups.filter(group => candidates.some(group.matches)).flatMap(group => [
           {key: group.label, value: `group:${group.label}`, text: t(group.label), disabled: true, className: 'draft-group-heading'},
           ...candidates.filter(group.matches).sort((a, b) => {
             const first = numbering(a), second = numbering(b);
             return first[0] - second[0] || first[1] - second[1] || first[2] - second[2];
           }).map(item => ({key: item.id, value: item.id, text: item.title, className: 'draft-group-option',
             description: !item.currentVersion.contentFile && !item.currentVersion.content.trim() ? t('No content') : undefined}))
-        ])} /></Form.Field>
+        ]) : [{key: 'empty', value: 'empty', text: t('(Empty)'), disabled: true, className: 'draft-empty'}]} /></Form.Field>
       <Button primary fluid loading={saving} disabled={!canChair || saving || !candidates.some(item => item.id === draftId)}>{t('Confirm vote')}</Button>
     </Form></Card.Content></Card>
   </Container>;

@@ -151,6 +151,32 @@ describe('committee workspace routes and roles', () => {
     expect(page.querySelector('[data-navigation-key="/votes"]')?.textContent).toContain('Vote - DIRECTIVE 1.2');
   });
 
+  it.each(['RESOLUTION', 'DIRECTIVE', undefined] as const)('hides empty voting groups with %s candidates', async draftType => {
+    const draft: ProceedingDocument = {id: 'draft', committeeId: 'committee', meetingSessionId: 'meeting',
+      kind: 'RESOLUTION', draftType, resolutionId: null, ordinal: 1, customTitle: null, title: 'Draft 1.1',
+      status: 'PUBLISHED', rulePackageVersionId: 'rules', currentVersion: {id: 'body', versionNumber: 1,
+        content: '', contentFile: null, createdAt: '2026-09-30T00:00:00Z'}, votingVersionId: null, public: true,
+      proposers: [], seconders: [], delegatesCanAmend: false, directVote: null, resultDecisions: [], revision: 1,
+      discussion: [], createdAt: '2026-09-30T00:00:00Z', updatedAt: '2026-09-30T00:00:00Z'};
+    const startDocumentVote = vi.fn();
+    const page = await render('CHAIR', '/committees/committee/votes/new', user, value => ({...value,
+      documents: draftType ? [draft] : [], meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1,
+        name: 'Session 1', phaseId: 'formal-debate', activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1,
+        createdAt: '2026-09-30T00:00:00Z', closedAt: null}}), {startDocumentVote});
+    const select = page.querySelector<HTMLElement>('[aria-label="Choose draft"]')!;
+    await act(async () => {select.click();});
+    expect([...page.querySelectorAll('.draft-group-heading')].map(group => group.textContent))
+      .toEqual(draftType ? [draftType === 'DIRECTIVE' ? 'Draft Directives' : 'Draft Resolutions'] : []);
+    expect(page.querySelector('.draft-empty')?.textContent).toBe(draftType ? undefined : '(Empty)');
+    if (!draftType) {
+      await act(async () => {page.querySelector<HTMLElement>('.draft-empty')!.click();});
+      await act(async () => {select.dispatchEvent(new KeyboardEvent('keydown', {key: 'ArrowDown', keyCode: 40, bubbles: true}));});
+      await act(async () => {select.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', keyCode: 13, bubbles: true}));});
+      expect(page.querySelector<HTMLButtonElement>('.new-document-vote-card button')?.disabled).toBe(true);
+      expect(startDocumentVote).not.toHaveBeenCalled();
+    }
+  });
+
   it.each(['start', 'set'] as const)('shows the unmoderated timer immediately and creates it on %s', async action => {
     const timer = {id: 'unmod-timer', committeeId: 'committee', ownerType: 'COMMITTEE' as const, ownerId: 'committee',
       running: false, startedAt: null, remainingAtStartMs: 600_000, remainingMs: 600_000,
