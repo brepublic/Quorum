@@ -2823,6 +2823,7 @@ html[lang='zh-CN'] .ui.grid > .column {
 .crisis-time-dot { display: inline-block; width: 0.6rem; height: 0.6rem; border-radius: 50%; margin-left: 0.65rem; vertical-align: middle; flex-shrink: 0; }
 .crisis-time-dot.orange { background-color: #e57d12; }
 .crisis-time-dot.red { background-color: #db2828; }
-@keyframes crisis-awaiting { 0%, 49.999% { --crisis-reminder-color: #db2828; } 50%, 100% { --crisis-reminder-color: #1b1c1d; } }
-.ui.menu [data-navigation-key='/crises'].crisis-awaiting { animation: crisis-awaiting 2s steps(1, end) infinite; }
-.ui.menu .crisis-awaiting > .text, .ui.menu .crisis-awaiting > .crisis-entry-label { color: var(--crisis-reminder-color, #1b1c1d); }
+.ui.menu[data-crisis-reminder='red'] .crisis-awaiting > .text,
+.ui.menu[data-crisis-reminder='red'] .crisis-awaiting > .crisis-entry-label { color: #db2828; }
+.ui.menu[data-crisis-reminder='black'] .crisis-awaiting > .text,
+.ui.menu[data-crisis-reminder='black'] .crisis-awaiting > .crisis-entry-label { color: #1b1c1d; }

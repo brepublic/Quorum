@@ -40,7 +40,7 @@ let container: HTMLDivElement | undefined;
 afterEach(() => {
   if (root) act(() => root?.unmount());
   container?.remove(); root = undefined; container = undefined; setLanguage('en');
-  vi.restoreAllMocks(); vi.unstubAllGlobals();
+  vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals();
 });
 
 function render(node: React.ReactNode, path = '/') {
@@ -50,6 +50,36 @@ function render(node: React.ReactNode, path = '/') {
 }
 
 describe('self-hosted workspace navigation', () => {
+  it('keeps an open crisis dropdown synchronized for multiple cycles while viewing another page', async () => {
+    vi.useFakeTimers();
+    const current = {...snapshot, crises: [
+      {id: 'pending', committeeId: 'committee', sessionOrdinal: 1, ordinal: 1, endedAt: null,
+        timer: {remainingMs: 60_000, running: false}, updates: [{status: 'PENDING'}]},
+      {id: 'ended', committeeId: 'committee', sessionOrdinal: 1, ordinal: 2, endedAt: '2026-09-30T00:00:00Z',
+        timer: {remainingMs: 0, running: false}, updates: [{status: 'ENDED'}]},
+      {id: 'draft', committeeId: 'committee', sessionOrdinal: 1, ordinal: 3, endedAt: null,
+        timer: {remainingMs: 0, running: false}, updates: [{status: 'UNPUBLISHED'}]}
+    ]} as unknown as CommitteeWorkspaceSnapshot;
+    const page = render(<CommitteeNavigation snapshot={current} user={user} logout={() => undefined} />,
+      '/committees/committee/unmod');
+    const dropdown = page.querySelector<HTMLElement>('.committee-navigation-desktop [data-navigation-key="/crises"]')!;
+    act(() => dropdown.click());
+    for (let cycle = 0; cycle < 6; cycle++) {
+      expect(dropdown.getAttribute('aria-expanded')).toBe('true');
+      expect([...page.querySelectorAll('[data-crisis-reminder]')].map(menu => menu.getAttribute('data-crisis-reminder')))
+        .toEqual(Array(3).fill(cycle % 2 === 0 ? 'red' : 'black'));
+      expect(dropdown.querySelector('a[href$="/pending"]')?.classList.contains('crisis-awaiting')).toBe(true);
+      expect(dropdown.querySelector('a[href$="/ended"]')?.classList.contains('crisis-awaiting')).toBe(false);
+      expect(dropdown.querySelector('a[href$="/draft"]')?.classList.contains('crisis-awaiting')).toBe(false);
+      await act(async () => {await vi.advanceTimersByTimeAsync(1_000);});
+    }
+    act(() => dropdown.click());
+    await act(async () => {await vi.advanceTimersByTimeAsync(1_000);});
+    act(() => dropdown.click());
+    expect(dropdown.getAttribute('aria-expanded')).toBe('true');
+    expect(dropdown.closest('[data-crisis-reminder]')?.getAttribute('data-crisis-reminder')).toBe('black');
+  });
+
   it('folds only as much as needed, restores items, and preserves the workspace', () => {
     let available = 2000;
     let resize = () => {};

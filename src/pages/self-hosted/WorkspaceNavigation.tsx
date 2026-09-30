@@ -237,6 +237,16 @@ export function CommitteeNavigation({snapshot, user, logout, realtimeStatus = 'C
   const language = useLanguage();
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
   const [level, setLevel] = React.useState(0);
+  const [crisisReminderRed, setCrisisReminderRed] = React.useState(true);
+  const hasPendingCrisis = (snapshot.crises ?? []).some(group => group.committeeId === snapshot.committee.id
+    && !group.endedAt && group.updates.some(update => update.status === 'PENDING'));
+  React.useEffect(() => {
+    setCrisisReminderRed(true);
+    if (!hasPendingCrisis) return;
+    const timer = window.setInterval(() => setCrisisReminderRed(red => !red), 1_000);
+    return () => window.clearInterval(timer);
+  }, [hasPendingCrisis]);
+  const crisisReminder = crisisReminderRed ? 'red' : 'black';
   const measurementRef = React.useRef<HTMLDivElement | null>(null);
   React.useLayoutEffect(() => {
     const container = measurementRef.current;
@@ -272,7 +282,7 @@ export function CommitteeNavigation({snapshot, user, logout, realtimeStatus = 'C
   const mode = level === 12 ? 'sidebar' : 'desktop';
   return <>
     <nav data-navigation-mode={mode} data-collapse-level={level} className="committee-navigation-desktop" aria-label={t('Committee navigation')}>
-      <Menu className="committee-primary-navigation" size="large" fluid>
+      <Menu className="committee-primary-navigation" size="large" fluid data-crisis-reminder={crisisReminder}>
         <PrimaryItems snapshot={snapshot} onCreateCaucus={onCreateCaucus} level={level} />
         <Menu.Menu position="right"><AttendanceThresholdItem snapshot={snapshot} /><RealtimeStatusItem status={realtimeStatus} compact={level >= 1} />
           {user && <AccountMenu user={user} logout={logout} />}</Menu.Menu>
@@ -282,7 +292,7 @@ export function CommitteeNavigation({snapshot, user, logout, realtimeStatus = 'C
       measurementRef.current = element;
       element?.setAttribute('inert', '');
     }}>
-      <Menu className="committee-primary-navigation" size="large">
+      <Menu className="committee-primary-navigation" size="large" data-crisis-reminder={crisisReminder}>
         <PrimaryItems snapshot={snapshot} />
         <Menu.Item className="committee-navigation-more"><Icon name="ellipsis horizontal" /></Menu.Item>
         <Menu.Menu position="right"><AttendanceThresholdItem snapshot={snapshot} /><RealtimeStatusItem status={realtimeStatus} />
@@ -291,6 +301,7 @@ export function CommitteeNavigation({snapshot, user, logout, realtimeStatus = 'C
     </div>
     <Sidebar.Pushable className="committee-navigation-pushable" data-navigation-mode={mode}>
       <Sidebar className="committee-mobile-sidebar" as={Menu} animation="uncover" vertical visible={sidebarOpen}
+        data-crisis-reminder={crisisReminder}
         onHide={() => setSidebarOpen(false)}>
         <AttendanceThresholdItem snapshot={snapshot} /><RealtimeStatusItem status={realtimeStatus} />
         <PrimaryItems snapshot={snapshot} onNavigate={() => setSidebarOpen(false)} onCreateCaucus={onCreateCaucus} />
