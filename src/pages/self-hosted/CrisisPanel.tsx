@@ -117,16 +117,19 @@ function CrisisCard({group,card,files,api,run,editable}: {
           else setDraft(current=>({...current,fileId:id}));
         }} />
       </Table.Cell></Table.Row>
-      <Table.Row><Table.Cell className="motion-metadata-key">{t('Handling time (minutes)')}</Table.Cell><Table.Cell>
+      <Table.Row><Table.Cell className="motion-metadata-key">{t('Handling time')}</Table.Cell><Table.Cell>
+      <div className="crisis-duration-editor">
       <Form.Input fluid type="number" step="any" min={0} aria-label={t('Handling time (minutes)')}
         value={draft.minutes} error={Boolean(draft.minutes && !validTime)} disabled={working}
         onChange={event=> {const minutes=event.currentTarget.value;setDraft(current=>({...current,minutes}));}} />
+      <span className="crisis-duration-unit">{t('min')}</span>
+      </div>
       </Table.Cell></Table.Row>
       </Table.Body></Table>
       <Button type="button" positive fluid loading={working} disabled={working || !validTime || !draft.fileId || !choices.some(file=>file.id===draft.fileId)} onClick={()=>void publish()}>{t('Publish crisis')}</Button>
     </Form> : <><Table compact celled unstackable className="motion-metadata-table crisis-metadata"><Table.Body>
       <Table.Row><Table.Cell className="motion-metadata-key">{t('Crisis notice')}</Table.Cell><Table.Cell>{card.notice?.logicalName ?? '—'}</Table.Cell></Table.Row>
-      {card.handlingDurationMs!==null && <Table.Row><Table.Cell className="motion-metadata-key">{t('Handling time (minutes)')}</Table.Cell><Table.Cell>{card.handlingDurationMs/60000}</Table.Cell></Table.Row>}
+      {card.handlingDurationMs!==null && <Table.Row><Table.Cell className="motion-metadata-key">{t('Handling time')}</Table.Cell><Table.Cell>{card.handlingDurationMs/60000} {t('min')}</Table.Cell></Table.Row>}
       </Table.Body></Table>
       {card.notice && <Button fluid primary loading={working} disabled={working || card.notice.status==='DELETED'} onClick={()=>void download()}>{t('Download file')} <Icon name="arrow down" /></Button>}</>}
   </Card.Content>

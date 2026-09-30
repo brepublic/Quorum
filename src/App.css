@@ -2817,12 +2817,14 @@ html[lang='zh-CN'] .ui.grid > .column {
 .crisis-card-list .ui.card { margin: 0; }
 .crisis-card-heading { align-items: flex-start; gap: 1rem; margin-bottom: 1rem; }
 .crisis-card-title { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: 1.28571429em; font-weight: 700; line-height: 1.4; }
-.crisis-card-title .ui.input { margin-top: 0.6rem; }
-.crisis-card-title .ui.input > input { font-size: inherit; font-weight: inherit; }
+.crisis-card-title .ui.input { margin-top: 0.6rem; font-size: 1rem; }
 .crisis-metadata.ui.table { table-layout: fixed; }
 .crisis-card .crisis-metadata.ui.table td.motion-metadata-key { width: 11rem; }
 .crisis-metadata.ui.table td { overflow-wrap: anywhere; }
 .crisis-metadata .field { margin: 0; }
+.crisis-duration-editor { display: flex; align-items: center; gap: 0.5rem; }
+.crisis-card .crisis-metadata .crisis-duration-editor .field { flex: 0 1 6rem; min-width: 0; margin: 0; }
+.crisis-duration-unit { white-space: nowrap; }
 .crisis-metadata .ui.selection.dropdown { min-width: 0; }
 .crisis-metadata .ui.selection.dropdown > .text { white-space: normal; overflow-wrap: anywhere; }
 @media (max-width: 480px) {

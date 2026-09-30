@@ -112,6 +112,7 @@ const zhCN: Record<string, string> = {
   'Crisis timer': '危机计时器',
   'Crisis title': '危机标题',
   'Crisis notice': '危机通告',
+  'Handling time': '处理时间',
   'Handling time (minutes)': '处理时间（分钟）',
   'Publish crisis': '发布危机',
   'Unpublished': '未发布',
