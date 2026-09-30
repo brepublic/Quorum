@@ -78,7 +78,7 @@ interface StrawpollRow extends QueryResultRow {
 }
 
 interface DocumentRow extends QueryResultRow {
-  id: string; committee_id: string; meeting_session_id: string; kind: ProceedingDocumentKind; custom_title: string | null; ordinal: number;
+  id: string; committee_id: string; meeting_session_id: string; kind: ProceedingDocumentKind; draft_type: 'RESOLUTION' | 'DIRECTIVE'; custom_title: string | null; ordinal: number;
   status: ProceedingDocumentStatus; rule_package_version_id: string; current_version_id: string;
   voting_version_id: string | null; is_public: boolean; created_by_user_id: string;
   created_on_behalf_of_seat_id: string | null; revision: number; created_at: Date; updated_at: Date;
@@ -136,10 +136,10 @@ export async function speakerListName(client: PoolClient,
   if (row.custom_title !== null) return row.custom_title;
   if (row.kind === 'GENERAL') return formatCommitteeContent({kind: 'GENERAL_SPEAKERS_LIST'}, language);
   if (row.linked_resolution_document_id) {
-    const linked = (await client.query<{ordinal: number; custom_title: string | null; session_ordinal: number}>(
-      `SELECT d.ordinal,d.custom_title,s.ordinal AS session_ordinal FROM documents d
+    const linked = (await client.query<{ordinal: number; custom_title: string | null; session_ordinal: number; draft_type: 'RESOLUTION' | 'DIRECTIVE'}>(
+      `SELECT d.ordinal,d.draft_type,d.custom_title,s.ordinal AS session_ordinal FROM documents d
         JOIN meeting_sessions s ON s.id=d.meeting_session_id WHERE d.id=$1`, [row.linked_resolution_document_id])).rows[0];
-    if (linked) return formatCommitteeContent({kind: 'RESOLUTION', ordinal: linked.ordinal,
+    if (linked) return formatCommitteeContent({kind: linked.draft_type, ordinal: linked.ordinal,
       sessionOrdinal: linked.session_ordinal, customTitle: linked.custom_title}, language);
   }
   return formatCommitteeContent({kind: 'MODERATED_CAUCUS', topic: row.topic, customTitle: null}, language);
@@ -294,7 +294,7 @@ async function documentState(client: PoolClient, row: DocumentRow): Promise<Proc
   const title = formatCommitteeContent(row.kind === 'AMENDMENT'
     ? {kind: 'AMENDMENT', ordinal: amendment!.type_ordinal, sessionOrdinal: context.ordinal,
       resolutionOrdinal: amendment!.resolution_ordinal, amendmentType: amendment!.amendment_type, customTitle: row.custom_title}
-    : {kind: 'RESOLUTION', ordinal: row.ordinal, sessionOrdinal: context.ordinal, customTitle: row.custom_title}, context.committee_language);
+    : {kind: row.draft_type, ordinal: row.ordinal, sessionOrdinal: context.ordinal, customTitle: row.custom_title}, context.committee_language);
   const version = await client.query<{id: string; version_number: number; content: string; content_file_entry_id: string | null;
     logical_name: string | null; original_name: string | null; media_type: string | null;
     file_status: 'UPLOAD_COMPLETE' | 'PENDING_REVIEW' | 'PUBLISHED' | 'REJECTED' | 'DELETED' | null;
@@ -326,14 +326,14 @@ async function documentState(client: PoolClient, row: DocumentRow): Promise<Proc
     .map(item => ({seatId: item.seat_id, seatDisplayName: item.display_name,
       flag: {type: item.flag_type, value: item.flag_value} as ProceedingDocument['proposers'][number]['flag']}));
   let delegatesCanAmend = false; let directVote: ResolutionDirectVoteState | null = null;
-  if (row.kind === 'RESOLUTION') {
-    const resolution = await client.query<ResolutionRow>('SELECT * FROM resolutions WHERE document_id=$1', [row.id]);
+  if (row.kind === 'RESOLUTION' || amendment?.amendment_type === 'UNFRIENDLY') {
+    const resolution = await client.query<ResolutionRow>('SELECT v.*,coalesce(r.delegates_can_amend,false) AS delegates_can_amend FROM document_voting v LEFT JOIN resolutions r USING(document_id) WHERE v.document_id=$1', [row.id]);
     const metadata = resolution.rows[0];
     if (!metadata) throw new AppError({code: 'INTERNAL_ERROR', message: 'Resolution metadata is unavailable.'});
     delegatesCanAmend = metadata.delegates_can_amend;
     directVote = await resolutionDirectVoteState(client, row, metadata);
   }
-  return {id: row.id, committeeId: row.committee_id, meetingSessionId: row.meeting_session_id, kind: row.kind,
+  return {id: row.id, committeeId: row.committee_id, meetingSessionId: row.meeting_session_id, kind: row.kind, draftType: row.draft_type,
     ...(amendment ? {amendmentType: amendment.amendment_type, amendmentOrdinal: amendment.type_ordinal} : {}),
     resolutionId: row.resolution_document_id, title, ordinal: row.ordinal, customTitle: row.custom_title, status: row.status,
     rulePackageVersionId: row.rule_package_version_id,
@@ -362,7 +362,7 @@ async function resolutionDirectVoteState(client: PoolClient, document: DocumentR
   [document.committee_id, document.meeting_session_id]);
   const votes = await client.query<{id: string; seat_id: string; seat_display_name: string; current_choice: BallotChoice;
     revision: number; cast_at: Date}>(`SELECT id,seat_id,seat_display_name,current_choice,revision,cast_at
-    FROM resolution_direct_votes WHERE resolution_document_id=$1 AND retracted_at IS NULL ORDER BY seat_id`, [document.id]);
+    FROM document_direct_votes WHERE document_id=$1 AND retracted_at IS NULL ORDER BY seat_id`, [document.id]);
   const eligibleIds = new Set(eligibility.rows.map(item => item.seat_id));
   const currentVotes = votes.rows.filter(vote => eligibleIds.has(vote.seat_id));
   const forCount = currentVotes.filter(vote => vote.current_choice === 'FOR').length;
@@ -397,6 +397,39 @@ async function resolutionDirectVoteState(client: PoolClient, document: DocumentR
     automaticResult, votes: currentVotes.map(vote => ({id: vote.id, seatId: vote.seat_id,
       seatDisplayName: vote.seat_display_name, choice: vote.current_choice, revision: vote.revision,
       castAt: vote.cast_at.toISOString()}))};
+}
+
+async function requireDirectVoteDocument(client: PoolClient, document: DocumentRow): Promise<void> {
+  if (document.status === 'POSTPONED') throw new AppError({code: 'RESOURCE_CONFLICT', reason: 'DOCUMENT_STATE_CHANGED', message: 'The draft is postponed.'});
+  const session = (await client.query<{status: string}>('SELECT status FROM meeting_sessions WHERE id=$1', [document.meeting_session_id])).rows[0];
+  if (session?.status !== 'OPEN') throw new AppError({code: 'RESOURCE_CONFLICT', reason: 'MEETING_CLOSED', message: 'Meeting session is closed.'});
+  if (document.kind === 'AMENDMENT') {
+    await requireUnfriendlyAmendment(client, document.id);
+    if (!['VOTING','INCORPORATED','REJECTED'].includes(document.status)) throw new AppError({code: 'RESOURCE_CONFLICT', reason: 'DOCUMENT_NOT_IN_VOTING', message: 'The amendment has not entered voting.'});
+    const parent = (await client.query<{status: string}>('SELECT status FROM documents WHERE id=$1 AND deleted_at IS NULL', [document.resolution_document_id])).rows[0];
+    if (!parent || parent.status === 'POSTPONED') throw new AppError({code: 'RESOURCE_CONFLICT', reason: 'DOCUMENT_STATE_CHANGED', message: 'The parent draft is unavailable.'});
+  }
+  const ballot = await client.query('SELECT 1 FROM ballots WHERE subject_id=$1 LIMIT 1', [document.id]);
+  if (ballot.rowCount) throw new AppError({code: 'RESOURCE_CONFLICT', reason: 'BALLOT_ALREADY_EXISTS', message: 'The draft already has a formal ballot.'});
+}
+
+async function updateAmendmentDirectResult(client: PoolClient, document: DocumentRow, auth: AuthenticatedSession,
+  context: Stage4Context, now: Date): Promise<void> {
+  if (document.kind !== 'AMENDMENT') return;
+  const metadata = (await client.query<ResolutionRow>('SELECT * FROM document_voting WHERE document_id=$1', [document.id])).rows[0]!;
+  if (!metadata.direct_vote_completed_at) return;
+  const state = await resolutionDirectVoteState(client, document, metadata);
+  if (!state.automaticResult) return;
+  const outcome = state.automaticResult === 'PASSED' ? 'INCORPORATED' : 'REJECTED';
+  if (document.status === outcome) return;
+  const previous = (await client.query<{id: string}>('SELECT id FROM document_result_decisions WHERE document_id=$1 ORDER BY created_at DESC,id DESC LIMIT 1', [document.id])).rows[0];
+  await client.query(`INSERT INTO document_result_decisions(id,committee_id,document_id,previous_status,new_status,reason,corrects_decision_id,actor_user_id,created_at)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [randomUUID(), document.committee_id, document.id, document.status, outcome,
+    previous ? 'Vote correction' : null, previous?.id ?? null, auth.user.id, now]);
+  await client.query('UPDATE documents SET status=$2,revision=revision+1,updated_at=$3 WHERE id=$1', [document.id,outcome,now]);
+  await audit(client, context, {committeeId: document.committee_id, actorUserId: auth.user.id, capabilities: ['CHAIR'],
+    action: 'documents.result_recorded', resourceType: 'document', resourceId: document.id, before: {status: document.status}, after: {status: outcome}});
+  document.status = outcome; document.revision += 1; document.updated_at = now;
 }
 
 const documentBallotRuleIds: Record<ProceedingDocumentKind, string> = {
@@ -1447,7 +1480,7 @@ export class Stage5Service {
           || motionTypeId === 'open-moderated-caucus' && (parameters as Record<string, unknown>).resolutionTarget !== undefined) {
           const targetId = motionId(parameters as Record<string, unknown>, 'resolutionTarget', 'Target resolution ID');
           const target = await client.query<{status: ProceedingDocumentStatus; direct_vote_started_at: Date | null}>(
-            `SELECT d.status,r.direct_vote_started_at FROM documents d JOIN resolutions r ON r.document_id=d.id
+            `SELECT d.status,r.direct_vote_started_at FROM documents d JOIN document_voting r ON r.document_id=d.id
             WHERE d.id=$1 AND d.committee_id=$2 AND d.meeting_session_id=$3 AND d.deleted_at IS NULL`,
           [targetId, committeeId, meetingSessionId]);
           const expected = motionTypeId === 'resume-resolution' ? 'POSTPONED' : 'PUBLISHED';
@@ -1724,8 +1757,8 @@ export class Stage5Service {
       if (parameters.resolutionTarget !== undefined) {
         const resolutionId = motionId(parameters, 'resolutionTarget', 'Target resolution ID');
         const target = await client.query<{id: string; custom_title: string | null; ordinal: number;
-          session_ordinal: number; status: ProceedingDocumentStatus}>(`SELECT d.id,d.custom_title,d.ordinal,
-          ms.ordinal AS session_ordinal,d.status FROM documents d JOIN resolutions r ON r.document_id=d.id
+          session_ordinal: number; draft_type: 'RESOLUTION' | 'DIRECTIVE'; status: ProceedingDocumentStatus}>(`SELECT d.id,d.custom_title,d.ordinal,d.draft_type,
+          ms.ordinal AS session_ordinal,d.status FROM documents d JOIN document_voting r ON r.document_id=d.id
           JOIN meeting_sessions ms ON ms.id=d.meeting_session_id
           WHERE d.id=$1 AND d.committee_id=$2 AND d.meeting_session_id=$3 AND d.deleted_at IS NULL FOR UPDATE OF d`,
         [resolutionId, committeeId, motion.meeting_session_id]);
@@ -1738,7 +1771,7 @@ export class Stage5Service {
         if (existing.rows[0]) {
           throw new AppError({reason: 'RESOLUTION_CAUCUS_EXISTS', code: 'RESOURCE_CONFLICT', message: 'The target resolution already has an associated caucus.'});
         }
-        linkedResolution = {id: row.id, title: formatCommitteeContent({kind: 'RESOLUTION', ordinal: row.ordinal,
+        linkedResolution = {id: row.id, title: formatCommitteeContent({kind: row.draft_type, ordinal: row.ordinal,
           sessionOrdinal: row.session_ordinal, customTitle: row.custom_title}, committee.committee_language)};
       }
       const listId = randomUUID(); const caucusId = randomUUID(); const speechTimerId = randomUUID();
@@ -1908,7 +1941,7 @@ export class Stage5Service {
         before: {status: document.status, revision: document.revision},
         after: {status: 'PUBLISHED', revision: (updated.rows[0] as DocumentRow).revision,
           motionId: motion.id}});
-      return `/committees/${committeeId}/resolutions/${documentId}`;
+      return `/committees/${committeeId}/${document.draft_type === 'DIRECTIVE' ? 'directives' : 'resolutions'}/${documentId}`;
     }
 
     if (motion.motion_type_id === 'postpone-resolution' || motion.motion_type_id === 'resume-resolution') {
@@ -1925,7 +1958,7 @@ export class Stage5Service {
         message: 'The target resolution is not in the required state.'});
       if (postpone) {
         const voting = await client.query<{direct_vote_started_at: Date | null}>(
-          'SELECT direct_vote_started_at FROM resolutions WHERE document_id=$1 FOR UPDATE', [documentId]);
+          'SELECT direct_vote_started_at FROM document_voting WHERE document_id=$1 FOR UPDATE', [documentId]);
         if (voting.rows[0]?.direct_vote_started_at) throw new AppError({reason: 'DOCUMENT_STATE_CHANGED',
           code: 'RESOURCE_CONFLICT', message: 'The target resolution has already entered voting.'});
       }
@@ -1973,7 +2006,7 @@ export class Stage5Service {
               motionId: motion.id}, audience: 'PUBLIC'});
         }
       }
-      return `/committees/${committeeId}/resolutions/${documentId}`;
+      return `/committees/${committeeId}/${document.draft_type === 'DIRECTIVE' ? 'directives' : 'resolutions'}/${documentId}`;
     }
 
     if (motion.motion_type_id === 'introduce-amendment') {
@@ -2337,6 +2370,8 @@ export class Stage5Service {
         } else {
           const kind = subjectType === 'RESOLUTION' ? 'RESOLUTION' : 'AMENDMENT';
           if (kind === 'AMENDMENT') await requireUnfriendlyAmendment(client, subjectId);
+          const direct = await client.query('SELECT 1 FROM document_voting WHERE document_id=$1 AND direct_vote_started_at IS NOT NULL', [subjectId]);
+          if (direct.rowCount) throw new AppError({code: 'RESOURCE_CONFLICT', reason: 'BALLOT_ALREADY_EXISTS', message: 'The draft already has a vote.'});
           const document = await client.query<{status: ProceedingDocumentStatus; voting_version_id: string | null}>(
             `SELECT status,voting_version_id FROM documents WHERE id=$1 AND committee_id=$2 AND kind=$3
               AND deleted_at IS NULL FOR UPDATE`,
@@ -3050,8 +3085,10 @@ export class Stage5Service {
     input: Record<string, unknown>, key: string, context: Stage4Context): Promise<ProceedingDocument> {
     requireBusinessIdentity(auth);
     assertExactBody(input, kind === 'RESOLUTION'
-      ? ['meetingSessionId', 'customTitle', 'content', 'onBehalfOfSeatId']
+      ? ['meetingSessionId', 'customTitle', 'content', 'onBehalfOfSeatId', 'draftType']
       : ['meetingSessionId', 'customTitle', 'content', 'onBehalfOfSeatId', 'resolutionId', 'amendmentType']);
+    const draftType = input.draftType ?? 'RESOLUTION';
+    if (kind === 'RESOLUTION' && !['RESOLUTION', 'DIRECTIVE'].includes(String(draftType))) throw new AppError({code: 'VALIDATION_FAILED', message: 'Draft type is invalid.'});
     const amendmentType = input.amendmentType;
     if (kind === 'AMENDMENT' && !['FRIENDLY', 'UNFRIENDLY'].includes(String(amendmentType))) {
       throw new AppError({code: 'VALIDATION_FAILED', message: 'Amendment type is invalid.'});
@@ -3085,11 +3122,11 @@ export class Stage5Service {
       }
       const id = randomUUID(); const versionId = randomUUID(); const now = this.now();
       const inserted = await client.query<DocumentRow>(`INSERT INTO documents
-        (id,committee_id,meeting_session_id,kind,custom_title,rule_package_version_id,current_version_id,is_public,
+        (id,committee_id,meeting_session_id,kind,custom_title,rule_package_version_id,current_version_id,is_public,draft_type,
          created_by_user_id,created_on_behalf_of_seat_id,created_at,updated_at)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11) RETURNING *,NULL::uuid AS resolution_document_id`,
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$12,$9,$10,$11,$11) RETURNING *,NULL::uuid AS resolution_document_id`,
       [id, committeeId, meetingSessionId, kind, customTitle, session.rows[0].active_rule_package_version_id, versionId,
-        isPublic, auth.user.id, actor.seatId, now]);
+        isPublic, auth.user.id, actor.seatId, now, draftType]);
       await client.query(`INSERT INTO document_versions
         (id,document_id,version_number,content,created_by_user_id,created_on_behalf_of_seat_id,created_at)
         VALUES ($1,$2,1,$3,$4,$5,$6)`, [versionId, id, content, auth.user.id, actor.seatId, now]);
@@ -3104,6 +3141,9 @@ export class Stage5Service {
         if (amendmentType === 'FRIENDLY') await client.query(`INSERT INTO amendment_countries (amendment_document_id,seat_id,role)
           SELECT $1,seat_id,'SECONDER' FROM resolution_countries WHERE resolution_document_id=$2 AND role='PROPOSER'`, [id, resolutionId]);
       }
+      if (kind === 'RESOLUTION' || amendmentType === 'UNFRIENDLY') await client.query(
+        `INSERT INTO document_voting(document_id,direct_vote_majority) VALUES ($1,$2)`,
+        [id, kind === 'AMENDMENT' ? 'SIMPLE_MAJORITY' : 'TWO_THIRDS']);
       const eventAudience = isPublic ? 'PUBLIC' : 'MEMBER';
       await appendEvent(client, committee, {type: 'document.created', resourceType: 'document', resourceId: id, revision: 1,
         payload: {kind, resolutionId, customTitle, ordinal: inserted.rows[0]!.ordinal, status: 'DRAFT', currentVersionId: versionId,
@@ -3138,6 +3178,7 @@ export class Stage5Service {
         message: 'A document body must use either text or a file.'});
       if (document.kind === 'AMENDMENT' && !content.trim() && !contentFileEntryId) throw new AppError({reason: 'AMENDMENT_BODY_REQUIRED', code: 'VALIDATION_FAILED',
         message: 'Amendment content is invalid.'});
+      if (document.voting_version_id) throw new AppError({code: 'RESOURCE_CONFLICT', reason: 'DOCUMENT_STATE_CHANGED', message: 'The draft version is frozen for voting.'});
       if (document.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT',
         message: 'This document changed since it was loaded.', details: {currentRevision: document.revision}});
       if (document.status === 'VOTING' || ['PASSED', 'FAILED', 'INCORPORATED', 'REJECTED'].includes(document.status)) {
@@ -3247,9 +3288,9 @@ export class Stage5Service {
       if (!document) throw new AppError({code: 'NOT_FOUND', message: 'Document not found.'});
       if (document.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT',
         message: 'This document changed since it was loaded.', details: {currentRevision: document.revision}});
-      if (document.kind === 'AMENDMENT' && supplied.some(key => key !== 'proposerSeatIds' && key !== 'seconderSeatIds')) throw new AppError({reason: 'RESOLUTION_SETTING_ONLY',
+      if (document.kind === 'AMENDMENT' && supplied.includes('delegatesCanAmend')) throw new AppError({reason: 'RESOLUTION_SETTING_ONLY',
         code: 'VALIDATION_FAILED', message: 'This setting is only available for resolutions.'});
-      if (document.kind === 'AMENDMENT' && !['DRAFT', 'PUBLISHED'].includes(document.status)) throw new AppError({
+      if (document.kind === 'AMENDMENT' && supplied.some(key => key !== 'majority') && !['DRAFT', 'PUBLISHED'].includes(document.status)) throw new AppError({
         reason: 'DOCUMENT_STATE_CHANGED', code: 'RESOURCE_CONFLICT', message: 'The Amendment can no longer be edited.'});
       const seat = async (value: unknown, name: string): Promise<string> => {
         const seatId = uuid(value, name);
@@ -3285,8 +3326,9 @@ export class Stage5Service {
         throw new AppError({reason: 'INVALID_BALLOT_THRESHOLD', code: 'VALIDATION_FAILED', message: 'The direct-vote majority is invalid.'});
       }
       const now = this.now(); let before: Record<string, unknown>; let after: Record<string, unknown>;
-      if (document.kind === 'RESOLUTION') {
-        const metadataResult = await client.query<ResolutionRow>('SELECT * FROM resolutions WHERE document_id=$1 FOR UPDATE', [documentId]);
+      if (document.kind === 'RESOLUTION' || majority !== undefined) {
+        if (document.kind === 'AMENDMENT') await requireUnfriendlyAmendment(client, documentId);
+        const metadataResult = await client.query<ResolutionRow>('SELECT v.*,coalesce(r.delegates_can_amend,false) AS delegates_can_amend FROM document_voting v LEFT JOIN resolutions r USING(document_id) WHERE v.document_id=$1 FOR UPDATE OF v', [documentId]);
         const metadata = metadataResult.rows[0] as ResolutionRow;
         const nextProposers = proposerSeatIds ?? previousIds('PROPOSER');
         const nextSeconders = seconderSeatIds ?? previousIds('SECONDER');
@@ -3299,9 +3341,10 @@ export class Stage5Service {
           code: 'VALIDATION_FAILED', message: 'Drafting and seconding countries must be different.'});
         if (JSON.stringify(before) === JSON.stringify(after)) throw new AppError({reason: 'DOCUMENT_SETTINGS_UNCHANGED', code: 'RESOURCE_CONFLICT',
           message: 'The document settings are unchanged.'});
-        await client.query(`UPDATE resolutions SET delegates_can_amend=$2,
-          direct_vote_majority=$3,direct_vote_revision=direct_vote_revision+CASE WHEN direct_vote_majority<>$3 THEN 1 ELSE 0 END
-          WHERE document_id=$1`, [documentId, after.delegatesCanAmend, after.majority]);
+        await client.query('UPDATE resolutions SET delegates_can_amend=$2 WHERE document_id=$1', [documentId, after.delegatesCanAmend]);
+        await client.query(`UPDATE document_voting SET direct_vote_majority=$2,
+          direct_vote_revision=direct_vote_revision+CASE WHEN direct_vote_majority<>$2 THEN 1 ELSE 0 END
+          WHERE document_id=$1`, [documentId, after.majority]);
         for (const [role, ids] of [['PROPOSER', proposerSeatIds], ['SECONDER', seconderSeatIds]] as const) {
           if (ids === undefined) continue;
           await client.query(`DELETE FROM ${countryTable} WHERE ${countryDocumentColumn}=$1 AND role=$2`, [documentId, role]);
@@ -3345,6 +3388,45 @@ export class Stage5Service {
     });
   }
 
+  async startDocumentVote(auth: AuthenticatedSession, documentId: string, input: Record<string, unknown>,
+    key: string, context: Stage4Context): Promise<ProceedingDocument> {
+    requireBusinessIdentity(auth); assertExactBody(input, ['baseRevision']);
+    const revision = positiveInteger(input.baseRevision, 'Document revision');
+    return idempotentTransaction({pool: this.pool, auth, route: `POST /api/v1/documents/${documentId}/vote`,
+      key, request: input, status: 200, work: async client => {
+        const located = (await client.query<{committee_id: string}>(
+          'SELECT committee_id FROM documents WHERE id=$1 AND deleted_at IS NULL', [documentId])).rows[0];
+        if (!located) throw new AppError({code: 'NOT_FOUND', message: 'Document not found.'});
+        const committee = await lockedCommittee(client, located.committee_id); requireProceedingsActive(committee);
+        await requireChair(client, committee, auth.user.id);
+        const document = (await client.query<DocumentRow>(`SELECT d.*,
+          (SELECT resolution_document_id FROM amendments WHERE document_id=d.id) AS resolution_document_id
+          FROM documents d WHERE d.id=$1 FOR UPDATE`, [documentId])).rows[0]!;
+        if (document.revision !== revision) throw new AppError({code: 'REVISION_CONFLICT', message: 'The draft changed.'});
+        await requireDirectVoteDocument(client, document);
+        const metadata = (await client.query<ResolutionRow>('SELECT * FROM document_voting WHERE document_id=$1 FOR UPDATE', [documentId])).rows[0]!;
+        if (metadata.direct_vote_started_at) return documentState(client, document);
+        if (['PASSED','FAILED','INCORPORATED','REJECTED'].includes(document.status)) throw new AppError({code: 'RESOURCE_CONFLICT', reason: 'DOCUMENT_STATE_CHANGED', message: 'The draft already has a result.'});
+        await requirePublishedDocumentFile(client, document.current_version_id);
+        const body = (await client.query<{content: string; content_file_entry_id: string | null}>(
+          'SELECT content,content_file_entry_id FROM document_versions WHERE id=$1', [document.current_version_id])).rows[0]!;
+        if (!body.content.trim() && !body.content_file_entry_id) throw new AppError({code: 'VALIDATION_FAILED', reason: 'DRAFT_BODY_REQUIRED', message: 'Add draft text or a file.'});
+        const eligible = await client.query(`SELECT 1 FROM committee_seats s JOIN current_attendance a
+          ON a.seat_id=s.id AND a.meeting_session_id=$2 AND a.state='PRESENT'
+          WHERE s.committee_id=$1 AND s.active AND s.can_vote LIMIT 1`, [committee.id, document.meeting_session_id]);
+        if (!eligible.rowCount) throw new AppError({code: 'VALIDATION_FAILED', reason: 'NO_ELIGIBLE_VOTERS', message: 'There are no eligible voters.'});
+        const now = this.now();
+        await client.query('UPDATE document_voting SET direct_vote_started_at=$2 WHERE document_id=$1', [documentId, now]);
+        await client.query('UPDATE documents SET voting_version_id=coalesce(voting_version_id,current_version_id),is_public=true WHERE id=$1', [documentId]);
+        document.voting_version_id = document.voting_version_id ?? document.current_version_id; document.is_public = true;
+        await appendEvent(client, committee, {type: 'document.direct_vote_changed', resourceType: 'document',
+          resourceId: documentId, revision: document.revision, payload: {started: true}, audience: 'PUBLIC'});
+        await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id, capabilities: ['CHAIR'],
+          action: 'documents.direct_vote_started', resourceType: 'document', resourceId: documentId, after: {versionId: document.voting_version_id}});
+        return documentState(client, document);
+      }});
+  }
+
   async submitResolutionDirectVote(auth: AuthenticatedSession, documentId: string, input: Record<string, unknown>,
     key: string, context: Stage4Context): Promise<ProceedingDocument> {
     requireBusinessIdentity(auth);
@@ -3378,15 +3460,15 @@ export class Stage5Service {
     return idempotentTransaction({pool: this.pool, auth, route: `POST /api/v1/resolutions/${documentId}/direct-vote/submit`,
       key, request: input, status: 200, work: async client => {
         const located = await client.query<{committee_id: string}>(
-          'SELECT committee_id FROM documents WHERE id=$1 AND kind=$2 AND deleted_at IS NULL',
-          [documentId, 'RESOLUTION']);
+          'SELECT committee_id FROM documents WHERE id=$1 AND deleted_at IS NULL', [documentId]);
         if (!located.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Resolution not found.'});
         const committee = await lockedCommittee(client, located.rows[0].committee_id);
         requireProceedingsActive(committee); await requireChair(client, committee, auth.user.id);
-        const found = await client.query<DocumentRow>(`SELECT d.*,NULL::uuid AS resolution_document_id FROM documents d
-          WHERE d.id=$1 AND d.kind='RESOLUTION' AND d.deleted_at IS NULL FOR UPDATE`, [documentId]);
+        const found = await client.query<DocumentRow>(`SELECT d.*,(SELECT resolution_document_id FROM amendments WHERE document_id=d.id) AS resolution_document_id FROM documents d
+          WHERE d.id=$1 AND d.deleted_at IS NULL FOR UPDATE`, [documentId]);
         const document = found.rows[0] as DocumentRow;
-        const metadata = await client.query<ResolutionRow>('SELECT * FROM resolutions WHERE document_id=$1 FOR UPDATE', [documentId]);
+        await requireDirectVoteDocument(client, document);
+        const metadata = await client.query<ResolutionRow>('SELECT v.*,coalesce(r.delegates_can_amend,false) AS delegates_can_amend FROM document_voting v LEFT JOIN resolutions r USING(document_id) WHERE v.document_id=$1 FOR UPDATE OF v', [documentId]);
         const resolution = metadata.rows[0] as ResolutionRow;
         if (document.revision !== baseDocumentRevision || resolution.direct_vote_revision !== baseSettingsRevision
           || resolution.direct_vote_cast_revision !== baseCastRevision) throw new AppError({
@@ -3418,7 +3500,7 @@ export class Stage5Service {
           message: 'Voting eligibility changed or the vote list is incomplete.'});
         const existing = await client.query<{id: string; seat_id: string; current_choice: BallotChoice;
           revision: number; retracted_at: Date | null}>(`SELECT id,seat_id,current_choice,revision,retracted_at
-          FROM resolution_direct_votes WHERE resolution_document_id=$1 FOR UPDATE`, [documentId]);
+          FROM document_direct_votes WHERE document_id=$1 FOR UPDATE`, [documentId]);
         const previousBySeat = new Map(existing.rows.map(vote => [vote.seat_id, vote]));
         const now = this.now();
         for (const seat of currentEligibility.rows) {
@@ -3426,15 +3508,15 @@ export class Stage5Service {
           const previous = previousBySeat.get(seat.seat_id);
           if (previous && !previous.retracted_at && previous.current_choice === choice) continue;
           const voteId = previous?.id ?? randomUUID();
-          if (previous) await client.query(`UPDATE resolution_direct_votes SET current_choice=$2,actor_user_id=$3,
+          if (previous) await client.query(`UPDATE document_direct_votes SET current_choice=$2,actor_user_id=$3,
             on_behalf_of_seat_id=$4,cast_at=$5,retracted_at=NULL,retracted_by_user_id=NULL,revision=revision+1
             WHERE id=$1`, [voteId, choice, auth.user.id, seat.seat_id, now]);
-          else await client.query(`INSERT INTO resolution_direct_votes
-            (id,committee_id,resolution_document_id,seat_id,seat_display_name,current_choice,actor_user_id,
+          else await client.query(`INSERT INTO document_direct_votes
+            (id,committee_id,document_id,seat_id,seat_display_name,current_choice,actor_user_id,
               on_behalf_of_seat_id,cast_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$4,$8)`,
           [voteId, committee.id, documentId, seat.seat_id, seat.seat_display_name, choice, auth.user.id, now]);
-          await client.query(`INSERT INTO resolution_direct_vote_revisions
-            (id,committee_id,resolution_document_id,vote_id,seat_id,previous_choice,new_choice,actor_user_id,
+          await client.query(`INSERT INTO document_direct_vote_revisions
+            (id,committee_id,document_id,vote_id,seat_id,previous_choice,new_choice,actor_user_id,
               on_behalf_of_seat_id,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$5,$9)`,
           [randomUUID(), committee.id, documentId, voteId, seat.seat_id,
             previous && !previous.retracted_at ? previous.current_choice : null, choice, auth.user.id, now]);
@@ -3445,7 +3527,7 @@ export class Stage5Service {
               voteRevision: previous?.revision ?? 0},
             after: {seatId: seat.seat_id, choice, voteRevision: (previous?.revision ?? 0) + 1}});
         }
-        await client.query(`UPDATE resolutions SET direct_vote_started_at=coalesce(direct_vote_started_at,$2),
+        await client.query(`UPDATE document_voting SET direct_vote_started_at=coalesce(direct_vote_started_at,$2),
           direct_vote_completed_at=$2,direct_vote_cast_revision=direct_vote_cast_revision+1 WHERE document_id=$1`,
         [documentId, now]);
         await appendEvent(client, committee, {type: 'document.direct_vote_changed', resourceType: 'document',
@@ -3454,6 +3536,7 @@ export class Stage5Service {
         await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id, capabilities: ['CHAIR'],
           action: 'documents.direct_vote_submitted', resourceType: 'document', resourceId: documentId,
           after: {seatCount: votes.length}});
+        await updateAmendmentDirectResult(client, document, auth, context, now);
         return documentState(client, document);
       }});
   }
@@ -3467,14 +3550,14 @@ export class Stage5Service {
       code: 'VALIDATION_FAILED', message: 'Vote choice is invalid.'});
     return transaction(this.pool, async client => {
       const located = await client.query<{committee_id: string}>(
-        'SELECT committee_id FROM documents WHERE id=$1 AND kind=$2 AND deleted_at IS NULL',
-        [documentId, 'RESOLUTION']);
+        'SELECT committee_id FROM documents WHERE id=$1 AND deleted_at IS NULL', [documentId]);
       if (!located.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Resolution not found.'});
       const committee = await lockedCommittee(client, located.rows[0].committee_id); requireProceedingsActive(committee);
       await requireChair(client, committee, auth.user.id);
-      const found = await client.query<DocumentRow>(`SELECT d.*,NULL::uuid AS resolution_document_id FROM documents d
-        WHERE d.id=$1 AND d.kind='RESOLUTION' AND d.deleted_at IS NULL FOR UPDATE`, [documentId]);
+      const found = await client.query<DocumentRow>(`SELECT d.*,(SELECT resolution_document_id FROM amendments WHERE document_id=d.id) AS resolution_document_id FROM documents d
+        WHERE d.id=$1 AND d.deleted_at IS NULL FOR UPDATE`, [documentId]);
       const document = found.rows[0] as DocumentRow;
+        await requireDirectVoteDocument(client, document);
       if (document.status === 'POSTPONED') throw new AppError({reason: 'DOCUMENT_STATE_CHANGED', code: 'RESOURCE_CONFLICT',
         message: 'The Draft Resolution is postponed.'});
       if (choice !== null) await requirePublishedDocumentFile(client, document.current_version_id);
@@ -3486,8 +3569,8 @@ export class Stage5Service {
       if (choice === 'ABSTAIN' && eligible.rows[0].must_vote) throw new AppError({reason: 'SEAT_MUST_VOTE', code: 'VALIDATION_FAILED',
         message: 'This seat must vote for or against.'});
       const vote = await client.query<{id: string; current_choice: BallotChoice; revision: number; retracted_at: Date | null}>(
-        `SELECT id,current_choice,revision,retracted_at FROM resolution_direct_votes
-          WHERE resolution_document_id=$1 AND seat_id=$2 FOR UPDATE`, [documentId, seatId]);
+        `SELECT id,current_choice,revision,retracted_at FROM document_direct_votes
+          WHERE document_id=$1 AND seat_id=$2 FOR UPDATE`, [documentId, seatId]);
       const current = vote.rows[0]; const previousChoice = current && !current.retracted_at ? current.current_choice : null;
       if (choice === previousChoice) throw new AppError({code: 'RESOURCE_CONFLICT', reason: choice === null ? 'NO_VOTE_TO_UNDO' : 'VOTE_ALREADY_RECORDED', message: choice === null
         ? 'This seat has no current vote to retract.' : 'This seat already has that vote.'});
@@ -3495,25 +3578,25 @@ export class Stage5Service {
       if (!current) {
         if (choice === null) throw new AppError({reason: 'NO_VOTE_TO_UNDO', code: 'RESOURCE_CONFLICT', message: 'This seat has no current vote to retract.'});
         voteId = randomUUID(); voteRevision = 1;
-        await client.query(`INSERT INTO resolution_direct_votes
-          (id,committee_id,resolution_document_id,seat_id,seat_display_name,current_choice,actor_user_id,on_behalf_of_seat_id,cast_at)
+        await client.query(`INSERT INTO document_direct_votes
+          (id,committee_id,document_id,seat_id,seat_display_name,current_choice,actor_user_id,on_behalf_of_seat_id,cast_at)
           VALUES ($1,$2,$3,$4,$5,$6,$7,$4,$8)`, [voteId, committee.id, documentId, seatId,
           eligible.rows[0].display_name, choice, auth.user.id, now]);
       } else if (choice === null) {
         voteId = current.id; voteRevision = current.revision + 1;
-        await client.query(`UPDATE resolution_direct_votes SET retracted_at=$2,retracted_by_user_id=$3,
+        await client.query(`UPDATE document_direct_votes SET retracted_at=$2,retracted_by_user_id=$3,
           revision=revision+1 WHERE id=$1`, [voteId, now, auth.user.id]);
       } else {
         voteId = current.id; voteRevision = current.revision + 1;
-        await client.query(`UPDATE resolution_direct_votes SET current_choice=$2,actor_user_id=$3,on_behalf_of_seat_id=$4,
+        await client.query(`UPDATE document_direct_votes SET current_choice=$2,actor_user_id=$3,on_behalf_of_seat_id=$4,
           cast_at=$5,retracted_at=NULL,retracted_by_user_id=NULL,revision=revision+1 WHERE id=$1`,
         [voteId, choice, auth.user.id, seatId, now]);
       }
-      await client.query(`INSERT INTO resolution_direct_vote_revisions
-        (id,committee_id,resolution_document_id,vote_id,seat_id,previous_choice,new_choice,actor_user_id,on_behalf_of_seat_id,created_at)
+      await client.query(`INSERT INTO document_direct_vote_revisions
+        (id,committee_id,document_id,vote_id,seat_id,previous_choice,new_choice,actor_user_id,on_behalf_of_seat_id,created_at)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$5,$9)`, [randomUUID(), committee.id, documentId, voteId, seatId,
         previousChoice, choice, auth.user.id, now]);
-      await client.query(`UPDATE resolutions SET direct_vote_started_at=coalesce(direct_vote_started_at,$2),
+      await client.query(`UPDATE document_voting SET direct_vote_started_at=coalesce(direct_vote_started_at,$2),
         direct_vote_cast_revision=direct_vote_cast_revision+1,
         direct_vote_completed_at=CASE WHEN direct_vote_completed_at IS NOT NULL THEN direct_vote_completed_at
           WHEN EXISTS (SELECT 1 FROM committee_seats s JOIN current_attendance a
@@ -3522,8 +3605,8 @@ export class Stage5Service {
             AND NOT EXISTS (SELECT 1 FROM committee_seats s JOIN current_attendance a
               ON a.seat_id=s.id AND a.meeting_session_id=$3 AND a.state='PRESENT'
               WHERE s.committee_id=$4 AND s.active=true AND s.can_vote=true
-                AND NOT EXISTS (SELECT 1 FROM resolution_direct_votes v
-                  WHERE v.resolution_document_id=$1 AND v.seat_id=s.id AND v.retracted_at IS NULL))
+                AND NOT EXISTS (SELECT 1 FROM document_direct_votes v
+                  WHERE v.document_id=$1 AND v.seat_id=s.id AND v.retracted_at IS NULL))
           THEN $2 ELSE NULL END WHERE document_id=$1`, [documentId, now, document.meeting_session_id, committee.id]);
       await appendEvent(client, committee, {type: 'document.direct_vote_changed', resourceType: 'document',
         resourceId: documentId, revision: document.revision, payload: {seatId, hasCurrentVote: choice !== null}, audience: 'PUBLIC'});
@@ -3531,7 +3614,8 @@ export class Stage5Service {
         onBehalfOfSeatId: seatId, action: 'documents.direct_vote_changed', resourceType: 'document', resourceId: documentId,
         before: {seatId, choice: previousChoice, voteRevision: current?.revision ?? 0},
         after: {seatId, choice, voteRevision}});
-      return documentState(client, document);
+      await updateAmendmentDirectResult(client, document, auth, context, now);
+        return documentState(client, document);
     });
   }
 

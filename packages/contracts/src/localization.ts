@@ -73,7 +73,7 @@ export type AutomaticContentName =
   | {kind: 'SESSION'; ordinal: number}
   | {kind: 'GENERAL_SPEAKERS_LIST'}
   | {kind: 'MODERATED_CAUCUS'; topic: string; customTitle: string | null}
-  | {kind: 'RESOLUTION'; sessionOrdinal: number; ordinal: number; customTitle: string | null}
+  | {kind: 'RESOLUTION' | 'DIRECTIVE'; sessionOrdinal: number; ordinal: number; customTitle: string | null}
   | {kind: 'AMENDMENT'; ordinal: number; sessionOrdinal: number; resolutionOrdinal: number; amendmentType: 'FRIENDLY' | 'UNFRIENDLY'; customTitle: string | null}
   | {kind: 'STRAWPOLL'; ordinal: number; question: string};
 
@@ -91,6 +91,7 @@ export function formatCommitteeContent(resource: AutomaticContentName, language:
     case 'SESSION': return zh ? `第${positiveOrdinal(resource.ordinal)}会期` : `Session ${positiveOrdinal(resource.ordinal)}`;
     case 'GENERAL_SPEAKERS_LIST': return zh ? '主发言名单' : "General Speaker's List";
     case 'MODERATED_CAUCUS': return resource.topic || (zh ? '未命名有主持核心磋商' : 'Untitled caucus');
+    case 'DIRECTIVE': return `${zh ? '指令草案' : 'Draft Directive'} ${positiveOrdinal(resource.sessionOrdinal)}.${positiveOrdinal(resource.ordinal)}`;
     case 'RESOLUTION': return `${zh ? '决议草案' : 'Draft Resolution'} ${positiveOrdinal(resource.sessionOrdinal)}.${positiveOrdinal(resource.ordinal)}`;
     case 'AMENDMENT': return `${zh ? resource.amendmentType === 'FRIENDLY' ? '决议草案友好修正案' : '决议草案非友好修正案'
       : resource.amendmentType === 'FRIENDLY' ? 'Draft Resolution Friendly Amendment' : 'Draft Resolution Unfriendly Amendment'} ${positiveOrdinal(resource.sessionOrdinal)}.${positiveOrdinal(resource.resolutionOrdinal)}.${positiveOrdinal(resource.ordinal)}`;

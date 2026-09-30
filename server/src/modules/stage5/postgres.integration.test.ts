@@ -102,6 +102,72 @@ async function meetingEndFixture() {
 }
 
 integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
+  it('creates independent directive entries and one persistent vote with corrections', async () => {
+    const f = await meetingEndFixture();
+    const make = (draftType: string, key: string) => stage5.createResolution(f.firstChair, f.committee.id,
+      {meetingSessionId: f.session.id, customTitle: null, content: 'Draft body', draftType}, key, context(key));
+    const resolution = await make('RESOLUTION', 'new-resolution');
+    let directive = await make('DIRECTIVE', 'new-directive');
+    const next = await make('DIRECTIVE', 'next-directive');
+    expect(resolution).toMatchObject({ordinal: 1, title: 'Draft Resolution 1.1'});
+    expect(directive).toMatchObject({ordinal: 1, draftType: 'DIRECTIVE', title: 'Draft Directive 1.1'});
+    expect(next).toMatchObject({ordinal: 2, title: 'Draft Directive 1.2'});
+    directive = await stage5.updateDocumentSettings(f.firstChair, directive.id,
+      {baseRevision: directive.revision, proposerSeatIds: [f.firstSeat.id]}, context('directive-country'));
+    const starts = await Promise.all([1,2].map(index => stage5.startDocumentVote(f.firstChair, directive.id,
+      {baseRevision: directive.revision}, `start-${index}`, context(`start-${index}`))));
+    expect(starts[0].directVote?.startedAt).toBe(starts[1].directVote?.startedAt);
+    expect((await pool!.query("SELECT count(*)::int AS count FROM audit_log WHERE resource_id=$1 AND action='documents.direct_vote_started'", [directive.id])).rows[0].count).toBe(1);
+    directive = (await stage4.snapshot(f.committee.id, f.firstChair)).documents!.find(item => item.id === directive.id)!;
+    expect(directive).toMatchObject({title: 'Draft Directive 1.1', proposers: [{seatId: f.firstSeat.id}], votingVersionId: directive.currentVersion.id});
+    await expect(stage5.createDocumentVersion(f.firstChair, directive.id,
+      {baseRevision: directive.revision, customTitle: null, content: 'Changed'}, context('frozen-directive'))).rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
+    const vote = directive.directVote!;
+    directive = await stage5.submitResolutionDirectVote(f.firstChair, directive.id,
+      {baseDocumentRevision: directive.revision, baseSettingsRevision: vote.settingsRevision, baseCastRevision: vote.castRevision,
+        eligibility: vote.eligibility, votes: [{seatId: f.firstSeat.id, choice: 'FOR'}]}, 'directive-submit', context('directive-submit'));
+    expect(directive.directVote).toMatchObject({automaticResult: 'PASSED', votes: [{choice: 'FOR'}]});
+    const completedAt = directive.directVote!.completedAt;
+    directive = await stage5.setResolutionDirectVote(f.firstChair, directive.id,
+      {seatId: f.firstSeat.id, choice: 'AGAINST'}, context('directive-correct'));
+    expect(directive.directVote).toMatchObject({automaticResult: 'FAILED', completedAt, votes: [{choice: 'AGAINST'}]});
+    expect((await pool!.query('SELECT count(*)::int AS count FROM document_voting WHERE document_id=$1', [directive.id])).rows[0].count).toBe(1);
+  });
+
+  it('gates unfriendly votes on motions and persists adoption and corrections in the shared vote', async () => {
+    const f = await meetingEndFixture();
+    await pool!.query("UPDATE committees SET operation_mode='CHAIR_OPERATED' WHERE id=$1", [f.committee.id]);
+    let resolution = await stage5.createResolution(f.firstChair, f.committee.id,
+      {meetingSessionId: f.session.id, customTitle: null, content: 'Resolution'}, 'am-parent', context('am-parent'));
+    const pass = async (motionTypeId: string, parameters: Record<string, unknown>, key: string) => {
+      const motion = await stage5.proposeMotion(f.firstChair, f.committee.id,
+        {meetingSessionId: f.session.id, motionTypeId, onBehalfOfSeatId: f.firstSeat.id, parameters}, key, context(key));
+      await stage5.decideMotion(f.firstChair, motion.id, {baseRevision: motion.revision, result: 'PASSED'}, context(`${key}-pass`));
+    };
+    await pass('introduce-draft-resolution', {resolutionTarget: resolution.id}, 'intro-parent');
+    resolution = (await stage4.snapshot(f.committee.id, f.firstChair)).documents!.find(item => item.id === resolution.id)!;
+    const make = (amendmentType: string, key: string) => stage5.createAmendment(f.firstChair, resolution.id,
+      {meetingSessionId: f.session.id, customTitle: null, content: 'Amendment', amendmentType, onBehalfOfSeatId: f.firstSeat.id}, key, context(key));
+    let amendment = await make('UNFRIENDLY', 'am-unfriendly');
+    const friendly = await make('FRIENDLY', 'am-friendly');
+    await expect(stage5.startDocumentVote(f.firstChair, amendment.id, {baseRevision: amendment.revision}, 'too-early', context('too-early'))).rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
+    await expect(stage5.startDocumentVote(f.firstChair, friendly.id, {baseRevision: friendly.revision}, 'friendly-start', context('friendly-start'))).rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
+    await pass('introduce-amendment', {amendmentTarget: amendment.id, proposal: 'Amendment'}, 'am-intro');
+    await pass('vote-on-amendment', {amendmentTarget: amendment.id}, 'am-motion');
+    amendment = (await stage4.snapshot(f.committee.id, f.firstChair)).documents!.find(item => item.id === amendment.id)!;
+    amendment = await stage5.startDocumentVote(f.firstChair, amendment.id,
+      {baseRevision: amendment.revision}, 'am-start', context('am-start'));
+    const vote = amendment.directVote!;
+    amendment = await stage5.submitResolutionDirectVote(f.firstChair, amendment.id,
+      {baseDocumentRevision: amendment.revision, baseSettingsRevision: vote.settingsRevision, baseCastRevision: vote.castRevision,
+        eligibility: vote.eligibility, votes: [{seatId: f.firstSeat.id, choice: 'FOR'}]}, 'am-submit', context('am-submit'));
+    expect(amendment).toMatchObject({status: 'INCORPORATED', directVote: {automaticResult: 'PASSED'}});
+    amendment = await stage5.setResolutionDirectVote(f.firstChair, amendment.id, {seatId: f.firstSeat.id, choice: 'AGAINST'}, context('am-correct'));
+    expect(amendment).toMatchObject({status: 'REJECTED', directVote: {automaticResult: 'FAILED'}, resultDecisions: [{newStatus: 'INCORPORATED'}, {newStatus: 'REJECTED'}]});
+    await expect(stage5.createBallot(f.firstChair, f.committee.id, {meetingSessionId: f.session.id, subjectType: 'AMENDMENT', subjectId: amendment.id,
+      procedural: false, thresholdKind: 'SIMPLE_MAJORITY'}, 'parallel-ballot', context('parallel-ballot'))).rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
+  });
+
   it.each(['suspend-meeting', 'adjourn-meeting'])('%s prepares the next session and preserves proceedings when it starts', async motionTypeId => {
     const fixture = await meetingEndFixture();
     await pool!.query("UPDATE committees SET operation_mode='CHAIR_OPERATED' WHERE id=$1", [fixture.committee.id]);
@@ -179,7 +245,7 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
     expect(raced.filter(result => result.status === 'fulfilled')).toHaveLength(1);
     expect(raced.find(result => result.status === 'rejected')).toMatchObject({status: 'rejected',
       reason: {code: 'RESOURCE_CONFLICT', reason: 'VOTE_ALREADY_RECORDED'}});
-    const history = await pool!.query('SELECT new_choice FROM resolution_direct_vote_revisions WHERE resolution_document_id=$1', [document.id]);
+    const history = await pool!.query('SELECT new_choice FROM document_direct_vote_revisions WHERE document_id=$1', [document.id]);
     expect(history.rows).toEqual([{new_choice: 'FOR'}]);
     await stage5.setResolutionDirectVote(f.firstChair, document.id,
       {seatId: f.firstSeat.id, choice: null}, context('rapid-undo'));
@@ -199,7 +265,7 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
     await expect(stage5.submitResolutionDirectVote(f.firstChair, document.id,
       {...request, votes: request.votes.slice(0, 1)}, randomUUID(), context('batch-incomplete')))
       .rejects.toMatchObject({code: 'REVISION_CONFLICT'});
-    expect((await pool!.query('SELECT 1 FROM resolution_direct_votes WHERE resolution_document_id=$1',
+    expect((await pool!.query('SELECT 1 FROM document_direct_votes WHERE document_id=$1',
       [document.id])).rowCount).toBe(0);
     const key = randomUUID();
     const submitted = await stage5.submitResolutionDirectVote(f.firstChair, document.id,
@@ -208,14 +274,14 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
       votes: expect.arrayContaining([{seatId: f.firstSeat.id, choice: 'FOR',
         id: expect.any(String), seatDisplayName: expect.any(String), revision: 1, castAt: expect.any(String)}])});
     await stage5.submitResolutionDirectVote(f.firstChair, document.id, request, key, context('batch-retry'));
-    expect((await pool!.query('SELECT 1 FROM resolution_direct_vote_revisions WHERE resolution_document_id=$1',
+    expect((await pool!.query('SELECT 1 FROM document_direct_vote_revisions WHERE document_id=$1',
       [document.id])).rowCount).toBe(2);
     await expect(stage5.submitResolutionDirectVote(f.secondChair, document.id,
       request, randomUUID(), context('batch-stale'))).rejects.toMatchObject({code: 'REVISION_CONFLICT'});
     const corrected = await stage5.setResolutionDirectVote(f.firstChair, document.id,
       {seatId: f.firstSeat.id, choice: 'AGAINST'}, context('batch-correction'));
     expect(corrected.directVote).toMatchObject({castRevision: 2, completedAt: submitted.directVote?.completedAt});
-    expect((await pool!.query('SELECT 1 FROM resolution_direct_vote_revisions WHERE resolution_document_id=$1',
+    expect((await pool!.query('SELECT 1 FROM document_direct_vote_revisions WHERE document_id=$1',
       [document.id])).rowCount).toBe(3);
   });
 
@@ -233,7 +299,7 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
     await stage5.setMotionDirectVote(f.firstChair, motion.id,
       {onBehalfOfSeatId: f.firstSeat.id, choice: 'FOR'}, context('purge-motion-vote'));
     await pool!.query('UPDATE speaker_lists SET linked_resolution_document_id=$1 WHERE id=$2', [document.id, f.generalList.id]);
-    await expect(pool!.query('DELETE FROM resolution_direct_vote_revisions WHERE committee_id=$1', [f.committee.id]))
+    await expect(pool!.query('DELETE FROM document_direct_vote_revisions WHERE committee_id=$1', [f.committee.id]))
       .rejects.toThrow('append-only');
     await expect(pool!.query('DELETE FROM motion_direct_vote_revisions WHERE committee_id=$1', [f.committee.id]))
       .rejects.toThrow('append-only');

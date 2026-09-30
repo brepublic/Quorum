@@ -446,7 +446,7 @@ export const selfHostedApi = {
       body: {baseRevision, optionId, tally}});
   },
   createResolution(committeeId: string, input: {meetingSessionId: string; customTitle: string | null; content: string;
-    onBehalfOfSeatId?: string}) {
+    onBehalfOfSeatId?: string; draftType?: 'RESOLUTION' | 'DIRECTIVE'}) {
     return request<ProceedingDocument>(`/api/v1/committees/${committeeId}/resolutions`, {method: 'POST',
       body: input, idempotencyKey: key()});
   },
@@ -471,6 +471,9 @@ export const selfHostedApi = {
     seconderSeatIds?: string[]; delegatesCanAmend?: boolean;
     majority?: 'SIMPLE_MAJORITY' | 'TWO_THIRDS' | 'TWO_THIRDS_NON_ABSTAINING'}) {
     return request<ProceedingDocument>(`/api/v1/documents/${id}/settings`, {method: 'POST', body: input});
+  },
+  startDocumentVote(id: string, baseRevision: number) {
+    return request<ProceedingDocument>(`/api/v1/documents/${id}/vote`, {method: 'POST', body: {baseRevision}, idempotencyKey: key()});
   },
   setResolutionDirectVote(id: string, seatId: string, choice: 'FOR' | 'AGAINST' | 'ABSTAIN' | null) {
     return request<ProceedingDocument>(`/api/v1/resolutions/${id}/direct-vote`, {method: 'POST',

@@ -45,8 +45,8 @@ try {
       set_config('quorum.committee_purge_token',$2,true)`, [committee.id,token]);
     // This script is guarded to schema 55; resolution countries were introduced in schema 67.
     for (const query of COMMITTEE_PURGE_QUERIES) {
-      if (query.startsWith('DELETE FROM resolution_countries ') || query.startsWith('DELETE FROM amendment_countries ')) continue;
-      await client.query(query,[committee.id]);
+      if (query.startsWith('DELETE FROM document_voting ') || query.startsWith('DELETE FROM resolution_countries ') || query.startsWith('DELETE FROM amendment_countries ')) continue;
+      await client.query(query.replaceAll('document_direct_vote_revisions','resolution_direct_vote_revisions').replaceAll('document_direct_votes','resolution_direct_votes'),[committee.id]);
     }
     await client.query(`UPDATE committee_deletion_jobs SET status='COMPLETED',completed_at=now(),
       claimed_at=NULL,claim_token=NULL,failure_code=NULL,failure_reason=NULL WHERE committee_id=$1`,[committee.id]);

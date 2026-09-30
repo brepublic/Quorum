@@ -1076,6 +1076,12 @@ async function handleStage5Request(options: {
     sendJson(response, 201, success(await stage5.createAmendment(auth, amendments[1] as string, body,
       idempotencyKey(request), context), requestId)); return true;
   }
+  const documentVote = /^\/api\/v1\/documents\/([0-9a-f-]{36})\/vote$/.exec(pathname);
+  if (method === 'POST' && documentVote) {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response, 200, success(await stage5.startDocumentVote(auth, documentVote[1] as string, body,
+      idempotencyKey(request), context), requestId)); return true;
+  }
   const resolutionDirectVoteSubmit = /^\/api\/v1\/resolutions\/([0-9a-f-]{36})\/direct-vote\/submit$/.exec(pathname);
   if (method === 'POST' && resolutionDirectVoteSubmit) {
     const auth = await write(); const body = await readJson(request);

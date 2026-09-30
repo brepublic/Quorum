@@ -326,6 +326,7 @@ export interface ProceedingDocument {
   committeeId: string;
   meetingSessionId: string;
   kind: ProceedingDocumentKind;
+  draftType?: 'RESOLUTION' | 'DIRECTIVE';
   resolutionId: string | null;
   amendmentType?: AmendmentType;
   amendmentOrdinal?: number;

@@ -213,6 +213,7 @@ export const ERROR_TEXT = {
   CAUCUS_TIMER_MISSING: {en: "The caucus timer is unavailable. Refresh, and contact an administrator if it remains unavailable.", 'zh-CN': "找不到该磋商的计时器，请刷新；仍不可用时联系管理员。"},
   RESOLUTION_ALREADY_INTRODUCED: {en: "Only an unintroduced Draft Resolution can be introduced. Refresh and select again.", 'zh-CN': "只能展示尚未展示的决议草案，请刷新后重新选择。"},
   AMENDMENT_ALREADY_INTRODUCED: {en: "Only a Draft Amendment can be introduced. Refresh and select again.", 'zh-CN': "只能展示尚未展示的修正案草案，请刷新后重新选择。"},
+  DRAFT_BODY_REQUIRED: {en: "Add draft text or select a published file first.", 'zh-CN': "请先填写草案正文或选择已发布文件。"},
   AMENDMENT_BODY_REQUIRED: {en: "Add Amendment text or select a published file first.", 'zh-CN': "请先填写修正案正文或选择已发布文件。"},
   AMENDMENT_NOT_INTRODUCED: {en: "Pass a motion to introduce this Amendment first.", 'zh-CN': "请先通过展示该修正案的动议。"},
   INVALID_MOTION_RESULT: {en: "Choose a motion result allowed by the rules.", 'zh-CN': "请选择规则允许的动议结果。"},

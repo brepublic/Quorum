@@ -378,7 +378,7 @@ interface SnapshotStrawpollRow extends QueryResultRow {
 
 interface SnapshotDocumentRow extends QueryResultRow {
   amendment_type: 'FRIENDLY' | 'UNFRIENDLY'; type_ordinal: number; resolution_ordinal: number;
-  id: string; committee_id: string; meeting_session_id: string; kind: ProceedingDocument['kind']; custom_title: string | null; ordinal: number;
+  id: string; committee_id: string; meeting_session_id: string; kind: ProceedingDocument['kind']; draft_type: 'RESOLUTION' | 'DIRECTIVE'; custom_title: string | null; ordinal: number;
   status: ProceedingDocument['status']; rule_package_version_id: string; current_version_id: string;
   voting_version_id: string | null; is_public: boolean; revision: number; created_at: Date; updated_at: Date;
   resolution_document_id: string | null;
@@ -1102,11 +1102,11 @@ export class Stage4Service {
           .map(item => ({seatId: item.seat_id, seatDisplayName: item.display_name,
             flag: {type: item.flag_type, value: item.flag_value} as ProceedingDocument['proposers'][number]['flag']}));
         let delegatesCanAmend = false; let directVote: ProceedingDocument['directVote'] = null;
-        if (row.kind === 'RESOLUTION') {
+        if (row.kind === 'RESOLUTION' || row.amendment_type === 'UNFRIENDLY') {
           const metadata = await client.query<{delegates_can_amend: boolean; direct_vote_majority: NonNullable<ProceedingDocument['directVote']>['majority'];
             direct_vote_started_at: Date | null; direct_vote_completed_at: Date | null;
             direct_vote_revision: number; direct_vote_cast_revision: number}>(
-            'SELECT * FROM resolutions WHERE document_id=$1', [row.id]);
+            'SELECT v.*,coalesce(r.delegates_can_amend,false) AS delegates_can_amend FROM document_voting v LEFT JOIN resolutions r USING(document_id) WHERE v.document_id=$1', [row.id]);
           const resolution = metadata.rows[0];
           if (!resolution) throw new AppError({code: 'INTERNAL_ERROR', message: 'Resolution metadata is unavailable.'});
           delegatesCanAmend = resolution.delegates_can_amend;
@@ -1117,7 +1117,7 @@ export class Stage4Service {
           [row.committee_id, row.meeting_session_id]);
           const votes = await client.query<{id: string; seat_id: string; seat_display_name: string; current_choice: BallotChoice;
             revision: number; cast_at: Date}>(`SELECT id,seat_id,seat_display_name,current_choice,revision,cast_at
-            FROM resolution_direct_votes WHERE resolution_document_id=$1 AND retracted_at IS NULL ORDER BY seat_id`, [row.id]);
+            FROM document_direct_votes WHERE document_id=$1 AND retracted_at IS NULL ORDER BY seat_id`, [row.id]);
           const eligibleIds = new Set(eligibility.rows.map(item => item.seat_id));
           const currentVotes = votes.rows.filter(vote => eligibleIds.has(vote.seat_id));
           const forCount = currentVotes.filter(vote => vote.current_choice === 'FOR').length;
@@ -1154,10 +1154,10 @@ export class Stage4Service {
             votes: currentVotes.map(vote => ({id: vote.id, seatId: vote.seat_id, seatDisplayName: vote.seat_display_name,
               choice: vote.current_choice, revision: vote.revision, castAt: vote.cast_at.toISOString()}))};
         }
-        return {id: row.id, committeeId: row.committee_id, meetingSessionId: row.meeting_session_id, kind: row.kind,
+        return {id: row.id, committeeId: row.committee_id, meetingSessionId: row.meeting_session_id, kind: row.kind, draftType: row.draft_type,
           ...(row.kind === 'AMENDMENT' ? {amendmentType: row.amendment_type, amendmentOrdinal: row.type_ordinal} : {}),
           resolutionId: row.resolution_document_id, ordinal: row.ordinal, customTitle: row.custom_title,
-          title: formatCommitteeContent({kind: row.kind, ordinal: row.kind === 'AMENDMENT' ? row.type_ordinal : row.ordinal,
+          title: formatCommitteeContent({kind: row.kind === 'RESOLUTION' ? row.draft_type : row.kind, ordinal: row.kind === 'AMENDMENT' ? row.type_ordinal : row.ordinal,
             amendmentType: row.amendment_type, resolutionOrdinal: row.resolution_ordinal, customTitle: row.custom_title,
             sessionOrdinal: meetingSessionsResult.rows.find(session => session.id === row.meeting_session_id)!.ordinal}, committee.committee_language), status: row.status,
           rulePackageVersionId: row.rule_package_version_id,
