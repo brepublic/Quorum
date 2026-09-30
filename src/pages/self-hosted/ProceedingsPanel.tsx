@@ -24,6 +24,7 @@ import Loading from '../../components/Loading';
 import {getLanguage, t} from "../../i18n";
 import {newIdempotencyKey, SelfHostedApiError, type SelfHostedApi} from '../../services/self-hosted-api';
 import {localizedDisplayName} from './TemplateManagers';
+import {useCommitteeWorkspace} from './CommitteeWorkspaceContext';
 
 type Run = (operation: () => Promise<unknown>) => Promise<void>;
 type View = 'motions' | 'unmod' | 'caucus' | 'strawpoll' | 'resolution' | 'directive' | 'voting';
@@ -175,14 +176,15 @@ function attendanceSeatOptions(snapshot: CommitteeWorkspaceSnapshot, presentSeat
 }
 
 function useTimerRemainingMs(timer: AuthoritativeTimer): number {
-  const [elapsed, setElapsed] = React.useState(0);
+  const {snapshotReceivedAt} = useCommitteeWorkspace();
+  const [now, setNow] = React.useState(() => performance.now());
   React.useEffect(() => {
-    setElapsed(0);
+    setNow(performance.now());
     if (!timer.running) return;
-    const started = performance.now();
-    const interval = window.setInterval(() => setElapsed(performance.now() - started), 250);
+    const interval = window.setInterval(() => setNow(performance.now()), 250);
     return () => window.clearInterval(interval);
-  }, [timer.id, timer.revision, timer.running]);
+  }, [timer.id, timer.running, snapshotReceivedAt]);
+  const elapsed = Math.max(0, now - snapshotReceivedAt);
   return Math.max(0, timer.remainingMs - (timer.running ? elapsed : 0));
 }
 

@@ -70,6 +70,55 @@ function clickSemanticCheckbox(element?: Element | null) {
 }
 
 describe('committee workspace routes and roles', () => {
+  it('keeps crisis time across navigation and rebases fresh snapshots even without a timer revision change', async () => {
+    vi.useFakeTimers({toFake: ['Date', 'performance', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval']});
+    let remainingMs = 18_000; let running = true; let revision = 1;
+    const readSnapshot = vi.fn(async () => ({...snapshot('CHAIR'), crises: [{
+      id: 'crisis', committeeId: 'committee', meetingSessionId: 'meeting', sessionOrdinal: 1, ordinal: 1,
+      nextUpdateOrdinal: 2, revision: 1, endedAt: null, autoStartAt: null,
+      timer: {id: 'crisis-timer', committeeId: 'committee', ownerType: 'CRISIS' as const, ownerId: 'crisis',
+        running, startedAt: running ? '2026-09-30T00:00:00Z' : null, remainingAtStartMs: 60_000,
+        remainingMs, revision, expiredAt: null, serverTime: '2026-09-30T00:00:42Z'},
+      updates: [{id: 'update', groupId: 'crisis', ordinal: 1, title: '', status: 'PENDING' as const,
+        handlingDurationMs: 60_000, notice: null, revision: 1, publishedAt: '2026-09-30T00:00:00Z'}]
+    }]}));
+    const page = await render('CHAIR', '/committees/committee/unmod', user, value => value, {snapshot: readSnapshot});
+    const navigate = async (path: string) => {await act(async () => {
+      page.querySelector<HTMLAnchorElement>(`a[href="/committees/committee/${path}"]`)!.click();
+    });};
+    const time = () => page.querySelector('.crisis-panel time')?.textContent;
+    await act(async () => {await vi.advanceTimersByTimeAsync(7_000);});
+    await navigate('crises/crisis');
+    expect(time()).toBe('0:11');
+    await act(async () => {await vi.advanceTimersByTimeAsync(3_000);});
+    expect(time()).toBe('0:08');
+    await navigate('unmod');
+    await act(async () => {await vi.advanceTimersByTimeAsync(4_000);});
+    await navigate('crises/crisis');
+    expect(time()).toBe('0:04');
+    expect(readSnapshot).toHaveBeenCalledTimes(1);
+
+    remainingMs = 4_000;
+    await act(async () => {window.dispatchEvent(new Event('focus')); await Promise.resolve();});
+    expect(time()).toBe('0:04');
+    await act(async () => {await vi.advanceTimersByTimeAsync(1_000);});
+    expect(time()).toBe('0:03');
+    running = false; remainingMs = 3_000; revision++;
+    await act(async () => {window.dispatchEvent(new Event('focus')); await Promise.resolve();});
+    await navigate('unmod');
+    await act(async () => {await vi.advanceTimersByTimeAsync(10_000);});
+    await navigate('crises/crisis');
+    expect(time()).toBe('0:03');
+    running = true; revision++;
+    await act(async () => {window.dispatchEvent(new Event('focus')); await Promise.resolve();});
+    await act(async () => {await vi.advanceTimersByTimeAsync(3_000);});
+    expect(time()).toBe('0:00');
+    await navigate('unmod');
+    await act(async () => {await vi.advanceTimersByTimeAsync(2_000);});
+    await navigate('crises/crisis');
+    expect(time()).toBe('0:00');
+  });
+
   it('creates a directive entry through the shared draft flow', async () => {
     const createResolution = vi.fn(async () => ({id: 'directive'} as ProceedingDocument));
     await render('CHAIR', '/committees/committee/directives/new', user, value => ({...value,

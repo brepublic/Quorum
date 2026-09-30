@@ -13,6 +13,7 @@ function errorText(error: unknown): string {
 
 interface CommitteeWorkspaceValue {
   snapshot?: CommitteeWorkspaceSnapshot;
+  snapshotReceivedAt: number;
   error?: string;
   realtimeStatus: RealtimeStatus;
   working: boolean;
@@ -29,7 +30,9 @@ export function CommitteeWorkspaceProvider({committeeId, api, children}: React.P
   const location = useLocation();
   const pathname = location.pathname;
   const pathnameRef = React.useRef(pathname);
-  const [snapshot, setSnapshot] = React.useState<CommitteeWorkspaceSnapshot>();
+  const [{snapshot, snapshotReceivedAt}, setSnapshot] = React.useState<{
+    snapshot?: CommitteeWorkspaceSnapshot; snapshotReceivedAt: number;
+  }>({snapshotReceivedAt: 0});
   const [streamAfter, setStreamAfter] = React.useState<number>();
   const [realtimeStatus, setRealtimeStatus] = React.useState<RealtimeStatus>('CONNECTING');
   const [failure, setError] = React.useState<unknown>();
@@ -45,7 +48,7 @@ export function CommitteeWorkspaceProvider({committeeId, api, children}: React.P
     const requestPathname = pathnameRef.current;
     try {
       const next = await api.snapshot(committeeId);
-      setSnapshot(next);
+      setSnapshot({snapshot: next, snapshotReceivedAt: performance.now()});
       setStreamAfter(current => current ?? next.sync.committeeEventSequence);
       setError(undefined);
       return next;
@@ -92,8 +95,9 @@ export function CommitteeWorkspaceProvider({committeeId, api, children}: React.P
     }
   }, [refresh]);
 
-  const value = React.useMemo<CommitteeWorkspaceValue>(() => ({snapshot, error, realtimeStatus, working, refresh, run}),
-    [snapshot, error, realtimeStatus, working, refresh, run]);
+  const value = React.useMemo<CommitteeWorkspaceValue>(() => ({snapshot, snapshotReceivedAt,
+    error, realtimeStatus, working, refresh, run}),
+    [snapshot, snapshotReceivedAt, error, realtimeStatus, working, refresh, run]);
   return <CommitteeWorkspaceContext.Provider value={value}>{children}</CommitteeWorkspaceContext.Provider>;
 }
 
