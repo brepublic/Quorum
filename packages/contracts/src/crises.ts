@@ -31,7 +31,7 @@ export interface CrisisNoticePreview {
   updateOrdinal: number;
   groupId: string | null;
   updateId: string | null;
-  replacement: {id: string; logicalName: string} | null;
+  replacement: {id: string; logicalName: string; originalName?: string} | null;
 }
 
 export function parseCrisisNoticeName(name: string): {sessionOrdinal: number; groupOrdinal: number; updateOrdinal: number} | null {

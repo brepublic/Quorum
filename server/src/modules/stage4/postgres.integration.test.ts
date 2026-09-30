@@ -129,7 +129,7 @@ integration('PostgreSQL stage 4 templates and seat snapshots', () => {
     const second = await create('second');
     expect((await service.getSettings(owner, second.id)).rejectionTypes).toEqual(newTypes);
     expect((await service.getSettings(owner, first.id)).rejectionTypes).toEqual(initial.rejectionTypes);
-    const extensions = {WORKING_PAPER:['pdf'],DIRECTIVE_DRAFT:['docx'],RESOLUTION_DRAFT:['odt']};
+    const extensions = {...initial.allowedExtensions,WORKING_PAPER:['pdf'],DIRECTIVE_DRAFT:['docx'],RESOLUTION_DRAFT:['odt']};
     await service.updateSettings(owner, first.id, {baseRevision:initial.revision,rejectionTypes:newTypes,allowedExtensions:extensions},context('local'));
     await expect(service.updateSettings(owner, first.id, {baseRevision:initial.revision,rejectionTypes:newTypes,allowedExtensions:extensions},context('stale'))).rejects.toMatchObject({code:'REVISION_CONFLICT'});
     expect(await service.getSettings(owner, first.id)).toMatchObject({allowedExtensions:extensions});

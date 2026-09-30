@@ -1,4 +1,5 @@
 import {Stage8DeletionService} from '../operations/deletion-service';
+import {Stage8ArchiveService} from '../operations/archive-service';
 import {testCommitteeInput} from '../../test/committee-fixture';
 // @vitest-environment node
 
@@ -147,6 +148,10 @@ integration('PostgreSQL crisis lifecycle', () => {
     const first = await stage5.importCrisisNotice(f.firstChair,file.id,{baseRevision: renamed.revision},'repeat-import',context('first-import'));
     expect(await stage5.importCrisisNotice(f.firstChair,file.id,{baseRevision: renamed.revision},'repeat-import',context('repeat-import'))).toEqual(first);
     expect(await stage5.importCrisisNotice(f.firstChair,file.id,{baseRevision: renamed.revision},'another-import',context('duplicate-import'))).toEqual(first);
+    const moved=await stage5.saveCrisisNoticeName(f.firstChair,file.id,{baseRevision:renamed.revision,logicalName:'Crisis Notice 1.2.1'},context('cannot-move-notice'));
+    await expect(stage5.importCrisisNotice(f.firstChair,file.id,{baseRevision:moved.revision},randomUUID(),context('reject-moved-notice'))).rejects.toMatchObject({reason:'CRISIS_NUMBER_MISMATCH',params:{session:1,group:1,update:1}});
+    await stage5.saveCrisisNoticeName(f.firstChair,file.id,{baseRevision:moved.revision,logicalName:'Crisis Notice 1.1.1'},context('restore-notice-number'));
+    expect((await pool!.query('SELECT count(*)::int AS n FROM crisis_groups WHERE committee_id=$1',[f.committee.id])).rows[0].n).toBe(1);
     let group = (await stage4.snapshot(f.committee.id,f.firstChair)).crises![0]!;
     group = await stage5.updateCrisisCard(f.firstChair,first.updateId,{baseRevision: group.updates[0]!.revision,title: 'Keep title',handlingDurationMs: 60000},context('edit-before-replace'));
     const replacement = await testCrisisNotice(f);
@@ -486,6 +491,7 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
 
   it('purges direct voting histories and linked caucuses without touching another committee', async () => {
     const f = await meetingFixture(); const other = await meetingFixture();
+    const crisis=await stage5.createCrisis(f.firstChair,f.committee.id,{meetingSessionId:f.session.id},randomUUID(),context('purge-crisis'));
     const document = await stage5.createResolution(f.firstChair, f.committee.id,
       {meetingSessionId: f.session.id, customTitle: null, content: ''}, randomUUID(), context('purge-document'));
     await stage5.updateDocumentSettings(f.firstChair, document.id,
@@ -504,11 +510,20 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
       .rejects.toThrow('append-only');
     const revision = (await pool!.query('SELECT revision FROM committees WHERE id=$1', [f.committee.id])).rows[0].revision;
     const archived = await stage3.archiveCommittee(f.owner, f.committee.id, revision, context('purge-archive'));
+    const exported=await new Stage8ArchiveService(pool!).exportCommittee(f.owner,f.committee.id);
+    const chunks=[];for await(const chunk of exported.content) chunks.push(String(chunk));
+    const records=chunks.join('').trim().split('\n').map(line=>JSON.parse(line));
+    expect(records).toEqual(expect.arrayContaining([
+      expect.objectContaining({section:'crisis_groups',record:expect.objectContaining({id:crisis.id})}),
+      expect.objectContaining({section:'crisis_updates',record:expect.objectContaining({group_id:crisis.id,status:'UNPUBLISHED'})})
+    ]));
     const deletion = new Stage8DeletionService(pool!);
     await deletion.requestDeletion(f.owner, f.committee.id,
       {baseRevision: archived.revision, confirmationName: f.committee.name}, randomUUID(), context('purge'));
     expect(await deletion.processNext()).toMatchObject({status: 'COMPLETED'});
     expect((await pool!.query('SELECT id FROM committees WHERE id=$1', [f.committee.id])).rows).toEqual([]);
+    expect((await pool!.query('SELECT id FROM crisis_groups WHERE id=$1',[crisis.id])).rows).toEqual([]);
+    expect((await pool!.query('SELECT id FROM timer_states WHERE id=$1',[crisis.timer.id])).rows).toEqual([]);
     expect((await stage4.snapshot(other.committee.id, other.firstChair)).meetingSession?.id).toBe(other.session.id);
   });
 

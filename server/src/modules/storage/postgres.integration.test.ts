@@ -208,6 +208,24 @@ async function committedServerFile(fixture: Awaited<ReturnType<typeof storageFix
 }
 
 integration('PostgreSQL stage 6 file metadata', () => {
+  it('persists chair crisis uploads and rejects delegate uploads and ordinary review bypasses',async()=> {
+    const f=await storageFixture();
+    const content='Crisis notice bytes';const body={logicalName:'Crisis Notice 1.1.1',originalName:'unrelated-9.9.9.txt',mediaType:'text/plain',expectedSizeBytes:content.length,sha256:digest(content),fileType:'CRISIS_NOTICE'};
+    await expect(uploads.createUpload(f.member,f.committee.id,body,randomUUID(),context('member-crisis-upload'))).rejects.toMatchObject({reason:'CHAIR_REQUIRED'});
+    const upload=await uploads.createUpload(f.chair,f.committee.id,body,randomUUID(),context('chair-crisis-upload'));
+    await uploads.receiveContent(f.chair,upload.id,(async function*(){yield content;})(),randomUUID(),content.length,context('crisis-bytes'));
+    const notice=await serverVolume.commitUpload(f.chair,upload.id,{},randomUUID(),context('crisis-commit'));
+    expect(notice).toMatchObject({status:'PENDING_REVIEW',fileType:'CRISIS_NOTICE',submissionSource:'CHAIR'});
+    expect((await files.get(f.chair,notice.id)).currentVersion.originalName).toBe(body.originalName);
+    const commits=new Stage6ProviderCommitService(pool!,serverVolume,{} as never);
+    const review=new DelegateFileService(pool!,uploads,commits,files,storage);
+    const input={baseRevision:notice.revision,logicalName:notice.logicalName,fileType:'WORKING_PAPER'};
+    await expect(review.approve(f.chair,notice.id,input,context('ordinary-crisis-approve'))).rejects.toMatchObject({reason:'CRISIS_PUBLICATION_REQUIRED'});
+    await expect(review.reject(f.chair,notice.id,input,randomUUID(),context('ordinary-crisis-reject'))).rejects.toMatchObject({reason:'CRISIS_PUBLICATION_REQUIRED'});
+    await expect(files.publish(f.chair,notice.id,{baseRevision:notice.revision},randomUUID(),context('ordinary-crisis-publish'))).rejects.toMatchObject({reason:'CRISIS_PUBLICATION_REQUIRED'});
+    expect((await files.get(f.chair,notice.id)).status).toBe('PENDING_REVIEW');
+  });
+
   it.each(['SERVER_VOLUME','S3_COMPATIBLE'] as const)('confirms formal-name replacement atomically without copying stored bytes on %s', async provider => {
     const fixture = provider === 'SERVER_VOLUME' ? await storageFixture() : await s3Fixture();
     const transport = new IntegrationS3Transport();

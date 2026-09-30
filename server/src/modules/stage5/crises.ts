@@ -105,6 +105,14 @@ export async function crisisNoticePreview(client: PoolClient, committeeId: strin
   const number = parseCrisisNoticeName(file.logical_name);
   if (!number) throw new AppError({code: 'VALIDATION_FAILED',reason: 'CRISIS_NUMBER_REQUIRED',message: 'Complete crisis number.'});
   const mismatch = (params: ApiErrorParams): never => {throw new AppError({code: 'RESOURCE_CONFLICT',reason: 'CRISIS_NUMBER_MISMATCH',params,message: 'Use the next crisis number.'});};
+  const linked=(await client.query(`SELECT u.id,u.group_id,u.ordinal,g.ordinal AS group_ordinal,s.ordinal AS session_ordinal
+    FROM crisis_updates u JOIN crisis_groups g ON g.id=u.group_id JOIN meeting_sessions s ON s.id=g.meeting_session_id
+    WHERE u.notice_file_id=$1 AND u.committee_id=$2`,[fileId,committeeId])).rows[0];
+  if(linked) {
+    if(linked.session_ordinal!==number.sessionOrdinal || linked.group_ordinal!==number.groupOrdinal || linked.ordinal!==number.updateOrdinal)
+      mismatch({session:linked.session_ordinal,group:linked.group_ordinal,update:linked.ordinal});
+    return {...number,groupId:linked.group_id,updateId:linked.id,replacement:null};
+  }
   const session = (await client.query('SELECT * FROM meeting_sessions WHERE committee_id=$1 AND ordinal=$2', [committeeId,number.sessionOrdinal])).rows[0];
   if (!session) throw new AppError({code: 'VALIDATION_FAILED',reason: 'CRISIS_SESSION_MISSING',message: 'Session not found.'});
   const group = (await client.query('SELECT * FROM crisis_groups WHERE meeting_session_id=$1 AND ordinal=$2', [session.id,number.groupOrdinal])).rows[0];
@@ -112,15 +120,11 @@ export async function crisisNoticePreview(client: PoolClient, committeeId: strin
     if (number.groupOrdinal !== session.next_crisis_ordinal || number.updateOrdinal !== 1) mismatch({session: number.sessionOrdinal,group: session.next_crisis_ordinal,update: 1});
     return {...number,groupId: null,updateId: null,replacement: null};
   }
-  const linked = (await client.query('SELECT * FROM crisis_updates WHERE notice_file_id=$1', [fileId])).rows[0];
-  if (linked) {
-    if (linked.group_id !== group.id || linked.ordinal !== number.updateOrdinal) mismatch({session: number.sessionOrdinal,group: group.ordinal,update: linked.ordinal});
-    return {...number,groupId: group.id,updateId: linked.id,replacement: null};
-  }
   if (group.ended_at) throw new AppError({code: 'RESOURCE_CONFLICT',reason: 'CRISIS_GROUP_ENDED',message: 'Crisis ended.'});
-  const draft = (await client.query(`SELECT u.*,e.logical_name FROM crisis_updates u LEFT JOIN file_entries e ON e.id=u.notice_file_id
+  const draft = (await client.query(`SELECT u.*,e.logical_name,v.original_name FROM crisis_updates u LEFT JOIN file_entries e ON e.id=u.notice_file_id
+    LEFT JOIN file_versions v ON v.id=e.current_version_id
     WHERE u.group_id=$1 AND u.status='UNPUBLISHED'`, [group.id])).rows[0];
   if (number.updateOrdinal !== (draft?.ordinal ?? group.next_update_ordinal)) mismatch({session: number.sessionOrdinal,group: group.ordinal,update: draft?.ordinal ?? group.next_update_ordinal});
   return {...number,groupId: group.id,updateId: draft?.id ?? null,
-    replacement: draft?.notice_file_id ? {id: draft.notice_file_id,logicalName: draft.logical_name} : null};
+    replacement: draft?.notice_file_id ? {id: draft.notice_file_id,logicalName: draft.logical_name,originalName:draft.original_name} : null};
 }

@@ -83,8 +83,8 @@ describe('delegate file HTTP boundary', () => {
     expect(rejected.statusCode).toBe(403);
     expect(openPublishedCategory).not.toHaveBeenCalled();
     const accepted = await send(service, {path, method: 'POST',
-      cookie: '__Host-quorum_delegate_files=credential; __Host-quorum_delegate_files_csrf=right', csrf: 'right'});
+      cookie: '__Host-quorum_delegate_files=credential; __Host-quorum_delegate_files_csrf=right', csrf: 'right',body:{latestSeenFileId:'seen-file'}});
     expect(accepted.statusCode).toBe(200);
-    expect(openPublishedCategory).toHaveBeenCalledWith('credential', 'OTHER');
+    expect(openPublishedCategory).toHaveBeenCalledWith('credential', 'OTHER','seen-file');
   });
 });
