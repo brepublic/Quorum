@@ -1,5 +1,6 @@
 import {rejectionTypes} from '../delegate-files/settings.js';
 import {speakerListName} from '../stage5/service.js';
+import {crisisGroups} from '../stage5/crises.js';
 import {createHash, randomUUID} from 'node:crypto';
 import type {Pool, PoolClient, QueryResultRow} from 'pg';
 import type {
@@ -951,6 +952,9 @@ export class Stage4Service {
             mustCollectAllVotesWhenVetoSeatEligible: rules.ballots?.mustCollectAllVotesWhenVetoSeatEligible === true},
           documents: {amendmentsPublicByDefault: rules.documents?.amendmentsPublicByDefault === true}},
         sync: {committeeEventSequence: Number(committee.next_event_sequence) - 1},
+        crises: await crisisGroups(client,committeeId,viewer.audience === 'PUBLIC'),
+        crisisAutoStartDelayMinutes: Number(committee.crisis_auto_start_delay_minutes),
+        nextCrisisGroupOrdinal: currentSession ? Number((await client.query('SELECT next_crisis_ordinal FROM meeting_sessions WHERE id=$1',[currentSession.id])).rows[0]?.next_crisis_ordinal ?? 1) : 1,
         ...(currentSession ? {meetingSession: meetingSession(currentSession, committee.committee_language)} : {}),
         meetingEndedAt: committee.meeting_ended_at?.toISOString() ?? null,
         meetingSessions: meetingSessionsResult.rows.map(row => meetingSession(row, committee.committee_language)),
@@ -1104,6 +1108,7 @@ export class Stage4Service {
         let delegatesCanAmend = false; let directVote: ProceedingDocument['directVote'] = null;
         if (row.kind === 'RESOLUTION' || row.amendment_type === 'UNFRIENDLY') {
           const metadata = await client.query<{delegates_can_amend: boolean; direct_vote_majority: NonNullable<ProceedingDocument['directVote']>['majority'];
+            crisis_group_id: string | null; crisis_update_id: string | null; crisis_invalidated_at: Date | null;
             direct_vote_started_at: Date | null; direct_vote_completed_at: Date | null;
             direct_vote_revision: number; direct_vote_cast_revision: number}>(
             'SELECT v.*,coalesce(r.delegates_can_amend,false) AS delegates_can_amend FROM document_voting v LEFT JOIN resolutions r USING(document_id) WHERE v.document_id=$1', [row.id]);
@@ -1145,6 +1150,8 @@ export class Stage4Service {
             else if (forCount + remaining < threshold) automaticResult = 'FAILED';
           }
           directVote = {majority: resolution.direct_vote_majority,
+            crisisGroupId: resolution.crisis_group_id,crisisUpdateId: resolution.crisis_update_id,
+            invalidatedAt: resolution.crisis_invalidated_at?.toISOString() ?? null,
             startedAt: resolution.direct_vote_started_at?.toISOString() ?? null,
             completedAt: resolution.direct_vote_completed_at?.toISOString() ?? null,
             castRevision: resolution.direct_vote_cast_revision,

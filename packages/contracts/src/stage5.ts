@@ -18,7 +18,7 @@ export interface CommitteeEventEnvelope {
 
 export const COMMITTEE_EVENT_SCHEMA_VERSION = 1 as const;
 
-export type TimerOwnerType = 'COMMITTEE' | 'SPEAKER_LIST' | 'CAUCUS' | 'SPEECH';
+export type TimerOwnerType = 'COMMITTEE' | 'SPEAKER_LIST' | 'CAUCUS' | 'SPEECH' | 'CRISIS';
 
 export interface AuthoritativeTimer {
   id: string;
@@ -285,6 +285,9 @@ export interface DocumentDiscussionEntry {
 export type ResolutionDirectVoteMajority = 'SIMPLE_MAJORITY' | 'TWO_THIRDS' | 'TWO_THIRDS_NON_ABSTAINING';
 
 export interface ResolutionDirectVoteState {
+  crisisGroupId?: string | null;
+  crisisUpdateId?: string | null;
+  invalidatedAt?: string | null;
   majority: ResolutionDirectVoteMajority;
   startedAt: string | null;
   completedAt: string | null;

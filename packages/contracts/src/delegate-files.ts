@@ -30,6 +30,7 @@ export interface DelegatePublishedFile {
 }
 
 export interface DelegateReviewFile extends DelegatePublishedFile {
+  crisisNameEdited?: boolean;
   status: 'UPLOAD_COMPLETE' | 'PENDING_REVIEW' | 'PUBLISHED' | 'REJECTED' | 'DELETED';
   publishedFileId?: string;
   rejectionReason?: string | null;

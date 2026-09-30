@@ -10,6 +10,8 @@ import type {AuthenticatedSession} from '../identity/store.js';
 import {activeSeat, appendEvent, audit, idempotentTransaction, isChair, lockedCommittee, requireBusinessIdentity,
   requireChair, requireProceedingsActive, transaction, type Stage4CommitteeRow, type Stage4Context} from '../stage4/database.js';
 import {assertExactBody} from '../stage4/validation.js';
+import {closeCrisisGroup, crisisGroups, crisisNoticePreview, insertCrisisGroup, insertCrisisUpdate,
+  recordCrisisChange, reconcileCrisisResult, requireDirectiveCrisis} from './crises.js';
 
 interface TimerRow extends QueryResultRow {
   id: string;
@@ -86,6 +88,8 @@ interface DocumentRow extends QueryResultRow {
 }
 
 interface ResolutionRow extends QueryResultRow {
+  crisis_group_id: string | null; crisis_update_id: string | null; crisis_invalidated_at: Date | null;
+  completed_outcome: string | null;
   document_id: string; delegates_can_amend: boolean;
   direct_vote_majority: ResolutionDirectVoteMajority; direct_vote_started_at: Date | null; direct_vote_revision: number;
   direct_vote_cast_revision: number; direct_vote_completed_at: Date | null;
@@ -390,6 +394,8 @@ async function resolutionDirectVoteState(client: PoolClient, document: DocumentR
     else if (forCount + remaining < threshold) automaticResult = 'FAILED';
   }
   return {majority: resolution.direct_vote_majority, startedAt: resolution.direct_vote_started_at?.toISOString() ?? null,
+    crisisGroupId: resolution.crisis_group_id, crisisUpdateId: resolution.crisis_update_id,
+    invalidatedAt: resolution.crisis_invalidated_at?.toISOString() ?? null,
     completedAt: resolution.direct_vote_completed_at?.toISOString() ?? null,
     castRevision: resolution.direct_vote_cast_revision, settingsRevision: resolution.direct_vote_revision,
     eligibility: eligibility.rows.map(item => ({seatId: item.seat_id,
@@ -400,6 +406,7 @@ async function resolutionDirectVoteState(client: PoolClient, document: DocumentR
 }
 
 async function requireDirectVoteDocument(client: PoolClient, document: DocumentRow): Promise<void> {
+  if (document.draft_type === 'DIRECTIVE') await requireDirectiveCrisis(client,document.id,document.committee_id);
   if (document.status === 'POSTPONED') throw new AppError({code: 'RESOURCE_CONFLICT', reason: 'DOCUMENT_STATE_CHANGED', message: 'The draft is postponed.'});
   const session = (await client.query<{status: string}>('SELECT status FROM meeting_sessions WHERE id=$1', [document.meeting_session_id])).rows[0];
   if (session?.status !== 'OPEN') throw new AppError({code: 'RESOURCE_CONFLICT', reason: 'MEETING_CLOSED', message: 'Meeting session is closed.'});
@@ -432,6 +439,28 @@ async function updateAmendmentDirectResult(client: PoolClient, document: Documen
   await appendEvent(client, committee, {type: 'document.result_recorded', resourceType: 'document', resourceId: document.id,
     revision: document.revision + 1, payload: {previousStatus: document.status, outcome, corrected: Boolean(previous)}, audience: 'PUBLIC'});
   document.status = outcome; document.revision += 1; document.updated_at = now;
+}
+
+async function updateDirectiveDirectResult(client: PoolClient, document: DocumentRow, committee: Stage4CommitteeRow,
+  auth: AuthenticatedSession, context: Stage4Context, now: Date): Promise<void> {
+  if (document.draft_type !== 'DIRECTIVE') return;
+  const metadata = (await client.query<ResolutionRow>('SELECT * FROM document_voting WHERE document_id=$1',[document.id])).rows[0]!;
+  if (!metadata.direct_vote_completed_at || metadata.crisis_invalidated_at || !metadata.crisis_group_id) return;
+  const state = await resolutionDirectVoteState(client,document,metadata);
+  const outcome = state.eligibility.length > 0 && state.votes.length === state.eligibility.length ? state.automaticResult : null;
+  await client.query('UPDATE document_voting SET completed_outcome=$2 WHERE document_id=$1',[document.id,outcome]);
+  const status = outcome === 'PASSED' ? 'PASSED' : outcome ? 'FAILED' : 'VOTING';
+  if (document.status !== status) {
+    const previous = (await client.query('SELECT id FROM document_result_decisions WHERE document_id=$1 ORDER BY created_at DESC,id DESC LIMIT 1',[document.id])).rows[0];
+    await client.query(`INSERT INTO document_result_decisions(id,committee_id,document_id,previous_status,new_status,reason,corrects_decision_id,actor_user_id,created_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,[randomUUID(),committee.id,document.id,document.status,status,previous ? 'Vote correction' : null,previous?.id ?? null,auth.user.id,now]);
+    await client.query('UPDATE documents SET status=$2,revision=revision+1,updated_at=$3 WHERE id=$1',[document.id,status,now]);
+    await appendEvent(client,committee,{type: 'document.result_recorded',resourceType: 'document',resourceId: document.id,
+      revision: document.revision+1,audience: 'PUBLIC',payload: {previousStatus: document.status,outcome: status,corrected: Boolean(previous)}});
+    await audit(client,context,{committeeId: committee.id,actorUserId: auth.user.id,capabilities: ['CHAIR'],action: 'documents.result_recorded',resourceType: 'document',resourceId: document.id,before: {status: document.status},after: {status}});
+    document.status = status; document.revision += 1; document.updated_at = now;
+  }
+  await reconcileCrisisResult(client,committee,metadata.crisis_group_id,auth.user.id,context,now);
 }
 
 const documentBallotRuleIds: Record<ProceedingDocumentKind, string> = {
@@ -521,6 +550,201 @@ export function canYieldSpeech(speech: Pick<SpeechRow, 'kind' | 'can_yield' | 's
 export class Stage5Service {
   constructor(private readonly pool: Pool, private readonly now: () => Date = () => new Date()) {}
 
+  async createCrisis(auth: AuthenticatedSession, committeeId: string, input: Record<string, unknown>, key: string, context: Stage4Context) {
+    requireBusinessIdentity(auth); assertExactBody(input, ['meetingSessionId']);
+    const sessionId = uuid(input.meetingSessionId, 'Meeting session');
+    return idempotentTransaction({pool: this.pool,auth,route: `/api/v1/committees/${committeeId}/crises`,key,request: input,status: 201,work: async client => {
+      const committee = await lockedCommittee(client,committeeId); requireProceedingsActive(committee); await requireChair(client,committee,auth.user.id);
+      const session = (await client.query('SELECT status FROM meeting_sessions WHERE id=$1 AND committee_id=$2', [sessionId,committeeId])).rows[0];
+      if (session?.status !== 'OPEN') throw new AppError({code: 'RESOURCE_CONFLICT',reason: 'MEETING_NOT_OPEN',message: 'Open meeting required.'});
+      const groupId = await insertCrisisGroup(client,committeeId,sessionId,auth.user.id);
+      await insertCrisisUpdate(client,committeeId,groupId);
+      await recordCrisisChange(client,committee,groupId,'CREATED',auth.user.id,context,'CHAIR');
+      return (await crisisGroups(client,committeeId,false,this.now())).find(group => group.id === groupId)!;
+    }});
+  }
+
+  async createCrisisUpdate(auth: AuthenticatedSession, groupId: string, input: Record<string, unknown>, key: string, context: Stage4Context) {
+    requireBusinessIdentity(auth); assertExactBody(input,['baseRevision']); const baseRevision = positiveInteger(input.baseRevision,'Revision');
+    return idempotentTransaction({pool: this.pool,auth,route: `/api/v1/crises/${groupId}/updates`,key,request: input,status: 201,work: async client => {
+      const located = (await client.query('SELECT committee_id FROM crisis_groups WHERE id=$1',[groupId])).rows[0];
+      if (!located) throw new AppError({code: 'NOT_FOUND',message: 'Crisis not found.'});
+      const committee = await lockedCommittee(client,located.committee_id); requireProceedingsActive(committee); await requireChair(client,committee,auth.user.id);
+      const group = (await client.query('SELECT * FROM crisis_groups WHERE id=$1 FOR UPDATE',[groupId])).rows[0]!;
+      if (group.ended_at) throw new AppError({code: 'RESOURCE_CONFLICT',reason: 'CRISIS_GROUP_ENDED',message: 'Crisis ended.'});
+      if (group.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT',message: 'Crisis changed.'});
+      if ((await client.query("SELECT 1 FROM crisis_updates WHERE group_id=$1 AND status='UNPUBLISHED'",[groupId])).rowCount)
+        throw new AppError({code: 'RESOURCE_CONFLICT',reason: 'CRISIS_UNPUBLISHED_EXISTS',message: 'Unpublished update exists.'});
+      await insertCrisisUpdate(client,committee.id,groupId);
+      await recordCrisisChange(client,committee,groupId,'UPDATE_CREATED',auth.user.id,context,'CHAIR');
+      return (await crisisGroups(client,committee.id,false,this.now())).find(group => group.id === groupId)!;
+    }});
+  }
+
+  async updateCrisisCard(auth: AuthenticatedSession, updateId: string, input: Record<string, unknown>, context: Stage4Context) {
+    requireBusinessIdentity(auth); assertExactBody(input,['baseRevision','title','handlingDurationMs','fileId','replaceNoticeId']);
+    const revision = positiveInteger(input.baseRevision,'Revision');
+    return transaction(this.pool,async client => {
+      const located = (await client.query('SELECT committee_id,group_id FROM crisis_updates WHERE id=$1',[updateId])).rows[0];
+      if (!located) throw new AppError({code: 'NOT_FOUND',message: 'Crisis update not found.'});
+      const committee = await lockedCommittee(client,located.committee_id); requireProceedingsActive(committee); await requireChair(client,committee,auth.user.id);
+      const card = (await client.query('SELECT u.*,g.ended_at FROM crisis_updates u JOIN crisis_groups g ON g.id=u.group_id WHERE u.id=$1 FOR UPDATE OF u,g',[updateId])).rows[0]!;
+      if (card.status !== 'UNPUBLISHED' || card.ended_at) throw new AppError({code: 'RESOURCE_CONFLICT',reason: 'CRISIS_GROUP_ENDED',message: 'Crisis is locked.'});
+      if (card.revision !== revision) throw new AppError({code: 'REVISION_CONFLICT',message: 'Crisis update changed.'});
+      const title = input.title === undefined ? card.title : text(input.title,'Title',500,true);
+      const duration = input.handlingDurationMs === undefined ? card.handling_duration_ms : input.handlingDurationMs === null ? null : positiveInteger(input.handlingDurationMs,'Handling time');
+      const fileId = input.fileId === undefined ? card.notice_file_id : input.fileId === null ? null : uuid(input.fileId,'File');
+      if (fileId && fileId !== card.notice_file_id) {
+        const preview = await crisisNoticePreview(client,committee.id,fileId);
+        if (preview.groupId !== card.group_id || preview.updateId !== card.id) throw new AppError({code: 'VALIDATION_FAILED',reason: 'CRISIS_NOTICE_REQUIRED',message: 'Matching notice required.'});
+        if (card.notice_file_id && input.replaceNoticeId !== card.notice_file_id) throw new AppError({code: 'RESOURCE_CONFLICT',reason: 'CRISIS_NOTICE_CONFLICT',message: 'Confirm notice replacement.'});
+      }
+      await client.query(`UPDATE crisis_updates SET title=$2,handling_duration_ms=$3,notice_file_id=$4,revision=revision+1 WHERE id=$1`,[updateId,title,duration,fileId]);
+      if (fileId) await client.query('UPDATE delegate_file_metadata SET crisis_name_edited=true WHERE file_entry_id=$1',[fileId]);
+      await client.query('UPDATE crisis_groups SET revision=revision+1 WHERE id=$1',[card.group_id]);
+      await recordCrisisChange(client,committee,card.group_id,'UPDATE_EDITED',auth.user.id,context,'CHAIR');
+      return (await crisisGroups(client,committee.id,false,this.now())).find(group => group.id === card.group_id)!;
+    });
+  }
+
+  async saveCrisisNoticeName(auth: AuthenticatedSession, fileId: string, input: Record<string, unknown>, context: Stage4Context) {
+    requireBusinessIdentity(auth); assertExactBody(input,['baseRevision','logicalName','manuallyEdited']);
+    const revision = positiveInteger(input.baseRevision,'Revision'); const name = text(input.logicalName,'File name',500);
+    return transaction(this.pool,async client => {
+      const located = (await client.query('SELECT committee_id FROM file_entries WHERE id=$1',[fileId])).rows[0];
+      if (!located) throw new AppError({code: 'NOT_FOUND',message: 'File not found.'});
+      const committee = await lockedCommittee(client,located.committee_id); requireProceedingsActive(committee); await requireChair(client,committee,auth.user.id);
+      const file = (await client.query(`SELECT e.*,m.file_type FROM file_entries e JOIN delegate_file_metadata m ON m.file_entry_id=e.id WHERE e.id=$1 FOR UPDATE OF e`,[fileId])).rows[0]!;
+      if (!file || file.file_type !== 'CRISIS_NOTICE' || !['UPLOAD_COMPLETE','PENDING_REVIEW'].includes(file.status)) throw new AppError({code: 'RESOURCE_CONFLICT',reason: 'CRISIS_PUBLICATION_REQUIRED',message: 'Use crisis publication.'});
+      if (file.revision !== revision) throw new AppError({code: 'REVISION_CONFLICT',message: 'File changed.'});
+      const edited = input.manuallyEdited !== false;
+      const metadata = (await client.query('SELECT crisis_name_edited FROM delegate_file_metadata WHERE file_entry_id=$1',[fileId])).rows[0]!;
+      const changed = name !== file.logical_name || edited && !metadata.crisis_name_edited;
+      if (changed) {
+        await client.query('UPDATE delegate_file_metadata SET crisis_name_edited=crisis_name_edited OR $2 WHERE file_entry_id=$1',[fileId,edited]);
+        await client.query('UPDATE file_entries SET logical_name=$2,revision=revision+1,updated_at=$3 WHERE id=$1',[fileId,name,this.now()]);
+        await appendEvent(client,committee,{type: 'file.review_requested',resourceType: 'file_entry',resourceId: fileId,revision: revision+1,audience: 'CHAIR',payload: {logicalName: name}});
+        await audit(client,context,{committeeId: committee.id,actorUserId: auth.user.id,capabilities: ['CHAIR'],action: 'storage.file_review_requested',resourceType: 'file_entry',resourceId: fileId,before: {logicalName: file.logical_name},after: {logicalName: name}});
+      }
+      return {revision: revision + (changed ? 1 : 0)};
+    });
+  }
+
+  async previewCrisisNotice(auth: AuthenticatedSession, fileId: string) {
+    requireBusinessIdentity(auth);
+    return transaction(this.pool,async client => {
+      const located = (await client.query('SELECT committee_id FROM file_entries WHERE id=$1',[fileId])).rows[0];
+      if (!located) throw new AppError({code: 'NOT_FOUND',message: 'File not found.'});
+      const committee = await lockedCommittee(client,located.committee_id); requireProceedingsActive(committee); await requireChair(client,committee,auth.user.id);
+      return crisisNoticePreview(client,committee.id,fileId);
+    });
+  }
+
+  async importCrisisNotice(auth: AuthenticatedSession, fileId: string, input: Record<string, unknown>, key: string, context: Stage4Context) {
+    requireBusinessIdentity(auth); assertExactBody(input,['baseRevision','replaceNoticeId']); const revision = positiveInteger(input.baseRevision,'Revision');
+    return idempotentTransaction({pool: this.pool,auth,route: `/api/v1/files/${fileId}/crisis`,key,request: input,status: 200,work: async client => {
+      const located = (await client.query('SELECT committee_id FROM file_entries WHERE id=$1',[fileId])).rows[0];
+      if (!located) throw new AppError({code: 'NOT_FOUND',message: 'File not found.'});
+      const committee = await lockedCommittee(client,located.committee_id); requireProceedingsActive(committee); await requireChair(client,committee,auth.user.id);
+      const file = (await client.query('SELECT revision FROM file_entries WHERE id=$1 FOR UPDATE',[fileId])).rows[0]!;
+      if (file.revision !== revision) throw new AppError({code: 'REVISION_CONFLICT',message: 'File changed.'});
+      const preview = await crisisNoticePreview(client,committee.id,fileId);
+      if (preview.replacement && input.replaceNoticeId !== preview.replacement.id) throw new AppError({code: 'RESOURCE_CONFLICT',reason: 'CRISIS_NOTICE_CONFLICT',message: 'Confirm replacement.'});
+      let groupId = preview.groupId; let updateId = preview.updateId;
+      if (!groupId) {
+        const session = (await client.query('SELECT id FROM meeting_sessions WHERE committee_id=$1 AND ordinal=$2',[committee.id,preview.sessionOrdinal])).rows[0]!;
+        groupId = await insertCrisisGroup(client,committee.id,session.id,auth.user.id);
+      }
+      if (!updateId) updateId = await insertCrisisUpdate(client,committee.id,groupId,fileId);
+      else {
+        const linked = (await client.query('SELECT notice_file_id,status FROM crisis_updates WHERE id=$1',[updateId])).rows[0]!;
+        if (linked.notice_file_id !== fileId) {
+          await client.query('UPDATE crisis_updates SET notice_file_id=$2,revision=revision+1 WHERE id=$1',[updateId,fileId]);
+          await client.query('UPDATE crisis_groups SET revision=revision+1 WHERE id=$1',[groupId]);
+        }
+      }
+      // Once imported, the allocated identity must survive future automatic suggestions.
+      await client.query('UPDATE delegate_file_metadata SET crisis_name_edited=true WHERE file_entry_id=$1',[fileId]);
+      await recordCrisisChange(client,committee,groupId,'NOTICE_IMPORTED',auth.user.id,context,'CHAIR');
+      return {groupId,updateId};
+    }});
+  }
+
+  async publishCrisis(auth: AuthenticatedSession, updateId: string, input: Record<string, unknown>, key: string, context: Stage4Context) {
+    requireBusinessIdentity(auth); assertExactBody(input,['baseRevision']); const revision = positiveInteger(input.baseRevision,'Revision');
+    return idempotentTransaction({pool: this.pool,auth,route: `/api/v1/crisis-updates/${updateId}/publish`,key,request: input,status: 200,work: async client => {
+      const located = (await client.query('SELECT committee_id,group_id FROM crisis_updates WHERE id=$1',[updateId])).rows[0];
+      if (!located) throw new AppError({code: 'NOT_FOUND',message: 'Crisis update not found.'});
+      const committee = await lockedCommittee(client,located.committee_id); requireProceedingsActive(committee); await requireChair(client,committee,auth.user.id);
+      const group = (await client.query('SELECT * FROM crisis_groups WHERE id=$1 FOR UPDATE',[located.group_id])).rows[0]!;
+      const card = (await client.query('SELECT * FROM crisis_updates WHERE id=$1 FOR UPDATE',[updateId])).rows[0]!;
+      if (group.ended_at) throw new AppError({code: 'RESOURCE_CONFLICT',reason: 'CRISIS_GROUP_ENDED',message: 'Crisis ended.'});
+      if (card.status !== 'UNPUBLISHED' || card.revision !== revision) throw new AppError({code: 'REVISION_CONFLICT',message: 'Crisis update changed.'});
+      if (!card.notice_file_id || !card.handling_duration_ms) throw new AppError({code: 'VALIDATION_FAILED',reason: 'CRISIS_NOTICE_REQUIRED',message: 'Select a notice and handling time.'});
+      const preview = await crisisNoticePreview(client,committee.id,card.notice_file_id);
+      if (preview.updateId !== updateId) throw new AppError({code: 'VALIDATION_FAILED',reason: 'CRISIS_NOTICE_REQUIRED',message: 'Matching notice required.'});
+      const file = (await client.query('SELECT * FROM file_entries WHERE id=$1 FOR UPDATE',[card.notice_file_id])).rows[0]!;
+      const now = this.now(); const delay = Number(committee.crisis_auto_start_delay_minutes);
+      const autoStart = delay > 0 ? new Date(now.getTime()+delay*60000) : null;
+      await client.query(`UPDATE file_entries SET formal_name=logical_name,status='PUBLISHED',published_at=$2,
+        published_by_user_id=$3,revision=revision+1,updated_at=$2 WHERE id=$1`,[file.id,now,auth.user.id]);
+      await client.query(`UPDATE delegate_file_metadata SET approved_at=$2,approved_by_user_id=$3,approved_name=$4
+        WHERE file_entry_id=$1`,[file.id,now,auth.user.id,file.logical_name]);
+      await client.query(`UPDATE storage_cache_entries SET state='READY',state_changed_at=now(),updated_at=now()
+        WHERE file_entry_id=$1 AND state='REVIEW_PINNED'`,[file.id]);
+      await client.query(`UPDATE crisis_updates SET status='SUPERSEDED',revision=revision+1 WHERE group_id=$1 AND ordinal<$2`,[group.id,card.ordinal]);
+      await client.query(`UPDATE crisis_updates SET status='PENDING',notice_version_id=$2,notice_name=$3,
+        published_at=$4,published_by_user_id=$5,revision=revision+1 WHERE id=$1`,[updateId,file.current_version_id,file.logical_name,now,auth.user.id]);
+      const invalidated = (await client.query(`UPDATE document_voting SET crisis_invalidated_at=$3
+        WHERE crisis_group_id=$1 AND crisis_update_id<>$2 AND direct_vote_completed_at IS NULL AND crisis_invalidated_at IS NULL RETURNING document_id`,[group.id,updateId,now])).rows;
+      for (const v of invalidated) {
+        const document = (await client.query(`UPDATE documents SET status='FAILED',revision=revision+1,updated_at=$2 WHERE id=$1 RETURNING revision`,[v.document_id,now])).rows[0]!;
+        await appendEvent(client,committee,{type: 'document.status_changed',resourceType: 'document',resourceId: v.document_id,revision: document.revision,audience: 'PUBLIC',payload: {status: 'FAILED',reason: 'CRISIS_UPDATED'}});
+        await audit(client,context,{committeeId: committee.id,actorUserId: auth.user.id,capabilities: ['CHAIR'],action: 'documents.status_changed',resourceType: 'document',resourceId: v.document_id,after: {status: 'FAILED',reason: 'CRISIS_UPDATED'}});
+      }
+      const timer = (await client.query(`UPDATE timer_states SET running=$2,started_at=$3,remaining_at_start_ms=$4,expired_at=NULL,
+        revision=revision+1,updated_at=$5 WHERE id=$1 RETURNING revision`,[group.timer_id,delay===0,delay===0 ? now : null,card.handling_duration_ms,now])).rows[0]!;
+      await client.query('UPDATE crisis_groups SET auto_start_at=$2,revision=revision+1 WHERE id=$1',[group.id,autoStart]);
+      await appendEvent(client,committee,{type: 'file.published',resourceType: 'file_entry',resourceId: file.id,revision: file.revision+1,
+        audience: 'PUBLIC',payload: {status: 'PUBLISHED',logicalName: file.logical_name,fileType: 'CRISIS_NOTICE',submissionSource: 'CHAIR',submitterDisplayName: null,publishedAt: now.toISOString()}});
+      await audit(client,context,{committeeId: committee.id,actorUserId: auth.user.id,capabilities: ['CHAIR'],action: 'storage.file_published',resourceType: 'file_entry',resourceId: file.id,after: {status: 'PUBLISHED',crisisUpdateId: updateId}});
+      await appendEvent(client,committee,{type: 'timer.changed',resourceType: 'timer',resourceId: group.timer_id,revision: timer.revision,audience: 'PUBLIC',payload: {command: 'CRISIS_PUBLISHED',running: delay===0}});
+      await audit(client,context,{committeeId: committee.id,actorUserId: auth.user.id,capabilities: ['CHAIR'],action: 'timers.reset',resourceType: 'timer',resourceId: group.timer_id,after: {remainingMs: Number(card.handling_duration_ms),autoStartAt: autoStart?.toISOString() ?? null,revision: timer.revision}});
+      await recordCrisisChange(client,committee,group.id,'PUBLISHED',auth.user.id,context);
+      return (await crisisGroups(client,committee.id,false,now)).find(g => g.id === group.id)!;
+    }});
+  }
+
+  async setCrisisAutoStartDelay(auth: AuthenticatedSession, committeeId: string, input: Record<string, unknown>, context: Stage4Context) {
+    requireBusinessIdentity(auth); assertExactBody(input,['baseRevision','minutes']); const revision = positiveInteger(input.baseRevision,'Revision');
+    if (typeof input.minutes !== 'number' || !Number.isSafeInteger(input.minutes*60000) || !Number.isFinite(new Date(this.now().getTime()+input.minutes*60000).getTime())) throw new AppError({code: 'VALIDATION_FAILED',reason: 'INVALID_FIELD',message: 'Invalid delay.'});
+    return transaction(this.pool,async client => {
+      const committee = await lockedCommittee(client,committeeId); requireProceedingsActive(committee); await requireChair(client,committee,auth.user.id);
+      if (committee.revision !== revision) throw new AppError({code: 'REVISION_CONFLICT',message: 'Committee changed.'});
+      await client.query('UPDATE committees SET crisis_auto_start_delay_minutes=$2,revision=revision+1,updated_at=$3 WHERE id=$1',[committeeId,input.minutes,this.now()]);
+      await appendEvent(client,committee,{type: 'committee.crisis_settings_changed',resourceType: 'committee',resourceId: committeeId,revision: committee.revision+1,payload: {crisisAutoStartDelayMinutes: input.minutes}});
+      await audit(client,context,{committeeId,actorUserId: auth.user.id,capabilities: ['CHAIR'],action: 'committee.crisis_settings_changed',resourceType: 'committee',resourceId: committeeId,after: {crisisAutoStartDelayMinutes: input.minutes}});
+      return {minutes: input.minutes};
+    });
+  }
+
+  async processCrisisAutoStarts(): Promise<void> {
+    const now = this.now();
+    const due = (await this.pool.query(`SELECT id,committee_id FROM crisis_groups WHERE auto_start_at<=$1 ORDER BY auto_start_at LIMIT 100`,[now])).rows;
+    for (const candidate of due) await transaction(this.pool,async client => {
+      const committee = await lockedCommittee(client,candidate.committee_id);
+      const group = (await client.query('SELECT * FROM crisis_groups WHERE id=$1 FOR UPDATE',[candidate.id])).rows[0];
+      if (!group?.auto_start_at || group.auto_start_at>now || group.ended_at || committee.status !== 'ACTIVE') return;
+      const pending = (await client.query("SELECT published_by_user_id FROM crisis_updates WHERE group_id=$1 AND status='PENDING'",[group.id])).rows[0];
+      if (!pending) return;
+      const timer = (await client.query(`UPDATE timer_states SET running=true,started_at=$2,expired_at=NULL,revision=revision+1,updated_at=$3
+        WHERE id=$1 AND NOT running AND remaining_at_start_ms>0 RETURNING revision`,[group.timer_id,group.auto_start_at,now])).rows[0];
+      await client.query('UPDATE crisis_groups SET auto_start_at=NULL,revision=revision+1 WHERE id=$1',[group.id]);
+      if (timer) await appendEvent(client,committee,{type: 'timer.changed',resourceType: 'timer',resourceId: group.timer_id,revision: timer.revision,audience: 'PUBLIC',payload: {command: 'CRISIS_AUTO_STARTED'}});
+      await recordCrisisChange(client,committee,group.id,'AUTO_STARTED',pending.published_by_user_id,{requestId: 'crisis-auto-start'});
+    });
+  }
+
   async createTimer(auth: AuthenticatedSession, committeeId: string, input: Record<string, unknown>, key: string,
     context: Stage4Context): Promise<AuthoritativeTimer> {
     requireBusinessIdentity(auth); assertExactBody(input, ['ownerType', 'ownerId', 'durationMs']);
@@ -559,6 +783,11 @@ export class Stage5Service {
       await requireChair(client, committee, auth.user.id);
       const found = await client.query<TimerRow>('SELECT * FROM timer_states WHERE id=$1 FOR UPDATE', [timerId]);
       const current = found.rows[0] as TimerRow;
+      if (current.owner_type === 'CRISIS') {
+        const group = (await client.query('SELECT ended_at FROM crisis_groups WHERE id=$1',[current.owner_id])).rows[0];
+        if (!group || group.ended_at || !(await client.query("SELECT 1 FROM crisis_updates WHERE group_id=$1 AND status='PENDING'",[current.owner_id])).rowCount)
+          throw new AppError({code: 'RESOURCE_CONFLICT',reason: 'CRISIS_GROUP_ENDED',message: 'No crisis awaiting action.'});
+      }
       if (current.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT',
         message: 'This timer changed since it was loaded.', details: {currentRevision: current.revision}});
       const now = this.now(); const remaining = remainingTimerMs(current, now);
@@ -589,6 +818,8 @@ export class Stage5Service {
       [timerId, running, startedAt, nextRemaining, expiredAt, now]);
       const revision = current.revision + 1; const action = command === 'start' ? 'started' : command === 'pause' ? 'paused'
         : command === 'resume' ? 'resumed' : command === 'extend' ? 'extended' : command === 'reset' ? 'reset' : 'expired';
+      if (current.owner_type === 'CRISIS' && (command === 'start' || command === 'resume'))
+        await client.query('UPDATE crisis_groups SET auto_start_at=NULL,revision=revision+1 WHERE id=$1',[current.owner_id]);
       await appendEvent(client, committee, {type: command === 'expire' ? 'timer.expired' : 'timer.changed',
         resourceType: 'timer', resourceId: timerId, revision,
         payload: {command: command.toUpperCase(), running, remainingMs: nextRemaining}});
@@ -2105,6 +2336,7 @@ export class Stage5Service {
       }
       if (document.status !== 'PUBLISHED') throw new AppError({reason: 'RESOLUTION_NOT_INTRODUCED', code: 'RESOURCE_CONFLICT',
         message: 'Only an introduced resolution can enter voting.'});
+      if (document.draft_type === 'DIRECTIVE') await requireDirectiveCrisis(client,document.id,committeeId);
       await requirePublishedDocumentFile(client, document.current_version_id);
       await client.query(`UPDATE documents SET status='VOTING',voting_version_id=current_version_id,
         revision=revision+1,updated_at=$2 WHERE id=$1`, [resolutionId, now]);
@@ -2376,11 +2608,12 @@ export class Stage5Service {
             WHERE document_id=$1 AND direct_vote_started_at IS NOT NULL
             UNION ALL SELECT 1 FROM ballots WHERE subject_id=$1 AND subject_type=$2 LIMIT 1`, [subjectId, subjectType]);
           if (existingVote.rowCount) throw new AppError({code: 'RESOURCE_CONFLICT', reason: 'BALLOT_ALREADY_EXISTS', message: 'The draft already has a vote.'});
-          const document = await client.query<{status: ProceedingDocumentStatus; voting_version_id: string | null}>(
-            `SELECT status,voting_version_id FROM documents WHERE id=$1 AND committee_id=$2 AND kind=$3
+          const document = await client.query<{status: ProceedingDocumentStatus; voting_version_id: string | null; draft_type: string | null}>(
+            `SELECT status,voting_version_id,draft_type FROM documents WHERE id=$1 AND committee_id=$2 AND kind=$3
               AND deleted_at IS NULL FOR UPDATE`,
             [subjectId, committeeId, kind]);
           if (!document.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Ballot document not found.'});
+          if (document.rows[0].draft_type === 'DIRECTIVE') throw new AppError({code: 'VALIDATION_FAILED',reason: 'DIRECTIVE_VOTE_REQUIRED',message: 'Use directive voting.'});
           if (document.rows[0].status !== 'VOTING' || !document.rows[0].voting_version_id) throw new AppError({reason: 'DOCUMENT_NOT_IN_VOTING',
             code: 'RESOURCE_CONFLICT', message: 'The document has not entered formal voting.'});
           subjectVersionId = document.rows[0].voting_version_id;
@@ -3119,6 +3352,7 @@ export class Stage5Service {
           WHERE d.id=$1 AND d.committee_id=$2 AND d.kind='RESOLUTION' AND d.deleted_at IS NULL FOR UPDATE`,
         [resolutionId, committeeId]);
         if (!parent.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Resolution not found.'});
+        if (parent.rows[0].draft_type === 'DIRECTIVE') throw new AppError({code: 'RESOURCE_CONFLICT',reason: 'DIRECTIVE_AMENDMENTS_FORBIDDEN',message: 'Directives do not accept amendments.'});
         if (parent.rows[0].meeting_session_id !== meetingSessionId) throw new AppError({reason: 'DOCUMENT_SESSION_MISMATCH', code: 'VALIDATION_FAILED',
           message: 'Amendment and Draft Resolution must use the same meeting session.'});
         if (parent.rows[0].status !== 'PUBLISHED') throw new AppError({reason: 'AMENDMENTS_NOT_ACCEPTED', code: 'RESOURCE_CONFLICT',
@@ -3275,9 +3509,9 @@ export class Stage5Service {
   async updateDocumentSettings(auth: AuthenticatedSession, documentId: string, input: Record<string, unknown>,
     context: Stage4Context): Promise<ProceedingDocument> {
     requireBusinessIdentity(auth);
-    assertExactBody(input, ['baseRevision', 'proposerSeatIds', 'seconderSeatIds', 'delegatesCanAmend', 'majority']);
+    assertExactBody(input, ['baseRevision', 'proposerSeatIds', 'seconderSeatIds', 'delegatesCanAmend', 'majority', 'crisisGroupId']);
     const baseRevision = positiveInteger(input.baseRevision, 'Base revision');
-    const supplied = ['proposerSeatIds', 'seconderSeatIds', 'delegatesCanAmend', 'majority']
+    const supplied = ['proposerSeatIds', 'seconderSeatIds', 'delegatesCanAmend', 'majority', 'crisisGroupId']
       .filter(key => Object.prototype.hasOwnProperty.call(input, key));
     if (supplied.length === 0) throw new AppError({reason: 'DOCUMENT_SETTINGS_EMPTY', code: 'VALIDATION_FAILED', message: 'No document setting was supplied.'});
     return transaction(this.pool, async client => {
@@ -3290,6 +3524,11 @@ export class Stage5Service {
         LEFT JOIN amendments a ON a.document_id=d.id WHERE d.id=$1 AND d.deleted_at IS NULL FOR UPDATE OF d`, [documentId]);
       const document = found.rows[0];
       if (!document) throw new AppError({code: 'NOT_FOUND', message: 'Document not found.'});
+      if (document.draft_type === 'DIRECTIVE') {
+        const metadata = (await client.query<ResolutionRow>('SELECT * FROM document_voting WHERE document_id=$1',[documentId])).rows[0]!;
+        if (metadata.crisis_invalidated_at) throw new AppError({code: 'RESOURCE_CONFLICT',reason: 'CRISIS_UPDATED',message: 'Crisis updated.'});
+        if (input.delegatesCanAmend === true) throw new AppError({code: 'VALIDATION_FAILED',reason: 'DIRECTIVE_AMENDMENTS_FORBIDDEN',message: 'Directives do not accept amendments.'});
+      }
       if (document.revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT',
         message: 'This document changed since it was loaded.', details: {currentRevision: document.revision}});
       if (document.kind === 'AMENDMENT' && supplied.includes('delegatesCanAmend')) throw new AppError({reason: 'RESOLUTION_SETTING_ONLY',
@@ -3334,13 +3573,24 @@ export class Stage5Service {
         if (document.kind === 'AMENDMENT') await requireUnfriendlyAmendment(client, documentId);
         const metadataResult = await client.query<ResolutionRow>('SELECT v.*,coalesce(r.delegates_can_amend,false) AS delegates_can_amend FROM document_voting v LEFT JOIN resolutions r USING(document_id) WHERE v.document_id=$1 FOR UPDATE OF v', [documentId]);
         const metadata = metadataResult.rows[0] as ResolutionRow;
+        let nextCrisisGroup = metadata.crisis_group_id; let nextCrisisUpdate = metadata.crisis_update_id;
+        if (Object.prototype.hasOwnProperty.call(input,'crisisGroupId')) {
+          if (document.draft_type !== 'DIRECTIVE' || metadata.direct_vote_started_at) throw new AppError({code: 'RESOURCE_CONFLICT',reason: 'DOCUMENT_FROZEN',message: 'The crisis association is frozen.'});
+          nextCrisisGroup = input.crisisGroupId === null ? null : uuid(input.crisisGroupId,'Crisis group'); nextCrisisUpdate = null;
+          if (nextCrisisGroup) {
+            const pending = (await client.query(`SELECT u.id FROM crisis_updates u JOIN crisis_groups g ON g.id=u.group_id
+              WHERE g.id=$1 AND g.committee_id=$2 AND g.ended_at IS NULL AND u.status='PENDING'`,[nextCrisisGroup,committee.id])).rows[0];
+            if (!pending) throw new AppError({code: 'VALIDATION_FAILED',reason: 'CRISIS_ASSOCIATION_REQUIRED',message: 'Select a crisis awaiting action.'});
+            nextCrisisUpdate = pending.id;
+          }
+        }
         const nextProposers = proposerSeatIds ?? previousIds('PROPOSER');
         const nextSeconders = seconderSeatIds ?? previousIds('SECONDER');
         before = {proposerSeatIds: previousIds('PROPOSER'), seconderSeatIds: previousIds('SECONDER'),
-          delegatesCanAmend: metadata.delegates_can_amend, majority: metadata.direct_vote_majority};
+          delegatesCanAmend: metadata.delegates_can_amend, majority: metadata.direct_vote_majority,crisisGroupId: metadata.crisis_group_id,crisisUpdateId: metadata.crisis_update_id};
         after = {proposerSeatIds: nextProposers, seconderSeatIds: nextSeconders,
           delegatesCanAmend: input.delegatesCanAmend === undefined ? metadata.delegates_can_amend : input.delegatesCanAmend,
-          majority: majority ?? metadata.direct_vote_majority};
+          majority: majority ?? metadata.direct_vote_majority,crisisGroupId: nextCrisisGroup,crisisUpdateId: nextCrisisUpdate};
         if (nextProposers.some(id => nextSeconders.includes(id))) throw new AppError({reason: 'DOCUMENT_COUNTRY_ROLES_OVERLAP',
           code: 'VALIDATION_FAILED', message: 'Drafting and seconding countries must be different.'});
         if (JSON.stringify(before) === JSON.stringify(after)) throw new AppError({reason: 'DOCUMENT_SETTINGS_UNCHANGED', code: 'RESOURCE_CONFLICT',
@@ -3349,6 +3599,8 @@ export class Stage5Service {
         await client.query(`UPDATE document_voting SET direct_vote_majority=$2,
           direct_vote_revision=direct_vote_revision+CASE WHEN direct_vote_majority<>$2 THEN 1 ELSE 0 END
           WHERE document_id=$1`, [documentId, after.majority]);
+        if (Object.prototype.hasOwnProperty.call(input,'crisisGroupId')) await client.query(
+          'UPDATE document_voting SET crisis_group_id=$2,crisis_update_id=$3 WHERE document_id=$1',[documentId,nextCrisisGroup,nextCrisisUpdate]);
         for (const [role, ids] of [['PROPOSER', proposerSeatIds], ['SECONDER', seconderSeatIds]] as const) {
           if (ids === undefined) continue;
           await client.query(`DELETE FROM ${countryTable} WHERE ${countryDocumentColumn}=$1 AND role=$2`, [documentId, role]);
@@ -3389,6 +3641,7 @@ export class Stage5Service {
       await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id, capabilities: ['CHAIR'],
         action: 'documents.settings_changed', resourceType: 'document', resourceId: documentId, before, after});
       if (majority !== undefined) await updateAmendmentDirectResult(client, updated.rows[0] as DocumentRow, committee, auth, context, now);
+      if (majority !== undefined) await updateDirectiveDirectResult(client, updated.rows[0] as DocumentRow, committee, auth, context, now);
       return documentState(client, updated.rows[0] as DocumentRow);
     });
   }
@@ -3542,6 +3795,7 @@ export class Stage5Service {
           action: 'documents.direct_vote_submitted', resourceType: 'document', resourceId: documentId,
           after: {seatCount: votes.length}});
         await updateAmendmentDirectResult(client, document, committee, auth, context, now);
+        await updateDirectiveDirectResult(client, document, committee, auth, context, now);
         return documentState(client, document);
       }});
   }
@@ -3620,6 +3874,7 @@ export class Stage5Service {
         before: {seatId, choice: previousChoice, voteRevision: current?.revision ?? 0},
         after: {seatId, choice, voteRevision}});
       await updateAmendmentDirectResult(client, document, committee, auth, context, now);
+      await updateDirectiveDirectResult(client, document, committee, auth, context, now);
         return documentState(client, document);
     });
   }
@@ -3640,6 +3895,7 @@ export class Stage5Service {
       if (document.status === 'POSTPONED') throw new AppError({reason: 'DOCUMENT_STATE_CHANGED', code: 'RESOURCE_CONFLICT',
         message: 'The Draft Resolution is postponed.'});
       const allowed = document.kind === 'RESOLUTION' ? ['PASSED', 'FAILED'] : ['INCORPORATED', 'REJECTED'];
+      if (document.draft_type === 'DIRECTIVE') throw new AppError({code: 'RESOURCE_CONFLICT',reason: 'DIRECTIVE_RESULT_REQUIRED',message: 'Submit the complete vote result.'});
       if (!allowed.includes(outcome)) throw new AppError({reason: 'INVALID_DOCUMENT_RESULT', code: 'VALIDATION_FAILED', message: 'Document result is invalid.'});
       if (document.kind === 'AMENDMENT') {
         const amendment = (await client.query<{amendment_type: string}>(

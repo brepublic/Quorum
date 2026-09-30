@@ -161,6 +161,17 @@ async function main(): Promise<void> {
     const stopCommitteeDeletionWorker = startCommitteeDeletionWorker(committeeDeletions, logger);
     const stopRetentionWorker = startRetentionWorker(retention, logger);
     const stopStorageCacheWorker = startStorageCacheWorker(storageCacheOperations);
+    let crisisWorkerRunning = false;
+    const runCrisisAutoStarts = async () => {
+      if (crisisWorkerRunning) return;
+      crisisWorkerRunning = true;
+      try {await stage5.processCrisisAutoStarts();}
+      catch (error) {logger.error('crisis.auto_start.failed',{error});}
+      finally {crisisWorkerRunning = false;}
+    };
+    const crisisAutoStartTimer = setInterval(() => void runCrisisAutoStarts(),1000);
+    crisisAutoStartTimer.unref();
+    await runCrisisAutoStarts();
 
     server.listen(config.port, config.host, () => {
       logger.info('server.started', {
@@ -182,6 +193,7 @@ async function main(): Promise<void> {
       stopCommitteeDeletionWorker();
       stopRetentionWorker();
       stopStorageCacheWorker();
+      clearInterval(crisisAutoStartTimer);
       logger.info('server.shutdown.started', {signal});
 
       const forceTimer = setTimeout(() => {

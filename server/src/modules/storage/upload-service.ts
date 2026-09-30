@@ -1,4 +1,4 @@
-import {ERROR_TEXT} from '@quorum/contracts';
+import {ERROR_TEXT, DELEGATE_FILE_TYPES} from '@quorum/contracts';
 import {randomUUID} from 'node:crypto';
 import type {Pool, PoolClient, QueryResultRow} from 'pg';
 import {ERROR_HTTP_STATUS, type ApiErrorCode, type FileUpload, type FileUploadStatus} from '@quorum/contracts';
@@ -63,6 +63,7 @@ interface StoredAttempt {
 type Claim = {kind: 'WRITE' | 'RECOVER'; upload: UploadRow} | {kind: 'REPLAY'; attempt: StoredAttempt};
 
 export interface CreateUploadInput {
+  fileType?: string;
   logicalName: string;
   originalName: string;
   mediaType: string;
@@ -210,8 +211,11 @@ export class Stage6UploadService {
     submission?: {sessionId: string; seatId: string; displayName: string; fileType: string}): Promise<FileUpload> {
     requireBusinessIdentity(auth);
     assertExactBody(body as Record<string, unknown>,
-      ['logicalName', 'originalName', 'mediaType', 'expectedSizeBytes', 'sha256']);
+      ['logicalName', 'originalName', 'mediaType', 'expectedSizeBytes', 'sha256', 'fileType']);
     const input = body as unknown as CreateUploadInput;
+    if (input.fileType !== undefined && (typeof input.fileType !== 'string' || !([...DELEGATE_FILE_TYPES] as string[]).includes(input.fileType)
+      && !/^CUSTOM:.{1,100}$/.test(input.fileType))) throw new AppError({code: 'VALIDATION_FAILED',reason: 'INVALID_FILE_TYPE',message: 'Invalid file type.'});
+    if (submission?.fileType === 'CRISIS_NOTICE') throw new AppError({code: 'FORBIDDEN',reason: 'CHAIR_REQUIRED',message: 'Only chairs upload crisis notices.'});
     const logicalName = boundedText(input.logicalName, 'Logical name', 500);
     const originalName = boundedText(input.originalName, 'Original name', 500);
     const mediaType = boundedText(input.mediaType, 'Media type', 255).toLowerCase();
@@ -232,6 +236,7 @@ export class Stage6UploadService {
         const committee = await lockedCommittee(client, uuid(committeeId, 'Committee ID'));
         requireProceedingsActive(committee);
         await requireContributor(client, committee, auth.user.id);
+        if (input.fileType === 'CRISIS_NOTICE' && !await isChair(client,committee.id,auth.user.id)) throw new AppError({code: 'FORBIDDEN',reason: 'CHAIR_REQUIRED',message: 'Only chairs upload crisis notices.'});
         const activeBinding = await client.query<ActiveBindingRow>(`SELECT id FROM storage_bindings
           WHERE committee_id=$1 AND id=$2 AND status='ACTIVE' FOR SHARE`,
         [committee.id, committee.active_storage_binding_id]);
@@ -249,6 +254,7 @@ export class Stage6UploadService {
         [id, committee.id, activeBinding.rows[0].id, auth.user.id, logicalName, originalName, mediaType,
           expectedSizeBytes, expectedSha256, stagingKey(id), expiresAt]);
         const row = created.rows[0] as UploadRow;
+        if (input.fileType) await client.query('UPDATE file_uploads SET chair_file_type=$2 WHERE id=$1',[id,input.fileType]);
         if (submission) {
           const active = await client.query(`SELECT 1 FROM delegate_file_sessions s
             JOIN delegate_file_shares sh ON sh.id=s.share_id WHERE s.id=$1 AND s.seat_id=$2

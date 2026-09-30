@@ -415,6 +415,20 @@ export const ERROR_TEXT = {
   NETWORK_ERROR: {en: "Unable to connect. Check your network and try again.", 'zh-CN': "无法连接，请检查网络后重试。"},
   INVALID_RESPONSE: {en: "The server returned an invalid response. Try again later.", 'zh-CN': "服务器返回了无效响应，请稍后重试。"},
   ABORTED: {en: "The operation was cancelled.", 'zh-CN': "操作已取消。"},
+  CRISIS_NUMBER_REQUIRED: {en: 'Complete the crisis number: X.Y.Z.', 'zh-CN': '请补全危机编号：X.Y.Z。'},
+  CRISIS_NUMBER_MISMATCH: {en: 'Use crisis number {session}.{group}.{update}. Correct the system file name.', 'zh-CN': '应使用危机编号 {session}.{group}.{update}，请修正系统文件名称。'},
+  CRISIS_SESSION_MISSING: {en: 'The numbered meeting session does not exist. Correct the system file name.', 'zh-CN': '编号对应的会期不存在，请修正系统文件名称。'},
+  CRISIS_GROUP_ENDED: {en: 'This crisis group has ended.', 'zh-CN': '该危机组已结束。'},
+  CRISIS_UNPUBLISHED_EXISTS: {en: 'Publish the existing update before creating another.', 'zh-CN': '请先发布已有的未发布卡片。'},
+  CRISIS_NOTICE_CONFLICT: {en: 'The notice changed. Refresh and confirm the replacement.', 'zh-CN': '关联通告已改变，请刷新后重新确认替换。'},
+  CRISIS_NOTICE_REQUIRED: {en: 'Select a saved crisis notice with the matching number.', 'zh-CN': '请选择已保存成功且编号一致的危机通告。'},
+  CRISIS_PUBLICATION_REQUIRED: {en: 'Publish this notice from its crisis card.', 'zh-CN': '请从危机卡片发布该通告。'},
+  CRISIS_UPDATED: {en: 'The crisis has been updated. Create a new directive for the current version.', 'zh-CN': '危机已更新，请新建指令应对当前版本。'},
+  CRISIS_ASSOCIATION_REQUIRED: {en: 'Select a crisis group awaiting action before voting.', 'zh-CN': '开始表决前请选择一个有待处理危机的组。'},
+  DIRECTIVE_VOTE_REQUIRED: {en: 'Start the directive vote from the Voting page.', 'zh-CN': '请从表决页开始指令表决。'},
+  CRISIS_PAUSE_CONFIRMATION: {en: 'End all unfinished crises before pausing the committee.', 'zh-CN': '暂停委员会前，请确认结束全部未结束危机。'},
+  DIRECTIVE_AMENDMENTS_FORBIDDEN: {en: 'Directives do not accept amendments.', 'zh-CN': '指令不接受修正案。'},
+  DIRECTIVE_RESULT_REQUIRED: {en: 'Submit the complete directive vote to record its result.', 'zh-CN': '请提交完整的指令表决结果。'},
   OPERATION_FAILED: {en: "Request failed. Try again later.", 'zh-CN': "请求失败，请稍后重试。"},
  } as const;
 export type LocalizedErrorReason = keyof typeof ERROR_TEXT;
@@ -422,7 +436,7 @@ export type LocalizedErrorReason = keyof typeof ERROR_TEXT;
 /** Unknown server messages and exception bodies never become user-facing text. */
 export function formatApiError(error: unknown, language: ContentLanguage): string {
   const value = error && typeof error === 'object' ? error as {
-    code?: unknown; requestId?: unknown; reason?: unknown; params?: {formats?: unknown; max?: unknown}; localization?: {reason?: unknown; params?: {formats?: unknown; max?: unknown}}; name?: unknown;
+    code?: unknown; requestId?: unknown; reason?: unknown; params?: import('./api.js').ApiErrorParams; localization?: {reason?: unknown; params?: import('./api.js').ApiErrorParams}; name?: unknown;
   } : undefined;
   const reason = value?.localization?.reason ?? value?.reason;
   const key = typeof reason === 'string' && Object.hasOwn(ERROR_TEXT, reason) ? reason
@@ -436,6 +450,10 @@ export function formatApiError(error: unknown, language: ContentLanguage): strin
   if (text.includes('{max}')) text = text.replace('{max}', typeof maximum === 'number' && Number.isSafeInteger(maximum)
     && maximum >= 0 ? String(maximum) : '—');
   const formats = value?.localization?.params?.formats ?? value?.params?.formats;
+  for (const key of ['session', 'group', 'update'] as const) {
+    const number = value?.localization?.params?.[key] ?? value?.params?.[key];
+    text = text.replace(`{${key}}`, typeof number === 'number' && Number.isSafeInteger(number) && number >= 1 ? String(number) : '—');
+  }
   return key === 'INVALID_FILE_EXTENSION' ? text.replace('{formats}',
     typeof formats === 'string' && formats.length <= 2048 && /^[a-zA-Z0-9., ]+$/.test(formats) ? formats : '—') : text;
 }

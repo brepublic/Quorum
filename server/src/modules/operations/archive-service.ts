@@ -17,6 +17,9 @@ interface ArchiveSection {
 }
 
 export const ARCHIVE_SECTIONS: readonly ArchiveSection[] = Object.freeze([
+  {name: 'crisis_settings',query: `SELECT crisis_auto_start_delay_minutes FROM committees WHERE id=$1`},
+  {name: 'crisis_groups',query: `SELECT * FROM crisis_groups WHERE committee_id=$1 ORDER BY meeting_session_id,ordinal`},
+  {name: 'crisis_updates',query: `SELECT * FROM crisis_updates WHERE committee_id=$1 ORDER BY group_id,ordinal`},
   {name: 'committee_memberships', query: `SELECT user_id,status,joined_at,updated_at FROM committee_memberships WHERE committee_id=$1 ORDER BY user_id`},
   {name: 'committee_chairs', query: `SELECT user_id,granted_at,revoked_at FROM committee_capabilities WHERE committee_id=$1 ORDER BY user_id`},
   {name: 'committee_seats', query: `SELECT id,stable_key,display_name,flag_type,flag_value,rank,can_vote,has_veto,must_vote,sort_order,active,revision,created_at,updated_at FROM committee_seats WHERE committee_id=$1 ORDER BY sort_order,id`},

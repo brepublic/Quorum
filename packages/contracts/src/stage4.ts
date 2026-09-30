@@ -340,6 +340,9 @@ export interface CommitteeWorkspaceSnapshot {
   motionSettings: import('./stage3.js').CommitteeMotionSettings;
   layoutSettings: {moveQueueUp: boolean; timersInSeparateColumns: boolean};
   timers?: import('./stage5.js').AuthoritativeTimer[];
+  crises?: import('./crises.js').CrisisGroup[];
+  crisisAutoStartDelayMinutes?: number;
+  nextCrisisGroupOrdinal?: number;
   speakerLists?: import('./stage5.js').SpeakerList[];
   motions?: import('./stage5.js').ProceedingMotion[];
   ballots?: import('./stage5.js').FormalBallot[];

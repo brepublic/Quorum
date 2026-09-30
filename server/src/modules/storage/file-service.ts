@@ -343,6 +343,8 @@ export class Stage6FileService {
       if (!located) throw new AppError({code: 'NOT_FOUND', message: 'File not found.'});
       const committee = await lockedCommittee(client, located.committee_id);
       const entry = await this.entryForUpdate(client, id);
+      if (next === 'PUBLISHED' && (await client.query("SELECT 1 FROM delegate_file_metadata WHERE file_entry_id=$1 AND file_type='CRISIS_NOTICE'",[id])).rowCount)
+        throw new AppError({code: 'RESOURCE_CONFLICT',reason: 'CRISIS_PUBLICATION_REQUIRED',message: 'Publish from the crisis card.'});
       requireProceedingsActive(committee);
       if (entry.revision !== baseRevision) {
         throw new AppError({code: 'REVISION_CONFLICT', message: 'This file changed since it was loaded.',

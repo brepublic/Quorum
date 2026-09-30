@@ -2,7 +2,7 @@ import {Stage8DeletionService} from '../operations/deletion-service';
 import {testCommitteeInput} from '../../test/committee-fixture';
 // @vitest-environment node
 
-import {randomUUID} from 'node:crypto';
+import {createHash, randomUUID} from 'node:crypto';
 import {resolve} from 'node:path';
 import pg from 'pg';
 import {afterEach, beforeEach, describe, expect, it} from 'vitest';
@@ -101,6 +101,199 @@ async function meetingEndFixture() {
   return {committee, session, generalList, firstChair, firstDelegate, firstSeat};
 }
 
+async function testCrisisNotice(f: Awaited<ReturnType<typeof meetingEndFixture>>, name = 'Crisis Notice 1.1.1') {
+  const storage = new Stage6StorageService(pool!);
+  const snapshot = await stage4.snapshot(f.committee.id,f.firstChair);
+  let binding = (await storage.listBindings(f.firstChair,f.committee.id)).find(binding => binding.status === 'ACTIVE');
+  if (!binding) binding = await storage.createServerVolumeBinding(f.firstChair,f.committee.id,{baseRevision: snapshot.committee.revision},randomUUID(),context('crisis-binding'));
+  const content = 'Verified crisis notice';
+  const file = await storage.recordProviderCommit(f.firstChair,f.committee.id,{bindingId: binding.id,logicalName: name,
+    originalName: 'unrelated-999.999.999.pdf',mediaType: 'application/pdf',sizeBytes: Buffer.byteLength(content),
+    sha256: createHash('sha256').update(content).digest('hex'),storageKey: `blobs/${randomUUID().replaceAll('-','')}`},randomUUID(),context('crisis-notice'));
+  await pool!.query("UPDATE delegate_file_metadata SET file_type='CRISIS_NOTICE' WHERE file_entry_id=$1",[file.id]);
+  return file;
+}
+
+async function preparedTestCrisis(f: Awaited<ReturnType<typeof meetingEndFixture>>, name = 'Crisis Notice 1.1.1') {
+  const file = await testCrisisNotice(f,name);
+  const imported = await stage5.importCrisisNotice(f.firstChair,file.id,{baseRevision: file.revision},randomUUID(),context('crisis-import'));
+  const group = (await stage4.snapshot(f.committee.id,f.firstChair)).crises!.find(group => group.id === imported.groupId)!;
+  return stage5.updateCrisisCard(f.firstChair,imported.updateId,{baseRevision: group.updates[0]!.revision,title: 'Harbor blockade',handlingDurationMs: 1800000},context('crisis-edit'));
+}
+async function publishedTestCrisis(f: Awaited<ReturnType<typeof meetingEndFixture>>, name = 'Crisis Notice 1.1.1') {
+  const group = await preparedTestCrisis(f,name);
+  return stage5.publishCrisis(f.firstChair,group.updates[0]!.id,{baseRevision: group.updates[0]!.revision},randomUUID(),context('crisis-publish'));
+}
+
+integration('PostgreSQL crisis lifecycle', () => {
+  it('serializes two chairs creating updates and hides unpublished notices from public snapshots',async () => {
+    const f = await meetingEndFixture();
+    const second = await user('crisis-second-chair');
+    await stage3.setChair(f.firstChair,f.committee.id,second.user.email,true,(await stage4.snapshot(f.committee.id,f.firstChair)).committee.revision,context('grant-crisis-chair'));
+    const group = await publishedTestCrisis(f);
+    const results = await Promise.allSettled([f.firstChair,second].map(auth => stage5.createCrisisUpdate(auth,group.id,{baseRevision: group.revision},randomUUID(),context('concurrent-update'))));
+    expect(results.filter(result => result.status==='fulfilled')).toHaveLength(1);
+    expect((await pool!.query("SELECT count(*)::int AS n FROM crisis_updates WHERE group_id=$1 AND status='UNPUBLISHED'",[group.id])).rows[0].n).toBe(1);
+    const view = await stage4.snapshot(f.committee.id);
+    expect(view.crises![0]!.updates).toHaveLength(1);
+    expect(view.crises![0]!.updates[0]!.status).toBe('PENDING');
+  });
+
+  it('validates system names, corrects jumps, repeats imports, and replaces only unpublished notices',async () => {
+    const f = await meetingEndFixture();
+    const file = await testCrisisNotice(f,'Crisis Notice 1.3.1');
+    await expect(stage5.previewCrisisNotice(f.firstChair,file.id)).rejects.toMatchObject({reason: 'CRISIS_NUMBER_MISMATCH',params: {session: 1,group: 1,update: 1}});
+    const renamed = await stage5.saveCrisisNoticeName(f.firstChair,file.id,{baseRevision: file.revision,logicalName: 'Crisis Notice 1.1.1'},context('fix-number'));
+    const first = await stage5.importCrisisNotice(f.firstChair,file.id,{baseRevision: renamed.revision},'repeat-import',context('first-import'));
+    expect(await stage5.importCrisisNotice(f.firstChair,file.id,{baseRevision: renamed.revision},'repeat-import',context('repeat-import'))).toEqual(first);
+    expect(await stage5.importCrisisNotice(f.firstChair,file.id,{baseRevision: renamed.revision},'another-import',context('duplicate-import'))).toEqual(first);
+    let group = (await stage4.snapshot(f.committee.id,f.firstChair)).crises![0]!;
+    group = await stage5.updateCrisisCard(f.firstChair,first.updateId,{baseRevision: group.updates[0]!.revision,title: 'Keep title',handlingDurationMs: 60000},context('edit-before-replace'));
+    const replacement = await testCrisisNotice(f);
+    expect(await stage5.previewCrisisNotice(f.firstChair,replacement.id)).toMatchObject({replacement: {id: file.id}});
+    await expect(stage5.importCrisisNotice(f.firstChair,replacement.id,{baseRevision: replacement.revision},'unconfirmed-replace',context('no-replace'))).rejects.toMatchObject({reason: 'CRISIS_NOTICE_CONFLICT'});
+    await stage5.importCrisisNotice(f.firstChair,replacement.id,{baseRevision: replacement.revision,replaceNoticeId: file.id},'confirmed-replace',context('replace'));
+    group = (await stage4.snapshot(f.committee.id,f.firstChair)).crises![0]!;
+    expect(group.updates[0]).toMatchObject({id: first.updateId,ordinal: 1,title: 'Keep title',handlingDurationMs: 60000,notice: {id: replacement.id}});
+    expect((await pool!.query('SELECT status FROM file_entries WHERE id=$1',[file.id])).rows[0].status).toBe('PENDING_REVIEW');
+    await stage5.publishCrisis(f.firstChair,first.updateId,{baseRevision: group.updates[0]!.revision},'publish-replaced',context('publish-replaced'));
+    await expect(stage5.previewCrisisNotice(f.firstChair,file.id)).rejects.toMatchObject({reason: 'CRISIS_NUMBER_MISMATCH',params: {update: 2}});
+    const missing = await testCrisisNotice(f,'Crisis Notice 99.1.1');
+    await expect(stage5.previewCrisisNotice(f.firstChair,missing.id)).rejects.toMatchObject({reason: 'CRISIS_SESSION_MISSING'});
+  });
+
+  it('rolls publication back completely and does not reset a timer on retry',async () => {
+    const f = await meetingEndFixture(); const group = await preparedTestCrisis(f); const card = group.updates[0]!;
+    await pool!.query(`CREATE FUNCTION fail_crisis_publish() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+      IF NEW.action='storage.file_published' THEN RAISE EXCEPTION 'Injected failure'; END IF; RETURN NEW; END $$;
+      CREATE TRIGGER fail_crisis_publish BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION fail_crisis_publish()`);
+    await expect(stage5.publishCrisis(f.firstChair,card.id,{baseRevision: card.revision},'rollback-publish',context('rollback-publish'))).rejects.toThrow('Injected failure');
+    expect((await stage4.snapshot(f.committee.id,f.firstChair)).crises![0]).toMatchObject({revision: group.revision,autoStartAt: null,timer: {revision: group.timer.revision,running: false,remainingMs: 0},updates: [{status: 'UNPUBLISHED',revision: card.revision,notice: {status: 'PENDING_REVIEW'}}]});
+    await pool!.query('DROP TRIGGER fail_crisis_publish ON audit_log; DROP FUNCTION fail_crisis_publish()');
+    const published = await stage5.publishCrisis(f.firstChair,card.id,{baseRevision: card.revision},'rollback-publish',context('retry-publish'));
+    const started = await stage5.commandTimer(f.firstChair,published.timer.id,'start',{baseRevision: published.timer.revision},context('manual-start'));
+    await stage5.publishCrisis(f.firstChair,card.id,{baseRevision: card.revision},'rollback-publish',context('duplicate-publish'));
+    expect((await stage4.snapshot(f.committee.id,f.firstChair)).crises![0]!.timer.revision).toBe(started.revision);
+  });
+
+  it('restores overdue automatic starts from durable plans and handles all three settings',async () => {
+    const f = await meetingEndFixture(); let clock = new Date(); stage5 = new Stage5Service(pool!,()=>clock);
+    const group = await publishedTestCrisis(f); expect(group.autoStartAt).not.toBeNull();
+    let snapshot = await stage4.snapshot(f.committee.id,f.firstChair);
+    await stage5.setCrisisAutoStartDelay(f.firstChair,f.committee.id,{baseRevision: snapshot.committee.revision,minutes: 0},context('immediate-setting'));
+    expect((await stage4.snapshot(f.committee.id,f.firstChair)).crises![0]!.autoStartAt).toBe(group.autoStartAt);
+    clock = new Date(clock.getTime()+330000); stage5 = new Stage5Service(pool!,()=>clock);
+    await stage5.processCrisisAutoStarts();
+    const restored = (await pool!.query('SELECT running,started_at,remaining_at_start_ms FROM timer_states WHERE id=$1',[group.timer.id])).rows[0];
+    expect(restored).toMatchObject({running: true,remaining_at_start_ms: '1800000'});
+    expect(restored.started_at.toISOString()).toBe(group.autoStartAt);
+    const immediate = await publishedTestCrisis(f,'Crisis Notice 1.2.1'); expect(immediate.timer.running).toBe(true);
+    snapshot = await stage4.snapshot(f.committee.id,f.firstChair);
+    await stage5.setCrisisAutoStartDelay(f.firstChair,f.committee.id,{baseRevision: snapshot.committee.revision,minutes: -1},context('manual-setting'));
+    const manual = await publishedTestCrisis(f,'Crisis Notice 1.3.1'); expect(manual).toMatchObject({autoStartAt: null,timer: {running: false}});
+    const paused = await stage5.commandTimer(f.firstChair,immediate.timer.id,'pause',{baseRevision: immediate.timer.revision},context('pause-manual'));
+    clock = new Date(clock.getTime()+3600000); await stage5.processCrisisAutoStarts();
+    expect((await pool!.query('SELECT running,revision FROM timer_states WHERE id=$1',[paused.id])).rows[0]).toMatchObject({running: false,revision: paused.revision});
+  });
+
+  it('invalidates unfinished directives, preserves votes, and makes completed old-version corrections historical',async () => {
+    const f = await meetingEndFixture(); const group = await publishedTestCrisis(f);
+    const make = async (name: string) => {
+      let d = await stage5.createResolution(f.firstChair,f.committee.id,{meetingSessionId: f.session.id,draftType: 'DIRECTIVE',content: name,customTitle: null},name,context(name));
+      d = await stage5.updateDocumentSettings(f.firstChair,d.id,{baseRevision: d.revision,crisisGroupId: group.id},context('directive-link'));
+      return stage5.startDocumentVote(f.firstChair,d.id,{baseRevision: d.revision},randomUUID(),context('directive-start'));
+    };
+    let completed = await make('completed-old'); const unfinished = await make('unfinished-old');
+    completed = await stage5.setResolutionDirectVote(f.firstChair,completed.id,{seatId: f.firstSeat.id,choice: 'AGAINST'},context('old-failed'));
+    const next = await preparedTestCrisis(f,'Crisis Notice 1.1.2');
+    expect((await stage4.snapshot(f.committee.id,f.firstChair)).documents!.find(d=>d.id===unfinished.id)!.directVote!.invalidatedAt).toBeNull();
+    await stage5.publishCrisis(f.firstChair,next.updates[0]!.id,{baseRevision: next.updates[0]!.revision},'update-publish',context('update-publish'));
+    await expect(stage5.setResolutionDirectVote(f.firstChair,unfinished.id,{seatId: f.firstSeat.id,choice: 'FOR'},context('invalid-vote'))).rejects.toMatchObject({reason: 'CRISIS_UPDATED'});
+    await stage5.setResolutionDirectVote(f.firstChair,completed.id,{seatId: f.firstSeat.id,choice: 'FOR'},context('historical-correction'));
+    const snapshot = await stage4.snapshot(f.committee.id,f.firstChair);
+    expect(snapshot.crises![0]).toMatchObject({endedAt: null,updates: [{status: 'PENDING'},{status: 'SUPERSEDED'}]});
+    expect(snapshot.documents!.find(d=>d.id===completed.id)!.status).toBe('PASSED');
+    await expect(stage5.createAmendment(f.firstChair,completed.id,{meetingSessionId: f.session.id,onBehalfOfSeatId: f.firstSeat.id,amendmentType: 'FRIENDLY',content: '',customTitle: null},'directive-amendment',context('directive-amendment'))).rejects.toMatchObject({reason: 'DIRECTIVE_AMENDMENTS_FORBIDDEN'});
+  });
+
+  it('requires atomic confirmation to end all unfinished groups and pause the committee',async () => {
+    const f = await meetingEndFixture(); await publishedTestCrisis(f); await preparedTestCrisis(f,'Crisis Notice 1.2.1');
+    const snapshot = await stage4.snapshot(f.committee.id,f.firstChair);
+    await expect(stage3.setCommitteeStatus(f.firstChair,f.committee.id,'PAUSED',snapshot.committee.revision,context('pause-without-ending'))).rejects.toMatchObject({reason: 'CRISIS_PAUSE_CONFIRMATION'});
+    expect((await stage4.snapshot(f.committee.id,f.firstChair)).committee.status).toBe('ACTIVE');
+    await stage3.setCommitteeStatus(f.firstChair,f.committee.id,'PAUSED',snapshot.committee.revision,context('end-and-pause'),true);
+    const paused = await stage4.snapshot(f.committee.id,f.firstChair);
+    expect(paused.committee.status).toBe('PAUSED');
+    expect(paused.crises!.every(g=>g.endedAt && !g.autoStartAt && !g.timer.running && g.updates.every(u=>u.status==='ENDED'))).toBe(true);
+    expect(paused.crises!.find(g=>g.ordinal===2)!.updates[0]!.notice!.status).toBe('PENDING_REVIEW');
+  });
+
+  it('orders simultaneous publication and complete vote submission under the same committee lock',async()=> {
+    const f=await meetingFixture(); const group=await publishedTestCrisis(f);
+    let directive=await stage5.createResolution(f.firstChair,f.committee.id,{meetingSessionId:f.session.id,draftType:'DIRECTIVE',content:'Respond',customTitle:null},randomUUID(),context('race-directive'));
+    directive=await stage5.updateDocumentSettings(f.firstChair,directive.id,{baseRevision:directive.revision,crisisGroupId:group.id},context('race-link'));
+    directive=await stage5.startDocumentVote(f.firstChair,directive.id,{baseRevision:directive.revision},randomUUID(),context('race-start'));
+    const next=await preparedTestCrisis(f,'Crisis Notice 1.1.2'); const card=next.updates[0]!;
+    const vote=directive.directVote!;
+    const outcomes=await Promise.allSettled([
+      stage5.publishCrisis(f.firstChair,card.id,{baseRevision:card.revision},randomUUID(),context('race-publish')),
+      stage5.submitResolutionDirectVote(f.firstChair,directive.id,{baseDocumentRevision:directive.revision,baseSettingsRevision:vote.settingsRevision,
+        baseCastRevision:vote.castRevision,eligibility:vote.eligibility,votes:vote.eligibility.map(seat=>({seatId:seat.seatId,choice:'FOR'}))},randomUUID(),context('race-submit'))
+    ]);
+    expect(outcomes.filter(result=>result.status==='fulfilled')).toHaveLength(1);
+    const snapshot=await stage4.snapshot(f.committee.id,f.firstChair);
+    const saved=snapshot.documents!.find(d=>d.id===directive.id)!;
+    if(outcomes[0]!.status==='fulfilled') {
+      expect(outcomes[1]).toMatchObject({status:'rejected',reason:{reason:'CRISIS_UPDATED'}});
+      expect(snapshot.crises![0]!.endedAt).toBeNull();expect(saved.directVote!.votes).toHaveLength(0);
+    } else {
+      expect(outcomes[0]).toMatchObject({status:'rejected',reason:{reason:'CRISIS_GROUP_ENDED'}});
+      expect(snapshot.crises![0]!.updates.every(update=>update.status==='ENDED')).toBe(true);
+      expect(saved).toMatchObject({status:'PASSED',directVote:{completedAt:expect.any(String)}});
+      await stage5.setResolutionDirectVote(f.firstChair,directive.id,{seatId:f.firstSeat.id,choice:'AGAINST'},context('race-correction'));
+      const restored=(await stage4.snapshot(f.committee.id,f.firstChair)).crises![0]!;
+      expect(restored).toMatchObject({endedAt:null,autoStartAt:null,timer:{running:false},updates:[{status:'UNPUBLISHED'},{status:'PENDING'}]});
+    }
+  });
+
+  it('preserves partial saved votes on invalidation and never restarts after a manual pause',async()=> {
+    const f=await meetingFixture();const group=await publishedTestCrisis(f);
+    let d=await stage5.createResolution(f.firstChair,f.committee.id,{meetingSessionId:f.session.id,draftType:'DIRECTIVE',content:'Respond',customTitle:null},randomUUID(),context('partial-directive'));
+    d=await stage5.updateDocumentSettings(f.firstChair,d.id,{baseRevision:d.revision,crisisGroupId:group.id},context('partial-link'));
+    d=await stage5.startDocumentVote(f.firstChair,d.id,{baseRevision:d.revision},randomUUID(),context('partial-start'));
+    d=await stage5.setResolutionDirectVote(f.firstChair,d.id,{seatId:f.firstSeat.id,choice:'FOR'},context('partial-vote'));
+    expect(d.directVote!.completedAt).toBeNull();
+    let timer=await stage5.commandTimer(f.firstChair,group.timer.id,'start',{baseRevision:group.timer.revision},context('manual-start'));
+    timer=await stage5.commandTimer(f.firstChair,timer.id,'pause',{baseRevision:timer.revision},context('manual-pause'));
+    const later=new Stage5Service(pool!,()=>new Date(Date.now()+3600000));await later.processCrisisAutoStarts();
+    expect((await stage4.snapshot(f.committee.id,f.firstChair)).crises![0]).toMatchObject({autoStartAt:null,timer:{running:false,revision:timer.revision}});
+    const next=await preparedTestCrisis(f,'Crisis Notice 1.1.2');await stage5.publishCrisis(f.firstChair,next.updates[0]!.id,{baseRevision:next.updates[0]!.revision},randomUUID(),context('partial-update'));
+    const invalid=(await stage4.snapshot(f.committee.id,f.firstChair)).documents!.find(doc=>doc.id===d.id)!;
+    expect(invalid).toMatchObject({status:'FAILED',directVote:{invalidatedAt:expect.any(String),votes:[{seatId:f.firstSeat.id,choice:'FOR'}]}});
+  });
+
+  it('allows a new session directive to end an earlier group and retains closure while another effective directive passes',async()=> {
+    const f=await meetingFixture();const group=await publishedTestCrisis(f);
+    await stage4.closeMeetingSession(f.firstChair,f.session.id,{baseRevision:f.session.revision},context('crisis-next-session'));
+    const session=await stage4.startMeetingSession(f.firstChair,f.committee.id,{},context('crisis-new-session'),randomUUID());
+    for(const seat of [f.firstSeat,f.secondSeat]) await stage4.createAttendanceEvent(f.firstChair,f.committee.id,{meetingSessionId:session.id,seatId:seat.id,type:'PRESENT'},context('crisis-present'));
+    const make=async()=> {
+      let d=await stage5.createResolution(f.firstChair,f.committee.id,{meetingSessionId:session.id,draftType:'DIRECTIVE',content:'Respond',customTitle:null},randomUUID(),context('cross-session-directive'));
+      d=await stage5.updateDocumentSettings(f.firstChair,d.id,{baseRevision:d.revision,crisisGroupId:group.id},context('cross-session-link'));
+      d=await stage5.startDocumentVote(f.firstChair,d.id,{baseRevision:d.revision},randomUUID(),context('cross-session-start'));
+      for(const seat of [f.firstSeat,f.secondSeat]) d=await stage5.setResolutionDirectVote(f.firstChair,d.id,{seatId:seat.id,choice:'AGAINST'},context('cross-session-failed'));
+      return d;
+    };
+    const first=await make(),second=await make();
+    await stage5.createCrisisUpdate(f.firstChair,group.id,{baseRevision:group.revision},randomUUID(),context('draft-before-end'));
+    for(const d of [first,second]) for(const seat of [f.firstSeat,f.secondSeat]) await stage5.setResolutionDirectVote(f.firstChair,d.id,{seatId:seat.id,choice:'FOR'},context('cross-session-passed'));
+    await stage5.setResolutionDirectVote(f.firstChair,first.id,{seatId:f.firstSeat.id,choice:'AGAINST'},context('first-corrected'));
+    expect((await stage4.snapshot(f.committee.id,f.firstChair)).crises![0]!.endedAt).not.toBeNull();
+    await stage5.setResolutionDirectVote(f.firstChair,second.id,{seatId:f.firstSeat.id,choice:'AGAINST'},context('second-corrected'));
+    expect((await stage4.snapshot(f.committee.id,f.firstChair)).crises![0]).toMatchObject({sessionOrdinal:1,endedAt:null,autoStartAt:null,timer:{running:false},updates:[{status:'UNPUBLISHED'},{status:'PENDING'}]});
+  });
+});
+
 integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
   it('creates independent directive entries and one persistent vote with corrections', async () => {
     const f = await meetingEndFixture();
@@ -112,6 +305,10 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
     expect(resolution).toMatchObject({ordinal: 1, title: 'Draft Resolution 1.1'});
     expect(directive).toMatchObject({ordinal: 1, draftType: 'DIRECTIVE', title: 'Draft Directive 1.1'});
     expect(next).toMatchObject({ordinal: 2, title: 'Draft Directive 1.2'});
+    await expect(stage5.startDocumentVote(f.firstChair,directive.id,{baseRevision: directive.revision},'no-crisis',context('no-crisis')))
+      .rejects.toMatchObject({reason: 'CRISIS_ASSOCIATION_REQUIRED'});
+    const crisis = await publishedTestCrisis(f);
+    directive = await stage5.updateDocumentSettings(f.firstChair,directive.id,{baseRevision: directive.revision,crisisGroupId: crisis.id},context('link-crisis'));
     directive = await stage5.updateDocumentSettings(f.firstChair, directive.id,
       {baseRevision: directive.revision, proposerSeatIds: [f.firstSeat.id]}, context('directive-country'));
     const starts = await Promise.all([1,2].map(index => stage5.startDocumentVote(f.firstChair, directive.id,
@@ -127,10 +324,12 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
       {baseDocumentRevision: directive.revision, baseSettingsRevision: vote.settingsRevision, baseCastRevision: vote.castRevision,
         eligibility: vote.eligibility, votes: [{seatId: f.firstSeat.id, choice: 'FOR'}]}, 'directive-submit', context('directive-submit'));
     expect(directive.directVote).toMatchObject({automaticResult: 'PASSED', votes: [{choice: 'FOR'}]});
+    expect((await stage4.snapshot(f.committee.id,f.firstChair)).crises![0]).toMatchObject({endedAt: expect.any(String),timer: {running: false},updates: [{status: 'ENDED'}]});
     const completedAt = directive.directVote!.completedAt;
     directive = await stage5.setResolutionDirectVote(f.firstChair, directive.id,
       {seatId: f.firstSeat.id, choice: 'AGAINST'}, context('directive-correct'));
     expect(directive.directVote).toMatchObject({automaticResult: 'FAILED', completedAt, votes: [{choice: 'AGAINST'}]});
+    expect((await stage4.snapshot(f.committee.id,f.firstChair)).crises![0]).toMatchObject({endedAt: null,autoStartAt: null,timer: {running: false},updates: [{status: 'PENDING'}]});
     expect((await pool!.query('SELECT count(*)::int AS count FROM document_voting WHERE document_id=$1', [directive.id])).rows[0].count).toBe(1);
   });
 

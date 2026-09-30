@@ -266,6 +266,7 @@ export class DelegateFileService {
     const session = await this.authenticate(credential);
     await this.assertMayUpload(session);
     const type = fileType(body.fileType); const uploadBody = {...body}; delete uploadBody.fileType;
+    if (type === 'CRISIS_NOTICE') throw new AppError({code: 'FORBIDDEN',reason: 'CHAIR_REQUIRED',message: 'Only chairs upload crisis notices.'});
     const settings = (await this.pool.query('SELECT delegate_file_settings FROM committees WHERE id=$1', [session.committee_id])).rows[0].delegate_file_settings as DelegateFileSettings;
     const extensions = settings.allowedExtensions[isCustomDelegateFileType(type) ? 'OTHER' : type];
     if (typeof body.originalName !== 'string' || !isAllowedDelegateFile(body.originalName, extensions)) {
@@ -315,6 +316,8 @@ export class DelegateFileService {
     if (!located) throw new AppError({code: 'NOT_FOUND', message: 'File not found.'});
     const committee = await this.requireManager(client, located.committee_id, auth.user.id, true);
     const entry = (await client.query(`SELECT * FROM file_entries WHERE id=$1 FOR UPDATE`, [fileId])).rows[0];
+    if (type === 'CRISIS_NOTICE' || (await client.query("SELECT 1 FROM delegate_file_metadata WHERE file_entry_id=$1 AND file_type='CRISIS_NOTICE'",[fileId])).rowCount)
+      throw new AppError({code: 'RESOURCE_CONFLICT',reason: 'CRISIS_PUBLICATION_REQUIRED',message: 'Publish from the crisis card.'});
     if (!entry || entry.status === 'DELETED' || entry.merged_into_file_entry_id)
       throw new AppError({code: 'NOT_FOUND', message: 'File not found.'});
     if (entry.revision !== revision) throw new AppError({code: 'REVISION_CONFLICT',
@@ -328,6 +331,8 @@ export class DelegateFileService {
       AND status<>'DELETED' AND id<>$3 FOR UPDATE`, [committee.id, logicalName, fileId])).rows[0];
     const token = target ? createHash('sha256').update(JSON.stringify([fileId, revision, entry.current_version_id,
       version.hash, logicalName, type, target.id, target.revision, target.current_version_id])).digest('hex') : null;
+    if (target && (await client.query("SELECT 1 FROM delegate_file_metadata WHERE file_entry_id=$1 AND file_type='CRISIS_NOTICE'",[target.id])).rowCount)
+      throw new AppError({code: 'RESOURCE_CONFLICT',reason: 'CRISIS_PUBLICATION_REQUIRED',message: 'Create the next crisis update.'});
     return {committee, entry, version, target, token, logicalName, type};
   }
 
@@ -424,6 +429,8 @@ export class DelegateFileService {
         const entry = (await client.query<{committee_id: string; status: string; revision: number; created_at: Date}>(
           'SELECT * FROM file_entries WHERE id=$1 FOR UPDATE', [fileId])).rows[0];
         if (!entry) throw new AppError({code: 'NOT_FOUND', message: 'File not found.'});
+        if (type === 'CRISIS_NOTICE' || (await client.query("SELECT 1 FROM delegate_file_metadata WHERE file_entry_id=$1 AND file_type='CRISIS_NOTICE'",[fileId])).rowCount)
+          throw new AppError({code: 'RESOURCE_CONFLICT',reason: 'CRISIS_PUBLICATION_REQUIRED',message: 'Use the crisis card.'});
         if (entry.revision !== revision) throw new AppError({code: 'REVISION_CONFLICT', message: 'This file changed since it was loaded.'});
         if (!['UPLOAD_COMPLETE', 'PENDING_REVIEW'].includes(entry.status)) throw new AppError({reason: 'FILE_NOT_PENDING_REVIEW', code: 'RESOURCE_CONFLICT', message: 'File status does not allow rejection.'});
         const settings = await this.readSettings(client, committee.id);
@@ -672,8 +679,9 @@ export class DelegateFileService {
   }
 
   private reviewFile(file: FileEntry, metadata?: MetadataRow): DelegateReviewFile {
+    const crisisNameEdited = metadata?.crisis_name_edited === true;
     return {id: file.id, logicalName: file.logicalName, submitterDisplayName: file.submitterDisplayName ?? null,
-      fileType: file.fileType ?? null, submittedAt: file.submittedAt ?? metadata?.submitted_at?.toISOString() ?? null,
+      crisisNameEdited,fileType: file.fileType ?? null, submittedAt: file.submittedAt ?? metadata?.submitted_at?.toISOString() ?? null,
       publishedAt: file.publishedAt ?? '', revision: file.revision,
       status: file.status as DelegateReviewFile['status'], submissionSource: file.submissionSource ?? 'LEGACY',
       originalName: file.currentVersion.originalName, sizeBytes: file.currentVersion.sizeBytes,

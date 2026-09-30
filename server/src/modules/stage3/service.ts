@@ -1,4 +1,6 @@
 import {Stage4Service} from '../stage4/service.js';
+import {closeCrisisGroup} from '../stage5/crises.js';
+import type {Stage4CommitteeRow} from '../stage4/database.js';
 import {ruleLanguageAvailability} from '@quorum/rule-schema';
 import type {ContentLanguage} from '@quorum/contracts';
 import {createHash, randomUUID} from 'node:crypto';
@@ -24,7 +26,7 @@ import type {AuthenticatedSession} from '../identity/store.js';
 type Context = {requestId: string; sourceIp?: string; userAgent?: string};
 type Audience = 'PUBLIC' | 'MEMBER' | 'CHAIR' | 'OWNER';
 
-interface CommitteeRow extends QueryResultRow {
+interface CommitteeRow extends Stage4CommitteeRow {
   committee_language: ContentLanguage;
   id: string; owner_user_id: string; name: string; chair_label: string; topic: string; conference: string;
   visibility: CommitteeVisibility; operation_mode: CommitteeOperationMode;
@@ -564,7 +566,7 @@ export class Stage3Service {
   }
 
   async setCommitteeStatus(auth: AuthenticatedSession, committeeId: string, status: unknown, baseRevision: number,
-    context: Context): Promise<CommitteeSummary> {
+    context: Context, endCrises = false): Promise<CommitteeSummary> {
     requireBusinessIdentity(auth);
     if (!['ACTIVE', 'PAUSED'].includes(status as string)) {
       throw new AppError({reason: 'INVALID_COMMITTEE_STATUS', code: 'VALIDATION_FAILED', message: 'Committee status is invalid.'});
@@ -572,6 +574,11 @@ export class Stage3Service {
     return transaction(this.pool, async client => {
       const row = await lockedCommittee(client, committeeId); await requireChair(client, row, auth.user.id);
       requireEditable(row); revision(row, baseRevision);
+      if (status === 'PAUSED') {
+        const unfinished = (await client.query('SELECT id FROM crisis_groups WHERE committee_id=$1 AND ended_at IS NULL ORDER BY id',[committeeId])).rows;
+        if (unfinished.length && !endCrises) throw new AppError({code: 'RESOURCE_CONFLICT',reason: 'CRISIS_PAUSE_CONFIRMATION',message: 'Confirm ending unfinished crises.'});
+        for (const group of unfinished) await closeCrisisGroup(client,row,group.id,auth.user.id,context,new Date(),true);
+      }
       const updated = await client.query<CommitteeRow>(`UPDATE committees SET status=$2,revision=revision+1,
         updated_at=now() WHERE id=$1 RETURNING *`, [committeeId, status]);
       const changed = updated.rows[0] as CommitteeRow;

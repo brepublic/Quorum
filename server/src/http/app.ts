@@ -950,6 +950,35 @@ async function handleStage5Request(options: {
   const {request, response, pathname, requestId, identity, stage5, allowedOrigins} = options;
   const method = request.method ?? 'GET'; const context = identityContext(request, requestId);
   const write = async () => { requireOrigin(request, allowedOrigins); return authenticatedWrite(request, identity); };
+  const crisisCreate = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/crises$/.exec(pathname);
+  if (method === 'POST' && crisisCreate) {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response,201,success(await stage5.createCrisis(auth,crisisCreate[1]!,body,idempotencyKey(request),context),requestId)); return true;
+  }
+  const crisisUpdates = /^\/api\/v1\/crises\/([0-9a-f-]{36})\/updates$/.exec(pathname);
+  if (method === 'POST' && crisisUpdates) {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response,201,success(await stage5.createCrisisUpdate(auth,crisisUpdates[1]!,body,idempotencyKey(request),context),requestId)); return true;
+  }
+  const crisisCard = /^\/api\/v1\/crisis-updates\/([0-9a-f-]{36})(\/publish)?$/.exec(pathname);
+  if (method === 'POST' && crisisCard) {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response,200,success(crisisCard[2] ? await stage5.publishCrisis(auth,crisisCard[1]!,body,idempotencyKey(request),context)
+      : await stage5.updateCrisisCard(auth,crisisCard[1]!,body,context),requestId)); return true;
+  }
+  const crisisNotice = /^\/api\/v1\/files\/([0-9a-f-]{36})\/crisis(?:-(name|preview))?$/.exec(pathname);
+  if (method === 'POST' && crisisNotice) {
+    const auth = await write(); const body = await readJson(request);
+    const result = crisisNotice[2] === 'name' ? await stage5.saveCrisisNoticeName(auth,crisisNotice[1]!,body,context)
+      : crisisNotice[2] === 'preview' ? await stage5.previewCrisisNotice(auth,crisisNotice[1]!)
+        : await stage5.importCrisisNotice(auth,crisisNotice[1]!,body,idempotencyKey(request),context);
+    sendJson(response,200,success(result,requestId)); return true;
+  }
+  const crisisSettings = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/crisis-settings$/.exec(pathname);
+  if (method === 'POST' && crisisSettings) {
+    const auth = await write(); const body = await readJson(request);
+    sendJson(response,200,success(await stage5.setCrisisAutoStartDelay(auth,crisisSettings[1]!,body,context),requestId)); return true;
+  }
   const timers = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/timers$/.exec(pathname);
   if (method === 'POST' && timers) {
     const auth = await write(); const body = await readJson(request);
@@ -1195,7 +1224,7 @@ async function handleStage3Request(options: {
   if (method === 'POST' && committeeStatus) {
     const auth = await write(); const body = await readJson(request);
     sendJson(response, 200, success(await stage3.setCommitteeStatus(auth, committeeStatus[1] as string,
-      body.status, integerField(body, 'baseRevision'), context), requestId)); return true;
+      body.status, integerField(body, 'baseRevision'), context, body.endCrises === true), requestId)); return true;
   }
 
   const seats = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/seats$/.exec(pathname);

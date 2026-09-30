@@ -28,6 +28,9 @@ interface BlockerRow extends QueryResultRow {
 }
 
 export const COMMITTEE_PURGE_QUERIES = [
+  `UPDATE document_voting SET crisis_group_id=NULL,crisis_update_id=NULL WHERE document_id IN (SELECT id FROM documents WHERE committee_id=$1)`,
+  `DELETE FROM crisis_updates WHERE committee_id=$1`,
+  `DELETE FROM crisis_groups WHERE committee_id=$1`,
   `DELETE FROM committee_deletion_agent_tasks WHERE deletion_job_id IN
     (SELECT id FROM committee_deletion_jobs WHERE committee_id=$1)`,
   `DELETE FROM storage_agent_conflict_applications WHERE conflict_id IN

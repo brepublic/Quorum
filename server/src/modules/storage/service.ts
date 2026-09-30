@@ -369,6 +369,8 @@ export class Stage6StorageService {
     const bindingId = uuid(input.bindingId, 'Storage binding ID');
     const requestedBlobId = input.blobId === undefined ? undefined : uuid(input.blobId, 'Blob ID');
     const fileEntryId = input.fileEntryId === undefined ? undefined : uuid(input.fileEntryId, 'File ID');
+    if (fileEntryId && (await client.query('SELECT 1 FROM crisis_updates WHERE notice_file_id=$1 AND published_at IS NOT NULL',[fileEntryId])).rowCount)
+      throw new AppError({code: 'RESOURCE_CONFLICT',reason: 'CRISIS_PUBLICATION_REQUIRED',message: 'Create a crisis update to change published content.'});
     const targetFileEntryId = input.targetFileEntryId === undefined
       ? undefined : uuid(input.targetFileEntryId, 'Target file ID');
     if (fileEntryId && targetFileEntryId) {
@@ -448,6 +450,8 @@ export class Stage6StorageService {
       file_type: string; submitted_at: Date}>(`SELECT * FROM delegate_file_upload_contexts WHERE upload_id=$1`,
     [uploadId])).rows[0] : undefined;
     const chair = committee.owner_user_id === auth.user.id || await isChair(client, committee.id, auth.user.id);
+    const chairType = uploadId ? (await client.query('SELECT chair_file_type FROM file_uploads WHERE id=$1',[uploadId])).rows[0]?.chair_file_type : null;
+    if (chairType === 'CRISIS_NOTICE' && !await isChair(client,committee.id,auth.user.id)) throw new AppError({code: 'FORBIDDEN',reason: 'CHAIR_REQUIRED',message: 'Only chairs upload crisis notices.'});
     const submittedAt = submission?.submitted_at ?? new Date();
     const source = submission ? 'DELEGATE_PORTAL' : chair ? 'CHAIR' : 'ACCOUNT';
     await client.query(`INSERT INTO delegate_file_metadata
@@ -457,7 +461,7 @@ export class Stage6StorageService {
         submitter_display_name=EXCLUDED.submitter_display_name,file_type=EXCLUDED.file_type,
         submitted_at=EXCLUDED.submitted_at,rejection_reason=NULL,rejected_at=NULL`,
     [id, source, submission?.seat_id ?? null, submission?.seat_display_name ?? (chair ? null : auth.user.displayName),
-      submission?.file_type ?? null, submittedAt]);
+      submission?.file_type ?? chairType ?? (await client.query('SELECT file_type FROM delegate_file_metadata WHERE file_entry_id=$1',[id])).rows[0]?.file_type ?? null, submittedAt]);
     entry = (await client.query<FileEntryRow>(`UPDATE file_entries SET submitted_at=$2,updated_at=now() WHERE id=$1 RETURNING *`, [id, submittedAt])).rows[0];
     await appendEvent(client, committee, {type: 'file.review_requested', resourceType: 'file_entry',
       resourceId: id, revision: entry!.revision, payload: {status: 'PENDING_REVIEW', submissionSource: source,
