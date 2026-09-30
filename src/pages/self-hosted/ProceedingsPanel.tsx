@@ -1819,8 +1819,13 @@ function VotingWorkspace({snapshot, run, api, canChair, resourceId}: CommonProps
             description: !item.currentVersion.contentFile && !item.currentVersion.content.trim() ? t('No content') : undefined}))
         ]) : [{key: 'empty', value: 'empty', text: t('(Empty)'), disabled: true, className: 'draft-empty'}]} /></Form.Field>
       {selectedDraft?.draftType==='DIRECTIVE' && <Form.Select fluid selection label={t('Responding to crisis')} aria-label={t('Responding to crisis')}
-        value={crisisId} disabled={!canChair || saving} options={activeCrises.map(group=>({key:group.id,value:group.id,
-          text:`${t('Crisis')} ${group.sessionOrdinal}.${group.ordinal}.${group.updates.find(update=>update.status==='PENDING')!.ordinal}`}))}
+        value={crisisId} disabled={!canChair || saving || Boolean(selectedDraft.directVote?.crisisGroupId)}
+        options={(selectedDraft.directVote?.crisisGroupId
+          ? (snapshot.crises ?? []).filter(group=>group.id===selectedDraft.directVote?.crisisGroupId) : activeCrises).map(group=> {
+          const update=group.updates.find(update=>selectedDraft.directVote?.crisisGroupId
+            ? update.id===selectedDraft.directVote.crisisUpdateId : update.status==='PENDING');
+          return {key:group.id,value:group.id,text:`${t('Crisis')} ${group.sessionOrdinal}.${group.ordinal}${update ? `.${update.ordinal}` : ''}`};
+        })}
         onChange={(_,data)=>setCrisisId(String(data.value))} />}
       <Button primary fluid loading={saving} disabled={!canChair || snapshot.committee.status!=='ACTIVE' || saving || !selectedDraft || selectedDraft.draftType==='DIRECTIVE' && !activeCrises.some(group=>group.id===crisisId)}>{t('Confirm vote')}</Button>
     </Form></Card.Content></Card>

@@ -153,7 +153,7 @@ describe('committee workspace routes and roles', () => {
   it.each([
     {association: 'unlinked', savedGroup: null, savedUpdate: null, savesAssociation: true},
     {association: 'already current', savedGroup: 'crisis', savedUpdate: 'crisis-update', savesAssociation: false},
-    {association: 'another group', savedGroup: 'other-crisis', savedUpdate: 'other-update', savesAssociation: true},
+    {association: 'another linked group', savedGroup: 'other-crisis', savedUpdate: 'other-update', savesAssociation: false},
     {association: 'an older update', savedGroup: 'crisis', savedUpdate: 'previous-update', savesAssociation: true}
   ])('groups draft entries numerically and creates the selected vote once when $association', async ({savedGroup, savedUpdate, savesAssociation}) => {
     const make = (id: string, ordinal: number, draftType: 'RESOLUTION' | 'DIRECTIVE' = 'RESOLUTION'): ProceedingDocument => ({
@@ -197,7 +197,10 @@ describe('committee workspace routes and roles', () => {
     const page = await render('CHAIR', '/committees/committee/votes/new', user, value => ({...value, documents,
       meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: 'Session 1', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1, createdAt: '2026-09-30T00:00:00Z', closedAt: null},
-      crises:[{id:'crisis',committeeId:'committee',sessionOrdinal:1,ordinal:1,endedAt:null,timer:{remainingMs:1800000,running:false},updates:[{id:'crisis-update',status:'PENDING',ordinal:1}]}] as CommitteeWorkspaceSnapshot['crises'],
+      crises:[{id:'crisis',committeeId:'committee',sessionOrdinal:1,ordinal:1,endedAt:null,timer:{remainingMs:1800000,running:false},
+        updates:[{id:'crisis-update',status:'PENDING',ordinal:2},{id:'previous-update',status:'SUPERSEDED',ordinal:1}]},
+        {id:'other-crisis',committeeId:'committee',sessionOrdinal:1,ordinal:2,endedAt:null,timer:{remainingMs:1800000,running:false},
+          updates:[{id:'other-update',status:'PENDING',ordinal:1}]}] as CommitteeWorkspaceSnapshot['crises'],
       meetingSessions: [{id: 'meeting', committeeId: 'committee', ordinal: 1, name: 'Session 1', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1, createdAt: '2026-09-30T00:00:00Z', closedAt: null}]}),
       {startDocumentVote, listFiles,updateDocumentSettings});
@@ -228,10 +231,17 @@ describe('committee workspace routes and roles', () => {
     });
     expect(page.querySelector('.draft-group-option.selected')?.textContent).toBe('DIRECTIVE 1.2');
     await act(async () => {select.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', keyCode: 13, bubbles: true}));});
-    expect(confirm.disabled).toBe(savedGroup!=='crisis');
+    expect(confirm.disabled).toBe(!savedGroup);
     const crisis=page.querySelector<HTMLElement>('[aria-label="Responding to crisis"]')!;
-    await act(async()=>crisis.click());
-    await act(async()=>crisis.querySelector<HTMLElement>('.item')!.click());
+    if (savedGroup) {
+      expect(crisis.getAttribute('aria-disabled')).toBe('true');
+      expect(crisis.querySelector('.text')?.textContent).toBe(savedGroup==='other-crisis' ? 'Crisis 1.2.1'
+        : savedUpdate==='previous-update' ? 'Crisis 1.1.1' : 'Crisis 1.1.2');
+    } else {
+      expect(crisis.getAttribute('aria-disabled')).not.toBe('true');
+      await act(async()=>crisis.click());
+      await act(async()=>crisis.querySelector<HTMLElement>('.item')!.click());
+    }
     expect(confirm.disabled).toBe(false);
     await act(async () => {confirm.click(); confirm.click();});
     expect(startDocumentVote).toHaveBeenCalledTimes(1);
