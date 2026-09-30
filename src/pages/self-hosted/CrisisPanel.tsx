@@ -74,17 +74,17 @@ function CrisisCard({group,card,files,api,run,editable}: {
       && n?.sessionOrdinal===group.sessionOrdinal && n.groupOrdinal===group.ordinal && n.updateOrdinal===card.ordinal;
   };
   const choices=files.filter(matches);
-  const save = async (fileId=draft.fileId,replaceNoticeId?: string) => {
-    if (!dirty && fileId===draft.fileId) return card;
+  const save = async () => {
+    if (!dirty) return card;
     const saved=await api.updateCrisisCard(card.id,{baseRevision: draft.revision,title: draft.title,
-      handlingDurationMs: draft.minutes==='' ? null : Number(draft.minutes)*60000,fileId,replaceNoticeId});
+      handlingDurationMs: draft.minutes==='' ? null : Number(draft.minutes)*60000,fileId:draft.fileId,
+      replaceNoticeId:card.notice && draft.fileId!==card.notice.id ? card.notice.id : undefined});
     const next=saved.updates.find(update=>update.id===card.id)!; setDraft(fromCard(next)); return next;
   };
   const perform = async (operation: ()=>Promise<unknown>) => {
     if (workingRef.current) return; workingRef.current=true;setWorking(true);
     try {await run(operation);} finally {workingRef.current=false;setWorking(false);}
   };
-  const autosave = () => {if (editable && dirty && (!draft.minutes || validTime)) void perform(()=>save());};
   const publish = () => perform(async ()=> {
     const saved = await save();
     if (attempt.current?.revision!==saved.revision) attempt.current={revision: saved.revision,key: newIdempotencyKey()};
@@ -103,7 +103,7 @@ function CrisisCard({group,card,files,api,run,editable}: {
   return <Card fluid className="crisis-card motion-card"><Card.Content>
     <div className="motion-heading crisis-card-heading"><Card.Header className="crisis-card-title"><strong>{t('Crisis')} {numberFor(group,card)}</strong>
       {editable ? <Input fluid aria-label={t('Crisis title')} placeholder={t('Title')} value={draft.title} disabled={working}
-        onChange={event=> {const title=event.currentTarget.value;setDraft(current=>({...current,title}));}} onBlur={autosave} /> : card.title && <span> — {card.title}</span>}
+        onChange={event=> {const title=event.currentTarget.value;setDraft(current=>({...current,title}));}} /> : card.title && <span> — {card.title}</span>}
     </Card.Header><Label basic color={card.status==='PENDING' ? 'orange' : card.status==='UNPUBLISHED' ? 'blue' : card.status==='ENDED' ? 'green' : 'grey'}>{t(statusLabels[card.status])}</Label></div>
     {Boolean(failure) && <Message error content={storageErrorText(failure)} />}
     {editable ? <Form>
@@ -111,12 +111,12 @@ function CrisisCard({group,card,files,api,run,editable}: {
         options={choices.map(file=>({key:file.id,value:file.id,text:file.logicalName,description:file.originalName}))}
         onChange={(_,data)=> {
           const id=String(data.value);
-          if (card.notice && id!==card.notice.id) setReplacement(id);
-          else {setDraft(current=>({...current,fileId:id})); void perform(()=>save(id));}
+          if (draft.fileId && id!==draft.fileId) setReplacement(id);
+          else setDraft(current=>({...current,fileId:id}));
         }} />
       <Form.Input fluid type="number" step="any" min={0} label={t('Handling time (minutes)')} aria-label={t('Handling time (minutes)')}
         value={draft.minutes} error={Boolean(draft.minutes && !validTime)} disabled={working}
-        onChange={event=> {const minutes=event.currentTarget.value;setDraft(current=>({...current,minutes}));}} onBlur={autosave} />
+        onChange={event=> {const minutes=event.currentTarget.value;setDraft(current=>({...current,minutes}));}} />
       <Button type="button" positive fluid loading={working} disabled={working || !validTime || !draft.fileId || !choices.some(file=>file.id===draft.fileId)} onClick={()=>void publish()}>{t('Publish crisis')}</Button>
     </Form> : <><p className="crisis-notice-name">{card.notice?.logicalName ?? '—'}</p>
       {card.handlingDurationMs!==null && <p>{t('Handling time (minutes)')}: {card.handlingDurationMs/60000}</p>}
@@ -124,10 +124,10 @@ function CrisisCard({group,card,files,api,run,editable}: {
   </Card.Content>
     <Modal size="tiny" open={Boolean(replacement)} onClose={()=>setReplacement(undefined)} closeOnDimmerClick={!working} closeOnEscape={!working}>
       <Modal.Header>{t('Replace notice')}</Modal.Header><Modal.Content>
-        <strong>{t('Current notice')}</strong><p>{card.notice?.logicalName}</p><p>{files.find(file=>file.id===card.notice?.id)?.originalName}</p>
+        <strong>{t('Current notice')}</strong><p>{files.find(file=>file.id===draft.fileId)?.logicalName ?? card.notice?.logicalName}</p><p>{files.find(file=>file.id===draft.fileId)?.originalName}</p>
         <strong>{t('New notice')}</strong><p>{files.find(file=>file.id===replacement)?.logicalName}</p><p>{files.find(file=>file.id===replacement)?.originalName}</p>
       </Modal.Content><Modal.Actions><Button disabled={working} onClick={()=>setReplacement(undefined)}>{t('Cancel')}</Button>
-        <Button primary loading={working} disabled={working} onClick={()=>void perform(async()=> {await save(replacement,card.notice?.id);setReplacement(undefined);})}>{t('Replace notice')}</Button>
+        <Button primary disabled={working} onClick={()=> {setDraft(current=>({...current,fileId:replacement!}));setReplacement(undefined);}}>{t('Replace notice')}</Button>
       </Modal.Actions></Modal>
   </Card>;
 }
