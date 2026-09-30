@@ -117,7 +117,6 @@ function CrisisCard({group,card,files,api,run,editable}: {
       <Form.Input fluid type="number" step="any" min={0} label={t('Handling time (minutes)')} aria-label={t('Handling time (minutes)')}
         value={draft.minutes} error={Boolean(draft.minutes && !validTime)} disabled={working}
         onChange={event=> {const minutes=event.currentTarget.value;setDraft(current=>({...current,minutes}));}} onBlur={autosave} />
-      {draft.revision!==card.revision && dirty && <Button type="button" onClick={()=>setDraft(fromCard(card))}>{t('Reload')}</Button>}
       <Button type="button" positive fluid loading={working} disabled={working || !validTime || !draft.fileId || !choices.some(file=>file.id===draft.fileId)} onClick={()=>void publish()}>{t('Publish crisis')}</Button>
     </Form> : <><p className="crisis-notice-name">{card.notice?.logicalName ?? '—'}</p>
       {card.handlingDurationMs!==null && <p>{t('Handling time (minutes)')}: {card.handlingDurationMs/60000}</p>}

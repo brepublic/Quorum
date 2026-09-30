@@ -53,7 +53,10 @@ describe('crisis card input', () => {
         handlingDurationMs: payload.handlingDurationMs === undefined ? group.updates[0].handlingDurationMs : payload.handlingDurationMs, revision: 2}]};
       return group;
     });
-    const api = {snapshot: vi.fn(async () => read()), openCommitteeEvents: vi.fn(() => () => undefined),
+    let finishRefresh!: (snapshot: CommitteeWorkspaceSnapshot) => void;
+    const refreshed = new Promise<CommitteeWorkspaceSnapshot>(resolve => {finishRefresh = resolve;});
+    const api = {snapshot: vi.fn().mockImplementationOnce(async () => read()).mockImplementation(() => refreshed),
+      openCommitteeEvents: vi.fn(() => () => undefined),
       listDelegateReviewFiles: vi.fn(async () => []), updateCrisisCard} as unknown as SelfHostedApi;
     await act(async () => root.render(<MemoryRouter><CommitteeWorkspaceProvider committeeId="committee" api={api}>
       <Panel api={api} />
@@ -69,6 +72,11 @@ describe('crisis card input', () => {
     expect(updateCrisisCard).toHaveBeenCalledWith('card', {
       baseRevision: 1, ...expected, fileId: null, replaceNoticeId: undefined
     });
+    // The save response can arrive before the workspace snapshot catches up.
+    expect(host.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)?.disabled).toBe(true);
+    expect([...host.querySelectorAll('.crisis-card form button')].map(button => button.textContent)).toEqual(['发布危机']);
+    await act(async () => {finishRefresh(read());});
+    expect(host.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)?.disabled).toBe(false);
     expect(host.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)?.value).toBe(value);
     expect(group.updates[0].status).toBe('UNPUBLISHED');
   });
