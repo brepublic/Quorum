@@ -5,6 +5,7 @@ import {afterEach, describe, expect, it, vi} from 'vitest';
 import {MemoryRouter} from 'react-router-dom';
 import SelfHostedIdentity from './SelfHostedIdentity';
 import {IdentityApiError, type SelfHostedIdentityClient, type SelfHostedUser} from '../services/self-hosted-identity';
+import {selfHostedApi, SelfHostedApiError} from '../services/self-hosted-api';
 
 (globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT: boolean}).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -28,6 +29,7 @@ afterEach(() => {
   root = undefined;
   container = undefined;
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 function client(overrides: Partial<SelfHostedIdentityClient>): SelfHostedIdentityClient {
@@ -55,12 +57,12 @@ function client(overrides: Partial<SelfHostedIdentityClient>): SelfHostedIdentit
   };
 }
 
-async function renderClient(identityClient: SelfHostedIdentityClient): Promise<string> {
+async function renderClient(identityClient: SelfHostedIdentityClient, path = '/'): Promise<string> {
   container = document.createElement('div');
   document.body.append(container);
   root = createRoot(container);
   await act(async () => {
-    root?.render(<MemoryRouter initialEntries={['/']}><SelfHostedIdentity client={identityClient} /></MemoryRouter>);
+    root?.render(<MemoryRouter initialEntries={[path]}><SelfHostedIdentity client={identityClient} /></MemoryRouter>);
     await Promise.resolve();
     await Promise.resolve();
     await Promise.resolve();
@@ -101,6 +103,39 @@ describe('self-hosted identity screens', () => {
     expect(container!.textContent).toContain('Login');
     expect(container!.textContent).not.toContain('Server error');
   });
+  it('explains an unsupported identity endpoint without suggesting a login or retry', async () => {
+    const identityClient = client({bootstrapStatus: vi.fn().mockRejectedValue(
+      new IdentityApiError(404, 'NOT_FOUND', 'Private server diagnostic'))});
+    const text = await renderClient(identityClient);
+    expect(text).toContain('Service unavailable');
+    expect(text).toContain('deployed version and configuration');
+    expect(text).not.toContain('Retry');
+    expect(text).not.toContain('Private server diagnostic');
+    expect(identityClient.me).not.toHaveBeenCalled();
+  });
+  it('offers login after an authentication or permission failure during startup', async () => {
+    await renderClient(client({me: vi.fn().mockRejectedValue(new IdentityApiError(403, 'FORBIDDEN', 'Hidden'))}));
+    expect(container?.textContent).not.toContain('Retry');
+    const login = [...container!.querySelectorAll('a')].find(link => link.textContent === 'Login');
+    expect(login).toBeTruthy();
+    await act(async () => {login?.click();});
+    expect(container?.querySelector('input[type="email"]')).toBeTruthy();
+  });
+  it.each([true, false])('offers home for an unknown top-level address (anonymous: %s)', async anonymous => {
+    const identityClient = client(anonymous ? {me: vi.fn().mockRejectedValue(
+      new IdentityApiError(401, 'AUTHENTICATION_REQUIRED', 'Login'))} : {});
+    const text = await renderClient(identityClient, '/incorrect-address');
+    expect(text).toContain('page address is invalid');
+    expect(text).not.toContain('Retry');
+    expect([...container!.querySelectorAll('a')].find(link => link.textContent === 'Return home')?.getAttribute('href'))
+      .toBe('/committees');
+    expect(container?.querySelector('input[type="email"]')).toBeNull();
+  });
+  it('keeps an authenticated login address as a home redirect', async () => {
+    const text = await renderClient(client({}), '/login');
+    expect(text).toContain('Account administration');
+    expect(text).not.toContain('page address is invalid');
+  });
 
   it('shows bootstrap only when the server reports an uninitialized instance', async () => {
     const identityClient = client({bootstrapStatus: vi.fn(async () => false)});
@@ -127,6 +162,25 @@ describe('self-hosted identity screens', () => {
 
     expect(text).toContain('Browse public committees');
     expect(container?.querySelector('a[href="/committees"]')).toBeTruthy();
+  });
+  it('uses the URL committee ID for anonymous deep links and returns home without retrying', async () => {
+    const id = '10000000-0000-4000-8000-000000000002';
+    const read = vi.spyOn(selfHostedApi, 'snapshot').mockRejectedValue(new SelfHostedApiError(404, 'NOT_FOUND', 'Hidden'));
+    vi.spyOn(selfHostedApi, 'listCommittees').mockResolvedValue([]);
+    const identityClient = client({me: vi.fn().mockRejectedValue(new IdentityApiError(401, 'AUTHENTICATION_REQUIRED', 'Login'))});
+    container = document.createElement('div'); document.body.append(container); root = createRoot(container);
+    await act(async () => {root?.render(<MemoryRouter initialEntries={[`/committees/${id}/crises/missing`]}>
+      <SelfHostedIdentity client={identityClient} />
+    </MemoryRouter>);});
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(read).toHaveBeenCalledWith(id);
+    expect(container.textContent).toContain('you need to log in');
+    expect(container.textContent).not.toContain('Retry');
+    expect(container.querySelector('a[href="/login"]')).toBeTruthy();
+    const home = [...container.querySelectorAll('a')].find(link => link.textContent === 'Return home');
+    await act(async () => {home?.click();});
+    expect(container.textContent).toContain('No public committees');
+    expect(container.textContent).not.toContain('does not exist');
   });
 
   it('shows account administration only to the system administrator', async () => {

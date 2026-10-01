@@ -20,6 +20,25 @@ describe('structured error localization', () => {
     expect(formatApiError({reason: 'INVALID_FILE_EXTENSION', params: {formats: '/private/path'}}, 'zh-CN'))
       .toBe('允许的文件格式：—');
   });
+  it.each([
+    [400, 'BAD_REQUEST'], [401, 'AUTHENTICATION_REQUIRED'], [403, 'FORBIDDEN'], [404, 'API_ROUTE_NOT_FOUND'], [405, 'METHOD_NOT_ALLOWED'],
+    [408, 'REQUEST_TIMEOUT'], [429, 'RATE_LIMITED'], [500, 'INTERNAL_ERROR'],
+    [502, 'SERVICE_NOT_READY'], [503, 'SERVICE_NOT_READY'], [504, 'REQUEST_TIMEOUT']
+  ])('explains a non-JSON HTTP %s response using its status', (status, reason) => {
+    for (const language of ['en', 'zh-CN'] as const) {
+      for (const code of ['INVALID_RESPONSE', 'HTTP_ERROR']) {
+        expect(formatApiError({status, code, message: 'private proxy diagnostics'}, language))
+          .toBe(formatApiError({reason}, language));
+      }
+    }
+  });
+  it('keeps a specific service reason and distinguishes content absence from a missing interface', () => {
+    expect(formatApiError({status: 503, code: 'INVALID_RESPONSE', reason: 'STORAGE_AGENT_OFFLINE'}, 'en'))
+      .toBe(formatApiError({reason: 'STORAGE_AGENT_OFFLINE'}, 'en'));
+    expect(formatApiError({status: 404, code: 'NOT_FOUND'}, 'zh-CN')).toBe('内容不存在，或当前账号无权查看。');
+    expect(formatApiError({code: 'NOT_FOUND', reason: 'API_ROUTE_NOT_FOUND'}, 'zh-CN')).toContain('部署版本和配置');
+    expect(formatApiError({status: 200, code: 'INVALID_RESPONSE'}, 'en')).toContain('invalid response');
+  });
 });
 
 it('explains business conflicts and download blockers in both languages without exposing diagnostics', () => {

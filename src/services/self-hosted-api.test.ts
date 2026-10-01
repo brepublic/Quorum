@@ -13,6 +13,25 @@ describe('self-hosted stage 4 API client', () => {
       id: 9, type: 'committee.updated', data: {id: 9}
     });
   });
+  it('rejects malformed committee addresses before making a request', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    for (const id of ['incorrect-address', 'a'.repeat(36), '00000000-0000-0000-0000-00000000000z']) {
+      await expect(selfHostedApi.snapshot(id)).rejects.toMatchObject({
+        status: 400, localization: {reason: 'INVALID_PAGE_ADDRESS'}
+      });
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+  it('retains the distinction between an inaccessible committee and an unsupported API', async () => {
+    const id = '00000000-0000-4000-8000-000000000001';
+    for (const reason of ['NOT_FOUND', 'API_ROUTE_NOT_FOUND']) {
+      vi.stubGlobal('fetch', vi.fn(async () => ({status: 404, json: async () => ({
+        error: {code: 'NOT_FOUND', reason, message: 'Not found.', requestId: 'lookup'}
+      })})));
+      await expect(selfHostedApi.snapshot(id)).rejects.toMatchObject({status: 404, localization: {reason}});
+    }
+  });
 
   it('sends CSRF, revision, and idempotency headers for commands', async () => {
     const fetchMock = vi.fn(async () => ({ok: true, status: 201,

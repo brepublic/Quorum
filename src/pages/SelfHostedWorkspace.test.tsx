@@ -1,11 +1,11 @@
 import * as React from 'react';
 import {act} from 'react';
 import {createRoot, type Root} from 'react-dom/client';
-import {MemoryRouter} from 'react-router-dom';
+import {MemoryRouter, Route} from 'react-router-dom';
 import {afterEach, describe, expect, it, vi} from 'vitest';
 import type {CommitteeWorkspaceSnapshot} from '@quorum/contracts';
-import SelfHostedWorkspace from './SelfHostedWorkspace';
-import type {SelfHostedApi} from '../services/self-hosted-api';
+import SelfHostedWorkspace, {SelfHostedCommitteeWorkspace} from './SelfHostedWorkspace';
+import {SelfHostedApiError, type SelfHostedApi} from '../services/self-hosted-api';
 import type {SelfHostedUser} from '../services/self-hosted-identity';
 
 (globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT: boolean}).IS_REACT_ACT_ENVIRONMENT = true;
@@ -31,6 +31,88 @@ let root: Root | undefined; let container: HTMLDivElement | undefined;
 afterEach(() => { if (root) act(() => root?.unmount()); container?.remove(); root = undefined; container = undefined; });
 
 describe('self-hosted stage 4 workspace', () => {
+  async function renderFailure(failure: SelfHostedApiError, anonymous = false, recover = false) {
+    const read = recover ? vi.fn().mockRejectedValueOnce(failure).mockResolvedValue(snapshot)
+      : vi.fn().mockRejectedValue(failure);
+    const api = {snapshot: read, openCommitteeEvents: vi.fn(() => () => undefined),
+      listCommittees: vi.fn(async () => []), listCountryTemplates: vi.fn(async () => []),
+      listRulePackages: vi.fn(async () => []), listCommitteeTemplates: vi.fn(async () => [])} as unknown as SelfHostedApi;
+    container = document.createElement('div'); document.body.append(container); root = createRoot(container);
+    await act(async () => {root?.render(<MemoryRouter initialEntries={['/committees/committee']}>
+      {anonymous ? <Route path="/committees/:id"><SelfHostedCommitteeWorkspace api={api} /></Route>
+        : <SelfHostedWorkspace user={user} logout={vi.fn()} api={api} />}
+    </MemoryRouter>);});
+    return api;
+  }
+
+  it.each([true, false])('offers appropriate exits for hidden or absent committees (anonymous: %s)', async anonymous => {
+    const api = await renderFailure(new SelfHostedApiError(404, 'NOT_FOUND', 'Private server diagnostic'), anonymous);
+    expect(container?.textContent).toContain(anonymous ? 'you need to log in' : 'your account does not have access');
+    expect(container?.textContent).not.toContain('Private server diagnostic');
+    expect(container?.textContent).not.toContain('Retry');
+    expect(Boolean(container?.querySelector('a[href="/login"]'))).toBe(anonymous);
+    const home = container?.querySelector<HTMLAnchorElement>('a[href="/committees"]');
+    expect(home?.textContent).toBe('Return home');
+    if (!anonymous) {
+      await act(async () => {home?.click();});
+      expect(api.listCommittees).toHaveBeenCalledOnce();
+      expect(container?.textContent).not.toContain('does not exist');
+    }
+    expect(api.snapshot).toHaveBeenCalledTimes(1);
+    expect(api.snapshot).toHaveBeenCalledWith('committee');
+    expect(api.openCommitteeEvents).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [401, 'AUTHENTICATION_REQUIRED', undefined, 'Please log in again.'],
+    [403, 'FORBIDDEN', undefined, 'You do not have permission'],
+    [400, 'BAD_REQUEST', 'INVALID_PAGE_ADDRESS', 'page address is invalid'],
+    [404, 'NOT_FOUND', 'API_ROUTE_NOT_FOUND', 'deployed version and configuration']
+  ] as const)('does not offer retries for permanent page failures (%s)', async (status, code, reason, text) => {
+    await renderFailure(new SelfHostedApiError(status, code, 'Private server diagnostic', undefined, undefined,
+      reason ? {reason} : undefined));
+    expect(container?.textContent).toContain(text);
+    expect(container?.textContent).not.toContain('Retry');
+    expect(container?.querySelector('a[href="/committees"]')).toBeTruthy();
+    expect(Boolean(container?.querySelector('a[href="/login"]'))).toBe(status === 401);
+  });
+
+  it.each([
+    [0, 'NETWORK_ERROR', 'Unable to connect'], [500, 'INTERNAL_ERROR', 'server could not complete'],
+    [502, 'INVALID_RESPONSE', 'service is unavailable'], [503, 'SERVICE_NOT_READY', 'service is unavailable'],
+    [504, 'INVALID_RESPONSE', 'request timed out'], [408, 'INVALID_RESPONSE', 'request timed out'],
+    [429, 'RATE_LIMITED', 'Too many requests'], [200, 'INVALID_RESPONSE', 'invalid response']
+  ])('retries a transient load failure and opens the recovered workspace (%s)', async (status, code, text) => {
+    const api = await renderFailure(new SelfHostedApiError(status, code, 'Private server diagnostic'), false, true);
+    expect(container?.querySelector('[role="alert"]')?.textContent).toContain(text);
+    const retry = [...container!.querySelectorAll('button')].find(button => button.textContent === 'Retry');
+    expect(retry).toBeTruthy();
+    await act(async () => {retry?.click();});
+    expect(api.snapshot).toHaveBeenCalledTimes(2);
+    expect(api.openCommitteeEvents).toHaveBeenCalledOnce();
+    expect(container?.textContent).toContain('Security Council');
+    expect(container?.querySelector('.error.message[role="alert"]')).toBeNull();
+  });
+
+  it.each([
+    ['unknown', 'page address is invalid'], ['motions/extra', 'page address is invalid'],
+    ['crises/missing/extra', 'page address is invalid'], ['crises/missing', 'Crisis not found.'],
+    ['caucuses/missing', 'Speaker list not found.'], ['strawpolls/missing', 'Strawpoll not found.'],
+    ['resolutions/missing', 'Draft Resolution not found.'], ['directives/missing', 'Draft not found.'],
+    ['votes/missing', 'Draft not found.']
+  ])('offers a way home for invalid committee detail addresses (%s)', async (path, text) => {
+    const api = {snapshot: vi.fn(async () => snapshot), openCommitteeEvents: vi.fn(() => () => undefined),
+      listFiles: vi.fn(async () => [])} as unknown as SelfHostedApi;
+    container = document.createElement('div'); document.body.append(container); root = createRoot(container);
+    await act(async () => {root?.render(<MemoryRouter initialEntries={['/committees/committee/' + path]}>
+      <SelfHostedWorkspace user={user} logout={vi.fn()} api={api} />
+    </MemoryRouter>);});
+    expect(container.querySelector('.error.message[role="alert"]')?.textContent).toContain(text);
+    expect([...container.querySelectorAll('a')].some(link => link.textContent === 'Return home'
+      && link.getAttribute('href') === '/committees')).toBe(true);
+    expect(container.textContent).not.toContain('Retry');
+  });
+
   it('hides the committee creation form for the system administrator', async () => {
     const api = {listCommittees: vi.fn(async () => []), listCountryTemplates: vi.fn(async () => []),
       listRulePackages: vi.fn(async () => []), listCommitteeTemplates: vi.fn(async () => [])} as unknown as SelfHostedApi;

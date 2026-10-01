@@ -317,7 +317,13 @@ export const selfHostedApi = {
   createCommittee(input: CreateCommitteeFromTemplateRequest) {
     return request<CommitteeSummary>('/api/v1/committees', {method: 'POST', body: input, idempotencyKey: key()});
   },
-  snapshot(id: string) { return request<CommitteeWorkspaceSnapshot>(`/api/v1/committees/${id}/snapshot`); },
+  snapshot(id: string) {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id)) {
+      return Promise.reject(new SelfHostedApiError(400, 'BAD_REQUEST', 'Invalid committee address.',
+        undefined, undefined, {reason: 'INVALID_PAGE_ADDRESS'}));
+    }
+    return request<CommitteeWorkspaceSnapshot>(`/api/v1/committees/${id}/snapshot`);
+  },
   openCommitteeEvents: openCommitteeEventStream,
   createTimer(committeeId: string, ownerType: 'COMMITTEE' | 'SPEAKER_LIST' | 'CAUCUS' | 'SPEECH', ownerId: string,
     durationMs: number) {

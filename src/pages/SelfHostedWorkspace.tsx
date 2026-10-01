@@ -1290,13 +1290,30 @@ function CommitteeWorkspaceContent({id, api, user, logout}: {
   id: string; api: SelfHostedApi; user?: SelfHostedUser; logout(): void;
 }) {
   useLanguage();
-  const {snapshot, error, realtimeStatus, refresh, run} = useCommitteeWorkspace();
+  const {snapshot, error, failure, realtimeStatus, refresh, run} = useCommitteeWorkspace();
   const location = useLocation(); const history = useHistory();
   const newCaucusPath = `/committees/${id}/caucuses/new`;
   const [createCaucusOpen, setCreateCaucusOpen] = React.useState(location.pathname === newCaucusPath);
   React.useEffect(() => {if (location.pathname === newCaucusPath) setCreateCaucusOpen(true);}, [location.pathname, newCaucusPath]);
   if (!snapshot && !error) return <Loading />;
-  if (!snapshot) return <Container text><Message error content={error} /><Button onClick={() => void refresh()}>{t('Retry')}</Button></Container>;
+  if (!snapshot) {
+    const status = failure instanceof SelfHostedApiError ? failure.status : undefined;
+    const reason = failure instanceof SelfHostedApiError ? failure.localization?.reason : undefined;
+    const unavailable = failure instanceof SelfHostedApiError && failure.code === 'NOT_FOUND'
+      && reason !== 'API_ROUTE_NOT_FOUND';
+    const retryable = reason !== 'API_ROUTE_NOT_FOUND' && (status === undefined || status === 0
+      || status === 408 || status === 429 || status >= 500 || status >= 200 && status < 300);
+    return <Container text>
+      <Message error role="alert" content={unavailable ? t(user
+        ? 'The committee does not exist, or your account does not have access.'
+        : 'The committee does not exist, or you need to log in to view it.') : error} />
+      <div className="committee-load-error-actions">
+        {retryable && <Button primary onClick={() => void refresh()}>{t('Retry')}</Button>}
+        {(status === 401 || !user && unavailable) && <Button primary as="a" href="/login">{t('Login')}</Button>}
+        <Button basic as={Link} to="/committees">{t('Return home')}</Button>
+      </div>
+    </Container>;
+  }
   const interactionSnapshot: CommitteeWorkspaceSnapshot = realtimeStatus === 'OFFLINE_READONLY'
     ? {...snapshot, viewer: {audience: 'PUBLIC', seatId: null}} : snapshot;
   const canChair = (interactionSnapshot.viewer.audience === 'CHAIR' || interactionSnapshot.viewer.audience === 'OWNER')
@@ -1312,28 +1329,29 @@ function CommitteeWorkspaceContent({id, api, user, logout}: {
           <Route exact path={`${base}/roll-call`}><RollCallPanel snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} /></Route>
           <Route exact path={`${base}/points`}><PointsPanel snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} /></Route>
           <Route exact path={`${base}/notes`}><NotesPanel snapshot={interactionSnapshot} run={run} api={api} /></Route>
-          <Route path={`${base}/posts/:tab?`} render={({match}) => <PostsPanel key={`${interactionSnapshot.committee.id}:${user?.id}:${interactionSnapshot.viewer.audience}:${interactionSnapshot.committee.operationMode}`} snapshot={interactionSnapshot} api={api}
+          <Route exact path={`${base}/posts/:tab?`} render={({match}) => <PostsPanel key={`${interactionSnapshot.committee.id}:${user?.id}:${interactionSnapshot.viewer.audience}:${interactionSnapshot.committee.operationMode}`} snapshot={interactionSnapshot} api={api}
             userId={user?.id} tab={match.params.tab} />} />
           <Route exact path={`${base}/files`}><Redirect to={`${base}/posts/attachments`} /></Route>
-          <Route path={`${base}/motions`}><ProceedingsPanel view="motions" snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} /></Route>
-          <Route path={`${base}/unmod`}><ProceedingsPanel view="unmod" snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} /></Route>
-          <Route path={`${base}/crises/:groupId`} render={({match})=><CrisisPanel resourceId={match.params.groupId}
+          <Route exact path={`${base}/motions`}><ProceedingsPanel view="motions" snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} /></Route>
+          <Route exact path={`${base}/unmod`}><ProceedingsPanel view="unmod" snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} /></Route>
+          <Route exact path={`${base}/crises/:groupId`} render={({match})=><CrisisPanel resourceId={match.params.groupId}
             snapshot={interactionSnapshot} api={api} run={run} canChair={canChair} />} />
           <Route exact path={newCaucusPath}><Redirect to={`${base}/motions`} /></Route>
-          <Route path={`${base}/caucuses/:listId`} render={({match}) => <ProceedingsPanel view="caucus" resourceId={match.params.listId}
+          <Route exact path={`${base}/caucuses/:listId`} render={({match}) => <ProceedingsPanel view="caucus" resourceId={match.params.listId}
             snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} />} />
-          <Route path={`${base}/resolutions/:documentId/:tab?`} render={({match}) => <ProceedingsPanel view="resolution"
+          <Route exact path={`${base}/resolutions/:documentId/:tab?`} render={({match}) => <ProceedingsPanel view="resolution"
             resourceId={match.params.documentId} tab={match.params.tab} snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} />} />
-          <Route path={`${base}/directives/:documentId/:tab?`} render={({match}) => <ProceedingsPanel view="directive"
+          <Route exact path={`${base}/directives/:documentId/:tab?`} render={({match}) => <ProceedingsPanel view="directive"
             resourceId={match.params.documentId} tab={match.params.tab} snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} />} />
-          <Route path={`${base}/votes/:documentId?`} render={({match}) => <ProceedingsPanel view="voting"
+          <Route exact path={`${base}/votes/:documentId?`} render={({match}) => <ProceedingsPanel view="voting"
             resourceId={match.params.documentId} snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} />} />
-          <Route path={`${base}/strawpolls/:pollId`} render={({match}) => <ProceedingsPanel view="strawpoll" resourceId={match.params.pollId}
+          <Route exact path={`${base}/strawpolls/:pollId`} render={({match}) => <ProceedingsPanel view="strawpoll" resourceId={match.params.pollId}
             snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} />} />
-          <Route path={`${base}/stats`}><StatisticsPanel snapshot={snapshot} /></Route>
-          <Route path={`${base}/settings`}><SettingsPanel snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} /></Route>
-          <Route path={`${base}/help`}><HelpPanel snapshot={snapshot} api={api} /></Route>
-          <Redirect to={base} />
+          <Route exact path={`${base}/stats`}><StatisticsPanel snapshot={snapshot} /></Route>
+          <Route exact path={`${base}/settings`}><SettingsPanel snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} /></Route>
+          <Route exact path={`${base}/help`}><HelpPanel snapshot={snapshot} api={api} /></Route>
+          <Route><Message error role="alert" content={t('This page address is invalid. Check the address or return home.')} />
+            <Button as={Link} to="/committees">{t('Return home')}</Button></Route>
         </Switch>
     </Container>
     <ModeratedCaucusCreateModal open={createCaucusOpen} snapshot={interactionSnapshot} run={run} api={api}
@@ -1359,6 +1377,8 @@ export default function SelfHostedWorkspace({user, logout, accountManager, api =
     <Route path="/committees/:id"><SelfHostedCommitteeWorkspace api={api} user={user} logout={logout} /></Route>
     {user.isSystemAdmin && <Route exact path="/admin">{accountManager}</Route>}
     <Route exact path="/"><Redirect to={user.isSystemAdmin ? '/admin' : '/committees'} /></Route>
-    <Redirect to="/committees" />
+    <Route exact path="/login"><Redirect to={user.isSystemAdmin ? '/admin' : '/committees'} /></Route>
+    <Route><Container text><Message error role="alert" content={t('This page address is invalid. Check the address or return home.')} />
+      <Button as={Link} to="/committees">{t('Return home')}</Button></Container></Route>
   </Switch></>;
 }

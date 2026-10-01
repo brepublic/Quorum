@@ -3,7 +3,7 @@ import {useLanguage} from '../i18n';
 import {apiErrorText} from '../i18n';
 import * as React from 'react';
 import {Button, Container, Form, Header, Icon, Menu, Message, Segment, Table} from 'semantic-ui-react';
-import {Link, useHistory, useLocation} from 'react-router-dom';
+import {Link, Route, Switch, useHistory, useLocation} from 'react-router-dom';
 import Loading from '../components/Loading';
 import {LanguageMenuItem, t} from '../i18n';
 import {
@@ -20,7 +20,7 @@ type Screen = 'loading' | 'bootstrap' | 'login' | 'change-password' | 'home';
 function errorTitle(error: unknown): string {
   if (error instanceof IdentityApiError) {
     if (error.status === 0) return t('Connection failed');
-    if (error.status === 502 || error.status === 503) return t('Service unavailable');
+    if (error.status === 404 || error.status === 502 || error.status === 503) return t('Service unavailable');
     if (error.status === 504 || error.status === 408) return t('Request timed out');
     if (error.status >= 500) return t('Server error');
     if (error.status === 401) return t('Authentication error');
@@ -38,11 +38,11 @@ function message(error: unknown): string {
   if (error.status === 504 || error.status === 408) return t('The server took too long to respond. Try again later.');
   if (error.status >= 500) return t('The server could not complete the request. Try again later or contact the administrator.');
   if (error.status === 429) return t('Too many requests. Wait a while before trying again.');
+  if (error.status === 404) return apiErrorText({reason: 'API_ROUTE_NOT_FOUND', requestId: error.requestId});
   // Preserve specific backend explanations, such as an incorrect password or a validation failure.
   if (error.code !== 'HTTP_ERROR') return apiErrorText(error);
   if (error.status === 401) return t('Please log in again.');
   if (error.status === 403) return t('You do not have permission to perform this action.');
-  if (error.status === 404) return t('The requested resource or interface was not found.');
   return t('Request failed. Try again later.');
 }
 
@@ -357,7 +357,11 @@ export default function SelfHostedIdentity({client = selfHostedIdentityClient}: 
   if (error) return <IdentityShell title={errorTitle(error)} icon="warning sign">
     <Message error role="alert" content={message(error)} />
     <div style={{marginTop: '1.5em'}}>
-      <Button primary fluid style={{margin: 0}} onClick={() => { setError(undefined); setAttempt(value => value + 1); }}>{t('Retry')}</Button>
+      {(!(error instanceof IdentityApiError) || error.status === 0 || error.status === 408
+        || error.status === 429 || error.status >= 500 || error.status >= 200 && error.status < 300)
+        && <Button primary fluid style={{margin: 0}} onClick={() => { setError(undefined); setAttempt(value => value + 1); }}>{t('Retry')}</Button>}
+      {error instanceof IdentityApiError && (error.status === 401 || error.status === 403)
+        && <Button primary fluid as={Link} to="/login" onClick={() => {setError(undefined); setScreen('login');}}>{t('Login')}</Button>}
     </div>
   </IdentityShell>;
   if (screen === 'loading') return <Loading />;
@@ -365,9 +369,15 @@ export default function SelfHostedIdentity({client = selfHostedIdentityClient}: 
   if (screen === 'login' && location.pathname === '/committees') return <SelfHostedPublicCommittees />;
   if (screen === 'login' && /^\/committees\/[^/]+/.test(location.pathname)) return <>
     <Menu><Menu.Item header>Quorum</Menu.Item><Menu.Menu position="right"><Menu.Item as={Link} to="/login">{t('Login')}</Menu.Item></Menu.Menu></Menu>
-    <SelfHostedCommitteeWorkspace />
+    <Route path="/committees/:id"><SelfHostedCommitteeWorkspace /></Route>
   </>;
-  if (screen === 'login') return <LoginForm client={client} onAuthenticated={authenticated} />;
+  if (screen === 'login') return <Switch>
+    <Route exact path={['/', '/login', '/countries', '/templates', '/admin', '/operations', '/storage']}>
+      <LoginForm client={client} onAuthenticated={authenticated} /></Route>
+    <Route path="/system-settings"><LoginForm client={client} onAuthenticated={authenticated} /></Route>
+    <Route><Container text><Message error role="alert" content={t('This page address is invalid. Check the address or return home.')} />
+      <Button as={Link} to="/committees">{t('Return home')}</Button></Container></Route>
+  </Switch>;
   if (screen === 'change-password') return <ChangePasswordForm client={client} onAuthenticated={authenticated} />;
   if (!user) return <Loading />;
   return <SelfHostedWorkspace user={user} logout={logout} identityClient={client}

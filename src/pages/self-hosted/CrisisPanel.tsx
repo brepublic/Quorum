@@ -1,5 +1,5 @@
 import * as React from 'react';
-import {useHistory} from 'react-router-dom';
+import {Link, useHistory} from 'react-router-dom';
 import {Button, Card, Form, Icon, Input, Label, Message, Modal, Table} from 'semantic-ui-react';
 import {parseCrisisNoticeName, type CommitteeWorkspaceSnapshot, type CrisisGroup, type CrisisUpdate, type DelegateReviewFile} from '@quorum/contracts';
 import {t, useLanguage} from '../../i18n';
@@ -38,7 +38,8 @@ export default function CrisisPanel({snapshot,api,run,canChair,resourceId}: {
   },[api,editable,snapshot.committee.id,snapshot.sync.committeeEventSequence]);
   if (resourceId === 'new') return <Button fluid primary loading={creating} disabled={creating || !editable || snapshot.meetingSession?.status !== 'OPEN'} onClick={()=>void create()}>{t('New crisis')}</Button>;
   const group = snapshot.crises?.find(group=>group.id===resourceId);
-  if (!group) return <Message content={t('Crisis not found.')} />;
+  if (!group) return <><Message error role="alert" content={t('Crisis not found.')} />
+    <Button as={Link} to="/committees">{t('Return home')}</Button></>;
   const pending = group.updates.some(update=>update.status==='PENDING');
   return <div className="crisis-panel">
     {Boolean(failure) && <Message error content={storageErrorText(failure)} />}

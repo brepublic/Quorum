@@ -15,6 +15,7 @@ interface CommitteeWorkspaceValue {
   snapshot?: CommitteeWorkspaceSnapshot;
   snapshotReceivedAt: number;
   error?: string;
+  failure?: unknown;
   realtimeStatus: RealtimeStatus;
   working: boolean;
   refresh(): Promise<CommitteeWorkspaceSnapshot | undefined>;
@@ -96,8 +97,8 @@ export function CommitteeWorkspaceProvider({committeeId, api, children}: React.P
   }, [refresh]);
 
   const value = React.useMemo<CommitteeWorkspaceValue>(() => ({snapshot, snapshotReceivedAt,
-    error, realtimeStatus, working, refresh, run}),
-    [snapshot, snapshotReceivedAt, error, realtimeStatus, working, refresh, run]);
+    error, failure, realtimeStatus, working, refresh, run}),
+    [snapshot, snapshotReceivedAt, error, failure, realtimeStatus, working, refresh, run]);
   return <CommitteeWorkspaceContext.Provider value={value}>{children}</CommitteeWorkspaceContext.Provider>;
 }
 

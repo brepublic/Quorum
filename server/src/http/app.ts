@@ -1617,7 +1617,7 @@ export function createRequestHandler(dependencies: AppDependencies): RequestList
           return;
         }
 
-        throw new AppError({code: 'NOT_FOUND', message: 'Resource not found.'});
+        throw new AppError({code: 'NOT_FOUND', reason: 'API_ROUTE_NOT_FOUND', message: 'Resource not found.'});
       } catch (error) {
         const normalized = normalizeError(error, requestId);
         if (normalized.status >= 500) {

@@ -376,7 +376,10 @@ export const ERROR_TEXT = {
   BAD_REQUEST: {en: "The request is invalid.", 'zh-CN': "请求无效。"},
   AUTHENTICATION_REQUIRED: {en: "Please log in again.", 'zh-CN': "请重新登录。"},
   FORBIDDEN: {en: "You do not have permission to perform this action.", 'zh-CN': "你没有权限执行此操作。"},
-  NOT_FOUND: {en: "The requested resource was not found.", 'zh-CN': "未找到请求的内容。"},
+  NOT_FOUND: {en: "The content does not exist, or your account does not have access.", 'zh-CN': "内容不存在，或当前账号无权查看。"},
+  INVALID_PAGE_ADDRESS: {en: "This page address is invalid. Check the address or return home.", 'zh-CN': "页面地址不正确，请检查地址或返回首页。"},
+  API_ROUTE_NOT_FOUND: {en: "The service does not support this request. Contact the administrator to check the deployed version and configuration.", 'zh-CN': "服务不支持此请求，请联系管理员检查部署版本和配置。"},
+  REQUEST_TIMEOUT: {en: "The request timed out. Try again later.", 'zh-CN': "请求超时，请稍后重试。"},
   METHOD_NOT_ALLOWED: {en: "This action is not supported.", 'zh-CN': "不支持此操作。"},
   REVISION_CONFLICT: {en: "The state changed. Reload and try again.", 'zh-CN': "状态已更新，请重新载入后重试。"},
   IDEMPOTENCY_CONFLICT: {en: "This request key was used for different content. Retry the action.", 'zh-CN': "请求标识已用于其他内容，请重新操作。"},
@@ -436,14 +439,22 @@ export type LocalizedErrorReason = keyof typeof ERROR_TEXT;
 /** Unknown server messages and exception bodies never become user-facing text. */
 export function formatApiError(error: unknown, language: ContentLanguage): string {
   const value = error && typeof error === 'object' ? error as {
-    code?: unknown; requestId?: unknown; reason?: unknown; params?: import('./api.js').ApiErrorParams; localization?: {reason?: unknown; params?: import('./api.js').ApiErrorParams}; name?: unknown;
+    code?: unknown; status?: unknown; requestId?: unknown; reason?: unknown; params?: import('./api.js').ApiErrorParams; localization?: {reason?: unknown; params?: import('./api.js').ApiErrorParams}; name?: unknown;
   } : undefined;
   const reason = value?.localization?.reason ?? value?.reason;
+  // Proxy failures may have no JSON error body. Use their HTTP status before the parse error.
+  const httpReason = value?.code === 'HTTP_ERROR' || value?.code === 'INVALID_RESPONSE'
+    ? value.status === 400 ? 'BAD_REQUEST' : value.status === 401 ? 'AUTHENTICATION_REQUIRED' : value.status === 403 ? 'FORBIDDEN'
+      : value.status === 404 ? 'API_ROUTE_NOT_FOUND' : value.status === 405 ? 'METHOD_NOT_ALLOWED'
+        : value.status === 408 || value.status === 504 ? 'REQUEST_TIMEOUT'
+        : value.status === 429 ? 'RATE_LIMITED' : value.status === 502 || value.status === 503 ? 'SERVICE_NOT_READY'
+          : typeof value.status === 'number' && value.status >= 500 ? 'INTERNAL_ERROR' : undefined
+    : undefined;
   const key = typeof reason === 'string' && Object.hasOwn(ERROR_TEXT, reason) ? reason
-    : typeof value?.code === 'string' && Object.hasOwn(ERROR_TEXT, value.code) ? value.code
-      : value?.name === 'AbortError' ? 'ABORTED' : 'OPERATION_FAILED';
+    : httpReason ?? (typeof value?.code === 'string' && Object.hasOwn(ERROR_TEXT, value.code) ? value.code
+      : value?.name === 'AbortError' ? 'ABORTED' : 'OPERATION_FAILED');
   let text: string = ERROR_TEXT[key as LocalizedErrorReason][language];
-  if (['OPERATION_FAILED', 'INTERNAL_ERROR', 'INVALID_RESPONSE', 'RESOURCE_CONFLICT', 'SERVICE_NOT_READY'].includes(key) && typeof value?.requestId === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value.requestId)) {
+  if (['OPERATION_FAILED', 'INTERNAL_ERROR', 'INVALID_RESPONSE', 'RESOURCE_CONFLICT', 'SERVICE_NOT_READY', 'API_ROUTE_NOT_FOUND'].includes(key) && typeof value?.requestId === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value.requestId)) {
     text += language === 'zh-CN' ? ` 请求编号：${value.requestId}` : ` Request ID: ${value.requestId}`;
   }
   const maximum = value?.localization?.params?.max ?? value?.params?.max;

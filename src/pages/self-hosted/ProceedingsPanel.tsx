@@ -415,7 +415,8 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
   const serverCaughtUp = localQueueOrder !== null && serverOrderStr === localQueueOrder.join(',');
   React.useEffect(() => { if (serverCaughtUp) setLocalQueueOrder(null); }, [serverCaughtUp]);
   const canParticipate = snapshot.viewer.audience !== 'PUBLIC' && snapshot.committee.status === 'ACTIVE';
-  if (!list) return <Message error content={t('Speaker list not found.')} />;
+  if (!list) return <><Message error role="alert" content={t('Speaker list not found.')} />
+    <Button as={Link} to="/committees">{t('Return home')}</Button></>;
   const current = list.queue.find(entry => entry.id === list.currentEntryId);
   const serverQueued = list.queue.filter(entry => entry.status === 'QUEUED');
   const queued = localQueueOrder
@@ -1363,7 +1364,8 @@ function StrawpollWorkspace({snapshot, run, api, canChair, resourceId}: CommonPr
   React.useEffect(() => {setAnonymousChoices([]); setAnonymousSubmitted(false);}, [poll?.id]);
   if (resourceId === 'new') return canChair && session ? <Loading />
     : <Message content={session ? t('Chair capability is required.') : t('Start a meeting first.')} />;
-  if (!poll) return <Message error content={t('Strawpoll not found.')} />;
+  if (!poll) return <><Message error role="alert" content={t('Strawpoll not found.')} />
+    <Button as={Link} to="/committees">{t('Return home')}</Button></>;
   const canVote = snapshot.viewer.audience !== 'PUBLIC' && snapshot.committee.status === 'ACTIVE';
   const cleanOptions = optionLabels.map(value => value.trim()).filter(Boolean);
   const ready = Boolean(question.trim() && cleanOptions.length >= 2
@@ -1830,7 +1832,8 @@ function VotingWorkspace({snapshot, run, api, canChair, resourceId}: CommonProps
       <Button primary fluid loading={saving} disabled={!canChair || snapshot.committee.status!=='ACTIVE' || saving || !selectedDraft || selectedDraft.draftType==='DIRECTIVE' && !activeCrises.some(group=>group.id===crisisId)}>{t('Confirm vote')}</Button>
     </Form></Card.Content></Card>
   </Container>;
-  if (!document) return <Message error content={t('Draft not found.')} />;
+  if (!document) return <><Message error role="alert" content={t('Draft not found.')} />
+    <Button as={Link} to="/committees">{t('Return home')}</Button></>;
   if (!document.directVote?.startedAt && !hasBallot(document.id)) return <Redirect to={`/committees/${snapshot.committee.id}/votes/new?draft=${document.id}`} />;
   if (hasBallot(document.id)) return <Container fluid><div className="document-voting-heading">
     <span>{t('Voting in progress')}</span><Header as="h1">{document.title}</Header></div>
@@ -1905,7 +1908,8 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab, draft
   if (resourceId === 'new') return canParticipate && session ? <Loading />
     : <Message content={session ? t('An active seat assignment is required.') : t('Start a meeting first.')} />;
   const document = selectedDocument;
-  if (!document) return <Message error content={t(draftType === 'DIRECTIVE' ? 'Draft not found.' : 'Draft Resolution not found.')} />;
+  if (!document) return <><Message error role="alert" content={t(draftType === 'DIRECTIVE' ? 'Draft not found.' : 'Draft Resolution not found.')} />
+    <Button as={Link} to="/committees">{t('Return home')}</Button></>;
   const amendments = (snapshot.documents ?? []).filter(item => item.resolutionId === document.id);
   const activeTab = tab === 'amendments' && draftType!=='DIRECTIVE' ? 'amendments' : 'text';
   const selectedAmendment = amendments.find(item => item.id === selectedAmendmentId);
