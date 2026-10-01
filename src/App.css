@@ -77,10 +77,14 @@
 }
 
 .committee-setup-layout {
-  display: grid;
+  display: flex;
+  flex-wrap: wrap;
   gap: 1.5rem;
-  grid-template-columns: minmax(0, 1fr);
-  align-items: start;
+  justify-content: center;
+  align-items: flex-start;
+  margin: 0 auto;
+  max-width: 100%;
+  width: fit-content;
 }
 
 .committee-seat-editor,
@@ -88,8 +92,21 @@
   min-width: 0;
 }
 
+.committee-seat-editor {
+  flex: 0 1 auto;
+  max-width: 100%;
+  width: fit-content;
+}
+
 .committee-setup-page .members-table {
-  table-layout: fixed;
+  max-width: 100%;
+  table-layout: auto;
+  width: 100%;
+}
+
+/* Override the generic Chinese definition-table column width. */
+.committee-setup-page .members-table tr > :first-child {
+  width: auto !important;
 }
 
 .committee-setup-page .members-table .ui.input,
@@ -115,7 +132,7 @@
 }
 
 .committee-setup-page .members-table .add-seat-row > th:first-child .ui.dropdown {
-  max-width: min(32rem, calc(100vw - 3rem));
+  max-width: min(22rem, calc(100vw - 3rem));
   min-width: 14rem;
   width: fit-content;
 }
@@ -126,22 +143,35 @@
   width: max-content;
 }
 
+.committee-setup-page .add-seat-row > th:first-child .ui.dropdown > .text,
+.committee-setup-page .add-seat-row > th:first-child .ui.dropdown .menu > .item {
+  align-items: center;
+  display: flex;
+  line-height: 1.4;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.committee-setup-page .add-seat-row > th:first-child .ui.dropdown .country-flag-display {
+  flex-shrink: 0;
+}
+
 .committee-setup-page .add-seat-row .ui.dropdown > .text > span:last-child,
 .committee-setup-page .add-seat-row .ui.dropdown .menu > .item > span:last-child {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 @media (min-width: 768px) {
-  /* Reserve room for single-line labels and controls; names use the remaining space. */
-  .committee-setup-page .members-table tr > :nth-child(2) { width: 11.5rem; }
-  .committee-setup-page .members-table tr > :nth-child(3) { width: 9.75rem; }
-  .committee-setup-page .members-table tr > :nth-child(4) { width: 5.25rem; }
-  .committee-setup-page .members-table tr > :nth-child(5) { width: 4.5rem; }
-  .committee-setup-page .members-table tr > :nth-child(6) { width: 8rem; }
-  .committee-setup-page .members-table tr > :nth-child(7) { width: 3.75rem; }
+  /* Keep voting controls aligned while the editor fits the country names. */
+  .committee-setup-page .members-table tr > :nth-child(2) { min-width: 10.75rem; width: 10.75rem; }
+  .committee-setup-page .members-table tr > :nth-child(3) { min-width: 9.75rem; width: 9.75rem; }
+  .committee-setup-page .members-table tr > :nth-child(4) { min-width: 5.25rem; width: 5.25rem; }
+  .committee-setup-page .members-table tr > :nth-child(5) { min-width: 5.25rem; width: 5.25rem; }
+  .committee-setup-page .members-table tr > :nth-child(6) { min-width: 8rem; width: 8rem; }
+  .committee-setup-page .members-table tr > :nth-child(7) { min-width: 4.5rem; width: 4.5rem; }
 
   .committee-setup-page .members-table tr > th,
   .committee-setup-page .members-table tr > td {
@@ -210,15 +240,15 @@
 
 .committee-setup-page .committee-seat-identity {
   align-items: center;
-  display: flex;
+  display: inline-flex;
   gap: 0.5rem;
+  max-width: 22rem;
 }
 
-.committee-setup-page .committee-seat-identity > span:last-child {
+.committee-setup-page .committee-seat-name {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .committee-setup-page .committee-seat-identity .country-flag-display {
@@ -229,8 +259,12 @@
 }
 
 .committee-seat-management {
+  contain-intrinsic-inline-size: 20rem;
+  container-type: inline-size;
   display: grid;
+  flex: 1 1 20rem;
   gap: 1rem;
+  max-width: 100%;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
   align-items: stretch;
 }
@@ -241,18 +275,56 @@
   width: 100%;
 }
 
-.committee-seat-management .list .description {
+.committee-seat-management .list .description,
+.committee-seat-management .list .header {
   overflow-wrap: anywhere;
 }
 
-/* Keep enough room for the fixed voting columns, a seat name, and the sidebar. */
-@container committee-setup (min-width: 74rem) {
-  .committee-setup-layout.has-seat-management {
-    grid-template-columns: minmax(0, 1fr) 20rem;
+/* Stack before the voting columns leave too little room for readable names. */
+@container committee-setup (max-width: 60rem) {
+  .committee-seat-editor {
+    flex-basis: 100%;
+    width: 100%;
   }
 
-  .committee-seat-management {
-    grid-template-columns: minmax(0, 1fr);
+  .committee-setup-page .ui.table.members-table,
+  .committee-setup-page .ui.table.members-table thead,
+  .committee-setup-page .ui.table.members-table tbody,
+  .committee-setup-page .ui.table.members-table tr,
+  .committee-setup-page .ui.table.members-table tr > th,
+  .committee-setup-page .ui.table.members-table tr > td {
+    display: block !important;
+    min-width: 0 !important;
+    width: auto !important;
+  }
+
+  .committee-setup-page .ui.table.members-table thead > tr:first-child {
+    display: none !important;
+  }
+
+  .committee-setup-page .members-table tr {
+    padding: 1em 0;
+    box-shadow: 0 -1px 0 rgba(0, 0, 0, 0.1) inset !important;
+  }
+
+  .committee-setup-page .ui.table.members-table tr > th,
+  .committee-setup-page .ui.table.members-table tr > td {
+    border: none !important;
+    padding: 0.25em 0.75em !important;
+    box-shadow: none !important;
+  }
+
+  .committee-setup-page .ui.table.members-table tr > th[data-label],
+  .committee-setup-page .ui.table.members-table tr > td[data-label] {
+    align-items: center;
+    display: flex !important;
+    gap: 1rem;
+    justify-content: space-between;
+  }
+
+  .committee-setup-page .members-table [data-label]::before {
+    content: attr(data-label);
+    font-weight: normal;
   }
 }
 

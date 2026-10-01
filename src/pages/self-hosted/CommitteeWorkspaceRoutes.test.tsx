@@ -453,6 +453,19 @@ describe('committee workspace routes and roles', () => {
     expect(page.querySelector('[aria-label="Veto · French delegation"]')).toBeTruthy();
   });
 
+  it.each(['OWNER', 'PUBLIC'] as const)('preserves complete country names of varied lengths in the %s seat list', async audience => {
+    const names = ['Chad', 'United Kingdom of Great Britain and Northern Ireland', '中华人民共和国',
+      'Côte d’Ivoire', '圣文森特和格林纳丁斯', 'A'.repeat(160)];
+    const page = await render(audience, '/committees/committee/setup', user, value => ({...value,
+      seats: names.map((displayName, index) => ({...value.seats[0], id: `seat-${index}`,
+        stableKey: `country-${index}`, displayName}))}));
+    expect([...page.querySelectorAll('.committee-seat-name')].map(element => element.textContent)).toEqual(names);
+    expect(page.querySelectorAll('.committee-seat-identity .country-flag-display')).toHaveLength(names.length);
+    if (audience === 'OWNER') {
+      for (const name of names) expect(page.querySelector(`[aria-label="Deactivate · ${name}"]`)).toBeTruthy();
+    }
+  });
+
   it('lets only Owners manage Chairs', async () => {
     const page = await render('OWNER', '/committees/committee/setup');
     expect(page.textContent).toContain('Grant Chair');

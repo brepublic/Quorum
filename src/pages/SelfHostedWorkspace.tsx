@@ -568,7 +568,7 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
         <Table.Cell />
       </Table.Row>}
       {displayedSeats.map(seat => <Table.Row key={seat.id}><Table.Cell>
-        <span className="committee-seat-identity"><Flag seat={seat} /><span>{seat.displayName}</span></span></Table.Cell>
+        <span className="committee-seat-identity"><Flag seat={seat} /><span className="committee-seat-name">{seat.displayName}</span></span></Table.Cell>
         <Table.Cell>{canChair && !readOnly ? <Form.Select aria-label={`${t('Rank')} · ${seat.displayName}`}
           search selection fluid disabled={Boolean(pending)} value={seat.rank} options={rankOptions} onChange={(_, data) => {
             const rank = data.value as typeof seatRank; void execute(`rank-${seat.id}`, () => api.updateSeat(snapshot.committee.id,
