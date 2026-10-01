@@ -1290,7 +1290,25 @@ function CommitteeWorkspaceContent({id, api, user, logout}: {
   id: string; api: SelfHostedApi; user?: SelfHostedUser; logout(): void;
 }) {
   useLanguage();
-  const {snapshot, error, failure, realtimeStatus, refresh, run} = useCommitteeWorkspace();
+  const {snapshot, snapshotReceivedAt, error, failure, realtimeStatus, refresh, run} = useCommitteeWorkspace();
+  const fileReviewScope = snapshot && (snapshot.viewer.audience === 'CHAIR' || snapshot.viewer.audience === 'OWNER')
+    ? `${id}:${user?.id}:${snapshot.viewer.audience}` : undefined;
+  const [fileReview, setFileReview] = React.useState<{scope: string; pending: boolean}>();
+  React.useEffect(() => {
+    if (!fileReviewScope) {setFileReview(undefined); return;}
+    let active = true;
+    const refreshFileReview = async () => {
+      try {
+        const files = await api.listFiles(id);
+        if (active) setFileReview({scope: fileReviewScope,
+          pending: files.some(file => file.status === 'UPLOAD_COMPLETE' || file.status === 'PENDING_REVIEW')});
+      } catch (caught) {
+        if (active && caught instanceof SelfHostedApiError && [401, 403, 404].includes(caught.status)) setFileReview(undefined);
+      }
+    };
+    void refreshFileReview();
+    return () => {active = false;};
+  }, [api, id, fileReviewScope, snapshotReceivedAt]);
   const location = useLocation(); const history = useHistory();
   const newCaucusPath = `/committees/${id}/caucuses/new`;
   const [createCaucusOpen, setCreateCaucusOpen] = React.useState(location.pathname === newCaucusPath);
@@ -1320,6 +1338,7 @@ function CommitteeWorkspaceContent({id, api, user, logout}: {
     && snapshot.committee.status !== 'ARCHIVED' && snapshot.committee.status !== 'DELETING';
   const base = `/committees/${id}`;
   return <CommitteeNavigation snapshot={snapshot} user={user} logout={logout} realtimeStatus={realtimeStatus}
+    hasPendingFileReview={fileReviewScope !== undefined && fileReview?.scope === fileReviewScope && fileReview.pending}
     onCreateCaucus={() => setCreateCaucusOpen(true)}>
     <Container fluid className="committee-workspace-page">{error && <Message error content={error} />}
         <Switch>

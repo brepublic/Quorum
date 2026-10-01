@@ -418,6 +418,22 @@
   margin: 0;
 }
 
+.committee-navigation-more-files {
+  display: inline-flex;
+  align-items: center;
+}
+
+.file-review-dot {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 0.5rem;
+  height: 0.5rem;
+  margin-left: 0.45rem;
+  border-radius: 50%;
+  background: #2185d0;
+  vertical-align: middle;
+}
+
 .committee-primary-navigation.ui.menu .committee-navigation-more > .menu {
   width: max-content;
   min-width: 11rem;

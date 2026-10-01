@@ -70,6 +70,66 @@ function clickSemanticCheckbox(element?: Element | null) {
 }
 
 describe('committee workspace routes and roles', () => {
+  it('updates pending-file dots through the existing SSE while viewing another page', async () => {
+    let sequence = 1;
+    let status = 'UPLOAD_COMPLETE';
+    let audience: CommitteeWorkspaceSnapshot['viewer']['audience'] = 'CHAIR';
+    let callbacks!: Parameters<SelfHostedApi['openCommitteeEvents']>[2];
+    const listFiles = vi.fn(async () => [{status}] as Awaited<ReturnType<SelfHostedApi['listFiles']>>);
+    const openCommitteeEvents = vi.fn((id, after, handlers) => {callbacks = handlers; return () => undefined;});
+    const page = await render('CHAIR', '/committees/committee/unmod', user, value => value, {
+      snapshot: vi.fn(async () => ({...snapshot(audience), sync: {committeeEventSequence: sequence}})),
+      openCommitteeEvents, listFiles
+    });
+    const dot = () => page.querySelector('.committee-navigation-desktop a[href="/committees/committee/posts"] .file-review-dot');
+    expect(dot()).not.toBeNull();
+    expect(listFiles).toHaveBeenCalledWith('committee');
+    expect(page.querySelector('.delegate-file-card-list')).toBeNull();
+    const event = async (type: string) => {
+      sequence++;
+      await act(async () => {callbacks.onEvent({type} as Parameters<typeof callbacks.onEvent>[0]);});
+    };
+    status = 'PENDING_REVIEW';
+    await event('file.review_requested');
+    expect(dot()).not.toBeNull();
+    status = 'PUBLISHED';
+    await event('file.published');
+    expect(dot()).toBeNull();
+    status = 'PENDING_REVIEW';
+    await event('file.created');
+    expect(dot()).not.toBeNull();
+    status = 'REJECTED';
+    await event('file.rejected');
+    expect(dot()).toBeNull();
+    status = 'PENDING_REVIEW';
+    await event('file.created');
+    expect(dot()).not.toBeNull();
+    audience = 'MEMBER';
+    const calls = listFiles.mock.calls.length;
+    await event('committee.updated');
+    expect(dot()).toBeNull();
+    expect(listFiles).toHaveBeenCalledTimes(calls);
+    expect(openCommitteeEvents).toHaveBeenCalledOnce();
+  });
+
+  it('ignores an old review-list response after a newer SSE refresh', async () => {
+    let sequence = 1;
+    let callbacks!: Parameters<SelfHostedApi['openCommitteeEvents']>[2];
+    let finish!: (files: Awaited<ReturnType<SelfHostedApi['listFiles']>>) => void;
+    const old = new Promise<Awaited<ReturnType<SelfHostedApi['listFiles']>>>(resolve => {finish = resolve;});
+    const listFiles = vi.fn().mockReturnValueOnce(old).mockResolvedValue([]);
+    const page = await render('CHAIR', '/committees/committee/unmod', user, value => value, {
+      snapshot: vi.fn(async () => ({...snapshot('CHAIR'), sync: {committeeEventSequence: sequence}})),
+      openCommitteeEvents: vi.fn((id, after, handlers) => {callbacks = handlers; return () => undefined;}),
+      listFiles
+    });
+    sequence++;
+    await act(async () => {callbacks.onEvent({type: 'file.published'} as Parameters<typeof callbacks.onEvent>[0]);});
+    await act(async () => {finish([{status: 'PENDING_REVIEW'}] as Awaited<ReturnType<SelfHostedApi['listFiles']>>);});
+    expect(page.querySelector('.file-review-dot')).toBeNull();
+    expect(listFiles).toHaveBeenCalledTimes(2);
+  });
+
   it('keeps crisis time across navigation and rebases fresh snapshots even without a timer revision change', async () => {
     vi.useFakeTimers({toFake: ['Date', 'performance', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval']});
     let remainingMs = 18_000; let running = true; let revision = 1;
@@ -211,7 +271,8 @@ describe('committee workspace routes and roles', () => {
     expect([...page.querySelectorAll('.draft-group-option')].filter(option => option.querySelector('.description'))
       .map(option => ({title: option.querySelector('.text')?.textContent, hint: option.querySelector('.description')?.textContent})))
       .toEqual([{title: 'DIRECTIVE 1.10', hint: 'No content'}, {title: 'UNFRIENDLY AMENDMENT 1.2.10', hint: 'No content'}]);
-    expect(listFiles).not.toHaveBeenCalled();
+    expect(listFiles).toHaveBeenCalledTimes(1);
+    expect(listFiles).toHaveBeenCalledWith('committee');
     const select = page.querySelector<HTMLElement>('[aria-label="Choose draft"]')!;
     const confirm = page.querySelector<HTMLButtonElement>('.new-document-vote-card button')!;
     expect(confirm.disabled).toBe(true);

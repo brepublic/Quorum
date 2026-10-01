@@ -89,18 +89,20 @@ describe('self-hosted workspace navigation', () => {
     });
     vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function(this: Element) {
       const width = this.classList.contains('committee-navigation-measurement') ? available
-        : this.classList.contains('committee-navigation-more') ? 50
+        : this.classList.contains('committee-navigation-more') ? 64
+        : this.classList.contains('committee-navigation-more-files') ? 14
+        : this.getAttribute('data-navigation-key') === '/posts' ? 114
         : this.classList.contains('realtime-status-label') ? 30
         : this.classList.contains('right') ? 200 : 100;
       return {width, height: 48, x: 0, y: 0, top: 0, left: 0, right: width, bottom: 48, toJSON: () => ({})};
     });
-    const page = render(<CommitteeNavigation snapshot={snapshot} user={user} logout={() => undefined}>
+    const page = render(<CommitteeNavigation snapshot={snapshot} user={user} logout={() => undefined} hasPendingFileReview>
       <input defaultValue="unsaved draft" />
     </CommitteeNavigation>, '/committees/committee/strawpolls/poll');
     const nav = page.querySelector('.committee-navigation-desktop')!;
     const draft = page.querySelector('input')!;
     const assertLevel = (width: number, level: number) => {
-      available = width;
+      available = width + 14;
       act(() => resize());
       expect(nav.getAttribute('data-collapse-level')).toBe(String(level));
       expect(page.querySelector('input')).toBe(draft);
@@ -109,17 +111,21 @@ describe('self-hosted workspace navigation', () => {
     for (const [width, level] of [[2100, 0], [1980, 1], [1900, 2], [1800, 3], [1700, 4], [1600, 5], [1500, 6], [1400, 7], [1300, 8], [1200, 9], [1100, 10], [1000, 11]]) {
       assertLevel(width, level);
       expect(Boolean(nav.querySelector('.realtime-status-label'))).toBe(level === 0);
+      expect(nav.querySelector('a[href="/committees/committee/posts"] .file-review-dot')?.getAttribute('aria-label')).toBe('Pending review');
+      expect(Boolean(nav.querySelector('.committee-navigation-more > .committee-navigation-more-files .file-review-dot'))).toBe(level >= 4);
       for (const [path, minimum] of [['/settings', 2], ['/help', 2], ['/stats', 3], ['/posts', 4], ['/notes', 5], ['/strawpolls', 6], ['/votes', 7], ['/resolutions', 8], ['/directives', 9], ['/crises', 10], ['/caucuses', 11]] as const) {
         expect(Boolean(nav.querySelector(`.committee-primary-navigation > [data-navigation-key="${path}"]`))).toBe(level < minimum);
       }
     }
     expect(nav.querySelector('.committee-navigation-more.active')).not.toBeNull();
     const more = nav.querySelector<HTMLElement>('.committee-navigation-more')!;
+    expect(more.querySelector(':scope > .icon')?.nextElementSibling?.classList.contains('committee-navigation-more-files')).toBe(true);
     act(() => more.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true})));
     expect(more.classList.contains('visible')).toBe(true);
     act(() => more.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true})));
     expect(more.classList.contains('visible')).toBe(false);
     act(() => more.click());
+    expect(more.querySelector('.visible.menu a[href="/committees/committee/posts"] .file-review-dot')).not.toBeNull();
     const poll = more.querySelector<HTMLElement>('[data-navigation-key="/strawpolls"]')!;
     act(() => poll.click());
     expect(poll.querySelector('.visible.menu a[href="/committees/committee/strawpolls/new"]')).not.toBeNull();
@@ -128,11 +134,17 @@ describe('self-hosted workspace navigation', () => {
     expect(more.classList.contains('visible')).toBe(false);
     assertLevel(800, 12);
     expect(nav.getAttribute('data-navigation-mode')).toBe('sidebar');
+    expect(page.querySelector('.committee-mobile-sidebar a[href="/committees/committee/posts"] .file-review-dot')).not.toBeNull();
     for (const [width, level] of [[1000, 11], [1100, 10], [1200, 9], [1300, 8], [1400, 7], [1500, 6], [1600, 5], [1700, 4], [1800, 3], [1900, 2], [1980, 1], [2100, 0]]) assertLevel(width, level);
     expect(page.querySelector('.committee-navigation-measurement')?.hasAttribute('inert')).toBe(true);
     expect(nav.querySelector('a[href="/committees/committee/setup"]')?.textContent).toBe('Seats');
     act(() => setLanguage('zh-CN'));
     expect(nav.querySelector('a[href="/committees/committee/setup"]')?.textContent).toBe('席位');
+    expect(nav.querySelector('a[href="/committees/committee/posts"] .file-review-dot')?.getAttribute('aria-label')).toBe('待审核');
+    act(() => root?.render(<MemoryRouter initialEntries={['/committees/committee']}>
+      <CommitteeNavigation snapshot={snapshot} user={user} logout={() => undefined} />
+    </MemoryRouter>));
+    expect(page.querySelector('.file-review-dot')).toBeNull();
   });
 
   it('uses route links and highlights a dynamic committee resource', () => {
