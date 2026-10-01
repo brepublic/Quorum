@@ -1,4 +1,4 @@
-import type {FlagSnapshot, LocalizedNames} from './stage4.js';
+import type {FlagSnapshot, LocalizedNames, SeatRank} from './stage4.js';
 
 export const DELEGATE_FILE_TYPES = ['WORKING_PAPER', 'DIRECTIVE_DRAFT', 'RESOLUTION_DRAFT', 'NEWS', 'CRISIS_NOTICE', 'INSTANT_MESSAGE'] as const;
 export type StandardDelegateFileType = typeof DELEGATE_FILE_TYPES[number];
@@ -47,8 +47,8 @@ export interface DelegatePortalBootstrap {
   committeeId: string;
   committeeName: string;
   shareId: string;
-  claimedSeat: {id: string; displayName: string; flag?: FlagSnapshot} | null;
-  eligibleSeats: Array<{id: string; displayName: string; flag: FlagSnapshot; searchTerms?: string[]}>;
+  claimedSeat: {id: string; displayName: string; rank: SeatRank; flag?: FlagSnapshot} | null;
+  eligibleSeats: Array<{id: string; displayName: string; rank: SeatRank; flag: FlagSnapshot; searchTerms?: string[]}>;
   mayUpload: boolean;
   storageAvailable: boolean;
   eventSequence: number;

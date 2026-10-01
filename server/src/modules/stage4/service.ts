@@ -84,7 +84,7 @@ interface CommitteeTemplateRow extends QueryResultRow {
 }
 interface TemplateMemberRow extends QueryResultRow {
   id: string; stable_key: string; names: LocalizedNames; default_language: string; rank: SeatRank;
-  can_vote: boolean; has_veto: boolean; must_vote: boolean; sort_order: number;
+  can_vote: boolean; can_procedural_vote: boolean; has_veto: boolean; must_vote: boolean; sort_order: number;
   flag_type: FlagSnapshot['type']; flag_value: string; revision: number;
 }
 
@@ -220,7 +220,7 @@ function builtinCommitteeTemplate(definition: BuiltinCommitteeTemplateDefinition
       const rank = 'STANDARD';
       return {id: `${definition.key}:${stableKey}`, stableKey,
         names: organization?.names ?? {'zh-CN': builtInCountryName(code, 'zh-CN'), en: builtInCountryName(code, 'en')},
-        defaultLanguage: 'zh-CN', rank, canVote: true, hasVeto: veto.has(code), mustVote: false, sortOrder,
+        defaultLanguage: 'zh-CN', rank, canVote: true, canProceduralVote: true, hasVeto: veto.has(code), mustVote: false, sortOrder,
         flag: organization?.flag ?? {type: 'STANDARD', value: code}, revision: 1};
     })
   };
@@ -438,8 +438,8 @@ function rollCallEntry(row: RollCallEntryRow): RollCallEntry {
 }
 
 async function rollCall(client: PoolClient, row: RollCallRow): Promise<RollCall> {
-  const seats = await client.query<{id: string; displayName: string; canVote: boolean; flag: FlagSnapshot}>(
-    `SELECT frozen.seat_id AS id,frozen.seat_display_name AS "displayName",seat.can_vote AS "canVote",
+  const seats = await client.query<{id: string; displayName: string; canVote: boolean; canProceduralVote: boolean; flag: FlagSnapshot}>(
+    `SELECT frozen.seat_id AS id,frozen.seat_display_name AS "displayName",seat.can_vote AS "canVote",seat.can_procedural_vote AS "canProceduralVote",
       json_build_object('type',seat.flag_type,'value',seat.flag_value) AS flag
       FROM roll_call_seats frozen JOIN committee_seats seat ON seat.id=frozen.seat_id
       WHERE frozen.roll_call_id=$1 ORDER BY frozen.sort_order`, [row.id]);
@@ -454,20 +454,23 @@ async function rollCall(client: PoolClient, row: RollCallRow): Promise<RollCall>
 async function replaceRollCall(client: PoolClient, committee: Stage4CommitteeRow, current: RollCallRow,
   actorUserId: string, context: Stage4Context, allowEmpty = false): Promise<RollCall | undefined> {
   const seats = await client.query<{id: string; display_name: string}>(`SELECT id,display_name FROM committee_seats
-    WHERE committee_id=$1 AND active=true ORDER BY sort_order,stable_key,id`, [committee.id]);
-  if (!seats.rows.length && !allowEmpty) throw new AppError({reason: 'NO_ACTIVE_SEATS', code: 'RESOURCE_CONFLICT',
+    WHERE committee_id=$1 AND active=true AND can_procedural_vote=true ORDER BY sort_order,stable_key,id`, [committee.id]);
+  const hasActiveSeats = seats.rows.length > 0 || Boolean((await client.query(
+    'SELECT 1 FROM committee_seats WHERE committee_id=$1 AND active LIMIT 1', [committee.id])).rowCount);
+  if (!hasActiveSeats && !allowEmpty) throw new AppError({reason: 'NO_ACTIVE_SEATS', code: 'RESOURCE_CONFLICT',
     message: 'The committee has no active seats.'});
   await client.query(`UPDATE roll_calls SET status=CASE WHEN status='IN_PROGRESS' THEN 'ABANDONED'::roll_call_status ELSE status END,
     current_seat_id=CASE WHEN status='IN_PROGRESS' THEN NULL ELSE current_seat_id END,
     revision=revision+CASE WHEN status='IN_PROGRESS' THEN 1 ELSE 0 END WHERE id=$1`, [current.id]);
-  const nextId = seats.rows.length ? randomUUID() : null;
+  const nextId = hasActiveSeats ? randomUUID() : null;
   let replacement: RollCallRow | undefined;
   if (nextId) {
     const inserted = await client.query<RollCallRow>(`INSERT INTO roll_calls
-      (id,committee_id,meeting_session_id,current_seat_id,rule_package_version_id,allowed_responses,started_by_user_id)
-      VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      (id,committee_id,meeting_session_id,current_seat_id,rule_package_version_id,allowed_responses,started_by_user_id,status,completed_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
     [nextId, committee.id, current.meeting_session_id, seats.rows[0]?.id,
-      current.rule_package_version_id, current.allowed_responses, actorUserId]);
+      current.rule_package_version_id, current.allowed_responses, actorUserId,
+      seats.rows.length ? 'IN_PROGRESS' : 'COMPLETED', seats.rows.length ? null : new Date()]);
     replacement = inserted.rows[0];
     for (const [index, seat] of seats.rows.entries()) await client.query(`INSERT INTO roll_call_seats
       (roll_call_id,seat_id,seat_display_name,sort_order) VALUES ($1,$2,$3,$4)`,
@@ -490,6 +493,8 @@ async function replaceRollCall(client: PoolClient, committee: Stage4CommitteeRow
 
 async function resetRollCallAfterSeatChange(client: PoolClient, committee: Stage4CommitteeRow,
   actorUserId: string, context: Stage4Context): Promise<void> {
+  const session = await client.query<{id: string}>("SELECT id FROM meeting_sessions WHERE committee_id=$1 AND status='OPEN'", [committee.id]);
+  if (session.rows[0]) await ensureFileOnlyAttendance(client, committee, session.rows[0].id, actorUserId);
   const latest = await client.query<RollCallRow>(`SELECT roll.* FROM roll_calls roll
     JOIN meeting_sessions session ON session.id=roll.meeting_session_id
     WHERE roll.committee_id=$1 AND session.status='OPEN' AND roll.status<>'ABANDONED'
@@ -497,10 +502,25 @@ async function resetRollCallAfterSeatChange(client: PoolClient, committee: Stage
   if (latest.rows[0]) await replaceRollCall(client, committee, latest.rows[0], actorUserId, context, true);
 }
 
+async function ensureFileOnlyAttendance(client: PoolClient, committee: Stage4CommitteeRow,
+  meetingSessionId: string, actorUserId: string): Promise<void> {
+  const seats = await client.query<{id: string; display_name: string}>(`SELECT s.id,s.display_name FROM committee_seats s
+    LEFT JOIN current_attendance a ON a.seat_id=s.id AND a.meeting_session_id=$2
+    WHERE s.committee_id=$1 AND s.active AND NOT s.can_procedural_vote AND a.state IS DISTINCT FROM 'PRESENT'`,
+  [committee.id, meetingSessionId]);
+  for (const seat of seats.rows) await insertAttendanceEvent(client, {committeeId: committee.id,
+    meetingSessionId, seatId: seat.id, seatDisplayName: seat.display_name, type: 'PRESENT', actorUserId});
+  if (seats.rows.length) await appendEvent(client, committee, {type: 'attendance.changed', resourceType: 'meeting_session',
+    resourceId: meetingSessionId, revision: 1, payload: {source: 'SEAT_PERMISSIONS', seatIds: seats.rows.map(seat => seat.id)}});
+}
+
 async function insertAttendanceEvent(client: PoolClient, input: {
   committeeId: string; meetingSessionId: string; seatId: string; seatDisplayName: string; type: AttendanceEventType;
   actorUserId: string; sourceRollCallEntryId?: string; sourcePointId?: string;
 }): Promise<AttendanceEvent> {
+  const seat = await client.query<{can_procedural_vote: boolean}>('SELECT can_procedural_vote FROM committee_seats WHERE id=$1', [input.seatId]);
+  if (!seat.rows[0]?.can_procedural_vote && input.type !== 'PRESENT') throw new AppError({code: 'VALIDATION_FAILED',
+    reason: 'INVALID_SEAT_PROPERTIES', message: 'File-only seats are always present.'});
   const state = input.type === 'TEMPORARILY_LEFT' ? 'TEMPORARILY_LEFT'
     : input.type === 'ABSENT' ? 'ABSENT' : 'PRESENT';
   const id = randomUUID();
@@ -571,7 +591,7 @@ async function committeeTemplate(client: PoolClient, row: CommitteeTemplateRow):
     countryTemplateKey: row.country_template_key, revision: row.revision,
     createdAt: row.created_at.toISOString(), updatedAt: row.updated_at.toISOString(),
     members: members.rows.map(item => ({id: item.id, stableKey: item.stable_key, names: item.names,
-      defaultLanguage: item.default_language, rank: item.rank, canVote: item.can_vote, hasVeto: item.has_veto,
+      defaultLanguage: item.default_language, rank: item.rank, canVote: item.can_vote, canProceduralVote: item.can_procedural_vote, hasVeto: item.has_veto,
       mustVote: item.must_vote, sortOrder: item.sort_order, flag: flag(item.flag_type, item.flag_value), revision: item.revision}))};
 }
 
@@ -603,10 +623,10 @@ async function replaceMembers(client: PoolClient, templateId: string, value: Com
   await client.query('DELETE FROM committee_template_members WHERE committee_template_id=$1', [templateId]);
   for (const member of value.members) {
     await client.query(`INSERT INTO committee_template_members
-      (id,committee_template_id,stable_key,names,default_language,rank,can_vote,has_veto,must_vote,sort_order,flag_type,flag_value)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+      (id,committee_template_id,stable_key,names,default_language,rank,can_vote,has_veto,must_vote,sort_order,flag_type,flag_value,can_procedural_vote)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
     [randomUUID(), templateId, member.stableKey, member.names, member.defaultLanguage, member.rank,
-      member.canVote, member.hasVeto, member.mustVote, member.sortOrder, member.flag.type, member.flag.value]);
+      member.canVote, member.hasVeto, member.mustVote, member.sortOrder, member.flag.type, member.flag.value, member.canProceduralVote ?? true]);
   }
 }
 
@@ -802,7 +822,7 @@ export class Stage4Service {
       : validateLocalizedNames(input.names, input.defaultLanguage);
     const value: CommitteeTemplateInput = {names: localized.names, defaultLanguage: localized.defaultLanguage,
       countryTemplateKey: source.countryTemplateKey, members: source.members.map(item => ({stableKey: item.stableKey,
-        names: item.names, defaultLanguage: item.defaultLanguage, rank: item.rank, canVote: item.canVote,
+        names: item.names, defaultLanguage: item.defaultLanguage, rank: item.rank, canVote: item.canVote, canProceduralVote: item.canProceduralVote,
         hasVeto: item.hasVeto, mustVote: item.mustVote, sortOrder: item.sortOrder, flag: item.flag}))};
     return idempotentTransaction({pool: this.pool, auth, route: `POST /api/v1/committee-templates/${id}/clone`,
       key: idempotencyKey, request: input, status: 201, work: async client => {
@@ -881,7 +901,7 @@ export class Stage4Service {
         ? committee.content_snapshot.countryTemplate
         : undefined;
       const seats = await client.query<Stage4CommitteeSeat>(`SELECT id,stable_key AS "stableKey",display_name AS "displayName",rank,
-        can_vote AS "canVote",has_veto AS "hasVeto",must_vote AS "mustVote",sort_order AS "sortOrder",active,revision,
+        can_vote AS "canVote",can_procedural_vote AS "canProceduralVote",has_veto AS "hasVeto",must_vote AS "mustVote",sort_order AS "sortOrder",active,revision,
         json_build_object('type',flag_type,'value',flag_value) AS flag FROM committee_seats
         WHERE committee_id=$1 AND active=true ORDER BY sort_order,stable_key,id`, [committeeId]);
       const [sessionResult, meetingSessionsResult] = await Promise.all([
@@ -989,9 +1009,9 @@ export class Stage4Service {
           client.query<{seat_id: string; seat_display_name: string}>(`SELECT s.id AS seat_id,s.display_name AS seat_display_name
             FROM committee_seats s JOIN current_attendance a ON a.seat_id=s.id
               AND a.meeting_session_id=$2 AND a.state='PRESENT'
-            WHERE s.committee_id=$1 AND s.active=true AND ($3 OR s.can_vote=true)
+            WHERE s.committee_id=$1 AND s.active=true AND CASE WHEN $3 THEN s.can_procedural_vote ELSE s.can_vote END
             ORDER BY s.sort_order,s.stable_key,s.id`, [row.committee_id, row.meeting_session_id,
-            row.direct_vote_include_non_voting]),
+            row.rule_evaluation.resolvedValues.procedural === true]),
           client.query<{id: string; seat_id: string; seat_display_name: string; current_choice: BallotChoice;
             revision: number; cast_at: Date}>(`SELECT id,seat_id,seat_display_name,current_choice,revision,cast_at
             FROM motion_direct_votes WHERE motion_id=$1 AND retracted_at IS NULL ORDER BY seat_id`, [row.id])
@@ -1011,9 +1031,7 @@ export class Stage4Service {
           requiredSecondCount: row.required_second_count,
           seconds: seconds.rows.map(item => ({id: item.id, seatId: item.seat_id, seatDisplayName: item.seat_display_name,
             createdAt: item.created_at.toISOString()})), directVote: {
-            includeNonVotingSeats: row.direct_vote_include_non_voting,
             startedAt: row.direct_vote_started_at?.toISOString() ?? null,
-            settingsRevision: row.direct_vote_settings_revision,
             eligibility: eligible.rows.map(item => ({seatId: item.seat_id, seatDisplayName: item.seat_display_name})),
             choices: procedural ? ['FOR', 'AGAINST'] as BallotChoice[] : ['FOR', 'AGAINST', 'ABSTAIN'] as BallotChoice[],
             threshold, automaticResult,
@@ -1305,10 +1323,10 @@ export class Stage4Service {
         if (template) {
           for (const member of template.members) {
             await client.query(`INSERT INTO committee_seats
-              (id,committee_id,stable_key,display_name,rank,can_vote,has_veto,must_vote,sort_order,flag_type,flag_value)
-              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+              (id,committee_id,stable_key,display_name,rank,can_vote,has_veto,must_vote,sort_order,flag_type,flag_value,can_procedural_vote)
+              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
             [randomUUID(), id, member.stableKey, committeeContentName(member.names, language),
-              member.rank, member.canVote, member.hasVeto, member.mustVote, member.sortOrder, member.flag.type, member.flag.value]);
+              member.rank, member.canVote, member.hasVeto, member.mustVote, member.sortOrder, member.flag.type, member.flag.value, member.canProceduralVote ?? true]);
           }
         }
         await audit(client, context, {committeeId: id, actorUserId: auth.user.id, capabilities: ['COMMITTEE_OWNER'],
@@ -1322,15 +1340,16 @@ export class Stage4Service {
   async createSeat(auth: AuthenticatedSession, committeeId: string, input: Record<string, unknown>,
     idempotencyKey: string, context: Stage4Context): Promise<Stage4CommitteeSeat> {
     requireBusinessIdentity(auth);
-    assertExactBody(input, ['stableKey', 'rank', 'canVote', 'hasVeto', 'mustVote', 'sortOrder']);
+    assertExactBody(input, ['stableKey', 'rank', 'canVote', 'canProceduralVote', 'hasVeto', 'mustVote', 'sortOrder']);
     const stableKey = requiredText(input.stableKey, 'Seat stable key', 128);
     const rank = (input.rank ?? 'STANDARD') as SeatRank;
-    const canVote = input.canVote ?? true;
+    const canProceduralVote = input.canProceduralVote ?? rank !== 'MEDIA';
+    const canVote = input.canVote ?? rank !== 'MEDIA';
     const hasVeto = input.hasVeto ?? false; const mustVote = input.mustVote ?? false;
     const sortOrder = input.sortOrder ?? 0;
-    if (!['STANDARD', 'NGO', 'OBSERVER'].includes(rank) || typeof canVote !== 'boolean'
+    if (!['STANDARD', 'NGO', 'OBSERVER', 'MEDIA'].includes(rank) || typeof canVote !== 'boolean' || typeof canProceduralVote !== 'boolean'
       || typeof hasVeto !== 'boolean' || typeof mustVote !== 'boolean' || !Number.isSafeInteger(sortOrder)
-      || ((hasVeto || mustVote) && !canVote)) throw new AppError({reason: 'INVALID_SEAT_PROPERTIES', code: 'VALIDATION_FAILED', message: 'Seat properties are invalid.'});
+      || ((hasVeto || mustVote) && !canVote) || (canVote && !canProceduralVote)) throw new AppError({reason: 'INVALID_SEAT_PROPERTIES', code: 'VALIDATION_FAILED', message: 'Seat properties are invalid.'});
     return idempotentTransaction({pool: this.pool, auth, route: `POST /api/v1/committees/${committeeId}/seats`,
       key: idempotencyKey, request: input, status: 201, work: async client => {
         const row = await lockedCommittee(client, committeeId); await requireChair(client, row, auth.user.id); requireEditable(row);
@@ -1349,35 +1368,35 @@ export class Stage4Service {
           if (seat.active) throw new AppError({reason: 'RESOURCE_ALREADY_EXISTS', code: 'RESOURCE_CONFLICT',
             message: 'The requested resource already exists.'});
           const restored = await client.query(`UPDATE committee_seats SET rank=$2,can_vote=$3,has_veto=$4,
-            must_vote=$5,sort_order=$6,active=true,revision=revision+1,updated_at=now()
+            must_vote=$5,sort_order=$6,can_procedural_vote=$7,active=true,revision=revision+1,updated_at=now()
             WHERE id=$1 RETURNING id,stable_key AS "stableKey",display_name AS "displayName",rank,
-              can_vote AS "canVote",has_veto AS "hasVeto",must_vote AS "mustVote",sort_order AS "sortOrder",active,revision,
+              can_vote AS "canVote",can_procedural_vote AS "canProceduralVote",has_veto AS "hasVeto",must_vote AS "mustVote",sort_order AS "sortOrder",active,revision,
               json_build_object('type',flag_type,'value',flag_value) AS flag`,
-          [seat.id, rank, canVote, hasVeto, mustVote, sortOrder]);
+          [seat.id, rank, canVote, hasVeto, mustVote, sortOrder, canProceduralVote]);
           await appendEvent(client, row, {type: 'seat.updated', resourceType: 'seat', resourceId: seat.id,
             revision: seat.revision + 1,
-            payload: {displayName, rank, canVote, hasVeto, mustVote, sortOrder, active: true, flagType: seatFlag.type}});
+            payload: {displayName, rank, canVote, canProceduralVote, hasVeto, mustVote, sortOrder, active: true, flagType: seatFlag.type}});
           await audit(client, context, {committeeId, actorUserId: auth.user.id, capabilities: ['CHAIR'],
             action: 'committee.seat_updated', resourceType: 'seat', resourceId: seat.id,
             before: {revision: seat.revision, active: false},
-            after: {revision: seat.revision + 1, displayName, rank, canVote, hasVeto, mustVote, sortOrder,
+            after: {revision: seat.revision + 1, displayName, rank, canVote, canProceduralVote, hasVeto, mustVote, sortOrder,
               active: true, flagType: seatFlag.type}});
           await resetRollCallAfterSeatChange(client, row, auth.user.id, context);
           return restored.rows[0] as Stage4CommitteeSeat;
         }
         const id = randomUUID();
         const result = await client.query(`INSERT INTO committee_seats
-          (id,committee_id,stable_key,display_name,rank,can_vote,has_veto,must_vote,sort_order,flag_type,flag_value)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-          RETURNING id,stable_key AS "stableKey",display_name AS "displayName",rank,can_vote AS "canVote",
+          (id,committee_id,stable_key,display_name,rank,can_vote,has_veto,must_vote,sort_order,flag_type,flag_value,can_procedural_vote)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+          RETURNING id,stable_key AS "stableKey",display_name AS "displayName",rank,can_vote AS "canVote",can_procedural_vote AS "canProceduralVote",
             has_veto AS "hasVeto",must_vote AS "mustVote",sort_order AS "sortOrder",active,revision,
             json_build_object('type',flag_type,'value',flag_value) AS flag`,
-        [id, committeeId, stableKey, displayName, rank, canVote, hasVeto, mustVote, sortOrder, seatFlag.type, seatFlag.value]);
+        [id, committeeId, stableKey, displayName, rank, canVote, hasVeto, mustVote, sortOrder, seatFlag.type, seatFlag.value, canProceduralVote]);
         await appendEvent(client, row, {type: 'seat.created', resourceType: 'seat', resourceId: id, revision: 1,
-          payload: {stableKey, displayName, rank, canVote, hasVeto, mustVote, sortOrder, flagType: seatFlag.type}});
+          payload: {stableKey, displayName, rank, canVote, canProceduralVote, hasVeto, mustVote, sortOrder, flagType: seatFlag.type}});
         await audit(client, context, {committeeId, actorUserId: auth.user.id, capabilities: ['CHAIR'],
           action: 'committee.seat_created', resourceType: 'seat', resourceId: id,
-          after: {stableKey, displayName, rank, canVote, hasVeto, mustVote, sortOrder, flagType: seatFlag.type}});
+          after: {stableKey, displayName, rank, canVote, canProceduralVote, hasVeto, mustVote, sortOrder, flagType: seatFlag.type}});
         await resetRollCallAfterSeatChange(client, row, auth.user.id, context);
         return result.rows[0] as Stage4CommitteeSeat;
       }});
@@ -1391,12 +1410,12 @@ export class Stage4Service {
       throw new AppError({reason: 'INVALID_SEAT_PROPERTIES', code: 'VALIDATION_FAILED', message: 'Seat patch is invalid.'});
     }
     const patch = input.patch as Record<string, unknown>;
-    assertExactBody(patch, ['rank', 'canVote', 'hasVeto', 'mustVote', 'sortOrder', 'active'], 'Seat patch');
+    assertExactBody(patch, ['rank', 'canVote', 'canProceduralVote', 'hasVeto', 'mustVote', 'sortOrder', 'active'], 'Seat patch');
     if (Object.keys(patch).length === 0) throw new AppError({reason: 'SEAT_PATCH_EMPTY', code: 'VALIDATION_FAILED', message: 'Seat patch is empty.'});
     return transaction(this.pool, async client => {
       const committee = await lockedCommittee(client, committeeId); await requireChair(client, committee, auth.user.id); requireEditable(committee);
       const found = await client.query<{
-        revision: number; display_name: string; rank: SeatRank; can_vote: boolean; has_veto: boolean; must_vote: boolean;
+        revision: number; display_name: string; rank: SeatRank; can_vote: boolean; can_procedural_vote: boolean; has_veto: boolean; must_vote: boolean;
         sort_order: number; flag_type: FlagSnapshot['type']; flag_value: string; active: boolean;
       }>('SELECT * FROM committee_seats WHERE id=$1 AND committee_id=$2 FOR UPDATE', [seatId, committeeId]);
       const current = found.rows[0];
@@ -1405,28 +1424,29 @@ export class Stage4Service {
         details: {currentRevision: current.revision}});
       const displayName = current.display_name;
       const rank = (patch.rank ?? current.rank) as SeatRank;
+      const canProceduralVote = patch.canProceduralVote ?? current.can_procedural_vote;
       const canVote = patch.canVote ?? current.can_vote; const hasVeto = patch.hasVeto ?? current.has_veto;
       const mustVote = patch.mustVote ?? current.must_vote; const sortOrder = patch.sortOrder ?? current.sort_order;
       const active = patch.active ?? current.active; const seatFlag = flag(current.flag_type, current.flag_value);
-      if (!['STANDARD', 'NGO', 'OBSERVER'].includes(rank) || typeof canVote !== 'boolean'
+      if (!['STANDARD', 'NGO', 'OBSERVER', 'MEDIA'].includes(rank) || typeof canVote !== 'boolean' || typeof canProceduralVote !== 'boolean'
         || typeof hasVeto !== 'boolean' || typeof mustVote !== 'boolean' || !Number.isSafeInteger(sortOrder)
-        || typeof active !== 'boolean' || ((hasVeto || mustVote) && !canVote)) {
+        || typeof active !== 'boolean' || ((hasVeto || mustVote) && !canVote) || (canVote && !canProceduralVote)) {
         throw new AppError({reason: 'INVALID_SEAT_PROPERTIES', code: 'VALIDATION_FAILED', message: 'Seat properties are invalid.'});
       }
       const result = await client.query(`UPDATE committee_seats SET display_name=$3,rank=$4,can_vote=$5,has_veto=$6,
-        must_vote=$7,sort_order=$8,flag_type=$9,flag_value=$10,active=$11,revision=revision+1,updated_at=now()
+        must_vote=$7,sort_order=$8,flag_type=$9,flag_value=$10,active=$11,can_procedural_vote=$12,revision=revision+1,updated_at=now()
         WHERE id=$1 AND committee_id=$2 RETURNING id,stable_key AS "stableKey",display_name AS "displayName",rank,
-        can_vote AS "canVote",has_veto AS "hasVeto",must_vote AS "mustVote",sort_order AS "sortOrder",active,revision,
+        can_vote AS "canVote",can_procedural_vote AS "canProceduralVote",has_veto AS "hasVeto",must_vote AS "mustVote",sort_order AS "sortOrder",active,revision,
         json_build_object('type',flag_type,'value',flag_value) AS flag`,
-      [seatId, committeeId, displayName, rank, canVote, hasVeto, mustVote, sortOrder, seatFlag.type, seatFlag.value, active]);
+      [seatId, committeeId, displayName, rank, canVote, hasVeto, mustVote, sortOrder, seatFlag.type, seatFlag.value, active, canProceduralVote]);
       await appendEvent(client, committee, {type: active ? 'seat.updated' : 'seat.deactivated', resourceType: 'seat',
         resourceId: seatId, revision: baseRevision + 1,
-        payload: {displayName, rank, canVote, hasVeto, mustVote, sortOrder, active, flagType: seatFlag.type}});
+        payload: {displayName, rank, canVote, canProceduralVote, hasVeto, mustVote, sortOrder, active, flagType: seatFlag.type}});
       await audit(client, context, {committeeId, actorUserId: auth.user.id, capabilities: ['CHAIR'],
         action: active ? 'committee.seat_updated' : 'committee.seat_deactivated', resourceType: 'seat', resourceId: seatId,
         before: {revision: current.revision}, after: {revision: current.revision + 1, displayName, rank,
-          canVote, hasVeto, mustVote, sortOrder, active, flagType: seatFlag.type}});
-      if (rank !== current.rank || canVote !== current.can_vote || hasVeto !== current.has_veto
+          canVote, canProceduralVote, hasVeto, mustVote, sortOrder, active, flagType: seatFlag.type}});
+      if (rank !== current.rank || canProceduralVote !== current.can_procedural_vote || canVote !== current.can_vote || hasVeto !== current.has_veto
         || mustVote !== current.must_vote || sortOrder !== current.sort_order || active !== current.active) {
         await resetRollCallAfterSeatChange(client, committee, auth.user.id, context);
       }
@@ -1620,6 +1640,7 @@ export class Stage4Service {
           VALUES ($1,$2,$3,$4,$5)
           RETURNING *`, [id, committeeId, phaseId, committee.active_rule_package_version_id, auth.user.id]);
       const generalRule = definition.rows[0].definition.speakerLists?.find(item => item.id === 'general-speakers-list');
+      await ensureFileOnlyAttendance(client, committee, id, auth.user.id);
       const configuredDuration = generalRule?.defaultDurationSeconds;
       const defaultSpeechMs = typeof configuredDuration === 'number' && Number.isSafeInteger(configuredDuration)
         && configuredDuration > 0 ? configuredDuration * 1000 : 120_000;
@@ -1736,12 +1757,15 @@ export class Stage4Service {
           throw new AppError({reason: 'INVALID_ROLL_CALL_RULES', code: 'VALIDATION_FAILED', message: 'The rule package has invalid roll-call responses.'});
         }
         const seats = await client.query<{id: string; display_name: string}>(`SELECT id,display_name FROM committee_seats
-          WHERE committee_id=$1 AND active=true ORDER BY sort_order,stable_key,id`, [committeeId]);
-        if (seats.rows.length === 0) throw new AppError({reason: 'NO_ACTIVE_SEATS', code: 'RESOURCE_CONFLICT', message: 'The committee has no active seats.'});
+          WHERE committee_id=$1 AND active=true AND can_procedural_vote=true ORDER BY sort_order,stable_key,id`, [committeeId]);
+        if (seats.rows.length === 0 && !(await client.query('SELECT 1 FROM committee_seats WHERE committee_id=$1 AND active LIMIT 1', [committeeId])).rowCount) {
+          throw new AppError({reason: 'NO_ACTIVE_SEATS', code: 'RESOURCE_CONFLICT', message: 'The committee has no active seats.'});
+        }
         const id = randomUUID(); const inserted = await client.query<RollCallRow>(`INSERT INTO roll_calls
-          (id,committee_id,meeting_session_id,current_seat_id,rule_package_version_id,allowed_responses,started_by_user_id)
-          VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-        [id, committeeId, meetingSessionId, seats.rows[0]?.id, session.active_rule_package_version_id, responses, auth.user.id]);
+          (id,committee_id,meeting_session_id,current_seat_id,rule_package_version_id,allowed_responses,started_by_user_id,status,completed_at)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+        [id, committeeId, meetingSessionId, seats.rows[0]?.id, session.active_rule_package_version_id, responses, auth.user.id,
+          seats.rows.length ? 'IN_PROGRESS' : 'COMPLETED', seats.rows.length ? null : new Date()]);
         for (const [index, seat] of seats.rows.entries()) {
           await client.query(`INSERT INTO roll_call_seats (roll_call_id,seat_id,seat_display_name,sort_order)
             VALUES ($1,$2,$3,$4)`, [id, seat.id, seat.display_name, index]);
@@ -2080,7 +2104,7 @@ export class Stage4Service {
         if (!meeting) throw new AppError({code: 'NOT_FOUND', message: 'Meeting session not found.'});
         if (meeting.status !== 'OPEN') throw new AppError({reason: 'MEETING_CLOSED', code: 'RESOURCE_CONFLICT', message: 'Meeting session is closed.'});
         const seat = await client.query<{display_name: string}>(`SELECT display_name FROM committee_seats
-          WHERE id=$1 AND committee_id=$2 AND active=true`, [seatId, committeeId]);
+          WHERE id=$1 AND committee_id=$2 AND active=true AND can_procedural_vote=true`, [seatId, committeeId]);
         if (!seat.rows[0]) throw new AppError({reason: 'INVALID_SEAT_REFERENCE', code: 'VALIDATION_FAILED', message: 'Seat is invalid.'});
         const version = await client.query<{definition: {points?: unknown}}>(`SELECT definition FROM rule_package_versions
           WHERE id=$1 AND status='PUBLISHED'`, [meeting.active_rule_package_version_id]);

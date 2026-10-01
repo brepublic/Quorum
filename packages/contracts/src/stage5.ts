@@ -140,9 +140,7 @@ export interface MotionDirectVote {
 }
 
 export interface MotionDirectVoteState {
-  includeNonVotingSeats: boolean;
   startedAt: string | null;
-  settingsRevision: number;
   eligibility: Array<{seatId: string; seatDisplayName: string}>;
   choices: BallotChoice[];
   threshold: number;

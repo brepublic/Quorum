@@ -264,8 +264,11 @@ export class DelegateFileService {
   async createUpload(credential: string | undefined, body: Record<string, unknown>, key: string,
     context: Stage4Context): Promise<FileUpload> {
     const session = await this.authenticate(credential);
-    await this.assertMayUpload(session);
-    const type = fileType(body.fileType); const uploadBody = {...body}; delete uploadBody.fileType;
+    const seat = await this.assertMayUpload(session);
+    const type = fileType(body.fileType);
+    if (seat.rank === 'MEDIA' && !['NEWS', 'INSTANT_MESSAGE'].includes(type)) throw new AppError({code: 'FORBIDDEN',
+      reason: 'MEDIA_FILE_TYPE_REQUIRED', message: 'Media delegates may upload only news and instant messages.'});
+    const uploadBody = {...body}; delete uploadBody.fileType;
     if (type === 'CRISIS_NOTICE') throw new AppError({code: 'FORBIDDEN',reason: 'CHAIR_REQUIRED',message: 'Only chairs upload crisis notices.'});
     const settings = (await this.pool.query('SELECT delegate_file_settings FROM committees WHERE id=$1', [session.committee_id])).rows[0].delegate_file_settings as DelegateFileSettings;
     const extensions = settings.allowedExtensions[isCustomDelegateFileType(type) ? 'OTHER' : type];
@@ -582,7 +585,7 @@ export class DelegateFileService {
 
   private async eligibleSeats(client: PoolClient, committeeId: string): Promise<DelegatePortalBootstrap['eligibleSeats']> {
     const result = await client.query<{id: string; stable_key: string; display_name: string;
-      flag_type: FlagSnapshot['type']; flag_value: string}>(`SELECT s.id,s.stable_key,s.display_name,s.flag_type,s.flag_value FROM meeting_sessions ms
+      flag_type: FlagSnapshot['type']; flag_value: string; rank: DelegatePortalBootstrap['eligibleSeats'][number]['rank']}>(`SELECT s.id,s.stable_key,s.display_name,s.flag_type,s.flag_value,s.rank FROM meeting_sessions ms
       JOIN current_attendance a ON a.meeting_session_id=ms.id AND a.state IN ('PRESENT','TEMPORARILY_LEFT')
       JOIN committee_seats s ON s.id=a.seat_id AND s.active=true
       WHERE ms.committee_id=$1 AND ms.status='OPEN' ORDER BY s.sort_order,s.stable_key,s.id`, [committeeId]);
@@ -601,7 +604,7 @@ export class DelegateFileService {
       content.countryTemplate.builtin ? new Map<string, string[]>() : manualCountryTerms(this.pool,
         committee.owner_user_id, content.countryTemplate.key, result.rows.map(row => row.stable_key))
     ]);
-    return result.rows.map(row => ({id: row.id, displayName: row.display_name,
+    return result.rows.map(row => ({id: row.id, displayName: row.display_name, rank: row.rank,
       flag: {type: row.flag_type, value: row.flag_value},
       searchTerms: [...termsFor(index, {kind: 'seat', key: row.id}), ...(manual.get(row.stable_key) ?? [])]}));
   }
@@ -612,13 +615,13 @@ export class DelegateFileService {
     if (!committee) throw new AppError({code: 'NOT_FOUND', message: 'Committee not found.'});
     const eligible = await this.eligibleSeats(client, share.committee_id);
     const settings = await this.readSettings(client, share.committee_id) as DelegateFileSettings;
-    const seat = session ? (await client.query('SELECT flag_type,flag_value FROM committee_seats WHERE id=$1 AND committee_id=$2',
+    const seat = session ? (await client.query('SELECT flag_type,flag_value,rank FROM committee_seats WHERE id=$1 AND committee_id=$2',
       [session.seat_id, share.committee_id])).rows[0] : undefined;
     const categoryRows = session ? (await client.query<{category: DelegateFileCategory; opened_at: Date}>(
       'SELECT category,opened_at FROM delegate_file_category_reads WHERE committee_id=$1 AND seat_id=$2',
       [share.committee_id, session.seat_id])).rows : [];
     return {committeeId: share.committee_id, committeeName: committee.name, committeeLanguage: committee.committee_language, shareId: share.id,
-      claimedSeat: session ? {id: session.seat_id, displayName: session.seat_display_name,
+      claimedSeat: session ? {id: session.seat_id, displayName: session.seat_display_name, rank: seat.rank,
         flag: seat ? {type: seat.flag_type, value: seat.flag_value} : undefined} : null,
       allowedExtensions: settings.allowedExtensions,
       eligibleSeats: session ? [] : eligible,
@@ -652,10 +655,12 @@ export class DelegateFileService {
     return Boolean(result.rowCount);
   }
 
-  private async assertMayUpload(session: DelegateSessionRow): Promise<void> {
+  private async assertMayUpload(session: DelegateSessionRow): Promise<DelegatePortalBootstrap['eligibleSeats'][number]> {
     const eligible = await transaction(this.pool, client => this.eligibleSeats(client, session.committee_id));
-    if (!eligible.some(item => item.id === session.seat_id)) throw new AppError({reason: 'DELEGATION_NOT_PRESENT', code: 'FORBIDDEN',
+    const seat = eligible.find(item => item.id === session.seat_id);
+    if (!seat) throw new AppError({reason: 'DELEGATION_NOT_PRESENT', code: 'FORBIDDEN',
       message: 'This delegation is not currently eligible to upload.'});
+    return seat;
   }
 
   private async ownedUpload(credential: string | undefined, uploadIdValue: string): Promise<DelegateSessionRow> {

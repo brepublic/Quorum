@@ -1045,7 +1045,7 @@ async function handleStage5Request(options: {
     sendJson(response, 201, success(await stage5.proposeMotion(auth, motions[1] as string, body,
       idempotencyKey(request), context), requestId)); return true;
   }
-  const motionCommand = /^\/api\/v1\/motions\/([0-9a-f-]{36})\/(second|decide|withdraw|direct-vote|direct-vote-settings)$/.exec(pathname);
+  const motionCommand = /^\/api\/v1\/motions\/([0-9a-f-]{36})\/(second|decide|withdraw|direct-vote)$/.exec(pathname);
   if (method === 'POST' && motionCommand) {
     const auth = await write(); const body = await readJson(request); const id = motionCommand[1] as string;
     const result = motionCommand[2] === 'second'
@@ -1054,9 +1054,7 @@ async function handleStage5Request(options: {
         ? await stage5.withdrawMotion(auth, id, body, context)
         : motionCommand[2] === 'direct-vote'
           ? await stage5.setMotionDirectVote(auth, id, body, context)
-          : motionCommand[2] === 'direct-vote-settings'
-            ? await stage5.setMotionDirectVoteSettings(auth, id, body, context)
-            : await stage5.decideMotion(auth, id, body, context);
+          : await stage5.decideMotion(auth, id, body, context);
     sendJson(response, motionCommand[2] === 'second' ? 201 : 200, success(result, requestId)); return true;
   }
   const ballots = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/ballots$/.exec(pathname);

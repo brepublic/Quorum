@@ -26,7 +26,7 @@ function snapshot(audience: CommitteeWorkspaceSnapshot['viewer']['audience']): C
       flag: {type: 'STANDARD', value: 'fr'}, revision: 1}]}} : {}), committee: {committeeLanguage: 'en', id: 'committee', name: 'Security Council', chairLabel: 'Chair',
     topic: 'Climate security', conference: 'Main Hall', visibility: 'PUBLIC', operationMode: 'DELEGATE_OPERATED',
     status: 'ACTIVE', activeRulePackageVersionId: 'rules', revision: 4}, seats: [{id: 'seat', stableKey: 'china',
-    displayName: 'China', rank: 'STANDARD', canVote: true, hasVeto: true, mustVote: false, sortOrder: 0, active: true,
+    displayName: 'China', rank: 'STANDARD', canVote: true, canProceduralVote: true, hasVeto: true, mustVote: false, sortOrder: 0, active: true,
     revision: 2, flag: {type: 'STANDARD', value: 'cn'}}], viewer: {audience, seatId: audience === 'MEMBER' ? 'seat' : null},
   motionSettings: {delegateMotionProposalsEnabled: false, delegateMotionVotingEnabled: false},
   layoutSettings: {moveQueueUp: false, timersInSeparateColumns: false},
@@ -128,6 +128,27 @@ describe('committee workspace routes and roles', () => {
     await act(async () => {finish([{status: 'PENDING_REVIEW'}] as Awaited<ReturnType<SelfHostedApi['listFiles']>>);});
     expect(page.querySelector('.file-review-dot')).toBeNull();
     expect(listFiles).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([true, false])('shows separate majorities only when a procedural nonvoter is actually present: %s', async observerPresent => {
+    const page = await render('CHAIR', '/committees/committee/roll-call', user, value => {
+      const seats = [{...value.seats[0], hasVeto: false}, {...value.seats[0], id: 'observer', displayName: 'Observer', canVote: false, hasVeto: false},
+        {...value.seats[0], id: 'media', displayName: 'Media', rank: 'MEDIA' as const, canVote: false, canProceduralVote: false, hasVeto: false}];
+      return {...value, seats, meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: 'Session 1',
+        phaseId: 'formal-debate', activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1,
+        createdAt: '2026-10-01T00:00:00.000Z', closedAt: null},
+        attendance: seats.map(seat => ({seatId: seat.id, state: seat.id === 'observer' && !observerPresent ? 'ABSENT' : 'PRESENT',
+          revision: 1, lastEventId: 'attendance', updatedAt: '2026-10-01T00:00:00.000Z'})),
+        rollCall: {id: 'roll', committeeId: 'committee', meetingSessionId: 'meeting', status: 'COMPLETED', currentSeatId: null,
+          rulePackageVersionId: 'rules', allowedResponses: ['PRESENT', 'ABSENT'], seats: seats.filter(seat => seat.canProceduralVote), entries: [],
+          revision: 1, startedAt: '2026-10-01T00:00:00.000Z', completedAt: '2026-10-01T00:01:00.000Z'}};
+    });
+    expect([...page.querySelectorAll('.roll-call-summary-label')].map(item => item.textContent)).toEqual(observerPresent
+      ? ['Present', 'Voting two-thirds majority', 'Voting simple majority', 'Procedural two-thirds majority', 'Procedural simple majority']
+      : ['Present', 'Simple majority', 'Two-thirds majority']);
+    expect([...page.querySelectorAll('.roll-call-summary-highlight strong')].map(item => item.textContent))
+      .toEqual(observerPresent ? ['2', '1', '1', '2', '2'] : ['1', '1', '1']);
+    expect([...page.querySelectorAll('.roll-call-country-name')].map(item => item.textContent)).not.toContain('Media');
   });
 
   it('keeps crisis time across navigation and rebases fresh snapshots even without a timer revision change', async () => {
@@ -447,13 +468,13 @@ describe('committee workspace routes and roles', () => {
     expect(all.querySelector('button')).toBeNull();
     expect(all.querySelector<HTMLInputElement>('[aria-label="Voting · All seats"]')?.disabled).toBe(false);
     expect(all.querySelector('.toggle.indeterminate')).toBeTruthy();
-    expect(all.querySelectorAll('.toggle.checkbox')).toHaveLength(3);
+    expect(all.querySelectorAll('.toggle.checkbox')).toHaveLength(4);
     expect(page.querySelectorAll('.members-table thead.full-width')).toHaveLength(2);
     await act(async () => {clickSemanticCheckbox(all.querySelector('[aria-label="No abstention · All seats"]')?.parentElement);});
     expect(updateSeat).not.toHaveBeenCalled();
     await act(async () => {await vi.advanceTimersByTimeAsync(1500);});
     expect(updateSeat).toHaveBeenCalledTimes(1);
-    expect(updateSeat).toHaveBeenCalledWith('committee', 'seat', 2, {canVote: true, hasVeto: true, mustVote: true});
+    expect(updateSeat).toHaveBeenCalledWith('committee', 'seat', 2, {canVote: true, canProceduralVote: true, hasVeto: true, mustVote: true});
   });
 
   it('clears no-abstention when all voting rights are removed', async () => {
@@ -467,8 +488,8 @@ describe('committee workspace routes and roles', () => {
     expect(page.querySelector<HTMLInputElement>('[aria-label="No abstention · China"]')?.checked).toBe(false);
     await act(async () => {await vi.advanceTimersByTimeAsync(1500);});
     expect(updateSeat).toHaveBeenCalledTimes(2);
-    expect(updateSeat).toHaveBeenCalledWith('committee', 'seat', 2, {canVote: false, hasVeto: false, mustVote: false});
-    expect(updateSeat).toHaveBeenCalledWith('committee', 'second', 2, {canVote: false, hasVeto: false, mustVote: false});
+    expect(updateSeat).toHaveBeenCalledWith('committee', 'seat', 2, {canVote: false, canProceduralVote: true, hasVeto: false, mustVote: false});
+    expect(updateSeat).toHaveBeenCalledWith('committee', 'second', 2, {canVote: false, canProceduralVote: true, hasVeto: false, mustVote: false});
   });
 
   it('previews repeated bulk clicks immediately and saves only after the last 1.5 seconds', async () => {
@@ -512,7 +533,7 @@ describe('committee workspace routes and roles', () => {
     expect(updateSeat).not.toHaveBeenCalled();
     await act(async () => {await vi.advanceTimersByTimeAsync(1500);});
     expect(updateSeat).toHaveBeenCalledTimes(1);
-    expect(updateSeat).toHaveBeenCalledWith('committee', 'second', 2, {canVote: true, hasVeto: true, mustVote: false});
+    expect(updateSeat).toHaveBeenCalledWith('committee', 'second', 2, {canVote: true, canProceduralVote: true, hasVeto: true, mustVote: false});
   });
 
   it('cancels queued changes on leaving setup', async () => {
@@ -528,8 +549,8 @@ describe('committee workspace routes and roles', () => {
   it('changes rank without changing capabilities', async () => {
     const updateSeat = vi.fn(async () => ({})) as unknown as SelfHostedApi['updateSeat'];
     const page = await render('CHAIR', '/committees/committee/setup', user, value => ({...value,
-      seats: [{...value.seats[0], rank: 'STANDARD', hasVeto: false, canVote: false},
-        {...value.seats[0], id: 'second', rank: 'OBSERVER', hasVeto: false, canVote: false}]}), {updateSeat});
+      seats: [{...value.seats[0], rank: 'STANDARD', hasVeto: false, canVote: false, canProceduralVote: true},
+        {...value.seats[0], id: 'second', rank: 'OBSERVER', hasVeto: false, canVote: false, canProceduralVote: true}]}), {updateSeat});
     expect(page.querySelector<HTMLInputElement>('[aria-label="No abstention · All seats"]')?.disabled).toBe(true);
     const dropdown = page.querySelector('[aria-label="Seat type · All seats"]')!;
     await act(async () => {(dropdown as HTMLElement).click();});
@@ -545,7 +566,7 @@ describe('committee workspace routes and roles', () => {
     vi.useFakeTimers();
     const updateSeat = vi.fn(async () => ({})) as unknown as SelfHostedApi['updateSeat'];
     const page = await render('CHAIR', '/committees/committee/setup', user, value => ({...value,
-      seats: [{...value.seats[0], rank: 'OBSERVER', canVote: false, hasVeto: false, mustVote: false}]}), {updateSeat});
+      seats: [{...value.seats[0], rank: 'OBSERVER', canVote: false, canProceduralVote: true, hasVeto: false, mustVote: false}]}), {updateSeat});
     const click = async (label: string) => act(async () => {
       clickSemanticCheckbox(page.querySelector(`[aria-label="${label} · All seats"]`)?.parentElement);
     });
@@ -557,7 +578,7 @@ describe('committee workspace routes and roles', () => {
     expect(page.querySelector<HTMLInputElement>('[aria-label="No abstention · China"]')?.checked).toBe(false);
     await click('Voting');
     await act(async () => {await vi.advanceTimersByTimeAsync(1500);});
-    expect(updateSeat).toHaveBeenCalledWith('committee', 'seat', 2, {canVote: true, hasVeto: false, mustVote: false});
+    expect(updateSeat).toHaveBeenCalledWith('committee', 'seat', 2, {canVote: true, canProceduralVote: true, hasVeto: false, mustVote: false});
   });
 
   it('does not turn a system administrator into a Committee Chair', async () => {
@@ -614,14 +635,14 @@ describe('committee workspace routes and roles', () => {
       allowedResponses: ['PRESENT', 'ABSENT'], seats: [], entries: [], revision: 4,
       startedAt: '2026-08-14T00:00:00.000Z', completedAt: null}));
     const seats = Array.from({length: 20}, (_, index) => ({id: `seat-${index}`, stableKey: `seat-${index}`,
-      displayName: `Seat ${String(20 - index).padStart(2, '0')}`, rank: 'STANDARD' as const, canVote: true,
+      displayName: `Seat ${String(20 - index).padStart(2, '0')}`, rank: 'STANDARD' as const, canVote: true, canProceduralVote: true,
       hasVeto: false, mustVote: false, sortOrder: index, active: true, revision: 1,
       flag: {type: 'EMOJI' as const, value: index === 0 ? '🏳️' : '🌐'}}));
     const page = await render('CHAIR', '/committees/committee/roll-call', user, value => ({...value, seats: seats.slice(1),
       meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: '第1会期', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1, createdAt: '2026-08-14T00:00:00.000Z', closedAt: null},
       rollCall: {id: 'roll-call', committeeId: 'committee', meetingSessionId: 'meeting', status: 'IN_PROGRESS',
-        currentSeatId: 'seat-0', rulePackageVersionId: 'rules', allowedResponses: ['PRESENT', 'ABSENT'], seats: seats.map(({id, displayName, canVote, flag}) => ({id, displayName, canVote, flag})),
+        currentSeatId: 'seat-0', rulePackageVersionId: 'rules', allowedResponses: ['PRESENT', 'ABSENT'], seats: seats.map(({id, displayName, canVote, canProceduralVote, flag}) => ({id, displayName, canVote, canProceduralVote, flag})),
         entries: [{id: 'entry', seatId: 'seat-1', seatDisplayName: 'Seat 02', response: 'PRESENT', actorUserId: 'chair',
           onBehalfOfSeatId: 'seat-1', rulePackageVersionId: 'rules', recordedAt: '2026-08-14T00:00:00.000Z', revision: 1}],
         revision: 3, startedAt: '2026-08-14T00:00:00.000Z', completedAt: null}}), {setRollCallResponse});
@@ -808,7 +829,7 @@ describe('committee workspace routes and roles', () => {
       motionTypeId, proposedBySeatId: 'seat', proposedBySeatDisplayName: 'China', parameters: {},
       status: 'SECONDED', rulePackageVersionId: 'rules', ruleEvaluation: {schemaVersion: 1, packageVersionId: 'rules',
         definition: {}, facts: {}, resolvedValues: {}, frozenAt: '2026-08-14T00:00:00.000Z'}, requiredSecondCount: 0,
-      seconds: [], revision: 1, directVote: {includeNonVotingSeats: false, startedAt: null, settingsRevision: 1,
+      seconds: [], revision: 1, directVote: {startedAt: null,
         eligibility: [], choices: ['FOR', 'AGAINST'], threshold: 1, automaticResult: null, votes: []},
       createdAt: '2026-08-14T00:00:00.000Z', decidedAt: null, destinationPath: null};
     const decideMotion = vi.fn(async () => {
@@ -869,7 +890,7 @@ describe('committee workspace routes and roles', () => {
       motionTypeId: 'open-debate', proposedBySeatId: 'seat', proposedBySeatDisplayName: 'China', parameters: {},
       status: 'PASSED', rulePackageVersionId: 'rules', ruleEvaluation: {schemaVersion: 1, packageVersionId: 'rules',
         definition: {}, facts: {}, resolvedValues: {}, frozenAt: '2026-08-14T00:00:00.000Z'}, requiredSecondCount: 0,
-      seconds: [], revision: 1, directVote: {includeNonVotingSeats: false, startedAt: null, settingsRevision: 1,
+      seconds: [], revision: 1, directVote: {startedAt: null,
         eligibility: [], choices: ['FOR', 'AGAINST'], threshold: 1, automaticResult: null, votes: []},
       createdAt: '2026-08-14T00:00:00.000Z', decidedAt: null,
       destinationPath: '/committees/committee/caucuses/general'};
@@ -899,7 +920,7 @@ describe('committee workspace routes and roles', () => {
       meetingSessionId, motionTypeId: 'suspend-meeting', proposedBySeatId: 'seat', proposedBySeatDisplayName: 'China',
       parameters: {}, status: 'PASSED', rulePackageVersionId: 'rules', ruleEvaluation: {schemaVersion: 1,
         packageVersionId: 'rules', definition: {}, facts: {}, resolvedValues: {}, frozenAt: createdAt}, requiredSecondCount: 0,
-      seconds: [], revision: 1, directVote: {includeNonVotingSeats: false, startedAt: null, settingsRevision: 1,
+      seconds: [], revision: 1, directVote: {startedAt: null,
         eligibility: [], choices: ['FOR', 'AGAINST'], threshold: 1, automaticResult: null, votes: []}, createdAt,
       decidedAt: null, destinationPath: null});
     const page = await render('CHAIR', '/committees/committee/motions', user, value => ({...value,
@@ -933,7 +954,7 @@ describe('committee workspace routes and roles', () => {
       ruleEvaluation: {schemaVersion: 1, packageVersionId: 'rules', definition: {}, facts: {}, resolvedValues: {},
         frozenAt: createdAt}, requiredSecondCount: 1,
       seconds: [{id: `second-${session.id}`, seatId: 'seconder', seatDisplayName: 'Bahrain', createdAt}], revision: 1,
-      directVote: {includeNonVotingSeats: false, startedAt: null, settingsRevision: 1, eligibility: [],
+      directVote: {startedAt: null, eligibility: [],
         choices: ['FOR', 'AGAINST'], threshold: 1, automaticResult: null, votes: []},
       createdAt, decidedAt: null, destinationPath: null}));
     const page = await render('CHAIR', '/committees/committee/motions', user, value => ({...value,
@@ -1090,7 +1111,7 @@ describe('committee workspace routes and roles', () => {
         meetingSessionId: 'meeting', motionTypeId, proposedBySeatId: 'seat', proposedBySeatDisplayName: 'China',
         parameters: {}, status: 'PASSED', rulePackageVersionId: 'rules', ruleEvaluation: {schemaVersion: 1,
           packageVersionId: 'rules', definition: {}, facts: {}, resolvedValues: {}, frozenAt: '2026-08-14T00:00:00.000Z'},
-        requiredSecondCount: 0, seconds: [], directVote: {includeNonVotingSeats: false, startedAt: null,
+        requiredSecondCount: 0, seconds: [], directVote: {startedAt: null,
           settingsRevision: 1, eligibility: [], choices: ['FOR', 'AGAINST'], threshold: 1,
           automaticResult: null, votes: []}, revision: 2, createdAt: '2026-08-14T00:00:00.000Z',
         decidedAt: `2026-08-14T00:0${index + 1}:00.000Z`, destinationPath: null})) as ProceedingMotion[],
@@ -1150,13 +1171,13 @@ describe('committee workspace routes and roles', () => {
         speakerDuration: 1, speakerUnit: 'min'}, status: 'SECONDED', rulePackageVersionId: 'rules',
       ruleEvaluation: {schemaVersion: 1, packageVersionId: 'rules', definition: {}, facts: {}, resolvedValues: {},
         frozenAt: '2026-08-14T00:00:00.000Z'}, requiredSecondCount: 0, seconds: [], revision: 1,
-      directVote: {includeNonVotingSeats: false, startedAt: null, settingsRevision: 1, eligibility: [],
+      directVote: {startedAt: null, eligibility: [],
         choices: ['FOR', 'AGAINST'], threshold: 1, automaticResult: null, votes: []},
       createdAt: '2026-08-14T00:00:00.000Z', decidedAt: null, destinationPath: null};
     const page = await render('CHAIR', '/committees/committee/motions', user, value => ({...value,
       committee: {...value.committee, committeeLanguage: language}, motions: [motion],
       seats: [...value.seats, {id: 'seconder', stableKey: 'usa', displayName: 'United States', rank: 'STANDARD',
-        canVote: true, hasVeto: false, mustVote: false, sortOrder: 1, active: true, revision: 1,
+        canVote: true, canProceduralVote: true, hasVeto: false, mustVote: false, sortOrder: 1, active: true, revision: 1,
         flag: {type: 'STANDARD', value: 'us'}}],
       meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: '第1会期', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1,
@@ -1195,7 +1216,7 @@ describe('committee workspace routes and roles', () => {
       parameters: {caucusDuration: 10, caucusUnit: 'min'}, status: 'SECONDED', rulePackageVersionId: 'rules',
       ruleEvaluation: {schemaVersion: 1, packageVersionId: 'rules', definition: {}, facts: {}, resolvedValues: {},
         frozenAt: '2026-08-14T00:00:00.000Z'}, requiredSecondCount: 0, seconds: [], revision: 1,
-      directVote: {includeNonVotingSeats: false, startedAt: null, settingsRevision: 1, eligibility: [],
+      directVote: {startedAt: null, eligibility: [],
         choices: ['FOR', 'AGAINST'], threshold: 1, automaticResult: null, votes: []},
       createdAt: '2026-08-14T00:00:00.000Z', decidedAt: null, destinationPath: null};
     const proposeMotion = vi.fn(async (): Promise<ProceedingMotion> => proposed);
@@ -1246,20 +1267,20 @@ describe('committee workspace routes and roles', () => {
     expect(page.querySelector<HTMLButtonElement>('button[aria-label="Propose motion"]')?.disabled).toBe(true);
   });
 
-  it('shows read-only counts and the non-voting-seat setting in delegate-operated motion cards', async () => {
+  it('shows read-only motion counts without an include-non-voting toggle', async () => {
     const motion: ProceedingMotion = {id: 'motion', committeeId: 'committee', meetingSessionId: 'meeting',
       motionTypeId: 'open-unmoderated-caucus', proposedBySeatId: 'seat', proposedBySeatDisplayName: 'China',
       parameters: {caucusDuration: 10, caucusUnit: 'min'}, status: 'SECONDED', rulePackageVersionId: 'rules',
       ruleEvaluation: {schemaVersion: 1, packageVersionId: 'rules', definition: {}, facts: {}, resolvedValues: {},
         frozenAt: '2026-08-14T00:00:00.000Z'}, requiredSecondCount: 0, seconds: [], revision: 1,
-      directVote: {includeNonVotingSeats: true, startedAt: null, settingsRevision: 1,
+      directVote: {startedAt: null,
         eligibility: [{seatId: 'seat', seatDisplayName: 'China'}, {seatId: 'observer', seatDisplayName: 'Observer'}],
         choices: ['FOR', 'AGAINST'], threshold: 2,
         automaticResult: null, votes: []}, createdAt: '2026-08-14T00:00:00.000Z', decidedAt: null,
       destinationPath: null};
     const page = await render('CHAIR', '/committees/committee/motions', user, value => ({...value,
       seats: [...value.seats, {id: 'observer', stableKey: 'observer', displayName: 'Observer', rank: 'OBSERVER',
-        canVote: false, hasVeto: false, mustVote: false, sortOrder: 1, active: true, revision: 1,
+        canVote: false, canProceduralVote: true, hasVeto: false, mustVote: false, sortOrder: 1, active: true, revision: 1,
         flag: {type: 'EMOJI', value: '🌐'}}],
       meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: '第1会期', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1,
@@ -1271,7 +1292,7 @@ describe('committee workspace routes and roles', () => {
         names: {en: 'Open an unmoderated caucus', 'zh-CN': '开启自由磋商'}, procedural: true,
         requiredSecondCount: 0}]}}));
 
-    expect(page.querySelector<HTMLInputElement>('.motion .ui.toggle.checkbox input')?.checked).toBe(true);
+    expect(page.querySelector('.motion .ui.toggle.checkbox')).toBeNull();
     const counts = [...page.querySelectorAll<HTMLButtonElement>('.motion-vote-panel button')];
     expect(counts).toHaveLength(2);
     expect(counts.every(button => button.disabled)).toBe(true);
@@ -1288,7 +1309,7 @@ describe('committee workspace routes and roles', () => {
         resolvedValues: {procedural: false}, frozenAt: '2026-08-14T00:00:00.000Z'}, requiredSecondCount: 1,
       seconds: [{id: 'second', seatId: 'seconder', seatDisplayName: 'United States',
         createdAt: '2026-08-14T00:00:00.000Z'}], revision: 2,
-      directVote: {includeNonVotingSeats: true, startedAt: null, settingsRevision: 1, eligibility: [],
+      directVote: {startedAt: null, eligibility: [],
         choices: ['FOR', 'AGAINST', 'ABSTAIN'], threshold: 1, automaticResult: null, votes: []},
       createdAt: '2026-08-14T00:00:00.000Z', decidedAt: null, destinationPath: null};
     const customize = (value: CommitteeWorkspaceSnapshot) => ({...value,
@@ -1324,7 +1345,7 @@ describe('committee workspace routes and roles', () => {
         resolvedValues: {procedural: false}, frozenAt: '2026-08-14T00:00:00.000Z'}, requiredSecondCount: 1,
       seconds: [{id: 'second', seatId: 'seconder', seatDisplayName: 'United States',
         createdAt: '2026-08-14T00:00:00.000Z'}], revision: 3,
-      directVote: {includeNonVotingSeats: true, startedAt: null, settingsRevision: 1, eligibility: [],
+      directVote: {startedAt: null, eligibility: [],
         choices: ['FOR', 'AGAINST', 'ABSTAIN'], threshold: 1, automaticResult: null, votes: []},
       createdAt: '2026-08-14T00:00:00.000Z', decidedAt: null, destinationPath: null};
     const customize = (value: CommitteeWorkspaceSnapshot): CommitteeWorkspaceSnapshot => ({...value,
@@ -1359,7 +1380,7 @@ describe('committee workspace routes and roles', () => {
     for (const audience of ['CHAIR', 'MEMBER'] as const) {
       const frozenPage = await render(audience, '/committees/committee/motions', user, value => {
         const next = customize(value);
-        return {...next, seats: [{...value.seats[0], displayName: 'Renamed current seat', canVote: false, hasVeto: false, mustVote: false},
+        return {...next, seats: [{...value.seats[0], displayName: 'Renamed current seat', canVote: false, canProceduralVote: true, hasVeto: false, mustVote: false},
           {...value.seats[0], id: 'new-seat', displayName: 'New seat'}],
           ballots: next.ballots!.map(ballot => ({...ballot, votes: [],
             eligibility: [{seatId: 'seat', seatDisplayName: 'Frozen China', mustVote: true, hasVeto: true}]}))};
@@ -1508,7 +1529,7 @@ describe('committee workspace routes and roles', () => {
         proposedBySeatId: 'seat', proposedBySeatDisplayName: 'China', parameters: {}, status: 'PASSED' as const,
         rulePackageVersionId: 'rules', ruleEvaluation: {schemaVersion: 1, packageVersionId: 'rules', definition: {}, facts: {},
           resolvedValues: {}, frozenAt: '2026-08-14T00:01:00.000Z'}, requiredSecondCount: 0, seconds: [], revision: 1,
-        directVote: {includeNonVotingSeats: false, startedAt: null, settingsRevision: 1, eligibility: [], choices: ['FOR', 'AGAINST'],
+        directVote: {startedAt: null, eligibility: [], choices: ['FOR', 'AGAINST'],
           threshold: 1, automaticResult: null, votes: []}, createdAt: '2026-08-14T00:01:00.000Z',
         decidedAt: '2026-08-14T00:01:00.000Z', destinationPath: null}]}));
     expect(closed.textContent).toContain("The General Speaker's List is closed");
@@ -1576,7 +1597,7 @@ describe('committee workspace routes and roles', () => {
       yieldDecisionStatus: null, interactionTargetSeatId: 'france', revision: 1,
       startedAt: '2026-08-14T00:00:00.000Z', endedAt: null, actions: [], contributions: []};
     const withQuestion = (value: CommitteeWorkspaceSnapshot): CommitteeWorkspaceSnapshot => ({...value,
-      seats: [...value.seats, {id: 'france', stableKey: 'france', displayName: 'France', rank: 'STANDARD', canVote: true,
+      seats: [...value.seats, {id: 'france', stableKey: 'france', displayName: 'France', rank: 'STANDARD', canVote: true, canProceduralVote: true,
         hasVeto: false, mustVote: false, sortOrder: 1, active: true, revision: 1, flag: {type: 'STANDARD', value: 'fr'}}],
       meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: '第1会期', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1,
@@ -1681,7 +1702,7 @@ describe('committee workspace routes and roles', () => {
       queue: [], speeches: [], createdAt: '2026-08-14T00:00:00.000Z', closedAt: null}));
     const page = await render('CHAIR', '/committees/committee/caucuses/list', user, value => ({...value,
       layoutSettings: {moveQueueUp: true, timersInSeparateColumns: true},
-      seats: [...value.seats, {id: 'france', stableKey: 'france', displayName: 'France', rank: 'STANDARD', canVote: true,
+      seats: [...value.seats, {id: 'france', stableKey: 'france', displayName: 'France', rank: 'STANDARD', canVote: true, canProceduralVote: true,
         hasVeto: false, mustVote: false, sortOrder: 1, active: true, revision: 1, flag: {type: 'STANDARD', value: 'fr'}}],
       meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: '第1会期', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1,
@@ -1764,7 +1785,7 @@ describe('committee workspace routes and roles', () => {
 
   it('keeps absent countries visible but disabled in general and moderated speaker queues', async () => {
     const withList = (value: CommitteeWorkspaceSnapshot, kind: 'GENERAL' | 'MODERATED_CAUCUS'): CommitteeWorkspaceSnapshot => ({...value,
-      seats: [...value.seats, {id: 'france', stableKey: 'france', displayName: 'France', rank: 'STANDARD', canVote: true,
+      seats: [...value.seats, {id: 'france', stableKey: 'france', displayName: 'France', rank: 'STANDARD', canVote: true, canProceduralVote: true,
         hasVeto: false, mustVote: false, sortOrder: 1, active: true, revision: 1, flag: {type: 'STANDARD', value: 'fr'}}],
       meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: '第1会期', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1, createdAt: '2026-08-14T00:00:00.000Z', closedAt: null},
@@ -2235,7 +2256,7 @@ describe('committee workspace routes and roles', () => {
     });
     const page = await render('CHAIR', '/committees/committee/resolutions/resolution/text', user,
       value => ({...value, seats: [...value.seats, {...value.seats[0], id: 'france', displayName: 'France', flag: france.flag}],
-        attendance: ['seat', 'france'].map(seatId => ({seatId, state: 'PRESENT', canVote: true, revision: 1, lastEventId: 'present', updatedAt: '2026-08-14T00:00:00.000Z'})),
+        attendance: ['seat', 'france'].map(seatId => ({seatId, state: 'PRESENT', canVote: true, canProceduralVote: true, revision: 1, lastEventId: 'present', updatedAt: '2026-08-14T00:00:00.000Z'})),
         documents: [document]}), {updateDocumentSettings});
     const lists = () => [...page.querySelectorAll('.resolution-country-list')];
     expect([...lists()[0].querySelectorAll('li')].map(row => row.textContent)).toEqual(['China', 'France']);
@@ -2517,7 +2538,7 @@ describe('committee workspace routes and roles', () => {
         proposedBySeatId: 'seat', proposedBySeatDisplayName: 'China', parameters: {}, status: 'PASSED',
         rulePackageVersionId: 'rules', ruleEvaluation: {schemaVersion: 1, packageVersionId: 'rules', definition: {}, facts: {},
           resolvedValues: {}, frozenAt: '2026-08-14T00:00:00.000Z'}, requiredSecondCount: 0,
-        seconds: [], directVote: {includeNonVotingSeats: false, startedAt: null, settingsRevision: 1,
+        seconds: [], directVote: {startedAt: null,
           eligibility: [], choices: ['FOR', 'AGAINST'], threshold: 1, automaticResult: null, votes: []},
         revision: 1, createdAt: '2026-08-14T00:00:00.000Z', decidedAt: '2026-08-14T00:00:00.000Z',
         destinationPath: null}]}));

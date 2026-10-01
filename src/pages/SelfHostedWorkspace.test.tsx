@@ -14,7 +14,7 @@ const user: SelfHostedUser = {id: 'user', email: 'user@example.com', displayName
 const snapshot: CommitteeWorkspaceSnapshot = {schemaVersion: 3,
   committee: {committeeLanguage: 'en', id: 'committee', name: 'Security Council', chairLabel: 'Chair', topic: '', conference: '', visibility: 'PRIVATE',
     operationMode: 'DELEGATE_OPERATED', status: 'ACTIVE', activeRulePackageVersionId: 'rules', revision: 1},
-  seats: [{id: 'seat', stableKey: 'china', displayName: 'China', rank: 'STANDARD', canVote: true, hasVeto: true,
+  seats: [{id: 'seat', stableKey: 'china', displayName: 'China', rank: 'STANDARD', canVote: true, canProceduralVote: true, hasVeto: true,
     mustVote: false, sortOrder: 0, active: true, revision: 1, flag: {type: 'STANDARD', value: 'cn'}}],
   viewer: {audience: 'MEMBER', seatId: 'seat'}, attendance: [], points: [],
   motionSettings: {delegateMotionProposalsEnabled: false, delegateMotionVotingEnabled: false},

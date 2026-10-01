@@ -407,8 +407,9 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
   api: SelfHostedApi; canChair: boolean}) {
   useLanguage();
   const [selectedCountryStableKey, setSelectedCountryStableKey] = React.useState('');
-  const [seatRank, setSeatRank] = React.useState<'STANDARD' | 'NGO' | 'OBSERVER'>('STANDARD');
+  const [seatRank, setSeatRank] = React.useState<'STANDARD' | 'NGO' | 'OBSERVER' | 'MEDIA'>('STANDARD');
   const [seatHasVeto, setSeatHasVeto] = React.useState(false);
+  const [seatCanProceduralVote, setSeatCanProceduralVote] = React.useState(true);
   const [seatCanVote, setSeatCanVote] = React.useState(true); const [seatMustVote, setSeatMustVote] = React.useState(false);
   const [chairEmail, setChairEmail] = React.useState(''); const [assignmentEmail, setAssignmentEmail] = React.useState('');
   const [assignmentSeatId, setAssignmentSeatId] = React.useState(snapshot.seats[0]?.id ?? '');
@@ -426,7 +427,7 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
       {seatId: invitationSeatId, maxUses: 1, expiresAt: new Date(invitationExpiresAt).toISOString()});});
     if (created) setInvitationCode(created.code);
   };
-  const rankOptions = (['STANDARD', 'NGO', 'OBSERVER'] as const)
+  const rankOptions = (['STANDARD', 'NGO', 'OBSERVER', 'MEDIA'] as const)
     .map(value => ({key: value, value, text: t(value)}));
   const countryOptions = React.useMemo(() => {
     const seated = new Set(snapshot.seats.map(seat => seat.stableKey));
@@ -443,7 +444,7 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
       ? current : String(countryOptions[0]?.value ?? ''));
   }, [countryOptions]);
   const selectedCountry = countryOptions.find(option => option.value === selectedCountryStableKey)?.country;
-  type VotingPatch = Partial<Pick<Stage4CommitteeSeat, 'canVote' | 'hasVeto' | 'mustVote'>>;
+  type VotingPatch = Partial<Pick<Stage4CommitteeSeat, 'canVote' | 'canProceduralVote' | 'hasVeto' | 'mustVote'>>;
   const [queuedVoting, setQueuedVoting] = React.useState<Record<string, VotingPatch>>();
   const displayedSeats = snapshot.seats.map(seat => {
     const patch = queuedVoting?.[seat.id];
@@ -452,27 +453,30 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
       canVote, mustVote: canVote && (patch?.mustVote ?? seat.mustVote)};
   });
   const allRank = snapshot.seats.every(seat => seat.rank === snapshot.seats[0]?.rank) ? snapshot.seats[0]?.rank : '';
+  const allCanProceduralVote = displayedSeats.every(seat => seat.canProceduralVote);
   const allCanVote = displayedSeats.every(seat => seat.canVote);
   const allHasVeto = displayedSeats.every(seat => seat.hasVeto);
   const allMustVote = displayedSeats.every(seat => seat.mustVote);
   // Remember the last uniform state; arriving with mixed values starts from off.
-  const lastUniformVoting = React.useRef({canVote: snapshot.seats.every(seat => seat.canVote),
+  const lastUniformVoting = React.useRef({canProceduralVote: snapshot.seats.every(seat => seat.canProceduralVote), canVote: snapshot.seats.every(seat => seat.canVote),
     hasVeto: snapshot.seats.every(seat => seat.hasVeto), mustVote: snapshot.seats.every(seat => seat.mustVote)});
   React.useEffect(() => {
     if (pending || !displayedSeats.length) return;
-    for (const field of ['canVote', 'hasVeto', 'mustVote'] as const) {
+    for (const field of ['canVote', 'canProceduralVote', 'hasVeto', 'mustVote'] as const) {
       if (displayedSeats.every(seat => seat[field])) lastUniformVoting.current[field] = true;
       else if (displayedSeats.every(seat => !seat[field])) lastUniformVoting.current[field] = false;
     }
   }, [displayedSeats, pending]);
-  const queueAllVoting = (field: 'canVote' | 'hasVeto' | 'mustVote') => {
+  const queueAllVoting = (field: 'canVote' | 'canProceduralVote' | 'hasVeto' | 'mustVote') => {
     const value = !lastUniformVoting.current[field];
     lastUniformVoting.current[field] = value;
     setQueuedVoting(current => Object.fromEntries(snapshot.seats.map(seat => {
       const next = {...seat, ...current?.[seat.id], [field]: value};
-      if (field === 'hasVeto' && value) next.canVote = true;
+      if (field === 'canProceduralVote' && next.canVote) next.canProceduralVote = true;
+      if (field === 'canVote' && !next.canProceduralVote) next.canVote = false;
+      if (field === 'hasVeto' && value) {next.canVote = true; next.canProceduralVote = true;}
       if (!next.canVote) {next.hasVeto = false; next.mustVote = false;}
-      return [seat.id, {canVote: next.canVote, hasVeto: next.hasVeto, mustVote: next.mustVote}];
+      return [seat.id, {canVote: next.canVote, canProceduralVote: next.canProceduralVote, hasVeto: next.hasVeto, mustVote: next.mustVote}];
     })));
   };
   const commitQueuedVoting = React.useRef<() => void>(() => undefined);
@@ -483,7 +487,7 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
         const queued = queuedVoting[seat.id];
         if (!queued) continue;
         const canVote = queued.canVote ?? seat.canVote;
-        const patch = {canVote, hasVeto: canVote && (queued.hasVeto ?? seat.hasVeto),
+        const patch = {canVote, canProceduralVote: queued.canProceduralVote ?? seat.canProceduralVote, hasVeto: canVote && (queued.hasVeto ?? seat.hasVeto),
           mustVote: canVote && (queued.mustVote ?? seat.mustVote)};
         if (Object.entries(patch).some(([field, value]) => seat[field as keyof Stage4CommitteeSeat] !== value)) {
           await api.updateSeat(snapshot.committee.id, seat.id, seat.revision, patch);
@@ -510,31 +514,33 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
     <Grid.Column width={11}><Header as="h2">{t('Seats')}</Header>
     {canChair && !readOnly && countryOptions.length > 0 && <Table className="members-table seat-create-table" compact celled definition stackable><Table.Header fullWidth><Table.Row>
       <Table.HeaderCell>{t('Seat')}</Table.HeaderCell><Table.HeaderCell>{t('Rank')}</Table.HeaderCell>
-      <Table.HeaderCell>{t('Voting rights')}</Table.HeaderCell><Table.HeaderCell>{t('Veto power')}</Table.HeaderCell><Table.HeaderCell>{t('No abstention')}</Table.HeaderCell>
+      <Table.HeaderCell>{t('Procedural voting')}</Table.HeaderCell><Table.HeaderCell>{t('Voting rights')}</Table.HeaderCell><Table.HeaderCell>{t('Veto power')}</Table.HeaderCell><Table.HeaderCell>{t('No abstention')}</Table.HeaderCell>
       {canChair && !readOnly && <Table.HeaderCell />}</Table.Row>
       {canChair && !readOnly && <Table.Row className="add-seat-row"><Table.HeaderCell><Form.Select aria-label={t('Seat')} search={searchOptions} selection
         value={selectedCountryStableKey} options={countryOptions} onChange={(_, data) => setSelectedCountryStableKey(String(data.value ?? ''))} /></Table.HeaderCell>
         <Table.HeaderCell><Form.Select aria-label={t('Rank')} search selection fluid value={seatRank} options={rankOptions}
-          onChange={(_, data) => setSeatRank(data.value as typeof seatRank)} /></Table.HeaderCell>
-        <Table.HeaderCell collapsing data-label={t('Voting rights')}><Form.Checkbox aria-label={t('Voting rights')} toggle checked={seatCanVote}
+          onChange={(_, data) => {const rank = data.value as typeof seatRank; setSeatRank(rank); if (rank === 'MEDIA') {setSeatCanVote(false); setSeatCanProceduralVote(false); setSeatHasVeto(false); setSeatMustVote(false);}}} /></Table.HeaderCell>
+        <Table.HeaderCell collapsing data-label={t('Procedural voting')}><Form.Checkbox aria-label={t('Procedural voting')} toggle checked={seatCanProceduralVote} disabled={seatCanVote}
+          onChange={(_, data) => setSeatCanProceduralVote(data.checked ?? false)} /></Table.HeaderCell>
+        <Table.HeaderCell collapsing data-label={t('Voting rights')}><Form.Checkbox aria-label={t('Voting rights')} toggle checked={seatCanVote} disabled={!seatCanProceduralVote}
           onChange={(_, data) => {const canVote = data.checked ?? false;
             setSeatCanVote(canVote); if (!canVote) {setSeatMustVote(false); setSeatHasVeto(false);}}} /></Table.HeaderCell>
         <Table.HeaderCell collapsing data-label={t('Veto power')}><Form.Checkbox aria-label={t('Veto power')} toggle checked={seatHasVeto}
-          onChange={(_, data) => {setSeatHasVeto(data.checked ?? false); if (data.checked) setSeatCanVote(true);}} /></Table.HeaderCell>
+          onChange={(_, data) => {setSeatHasVeto(data.checked ?? false); if (data.checked) {setSeatCanVote(true); setSeatCanProceduralVote(true);}}} /></Table.HeaderCell>
         <Table.HeaderCell collapsing data-label={t('No abstention')}><Form.Checkbox aria-label={t('No abstention')} toggle checked={seatMustVote}
           disabled={!seatCanVote} onChange={(_, data) => setSeatMustVote(data.checked ?? false)} /></Table.HeaderCell>
         <Table.HeaderCell collapsing><Button icon="plus" primary basic aria-label={t('Create seat')}
           loading={pending === 'create-seat'} disabled={Boolean(pending) || !selectedCountry} onClick={() => void (async () => {
             if (!selectedCountry) return;
             await execute('create-seat', () => api.createSeat(snapshot.committee.id, {
-              stableKey: selectedCountry.stableKey, rank: seatRank, canVote: seatCanVote, hasVeto: seatHasVeto,
+              stableKey: selectedCountry.stableKey, rank: seatRank, canVote: seatCanVote, canProceduralVote: seatCanProceduralVote, hasVeto: seatHasVeto,
               mustVote: seatMustVote, sortOrder: snapshot.seats.length}));
-            setSeatRank('STANDARD'); setSeatCanVote(true); setSeatHasVeto(false); setSeatMustVote(false);
+            setSeatRank('STANDARD'); setSeatCanVote(true); setSeatCanProceduralVote(true); setSeatHasVeto(false); setSeatMustVote(false);
           })()} /></Table.HeaderCell></Table.Row>}
       </Table.Header></Table>}
       <Table className="members-table seat-list-table" compact celled definition stackable>
       <Table.Header fullWidth><Table.Row><Table.HeaderCell>{t('Seat')}</Table.HeaderCell><Table.HeaderCell>{t('Rank')}</Table.HeaderCell>
-        <Table.HeaderCell>{t('Voting rights')}</Table.HeaderCell><Table.HeaderCell>{t('Veto power')}</Table.HeaderCell><Table.HeaderCell>{t('No abstention')}</Table.HeaderCell>
+        <Table.HeaderCell>{t('Procedural voting')}</Table.HeaderCell><Table.HeaderCell>{t('Voting rights')}</Table.HeaderCell><Table.HeaderCell>{t('Veto power')}</Table.HeaderCell><Table.HeaderCell>{t('No abstention')}</Table.HeaderCell>
         {canChair && !readOnly && <Table.HeaderCell />}</Table.Row></Table.Header>
       <Table.Body>
       {canChair && !readOnly && snapshot.seats.length > 0 && <Table.Row className="all-seats-row">
@@ -542,10 +548,13 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
         <Table.Cell><Form.Select aria-label={`${t('Rank')} · ${t('All seats')}`} search selection fluid
           value={allRank ?? ''} placeholder={t('Mixed seat ranks')} options={rankOptions} disabled={Boolean(pending)}
           onChange={(_, data) => {const rank = data.value as typeof seatRank;
-            void updateAllSeats('all-rank', () => ({rank}));}} /></Table.Cell>
+            void updateAllSeats('all-rank', () => rank === 'MEDIA' ? {rank, canVote: false, canProceduralVote: false, hasVeto: false, mustVote: false} : {rank});}} /></Table.Cell>
+        <Table.Cell collapsing data-label={t('Procedural voting')}><Form.Checkbox aria-label={`${t('Procedural voting')} · ${t('All seats')}`}
+          toggle checked={allCanProceduralVote} indeterminate={!allCanProceduralVote && displayedSeats.some(seat => seat.canProceduralVote)}
+          disabled={Boolean(pending) || allCanVote} onChange={() => queueAllVoting('canProceduralVote')} /></Table.Cell>
         <Table.Cell collapsing data-label={t('Voting rights')}><Form.Checkbox aria-label={`${t('Voting rights')} · ${t('All seats')}`}
           toggle checked={allCanVote} indeterminate={!allCanVote && displayedSeats.some(seat => seat.canVote)}
-          disabled={Boolean(pending)}
+          disabled={Boolean(pending) || displayedSeats.every(seat => !seat.canProceduralVote)}
           onChange={() => queueAllVoting('canVote')} /></Table.Cell>
         <Table.Cell collapsing data-label={t('Veto power')}><Form.Checkbox aria-label={`${t('Veto power')} · ${t('All seats')}`}
           toggle checked={allHasVeto} indeterminate={!allHasVeto && displayedSeats.some(seat => seat.hasVeto)}
@@ -561,10 +570,16 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
         <Table.Cell>{canChair && !readOnly ? <Form.Select aria-label={`${t('Rank')} · ${seat.displayName}`}
           search selection fluid disabled={Boolean(pending)} value={seat.rank} options={rankOptions} onChange={(_, data) => {
             const rank = data.value as typeof seatRank; void execute(`rank-${seat.id}`, () => api.updateSeat(snapshot.committee.id,
-              seat.id, seat.revision, {rank}));
+              seat.id, seat.revision, rank === 'MEDIA' ? {rank, canVote: false, canProceduralVote: false, hasVeto: false, mustVote: false} : {rank}));
           }} /> : t(seat.rank)}</Table.Cell>
+        <Table.Cell collapsing data-label={t('Procedural voting')}>{canChair && !readOnly ? <Form.Checkbox aria-label={`${t('Procedural voting')} · ${seat.displayName}`}
+          toggle checked={seat.canProceduralVote} disabled={Boolean(pending) || seat.canVote} onChange={(_, data) => {
+            const canProceduralVote = data.checked ?? false;
+            if (queuedVoting) {setQueuedVoting(current => ({...current, [seat.id]: {...current?.[seat.id], canProceduralVote}})); return;}
+            void execute(`procedural-${seat.id}`, () => api.updateSeat(snapshot.committee.id, seat.id, seat.revision, {canProceduralVote}));
+          }} /> : seat.canProceduralVote ? t('Yes') : t('No')}</Table.Cell>
         <Table.Cell collapsing data-label={t('Voting rights')}>{canChair && !readOnly ? <Form.Checkbox aria-label={`${t('Voting rights')} · ${seat.displayName}`}
-          toggle checked={seat.canVote} disabled={Boolean(pending)} onChange={(_, data) => {
+          toggle checked={seat.canVote} disabled={Boolean(pending) || !seat.canProceduralVote} onChange={(_, data) => {
             const canVote = data.checked ?? false;
             if (queuedVoting) {
               setQueuedVoting(current => ({...current, [seat.id]: {...current?.[seat.id], canVote, hasVeto: canVote && seat.hasVeto, mustVote: canVote && seat.mustVote}}));
@@ -575,7 +590,7 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
           }} /> : seat.canVote ? t('Voting rights') : t('Non-voting')}</Table.Cell>
         <Table.Cell collapsing data-label={t('Veto power')}>{canChair && !readOnly ? <Form.Checkbox aria-label={`${t('Veto power')} · ${seat.displayName}`}
           toggle checked={seat.hasVeto} disabled={Boolean(pending)} onChange={(_, data) => {
-            const hasVeto = data.checked ?? false; const patch = {hasVeto, canVote: hasVeto || seat.canVote, mustVote: seat.mustVote};
+            const hasVeto = data.checked ?? false; const patch = {hasVeto, canVote: hasVeto || seat.canVote, canProceduralVote: hasVeto || seat.canProceduralVote, mustVote: seat.mustVote};
             if (queuedVoting) {setQueuedVoting(current => ({...current, [seat.id]: {...current?.[seat.id], ...patch}})); return;}
             void execute(`veto-${seat.id}`, () => api.updateSeat(snapshot.committee.id, seat.id, seat.revision, patch));
           }} /> : seat.hasVeto ? t('Yes') : t('No')}</Table.Cell>
@@ -785,7 +800,7 @@ function RollCallPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
   const execute = React.useCallback(async (key: string, operation: () => Promise<unknown>) => {
     setPending(key); try {await run(operation);} finally {setPending(undefined);}
   }, [run]);
-  const seats = rollCall?.seats ?? snapshot.seats;
+  const seats = (rollCall?.seats ?? snapshot.seats).filter(seat => seat.canProceduralVote);
   const entries = draft?.responses ?? rollCall?.entries ?? [];
   const entryBySeat = new Map(entries.map(entry => [entry.seatId, entry]));
   const currentSeat = rollCall?.status === 'IN_PROGRESS' ? seats.find(seat => !entryBySeat.has(seat.id)) : undefined;
@@ -797,10 +812,10 @@ function RollCallPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
     if (rollCall) autoStartedSessionId.current = undefined;
   }, [rollCall?.id]);
   React.useEffect(() => {
-    if (!chair || rollCall || seats.length === 0 || session?.status !== 'OPEN' || autoStartedSessionId.current === session.id) return;
+    if (!chair || rollCall || snapshot.seats.length === 0 || session?.status !== 'OPEN' || autoStartedSessionId.current === session.id) return;
     autoStartedSessionId.current = session.id;
     void execute('roll-call', () => api.startRollCall(snapshot.committee.id, session.id));
-  }, [api, chair, execute, rollCall, seats.length, session?.id, session?.status, snapshot.committee.id]);
+  }, [api, chair, execute, rollCall, snapshot.seats.length, session?.id, session?.status, snapshot.committee.id]);
   const startMeeting = (replacement = false) => execute('meeting', async () => {
     try {
       const meeting = replacement
@@ -890,14 +905,19 @@ function RollCallPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
     if (attendance) return attendance === 'PRESENT';
     return entryBySeat.get(seat.id)?.response !== 'ABSENT' && entryBySeat.has(seat.id);
   }).map(seat => seat.id));
-  const votingSeats = seats.filter(seat => seat.canVote);
+  const proceduralSeats = snapshot.seats.filter(seat => seat.canProceduralVote);
+  const votingSeats = proceduralSeats.filter(seat => seat.canVote);
   const votingPresent = votingSeats.filter(seat => presentSeatIds.has(seat.id)).length;
-  const quorum = Math.ceil(votingSeats.length / 4);
-  const absentVoting = votingSeats.filter(seat => entryBySeat.get(seat.id)?.response === 'ABSENT').length;
+  const quorum = Math.ceil(proceduralSeats.length / 4);
+  const absentProcedural = proceduralSeats.filter(seat => entryBySeat.get(seat.id)?.response === 'ABSENT').length;
   const simpleMajority = votingPresent > 0 ? Math.floor(votingPresent / 2) + 1 : 0;
   const twoThirdsMajority = votingPresent > 0 ? Math.ceil(votingPresent * 2 / 3) : 0;
-  const quorumNotMet = votingPresent < quorum;
-  const quorumImpossible = rollCall.status === 'IN_PROGRESS' && votingSeats.length - absentVoting < quorum;
+  const proceduralPresent = proceduralSeats.filter(seat => presentSeatIds.has(seat.id)).length;
+  const proceduralSimpleMajority = proceduralPresent > 0 ? Math.floor(proceduralPresent / 2) + 1 : 0;
+  const proceduralTwoThirdsMajority = Math.ceil(proceduralPresent * 2 / 3);
+  const separateMajorities = proceduralPresent !== votingPresent;
+  const quorumNotMet = proceduralPresent < quorum;
+  const quorumImpossible = rollCall.status === 'IN_PROGRESS' && proceduralSeats.length - absentProcedural < quorum;
   const rollCallFailed = quorumNotMet && (rollCall.status === 'COMPLETED' || quorumImpossible);
   const rollCallCompletedWithQuorum = rollCall.status === 'COMPLETED' && !quorumNotMet;
   return <Container fluid className="roll-call-page">
@@ -910,7 +930,7 @@ function RollCallPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
         loading={pending === 'reset'} disabled={!!pending} onClick={() => setResetOpen(true)} />}
       <Label basic size="large">{t('{called} of {total} called', {called: entries.length, total: seats.length})}</Label>
     </div></div>
-    {seats.length === 0 ? <Message warning content={t('Add at least one committee member to proceed')} /> : <>
+    {seats.length === 0 ? snapshot.seats.length === 0 && <Message warning content={t('Add at least one committee member to proceed')} /> : <>
       <Segment className="roll-call-board">
         <div className="roll-call-legend" aria-label={t('Status legend')}>
           <span><i className="status-uncalled" />{t('Not called')}</span>
@@ -961,20 +981,22 @@ function RollCallPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
               disabled={!!pending} onClick={() => setResetOpen(true)} /></>}
         </div>}
       </Segment>
+    </>}
       {(rollCallFailed || rollCallCompletedWithQuorum) && <Segment className="roll-call-summary">
         <div className="roll-call-summary-highlights">
           <div className="roll-call-summary-highlight highlight-present"><span className="roll-call-summary-label">{t('Present')}</span>
-            <strong>{presentSeatIds.size}</strong></div>
+            <strong>{proceduralPresent}</strong></div>
           {rollCallFailed ? <><div className="roll-call-summary-highlight highlight-quorum"><span className="roll-call-summary-label">{t('Quorum')}</span>
             <strong>{quorum}</strong></div>
             <div className="roll-call-summary-highlight highlight-total-seats"><span className="roll-call-summary-label">{t('Total seats')}</span>
-              <strong>{votingSeats.length}</strong></div></> : <><div className="roll-call-summary-highlight highlight-two-thirds"><span className="roll-call-summary-label">{t('Two-thirds majority')}</span>
-              <strong>{twoThirdsMajority}</strong></div>
-            <div className="roll-call-summary-highlight highlight-simple-majority"><span className="roll-call-summary-label">{t('Simple majority')}</span>
-              <strong>{simpleMajority}</strong></div></>}
+              <strong>{proceduralSeats.length}</strong></div></> : (separateMajorities ? [
+              ['Voting two-thirds majority', twoThirdsMajority], ['Voting simple majority', simpleMajority],
+              ['Procedural two-thirds majority', proceduralTwoThirdsMajority], ['Procedural simple majority', proceduralSimpleMajority]
+            ] : [['Simple majority', simpleMajority], ['Two-thirds majority', twoThirdsMajority]])
+              .map(([label, value]) => <div key={label} className={`roll-call-summary-highlight ${String(label).includes('two-thirds') || label === 'Two-thirds majority' ? 'highlight-two-thirds' : 'highlight-simple-majority'}`}>
+                <span className="roll-call-summary-label">{t(String(label))}</span><strong>{value}</strong></div>)}
         </div>{rollCallCompletedWithQuorum && <Button as={Link} to={`/committees/${snapshot.committee.id}/motions`} primary fluid size="large">
           {t('Go to motions')}<Icon name="arrow right" /></Button>}</Segment>}
-    </>}
     <Confirm open={!!leaveTarget || discardOpen} header={t('Discard unsubmitted roll-call answers?')} content={null}
       cancelButton={t('Cancel')} confirmButton={t(leaveTarget ? 'Leave page' : 'Reload Roll Call')}
       onCancel={() => {setLeaveTarget(undefined); setDiscardOpen(false);}}

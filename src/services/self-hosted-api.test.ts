@@ -160,11 +160,8 @@ describe('self-hosted stage 4 API client', () => {
       json: async () => ({data: {id: 'motion'}, meta: {requestId: 'direct-vote'}})}));
     vi.stubGlobal('fetch', fetchMock);
     await selfHostedApi.setMotionDirectVote('motion', 'FOR', 'seat-two');
-    await selfHostedApi.setMotionDirectVoteSettings('motion', 2, false);
-    expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/v1/motions/motion/direct-vote', expect.objectContaining({
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/motions/motion/direct-vote', expect.objectContaining({
       method: 'POST', body: JSON.stringify({choice: 'FOR', onBehalfOfSeatId: 'seat-two'})}));
-    expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/v1/motions/motion/direct-vote-settings', expect.objectContaining({
-      method: 'POST', body: JSON.stringify({baseRevision: 2, includeNonVotingSeats: false})}));
   });
 
   it('sends legacy speaker workspace changes through audited self-hosted commands', async () => {

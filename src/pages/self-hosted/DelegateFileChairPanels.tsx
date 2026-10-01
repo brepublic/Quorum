@@ -120,6 +120,8 @@ export function DelegateFileUploadPanel({snapshot, api}: {snapshot: CommitteeWor
   const [selected, setSelected] = React.useState<File>();
   const [uploadType,setUploadType]=React.useState<DelegateFileType>('WORKING_PAPER');
   const chair=snapshot.viewer.audience==='CHAIR' || snapshot.viewer.audience==='OWNER';
+  const media = !chair && snapshot.seats.find(seat => seat.id === snapshot.viewer.seatId)?.rank === 'MEDIA';
+  React.useEffect(() => {if (media && !['NEWS', 'INSTANT_MESSAGE'].includes(uploadType)) setUploadType('NEWS');}, [media, uploadType]);
   const [pending, setPending] = React.useState<Awaited<ReturnType<SelfHostedApi['listPendingHostCommits']>>>([]);
   const [saved, setSaved] = React.useState<string>();
   const [trackedUpload, setTrackedUpload] = React.useState<{id: string; name: string}>();
@@ -180,7 +182,7 @@ export function DelegateFileUploadPanel({snapshot, api}: {snapshot: CommitteeWor
     {error && <Message error content={error} />}
     <Card centered fluid className="delegate-file-chair-upload"><Card.Content><Form onSubmit={() => void upload()}>
       <Form.Select fluid label={t('File type')} value={isCustomDelegateFileType(uploadType) ? 'OTHER' : uploadType} disabled={working || snapshot.committee.status!=='ACTIVE'}
-        options={[...FILE_TYPES.filter(type=>chair || type!=='CRISIS_NOTICE').map(type=>({key:type,value:type,text:delegateFileTypeName(type,snapshot.committee.committeeLanguage)})),{key:'OTHER',value:'OTHER',text:t('Other')}]}
+        options={[...FILE_TYPES.filter(type => media ? type === 'NEWS' || type === 'INSTANT_MESSAGE' : chair || type !== 'CRISIS_NOTICE').map(type=>({key:type,value:type,text:delegateFileTypeName(type,snapshot.committee.committeeLanguage)})),...(media ? [] : [{key:'OTHER',value:'OTHER',text:t('Other')}])]}
         onChange={(_,data)=>setUploadType(data.value==='OTHER' ? customDelegateFileType('') : data.value as DelegateFileType)} />
       {isCustomDelegateFileType(uploadType) && <Form.Input label={t('Custom file type')} required maxLength={100} disabled={working} value={uploadType.slice(7)} onChange={event=>setUploadType(customDelegateFileType(event.currentTarget.value))} />}
       <Form.Input disabled={working || snapshot.committee.status !== 'ACTIVE'} type="file" label={t("Choose file")} input={{ref: fileInput, onChange: (event: React.ChangeEvent<HTMLInputElement>) =>

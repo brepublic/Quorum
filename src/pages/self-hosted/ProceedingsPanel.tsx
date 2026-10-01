@@ -170,7 +170,7 @@ function seatOptionContent(seat: CommitteeWorkspaceSnapshot['seats'][number]) {
 }
 
 function attendanceSeatOptions(snapshot: CommitteeWorkspaceSnapshot, presentSeatIds: Set<string>): SpeakerSeatOption[] {
-  return snapshot.seats.map(seat => ({key: seat.id, value: seat.id, text: seat.displayName, content: seatOptionContent(seat),
+  return snapshot.seats.filter(seat => seat.canProceduralVote).map(seat => ({key: seat.id, value: seat.id, text: seat.displayName, content: seatOptionContent(seat),
     searchTerms: seat.searchTerms, disabled: !presentSeatIds.has(seat.id),
     description: presentSeatIds.has(seat.id) ? undefined : t('Absent')}));
 }
@@ -438,8 +438,9 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
   const totalTimer = (snapshot.timers ?? []).find(timer => timer.id === list.totalTimerId);
   const configuredYields = list.yieldTypes;
   const allowedYields = configuredYields ? mapRuleYieldTypes(configuredYields) : ['CHAIR', 'SEAT', 'QUESTIONS', 'COMMENTS'];
-  const presentSeatIds = new Set(snapshot.attendance.filter(item => item.state === 'PRESENT').map(item => item.seatId));
-  const presentSeats = snapshot.seats.filter(seat => presentSeatIds.has(seat.id));
+  const presentSeatIds = new Set(snapshot.attendance.filter(item => item.state === 'PRESENT'
+    && snapshot.seats.some(seat => seat.id === item.seatId && seat.canProceduralVote)).map(item => item.seatId));
+  const presentSeats = snapshot.seats.filter(seat => seat.canProceduralVote && presentSeatIds.has(seat.id));
   const currentAbsent = Boolean(current && !presentSeatIds.has(current.seatId));
   const nextAbsent = Boolean(next && !presentSeatIds.has(next.seatId));
   const queueSeatOptions = attendanceSeatOptions(snapshot, presentSeatIds);
@@ -978,7 +979,8 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
   const chairAdvisoryMode = snapshot.committee.operationMode === 'CHAIR_OPERATED' && canChair;
   const delegateMayPropose = delegateMode && snapshot.motionSettings.delegateMotionProposalsEnabled;
   const canPropose = snapshot.committee.status === 'ACTIVE' && (canChair
-    || snapshot.viewer.audience === 'MEMBER' && delegateMayPropose);
+    || snapshot.viewer.audience === 'MEMBER' && delegateMayPropose
+      && snapshot.seats.some(seat => seat.id === snapshot.viewer.seatId && seat.canProceduralVote));
   if (!session) return <Container text className="motions-page motions-empty-state">
     <Card className="motions-empty-card">
       <Card.Content textAlign="center" className="motions-empty-card-content">
@@ -988,8 +990,9 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
     </Card>
   </Container>;
 
-  const presentSeatIds = new Set(snapshot.attendance.filter(item => item.state === 'PRESENT').map(item => item.seatId));
-  const presentSeats = snapshot.seats.filter(seat => presentSeatIds.has(seat.id));
+  const presentSeatIds = new Set(snapshot.attendance.filter(item => item.state === 'PRESENT'
+    && snapshot.seats.some(seat => seat.id === item.seatId && seat.canProceduralVote)).map(item => item.seatId));
+  const presentSeats = snapshot.seats.filter(seat => seat.canProceduralVote && presentSeatIds.has(seat.id));
   const seatOptions = attendanceSeatOptions(snapshot, presentSeatIds);
   const openCaucuses = (snapshot.speakerLists ?? []).filter(list => list.kind === 'MODERATED_CAUCUS' && list.status === 'OPEN');
   const resolutions = (snapshot.documents ?? []).filter(document => document.kind === 'RESOLUTION'
@@ -1272,11 +1275,6 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
           onClick={() => void run(() => api.secondMotion(motion.id, additionalSeconder))}>{t('Second')}</Button>
       </Card.Content>}
       {delegateMode && <Card.Content extra>
-        {canChair && <Checkbox toggle label={t('Include non-voting seats')}
-          disabled={Boolean(motion.directVote.startedAt) && delegateMode}
-          checked={motion.directVote.includeNonVotingSeats}
-          onChange={(_, data) => void run(() => api.setMotionDirectVoteSettings(motion.id,
-            motion.directVote.settingsRevision, data.checked ?? false))} />}
         <div className="motion-vote-panel"><Button.Group fluid>
           <Popup content={t('Against')} trigger={<Button color="red" disabled aria-label={t('Against')}>
             <Icon name="thumbs down outline" />
@@ -1679,7 +1677,7 @@ function DocumentVoting({snapshot, run, api, canChair, document}: CommonProps & 
     <div className="document-voting-heading"><span>{t(document.directVote?.invalidatedAt ? 'Failed' : 'Voting in progress')}</span><Header as="h1">{document.title}</Header></div>
     {directVote && <Segment className="resolution-voting-board">
       <div className="resolution-voting-dashboard"><aside className="resolution-voting-metrics resolution-voting-thresholds">
-        <div className="resolution-voting-metric metric-present"><span>{t('Present')}</span><strong>{directEligibility.length}</strong></div>
+        <div className="resolution-voting-metric metric-present"><span>{t('Voting eligible')}</span><strong>{directEligibility.length}</strong></div>
         <div className="resolution-voting-metric metric-simple"><span>{t('Simple majority')}</span>
           <strong>{directEligibility.length > 0 ? Math.floor(directEligibility.length / 2) + 1 : '—'}</strong></div>
         <div className="resolution-voting-metric metric-two-thirds"><span>{t('Two-thirds majority')}</span>
@@ -1956,7 +1954,7 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab, draft
   const presentSeatIds = new Set((snapshot.attendanceBySession?.[document.meetingSessionId] ?? snapshot.attendance)
     .filter(item => item.state === 'PRESENT').map(item => item.seatId));
   const selectedCountryIds = new Set([...(countryDocument?.proposers ?? []), ...(countryDocument?.seconders ?? [])].map(country => country.seatId));
-  const countryOptions = snapshot.seats.filter(seat => !selectedCountryIds.has(seat.id))
+  const countryOptions = snapshot.seats.filter(seat => seat.canProceduralVote && !selectedCountryIds.has(seat.id))
     .map(seat => ({key: seat.id, value: seat.id, text: seat.displayName, content: seatOptionContent(seat),
       searchTerms: seat.searchTerms,
       disabled: !presentSeatIds.has(seat.id)}));

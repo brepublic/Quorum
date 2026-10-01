@@ -73,6 +73,9 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
   const [notices, setNotices] = React.useState<Array<DelegateFileAvailableEvent & {expiresAt: number}>>([]);
   const [file, setFile] = React.useState<File>(); const [fileType, setFileType] = React.useState<StandardDelegateFileType | 'OTHER'>('WORKING_PAPER');
   const [customType, setCustomType] = React.useState('');
+  React.useEffect(() => {
+    if (portal?.claimedSeat?.rank === 'MEDIA' && fileType !== 'NEWS' && fileType !== 'INSTANT_MESSAGE') setFileType('NEWS');
+  }, [portal?.claimedSeat?.rank, fileType]);
   const [publishedCategory, setPublishedCategory] = React.useState<DelegateFileCategory | 'ALL'>('ALL');
   const [localOpenedAt, setLocalOpenedAt] = React.useState<Partial<Record<DelegateFileCategory, string>>>({});
   const [progress, setProgress] = React.useState<number>(); const [submitted, setSubmitted] = React.useState(false);
@@ -248,10 +251,20 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
   if (!portal.claimedSeat) return <Container className="delegate-file-claim-page">
     {error && <Message error content={error} />}
     <Card centered className="delegate-file-claim-card"><Card.Content><Card.Header>{t("Select a delegation")}</Card.Header>
-      <Form><Form.Select fluid selection search={searchOptions} placeholder={t("Select a delegation")} value={seatId}
-        options={portal.eligibleSeats.map(seat => ({key: seat.id, value: seat.id, text: seat.displayName,
+      <Form><Form.Select fluid selection search={(options, query) => {
+        const matching = searchOptions(options.filter(option => !option.disabled), query);
+        const ids = new Set(matching.map(option => option.value));
+        const ranks = new Set(portal.eligibleSeats.filter(seat => ids.has(seat.id)).map(seat => seat.rank));
+        return options.filter(option => option.disabled ? ranks.has(option.value as typeof portal.eligibleSeats[number]['rank']) : ids.has(option.value));
+      }} placeholder={t("Select a delegation")} value={seatId}
+        options={(['STANDARD', 'NGO', 'OBSERVER', 'MEDIA'] as const).flatMap(rank => {
+          const members = portal.eligibleSeats.filter(seat => seat.rank === rank);
+          return members.length ? [{key: rank, value: rank, text: t(rank), disabled: true,
+            className: 'delegate-seat-group', content: <strong>{t(rank)}</strong>}, ...members.map(seat => ({key: seat.id, value: seat.id, text: seat.displayName,
           searchTerms: seat.searchTerms,
-          content: <span className="motion-seat-option"><CountryFlagDisplay flag={seat.flag} /><span>{seat.displayName}</span></span>}))}
+          className: 'delegate-seat-member',
+          content: <span className="motion-seat-option"><CountryFlagDisplay flag={seat.flag} /><span>{seat.displayName}</span></span>}))] : [];
+        })}
         onChange={(_, data) => setSeatId(String(data.value))} /></Form>
     </Card.Content><Card.Content extra><Button primary fluid disabled={!seatId} onClick={() => setConfirming(true)}>{t("Confirm")}</Button></Card.Content></Card>
     <Modal size="tiny" open={confirming} onClose={() => setConfirming(false)}><Modal.Header>{t("Confirm delegation")}</Modal.Header>
@@ -326,8 +339,10 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
         : <Message content={t(publishedCategory === 'ALL' ? 'No published files' : 'No files in this category')} />}</div></>}
         {active === 'upload' && <><Card centered fluid className="delegate-file-upload-card"><Card.Content>
         <Form onSubmit={() => void upload()}>
-        <Form.Select label={t("File type")} options={[...FILE_TYPES.filter(type=>type!=='CRISIS_NOTICE').map(type => ({key: type, value: type, text: delegateFileTypeName(type, portal.committeeLanguage)})),
-          {key: 'OTHER', value: 'OTHER', text: t('Other')}]} value={fileType} disabled={working}
+        <Form.Select label={t("File type")} options={[...FILE_TYPES.filter(type => claimedSeat.rank === 'MEDIA'
+          ? type === 'NEWS' || type === 'INSTANT_MESSAGE' : type !== 'CRISIS_NOTICE')
+          .map(type => ({key: type, value: type, text: delegateFileTypeName(type, portal.committeeLanguage)})),
+          ...(claimedSeat.rank === 'MEDIA' ? [] : [{key: 'OTHER', value: 'OTHER', text: t('Other')}])]} value={fileType} disabled={working}
           onChange={(_, data) => {setFileType(data.value as StandardDelegateFileType | 'OTHER'); setError(undefined);}} />
         {fileType === 'OTHER' && <Form.Input label={t('Custom file type')} value={customType} required maxLength={100} disabled={working}
           onChange={(_, data) => setCustomType(String(data.value))} />}

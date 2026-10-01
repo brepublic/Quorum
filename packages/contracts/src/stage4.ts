@@ -7,7 +7,7 @@ import type {
 } from './stage3.js';
 
 export type LocalizedNames = Record<string, string>;
-export type SeatRank = 'STANDARD' | 'NGO' | 'OBSERVER';
+export type SeatRank = 'STANDARD' | 'NGO' | 'OBSERVER' | 'MEDIA';
 export type FlagSnapshot =
   | {type: 'STANDARD'; value: string}
   | {type: 'EMOJI'; value: string}
@@ -48,6 +48,7 @@ export interface CommitteeTemplateMember {
   defaultLanguage: string;
   rank: SeatRank;
   canVote: boolean;
+  canProceduralVote: boolean;
   hasVeto: boolean;
   mustVote: boolean;
   sortOrder: number;
@@ -93,6 +94,7 @@ export interface CommitteeTemplateInput {
     defaultLanguage: string;
     rank: SeatRank;
     canVote: boolean;
+    canProceduralVote: boolean;
     hasVeto: boolean;
     mustVote: boolean;
     sortOrder: number;
@@ -129,7 +131,7 @@ export interface Stage4CommitteeSeat extends CommitteeSeat {
 export interface UpdateSeatRequest {
   baseRevision: number;
   patch: Partial<Pick<Stage4CommitteeSeat,
-    'rank' | 'canVote' | 'hasVeto' | 'mustVote' | 'sortOrder' | 'active'>>;
+    'rank' | 'canVote' | 'canProceduralVote' | 'hasVeto' | 'mustVote' | 'sortOrder' | 'active'>>;
 }
 
 export interface CommitteeNote {
@@ -211,7 +213,7 @@ export interface RollCall {
   currentSeatId: string | null;
   rulePackageVersionId: string;
   allowedResponses: string[];
-  seats: Pick<Stage4CommitteeSeat, 'id' | 'displayName' | 'canVote' | 'flag'>[];
+  seats: Pick<Stage4CommitteeSeat, 'id' | 'displayName' | 'canVote' | 'canProceduralVote' | 'flag'>[];
   entries: RollCallEntry[];
   revision: number;
   startedAt: string;

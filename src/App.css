@@ -78,8 +78,19 @@
 }
 
 .committee-setup-page .members-table thead > tr:first-child > th {
-  white-space: normal;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
+.committee-setup-page .ui.dropdown > .text {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.committee-setup-page .ui.dropdown .menu > .item {
+  white-space: nowrap;
 }
 
 .committee-setup-page .members-table .add-seat-row > th:first-child .ui.dropdown {
@@ -107,12 +118,13 @@
     table-layout: fixed;
   }
 
-  .committee-setup-page .members-table tr > :first-child { width: 38%; }
-  .committee-setup-page .members-table tr > :nth-child(2) { width: 20%; }
-  .committee-setup-page .members-table tr > :nth-child(3),
-  .committee-setup-page .members-table tr > :nth-child(4) { width: 10%; }
-  .committee-setup-page .members-table tr > :nth-child(5) { width: 13%; }
-  .committee-setup-page .members-table tr > :nth-child(6) { width: 9%; }
+  .committee-setup-page .members-table tr > :first-child { width: 26%; }
+  .committee-setup-page .members-table tr > :nth-child(2) { width: 22%; }
+  .committee-setup-page .members-table tr > :nth-child(3) { width: 13%; }
+  .committee-setup-page .members-table tr > :nth-child(4),
+  .committee-setup-page .members-table tr > :nth-child(5) { width: 10%; }
+  .committee-setup-page .members-table tr > :nth-child(6) { width: 11%; }
+  .committee-setup-page .members-table tr > :nth-child(7) { width: 8%; }
 
   .committee-setup-page .members-table [data-label] {
     text-align: center;
@@ -2878,3 +2890,12 @@ html[lang='zh-CN'] .ui.grid > .column {
 .ui.menu[data-crisis-reminder='red'] .crisis-awaiting > .crisis-entry-label { color: #db2828; }
 .ui.menu[data-crisis-reminder='black'] .crisis-awaiting > .text,
 .ui.menu[data-crisis-reminder='black'] .crisis-awaiting > .crisis-entry-label { color: #1b1c1d; }
+
+.delegate-file-claim-card .ui.dropdown .menu > .delegate-seat-group.disabled.item {
+  opacity: 1;
+  cursor: default;
+  font-weight: 700;
+}
+.delegate-file-claim-card .ui.dropdown .menu > .delegate-seat-member.item {
+  font-weight: 400;
+}

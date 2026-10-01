@@ -22,7 +22,7 @@ export const ARCHIVE_SECTIONS: readonly ArchiveSection[] = Object.freeze([
   {name: 'crisis_updates',query: `SELECT * FROM crisis_updates WHERE committee_id=$1 ORDER BY group_id,ordinal`},
   {name: 'committee_memberships', query: `SELECT user_id,status,joined_at,updated_at FROM committee_memberships WHERE committee_id=$1 ORDER BY user_id`},
   {name: 'committee_chairs', query: `SELECT user_id,granted_at,revoked_at FROM committee_capabilities WHERE committee_id=$1 ORDER BY user_id`},
-  {name: 'committee_seats', query: `SELECT id,stable_key,display_name,flag_type,flag_value,rank,can_vote,has_veto,must_vote,sort_order,active,revision,created_at,updated_at FROM committee_seats WHERE committee_id=$1 ORDER BY sort_order,id`},
+  {name: 'committee_seats', query: `SELECT id,stable_key,display_name,flag_type,flag_value,rank,can_vote,can_procedural_vote,has_veto,must_vote,sort_order,active,revision,created_at,updated_at FROM committee_seats WHERE committee_id=$1 ORDER BY sort_order,id`},
   {name: 'seat_assignments', query: `SELECT id,seat_id,user_id,status,assigned_at,ended_at FROM seat_assignments WHERE committee_id=$1 ORDER BY assigned_at,id`},
   {name: 'seat_invitations', query: `SELECT id,seat_id,max_uses,use_count,expires_at,revoked_at,created_at FROM seat_invitations WHERE committee_id=$1 ORDER BY created_at,id`},
   {name: 'rule_bindings', query: `SELECT b.id,b.package_version_id,b.effective_from_event_sequence,b.activated_at,v.version,v.schema_version,v.definition FROM committee_rule_bindings b JOIN rule_package_versions v ON v.id=b.package_version_id WHERE b.committee_id=$1 ORDER BY b.effective_from_event_sequence,b.id`},

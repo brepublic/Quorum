@@ -58,7 +58,7 @@ async function user(name: string): Promise<AuthenticatedSession> {
   return identity.authenticate(changed.sessionToken);
 }
 
-async function meetingFixture() {
+async function meetingFixture(requireSecond = false) {
   const suffix = String(++fixtureSequence);
   const owner = await user(`owner${suffix}`); const firstChair = await user(`chairone${suffix}`);
   const secondChair = await user(`chairtwo${suffix}`);
@@ -68,13 +68,24 @@ async function meetingFixture() {
     countryTemplateKey: 'builtin:default'}), 'committee', context('committee'));
   let revised = await stage3.setChair(owner, committee.id, firstChair.user.email, true, committee.revision, context('chair-one'));
   revised = await stage3.setChair(owner, committee.id, secondChair.user.email, true, revised.revision, context('chair-two'));
-  const firstSeat = await stage4.createSeat(firstChair, committee.id, {stableKey: 'first', canVote: true},
+  const firstSeat = await stage4.createSeat(firstChair, committee.id, {stableKey: 'first', canVote: true, canProceduralVote: true},
     'seat-first', context('seat-first'));
-  const secondSeat = await stage4.createSeat(firstChair, committee.id, {stableKey: 'second', canVote: true},
+  const secondSeat = await stage4.createSeat(firstChair, committee.id, {stableKey: 'second', canVote: true, canProceduralVote: true},
     'seat-second', context('seat-second'));
   await stage3.assignSeat(firstChair, committee.id, {seatId: firstSeat.id, email: firstDelegate.user.email}, context('assign-first'));
   await stage3.assignSeat(firstChair, committee.id, {seatId: secondSeat.id, email: secondDelegate.user.email}, context('assign-second'));
   await stage3.assignSeat(firstChair, committee.id, {seatId: firstSeat.id, email: sameSeatDelegate.user.email}, context('assign-third'));
+  if (requireSecond) {
+    const definition = (await pool!.query('SELECT definition FROM rule_package_versions WHERE id=$1',
+      [committee.activeRulePackageVersionId])).rows[0].definition;
+    definition.key = 'test:procedural-seconds';
+    definition.motions = definition.motions.map((motion: {id: string}) => motion.id === 'open-unmoderated-caucus'
+      ? {...motion, requiredSecondCount: 1} : motion);
+    const rules = await stage3.importRulePackage(firstChair,
+      {scope: 'COMMITTEE', committeeId: committee.id, definition}, context('procedural-rules'));
+    const revision = (await pool!.query('SELECT revision FROM committees WHERE id=$1', [committee.id])).rows[0].revision;
+    await stage3.activateRules(firstChair, committee.id, rules.versions[0]!.id, revision, context('procedural-rules-activate'));
+  }
   const session = await stage4.startMeetingSession(firstChair, committee.id, {}, context('meeting'), randomUUID());
   await stage4.createAttendanceEvent(firstChair, committee.id,
     {meetingSessionId: session.id, seatId: firstSeat.id, type: 'PRESENT'}, context('present-first'));
@@ -94,7 +105,7 @@ async function meetingEndFixture() {
   const committee = await stage4.createCommittee(firstChair, await testCommitteeInput(pool!, firstChair, {name: 'Meeting lifecycle', visibility: 'PUBLIC',
     countryTemplateKey: 'builtin:default'}), 'end-committee', context('end-committee'));
   const firstSeat = await stage4.createSeat(firstChair, committee.id,
-    {stableKey: 'end-first', canVote: true}, 'end-seat', context('end-seat'));
+    {stableKey: 'end-first', canVote: true, canProceduralVote: true}, 'end-seat', context('end-seat'));
   const session = await stage4.startMeetingSession(firstChair, committee.id, {}, context('end-meeting'), randomUUID());
   await stage4.createAttendanceEvent(firstChair, committee.id,
     {meetingSessionId: session.id, seatId: firstSeat.id, type: 'PRESENT'}, context('end-present'));
@@ -394,6 +405,53 @@ integration('PostgreSQL crisis lifecycle', () => {
 });
 
 integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
+  it('separates procedural and substantive voters while keeping strawpolls open to file-only seats', async () => {
+    const f = await meetingFixture(true);
+    await stage4.updateSeat(f.firstChair, f.committee.id, f.secondSeat.id,
+      {baseRevision: f.secondSeat.revision, patch: {canVote: false}}, context('procedural-only'));
+    const media = await stage4.createSeat(f.firstChair, f.committee.id,
+      {stableKey: 'other', rank: 'MEDIA'}, randomUUID(), context('file-only'));
+    const mediaDelegate = await user('media-rights');
+    await stage3.assignSeat(f.firstChair, f.committee.id,
+      {seatId: media.id, email: mediaDelegate.user.email}, context('assign-media'));
+    const input = {meetingSessionId: f.session.id, motionTypeId: 'open-unmoderated-caucus',
+      parameters: {caucusDuration: 10, caucusUnit: 'min'}};
+    await expect(stage5.proposeMotion(mediaDelegate, f.committee.id, input,
+      randomUUID(), context('media-motion'))).rejects.toMatchObject({reason: 'PRESENT_SEAT_REQUIRED'});
+    const motion = await stage5.proposeMotion(f.firstDelegate, f.committee.id, input,
+      randomUUID(), context('procedural-motion'));
+    expect(motion.directVote?.eligibility.map(seat => seat.seatId)).toEqual([f.firstSeat.id, f.secondSeat.id]);
+    expect(motion.directVote?.threshold).toBe(2);
+    await expect(stage5.secondMotion(mediaDelegate, motion.id, {}, randomUUID(), context('media-second')))
+      .rejects.toMatchObject({reason: 'PRESENT_SEAT_REQUIRED'});
+    await stage5.secondMotion(f.secondDelegate, motion.id, {}, randomUUID(), context('procedural-second'));
+    await expect(stage5.setMotionDirectVote(f.firstChair, motion.id,
+      {onBehalfOfSeatId: media.id, choice: 'FOR'}, context('media-vote'))).rejects.toMatchObject({code: 'FORBIDDEN'});
+    const recorded = await stage5.setMotionDirectVote(f.firstChair, motion.id,
+      {onBehalfOfSeatId: f.secondSeat.id, choice: 'FOR'}, context('procedural-vote'));
+    expect(recorded.directVote?.votes).toContainEqual(expect.objectContaining({seatId: f.secondSeat.id}));
+    const ballot = await stage5.createBallot(f.firstChair, f.committee.id,
+      {meetingSessionId: f.session.id, subjectType: 'MOTION', subjectId: motion.id,
+        procedural: true, thresholdKind: 'TWO_THIRDS'}, randomUUID(), context('procedural-ballot'));
+    expect(ballot.eligibility.map(seat => seat.seatId)).toEqual([f.firstSeat.id, f.secondSeat.id]);
+    expect(ballot.threshold.value).toBe(2);
+    await stage5.castVote(f.secondDelegate, ballot.id, {choice: 'FOR'}, randomUUID(), context('procedural-ballot-vote'));
+    const document = await stage5.createResolution(f.firstChair, f.committee.id,
+      {meetingSessionId: f.session.id, customTitle: null, content: 'Vote'}, randomUUID(), context('substantive-document'));
+    const direct = await stage5.setResolutionDirectVote(f.firstChair, document.id,
+      {seatId: f.firstSeat.id, choice: 'FOR'}, context('substantive-vote'));
+    expect(direct.directVote?.eligibility.map(seat => seat.seatId)).toEqual([f.firstSeat.id]);
+    expect(direct.directVote?.threshold).toBe(1);
+    await expect(stage5.setResolutionDirectVote(f.firstChair, document.id,
+      {seatId: f.secondSeat.id, choice: 'FOR'}, context('nonvoting-document'))).rejects.toMatchObject({code: 'FORBIDDEN'});
+    const poll = await stage5.createStrawpoll(f.firstChair, f.committee.id,
+      {meetingSessionId: f.session.id, question: 'Views?', votingMode: 'SEAT_AUTHENTICATED',
+        multipleChoice: false, options: ['For', 'Against']}, randomUUID(), context('all-seats-poll'));
+    const voted = await stage5.voteStrawpoll(mediaDelegate, poll.id,
+      {optionIds: [poll.options[0]!.id]}, randomUUID(), context('media-poll-vote'));
+    expect(voted.seatVotes).toContainEqual(expect.objectContaining({seatId: media.id}));
+  });
+
   it('creates independent directive entries and one persistent vote with corrections', async () => {
     const f = await meetingEndFixture();
     const make = (draftType: string, key: string) => stage5.createResolution(f.firstChair, f.committee.id,
@@ -778,7 +836,7 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
       const seats = [f.firstSeat, f.secondSeat];
       for (let index = 0; index < seats.length; index += 1) {
         seats[index] = await stage4.updateSeat(f.firstChair, f.committee.id, seats[index].id,
-          {baseRevision: seats[index].revision, patch: {canVote: false}}, context('disable-voting'));
+          {baseRevision: seats[index].revision, patch: {canVote: false, canProceduralVote: true}}, context('disable-voting'));
       }
       let document = await stage5.createResolution(f.firstChair, f.committee.id,
         {meetingSessionId: f.session.id, customTitle: null, content: ''}, 'empty-electorate', context('empty-electorate'));
@@ -791,7 +849,7 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
       expect((await snapshotDocument())?.directVote).toMatchObject({eligibility: [], threshold: 0, automaticResult: null});
       for (let index = 0; index < seats.length; index += 1) {
         seats[index] = await stage4.updateSeat(f.firstChair, f.committee.id, seats[index].id,
-          {baseRevision: seats[index].revision, patch: {canVote: true}}, context('enable-voting'));
+          {baseRevision: seats[index].revision, patch: {canVote: true, canProceduralVote: true}}, context('enable-voting'));
       }
       expect((await snapshotDocument())?.directVote?.automaticResult).toBeNull();
       for (const seat of seats) {
@@ -802,7 +860,7 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
       expect((await snapshotDocument())?.directVote?.automaticResult).toBe('PASSED');
       for (const seat of seats) {
         await stage4.updateSeat(f.firstChair, f.committee.id, seat.id,
-          {baseRevision: seat.revision, patch: {canVote: false}}, context('remove-eligibility'));
+          {baseRevision: seat.revision, patch: {canVote: false, canProceduralVote: true}}, context('remove-eligibility'));
       }
       expect((await snapshotDocument())?.directVote).toMatchObject({eligibility: [], votes: [], threshold: 0, automaticResult: null});
     });
@@ -834,7 +892,7 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
     let ballot = await create('cap-ballot');
     expect(ballot.eligibility.find(item => item.seatId === seat.id)).toMatchObject({hasVeto: true, mustVote: true});
     seat = await stage4.updateSeat(f.firstChair, f.committee.id, seat.id,
-      {baseRevision: seat.revision, patch: {canVote: false, hasVeto: false, mustVote: false}}, context('disable-capabilities'));
+      {baseRevision: seat.revision, patch: {canVote: false, canProceduralVote: true, hasVeto: false, mustVote: false}}, context('disable-capabilities'));
     await expect(stage5.castVote(f.firstChair, ballot.id, {choice: 'ABSTAIN', onBehalfOfSeatId: seat.id},
       'bad-chair-abstain', context('bad-chair-abstain'))).rejects.toMatchObject({code: 'VALIDATION_FAILED'});
     await expect(stage5.castVote(f.firstDelegate, ballot.id, {choice: 'ABSTAIN'},
@@ -855,7 +913,7 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
     await expect(stage5.castVote(f.firstDelegate, excluded.id, {choice: 'FOR'}, 'excluded', context('excluded')))
       .rejects.toMatchObject({code: 'FORBIDDEN'});
     seat = await stage4.updateSeat(f.firstChair, f.committee.id, seat.id,
-      {baseRevision: seat.revision, patch: {canVote: true}}, context('ordinary-seat'));
+      {baseRevision: seat.revision, patch: {canVote: true, canProceduralVote: true}}, context('ordinary-seat'));
     let ordinary = await create('cap-ordinary');
     expect(ordinary.eligibility.find(item => item.seatId === seat.id)).toMatchObject({hasVeto: false, mustVote: false});
     ordinary = await stage5.castVote(f.firstDelegate, ordinary.id, {choice: 'AGAINST'}, 'ordinary-against', context('ordinary-against'));
@@ -917,13 +975,13 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
     ]);
   });
 
-  it('keeps old direct motion voting separate, includes non-voting seats by default, and preserves changes', async () => {
+  it('allows procedural-only seats to vote on motions and preserves corrections', async () => {
     const fixture = await meetingFixture();
     await pool?.query("UPDATE committee_seats SET rank='OBSERVER',can_vote=false WHERE id=$1", [fixture.secondSeat.id]);
     let motion = await stage5.proposeMotion(fixture.firstDelegate, fixture.committee.id,
       {meetingSessionId: fixture.session.id, motionTypeId: 'open-unmoderated-caucus',
         parameters: {caucusDuration: 10, caucusUnit: 'min'}}, 'direct-motion', context('direct-motion'));
-    expect(motion.directVote).toMatchObject({includeNonVotingSeats: true, threshold: 2});
+    expect(motion.directVote).toMatchObject({threshold: 2});
     expect(motion.directVote.eligibility.map(item => item.seatId)).toContain(fixture.secondSeat.id);
     motion = await stage5.setMotionDirectVote(fixture.firstChair, motion.id,
       {choice: 'FOR', onBehalfOfSeatId: fixture.secondSeat.id}, context('direct-for'));
@@ -933,9 +991,6 @@ integration('PostgreSQL stage 5 high-concurrency proceedings', () => {
     motion = await stage5.setMotionDirectVote(fixture.firstChair, motion.id,
       {choice: null, onBehalfOfSeatId: fixture.secondSeat.id}, context('direct-retract'));
     expect(motion.directVote.votes).toEqual([]);
-    await expect(stage5.setMotionDirectVoteSettings(fixture.firstChair, motion.id,
-      {baseRevision: motion.directVote.settingsRevision, includeNonVotingSeats: false}, context('locked-setting')))
-      .rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
     const history = await pool?.query(`SELECT previous_choice,new_choice FROM motion_direct_vote_revisions
       WHERE motion_id=$1 AND seat_id=$2 ORDER BY created_at,id`, [motion.id, fixture.secondSeat.id]);
     expect(history?.rows).toEqual([{previous_choice: null, new_choice: 'FOR'},

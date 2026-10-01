@@ -24,8 +24,8 @@ const completedRollCall = {
   meetingSession: {id: "meeting", name: "第1会期", status: "OPEN"},
   rollCall: {id: "roll-call", meetingSessionId: "meeting", status: "COMPLETED"},
   seats: [
-    {id: "one", canVote: true}, {id: "two", canVote: true}, {id: "three", canVote: true}, {id: "four", canVote: true},
-    {id: "five", canVote: true}, {id: "six", canVote: true}, {id: "seven", canVote: true}
+    {id: "one", canVote: true, canProceduralVote: true}, {id: "two", canVote: true, canProceduralVote: true}, {id: "three", canVote: true, canProceduralVote: true}, {id: "four", canVote: true, canProceduralVote: true},
+    {id: "five", canVote: true, canProceduralVote: true}, {id: "six", canVote: true, canProceduralVote: true}, {id: "seven", canVote: true, canProceduralVote: true}
   ],
   attendance: [
     {seatId: "one", state: "PRESENT"}, {seatId: "two", state: "PRESENT"}, {seatId: "three", state: "PRESENT"},
@@ -192,24 +192,24 @@ describe('self-hosted workspace navigation', () => {
     const summary = page.querySelector(".attendance-threshold-summary");
     const realtime = page.querySelector(".realtime-status");
     expect(summary?.textContent).toBe("7/5/4");
-    expect(summary?.getAttribute("title")).toBe("Attendance / two-thirds majority / simple majority");
+    expect(summary?.getAttribute("title")).toBe("Attendance / procedural two-thirds majority / procedural simple majority");
     expect(summary?.nextElementSibling).toBe(realtime);
   });
 
-  it("excludes deactivated seats from attendance while counting only voting seats for thresholds", () => {
+  it("excludes deactivated seats from attendance while counting procedural seats for thresholds", () => {
     const current = {...completedRollCall,
-      seats: [{id: "one", canVote: false}, {id: "two", canVote: true}, {id: "three", canVote: true},
-        {id: "four", canVote: true}, {id: "five", canVote: true}]};
+      seats: [{id: "one", canVote: false, canProceduralVote: true}, {id: "two", canVote: true, canProceduralVote: true}, {id: "three", canVote: true, canProceduralVote: true},
+        {id: "four", canVote: true, canProceduralVote: true}, {id: "five", canVote: true, canProceduralVote: true}]};
     const page = render(<CommitteeNavigation snapshot={current as unknown as CommitteeWorkspaceSnapshot}
       user={user} logout={() => undefined} />, "/committees/committee/roll-call");
-    expect(page.querySelector(".attendance-threshold-summary")?.textContent).toBe("5/3/3");
+    expect(page.querySelector(".attendance-threshold-summary")?.textContent).toBe("5/4/3");
   });
 
-  it("shows zero majority thresholds when no present seat can vote", () => {
-    const current = {...completedRollCall, seats: [{id: "one", canVote: false}]};
+  it("counts procedural-only attendees and ignores file-only seats", () => {
+    const current = {...completedRollCall, seats: [{id: "one", canVote: false, canProceduralVote: true}, {id: "two", canVote: false, canProceduralVote: false}]};
     const page = render(<CommitteeNavigation snapshot={current as unknown as CommitteeWorkspaceSnapshot}
       user={user} logout={() => undefined} />, "/committees/committee/roll-call");
-    expect(page.querySelector(".attendance-threshold-summary")?.textContent).toBe("1/0/0");
+    expect(page.querySelector(".attendance-threshold-summary")?.textContent).toBe("1/1/1");
   });
 
   it("hides attendance thresholds until the current session has a completed roll call", () => {

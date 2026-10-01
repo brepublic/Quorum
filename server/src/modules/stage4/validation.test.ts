@@ -32,17 +32,19 @@ describe('stage 4 template validation', () => {
   it('keeps voting eligibility, veto, and must-vote independent', () => {
     const template = validateCommitteeTemplate({names: {en: 'Security Council'}, defaultLanguage: 'en',
       countryTemplateKey: 'builtin:default', members: [{stableKey: 'china', names: {en: 'China'}, defaultLanguage: 'en',
-        rank: 'STANDARD', canVote: true, hasVeto: true, mustVote: false, sortOrder: 1,
+        rank: 'STANDARD', canVote: true, canProceduralVote: true, hasVeto: true, mustVote: false, sortOrder: 1,
         flag: {type: 'STANDARD', value: 'cn'}}]});
-    expect(template.members[0]).toEqual(expect.objectContaining({canVote: true, hasVeto: true, mustVote: false}));
+    expect(template.members[0]).toEqual(expect.objectContaining({canVote: true, canProceduralVote: true, hasVeto: true, mustVote: false}));
   });
 
-  it.each(['STANDARD', 'NGO', 'OBSERVER'])('allows the same independent capabilities for %s and rejects invalid combinations', rank => {
+  it.each(['STANDARD', 'NGO', 'OBSERVER', 'MEDIA'])('allows the same independent capabilities for %s and rejects invalid combinations', rank => {
     const input = {names: {en: 'Capabilities'}, defaultLanguage: 'en', countryTemplateKey: 'builtin:default',
       members: [{stableKey: 'one', names: {en: 'One'}, defaultLanguage: 'en', rank,
-        canVote: true, hasVeto: true, mustVote: true, sortOrder: 0, flag: {type: 'EMOJI', value: '🏳️'}}]};
-    expect(validateCommitteeTemplate(input).members[0]).toMatchObject({rank, canVote: true, hasVeto: true, mustVote: true});
-    for (const patch of [{canVote: false}, {canVote: false, hasVeto: false}, {rank: 'VETO'}]) {
+        canVote: true, canProceduralVote: true, hasVeto: true, mustVote: true, sortOrder: 0, flag: {type: 'EMOJI', value: '🏳️'}}]};
+    expect(validateCommitteeTemplate(input).members[0]).toMatchObject({rank, canVote: true, canProceduralVote: true, hasVeto: true, mustVote: true});
+    for (const canProceduralVote of [true, false]) expect(validateCommitteeTemplate({...input, members: [{...input.members[0],
+      canVote: false, canProceduralVote, hasVeto: false, mustVote: false}]}).members[0]).toMatchObject({canVote: false, canProceduralVote});
+    for (const patch of [{canVote: false, canProceduralVote: true}, {canVote: false, canProceduralVote: true, hasVeto: false}, {canProceduralVote: false}, {rank: 'VETO'}]) {
       expect(() => validateCommitteeTemplate({...input, members: [{...input.members[0], ...patch}]})).toThrow();
     }
   });

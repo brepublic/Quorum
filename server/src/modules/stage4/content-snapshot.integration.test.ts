@@ -67,7 +67,7 @@ const countryTemplate = {names: {en: 'Countries', 'zh-CN': '国家'}, defaultLan
 
 const committeeTemplate = (countryTemplateKey: string) => ({names: {en: 'Council'}, defaultLanguage: 'en', countryTemplateKey,
   members: [{stableKey: 'china', names: {en: 'China', 'zh-CN': '中国'}, defaultLanguage: 'en', rank: 'STANDARD' as const,
-    canVote: true, hasVeto: true, mustVote: false, sortOrder: 1, flag: {type: 'STANDARD' as const, value: 'cn'}}]});
+    canVote: true, canProceduralVote: true, hasVeto: true, mustVote: false, sortOrder: 1, flag: {type: 'STANDARD' as const, value: 'cn'}}]});
 
 integration('immutable committee content', () => {
   async function fixture() {

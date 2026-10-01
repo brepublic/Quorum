@@ -367,7 +367,7 @@ export class Stage3Service {
       if (!row || row.status === 'DELETING') throw new AppError({code: 'NOT_FOUND', message: 'Committee not found.'});
       const viewer = await viewerAudience(client, row, auth?.user.id);
       const seats = await client.query(`SELECT id, stable_key AS "stableKey", display_name AS "displayName", rank,
-        can_vote AS "canVote", has_veto AS "hasVeto", sort_order AS "sortOrder", active, revision
+        can_vote AS "canVote", can_procedural_vote AS "canProceduralVote", has_veto AS "hasVeto", sort_order AS "sortOrder", active, revision
         FROM committee_seats WHERE committee_id=$1 AND active=true ORDER BY sort_order, stable_key`, [committeeId]);
       const visibleCommittee = committee(row);
       if (viewer.audience === 'PUBLIC' || viewer.audience === 'MEMBER') delete visibleCommittee.ownerUserId;

@@ -32,7 +32,7 @@ export interface SetCommitteeMotionSettingsRequest extends CommitteeRevisionRequ
 }
 export interface SetCommitteeStatusRequest extends CommitteeRevisionRequest {status: 'ACTIVE' | 'PAUSED'}
 export interface CreateSeatRequest {
-  stableKey: string; rank?: string; canVote?: boolean; hasVeto?: boolean; sortOrder?: number;
+  stableKey: string; rank?: string; canVote?: boolean; canProceduralVote?: boolean; hasVeto?: boolean; sortOrder?: number;
 }
 export type SeatAssignmentRequest = {seatId: string; email: string} | {action: 'END'; assignmentId: string};
 export interface CreateSeatInvitationRequest {seatId: string; maxUses: number; expiresAt: string}
@@ -72,6 +72,7 @@ export interface CommitteeSeat {
   searchTerms?: string[];
   rank: string | null;
   canVote: boolean;
+  canProceduralVote: boolean;
   hasVeto: boolean;
   sortOrder: number;
   active: boolean;

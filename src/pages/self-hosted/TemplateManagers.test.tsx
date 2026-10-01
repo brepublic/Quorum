@@ -123,7 +123,7 @@ describe('committee template independent capabilities', () => {
     const template: CommitteeTemplate = {id: 'cap-template', key: 'custom:cap-template', builtin: false,
       names: {en: 'Capabilities'}, defaultLanguage: 'en', countryTemplateKey: 'builtin:default', revision: 1,
       createdAt: null, updatedAt: null, members: [{id: 'member', stableKey: 'cn', names: {en: 'China'}, defaultLanguage: 'en',
-        rank: 'OBSERVER', canVote: false, hasVeto: false, mustVote: false, sortOrder: 0,
+        rank: 'OBSERVER', canVote: false, canProceduralVote: true, hasVeto: false, mustVote: false, sortOrder: 0,
         flag: {type: 'STANDARD', value: 'cn'}, revision: 1}]};
     const updateCommitteeTemplate = vi.fn(async () => template);
     const api = {listCommitteeTemplates: vi.fn(async () => [template]), listCountryTemplates: vi.fn(async () => [builtin]),
@@ -137,18 +137,18 @@ describe('committee template independent capabilities', () => {
     const click = async (index: number) => act(async () => {
       for (const type of ['mousedown', 'mouseup', 'click']) toggles()[index].parentElement!.dispatchEvent(new MouseEvent(type, {bubbles: true}));
     });
-    await click(1);
-    expect([...toggles()].map(input => input.checked)).toEqual([true, true, false]);
     await click(2);
-    await click(0);
-    expect([...toggles()].map(input => input.checked)).toEqual([false, false, false]);
-    expect(toggles()[2].disabled).toBe(true);
+    expect([...toggles()].map(input => input.checked)).toEqual([true, true, true, false]);
+    await click(3);
     await click(1);
+    expect([...toggles()].map(input => input.checked)).toEqual([true, false, false, false]);
+    expect(toggles()[3].disabled).toBe(true);
+    await click(2);
     await act(async () => {container!.querySelector('form')!.dispatchEvent(new Event('submit', {bubbles: true, cancelable: true}));});
     expect(updateCommitteeTemplate).toHaveBeenCalledWith('cap-template', 1, expect.objectContaining({members: [expect.objectContaining({
-      rank: 'OBSERVER', canVote: true, hasVeto: true, mustVote: false})]}));
+      rank: 'OBSERVER', canVote: true, canProceduralVote: true, hasVeto: true, mustVote: false})]}));
     expect(container!.querySelector('form')!.classList.contains('success')).toBe(true);
-    await click(1);
+    await click(2);
     expect(container!.querySelector('form')!.classList.contains('success')).toBe(false);
   });
 });

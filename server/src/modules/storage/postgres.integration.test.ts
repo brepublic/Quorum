@@ -136,7 +136,7 @@ async function storageFixture(visibility: 'PUBLIC' | 'PRIVATE' = 'PUBLIC') {
     countryTemplateKey: 'builtin:default'}), 'committee', context('committee'));
   committee = await stage3.setChair(owner, committee.id, chair.user.email, true, committee.revision, context('chair'));
   const seat = await stage4.createSeat(chair, committee.id,
-    {stableKey: 'member', canVote: true}, 'seat', context('seat'));
+    {stableKey: 'member', canVote: true, canProceduralVote: true}, 'seat', context('seat'));
   await stage3.assignSeat(chair, committee.id, {seatId: seat.id, email: member.user.email}, context('assign'));
   const binding = await storage.createServerVolumeBinding(chair, committee.id,
     {baseRevision: committee.revision}, 'binding', context('binding'));
@@ -174,7 +174,7 @@ async function s3Fixture() {
     countryTemplateKey: 'builtin:default'}), 's3-committee', context('s3-committee'));
   committee = await stage3.setChair(owner, committee.id, chair.user.email, true, committee.revision, context('s3-chair'));
   const seat = await stage4.createSeat(chair, committee.id,
-    {stableKey: 's3-member', canVote: true}, 's3-seat', context('s3-seat'));
+    {stableKey: 's3-member', canVote: true, canProceduralVote: true}, 's3-seat', context('s3-seat'));
   await stage3.assignSeat(chair, committee.id, {seatId: seat.id, email: member.user.email}, context('s3-assign'));
   const configs = new Stage6S3ConfigService(pool as pg.Pool,
     new StorageCredentialCipher(Buffer.alloc(32, 9), 1), () => new IntegrationS3Transport());
@@ -332,6 +332,41 @@ integration('PostgreSQL stage 6 file metadata', () => {
     const jobs=await pool!.query('SELECT blob_id FROM file_blob_delete_jobs WHERE committee_id=$1',[fixture.committee.id]);
     expect(jobs.rows.map(row=>row.blob_id)).toEqual(expect.arrayContaining([first.currentVersion.blobId,second.currentVersion.blobId,fourth.currentVersion.blobId]));
     expect(jobs.rows.map(row=>row.blob_id)).not.toContain(reused.currentVersion.blobId);
+  });
+
+  it('restricts media uploads to news and instant messages in both delegate and account entry points', async () => {
+    const f = await storageFixture('PRIVATE');
+    const seat = (await stage4.snapshot(f.committee.id, f.chair)).seats.find(seat => seat.stableKey === 'member')!;
+    await stage4.updateSeat(f.chair, f.committee.id, seat.id,
+      {baseRevision: seat.revision, patch: {rank: 'MEDIA', canVote: false, canProceduralVote: false}}, context('media-seat'));
+    await pool!.query("UPDATE committees SET operation_mode='CHAIR_OPERATED' WHERE id=$1", [f.committee.id]);
+    await stage4.startMeetingSession(f.chair, f.committee.id, {}, context('media-session'), randomUUID());
+    const transport = new IntegrationS3Transport();
+    const s3 = new Stage6S3CommitService(pool!, storage, staging, fileS3Configs,
+      config => new S3CompatibleStore(config, transport, 20 * 1024 * 1024));
+    const portal = new DelegateFileService(pool!, uploads, new Stage6ProviderCommitService(pool!, serverVolume, s3), files, storage);
+    const snapshot = await stage4.snapshot(f.committee.id, f.chair);
+    const share = await portal.startShare(f.chair, f.committee.id, snapshot.committee.revision,
+      'https://localhost', context('media-share'));
+    const capability = share.url.split('#')[1]!;
+    expect((await portal.bootstrap(capability)).eligibleSeats).toContainEqual(expect.objectContaining({id: seat.id, rank: 'MEDIA'}));
+    const claimed = await portal.claim(capability, seat.id, context('media-claim'));
+    expect(claimed).toMatchObject({mayUpload: true, claimedSeat: {id: seat.id, rank: 'MEDIA'}});
+    const body = {logicalName: 'media.txt', originalName: 'media.txt', mediaType: 'text/plain', expectedSizeBytes: 1, sha256: digest('x')};
+    for (const fileType of ['WORKING_PAPER', 'DIRECTIVE_DRAFT', 'RESOLUTION_DRAFT', 'CRISIS_NOTICE', 'CUSTOM:Test']) {
+      await expect(portal.createUpload(claimed.sessionToken, {...body, fileType}, randomUUID(), context('media-denied')))
+        .rejects.toMatchObject({code: 'FORBIDDEN', reason: 'MEDIA_FILE_TYPE_REQUIRED'});
+      await expect(uploads.createUpload(f.member, f.committee.id, {...body, fileType}, randomUUID(), context('account-media-denied')))
+        .rejects.toMatchObject({code: 'FORBIDDEN', reason: 'MEDIA_FILE_TYPE_REQUIRED'});
+    }
+    for (const fileType of ['NEWS', 'INSTANT_MESSAGE']) {
+      const upload = await portal.createUpload(claimed.sessionToken, {...body, fileType}, randomUUID(), context('media-allowed'));
+      await portal.receiveContent(claimed.sessionToken, upload.id, (async function* () {yield 'x';})(), randomUUID(), 1, context('media-bytes'));
+      const committed = await portal.commitUpload(claimed.sessionToken, upload.id, randomUUID(), context('media-commit'));
+      expect(committed).toMatchObject({status: 'PENDING_REVIEW', fileType});
+      expect(await uploads.createUpload(f.member, f.committee.id, {...body, fileType}, randomUUID(), context('account-media-allowed')))
+        .toMatchObject({status: 'CREATED'});
+    }
   });
 
   it.each(['SERVER_VOLUME', 'S3_COMPATIBLE'] as const)('uses the same private submission, review and share lifecycle on %s', async provider => {

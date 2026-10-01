@@ -372,6 +372,7 @@ export const ERROR_TEXT = {
   CHAIR_COMMIT_PENDING: {en: "Waiting for Chair computer to save the file", "zh-CN": "等待主席电脑保存文件"},
   THEME_TOO_LARGE: {en: "Theme file is too large. The maximum size is 3 MB.", "zh-CN": "主题文件过大，最大为 3 MB。"},
 
+  MEDIA_FILE_TYPE_REQUIRED: {en: 'Media delegates may upload only news and instant messages.', 'zh-CN': '媒体代表只能上传新闻和即时消息。'},
   INVALID_FILE_EXTENSION: {en: 'Allowed file formats: {formats}', 'zh-CN': '允许的文件格式：{formats}'},
   BAD_REQUEST: {en: "The request is invalid.", 'zh-CN': "请求无效。"},
   AUTHENTICATION_REQUIRED: {en: "Please log in again.", 'zh-CN': "请重新登录。"},

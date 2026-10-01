@@ -200,8 +200,8 @@ async function motionState(client: PoolClient, row: MotionRow): Promise<Proceedi
   const eligible = await client.query<{seat_id: string; seat_display_name: string}>(`SELECT s.id AS seat_id,
     s.display_name AS seat_display_name FROM committee_seats s JOIN current_attendance a ON a.seat_id=s.id
     AND a.meeting_session_id=$2 AND a.state='PRESENT' WHERE s.committee_id=$1 AND s.active=true
-    AND ($3 OR s.can_vote=true) ORDER BY s.sort_order,s.stable_key,s.id`,
-  [row.committee_id, row.meeting_session_id, row.direct_vote_include_non_voting]);
+    AND CASE WHEN $3 THEN s.can_procedural_vote ELSE s.can_vote END ORDER BY s.sort_order,s.stable_key,s.id`,
+  [row.committee_id, row.meeting_session_id, row.rule_evaluation.resolvedValues.procedural === true]);
   const votes = await client.query<{id: string; seat_id: string; seat_display_name: string; current_choice: BallotChoice;
     revision: number; cast_at: Date}>(`SELECT id,seat_id,seat_display_name,current_choice,revision,cast_at
     FROM motion_direct_votes WHERE motion_id=$1 AND retracted_at IS NULL ORDER BY seat_id`, [row.id]);
@@ -219,9 +219,8 @@ async function motionState(client: PoolClient, row: MotionRow): Promise<Proceedi
     rulePackageVersionId: row.rule_package_version_id, ruleEvaluation: row.rule_evaluation,
     requiredSecondCount: row.required_second_count,
     seconds: seconds.rows.map(item => ({id: item.id, seatId: item.seat_id, seatDisplayName: item.seat_display_name,
-      createdAt: item.created_at.toISOString()})), directVote: {includeNonVotingSeats: row.direct_vote_include_non_voting,
-      startedAt: row.direct_vote_started_at?.toISOString() ?? null, settingsRevision: row.direct_vote_settings_revision,
-      eligibility: eligible.rows.map(item => ({seatId: item.seat_id, seatDisplayName: item.seat_display_name})),
+      createdAt: item.created_at.toISOString()})), directVote: {
+      startedAt: row.direct_vote_started_at?.toISOString() ?? null, eligibility: eligible.rows.map(item => ({seatId: item.seat_id, seatDisplayName: item.seat_display_name})),
       choices: procedural ? ['FOR', 'AGAINST'] : ['FOR', 'AGAINST', 'ABSTAIN'], threshold, automaticResult,
       votes: currentVotes.map(item => ({id: item.id, seatId: item.seat_id, seatDisplayName: item.seat_display_name,
         choice: item.current_choice, revision: item.revision, castAt: item.cast_at.toISOString()}))},
@@ -503,7 +502,7 @@ async function representedDocumentSeat(client: PoolClient, committee: Stage4Comm
   if (!seatId) throw new AppError({reason: 'ACTIVE_SEAT_REQUIRED', code: 'FORBIDDEN', message: 'An active seat assignment is required.'});
   const seat = await client.query<{display_name: string}>(`SELECT s.display_name FROM committee_seats s
     JOIN current_attendance a ON a.seat_id=s.id AND a.meeting_session_id=$3 AND a.state='PRESENT'
-    WHERE s.id=$1 AND s.committee_id=$2 AND s.active=true`, [seatId, committee.id, meetingSessionId]);
+    WHERE s.id=$1 AND s.committee_id=$2 AND s.active=true AND s.can_procedural_vote=true`, [seatId, committee.id, meetingSessionId]);
   if (!seat.rows[0]) throw new AppError({reason: 'SEAT_NOT_PRESENT', code: 'FORBIDDEN', message: 'The represented seat is not present.'});
   return {chair, seatId, displayName: seat.rows[0].display_name};
 }
@@ -1075,7 +1074,7 @@ export class Stage5Service {
         if (!seatId) throw new AppError({reason: 'ACTIVE_SEAT_REQUIRED', code: 'FORBIDDEN', message: 'An active seat assignment is required.'});
         const seat = await client.query<{display_name: string}>(`SELECT s.display_name FROM committee_seats s
           JOIN current_attendance a ON a.seat_id=s.id AND a.meeting_session_id=$3 AND a.state='PRESENT'
-          WHERE s.id=$1 AND s.committee_id=$2 AND s.active=true`, [seatId, committee.id, list.meeting_session_id]);
+          WHERE s.id=$1 AND s.committee_id=$2 AND s.active=true AND s.can_procedural_vote=true`, [seatId, committee.id, list.meeting_session_id]);
         if (!seat.rows[0]) throw new AppError({reason: 'PRESENT_SEAT_REQUIRED', code: 'VALIDATION_FAILED', message: 'Only a present active seat may join the queue.'});
         const duplicate = await client.query(`SELECT 1 FROM speaker_queue_entries WHERE speaker_list_id=$1 AND seat_id=$2
           AND status IN ('QUEUED','CURRENT')`, [listId, seatId]);
@@ -1271,7 +1270,8 @@ export class Stage5Service {
       let nextId: string | null = null; let nextSpeechDurationMs = Number(list.default_speech_ms);
       if (!closeCaucus) {
         const waiting = await client.query<{id: string; state: string | null; speech_duration_ms: string | number}>(`SELECT
-          q.id,q.speech_duration_ms,a.state FROM speaker_queue_entries q
+          q.id,q.speech_duration_ms,CASE WHEN s.active AND s.can_procedural_vote THEN a.state END AS state FROM speaker_queue_entries q
+          JOIN committee_seats s ON s.id=q.seat_id
           LEFT JOIN current_attendance a ON a.seat_id=q.seat_id AND a.meeting_session_id=$2
           WHERE q.speaker_list_id=$1 AND q.status='QUEUED' ORDER BY q.position,q.created_at,q.id FOR UPDATE OF q`,
         [listId, list.meeting_session_id]);
@@ -1446,7 +1446,7 @@ export class Stage5Service {
         targetSeatId = uuid(input.targetSeatId, 'Yield target seat ID');
         const target = await client.query<{display_name: string}>(`SELECT s.display_name FROM committee_seats s
           JOIN current_attendance a ON a.seat_id=s.id AND a.meeting_session_id=$3 AND a.state='PRESENT'
-          WHERE s.id=$1 AND s.committee_id=$2 AND s.active=true`, [targetSeatId, committee.id, list.meeting_session_id]);
+          WHERE s.id=$1 AND s.committee_id=$2 AND s.active=true AND s.can_procedural_vote=true`, [targetSeatId, committee.id, list.meeting_session_id]);
         if (!target.rows[0]) throw new AppError({reason: 'SEAT_NOT_PRESENT', code: 'VALIDATION_FAILED', message: 'Yield target seat is not present.'});
         if (targetSeatId === speech.seat_id) throw new AppError({reason: 'YIELD_TO_SELF', code: 'VALIDATION_FAILED',
           message: 'A speaker cannot yield to the same seat.'});
@@ -1481,7 +1481,8 @@ export class Stage5Service {
         await client.query(`UPDATE speaker_queue_entries SET status='COMPLETED',completed_at=$2
           WHERE id=$1 AND status='CURRENT'`, [list.current_entry_id, now]);
         const waiting = await client.query<{id: string; state: string | null; speech_duration_ms: string | number}>(`SELECT
-          q.id,q.speech_duration_ms,a.state FROM speaker_queue_entries q
+          q.id,q.speech_duration_ms,CASE WHEN s.active AND s.can_procedural_vote THEN a.state END AS state FROM speaker_queue_entries q
+          JOIN committee_seats s ON s.id=q.seat_id
           LEFT JOIN current_attendance a ON a.seat_id=q.seat_id AND a.meeting_session_id=$2
           WHERE q.speaker_list_id=$1 AND q.status='QUEUED' ORDER BY q.position,q.created_at,q.id FOR UPDATE OF q`,
         [list.id, list.meeting_session_id]);
@@ -1583,7 +1584,7 @@ export class Stage5Service {
       if (decision === 'ACCEPT') {
         const target = await client.query<{display_name: string}>(`SELECT s.display_name FROM committee_seats s
           JOIN current_attendance a ON a.seat_id=s.id AND a.meeting_session_id=$3 AND a.state='PRESENT'
-          WHERE s.id=$1 AND s.committee_id=$2 AND s.active=true`,
+          WHERE s.id=$1 AND s.committee_id=$2 AND s.active=true AND s.can_procedural_vote=true`,
         [speech.yield_target_seat_id, committee.id, list.meeting_session_id]);
         if (!target.rows[0]) throw new AppError({reason: 'SEAT_NOT_PRESENT', code: 'RESOURCE_CONFLICT', message: 'The target seat is no longer present.'});
         inheritedId = randomUUID();
@@ -1600,7 +1601,8 @@ export class Stage5Service {
         await client.query(`UPDATE speaker_queue_entries SET status='COMPLETED',completed_at=$2
           WHERE id=$1 AND status='CURRENT'`, [list.current_entry_id, now]);
         const waiting = await client.query<{id: string; state: string | null; speech_duration_ms: string | number}>(`SELECT
-          q.id,q.speech_duration_ms,a.state FROM speaker_queue_entries q
+          q.id,q.speech_duration_ms,CASE WHEN s.active AND s.can_procedural_vote THEN a.state END AS state FROM speaker_queue_entries q
+          JOIN committee_seats s ON s.id=q.seat_id
           LEFT JOIN current_attendance a ON a.seat_id=q.seat_id AND a.meeting_session_id=$2
           WHERE q.speaker_list_id=$1 AND q.status='QUEUED' ORDER BY q.position,q.created_at,q.id FOR UPDATE OF q`,
         [list.id, list.meeting_session_id]);
@@ -1713,7 +1715,7 @@ export class Stage5Service {
         if (session.rows[0].status !== 'OPEN') throw new AppError({reason: 'MEETING_CLOSED', code: 'RESOURCE_CONFLICT', message: 'Meeting session is closed.'});
         const seat = await client.query<{display_name: string}>(`SELECT s.display_name FROM committee_seats s
           JOIN current_attendance a ON a.seat_id=s.id AND a.meeting_session_id=$3 AND a.state='PRESENT'
-          WHERE s.id=$1 AND s.committee_id=$2 AND s.active=true`, [seatId, committeeId, meetingSessionId]);
+          WHERE s.id=$1 AND s.committee_id=$2 AND s.active=true AND s.can_procedural_vote=true`, [seatId, committeeId, meetingSessionId]);
         if (!seat.rows[0]) throw new AppError({reason: 'PRESENT_SEAT_REQUIRED', code: 'VALIDATION_FAILED', message: 'Only a present active seat may propose a motion.'});
         const version = await client.query<{definition: {motions?: unknown}}>(`SELECT definition FROM rule_package_versions
           WHERE id=$1 AND status='PUBLISHED'`, [session.rows[0].active_rule_package_version_id]);
@@ -1764,13 +1766,13 @@ export class Stage5Service {
             message: 'The proposer and seconder must be different seats.'});
           const secondingSeat = await client.query<{display_name: string}>(`SELECT s.display_name FROM committee_seats s
             JOIN current_attendance a ON a.seat_id=s.id AND a.meeting_session_id=$3 AND a.state='PRESENT'
-            WHERE s.id=$1 AND s.committee_id=$2 AND s.active=true`, [secondedBySeatId, committeeId, meetingSessionId]);
+            WHERE s.id=$1 AND s.committee_id=$2 AND s.active=true AND s.can_procedural_vote=true`, [secondedBySeatId, committeeId, meetingSessionId]);
           if (!secondingSeat.rows[0]) throw new AppError({reason: 'PRESENT_SEAT_REQUIRED', code: 'VALIDATION_FAILED',
             message: 'Only a present active seat may second a motion.'});
           secondedBySeatName = secondingSeat.rows[0].display_name;
         }
-        const attendance = await client.query<{seat_id: string}>(`SELECT seat_id FROM current_attendance
-          WHERE meeting_session_id=$1 AND state='PRESENT' ORDER BY seat_id`, [meetingSessionId]);
+        const attendance = await client.query<{seat_id: string}>(`SELECT a.seat_id FROM current_attendance a JOIN committee_seats s ON s.id=a.seat_id
+          WHERE a.meeting_session_id=$1 AND a.state='PRESENT' AND s.active AND s.can_procedural_vote ORDER BY a.seat_id`, [meetingSessionId]);
         const now = this.now(); const evaluation = freezeRuleEvaluation({
           packageVersionId: session.rows[0].active_rule_package_version_id,
           definition: definition as unknown as Record<string, unknown>,
@@ -1840,7 +1842,7 @@ export class Stage5Service {
           message: 'A different present seat must second the motion.'});
         const seat = await client.query<{display_name: string}>(`SELECT s.display_name FROM committee_seats s
           JOIN current_attendance a ON a.seat_id=s.id AND a.meeting_session_id=$3 AND a.state='PRESENT'
-          WHERE s.id=$1 AND s.committee_id=$2 AND s.active=true`, [seatId, committee.id, motion.meeting_session_id]);
+          WHERE s.id=$1 AND s.committee_id=$2 AND s.active=true AND s.can_procedural_vote=true`, [seatId, committee.id, motion.meeting_session_id]);
         if (!seat.rows[0]) throw new AppError({reason: 'PRESENT_SEAT_REQUIRED', code: 'VALIDATION_FAILED', message: 'Only a present active seat may second a motion.'});
         const secondId = randomUUID(); await client.query(`INSERT INTO motion_seconds
           (id,committee_id,motion_id,seat_id,seat_display_name,actor_user_id,on_behalf_of_seat_id)
@@ -2428,50 +2430,6 @@ export class Stage5Service {
     });
   }
 
-  async setMotionDirectVoteSettings(auth: AuthenticatedSession, motionId: string, input: Record<string, unknown>,
-    context: Stage4Context): Promise<ProceedingMotion> {
-    requireBusinessIdentity(auth); assertExactBody(input, ['baseRevision', 'includeNonVotingSeats']);
-    const baseRevision = positiveInteger(input.baseRevision, 'Settings revision');
-    if (typeof input.includeNonVotingSeats !== 'boolean') throw new AppError({reason: 'INVALID_NON_VOTING_SETTING', code: 'VALIDATION_FAILED',
-      message: 'The non-voting-seat setting is invalid.'});
-    return transaction(this.pool, async client => {
-      const located = await client.query<{committee_id: string}>('SELECT committee_id FROM motions WHERE id=$1', [motionId]);
-      if (!located.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Motion not found.'});
-      const committee = await lockedCommittee(client, located.rows[0].committee_id); requireProceedingsActive(committee);
-      await requireChair(client, committee, auth.user.id);
-      const found = await client.query<MotionRow>('SELECT * FROM motions WHERE id=$1 FOR UPDATE', [motionId]);
-      const motion = found.rows[0] as MotionRow;
-      if (['PASSED', 'FAILED', 'WITHDRAWN', 'SUPERSEDED'].includes(motion.status)) throw new AppError({reason: 'MOTION_ALREADY_DECIDED',
-        code: 'RESOURCE_CONFLICT', message: 'The motion has already been decided.'});
-      if (motion.direct_vote_settings_revision !== baseRevision) throw new AppError({code: 'REVISION_CONFLICT',
-        message: 'The direct-vote setting changed since it was loaded.',
-        details: {currentRevision: motion.direct_vote_settings_revision}});
-      if (motion.direct_vote_started_at && committee.operation_mode !== 'CHAIR_OPERATED') throw new AppError({reason: 'VOTE_SETTINGS_LOCKED',
-        code: 'RESOURCE_CONFLICT', message: 'This setting is locked after delegate voting starts.'});
-      if (motion.direct_vote_include_non_voting === input.includeNonVotingSeats) throw new AppError({reason: 'VOTE_SETTINGS_UNCHANGED',
-        code: 'RESOURCE_CONFLICT', message: 'This direct-vote setting is already selected.'});
-      const now = this.now();
-      const updated = await client.query<MotionRow>(`UPDATE motions SET direct_vote_include_non_voting=$2,
-        direct_vote_settings_revision=direct_vote_settings_revision+1 WHERE id=$1 RETURNING *`,
-      [motionId, input.includeNonVotingSeats]);
-      await client.query(`INSERT INTO motion_direct_vote_setting_revisions
-        (id,committee_id,motion_id,previous_include_non_voting,new_include_non_voting,actor_user_id,created_at)
-        VALUES ($1,$2,$3,$4,$5,$6,$7)`, [randomUUID(), committee.id, motionId,
-        motion.direct_vote_include_non_voting, input.includeNonVotingSeats, auth.user.id, now]);
-      await appendEvent(client, committee, {type: 'motion.direct_vote_settings_changed', resourceType: 'motion',
-        resourceId: motionId, revision: motion.revision,
-        payload: {includeNonVotingSeats: input.includeNonVotingSeats,
-          settingsRevision: motion.direct_vote_settings_revision + 1}, audience: 'PUBLIC'});
-      await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id, capabilities: ['CHAIR'],
-        action: 'proceedings.motion_direct_vote_settings_changed', resourceType: 'motion', resourceId: motionId,
-        before: {includeNonVotingSeats: motion.direct_vote_include_non_voting,
-          settingsRevision: motion.direct_vote_settings_revision},
-        after: {includeNonVotingSeats: input.includeNonVotingSeats,
-          settingsRevision: motion.direct_vote_settings_revision + 1}});
-      return motionState(client, updated.rows[0] as MotionRow);
-    });
-  }
-
   async setMotionDirectVote(auth: AuthenticatedSession, motionId: string, input: Record<string, unknown>,
     context: Stage4Context): Promise<ProceedingMotion> {
     requireBusinessIdentity(auth); assertExactBody(input, ['choice', 'onBehalfOfSeatId']);
@@ -2497,12 +2455,12 @@ export class Stage5Service {
         seatId = await activeSeat(client, committee.id, auth.user.id);
       }
       if (!seatId) throw new AppError({reason: 'ACTIVE_SEAT_REQUIRED', code: 'FORBIDDEN', message: 'An active seat assignment is required.'});
+      const procedural = motion.rule_evaluation.resolvedValues.procedural === true;
       const eligible = await client.query<{display_name: string}>(`SELECT s.display_name FROM committee_seats s
         JOIN current_attendance a ON a.seat_id=s.id AND a.meeting_session_id=$3 AND a.state='PRESENT'
-        WHERE s.id=$1 AND s.committee_id=$2 AND s.active=true AND ($4 OR s.can_vote=true)`,
-      [seatId, committee.id, motion.meeting_session_id, motion.direct_vote_include_non_voting]);
+        WHERE s.id=$1 AND s.committee_id=$2 AND s.active=true AND CASE WHEN $4 THEN s.can_procedural_vote ELSE s.can_vote END`,
+      [seatId, committee.id, motion.meeting_session_id, procedural]);
       if (!eligible.rows[0]) throw new AppError({reason: 'SEAT_NOT_ELIGIBLE_TO_VOTE', code: 'FORBIDDEN', message: 'This seat is not eligible for the direct vote.'});
-      const procedural = motion.rule_evaluation.resolvedValues.procedural === true;
       if (choice === 'ABSTAIN' && procedural) throw new AppError({reason: 'PROCEDURAL_ABSTENTION_FORBIDDEN', code: 'VALIDATION_FAILED',
         message: 'Procedural motion votes cannot abstain.'});
       const vote = await client.query<{id: string; current_choice: BallotChoice; revision: number; retracted_at: Date | null}>(
@@ -2635,8 +2593,8 @@ export class Stage5Service {
         const eligible = await client.query<{seat_id: string; display_name: string; must_vote: boolean; has_veto: boolean}>(`SELECT
           s.id AS seat_id,s.display_name,s.must_vote,s.has_veto FROM committee_seats s JOIN current_attendance a
           ON a.seat_id=s.id AND a.meeting_session_id=$2 AND a.state='PRESENT'
-          WHERE s.committee_id=$1 AND s.active=true AND s.can_vote=true ORDER BY s.sort_order,s.stable_key,s.id`,
-        [committeeId, meetingSessionId]);
+          WHERE s.committee_id=$1 AND s.active=true AND CASE WHEN $3 THEN s.can_procedural_vote ELSE s.can_vote END ORDER BY s.sort_order,s.stable_key,s.id`,
+        [committeeId, meetingSessionId, procedural]);
         if (eligible.rowCount === 0) throw new AppError({reason: 'NO_ELIGIBLE_VOTERS', code: 'VALIDATION_FAILED', message: 'The ballot has no eligible seats.'});
         const eligibility = eligible.rows.map(seat => ({seatId: seat.seat_id, seatDisplayName: seat.display_name,
           mustVote: procedural || seat.must_vote, hasVeto: seat.has_veto}));
@@ -3551,7 +3509,7 @@ export class Stage5Service {
       const seat = async (value: unknown, name: string): Promise<string> => {
         const seatId = uuid(value, name);
         const present = await client.query(`SELECT 1 FROM committee_seats s JOIN current_attendance a ON a.seat_id=s.id
-          AND a.meeting_session_id=$3 AND a.state='PRESENT' WHERE s.id=$1 AND s.committee_id=$2 AND s.active=true`,
+          AND a.meeting_session_id=$3 AND a.state='PRESENT' WHERE s.id=$1 AND s.committee_id=$2 AND s.active=true AND s.can_procedural_vote=true`,
         [seatId, committee.id, document.meeting_session_id]);
         if (!present.rowCount) throw new AppError({code: 'VALIDATION_FAILED', reason: 'SEAT_NOT_PRESENT', message: `${name} is not present.`});
         return seatId;

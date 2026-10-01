@@ -398,10 +398,6 @@ export const selfHostedApi = {
     return request<ProceedingMotion>(`/api/v1/motions/${id}/direct-vote`, {method: 'POST',
       body: {choice, ...(onBehalfOfSeatId ? {onBehalfOfSeatId} : {})}});
   },
-  setMotionDirectVoteSettings(id: string, baseRevision: number, includeNonVotingSeats: boolean) {
-    return request<ProceedingMotion>(`/api/v1/motions/${id}/direct-vote-settings`, {method: 'POST',
-      body: {baseRevision, includeNonVotingSeats}});
-  },
   createBallot(committeeId: string, input: {meetingSessionId: string; subjectType: 'MOTION' | 'RESOLUTION' | 'AMENDMENT';
     subjectId: string; procedural: boolean; thresholdKind: 'SIMPLE_MAJORITY' | 'TWO_THIRDS'}) {
     return request<FormalBallot>(`/api/v1/committees/${committeeId}/ballots`, {method: 'POST',

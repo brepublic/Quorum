@@ -11,7 +11,7 @@ import {AppError} from '../../http/errors.js';
 
 const LANGUAGE = /^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/;
 const STABLE_KEY = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
-const RANKS = new Set<SeatRank>(['STANDARD', 'NGO', 'OBSERVER']);
+const RANKS = new Set<SeatRank>(['STANDARD', 'NGO', 'OBSERVER', 'MEDIA']);
 const FLAG_DATA_PREFIX = 'data:image/webp;base64,';
 const MAX_FLAG_BYTES = 256 * 1024;
 
@@ -180,19 +180,20 @@ export function validateCommitteeTemplate(value: unknown): CommitteeTemplateInpu
   const stableKeys = new Set<string>();
   const members = raw.members.map((candidate, index) => atField(`members.${index}`, () => {
     const member = object(candidate, `Member ${index + 1}`);
-    exactKeys(member, ['stableKey', 'names', 'defaultLanguage', 'rank', 'canVote', 'hasVeto', 'mustVote', 'sortOrder', 'flag'], 'Template member');
+    exactKeys(member, ['stableKey', 'names', 'defaultLanguage', 'rank', 'canVote', 'canProceduralVote', 'hasVeto', 'mustVote', 'sortOrder', 'flag'], 'Template member');
     const stableKey = string(member.stableKey, 'Member stable key', 128);
     if (!STABLE_KEY.test(stableKey) || stableKeys.has(stableKey)) invalid('INVALID_STABLE_KEY', 'Member stable key is invalid or duplicated.');
     stableKeys.add(stableKey);
     if (!RANKS.has(member.rank as SeatRank)
-      || typeof member.canVote !== 'boolean' || typeof member.hasVeto !== 'boolean'
+      || typeof member.canVote !== 'boolean' || typeof member.canProceduralVote !== 'boolean' || typeof member.hasVeto !== 'boolean'
       || typeof member.mustVote !== 'boolean') invalid('INVALID_SEAT_PROPERTIES', 'Member voting properties are invalid.');
-    if ((member.hasVeto || member.mustVote) && !member.canVote) invalid('VOTING_RIGHTS_REQUIRED', 'Seat capabilities require voting rights.');
+    if ((member.hasVeto || member.mustVote) && !member.canVote || member.canVote && !member.canProceduralVote) invalid('VOTING_RIGHTS_REQUIRED', 'Seat capabilities require voting rights.');
     return {
       stableKey,
       ...validateLocalizedNames(member.names, member.defaultLanguage),
       rank: member.rank as SeatRank,
       canVote: member.canVote,
+      canProceduralVote: member.canProceduralVote,
       hasVeto: member.hasVeto,
       mustVote: member.mustVote,
       sortOrder: integer(member.sortOrder, 'Member sort order'),

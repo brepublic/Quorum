@@ -5,6 +5,7 @@ import {ERROR_HTTP_STATUS, type ApiErrorCode, type FileUpload, type FileUploadSt
 import {AppError} from '../../http/errors.js';
 import type {AuthenticatedSession} from '../identity/store.js';
 import {
+  activeSeat,
   appendEvent,
   audit,
   idempotencyLockKey,
@@ -236,6 +237,14 @@ export class Stage6UploadService {
         const committee = await lockedCommittee(client, uuid(committeeId, 'Committee ID'));
         requireProceedingsActive(committee);
         await requireContributor(client, committee, auth.user.id);
+        const seatId = submission?.seatId ?? (!await isChair(client, committee.id, auth.user.id)
+          ? await activeSeat(client, committee.id, auth.user.id) : null);
+        if (seatId) {
+          const seat = await client.query<{rank: string}>('SELECT rank FROM committee_seats WHERE id=$1 AND committee_id=$2 AND active=true', [seatId, committee.id]);
+          if (seat.rows[0]?.rank === 'MEDIA' && !['NEWS', 'INSTANT_MESSAGE'].includes(submission?.fileType ?? input.fileType ?? '')) {
+            throw new AppError({code: 'FORBIDDEN', reason: 'MEDIA_FILE_TYPE_REQUIRED', message: 'Media delegates may upload only news and instant messages.'});
+          }
+        }
         if (input.fileType === 'CRISIS_NOTICE' && !await isChair(client,committee.id,auth.user.id)) throw new AppError({code: 'FORBIDDEN',reason: 'CHAIR_REQUIRED',message: 'Only chairs upload crisis notices.'});
         const activeBinding = await client.query<ActiveBindingRow>(`SELECT id FROM storage_bindings
           WHERE committee_id=$1 AND id=$2 AND status='ACTIVE' FOR SHARE`,

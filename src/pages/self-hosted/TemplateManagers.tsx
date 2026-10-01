@@ -26,7 +26,7 @@ type DraftCountry = Omit<CountryTemplateCountry, 'revision'> & {flagMode: FlagSn
 type DraftMember = Omit<CommitteeTemplateMember, 'revision'>;
 
 const CONTINENTS = ['Africa', 'Antarctica', 'Asia', 'Europe', 'North America', 'Oceania', 'South America'] as const;
-const RANKS: readonly SeatRank[] = ['STANDARD', 'NGO', 'OBSERVER'];
+const RANKS: readonly SeatRank[] = ['STANDARD', 'NGO', 'OBSERVER', 'MEDIA'];
 const draftId = (prefix: string) => `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
 export const localizedDisplayName = (names: LocalizedNames, defaultLanguage: string) =>
   names[getLanguage()]?.trim() || names[defaultLanguage]?.trim() || Object.values(names).find(Boolean) || '';
@@ -310,6 +310,7 @@ export function CommitteeTemplateManager({api}: {api: SelfHostedApi}) {
   const [localizedNames, setLocalizedNames] = React.useState<LocalizedNameDraft[]>([]); const [countryKey, setCountryKey] = React.useState('builtin:default');
   const [members, setMembers] = React.useState<DraftMember[]>([]); const [memberName, setMemberName] = React.useState('');
   const [rank, setRank] = React.useState<SeatRank>('STANDARD'); const [canVote, setCanVote] = React.useState(true);
+  const [canProceduralVote, setCanProceduralVote] = React.useState(true);
   const [hasVeto, setHasVeto] = React.useState(false);
   const [mustVote, setMustVote] = React.useState(false); const [deleteOpen, setDeleteOpen] = React.useState(false);
   const [saved, setSaved] = React.useState(false); const [saving, setSaving] = React.useState(false); const [failure, setError] = React.useState<unknown>();
@@ -331,7 +332,7 @@ export function CommitteeTemplateManager({api}: {api: SelfHostedApi}) {
     setDefaultLanguage((SUPPORTED_LANGUAGES.includes(template.defaultLanguage as Language) ? template.defaultLanguage : nextLanguage) as Language);
     setLocalizedNames(localizedDrafts(template.names, nextLanguage)); setCountryKey(template.countryTemplateKey);
     setMembers(template.members.map(member => ({id: member.id, stableKey: member.stableKey, names: {...member.names},
-      defaultLanguage: member.defaultLanguage, rank: member.rank, canVote: member.canVote, hasVeto: member.hasVeto,
+      defaultLanguage: member.defaultLanguage, rank: member.rank, canVote: member.canVote, canProceduralVote: member.canProceduralVote, hasVeto: member.hasVeto,
       mustVote: member.mustVote, sortOrder: member.sortOrder, flag: member.flag}))); setSaved(false); setError(undefined);});
   const save = async () => {
     if (!name.trim() || members.length === 0 || !selectedCountry) return; setSaving(true); setError(undefined);
@@ -339,7 +340,7 @@ export function CommitteeTemplateManager({api}: {api: SelfHostedApi}) {
     const input: CommitteeTemplateInput = {names, defaultLanguage: names[defaultLanguage] ? defaultLanguage : displayLanguage, countryTemplateKey: countryKey,
       members: members.map((member, sortOrder) => ({stableKey: member.stableKey,
         names: Object.fromEntries(Object.entries(member.names).filter(([, value]) => value.trim())), defaultLanguage: member.defaultLanguage,
-        rank: member.rank, canVote: member.canVote, hasVeto: member.hasVeto, mustVote: member.mustVote, sortOrder, flag: member.flag}))};
+        rank: member.rank, canVote: member.canVote, canProceduralVote: member.canProceduralVote, hasVeto: member.hasVeto, mustVote: member.mustVote, sortOrder, flag: member.flag}))};
     try { const result = selectedId ? await api.updateCommitteeTemplate(selectedId, templates.find(item => item.id === selectedId)!.revision, input)
       : await api.createCommitteeTemplate(input); const {nextTemplates} = await refresh(); load(nextTemplates.find(item => item.id === result.id) ?? result); setSaved(true); }
     catch (caught) { setError(caught); } finally { setSaving(false); }
@@ -389,7 +390,7 @@ export function CommitteeTemplateManager({api}: {api: SelfHostedApi}) {
             onChange={(_event, data) => {setCountryKey(String(data.value)); setMemberName(''); setSaved(false);}} />
           <Header as="h3">{t('Committee members')}</Header><Table className="template-members-table" compact celled stackable><Table.Header><Table.Row>
             <Table.HeaderCell>{t('Country or delegation')}</Table.HeaderCell><Table.HeaderCell>{t('Rank')}</Table.HeaderCell>
-            <Table.HeaderCell>{t('Voting rights')}</Table.HeaderCell><Table.HeaderCell>{t('Veto power')}</Table.HeaderCell><Table.HeaderCell>{t('No abstention')}</Table.HeaderCell><Table.HeaderCell />
+            <Table.HeaderCell>{t('Procedural voting')}</Table.HeaderCell><Table.HeaderCell>{t('Voting rights')}</Table.HeaderCell><Table.HeaderCell>{t('Veto power')}</Table.HeaderCell><Table.HeaderCell>{t('No abstention')}</Table.HeaderCell><Table.HeaderCell />
           </Table.Row></Table.Header><Table.Body>{members.map((member, index) => <Table.Row key={member.id}>
             <Table.Cell><details><summary><FlagDisplay flag={member.flag} />{localizedDisplayName(member.names, member.defaultLanguage)}</summary>
               {LANGUAGE_OPTIONS.map(language => <Form.Input key={language.value}
@@ -400,11 +401,13 @@ export function CommitteeTemplateManager({api}: {api: SelfHostedApi}) {
                 }} />)}</details></Table.Cell>
             <Table.Cell><Dropdown fluid selection value={member.rank} options={RANKS.map(value => ({key: value, value, text: t(value)}))}
               onChange={(_event, data) => setMembers(current => current.map(item => item.id === member.id
-                ? {...item, rank: data.value as SeatRank} : item))} /></Table.Cell>
-            <Table.Cell collapsing data-label={t('Voting rights')}><Checkbox aria-label={`${t('Voting rights')} · ${localizedDisplayName(member.names, member.defaultLanguage)}`} toggle checked={member.canVote} onChange={(_event, data) => setMembers(current => current.map(item =>
+                ? {...item, rank: data.value as SeatRank, ...(data.value === 'MEDIA' ? {canVote: false, canProceduralVote: false, hasVeto: false, mustVote: false} : {})} : item))} /></Table.Cell>
+            <Table.Cell collapsing data-label={t('Procedural voting')}><Checkbox aria-label={`${t('Procedural voting')} · ${localizedDisplayName(member.names, member.defaultLanguage)}`} toggle checked={member.canProceduralVote} disabled={member.canVote}
+              onChange={(_, data) => setMembers(current => current.map(item => item.id === member.id ? {...item, canProceduralVote: data.checked ?? false} : item))} /></Table.Cell>
+            <Table.Cell collapsing data-label={t('Voting rights')}><Checkbox aria-label={`${t('Voting rights')} · ${localizedDisplayName(member.names, member.defaultLanguage)}`} toggle checked={member.canVote} disabled={!member.canProceduralVote} onChange={(_event, data) => setMembers(current => current.map(item =>
               item.id === member.id ? {...item, canVote: data.checked ?? false, hasVeto: (data.checked ?? false) && item.hasVeto, mustVote: (data.checked ?? false) && item.mustVote} : item))} /></Table.Cell>
             <Table.Cell collapsing data-label={t('Veto power')}><Checkbox aria-label={`${t('Veto power')} · ${localizedDisplayName(member.names, member.defaultLanguage)}`} toggle checked={member.hasVeto} onChange={(_, data) => setMembers(current => current.map(item =>
-              item.id === member.id ? {...item, hasVeto: data.checked ?? false, canVote: Boolean(data.checked) || item.canVote} : item))} /></Table.Cell>
+              item.id === member.id ? {...item, hasVeto: data.checked ?? false, canVote: Boolean(data.checked) || item.canVote, canProceduralVote: Boolean(data.checked) || item.canProceduralVote} : item))} /></Table.Cell>
             <Table.Cell collapsing data-label={t('No abstention')}><Checkbox aria-label={`${t('No abstention')} · ${localizedDisplayName(member.names, member.defaultLanguage)}`} disabled={!member.canVote} toggle checked={member.mustVote} onChange={(_event, data) => setMembers(current => current.map(item =>
               item.id === member.id ? {...item, mustVote: data.checked ?? false} : item))} /></Table.Cell>
             <Table.Cell collapsing><Button type="button" basic negative icon="trash" aria-label={t('Remove')}
@@ -414,14 +417,15 @@ export function CommitteeTemplateManager({api}: {api: SelfHostedApi}) {
               onAddItem={(_event, data) => selectCountryOrCustom(String(data.value))}
               onChange={(_event, data) => selectCountryOrCustom(String(data.value))} />
           </Table.HeaderCell><Table.HeaderCell><Dropdown fluid selection value={rank} options={RANKS.map(value => ({key: value, value, text: t(value)}))}
-            onChange={(_event, data) => setRank(data.value as SeatRank)} /></Table.HeaderCell>
-          <Table.HeaderCell data-label={t('Voting rights')}><Checkbox aria-label={t('Voting rights')} toggle checked={canVote} onChange={(_event, data) => {setCanVote(data.checked ?? false); if (!data.checked) {setHasVeto(false); setMustVote(false);}}} /></Table.HeaderCell>
-          <Table.HeaderCell data-label={t('Veto power')}><Checkbox aria-label={t('Veto power')} toggle checked={hasVeto} onChange={(_, data) => {setHasVeto(data.checked ?? false); if (data.checked) setCanVote(true);}} /></Table.HeaderCell>
+            onChange={(_event, data) => {setRank(data.value as SeatRank); if (data.value === 'MEDIA') {setCanVote(false); setCanProceduralVote(false); setHasVeto(false); setMustVote(false);}}} /></Table.HeaderCell>
+          <Table.HeaderCell data-label={t('Procedural voting')}><Checkbox aria-label={t('Procedural voting')} toggle checked={canProceduralVote} disabled={canVote} onChange={(_, data) => setCanProceduralVote(data.checked ?? false)} /></Table.HeaderCell>
+          <Table.HeaderCell data-label={t('Voting rights')}><Checkbox aria-label={t('Voting rights')} toggle checked={canVote} disabled={!canProceduralVote} onChange={(_event, data) => {setCanVote(data.checked ?? false); if (!data.checked) {setHasVeto(false); setMustVote(false);}}} /></Table.HeaderCell>
+          <Table.HeaderCell data-label={t('Veto power')}><Checkbox aria-label={t('Veto power')} toggle checked={hasVeto} onChange={(_, data) => {setHasVeto(data.checked ?? false); if (data.checked) {setCanVote(true); setCanProceduralVote(true);}}} /></Table.HeaderCell>
           <Table.HeaderCell data-label={t('No abstention')}><Checkbox aria-label={t('No abstention')} disabled={!canVote} toggle checked={mustVote} onChange={(_event, data) => setMustVote(data.checked ?? false)} /></Table.HeaderCell>
           <Table.HeaderCell><Button type="button" basic primary icon="plus" aria-label={t('Add committee member')} disabled={!memberName.trim() || duplicateMember} onClick={() => {
             const country = selectedMemberCountry; const shown = country ? localizedDisplayName(country.names, country.defaultLanguage) : memberName.trim();
             setMembers(current => [...current, {id: draftId('member'), stableKey: country?.stableKey ?? draftId('member'), names: country?.names ?? {[displayLanguage]: shown},
-              defaultLanguage: country?.defaultLanguage ?? displayLanguage, rank, canVote, hasVeto, mustVote,
+              defaultLanguage: country?.defaultLanguage ?? displayLanguage, rank, canVote, canProceduralVote, hasVeto, mustVote,
               sortOrder: current.length, flag: country?.flag ?? {type: 'EMOJI', value: '🏳️'}}]); setMemberName(''); setSaved(false);}} /></Table.HeaderCell>
           </Table.Row></Table.Footer></Table>
           {members.length === 0 && <Message warning content={t('Add at least one committee member')} />}<Message success content={t('Template saved')} />

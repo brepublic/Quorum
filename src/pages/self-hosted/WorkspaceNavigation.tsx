@@ -29,12 +29,11 @@ function AttendanceThresholdItem({snapshot}: {snapshot: CommitteeWorkspaceSnapsh
   if (!validForCurrentSession) return null;
 
   const presentSeatIds = new Set(snapshot.attendance.filter(item => item.state === "PRESENT").map(item => item.seatId));
-  const presentSeats = snapshot.seats.filter(seat => presentSeatIds.has(seat.id));
+  const presentSeats = snapshot.seats.filter(seat => seat.canProceduralVote && presentSeatIds.has(seat.id));
   const presentDelegates = presentSeats.length;
-  const votingPresent = presentSeats.filter(seat => seat.canVote).length;
-  const twoThirdsMajority = Math.ceil(votingPresent * 2 / 3);
-  const simpleMajority = votingPresent > 0 ? Math.floor(votingPresent / 2) + 1 : 0;
-  const description = t("Attendance / two-thirds majority / simple majority");
+  const twoThirdsMajority = Math.ceil(presentDelegates * 2 / 3);
+  const simpleMajority = presentDelegates > 0 ? Math.floor(presentDelegates / 2) + 1 : 0;
+  const description = t("Attendance / procedural two-thirds majority / procedural simple majority");
 
   return <Menu.Item className="attendance-threshold-summary" title={description} aria-label={description}>
     {[presentDelegates, twoThirdsMajority, simpleMajority].join("/")}
