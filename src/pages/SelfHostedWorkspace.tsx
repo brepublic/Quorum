@@ -511,7 +511,7 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
       }
     });
   return <Container className="committee-setup-page"><Grid columns={2} stackable><Grid.Row>
-    <Grid.Column width={11}><Header as="h2">{t('Seats')}</Header>
+    <Grid.Column width={16}><Header as="h2">{t('Seats')}</Header>
     {canChair && !readOnly && countryOptions.length > 0 && <Table className="members-table seat-create-table" compact celled definition stackable><Table.Header fullWidth><Table.Row>
       <Table.HeaderCell>{t('Seat')}</Table.HeaderCell><Table.HeaderCell>{t('Rank')}</Table.HeaderCell>
       <Table.HeaderCell>{t('Procedural voting')}</Table.HeaderCell><Table.HeaderCell>{t('Voting rights')}</Table.HeaderCell><Table.HeaderCell>{t('Veto power')}</Table.HeaderCell><Table.HeaderCell>{t('No abstention')}</Table.HeaderCell>
@@ -612,7 +612,7 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
       </Table.Row>)}</Table.Body></Table>
       {snapshot.seats.length > 0 && <Button as={Link} to={`/committees/${snapshot.committee.id}/roll-call`} primary fluid>
         {t('Roll Call')}<Icon name="arrow right" /></Button>}
-    </Grid.Column><Grid.Column width={5}>
+    </Grid.Column><Grid.Column width={16} className="committee-seat-management">
     {owner && !readOnly && <Card fluid><Card.Content><Header as="h2">{t('Chairs')}</Header>
       <Form onSubmit={async () => {await execute('grant-chair', () => api.grantChair(snapshot.committee.id,
         chairEmail.trim(), snapshot.committee.revision)); setChairEmail('');}}>
