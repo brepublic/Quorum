@@ -178,16 +178,34 @@
     left center / 50% 100% no-repeat, #d4d4d5;
 }
 
-.committee-setup-page .committee-chairs-table {
-  table-layout: fixed;
+.committee-chairs-list {
+  list-style: none;
+  margin: 1rem 0 0;
+  min-width: 0;
+  padding: 0;
 }
 
-.committee-setup-page .committee-chairs-table tr > :last-child {
-  width: 7.5rem;
+.committee-chairs-list > li {
+  align-items: center;
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  min-width: 0;
+  padding: 0.75rem 0;
 }
 
-.committee-setup-page .committee-chairs-table td:first-child {
+.committee-chairs-list > li + li {
+  border-top: 1px solid var(--q-theme-border, rgba(34, 36, 38, 0.15));
+}
+
+.committee-chair-email {
+  min-width: 0;
   overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.committee-chairs-list > li > .ui.button {
+  margin: 0;
 }
 
 .committee-setup-page .committee-seat-identity {

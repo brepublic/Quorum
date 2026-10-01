@@ -621,16 +621,14 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
         <Form.Input label={t('Email')} required type="email" value={chairEmail} onChange={(_, data) => setChairEmail(String(data.value ?? ""))} />
         <Button primary loading={pending === 'grant-chair'} disabled={!chairEmail.trim()}>{t('Grant Chair')}</Button>
       </Form>
-      <Table compact celled stackable className="committee-chairs-table">
-        <Table.Header fullWidth><Table.Row><Table.HeaderCell>{t('Email')}</Table.HeaderCell>
-          <Table.HeaderCell collapsing>{t('Actions')}</Table.HeaderCell></Table.Row></Table.Header>
-        <Table.Body>{(snapshot.chairs ?? []).map(chair => <Table.Row key={chair.userEmail}>
-          <Table.Cell>{chair.userEmail}</Table.Cell>
-          <Table.Cell collapsing><Button negative loading={pending === `chair-${chair.userEmail}`}
+      {Boolean(snapshot.chairs?.length) && <ul className="committee-chairs-list" aria-label={t('Chairs')}>
+        {(snapshot.chairs ?? []).map(chair => <li key={chair.userEmail}>
+          <span className="committee-chair-email">{chair.userEmail}</span>
+          <Button negative size="mini" aria-label={`${t('Revoke')} · ${chair.userEmail}`} loading={pending === `chair-${chair.userEmail}`}
             onClick={() => void execute(`chair-${chair.userEmail}`, () => api.revokeChair(snapshot.committee.id,
-              chair.userEmail, snapshot.committee.revision))}>{t('Revoke')}</Button></Table.Cell>
-        </Table.Row>)}</Table.Body>
-      </Table>
+              chair.userEmail, snapshot.committee.revision))}>{t('Revoke')}</Button>
+        </li>)}
+      </ul>}
     </Card.Content></Card>}
     {canChair && !readOnly && snapshot.seats.length > 0 && <>
       <Card fluid><Card.Content><Header as="h2">{t('Seat assignments')}</Header>

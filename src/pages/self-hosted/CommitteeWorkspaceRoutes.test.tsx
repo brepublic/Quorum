@@ -456,8 +456,28 @@ describe('committee workspace routes and roles', () => {
   it('lets only Owners manage Chairs', async () => {
     const page = await render('OWNER', '/committees/committee/setup');
     expect(page.textContent).toContain('Grant Chair');
-    expect(page.querySelector('.committee-chairs-table')?.textContent).toContain('Revoke');
+    expect(page.querySelector('.committee-chairs-list')?.textContent).toContain('Revoke');
     expect(page.querySelectorAll('.committee-setup-page .ui.card')).toHaveLength(3);
+  });
+
+  it('preserves full Chair emails and revokes the selected account from the compact list', async () => {
+    const longEmail = `${'longchairaccount'.repeat(8)}@example.com`;
+    const revokeChair = vi.fn(async () => ({})) as unknown as SelfHostedApi['revokeChair'];
+    const page = await render('OWNER', '/committees/committee/setup', user, value => ({...value,
+      chairs: [{userEmail: 'first@example.com'}, {userEmail: longEmail}]}), {revokeChair});
+    expect([...page.querySelectorAll('.committee-chair-email')].map(item => item.textContent))
+      .toEqual(['first@example.com', longEmail]);
+    const button = [...page.querySelectorAll<HTMLButtonElement>('.committee-chairs-list button')]
+      .find(item => item.getAttribute('aria-label') === `Revoke · ${longEmail}`);
+    expect(button).toBeTruthy();
+    await act(async () => button?.click());
+    expect(revokeChair).toHaveBeenCalledWith('committee', longEmail, 4);
+  });
+
+  it('omits the Chair list when empty and keeps the grant form available', async () => {
+    const page = await render('OWNER', '/committees/committee/setup', user, value => ({...value, chairs: []}));
+    expect(page.querySelector('.committee-chairs-list')).toBeNull();
+    expect(page.textContent).toContain('Grant Chair');
   });
 
   it('uses the full seat area without an empty sidebar for read-only and empty Chair views', async () => {
