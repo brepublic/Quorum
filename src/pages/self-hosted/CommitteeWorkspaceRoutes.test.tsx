@@ -418,7 +418,9 @@ describe('committee workspace routes and roles', () => {
     expect(page.querySelector('[aria-label="Seat name"]')).toBeNull();
     expect(page.textContent).toContain('France');
     expect(page.textContent).toContain('No abstention');
-    expect(page.querySelector('.committee-setup-page > .ui.grid')).toBeTruthy();
+    expect(page.querySelector('.committee-setup-page')?.classList.contains('fluid')).toBe(true);
+    expect(page.querySelector('.committee-setup-layout.has-seat-management > .committee-seat-editor .seat-list-table')).toBeTruthy();
+    expect(page.querySelectorAll('.committee-setup-layout > .committee-seat-management > .ui.card')).toHaveLength(2);
     expect(page.textContent).toContain('Assign seat');
     expect(page.textContent).toContain('Create invitation');
     expect(page.textContent).not.toContain('Grant Chair');
@@ -456,6 +458,27 @@ describe('committee workspace routes and roles', () => {
     expect(page.textContent).toContain('Grant Chair');
     expect(page.querySelector('.committee-chairs-table')?.textContent).toContain('Revoke');
     expect(page.querySelectorAll('.committee-setup-page .ui.card')).toHaveLength(3);
+  });
+
+  it('uses the full seat area without an empty sidebar for read-only and empty Chair views', async () => {
+    for (const [audience, customize] of [
+      ['PUBLIC', (value: CommitteeWorkspaceSnapshot) => value],
+      ['OWNER', (value: CommitteeWorkspaceSnapshot) => ({...value, committee: {...value.committee, status: 'ARCHIVED' as const}})],
+      ['CHAIR', (value: CommitteeWorkspaceSnapshot) => ({...value, seats: []})]
+    ] as const) {
+      const page = await render(audience, '/committees/committee/setup', user, customize);
+      expect(page.querySelector('.committee-seat-editor')).toBeTruthy();
+      expect(page.querySelector('.committee-seat-management')).toBeNull();
+      expect(page.querySelector('.committee-setup-layout.has-seat-management')).toBeNull();
+      await act(async () => root?.unmount()); root = undefined; page.remove();
+    }
+  });
+
+  it('keeps Chair management available for an Owner with no seats', async () => {
+    const page = await render('OWNER', '/committees/committee/setup', user, value => ({...value, seats: []}));
+    expect(page.querySelectorAll('.committee-seat-management > .ui.card')).toHaveLength(1);
+    expect(page.textContent).toContain('Grant Chair');
+    expect(page.textContent).not.toContain('Assign seat');
   });
 
   it('updates all seats while preserving voting constraints and skips unchanged seats', async () => {

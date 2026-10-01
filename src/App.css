@@ -67,8 +67,25 @@
   outline: none;
 }
 
-.committee-setup-page {
+.committee-setup-page.ui.container {
+  container-name: committee-setup;
+  container-type: inline-size;
+  margin: 0 auto !important;
+  max-width: 100rem !important;
   padding: 1em 0 1.5em;
+  width: 100% !important;
+}
+
+.committee-setup-layout {
+  display: grid;
+  gap: 1.5rem;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+}
+
+.committee-seat-editor,
+.committee-seat-management {
+  min-width: 0;
 }
 
 .committee-setup-page .members-table {
@@ -119,7 +136,7 @@
 
 @media (min-width: 768px) {
   /* Reserve room for single-line labels and controls; names use the remaining space. */
-  .committee-setup-page .members-table tr > :nth-child(2) { width: 12.5rem; }
+  .committee-setup-page .members-table tr > :nth-child(2) { width: 11.5rem; }
   .committee-setup-page .members-table tr > :nth-child(3) { width: 9.75rem; }
   .committee-setup-page .members-table tr > :nth-child(4) { width: 5.25rem; }
   .committee-setup-page .members-table tr > :nth-child(5) { width: 4.5rem; }
@@ -161,6 +178,14 @@
     left center / 50% 100% no-repeat, #d4d4d5;
 }
 
+.committee-setup-page .committee-chairs-table {
+  table-layout: fixed;
+}
+
+.committee-setup-page .committee-chairs-table tr > :last-child {
+  width: 7.5rem;
+}
+
 .committee-setup-page .committee-chairs-table td:first-child {
   overflow-wrap: anywhere;
 }
@@ -185,17 +210,31 @@
   margin-right: 0;
 }
 
-@media (min-width: 768px) {
-  .committee-setup-page .committee-seat-management {
-    display: grid !important;
-    margin-top: 1rem;
-    grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
-    align-items: start;
-    gap: 1rem;
+.committee-seat-management {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+  align-items: stretch;
+}
+
+.committee-seat-management > .ui.card {
+  margin: 0;
+  min-width: 0;
+  width: 100%;
+}
+
+.committee-seat-management .list .description {
+  overflow-wrap: anywhere;
+}
+
+/* Keep enough room for the fixed voting columns, a seat name, and the sidebar. */
+@container committee-setup (min-width: 74rem) {
+  .committee-setup-layout.has-seat-management {
+    grid-template-columns: minmax(0, 1fr) 20rem;
   }
 
-  .committee-setup-page .committee-seat-management > .ui.card {
-    margin: 0;
+  .committee-seat-management {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
