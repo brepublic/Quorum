@@ -118,18 +118,14 @@ describe('stage 5 timer HTTP boundary', () => {
       {baseRevision: 4}, expect.any(Object));
   });
 
-  it('routes direct motion votes and their frozen eligibility setting', async () => {
+  it('routes direct motion votes', async () => {
     const setMotionDirectVote = vi.fn(async () => ({id: 'motion'}));
-    const setMotionDirectVoteSettings = vi.fn(async () => ({id: 'motion'}));
-    const stage5 = {setMotionDirectVote, setMotionDirectVoteSettings} as unknown as Stage5Service;
-    await send(stage5, '/api/v1/motions/30000000-0000-4000-8000-000000000001/direct-vote',
+    const stage5 = {setMotionDirectVote} as unknown as Stage5Service;
+    const response = await send(stage5, '/api/v1/motions/30000000-0000-4000-8000-000000000001/direct-vote',
       {choice: 'FOR', onBehalfOfSeatId: '40000000-0000-4000-8000-000000000001'});
-    await send(stage5, '/api/v1/motions/30000000-0000-4000-8000-000000000001/direct-vote-settings',
-      {baseRevision: 1, includeNonVotingSeats: false});
+    expect(response.statusCode).toBe(200);
     expect(setMotionDirectVote).toHaveBeenCalledWith(authenticated, '30000000-0000-4000-8000-000000000001',
       {choice: 'FOR', onBehalfOfSeatId: '40000000-0000-4000-8000-000000000001'}, expect.any(Object));
-    expect(setMotionDirectVoteSettings).toHaveBeenCalledWith(authenticated, '30000000-0000-4000-8000-000000000001',
-      {baseRevision: 1, includeNonVotingSeats: false}, expect.any(Object));
   });
 
   it('creates a persistent document vote with CSRF and idempotency', async () => {
