@@ -192,7 +192,7 @@ describe('self-hosted workspace navigation', () => {
     const summary = page.querySelector(".attendance-threshold-summary");
     const realtime = page.querySelector(".realtime-status");
     expect(summary?.textContent).toBe("7/5/4");
-    expect(summary?.getAttribute("title")).toBe("Attendance / procedural two-thirds majority / procedural simple majority");
+    expect(summary?.getAttribute("title")).toBe("Attendance / procedural Two-Thirds Majority / procedural Simple Majority");
     expect(summary?.nextElementSibling).toBe(realtime);
   });
 

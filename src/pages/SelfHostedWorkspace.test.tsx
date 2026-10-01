@@ -97,7 +97,7 @@ describe('self-hosted stage 4 workspace', () => {
   it.each([
     ['unknown', 'page address is invalid'], ['motions/extra', 'page address is invalid'],
     ['crises/missing/extra', 'page address is invalid'], ['crises/missing', 'Crisis not found.'],
-    ['caucuses/missing', 'Speaker list not found.'], ['strawpolls/missing', 'Strawpoll not found.'],
+    ['caucuses/missing', "Speaker's List not found."], ['strawpolls/missing', 'Straw Poll not found.'],
     ['resolutions/missing', 'Draft Resolution not found.'], ['directives/missing', 'Draft not found.'],
     ['votes/missing', 'Draft not found.']
   ])('offers a way home for invalid committee detail addresses (%s)', async (path, text) => {
@@ -267,7 +267,7 @@ describe('self-hosted stage 4 workspace', () => {
     const proceedings = container.querySelector<HTMLAnchorElement>('a[href="/committees/committee/motions"]');
     await act(async () => {proceedings?.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true}));});
     expect(container.textContent).not.toContain('Formal Ballot');
-    expect(container.textContent).not.toContain('Propose motion');
+    expect(container.textContent).not.toContain('Propose Motion');
     expect(container.textContent).not.toContain('新建决议草案');
   });
 });

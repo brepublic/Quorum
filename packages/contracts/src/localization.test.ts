@@ -55,8 +55,9 @@ describe('committee content language', () => {
     expect(formatCommitteeContent({kind: 'SESSION', ordinal: 2}, 'zh-CN')).toBe('第2会期');
     expect(formatCommitteeContent({kind: 'RESOLUTION', sessionOrdinal: 2, ordinal: 12, customTitle: null}, 'zh-CN')).toBe('决议草案 2.12');
     expect(formatCommitteeContent({kind: 'AMENDMENT', sessionOrdinal: 1, resolutionOrdinal: 3, amendmentType: 'UNFRIENDLY', ordinal: 2, customTitle: null}, 'en')).toBe('Draft Resolution Unfriendly Amendment 1.3.2');
-    expect(formatCommitteeContent({kind: 'STRAWPOLL', ordinal: 2, question: ''}, 'en')).toBe('New Strawpoll 2');
+    expect(formatCommitteeContent({kind: 'STRAWPOLL', ordinal: 2, question: ''}, 'en')).toBe('New Straw Poll 2');
     expect(formatCommitteeContent({kind: 'MODERATED_CAUCUS', topic: '用户主题', customTitle: null}, 'en')).toBe('用户主题');
+    expect(formatCommitteeContent({kind: 'MODERATED_CAUCUS', topic: '', customTitle: null}, 'en')).toBe('Untitled Moderated Caucus');
   });
   it.each([0, -1, 1.1, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1])('rejects invalid ordinal %s', ordinal => {
     expect(() => formatCommitteeContent({kind: 'SESSION', ordinal}, 'en')).toThrow('Invalid resource ordinal');

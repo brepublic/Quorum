@@ -144,8 +144,8 @@ describe('committee workspace routes and roles', () => {
           revision: 1, startedAt: '2026-10-01T00:00:00.000Z', completedAt: '2026-10-01T00:01:00.000Z'}};
     });
     expect([...page.querySelectorAll('.roll-call-summary-label')].map(item => item.textContent)).toEqual(observerPresent
-      ? ['Present', 'Voting two-thirds majority', 'Voting simple majority', 'Procedural two-thirds majority', 'Procedural simple majority']
-      : ['Present', 'Simple majority', 'Two-thirds majority']);
+      ? ['Present', 'Voting Two-Thirds Majority', 'Voting Simple Majority', 'Procedural Two-Thirds Majority', 'Procedural Simple Majority']
+      : ['Present', 'Simple Majority', 'Two-Thirds Majority']);
     expect([...page.querySelectorAll('.roll-call-summary-highlight strong')].map(item => item.textContent))
       .toEqual(observerPresent ? ['2', '1', '1', '2', '2'] : ['1', '1', '1']);
     expect([...page.querySelectorAll('.roll-call-country-name')].map(item => item.textContent)).not.toContain('Media');
@@ -1011,6 +1011,21 @@ describe('committee workspace routes and roles', () => {
     expect(workspace?.textContent).not.toContain('Create draft resolution');
   });
 
+  it.each([
+    ['en', 'Propose Strawpoll', 'Propose Straw Poll'],
+    ['en', 'My custom strawpoll motion', 'My custom strawpoll motion'],
+    ['zh-CN', 'Propose Strawpoll', '提议意向性投票']
+  ] as const)('formats built-in motion terminology and preserves custom names in %s: %s', async (language, englishName, expected) => {
+    setLanguage(language);
+    const page = await render('MEMBER', '/committees/committee/motions', user, value => ({...value,
+      motionSettings: {...value.motionSettings, delegateMotionProposalsEnabled: true},
+      meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: 'Session 1', phaseId: 'formal-debate',
+        activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1, createdAt: '2026-08-14T00:00:00.000Z', closedAt: null},
+      activeRules: {...value.activeRules, motionTypes: [{id: 'propose-strawpoll',
+        names: {en: englishName, 'zh-CN': '提议意向性投票'}, procedural: false, requiredSecondCount: 0}]}}));
+    expect(page.querySelector('.motion-proposal-form')?.textContent).toContain(expected);
+  });
+
   it('targets an existing unintroduced draft instead of naming a new resolution in the introduction motion', async () => {
     const proposeMotion = vi.fn(async () => ({} as ProceedingMotion));
     const page = await render('CHAIR', '/committees/committee/motions', user, value => ({...value,
@@ -1040,7 +1055,7 @@ describe('committee workspace routes and roles', () => {
       .find(field => field.querySelector('label')?.textContent === 'Target Draft Resolution')?.querySelector<HTMLElement>('.ui.dropdown');
     await act(async () => {target?.click(); await Promise.resolve();});
     await act(async () => {target?.querySelector<HTMLElement>('[role="option"]')?.click(); await Promise.resolve();});
-    await act(async () => {page.querySelector<HTMLButtonElement>('button[aria-label="Propose motion"]')?.click(); await Promise.resolve();});
+    await act(async () => {page.querySelector<HTMLButtonElement>('button[aria-label="Propose Motion"]')?.click(); await Promise.resolve();});
     expect(proposeMotion).toHaveBeenCalledWith('committee', {meetingSessionId: 'meeting', motionTypeId: 'introduce-draft-resolution',
       onBehalfOfSeatId: 'seat', parameters: {resolutionTarget: 'resolution'}});
   });
@@ -1077,7 +1092,7 @@ describe('committee workspace routes and roles', () => {
     const proposer = page.querySelector<HTMLElement>('.motion-proposer-field .ui.dropdown');
     await act(async () => {proposer?.click();});
     await act(async () => {proposer?.querySelector<HTMLElement>('[role="option"]')?.click();});
-    await act(async () => {page.querySelector<HTMLButtonElement>('button[aria-label="Propose motion"]')?.click();});
+    await act(async () => {page.querySelector<HTMLButtonElement>('button[aria-label="Propose Motion"]')?.click();});
     expect(proposeMotion).toHaveBeenCalledWith('committee', expect.objectContaining({motionTypeId: 'introduce-amendment',
       parameters: {amendmentTarget: 'amendment', proposal: 'Replace clause 1'}}));
   });
@@ -1264,7 +1279,7 @@ describe('committee workspace routes and roles', () => {
     await act(async () => {Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(duration, '');
       duration?.dispatchEvent(new Event('input', {bubbles: true})); await Promise.resolve();});
     expect(duration?.value).toBe('');
-    expect(page.querySelector<HTMLButtonElement>('button[aria-label="Propose motion"]')?.disabled).toBe(true);
+    expect(page.querySelector<HTMLButtonElement>('button[aria-label="Propose Motion"]')?.disabled).toBe(true);
   });
 
   it('shows read-only motion counts without an include-non-voting toggle', async () => {
@@ -1579,13 +1594,14 @@ describe('committee workspace routes and roles', () => {
     expect(queueDropdown).not.toBeNull();
     expect(queueFeed!.compareDocumentPosition(queueDropdown!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     const speakerTimer = [...page.querySelectorAll<HTMLElement>('.proceedings-timer')]
-      .find(timer => timer.querySelector('.top.left.attached.label')?.textContent === 'Speaker timer');
+      .find(timer => timer.querySelector('.top.left.attached.label')?.textContent === 'Speaker Timer');
     expect(speakerTimer?.querySelector('.speaker-timer-actions')?.textContent).toContain('Continue');
     expect(speakerTimer?.querySelector('.speaker-timer-actions')?.textContent).toContain('Next');
     const dividerNavigation = queuePanel?.querySelector('.speaker-queue-divider-navigation');
     expect(dividerNavigation?.querySelectorAll('a')).toHaveLength(2);
     expect(dividerNavigation?.textContent).toContain('Motions');
-    expect(dividerNavigation?.textContent).toContain('Question');
+    expect(dividerNavigation?.textContent).toContain('Points');
+    expect(dividerNavigation?.textContent).not.toContain('Question');
     expect(dividerNavigation?.querySelector('a[href="/committees/committee/points"]')).not.toBeNull();
     expect(dividerNavigation?.nextElementSibling?.classList.contains('speaker-queue-divider')).toBe(true);
   });
@@ -1725,9 +1741,9 @@ describe('committee workspace routes and roles', () => {
         remainingAtStartMs: 600_000, remainingMs: 590_000, revision: 2, expiredAt: null,
         serverTime: '2026-08-14T00:00:10.000Z'}]}), {commandSpeech, commandTimer, yieldSpeech, decideSpeechYield});
 
-    expect(page.querySelector('.speaker-timer-column')?.textContent).toContain('Speaker timer');
+    expect(page.querySelector('.speaker-timer-column')?.textContent).toContain('Speaker Timer');
     expect(page.querySelector('.speaker-timer-column')?.textContent).toContain('Now speaking');
-    expect(page.querySelector('.caucus-timer-column')?.textContent).toContain('Caucus timer');
+    expect(page.querySelector('.caucus-timer-column')?.textContent).toContain('Caucus Timer');
     expect(page.querySelector('.caucus-timer-column')?.textContent).toContain('Queue');
     const nextPanel = [...page.querySelectorAll<HTMLElement>('.ui.segment')]
       .find(segment => segment.querySelector('.top.left.attached.label')?.textContent === 'Next speaker');

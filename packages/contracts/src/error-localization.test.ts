@@ -2,6 +2,14 @@ import {describe, expect, it} from 'vitest';
 import {formatApiError} from './error-localization';
 
 describe('structured error localization', () => {
+  it('uses the same proceedings terminology as the workspace', () => {
+    expect(formatApiError({reason: 'SPEAKER_LIST_CLOSED'}, 'en'))
+      .toBe("The Speaker's List is closed. Open it first.");
+    expect(formatApiError({reason: 'INVALID_DRAFT_TYPE'}, 'en'))
+      .toBe('Choose a Draft Resolution or Draft Directive.');
+    expect(formatApiError({reason: 'SPEAKER_LIST_CLOSED'}, 'zh-CN'))
+      .toBe('发言名单已关闭，请先开放名单。');
+  });
   it('uses the reason and current language without displaying server message text', () => {
     const failure = {code: 'FORBIDDEN', message: '/private/path access token=secret',
       localization: {reason: 'INCORRECT_PASSWORD'}};

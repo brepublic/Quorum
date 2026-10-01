@@ -586,7 +586,7 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
   </Feed></Segment>;
   const queueDividerNavigation = <><Button.Group fluid className="speaker-queue-divider-navigation">
     <Button primary as={Link} to={`/committees/${snapshot.committee.id}/motions`}>{t('Motions')}<Icon name="arrow right" /></Button>
-    <Button primary as={Link} to={`/committees/${snapshot.committee.id}/points`}>{t('Question')}<Icon name="arrow right" /></Button>
+    <Button primary as={Link} to={`/committees/${snapshot.committee.id}/points`}>{t('Points')}<Icon name="arrow right" /></Button>
   </Button.Group><Divider className="speaker-queue-divider" /></>;
   const waitingSpeakers = <DragDropContext onDragEnd={onDragEnd}><Droppable droppableId={`speaker-queue-${list.id}`}>
       {provided => <div ref={provided.innerRef} {...provided.droppableProps}><Feed size="large" className="speaker-queue-feed">{queued.map((entry, index) =>
@@ -943,7 +943,9 @@ const motionTypeFallbackLabels: Record<string, string> = {
 };
 
 function motionTypeName(type: {id: string; names?: Record<string, string>} | undefined, id: string, language: ContentLanguage): string {
-  return type?.names ? motionContentName(type.names, getLanguage(), language) : t(motionTypeFallbackLabels[id] ?? id);
+  if (!type?.names) return t(motionTypeFallbackLabels[id] ?? id);
+  const name = motionContentName(type.names, getLanguage(), language);
+  return getLanguage() === 'en' && name === motionTypeFallbackLabels[id] ? t(name) : name;
 }
 
 const motionTypePosition = (id: string): number => ({

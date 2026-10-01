@@ -90,12 +90,12 @@ export function formatCommitteeContent(resource: AutomaticContentName, language:
     case 'FILE': return `${delegateFileTypeName(resource.fileType, language)} ${positiveOrdinal(resource.sessionOrdinal)}.${positiveOrdinal(resource.ordinal)}`;
     case 'SESSION': return zh ? `第${positiveOrdinal(resource.ordinal)}会期` : `Session ${positiveOrdinal(resource.ordinal)}`;
     case 'GENERAL_SPEAKERS_LIST': return zh ? '主发言名单' : "General Speaker's List";
-    case 'MODERATED_CAUCUS': return resource.topic || (zh ? '未命名有主持核心磋商' : 'Untitled caucus');
+    case 'MODERATED_CAUCUS': return resource.topic || (zh ? '未命名有主持核心磋商' : 'Untitled Moderated Caucus');
     case 'DIRECTIVE': return `${zh ? '指令草案' : 'Draft Directive'} ${positiveOrdinal(resource.sessionOrdinal)}.${positiveOrdinal(resource.ordinal)}`;
     case 'RESOLUTION': return `${zh ? '决议草案' : 'Draft Resolution'} ${positiveOrdinal(resource.sessionOrdinal)}.${positiveOrdinal(resource.ordinal)}`;
     case 'AMENDMENT': return `${resource.resolutionDraftType === 'DIRECTIVE' ? zh ? '指令草案' : 'Draft Directive' : zh ? '决议草案' : 'Draft Resolution'}${zh
       ? resource.amendmentType === 'FRIENDLY' ? '友好修正案' : '非友好修正案'
       : resource.amendmentType === 'FRIENDLY' ? ' Friendly Amendment' : ' Unfriendly Amendment'} ${positiveOrdinal(resource.sessionOrdinal)}.${positiveOrdinal(resource.resolutionOrdinal)}.${positiveOrdinal(resource.ordinal)}`;
-    case 'STRAWPOLL': return resource.question || `${zh ? '新意向性投票' : 'New Strawpoll '}${positiveOrdinal(resource.ordinal)}`;
+    case 'STRAWPOLL': return resource.question || `${zh ? '新意向性投票' : 'New Straw Poll '}${positiveOrdinal(resource.ordinal)}`;
   }
 }

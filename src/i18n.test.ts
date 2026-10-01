@@ -22,6 +22,48 @@ describe('i18n', () => {
     expect(t('No abstention')).toBe('No abstention');
   });
 
+  it('distinguishes procedural Points from questions asked during a yield or poll', () => {
+    expect(t('Points')).toBe('Points');
+    expect(t('Question')).toBe('Question');
+    expect(t('QUESTIONS')).toBe('Questions');
+    expect(t('Yield to questions')).toBe('Yield to Questions');
+    expect(t('Yield to the chair')).toBe('Yield to the Chair');
+    expect(t('Resolution proposer')).toBe('Sponsors');
+    expect(t('Resolution seconder')).toBe('Signatories');
+  });
+
+  it.each([
+    ["General Speaker's List", "General Speaker's List"],
+    ['Create speaker list', "Create Speaker's List"],
+    ['Speaker list not found.', "Speaker's List not found."],
+    ['Speaker timer', 'Speaker Timer'],
+    ['Moderated Caucus timer', 'Moderated Caucus Timer'],
+    ['Open Formal Debate', 'Open Formal Debate'],
+    ['Introduce Working Paper', 'Introduce Working Paper'],
+    ['Introduce Draft Resolution', 'Introduce Draft Resolution'],
+    ['Friendly Amendment', 'Friendly Amendment'],
+    ['Unfriendly Amendment', 'Unfriendly Amendment'],
+    ['Simple majority', 'Simple Majority'],
+    ['Two-thirds majority', 'Two-Thirds Majority'],
+    ['PRESENT_AND_VOTING', 'Present and Voting'],
+    ['Strawpolls', 'Straw Polls'],
+    ['Propose Strawpoll', 'Propose Straw Poll'],
+    ['Simple (50%) majority required', 'Simple Majority required (more than 50%)']
+  ])('uses canonical English terminology for %s', (key, expected) => {
+    expect(t(key)).toBe(expected);
+  });
+
+  it('preserves interpolated user text and the Chinese terminology', () => {
+    expect(t('New Strawpoll {count}', {count: 2})).toBe('New Straw Poll 2');
+    expect(t('The {item} you were looking for (ID: {id}) could not be found. It may have been deleted, or the URL you navigated to was incorrect.',
+      {item: 'my lowercase strawpoll', id: 'draft resolution'})).toContain('my lowercase strawpoll you were looking for (ID: draft resolution)');
+    setLanguage('zh-CN');
+    expect(t('Points')).toBe('问题');
+    expect(t('Yield to questions')).toBe('让渡给问题');
+    expect(t('Resolution proposer')).toBe('起草国');
+    expect(t('Resolution seconder')).toBe('附议国');
+  });
+
   it('switches to Simplified Chinese and interpolates values', () => {
     setLanguage('zh-CN');
 
