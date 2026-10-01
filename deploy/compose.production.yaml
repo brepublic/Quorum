@@ -1,5 +1,5 @@
 name: quorum
-x-quorum-release-commit: 6aff9d384ed50fc15a2422089d8a9865fa47e24a
+x-quorum-release-commit: c840d3d15b787c26548d6d9699a4d738b07bffde
 
 x-logging: &default-logging
   driver: json-file
@@ -9,7 +9,7 @@ x-logging: &default-logging
 
 services:
   caddy:
-    image: ghcr.io/brepublic/quorum-caddy@sha256:184fe67a51cd9d7546e5c947851831f48eaa00f71ef459366801dc8bccbf571a
+    image: ghcr.io/brepublic/quorum-caddy@sha256:6a6ac604c2ae70b184c68df5c2f5a03b0fa1ca8ff62ff4bf0dacb2aeff31cb14
     restart: unless-stopped
     environment:
       QUORUM_SITE_ADDRESS: ${QUORUM_SITE_ADDRESS}
@@ -27,7 +27,7 @@ services:
     logging: *default-logging
 
   app:
-    image: ghcr.io/brepublic/quorum-app@sha256:7e01e7512f2e8ea92b0386fe44a725663f143ca6ad5c6bd5fbd41b2f71a134e1
+    image: ghcr.io/brepublic/quorum-app@sha256:f2405c88c0fbf9a4504200aba81dcc26e8db984b354fe8db22deb0d725ea808a
     restart: unless-stopped
     environment:
       DB_HOST: postgres
@@ -37,7 +37,7 @@ services:
       DB_NAME: ${POSTGRES_DB}
       HOST: 0.0.0.0
       PORT: 3000
-      QUORUM_VERSION: ${QUORUM_VERSION:-v1.0.0}
+      QUORUM_VERSION: ${QUORUM_VERSION:-v1.1.0}
       QUORUM_MIGRATIONS_DIR: /app/server/migrations
       QUORUM_STORAGE_PATH: /var/lib/quorum/files
       QUORUM_ALLOWED_ORIGINS: ${QUORUM_ALLOWED_ORIGINS}
