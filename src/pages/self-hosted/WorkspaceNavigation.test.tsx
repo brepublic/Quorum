@@ -92,11 +92,16 @@ describe('self-hosted workspace navigation', () => {
         : this.classList.contains('committee-navigation-more') ? 64
         : this.classList.contains('committee-navigation-more-files') ? 14
         : this.getAttribute('data-navigation-key') === '/posts' ? 114
+        : this.matches('.account-menu > .text') ? 80
+        : this.classList.contains('navigation-caucus-label') ? 80
+        : this.classList.contains('navigation-caucus-short-measurement') ? 20
         : this.classList.contains('realtime-status-label') ? 30
         : this.classList.contains('right') ? 200 : 100;
       return {width, height: 48, x: 0, y: 0, top: 0, left: 0, right: width, bottom: 48, toJSON: () => ({})};
     });
-    const page = render(<CommitteeNavigation snapshot={snapshot} user={user} logout={() => undefined} hasPendingFileReview>
+    const page = render(<CommitteeNavigation snapshot={{...snapshot, crises: [{id: 'pending', committeeId: 'committee',
+      sessionOrdinal: 1, ordinal: 1, endedAt: null, timer: {remainingMs: 0, running: false}, updates: [{status: 'PENDING'}]}]
+    } as unknown as CommitteeWorkspaceSnapshot} user={user} logout={() => undefined} hasPendingFileReview>
       <input defaultValue="unsaved draft" />
     </CommitteeNavigation>, '/committees/committee/strawpolls/poll');
     const nav = page.querySelector('.committee-navigation-desktop')!;
@@ -108,12 +113,20 @@ describe('self-hosted workspace navigation', () => {
       expect(page.querySelector('input')).toBe(draft);
       expect(draft.value).toBe('unsaved draft');
     };
-    for (const [width, level] of [[2100, 0], [1980, 1], [1900, 2], [1800, 3], [1700, 4], [1600, 5], [1500, 6], [1400, 7], [1300, 8], [1200, 9], [1100, 10], [1000, 11]]) {
+    for (const [width, level] of [[2100, 0], [1980, 1], [1900, 2], [1780, 3], [1700, 4], [1600, 5], [1500, 6], [1400, 7], [1300, 8], [1200, 9], [1100, 10], [1000, 11], [900, 12], [800, 13]]) {
       assertLevel(width, level);
-      expect(Boolean(nav.querySelector('.realtime-status-label'))).toBe(level === 0);
+      expect(Boolean(nav.querySelector('.realtime-status-label'))).toBe(level < 3);
+      expect(nav.querySelector('.account-menu')?.classList.contains('account-menu-compact')).toBe(level >= 1);
+      expect(nav.querySelector('[data-navigation-key="/unmod"] .navigation-caucus-label')?.textContent)
+        .toBe(level >= 2 ? 'Unmod' : 'Unmoderated Caucus');
+      if (level < 13) expect(nav.querySelector('[data-navigation-key="/caucuses"] .navigation-caucus-label')?.textContent)
+        .toBe(level >= 2 ? 'Caucus' : 'Moderated Caucuses');
       expect(nav.querySelector('a[href="/committees/committee/posts"] .file-review-dot')?.getAttribute('aria-label')).toBe('Pending review');
-      expect(Boolean(nav.querySelector('.committee-navigation-more > .committee-navigation-more-files .file-review-dot'))).toBe(level >= 4);
-      for (const [path, minimum] of [['/settings', 2], ['/help', 2], ['/stats', 3], ['/posts', 4], ['/notes', 5], ['/strawpolls', 6], ['/votes', 7], ['/resolutions', 8], ['/directives', 9], ['/crises', 10], ['/caucuses', 11]] as const) {
+      expect(Boolean(nav.querySelector('.committee-navigation-more > .committee-navigation-more-files .file-review-dot'))).toBe(level >= 6);
+      expect(Boolean(nav.querySelector('.committee-navigation-more > .crisis-time-dot'))).toBe(level >= 12);
+      expect(nav.querySelector('.account-menu')?.getAttribute('title')).toBe(user.displayName);
+      expect(nav.querySelector('[data-navigation-key="/unmod"]')?.getAttribute('aria-label')).toBe('Unmoderated Caucus');
+      for (const [path, minimum] of [['/settings', 4], ['/help', 4], ['/stats', 5], ['/posts', 6], ['/notes', 7], ['/strawpolls', 8], ['/votes', 9], ['/resolutions', 10], ['/directives', 11], ['/crises', 12], ['/caucuses', 13]] as const) {
         expect(Boolean(nav.querySelector(`.committee-primary-navigation > [data-navigation-key="${path}"]`))).toBe(level < minimum);
       }
     }
@@ -132,13 +145,16 @@ describe('self-hosted workspace navigation', () => {
     expect(poll.querySelector('a.active')?.getAttribute('href')).toBe('/committees/committee/strawpolls/poll');
     act(() => poll.querySelector<HTMLElement>('a.active')?.click());
     expect(more.classList.contains('visible')).toBe(false);
-    assertLevel(800, 12);
+    assertLevel(600, 14);
     expect(nav.getAttribute('data-navigation-mode')).toBe('sidebar');
     expect(page.querySelector('.committee-mobile-sidebar a[href="/committees/committee/posts"] .file-review-dot')).not.toBeNull();
-    for (const [width, level] of [[1000, 11], [1100, 10], [1200, 9], [1300, 8], [1400, 7], [1500, 6], [1600, 5], [1700, 4], [1800, 3], [1900, 2], [1980, 1], [2100, 0]]) assertLevel(width, level);
+    for (const [width, level] of [[800, 13], [900, 12], [1000, 11], [1100, 10], [1200, 9], [1300, 8], [1400, 7], [1500, 6], [1600, 5], [1700, 4], [1780, 3], [1900, 2], [1980, 1], [2100, 0]]) assertLevel(width, level);
     expect(page.querySelector('.committee-navigation-measurement')?.hasAttribute('inert')).toBe(true);
     expect(nav.querySelector('a[href="/committees/committee/setup"]')?.textContent).toBe('Seats');
+    assertLevel(1900, 2);
     act(() => setLanguage('zh-CN'));
+    expect(nav.querySelector('[data-navigation-key="/unmod"] .navigation-caucus-label')?.textContent).toBe('自由磋商');
+    expect(nav.querySelector('[data-navigation-key="/caucuses"] .navigation-caucus-label')?.textContent).toBe('有主持核心磋商');
     expect(nav.querySelector('a[href="/committees/committee/setup"]')?.textContent).toBe('席位');
     expect(nav.querySelector('a[href="/committees/committee/posts"] .file-review-dot')?.getAttribute('aria-label')).toBe('待审核');
     act(() => root?.render(<MemoryRouter initialEntries={['/committees/committee']}>

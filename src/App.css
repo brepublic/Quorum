@@ -357,6 +357,20 @@
   flex-shrink: 0;
 }
 
+.committee-navigation-desktop:not([data-collapse-level="0"]) .committee-primary-navigation.ui.menu > .right.menu {
+  margin-left: 0 !important;
+}
+
+.account-menu-compact > .text {
+  display: none;
+}
+
+.navigation-caucus-short-measurement {
+  position: absolute;
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .committee-primary-navigation > .item {
   flex-shrink: 0;
   min-height: 3.2em;

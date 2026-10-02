@@ -25,3 +25,11 @@ describe('resolution voting grid', () => {
     expect(css).toMatch(/\.resolution-voting-grid\s*\{[^}]*grid-auto-flow:\s*column;[^}]*grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\);[^}]*grid-template-rows:\s*repeat\(6, minmax\(3\.25rem, auto\)\);[^}]*\}/s);
   });
 });
+
+describe('compact committee navigation', () => {
+  it('removes the automatic gap before attendance and hides the account name at constrained widths', () => {
+    const css = readFileSync(resolve(process.cwd(), 'src', 'App.css'), 'utf8');
+    expect(css).toMatch(/\.committee-navigation-desktop:not\(\[data-collapse-level="0"\]\) \.committee-primary-navigation\.ui\.menu > \.right\.menu\s*\{\s*margin-left: 0 !important;\s*\}/);
+    expect(css).toMatch(/\.account-menu-compact > \.text\s*\{\s*display: none;\s*\}/);
+  });
+});
