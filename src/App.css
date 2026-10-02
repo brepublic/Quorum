@@ -1906,7 +1906,8 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   box-shadow: none;
 }
 
-.motions-page {
+.motions-page,
+.meeting-empty-state {
   padding-bottom: 3rem;
   padding-top: 1rem;
 }

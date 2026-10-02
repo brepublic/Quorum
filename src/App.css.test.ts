@@ -10,6 +10,14 @@ describe('current meeting-session card spacing', () => {
   });
 });
 
+describe('meeting empty-state spacing', () => {
+  it('shares motion-page vertical padding with every meeting empty state', () => {
+    const css = readFileSync(resolve(process.cwd(), 'src', 'App.css'), 'utf8');
+
+    expect(css).toMatch(/\.motions-page,\s*\.meeting-empty-state\s*\{\s*padding-bottom: 3rem;\s*padding-top: 1rem;\s*\}/);
+  });
+});
+
 describe('resolution voting grid', () => {
   it('uses six growing rows in a column-first layout like roll call', () => {
     const css = readFileSync(resolve(process.cwd(), 'src', 'App.css'), 'utf8');
