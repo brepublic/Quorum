@@ -361,8 +361,8 @@
   margin-left: 0 !important;
 }
 
-.account-menu-compact > .text {
-  display: none;
+.ui.menu .dropdown.item.account-menu-compact > .dropdown.icon {
+  margin: 0;
 }
 
 .navigation-caucus-short-measurement {
@@ -535,7 +535,7 @@
   white-space: nowrap;
 }
 
-.committee-navigation-mobile .account-menu > .text {
+.committee-navigation-mobile .account-menu > .account-menu-name {
   max-width: 25vw;
   overflow: hidden;
   text-overflow: ellipsis;

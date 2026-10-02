@@ -27,9 +27,9 @@ describe('resolution voting grid', () => {
 });
 
 describe('compact committee navigation', () => {
-  it('removes the automatic gap before attendance and hides the account name at constrained widths', () => {
+  it('removes the automatic gap before attendance and uses an icon without text spacing', () => {
     const css = readFileSync(resolve(process.cwd(), 'src', 'App.css'), 'utf8');
     expect(css).toMatch(/\.committee-navigation-desktop:not\(\[data-collapse-level="0"\]\) \.committee-primary-navigation\.ui\.menu > \.right\.menu\s*\{\s*margin-left: 0 !important;\s*\}/);
-    expect(css).toMatch(/\.account-menu-compact > \.text\s*\{\s*display: none;\s*\}/);
+    expect(css).toMatch(/\.ui\.menu \.dropdown\.item\.account-menu-compact > \.dropdown\.icon\s*\{\s*margin: 0;\s*\}/);
   });
 });

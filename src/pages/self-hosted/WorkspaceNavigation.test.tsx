@@ -92,7 +92,7 @@ describe('self-hosted workspace navigation', () => {
         : this.classList.contains('committee-navigation-more') ? 64
         : this.classList.contains('committee-navigation-more-files') ? 14
         : this.getAttribute('data-navigation-key') === '/posts' ? 114
-        : this.matches('.account-menu > .text') ? 80
+        : this.classList.contains('account-menu') ? this.classList.contains('account-menu-compact') ? 40 : 120
         : this.classList.contains('navigation-caucus-label') ? 80
         : this.classList.contains('navigation-caucus-short-measurement') ? 20
         : this.classList.contains('realtime-status-label') ? 30
@@ -117,6 +117,8 @@ describe('self-hosted workspace navigation', () => {
       assertLevel(width, level);
       expect(Boolean(nav.querySelector('.realtime-status-label'))).toBe(level < 3);
       expect(nav.querySelector('.account-menu')?.classList.contains('account-menu-compact')).toBe(level >= 1);
+      expect(nav.querySelector('.account-menu-name')?.textContent ?? null).toBe(level >= 1 ? null : user.displayName);
+      expect(nav.querySelector('.account-menu > .text')).toBeNull();
       expect(nav.querySelector('[data-navigation-key="/unmod"] .navigation-caucus-label')?.textContent)
         .toBe(level >= 2 ? 'Unmod' : 'Unmoderated Caucus');
       if (level < 13) expect(nav.querySelector('[data-navigation-key="/caucuses"] .navigation-caucus-label')?.textContent)
@@ -188,6 +190,25 @@ describe('self-hosted workspace navigation', () => {
     expect(item?.getAttribute('href')).toBeNull();
     act(() => item?.click());
     expect(onCreateCaucus).toHaveBeenCalledOnce();
+  });
+
+  it('removes the username node in compact mode while retaining the icon and account actions', () => {
+    const logout = vi.fn();
+    const page = render(<AccountMenu user={user} logout={logout} compact />);
+    const account = page.querySelector<HTMLElement>('.account-menu')!;
+    expect(account.querySelector('.account-menu-name')).toBeNull();
+    expect([...account.children].some(child => child.classList.contains('text'))).toBe(false);
+    expect(account.textContent).not.toContain(user.displayName);
+    expect([...account.children].some(child => child.matches('.user.circle.icon'))).toBe(true);
+    expect(account.getAttribute('aria-label')).toBe('Account menu');
+    expect(account.getAttribute('title')).toBe(user.displayName);
+    act(() => account.click());
+    expect(account.getAttribute('aria-expanded')).toBe('true');
+    const exit = [...account.querySelectorAll<HTMLElement>('.menu > .item')].find(item => item.textContent === 'Logout');
+    act(() => exit?.click());
+    expect(logout).toHaveBeenCalledOnce();
+    act(() => root?.render(<MemoryRouter><AccountMenu user={user} logout={logout} /></MemoryRouter>));
+    expect(page.querySelector('.account-menu-name')?.textContent).toBe(user.displayName);
   });
 
   it('keeps templates and system settings in the account menu', () => {

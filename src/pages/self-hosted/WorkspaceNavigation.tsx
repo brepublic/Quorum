@@ -46,7 +46,7 @@ export function AccountMenu({user, logout, compact = false}: {user: SelfHostedUs
     const launcher = document.querySelector<HTMLButtonElement>('#quorum-theme-portal [aria-label="Appearance themes"], #quorum-theme-portal [aria-label="外观主题"]');
     launcher?.click();
   };
-  return <Dropdown item className={`account-menu${compact ? " account-menu-compact" : ""}`} icon="user circle" text={user.displayName} title={user.displayName} aria-label={t('Account menu')}>
+  return <Dropdown item className={`account-menu${compact ? " account-menu-compact" : ""}`} icon="user circle" trigger={compact ? <></> : <span className="account-menu-name">{user.displayName}</span>} title={user.displayName} aria-label={t('Account menu')}>
     <Dropdown.Menu>
       <Dropdown.Item as={Link} to="/committees" icon="users" text={t('My committees')} />
       <Dropdown.Item as={Link} to="/templates" icon="copy outline" text={t('Committee templates')} />
@@ -272,7 +272,9 @@ export function CommitteeNavigation({snapshot, user, logout, realtimeStatus = 'C
       const more = width('.committee-navigation-more');
       const moreFiles = width('.committee-navigation-more-files');
       const required = [full - more];
-      required.push(required[0] - width('.right.menu > .account-menu > .text'));
+      const compactAccount = container.querySelector('.committee-account-measurement .account-menu');
+      const accountSavings = width('.right.menu > .account-menu') - (compactAccount?.getBoundingClientRect().width ?? 0);
+      required.push(required[0] - accountSavings);
       const caucusSavings = language === 'en' ? ['/unmod', '/caucuses'].reduce((sum, path) => sum
         + width(`[data-navigation-key="${path}"] .navigation-caucus-label`)
         - width(`[data-navigation-key="${path}"] .navigation-caucus-short-measurement`), 0) : 0;
@@ -294,7 +296,9 @@ export function CommitteeNavigation({snapshot, user, logout, realtimeStatus = 'C
     const observer = new ResizeObserver(measure);
     observer.observe(container);
     observer.observe(menu);
-    for (const element of [...menu.children, ...menu.querySelectorAll('.realtime-status-label, .account-menu > .text, .navigation-caucus-label, .navigation-caucus-short-measurement')]) observer.observe(element);
+    for (const element of [...menu.children, ...menu.querySelectorAll('.realtime-status-label, .account-menu, .navigation-caucus-label, .navigation-caucus-short-measurement')]) observer.observe(element);
+    const compactAccount = container.querySelector('.committee-account-measurement .account-menu');
+    if (compactAccount) observer.observe(compactAccount);
     measure();
     return () => observer.disconnect();
   }, [snapshot, user, realtimeStatus, language, hasPendingFileReview]);
@@ -319,6 +323,9 @@ export function CommitteeNavigation({snapshot, user, logout, realtimeStatus = 'C
         <Menu.Menu position="right"><AttendanceThresholdItem snapshot={snapshot} /><RealtimeStatusItem status={realtimeStatus} />
           {user && <AccountMenu user={user} logout={logout} />}</Menu.Menu>
       </Menu>
+      {user && <Menu className="committee-primary-navigation committee-account-measurement" size="large">
+        <AccountMenu user={user} logout={logout} compact />
+      </Menu>}
     </div>
     <Sidebar.Pushable className="committee-navigation-pushable" data-navigation-mode={mode}>
       <Sidebar className="committee-mobile-sidebar" as={Menu} animation="uncover" vertical visible={sidebarOpen}
