@@ -110,7 +110,7 @@ describe('self-hosted workspace navigation', () => {
       available = width + 14;
       act(() => resize());
       expect(nav.getAttribute('data-collapse-level')).toBe(String(level));
-      expect(nav.querySelector('.committee-primary-navigation')?.classList.contains('fluid')).toBe(level === 0);
+      expect(nav.querySelector('.committee-primary-navigation')?.classList.contains('fluid')).toBe(true);
       expect(page.querySelector('input')).toBe(draft);
       expect(draft.value).toBe('unsaved draft');
     };
@@ -152,6 +152,10 @@ describe('self-hosted workspace navigation', () => {
     expect(nav.getAttribute('data-navigation-mode')).toBe('sidebar');
     expect(page.querySelector('.committee-mobile-sidebar a[href="/committees/committee/posts"] .file-review-dot')).not.toBeNull();
     for (const [width, level] of [[800, 13], [900, 12], [1000, 11], [1100, 10], [1200, 9], [1300, 8], [1400, 7], [1500, 6], [1600, 5], [1700, 4], [1780, 3], [1900, 2], [1980, 1], [2100, 0]]) assertLevel(width, level);
+    // Restore Statistics as soon as it fits, even with only one pixel to spare.
+    assertLevel(1600, 5);
+    assertLevel(1637, 4);
+    assertLevel(2100, 0);
     expect(page.querySelector('.committee-navigation-measurement')?.hasAttribute('inert')).toBe(true);
     expect(nav.querySelector('a[href="/committees/committee/setup"]')?.textContent).toBe('Seats');
     assertLevel(1900, 2);

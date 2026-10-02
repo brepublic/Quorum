@@ -347,11 +347,6 @@
   min-width: 0;
 }
 
-.committee-navigation-desktop:not([data-collapse-level="0"]) > .committee-primary-navigation.ui.menu {
-  width: max-content;
-  max-width: 100%;
-}
-
 .committee-primary-navigation > .header.item {
   max-width: min(24rem, 50vw);
   overflow: hidden;

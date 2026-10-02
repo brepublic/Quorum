@@ -267,7 +267,6 @@ export function CommitteeNavigation({snapshot, user, logout, realtimeStatus = 'C
       if (!available) return;
       const width = (selector: string) => menu.querySelector(selector)?.getBoundingClientRect().width ?? 0;
       // Measure the full, inert menu even while its visible counterpart is folded.
-      // A small restoration margin prevents fractional-width oscillation.
       const full = [...menu.children].reduce((sum, child) => sum + child.getBoundingClientRect().width, 2);
       const more = width('.committee-navigation-more');
       const moreFiles = width('.committee-navigation-more-files');
@@ -288,10 +287,8 @@ export function CommitteeNavigation({snapshot, user, logout, realtimeStatus = 'C
             ? width('[data-navigation-key="/caucuses"] .navigation-caucus-label')
               - width('[data-navigation-key="/caucuses"] .navigation-caucus-short-measurement') : 0));
       }
-      setLevel(previous => {
-        const next = required.findIndex((needed, index) => needed + (index < previous ? 4 : 0) <= available);
-        return next < 0 ? 14 : next;
-      });
+      const next = required.findIndex(needed => needed <= available);
+      setLevel(next < 0 ? 14 : next);
     };
     const observer = new ResizeObserver(measure);
     observer.observe(container);
@@ -306,7 +303,7 @@ export function CommitteeNavigation({snapshot, user, logout, realtimeStatus = 'C
   const mode = level === 14 ? 'sidebar' : 'desktop';
   return <>
     <nav data-navigation-mode={mode} data-collapse-level={level} className="committee-navigation-desktop" aria-label={t('Committee navigation')}>
-      <Menu className="committee-primary-navigation" size="large" fluid={level === 0} data-crisis-reminder={crisisReminder}>
+      <Menu className="committee-primary-navigation" size="large" fluid data-crisis-reminder={crisisReminder}>
         <PrimaryItems snapshot={snapshot} onCreateCaucus={onCreateCaucus} level={level} hasPendingFileReview={hasPendingFileReview} />
         <Menu.Menu position="right"><AttendanceThresholdItem snapshot={snapshot} /><RealtimeStatusItem status={realtimeStatus} compact={level >= 3} />
           {user && <AccountMenu user={user} logout={logout} compact={level >= 1} />}</Menu.Menu>
