@@ -306,7 +306,7 @@ export function CommitteeNavigation({snapshot, user, logout, realtimeStatus = 'C
   const mode = level === 14 ? 'sidebar' : 'desktop';
   return <>
     <nav data-navigation-mode={mode} data-collapse-level={level} className="committee-navigation-desktop" aria-label={t('Committee navigation')}>
-      <Menu className="committee-primary-navigation" size="large" fluid data-crisis-reminder={crisisReminder}>
+      <Menu className="committee-primary-navigation" size="large" fluid={level === 0} data-crisis-reminder={crisisReminder}>
         <PrimaryItems snapshot={snapshot} onCreateCaucus={onCreateCaucus} level={level} hasPendingFileReview={hasPendingFileReview} />
         <Menu.Menu position="right"><AttendanceThresholdItem snapshot={snapshot} /><RealtimeStatusItem status={realtimeStatus} compact={level >= 3} />
           {user && <AccountMenu user={user} logout={logout} compact={level >= 1} />}</Menu.Menu>

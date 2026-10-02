@@ -110,6 +110,7 @@ describe('self-hosted workspace navigation', () => {
       available = width + 14;
       act(() => resize());
       expect(nav.getAttribute('data-collapse-level')).toBe(String(level));
+      expect(nav.querySelector('.committee-primary-navigation')?.classList.contains('fluid')).toBe(level === 0);
       expect(page.querySelector('input')).toBe(draft);
       expect(draft.value).toBe('unsaved draft');
     };
