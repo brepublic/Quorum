@@ -25,6 +25,7 @@ import {apiErrorText, LanguageMenuItem, LANGUAGE_OPTIONS, getLanguage, t} from '
 import {selfHostedApi, SelfHostedApiError, type SelfHostedApi} from '../services/self-hosted-api';
 import {selfHostedIdentityClient, type SelfHostedIdentityClient, type SelfHostedUser} from '../services/self-hosted-identity';
 import ProceedingsPanel from './self-hosted/ProceedingsPanel';
+import MeetingEmptyState from './self-hosted/MeetingEmptyState';
 import CrisisPanel from './self-hosted/CrisisPanel';
 import FilesPanel from './self-hosted/FilesPanel';
 import SystemSettings from './self-hosted/SystemSettings';
@@ -1080,7 +1081,10 @@ function PointsPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspa
     return groups;
   }, []);
   const canRaise = snapshot.viewer.audience !== 'PUBLIC' && snapshot.committee.status === 'ACTIVE';
-  return <Container text className="points-page">
+  if (session?.status !== 'OPEN' && points.length === 0) return <MeetingEmptyState snapshot={snapshot} className="points-page" />;
+  return <>
+    {session?.status !== 'OPEN' && <MeetingEmptyState snapshot={snapshot} className="points-page" />}
+    <Container text className="points-page">
     {canRaise && session?.status === 'OPEN' && types.length === 0 && <Message content={t('The current rules do not enable points.')} />}
     {canRaise && session?.status === 'OPEN' && types.length > 0 && <Form className="point-proposal-form" onSubmit={create}>
       <Form.Select label={t('Point type')} placeholder={t('Select type')} search={searchOptions} selection fluid icon="search"
@@ -1124,7 +1128,7 @@ function PointsPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspa
       </Card.Content>}</Card>;
       })}</Card.Group>
     </React.Fragment>)}
-  </Container>;
+  </Container></>;
 }
 
 function StatisticsPanel({snapshot}: {snapshot: CommitteeWorkspaceSnapshot}) {

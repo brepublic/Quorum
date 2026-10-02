@@ -828,7 +828,7 @@ const zhCN: Record<string, string> = {
   'Speaker time in seconds': '单席发言时间（秒）',
   'Total time in minutes': '总时长（分钟）',
   'Start a meeting first.': '请先开始会期。',
-  'Open a meeting first.': '请先开始会期',
+  'Meeting not in session': '会期尚未开始',
   'Current meeting session has ended.': '当前会期已结束。',
   '(No motions)': '（尚无动议）',
   'Roll Call ->': '点名->',

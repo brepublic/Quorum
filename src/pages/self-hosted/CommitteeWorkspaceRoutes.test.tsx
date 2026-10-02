@@ -867,16 +867,48 @@ describe('committee workspace routes and roles', () => {
     expect(page.textContent).toContain('Save ruling');
   });
 
-  it('guides users to roll call when no meeting is open', async () => {
-    const page = await render('CHAIR', '/committees/committee/motions', user, value => ({...value,
-      meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 2, name: '第2会期', phaseId: 'formal-debate',
-        activeRulePackageVersionId: 'rules', status: 'PENDING', revision: 2,
-        createdAt: '2026-08-14T00:00:00.000Z', closedAt: null}}));
+  it.each(['motions', 'points'].flatMap(view => [undefined, 'PENDING', 'CLOSED'].flatMap(status =>
+    (['en', 'zh-CN'] as const).map(language => ({view, status, language})))))
+  ('guides $view users to roll call for a $status meeting in $language', async ({view, status, language}) => {
+    setLanguage(language);
+    const page = await render('CHAIR', `/committees/committee/${view}`, user, value => ({...value,
+      meetingSession: status ? {id: 'meeting', committeeId: 'committee', ordinal: 2, name: '第2会期', phaseId: 'formal-debate',
+        activeRulePackageVersionId: 'rules', status: status as 'PENDING' | 'CLOSED', revision: 2,
+        createdAt: '2026-08-14T00:00:00.000Z', closedAt: status === 'CLOSED' ? '2026-08-14T00:30:00.000Z' : null} : undefined}));
 
-    expect(page.textContent).toContain('Open a meeting first.');
-    expect(page.querySelector('.motions-empty-card')).not.toBeNull();
-    expect(page.querySelector('.motions-empty-card-content')).not.toBeNull();
-    expect(page.querySelector('.motions-empty-card a[href="/committees/committee/roll-call"]')?.textContent).toContain('Roll Call');
+    expect(page.querySelector('.meeting-empty-card')?.textContent).toContain(
+      language === 'en' ? 'Meeting not in session' : '会期尚未开始');
+    expect(page.querySelector('.meeting-empty-card-content')).not.toBeNull();
+    expect(page.querySelector('.meeting-empty-card a[href="/committees/committee/roll-call"]')?.textContent).toContain(
+      language === 'en' ? 'Roll Call' : '点名');
+    expect(page.querySelector('form')).toBeNull();
+    if (view === 'points' && !status && language === 'en') {
+      await act(async () => {page.querySelector<HTMLAnchorElement>('.meeting-empty-card a')?.click();});
+      expect(page.querySelector('.roll-call-start-card')).not.toBeNull();
+      expect(page.querySelector('.meeting-empty-card')).toBeNull();
+    }
+  });
+
+  it.each(['motions', 'points'])('shows the ended notice on %s after adjournment', async view => {
+    const page = await render('PUBLIC', `/committees/committee/${view}`, user, value => ({...value,
+      meetingEndedAt: '2026-08-14T00:30:00.000Z'}));
+    expect(page.querySelector('.meeting-empty-card')?.textContent).toContain('Meeting ended');
+    expect(page.querySelector('.meeting-empty-card')?.textContent).not.toContain('Meeting not in session');
+    expect(page.querySelector('.meeting-empty-card a')?.getAttribute('href')).toBe('/committees/committee/roll-call');
+  });
+
+  it.each(['motions', 'points'])('replaces the %s guidance when a meeting starts', async view => {
+    let started = false;
+    const page = await render('CHAIR', `/committees/committee/${view}`, user, value => ({...value,
+      meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: 'Session 1', phaseId: 'formal-debate',
+        activeRulePackageVersionId: 'rules', status: started ? 'OPEN' : 'PENDING', revision: 2,
+        createdAt: '2026-08-14T00:00:00.000Z', closedAt: null}}));
+    expect(page.querySelector('.meeting-empty-card')).not.toBeNull();
+    started = true;
+    await act(async () => {window.dispatchEvent(new Event('focus'));});
+    expect(page.querySelector('.meeting-empty-card')).toBeNull();
+    expect(page.querySelector(`.${view}-page`)).not.toBeNull();
+    if (view === 'points') expect(page.textContent).toContain('The current rules do not enable points.');
   });
 
   it.each(['suspend-meeting', 'adjourn-meeting'])('returns to the pending-session page after passing %s', async motionTypeId => {
@@ -909,10 +941,10 @@ describe('committee workspace routes and roles', () => {
       .find(button => button.textContent?.trim() === 'Passed');
     await act(async () => {passed?.click(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();});
     expect(decideMotion).toHaveBeenCalledWith('suspend', 1, 'PASSED');
-    expect(page.querySelector('.motions-empty-card')?.textContent).toContain(
-      motionTypeId === 'adjourn-meeting' ? 'Meeting ended' : 'Open a meeting first.');
+    expect(page.querySelector('.meeting-empty-card')?.textContent).toContain(
+      motionTypeId === 'adjourn-meeting' ? 'Meeting ended' : 'Meeting not in session');
     expect([...page.querySelectorAll('button')].some(button => button.textContent?.trim() === 'Passed')).toBe(false);
-    expect(page.querySelector('.motions-empty-card a[href="/committees/committee/roll-call"]')?.textContent).toContain('Roll Call');
+    expect(page.querySelector('.meeting-empty-card a[href="/committees/committee/roll-call"]')?.textContent).toContain('Roll Call');
   });
 
   it('allows starting the next session after adjournment and clears the ended notice', async () => {
@@ -1050,6 +1082,20 @@ describe('committee workspace routes and roles', () => {
     expect(page.querySelectorAll('.history-session-divider')[0]?.textContent).toContain('第2会期');
     expect(page.querySelectorAll('.history-session-divider')[1]?.textContent).toContain('第1会期');
     expect(page.querySelectorAll('.point-list')).toHaveLength(1);
+  });
+
+  it('keeps point history visible alongside roll-call guidance between sessions', async () => {
+    const page = await render('CHAIR', '/committees/committee/points', user, value => ({...value,
+      meetingSession: {id: 'next-meeting', committeeId: 'committee', ordinal: 2, name: 'Session 2', phaseId: 'formal-debate',
+        activeRulePackageVersionId: 'rules', status: 'PENDING', revision: 1, createdAt: '2026-08-14T01:00:00.000Z', closedAt: null},
+      points: [{id: 'point', committeeId: 'committee', meetingSessionId: 'old-meeting',
+        typeNames: {en: 'Point of order'}, pointTypeId: 'point-of-order', content: 'Historical reason',
+        raisedBySeatId: 'seat', raisedBySeatDisplayName: 'China', actorUserId: 'user', onBehalfOfSeatId: 'seat',
+        interruptRequested: false, status: 'UPHELD', chairResponse: '', resolvedByUserId: 'user',
+        rulePackageVersionId: 'rules', revision: 1, createdAt: '2026-08-14T00:00:00.000Z', resolvedAt: '2026-08-14T00:01:00.000Z'}]}));
+    expect(page.querySelector('.meeting-empty-card')?.textContent).toContain('Meeting not in session');
+    expect(page.querySelector('.point-list')?.textContent).toContain('Historical reason');
+    expect(page.querySelector('.point-proposal-form')).toBeNull();
   });
 
   it('uses rule-package motion choices and does not render the former combined workspace', async () => {

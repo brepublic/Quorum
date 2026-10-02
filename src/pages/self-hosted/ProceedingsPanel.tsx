@@ -21,6 +21,7 @@ import {Button, Card, Checkbox, Confirm, Container, Divider, Dropdown, Feed, For
 import {Link, Redirect, useHistory} from 'react-router-dom';
 import {CountryFlagDisplay} from '../../components/CountryFlagDisplay';
 import Loading from '../../components/Loading';
+import MeetingEmptyState from './MeetingEmptyState';
 import {getLanguage, t} from "../../i18n";
 import {newIdempotencyKey, SelfHostedApiError, type SelfHostedApi} from '../../services/self-hosted-api';
 import {localizedDisplayName} from './TemplateManagers';
@@ -983,14 +984,7 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
   const canPropose = snapshot.committee.status === 'ACTIVE' && (canChair
     || snapshot.viewer.audience === 'MEMBER' && delegateMayPropose
       && snapshot.seats.some(seat => seat.id === snapshot.viewer.seatId && seat.canProceduralVote));
-  if (!session) return <Container text className="motions-page motions-empty-state">
-    <Card className="motions-empty-card">
-      <Card.Content textAlign="center" className="motions-empty-card-content">
-        <Card.Description>{t(snapshot.meetingEndedAt ? 'Meeting ended' : 'Open a meeting first.')}</Card.Description>
-        <Button as={Link} to={`/committees/${snapshot.committee.id}/roll-call`} primary>{t('Roll Call')}<Icon name="arrow right" /></Button>
-      </Card.Content>
-    </Card>
-  </Container>;
+  if (!session) return <MeetingEmptyState snapshot={snapshot} className="motions-page" />;
 
   const presentSeatIds = new Set(snapshot.attendance.filter(item => item.state === 'PRESENT'
     && snapshot.seats.some(seat => seat.id === item.seatId && seat.canProceduralVote)).map(item => item.seatId));
