@@ -361,6 +361,14 @@
   margin-left: 0 !important;
 }
 
+.ui.menu .dropdown.item.account-menu-compact {
+  width: 2.5em;
+  min-width: 0;
+  padding-left: 0;
+  padding-right: 0;
+  justify-content: center;
+}
+
 .ui.menu .dropdown.item.account-menu-compact > .dropdown.icon {
   margin: 0;
 }

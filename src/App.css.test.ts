@@ -27,6 +27,11 @@ describe('resolution voting grid', () => {
 });
 
 describe('compact committee navigation', () => {
+  it('sizes the compact account button for a centered avatar with no horizontal item padding', () => {
+    const css = readFileSync(resolve(process.cwd(), 'src', 'App.css'), 'utf8');
+    expect(css).toMatch(/\.ui\.menu \.dropdown\.item\.account-menu-compact\s*\{\s*width: 2\.5em;\s*min-width: 0;\s*padding-left: 0;\s*padding-right: 0;\s*justify-content: center;\s*\}/);
+  });
+
   it('removes the automatic gap before attendance and uses an icon without text spacing', () => {
     const css = readFileSync(resolve(process.cwd(), 'src', 'App.css'), 'utf8');
     expect(css).toMatch(/\.committee-navigation-desktop:not\(\[data-collapse-level="0"\]\) \.committee-primary-navigation\.ui\.menu > \.right\.menu\s*\{\s*margin-left: 0 !important;\s*\}/);
