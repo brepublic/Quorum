@@ -1199,6 +1199,42 @@ describe('committee workspace routes and roles', () => {
       parameters: {amendmentTarget: 'amendment', proposal: 'Replace clause 1'}}));
   });
 
+  it('groups motion choices and skips headings when selecting with the mouse or keyboard', async () => {
+    const ids = ['adjourn-meeting', 'propose-strawpoll', 'introduce-draft-resolution', 'open-unmoderated-caucus',
+      'close-debate', 'open-debate', 'open-moderated-caucus', 'introduce-working-paper', 'suspend-meeting'];
+    const page = await render('CHAIR', '/committees/committee/motions', user, value => ({...value,
+      motionSettings: {...value.motionSettings, showMotionsOnDemand: false},
+      meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: 'Session 1', phaseId: 'formal-debate',
+        activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1, createdAt: '', closedAt: null},
+      activeRules: {...value.activeRules, motionTypes: ids.map(id => ({id, procedural: true, requiredSecondCount: 0}))}}));
+    const field = page.querySelector<HTMLElement>('.motion-type-field .ui.dropdown')!;
+    expect([...field.querySelectorAll('.motion-group-heading')].map(item => item.textContent))
+      .toEqual(['Formal Debate', 'Caucuses', 'Files', 'Other', 'Meeting Arrangements']);
+    expect([...field.querySelectorAll('.motion-type-option')].map(item => item.textContent)).toEqual([
+      'Open Formal Debate', 'Close Formal Debate', 'Open Moderated Caucus', 'Open Unmoderated Caucus',
+      'Introduce Working Paper', 'Introduce Draft Resolution', 'Propose Straw Poll', 'Suspend the meeting', 'Adjourn the meeting'
+    ]);
+    await act(async () => {field.click();});
+    await act(async () => {field.querySelector<HTMLElement>('.motion-group-heading')!.click();});
+    expect(field.classList.contains('visible')).toBe(true);
+    expect(field.querySelector(':scope > .text')?.textContent).toBe('Open Formal Debate');
+    for (let index = 0; index < 2; index++) {
+      await act(async () => {field.dispatchEvent(new KeyboardEvent('keydown', {key: 'ArrowDown', keyCode: 40, bubbles: true}));});
+    }
+    expect(field.querySelector('.motion-type-option.selected')?.textContent).toBe('Open Moderated Caucus');
+    expect(field.querySelector('.motion-group-heading.selected')).toBeNull();
+    await act(async () => {field.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', keyCode: 13, bubbles: true}));});
+    expect(field.querySelector(':scope > .text')?.textContent).toBe('Open Moderated Caucus');
+    const search = field.querySelector<HTMLInputElement>('input.search')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(search, 'no-such-motion');
+      search.dispatchEvent(new Event('input', {bubbles: true}));
+    });
+    expect(field.querySelector('.motion-group-heading')).toBeNull();
+    expect(field.querySelector('.motion-type-option')).toBeNull();
+    expect(field.querySelector('.menu .message')).not.toBeNull();
+  });
+
   it.each([true, false])('uses the actual main list for motion visibility (open=%s)', async open => {
     const page = await render('CHAIR', '/committees/committee/motions', user, value => ({...value,
       meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: 'Session 1', phaseId: 'formal-debate',
@@ -1207,7 +1243,7 @@ describe('committee workspace routes and roles', () => {
         entries: [], speeches: []}] as unknown as SpeakerList[],
       activeRules: {...value.activeRules, motionTypes: ['open-debate', 'close-debate'].map(id => ({id,
         procedural: true, requiredSecondCount: 0}))}}));
-    const options = [...page.querySelectorAll('.motion-proposal-form > .field:first-child .menu [role="option"]')].map(item => item.textContent);
+    const options = [...page.querySelectorAll('.motion-type-option')].map(item => item.textContent);
     expect(options).toEqual([open ? 'Close Formal Debate' : 'Open Formal Debate']);
   });
 
@@ -1229,10 +1265,11 @@ describe('committee workspace routes and roles', () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(search, 'kqzslb');
       search.dispatchEvent(new Event('input', {bubbles: true}));
     });
-    const option = typeField.querySelector<HTMLElement>('[role="option"]')!;
+    expect([...typeField.querySelectorAll('.motion-group-heading')].map(item => item.textContent)).toEqual(['Formal Debate']);
+    const option = typeField.querySelector<HTMLElement>('.motion-type-option')!;
     expect(option.textContent).toContain('Open Formal Debate');
     expect(option.querySelector('.motion-hidden-label')?.textContent).toBe('Hidden');
-    await act(async () => {option.click();});
+    await act(async () => {search.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', keyCode: 13, bubbles: true}));});
     expect(search.value).toBe('');
     expect(typeField.querySelector('.text')?.textContent).toBe('Open Formal Debate');
     expect(typeField.querySelector('.menu')?.textContent).not.toContain('Open Formal Debate');
@@ -1251,7 +1288,7 @@ describe('committee workspace routes and roles', () => {
       meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: 'Session 1', phaseId: 'formal-debate',
         activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1, createdAt: '', closedAt: null},
       activeRules: {...value.activeRules, motionTypes: ids.map(id => ({id, procedural: true, requiredSecondCount: 0}))}}));
-    const options = [...page.querySelectorAll('.motion-proposal-form > .field:first-child .menu [role="option"]')].map(item => item.textContent);
+    const options = [...page.querySelectorAll('.motion-type-option')].map(item => item.textContent);
     expect(options).toHaveLength(enabled ? 1 : 6);
     expect(options).toContain('Open Moderated Caucus');
     expect(options.some(text => text?.includes('Amendment'))).toBe(false);

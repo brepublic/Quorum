@@ -17,7 +17,7 @@ import type {
 } from '@quorum/contracts';
 import {DragDropContext, Draggable, Droppable, type DropResult} from 'react-beautiful-dnd';
 import {Button, Card, Checkbox, Confirm, Container, Divider, Dropdown, Feed, Form, Grid, Header, Icon, Input, Label, List,
-  Menu, Message, Pagination, Popup, Progress, Segment, Select, Statistic, Table, TextArea} from 'semantic-ui-react';
+  Menu, Message, Pagination, Popup, Progress, Segment, Select, Statistic, Table, TextArea, type DropdownItemProps} from 'semantic-ui-react';
 import {Link, Redirect, useHistory} from 'react-router-dom';
 import {CountryFlagDisplay} from '../../components/CountryFlagDisplay';
 import Loading from '../../components/Loading';
@@ -956,6 +956,38 @@ const motionTypePosition = (id: string): number => ({
   'adjourn-meeting': 3
 }[id] ?? 0);
 
+const motionGroups = [
+  {label: 'Formal Debate', types: ['open-debate', 'close-debate']},
+  {label: 'Motion Caucuses', types: ['open-moderated-caucus', 'open-unmoderated-caucus']},
+  {label: 'Files', types: ['introduce-working-paper', 'introduce-draft-resolution', 'reorder-draft-resolutions',
+    'postpone-resolution', 'resume-resolution', 'vote-on-resolution', 'introduce-amendment', 'vote-on-amendment']},
+  {label: 'Other Motions', types: ['propose-strawpoll']},
+  {label: 'Meeting Arrangements', types: ['suspend-meeting', 'adjourn-meeting']}
+];
+
+function MotionOption({groupLabel, children, ...props}: React.HTMLAttributes<HTMLDivElement> & {groupLabel?: string}) {
+  return <>{groupLabel && <div className="header motion-group-heading" role="presentation"
+    onMouseDown={event => event.preventDefault()} onClick={event => event.stopPropagation()}>{groupLabel}</div>}
+    <div {...props}>{children}</div></>;
+}
+
+function groupedMotionOptions(options: DropdownItemProps[], query = ''): DropdownItemProps[] {
+  const matches = searchOptions(options, query);
+  const typeId = (option: DropdownItemProps) => String(option.value).split(':')[0];
+  return motionGroups.flatMap(group => {
+    const items = matches.filter(option => group.types.includes(typeId(option))
+      || group.label === 'Other Motions' && !motionGroups.some(item => item.types.includes(typeId(option))));
+    if (!items.length) return [];
+    if (!query.trim()) items.sort((a, b) => {
+      const position = (option: DropdownItemProps) => String(option.value).startsWith(linkedResolutionMotionPrefix)
+        ? group.types.length : group.types.indexOf(typeId(option));
+      return position(a) - position(b);
+    });
+    return items.map((option, index) => ({...option, as: MotionOption, className: 'motion-type-option',
+      groupLabel: index === 0 ? t(group.label) : undefined}));
+  });
+}
+
 function hiddenMotionTypeIds(snapshot: CommitteeWorkspaceSnapshot): Set<string> {
   if (!snapshot.motionSettings.showMotionsOnDemand) return new Set();
   const sessionId = snapshot.meetingSession?.id;
@@ -1117,10 +1149,11 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
   return <Container text className="motions-page">
     {canPropose && <Form className="motion-proposal-form"
       error={(!chairAdvisoryMode && !divisible) || identicalSeats} onSubmit={propose}>
-      <Form.Select placeholder={t('Select type')} search={searchOptions} selection fluid label={t('Type')} icon="search"
+      <Form.Select className="motion-type-field" placeholder={t('Select type')} search={groupedMotionOptions} selection fluid label={t('Type')} icon="search"
         searchQuery={motionSearch} onSearchChange={(_, data) => setMotionSearch(data.searchQuery)}
         onClose={() => setMotionSearch('')} text={selectedMotionOption?.text}
-        options={displayedMotionOptions} value={selectedMotionOption ? motionChoice : ''} onChange={(_, data) => {
+        options={groupedMotionOptions(displayedMotionOptions)} value={selectedMotionOption ? motionChoice : ''} onChange={(_, data) => {
+          if (!motionOptions.some(option => option.value === data.value)) return;
           setMotionSearch('');
           const value = String(data.value); setMotionChoice(value);
           const amendmentOption = amendmentMotionOptions.find(option => option.value === value);

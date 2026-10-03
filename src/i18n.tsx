@@ -20,6 +20,8 @@ export const SUPPORTED_LANGUAGES: readonly Language[] = LANGUAGE_OPTIONS.map(opt
 const STORAGE_KEY = 'muncoordinated-language';
 
 const en: Record<string, string> = {
+  'Motion Caucuses': 'Caucuses',
+  'Other Motions': 'Other',
   'Unmoderated Caucus': 'Unmoderated Caucus',
   'Moderated Caucuses': 'Moderated Caucuses',
   'Stage': 'Prepare next speaker',
@@ -1106,6 +1108,10 @@ const zhCN: Record<string, string> = {
   'Settings': '设置',
   'Show motion types on demand': '按需显示动议类型',
   'Hidden': '已隐藏',
+  'Formal Debate': '正式辩论',
+  'Motion Caucuses': '磋商',
+  'Other Motions': '其他',
+  'Meeting Arrangements': '会议安排',
   'Help': '帮助',
   'Open': '开放',
   'Closed': '已关闭',

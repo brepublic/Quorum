@@ -1967,6 +1967,26 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   color: #767676;
 }
 
+.motion-type-field .ui.dropdown .menu > .motion-group-heading,
+.motion-type-field .ui.dropdown .menu > .motion-group-heading:hover {
+  color: #000 !important;
+  font-weight: 700;
+  opacity: 1;
+  cursor: default;
+  background: transparent !important;
+  box-shadow: none !important;
+  filter: none !important;
+  margin: 0;
+  padding: 0.78571429rem 1.14285714rem;
+  font-size: 1em;
+  text-transform: none;
+}
+
+.motion-type-field .ui.dropdown .menu > .item.motion-type-option {
+  font-weight: 400;
+  padding-left: calc(1.14285714rem + 1em) !important;
+}
+
 .motion-proposal-form .ui.button[type='submit'] {
   min-height: 2.75rem;
 }
