@@ -419,25 +419,28 @@ async function requireDirectVoteDocument(client: PoolClient, document: DocumentR
   if (ballot.rowCount) throw new AppError({code: 'RESOURCE_CONFLICT', reason: 'BALLOT_ALREADY_EXISTS', message: 'The draft already has a formal ballot.'});
 }
 
-async function updateAmendmentDirectResult(client: PoolClient, document: DocumentRow, committee: Stage4CommitteeRow, auth: AuthenticatedSession,
+async function updateDocumentDirectResult(client: PoolClient, document: DocumentRow, committee: Stage4CommitteeRow, auth: AuthenticatedSession,
   context: Stage4Context, now: Date): Promise<void> {
-  if (document.kind !== 'AMENDMENT') return;
+  if (document.draft_type === 'DIRECTIVE') return;
   const metadata = (await client.query<ResolutionRow>('SELECT * FROM document_voting WHERE document_id=$1', [document.id])).rows[0]!;
   if (!metadata.direct_vote_completed_at) return;
   const state = await resolutionDirectVoteState(client, document, metadata);
   if (!state.automaticResult) return;
-  const outcome = state.automaticResult === 'PASSED' ? 'INCORPORATED' : 'REJECTED';
+  if (document.kind === 'RESOLUTION' && state.votes.length !== state.eligibility.length) return;
+  const outcome = document.kind === 'RESOLUTION'
+    ? state.automaticResult === 'PASSED' ? 'PASSED' : 'FAILED'
+    : state.automaticResult === 'PASSED' ? 'INCORPORATED' : 'REJECTED';
   if (document.status === outcome) return;
   const previous = (await client.query<{id: string}>('SELECT id FROM document_result_decisions WHERE document_id=$1 ORDER BY created_at DESC,id DESC LIMIT 1', [document.id])).rows[0];
   await client.query(`INSERT INTO document_result_decisions(id,committee_id,document_id,previous_status,new_status,reason,corrects_decision_id,actor_user_id,created_at)
     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [randomUUID(), document.committee_id, document.id, document.status, outcome,
     previous ? 'Vote correction' : null, previous?.id ?? null, auth.user.id, now]);
-  await client.query('UPDATE documents SET status=$2,revision=revision+1,updated_at=$3 WHERE id=$1', [document.id,outcome,now]);
+  await client.query('UPDATE documents SET status=$2,is_public=true,revision=revision+1,updated_at=$3 WHERE id=$1', [document.id,outcome,now]);
   await audit(client, context, {committeeId: document.committee_id, actorUserId: auth.user.id, capabilities: ['CHAIR'],
     action: 'documents.result_recorded', resourceType: 'document', resourceId: document.id, before: {status: document.status}, after: {status: outcome}});
   await appendEvent(client, committee, {type: 'document.result_recorded', resourceType: 'document', resourceId: document.id,
     revision: document.revision + 1, payload: {previousStatus: document.status, outcome, corrected: Boolean(previous)}, audience: 'PUBLIC'});
-  document.status = outcome; document.revision += 1; document.updated_at = now;
+  document.status = outcome; document.is_public = true; document.revision += 1; document.updated_at = now;
 }
 
 async function updateDirectiveDirectResult(client: PoolClient, document: DocumentRow, committee: Stage4CommitteeRow,
@@ -3611,7 +3614,7 @@ export class Stage5Service {
         revision: document.revision + 1, payload: {kind: document.kind}, audience: document.is_public ? 'PUBLIC' : 'MEMBER'});
       await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id, capabilities: ['CHAIR'],
         action: 'documents.settings_changed', resourceType: 'document', resourceId: documentId, before, after});
-      if (majority !== undefined) await updateAmendmentDirectResult(client, updated.rows[0] as DocumentRow, committee, auth, context, now);
+      if (majority !== undefined) await updateDocumentDirectResult(client, updated.rows[0] as DocumentRow, committee, auth, context, now);
       if (majority !== undefined) await updateDirectiveDirectResult(client, updated.rows[0] as DocumentRow, committee, auth, context, now);
       return documentState(client, updated.rows[0] as DocumentRow);
     });
@@ -3765,7 +3768,7 @@ export class Stage5Service {
         await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id, capabilities: ['CHAIR'],
           action: 'documents.direct_vote_submitted', resourceType: 'document', resourceId: documentId,
           after: {seatCount: votes.length}});
-        await updateAmendmentDirectResult(client, document, committee, auth, context, now);
+        await updateDocumentDirectResult(client, document, committee, auth, context, now);
         await updateDirectiveDirectResult(client, document, committee, auth, context, now);
         return documentState(client, document);
       }});
@@ -3844,7 +3847,7 @@ export class Stage5Service {
         onBehalfOfSeatId: seatId, action: 'documents.direct_vote_changed', resourceType: 'document', resourceId: documentId,
         before: {seatId, choice: previousChoice, voteRevision: current?.revision ?? 0},
         after: {seatId, choice, voteRevision}});
-      await updateAmendmentDirectResult(client, document, committee, auth, context, now);
+      await updateDocumentDirectResult(client, document, committee, auth, context, now);
       await updateDirectiveDirectResult(client, document, committee, auth, context, now);
         return documentState(client, document);
     });

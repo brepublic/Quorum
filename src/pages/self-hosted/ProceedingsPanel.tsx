@@ -165,6 +165,11 @@ const statusLabels: Record<string, string> = {
 
 function statusLabel(value: string): string { return t(statusLabels[value] ?? value); }
 
+const resolutionStatusLabels: Record<string, string> = {
+  DRAFT: 'Pending introduction', PUBLISHED: 'Resolution status: Introduced',
+  POSTPONED: 'Resolution status: Postponed', VOTING: 'Voting in progress'
+};
+
 function seatOptionContent(seat: CommitteeWorkspaceSnapshot['seats'][number]) {
   const flag = <CountryFlagDisplay flag={seat.flag} />;
   return <span className="motion-seat-option">{flag}<span>{seat.displayName}</span></span>;
@@ -2073,7 +2078,10 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab, draft
   };
   return <Container className="resolution-page" fluid style={{paddingBottom: '2em'}}><Grid columns="equal" stackable>
     <Grid.Row><Grid.Column><Input value={versionTitle} loading={!document} labelPosition="right"
-      label={<Label>{statusLabel(document.status)}</Label>} size="massive" fluid placeholder={t(draftType === 'DIRECTIVE' ? 'Set directive name' : 'Set resolution name')}
+      label={<Label color={document.status === 'PASSED' ? 'green' : document.status === 'FAILED' ? 'red' : undefined}>
+        {draftType === 'RESOLUTION' && resolutionStatusLabels[document.status]
+          ? t(resolutionStatusLabels[document.status]) : statusLabel(document.status)}</Label>}
+      size="massive" fluid placeholder={t(draftType === 'DIRECTIVE' ? 'Set directive name' : 'Set resolution name')}
       disabled={!editable} onChange={event => {setVersionTitle(event.currentTarget.value); setVersionTitleDirty(true);}} onBlur={() => void saveVersion()} /></Grid.Column></Grid.Row>
     <Grid.Row><Grid.Column><Menu pointing secondary>
       {(draftType==='DIRECTIVE' ? [['text','Text']] : [['text', 'Text'], ['amendments', 'Amendments']]).map(([path, label]) =>

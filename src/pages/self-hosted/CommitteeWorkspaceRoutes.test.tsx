@@ -70,6 +70,31 @@ function clickSemanticCheckbox(element?: Element | null) {
 }
 
 describe('committee workspace routes and roles', () => {
+  it.each([
+    ['DRAFT', 'Pending introduction', '待介绍', null],
+    ['PUBLISHED', 'Introduced', '已介绍', null],
+    ['POSTPONED', 'Postponed', '已延置', null],
+    ['VOTING', 'Voting in progress', '正在表决', null],
+    ['PASSED', 'Passed', '通过', 'green'],
+    ['FAILED', 'Failed', '未通过', 'red']
+  ] as const)('shows the stored resolution status %s with localized copy and result color', async (status, english, chinese, color) => {
+    const document: ProceedingDocument = {id: 'resolution', committeeId: 'committee', meetingSessionId: 'meeting',
+      kind: 'RESOLUTION', draftType: 'RESOLUTION', resolutionId: null, ordinal: 1, customTitle: null,
+      title: 'Draft Resolution 1.1', status, rulePackageVersionId: 'rules',
+      currentVersion: {id: 'version', versionNumber: 1, content: 'Resolution', contentFile: null, createdAt: '2026-10-03T00:00:00Z'},
+      votingVersionId: null, public: status !== 'DRAFT', proposers: [], seconders: [], delegatesCanAmend: false,
+      directVote: null, resultDecisions: [], revision: 1, discussion: [], createdAt: '2026-10-03T00:00:00Z', updatedAt: '2026-10-03T00:00:00Z'};
+    const page = await render('CHAIR', '/committees/committee/resolutions/resolution', user,
+      value => ({...value, documents: [document]}));
+    const label = page.querySelector('.resolution-page .ui.input > .ui.label')!;
+    expect(label.textContent).toBe(english);
+    if (color) expect(label.classList.contains(color)).toBe(true);
+    await act(async () => {setLanguage('zh-CN');});
+    expect(label.textContent).toBe(chinese);
+    // The title follows the stored status even when no direct-vote summary exists.
+    expect(page.querySelector('.resolution-page input')?.getAttribute('value')).toBe('Draft Resolution 1.1');
+  });
+
   it('updates pending-file dots through the existing SSE while viewing another page', async () => {
     let sequence = 1;
     let status = 'UPLOAD_COMPLETE';

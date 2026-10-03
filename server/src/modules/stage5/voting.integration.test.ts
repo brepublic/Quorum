@@ -7,6 +7,54 @@ import {
 } from '../../../test/stage5-postgres-fixture';
 
 integration('PostgreSQL stage 5 voting', () => {
+  it.each(['SIMPLE_MAJORITY', 'TWO_THIRDS', 'TWO_THIRDS_NON_ABSTAINING'] as const)(
+    'synchronizes completed resolution results and corrections under %s', async majority => {
+      const f = await meetingFixture();
+      let document = await stage5.createResolution(f.firstChair, f.committee.id,
+        {meetingSessionId: f.session.id, customTitle: null, content: 'Resolution'}, randomUUID(), context('result-document'));
+      if (majority !== document.directVote?.majority) document = await stage5.updateDocumentSettings(f.firstChair, document.id,
+        {baseRevision: document.revision, majority}, context('result-majority'));
+      document = await stage5.setResolutionDirectVote(f.firstChair, document.id,
+        {seatId: f.firstSeat.id, choice: 'FOR'}, context('result-partial'));
+      expect(document).toMatchObject({status: 'DRAFT', resultDecisions: [], directVote: {completedAt: null}});
+      document = await stage5.setResolutionDirectVote(f.firstChair, document.id,
+        {seatId: f.secondSeat.id, choice: 'FOR'}, context('result-complete'));
+      expect(document).toMatchObject({status: 'PASSED', public: true, revision: expect.any(Number),
+        resultDecisions: [{previousStatus: 'DRAFT', newStatus: 'PASSED'}], directVote: {automaticResult: 'PASSED'}});
+      expect((await stage4.snapshot(f.committee.id, f.firstChair)).documents?.find(item => item.id === document.id)?.status).toBe('PASSED');
+      expect((await stage4.snapshot(f.committee.id)).documents?.find(item => item.id === document.id)?.status).toBe('PASSED');
+      await stage4.updateSeat(f.firstChair, f.committee.id, f.firstSeat.id,
+        {baseRevision: f.firstSeat.revision, patch: {hasVeto: true}}, context('result-veto-seat'));
+      document = await stage5.setResolutionDirectVote(f.firstChair, document.id,
+        {seatId: f.firstSeat.id, choice: 'AGAINST'}, context('result-veto'));
+      expect(document).toMatchObject({status: 'FAILED', directVote: {automaticResult: 'VETOED'},
+        resultDecisions: [{newStatus: 'PASSED'}, {previousStatus: 'PASSED', newStatus: 'FAILED',
+          correctsDecisionId: document.resultDecisions[0]!.id, reason: 'Vote correction'}]});
+      const failedRevision = document.revision;
+      document = await stage5.setResolutionDirectVote(f.firstChair, document.id,
+        {seatId: f.firstSeat.id, choice: 'FOR'}, context('result-pass-again'));
+      expect(document).toMatchObject({status: 'PASSED', revision: failedRevision + 1,
+        resultDecisions: [{newStatus: 'PASSED'}, {newStatus: 'FAILED'}, {newStatus: 'PASSED'}]});
+      expect((await pool!.query("SELECT payload->>'outcome' AS outcome FROM committee_events WHERE resource_id=$1 AND event_type='document.result_recorded' ORDER BY sequence", [document.id])).rows)
+        .toEqual([{outcome: 'PASSED'}, {outcome: 'FAILED'}, {outcome: 'PASSED'}]);
+      expect((await pool!.query("SELECT count(*)::int AS count FROM audit_log WHERE resource_id=$1 AND action='documents.result_recorded'", [document.id])).rows[0].count).toBe(3);
+    });
+
+  it('resynchronizes a completed resolution when its majority changes', async () => {
+    const f = await meetingFixture();
+    let document = await stage5.createResolution(f.firstChair, f.committee.id,
+      {meetingSessionId: f.session.id, customTitle: null, content: 'Resolution'}, randomUUID(), context('majority-result-document'));
+    document = await stage5.setResolutionDirectVote(f.firstChair, document.id,
+      {seatId: f.firstSeat.id, choice: 'FOR'}, context('majority-result-for'));
+    document = await stage5.setResolutionDirectVote(f.firstChair, document.id,
+      {seatId: f.secondSeat.id, choice: 'ABSTAIN'}, context('majority-result-abstain'));
+    expect(document).toMatchObject({status: 'FAILED', directVote: {automaticResult: 'FAILED'}});
+    document = await stage5.updateDocumentSettings(f.firstChair, document.id,
+      {baseRevision: document.revision, majority: 'TWO_THIRDS_NON_ABSTAINING'}, context('majority-result-change'));
+    expect(document).toMatchObject({status: 'PASSED', directVote: {automaticResult: 'PASSED'},
+      resultDecisions: [{newStatus: 'FAILED'}, {previousStatus: 'FAILED', newStatus: 'PASSED'}]});
+  });
+
   it('separates procedural and substantive voters while keeping strawpolls open to file-only seats', async () => {
     const f = await meetingFixture(true);
     await stage4.updateSeat(f.firstChair, f.committee.id, f.secondSeat.id,
@@ -92,10 +140,13 @@ integration('PostgreSQL stage 5 voting', () => {
     const key = randomUUID();
     const submitted = await stage5.submitResolutionDirectVote(f.firstChair, document.id,
       request, key, context('batch-submit'));
+    expect(submitted).toMatchObject({status: 'FAILED', revision: document.revision + 1,
+      resultDecisions: [{previousStatus: 'DRAFT', newStatus: 'FAILED'}]});
     expect(submitted.directVote).toMatchObject({castRevision: 1, completedAt: expect.any(String),
       votes: expect.arrayContaining([{seatId: f.firstSeat.id, choice: 'FOR',
         id: expect.any(String), seatDisplayName: expect.any(String), revision: 1, castAt: expect.any(String)}])});
     await stage5.submitResolutionDirectVote(f.firstChair, document.id, request, key, context('batch-retry'));
+    expect((await pool!.query('SELECT 1 FROM document_result_decisions WHERE document_id=$1', [document.id])).rowCount).toBe(1);
     expect((await pool!.query('SELECT 1 FROM document_direct_vote_revisions WHERE document_id=$1',
       [document.id])).rowCount).toBe(2);
     await expect(stage5.submitResolutionDirectVote(f.secondChair, document.id,
@@ -103,8 +154,14 @@ integration('PostgreSQL stage 5 voting', () => {
     const corrected = await stage5.setResolutionDirectVote(f.firstChair, document.id,
       {seatId: f.firstSeat.id, choice: 'AGAINST'}, context('batch-correction'));
     expect(corrected.directVote).toMatchObject({castRevision: 2, completedAt: submitted.directVote?.completedAt});
+    const passed = await stage5.setResolutionDirectVote(f.firstChair, document.id,
+      {seatId: f.firstSeat.id, choice: 'FOR'}, context('batch-correction-for'));
+    const completed = await stage5.setResolutionDirectVote(f.firstChair, document.id,
+      {seatId: f.secondSeat.id, choice: 'FOR'}, context('batch-correction-pass'));
+    expect(passed.status).toBe('FAILED');
+    expect(completed).toMatchObject({status: 'PASSED', resultDecisions: [{newStatus: 'FAILED'}, {newStatus: 'PASSED'}]});
     expect((await pool!.query('SELECT 1 FROM document_direct_vote_revisions WHERE document_id=$1',
-      [document.id])).rowCount).toBe(3);
+      [document.id])).rowCount).toBe(5);
   });
 
   it('reads ballot controls from the original rule version after a new binding', async () => {

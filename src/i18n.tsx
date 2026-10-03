@@ -20,6 +20,8 @@ export const SUPPORTED_LANGUAGES: readonly Language[] = LANGUAGE_OPTIONS.map(opt
 const STORAGE_KEY = 'muncoordinated-language';
 
 const en: Record<string, string> = {
+  'Resolution status: Introduced': 'Introduced',
+  'Resolution status: Postponed': 'Postponed',
   'Motion Caucuses': 'Caucuses',
   'Other Motions': 'Other',
   'Unmoderated Caucus': 'Unmoderated Caucus',
@@ -907,6 +909,9 @@ const zhCN: Record<string, string> = {
   'Withdrawn': '已撤回',
   'Superseded': '已替代',
   'Published': '已发布',
+  'Pending introduction': '待介绍',
+  'Resolution status: Introduced': '已介绍',
+  'Resolution status: Postponed': '已延置',
   'Draft': '草案',
   'Postponed': '已暂缓',
   'For,Against': '赞成,反对',

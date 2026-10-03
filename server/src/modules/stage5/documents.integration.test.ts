@@ -4,12 +4,62 @@ import {expect, it} from 'vitest';
 import {Stage8DeletionService} from '../operations/deletion-service';
 import {Stage8ArchiveService} from '../operations/archive-service';
 import {createHash, randomUUID} from 'node:crypto';
+import {readFile} from 'node:fs/promises';
 import {Stage6StorageService} from '../storage/service';
 import {
   pool, stage3, stage4, stage5, context, integration, user, meetingFixture, meetingEndFixture, publishedTestCrisis
 } from '../../../test/stage5-postgres-fixture';
 
 integration('PostgreSQL stage 5 documents', () => {
+  it('backfills completed ordinary resolution results without changing incomplete or undecided votes', async () => {
+    const f = await meetingFixture();
+    const third = await stage4.createSeat(f.firstChair, f.committee.id,
+      {stableKey: 'other', canVote: true, canProceduralVote: true, hasVeto: true}, randomUUID(), context('backfill-seat'));
+    await stage4.createAttendanceEvent(f.firstChair, f.committee.id,
+      {meetingSessionId: f.session.id, seatId: third.id, type: 'PRESENT'}, context('backfill-attendance'));
+    const cases = [
+      {majority: 'SIMPLE_MAJORITY', choices: ['FOR', 'FOR', 'ABSTAIN'], status: 'DRAFT', expected: 'PASSED'},
+      {majority: 'TWO_THIRDS', choices: ['FOR', 'FOR', 'ABSTAIN'], status: 'PUBLISHED', expected: 'PASSED'},
+      {majority: 'TWO_THIRDS_NON_ABSTAINING', choices: ['FOR', 'ABSTAIN', 'ABSTAIN'], status: 'VOTING', expected: 'PASSED'},
+      {majority: 'TWO_THIRDS', choices: ['FOR', 'FOR', 'AGAINST'], status: 'VOTING', expected: 'FAILED'},
+      {majority: 'SIMPLE_MAJORITY', choices: ['AGAINST', 'ABSTAIN', 'ABSTAIN'], status: 'PUBLISHED', expected: 'FAILED'},
+      {majority: 'TWO_THIRDS_NON_ABSTAINING', choices: ['ABSTAIN', 'ABSTAIN', 'ABSTAIN'], status: 'VOTING', expected: 'VOTING'},
+      {majority: 'TWO_THIRDS', choices: ['FOR', 'FOR'], status: 'PUBLISHED', expected: 'PUBLISHED'}
+    ];
+    const documents = [];
+    for (const entry of cases) {
+      const document = await stage5.createResolution(f.firstChair, f.committee.id,
+        {meetingSessionId: f.session.id, customTitle: null, content: 'Historical vote'}, randomUUID(), context('backfill-document'));
+      if (entry.status !== 'DRAFT') await pool!.query("UPDATE documents SET status='PUBLISHED' WHERE id=$1", [document.id]);
+      if (entry.status === 'VOTING') await pool!.query("UPDATE documents SET status='VOTING',voting_version_id=current_version_id WHERE id=$1", [document.id]);
+      await pool!.query('UPDATE document_voting SET direct_vote_majority=$2,direct_vote_started_at=now(),direct_vote_completed_at=now() WHERE document_id=$1',
+        [document.id, entry.majority]);
+      const seats = [f.firstSeat, f.secondSeat, third];
+      for (const [index, choice] of entry.choices.entries()) {
+        const voteId = randomUUID();
+        await pool!.query(`INSERT INTO document_direct_votes
+          (id,committee_id,document_id,seat_id,seat_display_name,current_choice,actor_user_id,on_behalf_of_seat_id)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$4)`, [voteId,f.committee.id,document.id,seats[index]!.id,seats[index]!.displayName,choice,f.firstChair.user.id]);
+        await pool!.query(`INSERT INTO document_direct_vote_revisions
+          (id,committee_id,document_id,vote_id,seat_id,new_choice,actor_user_id,on_behalf_of_seat_id)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$5)`, [randomUUID(),f.committee.id,document.id,voteId,seats[index]!.id,choice,f.firstChair.user.id]);
+      }
+      documents.push({...entry, id: document.id});
+    }
+    const sql = await readFile('server/migrations/0081_resolution_direct_vote_results.sql', 'utf8');
+    await pool!.query(sql);
+    const snapshot = await stage4.snapshot(f.committee.id, f.firstChair);
+    for (const entry of documents) {
+      const document = snapshot.documents!.find(item => item.id === entry.id)!;
+      expect(document.status).toBe(entry.expected);
+      expect(document.resultDecisions).toHaveLength(entry.expected !== entry.status ? 1 : 0);
+      if (entry.expected !== entry.status) expect(document.directVote?.automaticResult === 'PASSED' ? 'PASSED' : 'FAILED').toBe(entry.expected);
+    }
+    expect((await pool!.query("SELECT count(*)::int AS count FROM audit_log WHERE committee_id=$1 AND request_id='migration:0081'", [f.committee.id])).rows[0].count).toBe(5);
+    await pool!.query(sql);
+    expect((await pool!.query('SELECT count(*)::int AS count FROM document_result_decisions WHERE committee_id=$1', [f.committee.id])).rows[0].count).toBe(5);
+  });
+
   it('creates independent directive entries and one persistent vote with corrections', async () => {
     const f = await meetingEndFixture();
     const make = (draftType: string, key: string) => stage5.createResolution(f.firstChair, f.committee.id,
