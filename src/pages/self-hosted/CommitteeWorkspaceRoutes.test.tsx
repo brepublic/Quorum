@@ -1043,6 +1043,33 @@ describe('committee workspace routes and roles', () => {
     expect(link?.classList.contains('bottom')).toBe(true);
   });
 
+  it.each([
+    ['open-moderated-caucus', false], ['open-moderated-caucus', true],
+    ['extend-moderated-caucus', false], ['close-moderated-caucus', false]
+  ] as const)('localizes the passed %s destination (resolution-linked: %s)', async (motionTypeId, linked) => {
+    const destinationPath = '/committees/committee/caucuses/caucus';
+    const motion: ProceedingMotion = {id: 'motion', committeeId: 'committee', meetingSessionId: 'meeting',
+      motionTypeId, proposedBySeatId: 'seat', proposedBySeatDisplayName: 'China',
+      parameters: linked ? {resolutionTarget: 'resolution', detail: 'Discussion'} : {},
+      status: 'PASSED', rulePackageVersionId: 'rules', ruleEvaluation: {schemaVersion: 1, packageVersionId: 'rules',
+        definition: {}, facts: {}, resolvedValues: {}, frozenAt: '2026-08-14T00:00:00.000Z'},
+      requiredSecondCount: 0, seconds: [], revision: 1,
+      directVote: {startedAt: null, eligibility: [], choices: ['FOR', 'AGAINST'], threshold: 1,
+        automaticResult: null, votes: []}, createdAt: '2026-08-14T00:00:00.000Z',
+      decidedAt: null, destinationPath};
+    const page = await render('CHAIR', '/committees/committee/motions', user,
+      value => ({...value, meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: '第1会期',
+        phaseId: 'formal-debate', activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1,
+        createdAt: '2026-08-14T00:00:00.000Z', closedAt: null}, motions: [motion]}));
+    const link = () => page.querySelector<HTMLAnchorElement>(`.motion-queue a[href="${destinationPath}"]`);
+    expect(link()?.textContent).toBe('Moderated Caucus');
+    await act(async () => {setLanguage('zh-CN');});
+    expect(link()?.textContent).toBe('有主持核心磋商');
+    expect(link()?.getAttribute('href')).toBe(destinationPath);
+    await act(async () => {setLanguage('en');});
+    expect(link()?.textContent).toBe('Moderated Caucus');
+  });
+
   it('separates motion history at meeting-session boundaries', async () => {
     const sessions: NonNullable<CommitteeWorkspaceSnapshot['meetingSessions']> = [
       {id: 'session-2', committeeId: 'committee', ordinal: 2, name: '第2会期', phaseId: 'formal-debate',

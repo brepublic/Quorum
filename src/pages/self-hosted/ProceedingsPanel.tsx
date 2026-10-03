@@ -905,8 +905,8 @@ const hasResolutionTarget = (id: string) => ['introduce-draft-resolution', 'susp
 const hasAmendmentTarget = (id: string) => ['introduce-amendment', 'vote-on-amendment'].includes(id);
 const motionDetailLabel = (id: string) => ({'open-moderated-caucus': 'Topic', 'introduce-draft-resolution': 'Name',
   'introduce-amendment': 'Text', 'propose-strawpoll': 'Question', 'introduce-working-paper': 'Task'}[id] ?? '');
-const motionDestinationLabel = (id: string) => ({'open-moderated-caucus': 'Caucuses',
-  'extend-moderated-caucus': 'Caucuses', 'close-moderated-caucus': 'Caucuses',
+const motionDestinationLabel = (id: string) => ({'open-moderated-caucus': 'Moderated Caucus',
+  'extend-moderated-caucus': 'Moderated Caucus', 'close-moderated-caucus': 'Moderated Caucus',
   'open-debate': "General Speaker's List",
   'open-unmoderated-caucus': 'Unmoderated Caucus', 'extend-unmoderated-caucus': 'Unmoderated Caucus',
   'introduce-working-paper': 'Unmoderated Caucus', 'introduce-draft-resolution': 'Draft Resolution',
