@@ -28,7 +28,7 @@ function snapshot(audience: CommitteeWorkspaceSnapshot['viewer']['audience']): C
     status: 'ACTIVE', activeRulePackageVersionId: 'rules', revision: 4}, seats: [{id: 'seat', stableKey: 'china',
     displayName: 'China', rank: 'STANDARD', canVote: true, canProceduralVote: true, hasVeto: true, mustVote: false, sortOrder: 0, active: true,
     revision: 2, flag: {type: 'STANDARD', value: 'cn'}}], viewer: {audience, seatId: audience === 'MEMBER' ? 'seat' : null},
-  motionSettings: {showMotionsOnDemand: true, delegateMotionProposalsEnabled: false, delegateMotionVotingEnabled: false},
+  motionSettings: {groupMotionTypes: true, showMotionsOnDemand: true, delegateMotionProposalsEnabled: false, delegateMotionVotingEnabled: false},
   layoutSettings: {moveQueueUp: false, timersInSeparateColumns: false},
   memberships: audience === 'CHAIR' || audience === 'OWNER' ? [{userEmail: 'delegate@example.com', status: 'ACTIVE'}] : undefined,
   chairs: audience === 'CHAIR' || audience === 'OWNER' ? [{userEmail: 'chair@example.com'}] : undefined,
@@ -1529,6 +1529,35 @@ describe('committee workspace routes and roles', () => {
         .toBe(kind === 'eligible');
     });
 
+  it.each([true, false])('saves motion grouping from %s without changing demand filtering', async enabled => {
+    const setMotionSettings = vi.fn(async () => ({}));
+    const page = await render('CHAIR', '/committees/committee/settings', user,
+      value => ({...value, motionSettings: {...value.motionSettings, groupMotionTypes: enabled}}),
+      {setMotionSettings: setMotionSettings as unknown as SelfHostedApi['setMotionSettings']});
+    const input = page.querySelector<HTMLInputElement>('input[aria-label="Group motion types by category"]')!;
+    expect(input.checked).toBe(enabled);
+    await act(async () => {clickSemanticCheckbox(input.closest('.checkbox'));});
+    expect(setMotionSettings).toHaveBeenCalledWith('committee', {groupMotionTypes: !enabled, showMotionsOnDemand: true,
+      delegateMotionProposalsEnabled: false, delegateMotionVotingEnabled: false}, 4);
+  });
+
+  it.each([true, false])('shows motion category headings only when enabled (%s), including search', async enabled => {
+    const page = await render('CHAIR', '/committees/committee/motions', user, value => ({...value,
+      motionSettings: {...value.motionSettings, groupMotionTypes: enabled, showMotionsOnDemand: false},
+      meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: 'Session 1', phaseId: 'formal-debate',
+        activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1, createdAt: '', closedAt: null},
+      activeRules: {...value.activeRules, motionTypes: [{id: 'open-debate', procedural: true, requiredSecondCount: 0}]}}));
+    const field = page.querySelector('.motion-type-field')!;
+    expect(field.querySelectorAll('.motion-group-heading').length).toBe(enabled ? 1 : 0);
+    const input = field.querySelector('input')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'Open');
+      input.dispatchEvent(new Event('input', {bubbles: true}));
+    });
+    expect(field.querySelectorAll('.motion-group-heading').length).toBe(enabled ? 1 : 0);
+    expect(field.querySelector('.motion-type-option')?.textContent).toContain('Open Formal Debate');
+  });
+
   it('saves the committee motion display setting with the existing motion settings', async () => {
     const setMotionSettings = vi.fn(async () => ({}));
     const page = await render('CHAIR', '/committees/committee/settings', user, value => value,
@@ -1536,7 +1565,7 @@ describe('committee workspace routes and roles', () => {
     const input = page.querySelector<HTMLInputElement>('input[aria-label="Show motion types on demand"]')!;
     expect(input.checked).toBe(true);
     await act(async () => {clickSemanticCheckbox(input.closest('.checkbox'));});
-    expect(setMotionSettings).toHaveBeenCalledWith('committee', {showMotionsOnDemand: false,
+    expect(setMotionSettings).toHaveBeenCalledWith('committee', {groupMotionTypes: true, showMotionsOnDemand: false,
       delegateMotionProposalsEnabled: false, delegateMotionVotingEnabled: false}, 4);
   });
 

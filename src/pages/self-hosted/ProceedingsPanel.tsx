@@ -976,8 +976,9 @@ function MotionOption({groupLabel, children, ...props}: React.HTMLAttributes<HTM
     <div {...props}>{children}</div></>;
 }
 
-function groupedMotionOptions(options: DropdownItemProps[], query = ''): DropdownItemProps[] {
+function groupedMotionOptions(options: DropdownItemProps[], query = '', grouped = true): DropdownItemProps[] {
   const matches = searchOptions(options, query);
+  if (!grouped) return matches.map(option => ({...option, as: MotionOption, className: 'motion-type-option', groupLabel: undefined}));
   const typeId = (option: DropdownItemProps) => String(option.value).split(':')[0];
   return motionGroups.flatMap(group => {
     const items = matches.filter(option => group.types.includes(typeId(option))
@@ -1049,7 +1050,7 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
       const scrollbar = Math.max(2, menu.offsetWidth - menu.clientWidth);
       const nameWidth = Math.max(0, ...Array.from(menu.querySelectorAll<HTMLElement>('.motion-type-option > .text'),
         name => name.scrollWidth + 1));
-      const indent = viewportWidth < 768 && nameWidth + padding * 2 + fontSize + scrollbar > availableWidth ? 0 : fontSize;
+      const indent = !snapshot.motionSettings.groupMotionTypes || viewportWidth < 768 && nameWidth + padding * 2 + fontSize + scrollbar > availableWidth ? 0 : fontSize;
       const width = Math.min(availableWidth, Math.max(anchor.width, nameWidth + padding * 2 + indent + scrollbar));
       const left = Math.max(16, Math.min(anchor.left, viewportWidth - 16 - width)) - anchor.left;
       field.style.setProperty('--motion-menu-width', `${width}px`);
@@ -1198,11 +1199,11 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
       error={(!chairAdvisoryMode && !divisible) || identicalSeats} onSubmit={propose}>
       <div className="field motion-type-field" ref={motionFieldRef}>
         <label htmlFor={motionInputId}>{t('Type')}</label>
-        <Dropdown placeholder={t('Select type')} search={groupedMotionOptions} selection fluid icon="search"
+        <Dropdown placeholder={t('Select type')} search={(options, query) => groupedMotionOptions(options, query, snapshot.motionSettings.groupMotionTypes)} selection fluid icon="search"
         searchInput={{id: motionInputId}} aria-label={t('Type')} onOpen={() => setMotionMenuOpen(true)}
         searchQuery={motionSearch} onSearchChange={(_, data) => setMotionSearch(data.searchQuery)}
         onClose={() => {setMotionSearch(''); setMotionMenuOpen(false);}} text={selectedMotionOption?.text}
-        options={groupedMotionOptions(displayedMotionOptions)} value={selectedMotionOption ? motionChoice : ''} onChange={(_, data) => {
+        options={groupedMotionOptions(displayedMotionOptions, '', snapshot.motionSettings.groupMotionTypes)} value={selectedMotionOption ? motionChoice : ''} onChange={(_, data) => {
           if (!motionOptions.some(option => option.value === data.value)) return;
           setMotionSearch('');
           const value = String(data.value); setMotionChoice(value);

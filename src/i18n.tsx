@@ -1111,6 +1111,7 @@ const zhCN: Record<string, string> = {
   'Posts': '资料',
   'Stats': '统计',
   'Settings': '设置',
+  'Group motion types by category': '按分类显示动议类型',
   'Show motion types on demand': '按需显示动议类型',
   'Hidden': '已隐藏',
   'Formal Debate': '正式辩论',

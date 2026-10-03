@@ -520,24 +520,25 @@ export class Stage3Service {
     requireBusinessIdentity(auth);
     const settings = input && typeof input === 'object' && !Array.isArray(input)
       ? input as Record<string, unknown> : {};
-    if (typeof settings.showMotionsOnDemand !== 'boolean'
+    if (typeof settings.groupMotionTypes !== 'boolean'
+      || typeof settings.showMotionsOnDemand !== 'boolean'
       || typeof settings.delegateMotionProposalsEnabled !== 'boolean'
       || typeof settings.delegateMotionVotingEnabled !== 'boolean'
-      || Object.keys(settings).some(key => !['showMotionsOnDemand', 'delegateMotionProposalsEnabled', 'delegateMotionVotingEnabled'].includes(key))) {
+      || Object.keys(settings).some(key => !['groupMotionTypes', 'showMotionsOnDemand', 'delegateMotionProposalsEnabled', 'delegateMotionVotingEnabled'].includes(key))) {
       throw new AppError({reason: 'INVALID_MOTION_SETTINGS', code: 'VALIDATION_FAILED', message: 'Motion settings are invalid.'});
     }
     return transaction(this.pool, async client => {
       const row = await lockedCommittee(client, committeeId); await requireChair(client, row, auth.user.id);
       requireEditable(row); revision(row, baseRevision);
-      const before = {showMotionsOnDemand: row.show_motions_on_demand,
+      const before = {groupMotionTypes: row.group_motion_types, showMotionsOnDemand: row.show_motions_on_demand,
         delegateMotionProposalsEnabled: row.delegate_motion_proposals_enabled,
         delegateMotionVotingEnabled: row.delegate_motion_voting_enabled};
       const updated = await client.query<CommitteeRow>(`UPDATE committees
-        SET delegate_motion_proposals_enabled=$2,delegate_motion_voting_enabled=$3,show_motions_on_demand=$4,
+        SET delegate_motion_proposals_enabled=$2,delegate_motion_voting_enabled=$3,show_motions_on_demand=$4,group_motion_types=$5,
           revision=revision+1,updated_at=now() WHERE id=$1 RETURNING *`,
-      [committeeId, settings.delegateMotionProposalsEnabled, settings.delegateMotionVotingEnabled, settings.showMotionsOnDemand]);
+      [committeeId, settings.delegateMotionProposalsEnabled, settings.delegateMotionVotingEnabled, settings.showMotionsOnDemand, settings.groupMotionTypes]);
       const changed = updated.rows[0] as CommitteeRow;
-      const after = {showMotionsOnDemand: changed.show_motions_on_demand,
+      const after = {groupMotionTypes: changed.group_motion_types, showMotionsOnDemand: changed.show_motions_on_demand,
         delegateMotionProposalsEnabled: changed.delegate_motion_proposals_enabled,
         delegateMotionVotingEnabled: changed.delegate_motion_voting_enabled};
       await appendEvent(client, changed, {type: 'motion_settings.changed', resourceType: 'committee', resourceId: committeeId,

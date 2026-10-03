@@ -82,7 +82,7 @@ integration('PostgreSQL migrations', () => {
       expect(versions[0]).toMatchObject({id: versionId, version: 11, definition});
       expect(versions[1].definition.motions).toEqual([{id: 'open-debate'}, {id: 'close-debate'}]);
       const committee = (await pool.query('SELECT * FROM committees WHERE id=$1', [committeeId])).rows[0];
-      expect(committee).toMatchObject({show_motions_on_demand: true, active_rule_package_version_id: versions[1].id, revision: 2});
+      expect(committee).toMatchObject({show_motions_on_demand: true, group_motion_types: true, active_rule_package_version_id: versions[1].id, revision: 2});
       expect(committee.content_snapshot.initialRulePackageVersionId).toBe(versionId);
       const sessions = (await pool.query('SELECT id,active_rule_package_version_id FROM meeting_sessions')).rows;
       expect(sessions).toContainEqual({id: closed, active_rule_package_version_id: versionId});
@@ -308,11 +308,11 @@ integration('PostgreSQL migrations', () => {
       );
       const applied = await pool.query('SELECT version FROM quorum_meta.schema_migrations');
 
-      expect(first).toEqual(expect.objectContaining({ready: true, latestAppliedVersion: 81}));
+      expect(first).toEqual(expect.objectContaining({ready: true, latestAppliedVersion: 82}));
       expect(second).toEqual(expect.objectContaining({ready: true, pendingVersions: []}));
       expect(status.ready).toBe(true);
-      expect(runtime.rows[0]?.schema_compatibility).toBe(81);
-      expect(applied.rowCount).toBe(81);
+      expect(runtime.rows[0]?.schema_compatibility).toBe(82);
+      expect(applied.rowCount).toBe(82);
       const stage3Tables = await pool.query<{name: string}>(`SELECT table_name AS name FROM information_schema.tables
         WHERE table_schema='public' AND table_name IN ('committees','committee_memberships','committee_capabilities',
         'committee_seats','seat_assignments','seat_invitations','rule_packages','rule_package_versions',

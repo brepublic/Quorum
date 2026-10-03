@@ -704,6 +704,10 @@ function SettingsPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorks
       checked={snapshot.motionSettings.showMotionsOnDemand} disabled={readOnly}
       onChange={(_, data) => void execute('motion-settings', () => api.setMotionSettings(snapshot.committee.id,
         {...snapshot.motionSettings, showMotionsOnDemand: Boolean(data.checked)}, snapshot.committee.revision))} />
+    <Checkbox toggle aria-label={t('Group motion types by category')} label={t('Group motion types by category')}
+      checked={snapshot.motionSettings.groupMotionTypes} disabled={readOnly}
+      onChange={(_, data) => void execute('motion-settings', () => api.setMotionSettings(snapshot.committee.id,
+        {...snapshot.motionSettings, groupMotionTypes: Boolean(data.checked)}, snapshot.committee.revision))} />
     <Checkbox toggle aria-label={t("'Queue' should appear above 'Next speaking'")} checked={snapshot.layoutSettings.moveQueueUp} disabled={readOnly}
       onChange={(_, data) => void setLayoutSetting({moveQueueUp: Boolean(data.checked)})}
       label={t("'Queue' should appear above 'Next speaking'")} />

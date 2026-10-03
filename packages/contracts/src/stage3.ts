@@ -24,6 +24,7 @@ export interface UpdateCommitteeRequest extends CommitteeRevisionRequest {
 export interface SetChairRequest extends CommitteeRevisionRequest {email: string}
 export interface SetOperationModeRequest extends CommitteeRevisionRequest {operationMode: CommitteeOperationMode}
 export interface CommitteeMotionSettings {
+  groupMotionTypes: boolean;
   showMotionsOnDemand: boolean;
   delegateMotionProposalsEnabled: boolean;
   delegateMotionVotingEnabled: boolean;

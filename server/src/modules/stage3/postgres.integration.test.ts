@@ -66,13 +66,15 @@ integration('PostgreSQL stage 3 integration', () => {
     const committee = await stage3.createCommittee(owner,
       await testCommitteeInput(pool!, owner, {name: 'Motion settings', visibility: 'PUBLIC'}), context('motions'), randomUUID());
     const stage4 = new Stage4Service(pool!);
-    expect((await stage4.snapshot(committee.id)).motionSettings.showMotionsOnDemand).toBe(true);
-    const settings = {showMotionsOnDemand: false, delegateMotionProposalsEnabled: true, delegateMotionVotingEnabled: false};
+    expect((await stage4.snapshot(committee.id)).motionSettings).toMatchObject({showMotionsOnDemand: true, groupMotionTypes: true});
+    const settings = {groupMotionTypes: false, showMotionsOnDemand: false, delegateMotionProposalsEnabled: true, delegateMotionVotingEnabled: false};
     await expect(stage3.setMotionSettings(owner, committee.id, settings, committee.revision, context('owner-motion-settings')))
       .rejects.toMatchObject({code: 'FORBIDDEN'});
     const granted = await stage3.setChair(owner, committee.id, chair.user.email, true, committee.revision, context('motion-chair'));
     await expect(stage3.setMotionSettings(chair, committee.id, {...settings, showMotionsOnDemand: 'false'}, granted.revision,
       context('bad-motion-settings'))).rejects.toMatchObject({code: 'VALIDATION_FAILED'});
+    await expect(stage3.setMotionSettings(chair, committee.id, {...settings, groupMotionTypes: 'false'}, granted.revision,
+      context('bad-group-settings'))).rejects.toMatchObject({code: 'VALIDATION_FAILED'});
     const changed = await stage3.setMotionSettings(chair, committee.id, settings, granted.revision, context('motion-settings'));
     expect(changed).toEqual({...settings, revision: granted.revision + 1});
     expect((await stage4.snapshot(committee.id)).motionSettings).toEqual(settings);
@@ -80,8 +82,10 @@ integration('PostgreSQL stage 3 integration', () => {
       context('stale-motion-settings'))).rejects.toMatchObject({code: 'REVISION_CONFLICT'});
     const audit = (await pool!.query("SELECT before_summary,after_summary FROM audit_log WHERE action='committee.motion_settings_changed' AND committee_id=$1",
       [committee.id])).rows;
-    expect(audit).toEqual([{before_summary: {showMotionsOnDemand: true, delegateMotionProposalsEnabled: false,
+    expect(audit).toEqual([{before_summary: {groupMotionTypes: true, showMotionsOnDemand: true, delegateMotionProposalsEnabled: false,
       delegateMotionVotingEnabled: false}, after_summary: settings}]);
+    await stage3.setMotionSettings(chair, committee.id, {...settings, groupMotionTypes: true}, changed.revision, context('enable-grouping'));
+    expect((await stage4.snapshot(committee.id)).motionSettings).toEqual({...settings, groupMotionTypes: true});
   });
 
   it('keeps owner, Chair, membership, assignment, and system administration independent', async () => {

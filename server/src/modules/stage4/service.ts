@@ -954,7 +954,7 @@ export class Stage4Service {
         committee: viewer.audience === 'OWNER' || viewer.audience === 'CHAIR' ? summary : publicCommittee,
         ...(setupCountryTemplate ? {countryTemplate: setupCountryTemplate} : {}),
         seats: seats.rows, viewer, attendance, attendanceBySession, points, notes: [], textPosts: [],
-        motionSettings: {showMotionsOnDemand: committee.show_motions_on_demand,
+        motionSettings: {groupMotionTypes: committee.group_motion_types, showMotionsOnDemand: committee.show_motions_on_demand,
           delegateMotionProposalsEnabled: committee.delegate_motion_proposals_enabled,
           delegateMotionVotingEnabled: committee.delegate_motion_voting_enabled},
         layoutSettings: {moveQueueUp: committee.move_queue_up,
