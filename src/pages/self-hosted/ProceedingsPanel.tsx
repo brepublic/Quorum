@@ -956,6 +956,27 @@ const motionTypePosition = (id: string): number => ({
   'adjourn-meeting': 3
 }[id] ?? 0);
 
+function hiddenMotionTypeIds(snapshot: CommitteeWorkspaceSnapshot): Set<string> {
+  if (!snapshot.motionSettings.showMotionsOnDemand) return new Set();
+  const sessionId = snapshot.meetingSession?.id;
+  const generalListOpen = (snapshot.speakerLists ?? []).some(list => list.kind === 'GENERAL'
+    && list.meetingSessionId === sessionId && list.status === 'OPEN');
+  const resolutions = (snapshot.documents ?? []).filter(document => document.kind === 'RESOLUTION'
+    && document.meetingSessionId === sessionId);
+  const introduced = resolutions.filter(document => document.status === 'PUBLISHED');
+  const unvoted = introduced.filter(document => !document.directVote?.startedAt);
+  const reorderable = unvoted.filter(document => document.draftType !== 'DIRECTIVE'
+    && !(snapshot.ballots ?? []).some(ballot => ballot.subjectId === document.id && ballot.subjectType === 'RESOLUTION'));
+  return new Set([
+    ...(generalListOpen ? ['open-debate'] : ['close-debate']),
+    ...(!resolutions.some(document => document.status === 'DRAFT') ? ['introduce-draft-resolution'] : []),
+    ...(reorderable.length < 2 ? ['reorder-draft-resolutions'] : []),
+    ...(unvoted.length === 0 ? ['postpone-resolution'] : []),
+    ...(!resolutions.some(document => document.status === 'POSTPONED') ? ['resume-resolution'] : []),
+    ...(introduced.length === 0 ? ['vote-on-resolution'] : [])
+  ]);
+}
+
 function Motions({snapshot, run, api, canChair}: CommonProps) {
   const session = snapshot.meetingSession?.status === 'OPEN' ? snapshot.meetingSession : undefined;
   const types = [...snapshot.activeRules.motionTypes].sort((first, second) => {
@@ -963,8 +984,11 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
     if (firstPosition !== secondPosition) return firstPosition - secondPosition;
     return snapshot.activeRules.motionTypes.indexOf(first) - snapshot.activeRules.motionTypes.indexOf(second);
   });
-  const [motionType, setMotionType] = React.useState(types[0]?.id ?? '');
-  const [motionChoice, setMotionChoice] = React.useState(types[0]?.id ?? '');
+  const hiddenTypes = hiddenMotionTypeIds(snapshot);
+  const initialType = types.find(type => !hiddenTypes.has(type.id))?.id ?? '';
+  const [motionType, setMotionType] = React.useState(initialType);
+  const [motionChoice, setMotionChoice] = React.useState(initialType);
+  const [motionSearch, setMotionSearch] = React.useState('');
   const [proposal, setProposal] = React.useState('');
   const [proposerId, setProposerId] = React.useState(snapshot.viewer.seatId ?? '');
   const [seconderId, setSeconderId] = React.useState('');
@@ -997,17 +1021,13 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
     && document.amendmentType === 'UNFRIENDLY' && document.meetingSessionId === session.id);
   const eligibleResolutions = resolutions.filter(document => document.status === 'PUBLISHED');
   const postponableResolutions = eligibleResolutions.filter(document => !document.directVote?.startedAt);
-  const postponedResolutions = resolutions.filter(document => document.status === 'POSTPONED');
   const latestDebateMotion = (snapshot.motions ?? []).filter(motion => motion.meetingSessionId === session.id
     && motion.status === 'PASSED' && ['open-debate', 'close-debate'].includes(motion.motionTypeId))
     .sort((first, second) => Date.parse(second.decidedAt ?? '') - Date.parse(first.decidedAt ?? '')
       || second.id.localeCompare(first.id))[0];
   const debateClosed = latestDebateMotion?.motionTypeId === 'close-debate';
-  const availableTypes = types.filter(type => type.id === 'postpone-resolution' ? postponableResolutions.length > 0
-    : type.id === 'resume-resolution' ? postponedResolutions.length > 0
-      : type.id === 'vote-on-resolution' ? eligibleResolutions.length > 0
-        : type.id === 'introduce-amendment' ? eligibleResolutions.length > 0 && !debateClosed
-          : true);
+  const availableTypes = types.filter(type => type.id !== 'introduce-amendment'
+    || eligibleResolutions.length > 0 && !debateClosed);
   const selectedType = availableTypes.find(type => type.id === motionType);
   const needsSeconder = Boolean(selectedType && selectedType.requiredSecondCount > 0);
   const linkedResolutionIds = new Set((snapshot.speakerLists ?? []).map(list => list.linkedResolutionId).filter(Boolean));
@@ -1024,13 +1044,17 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
   const motionOptions = [
     ...amendmentMotionOptions,
     ...availableTypes.filter(type => !hasAmendmentTarget(type.id)).map(type => ({key: type.id, value: type.id,
-      text: motionTypeName(type, type.id, snapshot.committee.committeeLanguage), searchTerms: type.searchTerms})),
+      text: motionTypeName(type, type.id, snapshot.committee.committeeLanguage), searchTerms: type.searchTerms,
+      ...(hiddenTypes.has(type.id) ? {description: <span className="motion-hidden-label">{t('Hidden')}</span>} : {})})),
     ...(types.some(type => type.id === 'open-moderated-caucus') ? caucusResolutionOptions.map(document => ({
       key: linkedResolutionMotionValue(document.id), value: linkedResolutionMotionValue(document.id),
       text: `${t('Moderated Caucus')} - ${document.title}`,
       searchTerms: [...(types.find(type => type.id === 'open-moderated-caucus')?.searchTerms ?? []),
         ...(document.searchTerms ?? [])]})) : [])
   ];
+  const selectedMotionOption = motionOptions.find(option => option.value === motionChoice);
+  const displayedMotionOptions = motionSearch.trim() ? motionOptions
+    : motionOptions.filter(option => !hiddenTypes.has(String(option.value)));
   const targetResolutions = resolutions.filter(document => motionType === 'introduce-draft-resolution'
     ? document.status === 'DRAFT'
     : motionType === 'resume-resolution' ? document.status === 'POSTPONED'
@@ -1094,7 +1118,10 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
     {canPropose && <Form className="motion-proposal-form"
       error={(!chairAdvisoryMode && !divisible) || identicalSeats} onSubmit={propose}>
       <Form.Select placeholder={t('Select type')} search={searchOptions} selection fluid label={t('Type')} icon="search"
-        options={motionOptions} value={motionOptions.some(option => option.value === motionChoice) ? motionChoice : ''} onChange={(_, data) => {
+        searchQuery={motionSearch} onSearchChange={(_, data) => setMotionSearch(data.searchQuery)}
+        onClose={() => setMotionSearch('')} text={selectedMotionOption?.text}
+        options={displayedMotionOptions} value={selectedMotionOption ? motionChoice : ''} onChange={(_, data) => {
+          setMotionSearch('');
           const value = String(data.value); setMotionChoice(value);
           const amendmentOption = amendmentMotionOptions.find(option => option.value === value);
           if (amendmentOption) {

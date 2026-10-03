@@ -11,6 +11,7 @@ import {PostgresIdentityStore} from '../identity/postgres';
 import {IdentityService} from '../identity/service';
 import type {AuthenticatedSession} from '../identity/store';
 import {Stage3Service} from './service';
+import {Stage4Service} from '../stage4/service';
 
 const {Client, Pool} = pg;
 const adminUrl = process.env.TEST_DATABASE_ADMIN_URL;
@@ -60,6 +61,29 @@ async function user(name: string): Promise<AuthenticatedSession> {
 }
 
 integration('PostgreSQL stage 3 integration', () => {
+  it('persists motion display defaults and enforces Chair, revision and settings validation', async () => {
+    const owner = await user('motionowner'); const chair = await user('motionchair');
+    const committee = await stage3.createCommittee(owner,
+      await testCommitteeInput(pool!, owner, {name: 'Motion settings', visibility: 'PUBLIC'}), context('motions'), randomUUID());
+    const stage4 = new Stage4Service(pool!);
+    expect((await stage4.snapshot(committee.id)).motionSettings.showMotionsOnDemand).toBe(true);
+    const settings = {showMotionsOnDemand: false, delegateMotionProposalsEnabled: true, delegateMotionVotingEnabled: false};
+    await expect(stage3.setMotionSettings(owner, committee.id, settings, committee.revision, context('owner-motion-settings')))
+      .rejects.toMatchObject({code: 'FORBIDDEN'});
+    const granted = await stage3.setChair(owner, committee.id, chair.user.email, true, committee.revision, context('motion-chair'));
+    await expect(stage3.setMotionSettings(chair, committee.id, {...settings, showMotionsOnDemand: 'false'}, granted.revision,
+      context('bad-motion-settings'))).rejects.toMatchObject({code: 'VALIDATION_FAILED'});
+    const changed = await stage3.setMotionSettings(chair, committee.id, settings, granted.revision, context('motion-settings'));
+    expect(changed).toEqual({...settings, revision: granted.revision + 1});
+    expect((await stage4.snapshot(committee.id)).motionSettings).toEqual(settings);
+    await expect(stage3.setMotionSettings(chair, committee.id, {...settings, showMotionsOnDemand: true}, granted.revision,
+      context('stale-motion-settings'))).rejects.toMatchObject({code: 'REVISION_CONFLICT'});
+    const audit = (await pool!.query("SELECT before_summary,after_summary FROM audit_log WHERE action='committee.motion_settings_changed' AND committee_id=$1",
+      [committee.id])).rows;
+    expect(audit).toEqual([{before_summary: {showMotionsOnDemand: true, delegateMotionProposalsEnabled: false,
+      delegateMotionVotingEnabled: false}, after_summary: settings}]);
+  });
+
   it('keeps owner, Chair, membership, assignment, and system administration independent', async () => {
     const owner = await user('owner'); const chair = await user('chair'); const member = await user('member');
     const created = await stage3.createCommittee(owner, await testCommitteeInput(pool!, owner, {name: 'Private Committee', visibility: 'PRIVATE'}), context('committee'), randomUUID());
@@ -173,16 +197,16 @@ integration('PostgreSQL stage 3 integration', () => {
     expect(await stage3.listRulePackages()).toEqual(packages);
     const source = packages.find(item => item.key === 'builtin:beijing-academic') as (typeof packages)[number];
     expect(source.versions).toHaveLength(1);
-    expect(source.versions[0]).toMatchObject({version: 11, names: {'zh-CN': '北京学术标准 2021', en: 'Beijing Academic Standard 2021'}});
+    expect(source.versions[0]).toMatchObject({version: 12, names: {'zh-CN': '北京学术标准 2021', en: 'Beijing Academic Standard 2021'}});
     const versions = await pool!.query<{version: number; definition: {motions?: Array<{id: string; requiredSecondCount?: number}>}}>(
       'SELECT version,definition FROM rule_package_versions WHERE package_id=$1 ORDER BY version', [source.id]);
     expect(versions.rows.map(row => ({version: row.version,
       requiredSecondCount: row.definition.motions?.find(motion => motion.id === 'introduce-draft-resolution')?.requiredSecondCount,
       removedMotions: ['discuss-resolution', 'discuss-amendment', 'extend-unmoderated-caucus', 'extend-moderated-caucus',
         'close-moderated-caucus', 'suspend-draft-resolution-speakers-list',
-        'postpone-amendment', 'resume-amendment']
+        'postpone-amendment', 'resume-amendment', 'suspend-debate', 'resume-debate']
         .filter(id => row.definition.motions?.some(motion => motion.id === id))})))
-      .toEqual([{version: 11, requiredSecondCount: 0, removedMotions: []}]);
+      .toEqual([{version: 12, requiredSecondCount: 0, removedMotions: []}]);
     await expect(stage3.createRuleVersion(administrator, source.id, {definition: {}}, context('edit-builtin')))
       .rejects.toMatchObject({code: 'VALIDATION_FAILED'});
     const cloned = await stage3.cloneRulePackage(chair, source.id, {scope: 'COMMITTEE', committeeId: committee.id,

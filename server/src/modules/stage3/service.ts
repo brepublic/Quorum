@@ -8,6 +8,7 @@ import {readFile} from 'node:fs/promises';
 import type {Pool, PoolClient, QueryResultRow} from 'pg';
 import {
   type CommitteeOperationMode,
+  type CommitteeMotionSettings,
   type CommitteeSnapshot,
   type CommitteeSummary,
   type CommitteeVisibility,
@@ -136,6 +137,11 @@ function builtInVersion11(definition: RulePackageDefinition): RulePackageDefinit
     item.id === 'postpone-resolution' ? {...item, names: {'zh-CN': '延置决议草案', en: 'Postpone Draft Resolution'}}
       : item.id === 'resume-resolution' ? {...item, names: {'zh-CN': '取消延置决议草案', en: 'Resume the Draft Resolution'}}
         : item)};
+}
+
+function builtInVersion12(definition: RulePackageDefinition): RulePackageDefinition {
+  const upgraded = builtInVersion11(definition);
+  return {...upgraded, motions: upgraded.motions.filter(item => !['suspend-debate', 'resume-debate'].includes(item.id))};
 }
 
 function committee(row: CommitteeRow): CommitteeSummary {
@@ -340,7 +346,7 @@ export class Stage3Service {
         const inserted = await client.query<{id: string}>(`INSERT INTO rule_packages
           (id, scope, stable_key) VALUES ($1,'BUILTIN',$2)
           ON CONFLICT (scope, stable_key) DO UPDATE SET stable_key=EXCLUDED.stable_key RETURNING id`, [packageId, definition.key]);
-        for (const [version, versionDefinition] of [[11, builtInVersion11(definition)]] as const) {
+        for (const [version, versionDefinition] of [[12, builtInVersion12(definition)]] as const) {
           const validated = validateRulePackage(versionDefinition);
           if (!validated.ok) throw new Error(`Invalid built-in rule package: ${definition.key} v${version}: ${JSON.stringify(validated.issues)}`);
           await client.query(`INSERT INTO rule_package_versions
@@ -510,26 +516,29 @@ export class Stage3Service {
   }
 
   async setMotionSettings(auth: AuthenticatedSession, committeeId: string, input: unknown, baseRevision: number,
-    context: Context): Promise<{delegateMotionProposalsEnabled: boolean; delegateMotionVotingEnabled: boolean; revision: number}> {
+    context: Context): Promise<CommitteeMotionSettings & {revision: number}> {
     requireBusinessIdentity(auth);
     const settings = input && typeof input === 'object' && !Array.isArray(input)
       ? input as Record<string, unknown> : {};
-    if (typeof settings.delegateMotionProposalsEnabled !== 'boolean'
+    if (typeof settings.showMotionsOnDemand !== 'boolean'
+      || typeof settings.delegateMotionProposalsEnabled !== 'boolean'
       || typeof settings.delegateMotionVotingEnabled !== 'boolean'
-      || Object.keys(settings).some(key => !['delegateMotionProposalsEnabled', 'delegateMotionVotingEnabled'].includes(key))) {
+      || Object.keys(settings).some(key => !['showMotionsOnDemand', 'delegateMotionProposalsEnabled', 'delegateMotionVotingEnabled'].includes(key))) {
       throw new AppError({reason: 'INVALID_MOTION_SETTINGS', code: 'VALIDATION_FAILED', message: 'Motion settings are invalid.'});
     }
     return transaction(this.pool, async client => {
       const row = await lockedCommittee(client, committeeId); await requireChair(client, row, auth.user.id);
       requireEditable(row); revision(row, baseRevision);
-      const before = {delegateMotionProposalsEnabled: row.delegate_motion_proposals_enabled,
+      const before = {showMotionsOnDemand: row.show_motions_on_demand,
+        delegateMotionProposalsEnabled: row.delegate_motion_proposals_enabled,
         delegateMotionVotingEnabled: row.delegate_motion_voting_enabled};
       const updated = await client.query<CommitteeRow>(`UPDATE committees
-        SET delegate_motion_proposals_enabled=$2,delegate_motion_voting_enabled=$3,
+        SET delegate_motion_proposals_enabled=$2,delegate_motion_voting_enabled=$3,show_motions_on_demand=$4,
           revision=revision+1,updated_at=now() WHERE id=$1 RETURNING *`,
-      [committeeId, settings.delegateMotionProposalsEnabled, settings.delegateMotionVotingEnabled]);
+      [committeeId, settings.delegateMotionProposalsEnabled, settings.delegateMotionVotingEnabled, settings.showMotionsOnDemand]);
       const changed = updated.rows[0] as CommitteeRow;
-      const after = {delegateMotionProposalsEnabled: changed.delegate_motion_proposals_enabled,
+      const after = {showMotionsOnDemand: changed.show_motions_on_demand,
+        delegateMotionProposalsEnabled: changed.delegate_motion_proposals_enabled,
         delegateMotionVotingEnabled: changed.delegate_motion_voting_enabled};
       await appendEvent(client, changed, {type: 'motion_settings.changed', resourceType: 'committee', resourceId: committeeId,
         revision: changed.revision, payload: after});

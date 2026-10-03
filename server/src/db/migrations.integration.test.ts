@@ -51,6 +51,49 @@ afterEach(async () => {
 });
 
 integration('PostgreSQL migrations', () => {
+  it('enables motion display for existing committees and upgrades only current rule references', async () => {
+    const pool = new Pool({connectionString: databaseUrl});
+    const source = resolve('server/migrations');
+    const staged = await mkdtemp(join(tmpdir(), 'quorum-migrations-0080-')); temporaryDirectories.push(staged);
+    const owner = randomUUID(), packageId = randomUUID(), versionId = randomUUID(), committeeId = randomUUID();
+    const closed = randomUUID(), open = randomUUID();
+    const definition = {motions: [{id: 'open-debate'}, {id: 'suspend-debate'}, {id: 'resume-debate'}, {id: 'close-debate'}]};
+    try {
+      for (const file of (await readdir(source)).filter(file => file.endsWith('.sql') && Number(file.slice(0, 4)) < 80))
+        await cp(join(source, file), join(staged, file));
+      await runMigrations(pool, staged);
+      await pool.query(`INSERT INTO users(id,email,display_name,status,is_system_admin,must_change_password)
+        VALUES($1,'motions@example.test','Owner','ACTIVE',false,false)`, [owner]);
+      await pool.query("INSERT INTO rule_packages(id,scope,stable_key) VALUES($1,'BUILTIN','builtin:beijing-academic')", [packageId]);
+      await pool.query(`INSERT INTO rule_package_versions(id,package_id,version,status,definition,schema_version,published_at)
+        VALUES($1,$2,11,'PUBLISHED',$3,1,now())`, [versionId, packageId, definition]);
+      await pool.query(`INSERT INTO committees(id,owner_user_id,name,visibility,operation_mode,active_rule_package_version_id,
+        content_snapshot,committee_language) VALUES($1,$2,'Motions','PUBLIC','CHAIR_OPERATED',$3,$4,'en')`,
+      [committeeId, owner, versionId, {schemaVersion: 1, countryTemplate: {countries: []}, committeeTemplate: null,
+        initialRulePackageVersionId: versionId}]);
+      for (const [id, status] of [[closed, 'CLOSED'], [open, 'OPEN']]) await pool.query(`INSERT INTO meeting_sessions
+        (id,committee_id,phase_id,active_rule_package_version_id,created_by_user_id,status,closed_at)
+        VALUES($1,$2,'formal-debate',$3,$4,$5::meeting_session_status,
+          CASE WHEN $5::meeting_session_status='CLOSED' THEN now() END)`, [id, committeeId, versionId, owner, status]);
+      await runMigrations(pool, source);
+      await runMigrations(pool, source);
+      const versions = (await pool.query('SELECT id,version,definition FROM rule_package_versions ORDER BY version')).rows;
+      expect(versions).toHaveLength(2);
+      expect(versions[0]).toMatchObject({id: versionId, version: 11, definition});
+      expect(versions[1].definition.motions).toEqual([{id: 'open-debate'}, {id: 'close-debate'}]);
+      const committee = (await pool.query('SELECT * FROM committees WHERE id=$1', [committeeId])).rows[0];
+      expect(committee).toMatchObject({show_motions_on_demand: true, active_rule_package_version_id: versions[1].id, revision: 2});
+      expect(committee.content_snapshot.initialRulePackageVersionId).toBe(versionId);
+      const sessions = (await pool.query('SELECT id,active_rule_package_version_id FROM meeting_sessions')).rows;
+      expect(sessions).toContainEqual({id: closed, active_rule_package_version_id: versionId});
+      expect(sessions).toContainEqual({id: open, active_rule_package_version_id: versions[1].id});
+      const audits = (await pool.query("SELECT actor_user_id,after_summary FROM audit_log WHERE request_id='migration:0080'")).rows;
+      expect(audits).toEqual([{actor_user_id: null, after_summary: {versionId: versions[1].id, revision: 2}}]);
+      const events = await pool.query("SELECT 1 FROM committee_events WHERE event_type='rule_package.activated'");
+      expect(events.rowCount).toBe(1);
+    } finally { await pool.end(); }
+  });
+
   it('upgrades schema 66 single-country drafts without losing countries or rewriting history', async () => {
     const pool = new Pool({connectionString: databaseUrl});
     const source = resolve('server/migrations');
@@ -265,11 +308,11 @@ integration('PostgreSQL migrations', () => {
       );
       const applied = await pool.query('SELECT version FROM quorum_meta.schema_migrations');
 
-      expect(first).toEqual(expect.objectContaining({ready: true, latestAppliedVersion: 79}));
+      expect(first).toEqual(expect.objectContaining({ready: true, latestAppliedVersion: 80}));
       expect(second).toEqual(expect.objectContaining({ready: true, pendingVersions: []}));
       expect(status.ready).toBe(true);
-      expect(runtime.rows[0]?.schema_compatibility).toBe(79);
-      expect(applied.rowCount).toBe(79);
+      expect(runtime.rows[0]?.schema_compatibility).toBe(80);
+      expect(applied.rowCount).toBe(80);
       const stage3Tables = await pool.query<{name: string}>(`SELECT table_name AS name FROM information_schema.tables
         WHERE table_schema='public' AND table_name IN ('committees','committee_memberships','committee_capabilities',
         'committee_seats','seat_assignments','seat_invitations','rule_packages','rule_package_versions',

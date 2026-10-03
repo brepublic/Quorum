@@ -1104,6 +1104,8 @@ const zhCN: Record<string, string> = {
   'Posts': '资料',
   'Stats': '统计',
   'Settings': '设置',
+  'Show motion types on demand': '按需显示动议类型',
+  'Hidden': '已隐藏',
   'Help': '帮助',
   'Open': '开放',
   'Closed': '已关闭',

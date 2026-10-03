@@ -28,7 +28,7 @@ function snapshot(audience: CommitteeWorkspaceSnapshot['viewer']['audience']): C
     status: 'ACTIVE', activeRulePackageVersionId: 'rules', revision: 4}, seats: [{id: 'seat', stableKey: 'china',
     displayName: 'China', rank: 'STANDARD', canVote: true, canProceduralVote: true, hasVeto: true, mustVote: false, sortOrder: 0, active: true,
     revision: 2, flag: {type: 'STANDARD', value: 'cn'}}], viewer: {audience, seatId: audience === 'MEMBER' ? 'seat' : null},
-  motionSettings: {delegateMotionProposalsEnabled: false, delegateMotionVotingEnabled: false},
+  motionSettings: {showMotionsOnDemand: true, delegateMotionProposalsEnabled: false, delegateMotionVotingEnabled: false},
   layoutSettings: {moveQueueUp: false, timersInSeparateColumns: false},
   memberships: audience === 'CHAIR' || audience === 'OWNER' ? [{userEmail: 'delegate@example.com', status: 'ACTIVE'}] : undefined,
   chairs: audience === 'CHAIR' || audience === 'OWNER' ? [{userEmail: 'chair@example.com'}] : undefined,
@@ -1197,6 +1197,101 @@ describe('committee workspace routes and roles', () => {
     await act(async () => {page.querySelector<HTMLButtonElement>('button[aria-label="Propose Motion"]')?.click();});
     expect(proposeMotion).toHaveBeenCalledWith('committee', expect.objectContaining({motionTypeId: 'introduce-amendment',
       parameters: {amendmentTarget: 'amendment', proposal: 'Replace clause 1'}}));
+  });
+
+  it.each([true, false])('uses the actual main list for motion visibility (open=%s)', async open => {
+    const page = await render('CHAIR', '/committees/committee/motions', user, value => ({...value,
+      meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: 'Session 1', phaseId: 'formal-debate',
+        activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1, createdAt: '', closedAt: null},
+      speakerLists: [{id: 'general', kind: 'GENERAL', meetingSessionId: 'meeting', status: open ? 'OPEN' : 'CLOSED',
+        entries: [], speeches: []}] as unknown as SpeakerList[],
+      activeRules: {...value.activeRules, motionTypes: ['open-debate', 'close-debate'].map(id => ({id,
+        procedural: true, requiredSecondCount: 0}))}}));
+    const options = [...page.querySelectorAll('.motion-proposal-form > .field:first-child .menu [role="option"]')].map(item => item.textContent);
+    expect(options).toEqual([open ? 'Close Formal Debate' : 'Open Formal Debate']);
+  });
+
+  it('searches hidden motions, labels them, and keeps a searched selection usable after search clears', async () => {
+    const proposeMotion = vi.fn(async () => ({}));
+    const page = await render('CHAIR', '/committees/committee/motions', user, value => ({...value,
+      meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: 'Session 1', phaseId: 'formal-debate',
+        activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1, createdAt: '', closedAt: null},
+      speakerLists: [{id: 'general', kind: 'GENERAL', meetingSessionId: 'meeting', status: 'OPEN',
+        entries: [], speeches: []}] as unknown as SpeakerList[],
+      attendance: [{seatId: 'seat', state: 'PRESENT', lastEventId: 'attendance', updatedAt: ''}],
+      activeRules: {...value.activeRules, motionTypes: ['open-debate', 'close-debate'].map(id => ({id,
+        searchTerms: id === 'open-debate' ? ['kqzslb'] : [], procedural: true, requiredSecondCount: 0}))}}),
+      {proposeMotion: proposeMotion as unknown as SelfHostedApi['proposeMotion']});
+    const typeField = page.querySelector<HTMLElement>('.motion-proposal-form .field .ui.dropdown')!;
+    const search = typeField.querySelector<HTMLInputElement>('input.search')!;
+    await act(async () => {
+      typeField.click();
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(search, 'kqzslb');
+      search.dispatchEvent(new Event('input', {bubbles: true}));
+    });
+    const option = typeField.querySelector<HTMLElement>('[role="option"]')!;
+    expect(option.textContent).toContain('Open Formal Debate');
+    expect(option.querySelector('.motion-hidden-label')?.textContent).toBe('Hidden');
+    await act(async () => {option.click();});
+    expect(search.value).toBe('');
+    expect(typeField.querySelector('.text')?.textContent).toBe('Open Formal Debate');
+    expect(typeField.querySelector('.menu')?.textContent).not.toContain('Open Formal Debate');
+    await act(async () => {page.querySelector<HTMLElement>('.motion-proposer-field [role="option"]')!.click();});
+    const submit = page.querySelector<HTMLButtonElement>('button[aria-label="Propose Motion"]')!;
+    expect(submit.disabled).toBe(false);
+    await act(async () => {submit.click();});
+    expect(proposeMotion).toHaveBeenCalledWith('committee', expect.objectContaining({motionTypeId: 'open-debate'}));
+  });
+
+  it.each([true, false])('applies the switch to generic document motions without inventing special options (enabled=%s)', async enabled => {
+    const ids = ['introduce-draft-resolution', 'postpone-resolution', 'resume-resolution', 'vote-on-resolution',
+      'reorder-draft-resolutions', 'introduce-amendment', 'vote-on-amendment', 'open-moderated-caucus'];
+    const page = await render('CHAIR', '/committees/committee/motions', user, value => ({...value,
+      motionSettings: {...value.motionSettings, showMotionsOnDemand: enabled},
+      meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: 'Session 1', phaseId: 'formal-debate',
+        activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1, createdAt: '', closedAt: null},
+      activeRules: {...value.activeRules, motionTypes: ids.map(id => ({id, procedural: true, requiredSecondCount: 0}))}}));
+    const options = [...page.querySelectorAll('.motion-proposal-form > .field:first-child .menu [role="option"]')].map(item => item.textContent);
+    expect(options).toHaveLength(enabled ? 1 : 6);
+    expect(options).toContain('Open Moderated Caucus');
+    expect(options.some(text => text?.includes('Amendment'))).toBe(false);
+    expect(page.querySelector('.motion-hidden-label')).toBeNull();
+  });
+
+  it.each(['eligible', 'directive', 'postponed', 'direct-vote', 'formal-vote', 'previous-session', 'draft', 'failed'] as const)(
+    'only counts eligible current-session resolutions for reordering: %s', async kind => {
+      const document = {committeeId: 'committee', meetingSessionId: 'meeting', kind: 'RESOLUTION', draftType: 'RESOLUTION',
+        status: 'PUBLISHED', rulePackageVersionId: 'rules', resolutionId: null, ordinal: 1, customTitle: null,
+        title: 'Draft', public: true, proposers: [], seconders: [], delegatesCanAmend: false,
+        currentVersion: {id: 'version', versionNumber: 1, content: 'Body', contentFile: null, createdAt: ''},
+        directVote: null, votingVersionId: null, resultDecisions: [], revision: 1, discussion: [], createdAt: '', updatedAt: ''};
+      const second = {...document, id: 'second',
+        ...(kind === 'directive' ? {draftType: 'DIRECTIVE'} : {}),
+        ...(kind === 'postponed' ? {status: 'POSTPONED'} : {}),
+        ...(kind === 'draft' ? {status: 'DRAFT'} : {}),
+        ...(kind === 'failed' ? {status: 'FAILED'} : {}),
+        ...(kind === 'direct-vote' ? {directVote: {startedAt: '2026-10-03T00:00:00Z'}} : {}),
+        ...(kind === 'previous-session' ? {meetingSessionId: 'previous'} : {})};
+      const page = await render('CHAIR', '/committees/committee/motions', user, value => ({...value,
+        meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: 'Session 1', phaseId: 'formal-debate',
+          activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1, createdAt: '', closedAt: null},
+        documents: [{...document, id: 'first'}, second] as ProceedingDocument[],
+        ballots: (kind === 'formal-vote' ? [{id: 'ballot', subjectType: 'RESOLUTION', subjectId: 'second', status: 'OPEN'}]
+          : []) as CommitteeWorkspaceSnapshot['ballots'],
+        activeRules: {...value.activeRules, motionTypes: [{id: 'reorder-draft-resolutions', procedural: false, requiredSecondCount: 0}]}}));
+      expect(page.querySelector('.motion-proposal-form .menu')?.textContent?.includes('Reorder Draft Resolutions'))
+        .toBe(kind === 'eligible');
+    });
+
+  it('saves the committee motion display setting with the existing motion settings', async () => {
+    const setMotionSettings = vi.fn(async () => ({}));
+    const page = await render('CHAIR', '/committees/committee/settings', user, value => value,
+      {setMotionSettings: setMotionSettings as unknown as SelfHostedApi['setMotionSettings']});
+    const input = page.querySelector<HTMLInputElement>('input[aria-label="Show motion types on demand"]')!;
+    expect(input.checked).toBe(true);
+    await act(async () => {clickSemanticCheckbox(input.closest('.checkbox'));});
+    expect(setMotionSettings).toHaveBeenCalledWith('committee', {showMotionsOnDemand: false,
+      delegateMotionProposalsEnabled: false, delegateMotionVotingEnabled: false}, 4);
   });
 
   it.each([

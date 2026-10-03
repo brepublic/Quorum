@@ -13,6 +13,7 @@ import type {
   ProceedingDocument,
   CommitteeNote,
   CommitteeSummary,
+  CommitteeMotionSettings,
   CommitteeTemplate,
   CommitteeTemplateInput,
   CommitteeTextPost,
@@ -570,9 +571,8 @@ export const selfHostedApi = {
     return request<CommitteeSummary>(`/api/v1/committees/${committeeId}/operation-mode`, {method: 'POST',
       body: {operationMode, baseRevision}});
   },
-  setMotionSettings(committeeId: string, settings: {delegateMotionProposalsEnabled: boolean;
-    delegateMotionVotingEnabled: boolean}, baseRevision: number) {
-    return request<{delegateMotionProposalsEnabled: boolean; delegateMotionVotingEnabled: boolean; revision: number}>(
+  setMotionSettings(committeeId: string, settings: CommitteeMotionSettings, baseRevision: number) {
+    return request<CommitteeMotionSettings & {revision: number}>(
       `/api/v1/committees/${committeeId}/motion-settings`, {method: 'POST', body: {settings, baseRevision}});
   },
   setLayoutSettings(committeeId: string, settings: {moveQueueUp: boolean; timersInSeparateColumns: boolean},

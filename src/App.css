@@ -1963,6 +1963,10 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   margin: 0 auto;
 }
 
+.motion-proposal-form .menu .motion-hidden-label {
+  color: #767676;
+}
+
 .motion-proposal-form .ui.button[type='submit'] {
   min-height: 2.75rem;
 }
