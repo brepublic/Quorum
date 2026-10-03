@@ -548,8 +548,8 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
       <Table.Body>
       {canChair && !readOnly && snapshot.seats.length > 0 && <Table.Row className="all-seats-row">
         <Table.Cell>{t('All seats')}{pending?.startsWith('all-') && <Icon name="spinner" loading style={{marginLeft: '0.5em'}} />}</Table.Cell>
-        <Table.Cell><Form.Select aria-label={`${t('Rank')} · ${t('All seats')}`} search selection fluid
-          value={allRank ?? ''} placeholder={t('Mixed seat ranks')} options={rankOptions} disabled={Boolean(pending)}
+        <Table.Cell><Form.Select aria-label={`${t('Rank')} · ${t('All seats')}`} search selection fluid selectOnBlur={false}
+          value={allRank ?? ''} text={allRank ? t(allRank) : t('Mixed seat ranks')} placeholder={t('Mixed seat ranks')} options={rankOptions} disabled={Boolean(pending)}
           onChange={(_, data) => {const rank = data.value as typeof seatRank;
             void updateAllSeats('all-rank', () => rank === 'MEDIA' ? {rank, canVote: false, canProceduralVote: false, hasVeto: false, mustVote: false} : {rank});}} /></Table.Cell>
         <Table.Cell collapsing data-label={t('Procedural voting')}><Form.Checkbox aria-label={`${t('Procedural voting')} · ${t('All seats')}`}

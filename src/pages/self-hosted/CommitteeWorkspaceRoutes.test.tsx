@@ -627,6 +627,28 @@ describe('committee workspace routes and roles', () => {
     expect(updateSeat).not.toHaveBeenCalled();
   });
 
+  it.each(['outside', 'tab', 'escape'] as const)('does not save a mixed seat rank when dismissed by %s', async dismissal => {
+    const updateSeat = vi.fn(async () => ({})) as unknown as SelfHostedApi['updateSeat'];
+    const page = await render('CHAIR', '/committees/committee/setup', user, value => ({...value,
+      seats: [value.seats[0], {...value.seats[0], id: 'second', rank: 'NGO'}]}), {updateSeat});
+    const dropdown = page.querySelector<HTMLElement>('[aria-label="Seat type · All seats"]')!;
+    const input = dropdown.querySelector<HTMLInputElement>('input')!;
+    await act(async () => {input.focus(); dropdown.click();});
+    expect(dropdown.getAttribute('aria-expanded')).toBe('true');
+    expect(dropdown.querySelector('.text')?.textContent).toBe('Mixed seat types');
+    expect(updateSeat).not.toHaveBeenCalled();
+    await act(async () => {
+      if (dismissal === 'escape') input.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', keyCode: 27, bubbles: true}));
+      if (dismissal === 'tab') input.dispatchEvent(new KeyboardEvent('keydown', {key: 'Tab', keyCode: 9, bubbles: true}));
+    });
+    await act(async () => {
+      input.blur();
+      if (dismissal === 'outside') document.body.click();
+    });
+    expect(updateSeat).not.toHaveBeenCalled();
+    expect(dropdown.querySelector('.text')?.textContent).toBe('Mixed seat types');
+  });
+
   it('changes rank without changing capabilities', async () => {
     const updateSeat = vi.fn(async () => ({})) as unknown as SelfHostedApi['updateSeat'];
     const page = await render('CHAIR', '/committees/committee/setup', user, value => ({...value,
