@@ -404,6 +404,14 @@ async function resolutionDirectVoteState(client: PoolClient, document: DocumentR
       castAt: vote.cast_at.toISOString()}))};
 }
 
+async function requireDocumentBody(client: PoolClient, versionId: string): Promise<void> {
+  await requirePublishedDocumentFile(client, versionId);
+  const body = (await client.query<{content: string; content_file_entry_id: string | null}>(
+    'SELECT content,content_file_entry_id FROM document_versions WHERE id=$1', [versionId])).rows[0];
+  if (!body || !body.content.trim() && !body.content_file_entry_id) throw new AppError({
+    code: 'VALIDATION_FAILED', reason: 'DRAFT_BODY_REQUIRED', message: 'Add draft text or a file.'});
+}
+
 async function requireDirectVoteDocument(client: PoolClient, document: DocumentRow): Promise<void> {
   if (document.draft_type === 'DIRECTIVE') await requireDirectiveCrisis(client,document.id,document.committee_id);
   if (document.status === 'POSTPONED') throw new AppError({code: 'RESOURCE_CONFLICT', reason: 'DOCUMENT_STATE_CHANGED', message: 'The draft is postponed.'});
@@ -1727,17 +1735,21 @@ export class Stage5Service {
           && (item as {id?: unknown}).id === motionTypeId) : [];
         if (matches.length !== 1) throw new AppError({reason: 'MOTION_TYPE_UNAVAILABLE', code: 'VALIDATION_FAILED',
           message: 'Motion type is not active in the meeting rule package.'});
-        if (['postpone-resolution', 'resume-resolution', 'vote-on-resolution'].includes(motionTypeId)
+        if (['introduce-draft-resolution', 'postpone-resolution', 'resume-resolution', 'vote-on-resolution'].includes(motionTypeId)
           || motionTypeId === 'open-moderated-caucus' && (parameters as Record<string, unknown>).resolutionTarget !== undefined) {
           const targetId = motionId(parameters as Record<string, unknown>, 'resolutionTarget', 'Target resolution ID');
-          const target = await client.query<{status: ProceedingDocumentStatus; direct_vote_started_at: Date | null}>(
-            `SELECT d.status,r.direct_vote_started_at FROM documents d JOIN document_voting r ON r.document_id=d.id
-            WHERE d.id=$1 AND d.committee_id=$2 AND d.meeting_session_id=$3 AND d.deleted_at IS NULL`,
+          const target = await client.query<{status: ProceedingDocumentStatus; current_version_id: string; direct_vote_started_at: Date | null}>(
+            `SELECT d.status,d.current_version_id,r.direct_vote_started_at FROM documents d JOIN document_voting r ON r.document_id=d.id
+            WHERE d.id=$1 AND d.committee_id=$2 AND d.meeting_session_id=$3 AND d.kind='RESOLUTION' AND d.deleted_at IS NULL`,
           [targetId, committeeId, meetingSessionId]);
-          const expected = motionTypeId === 'resume-resolution' ? 'POSTPONED' : 'PUBLISHED';
+          const expected = motionTypeId === 'introduce-draft-resolution' ? 'DRAFT'
+            : motionTypeId === 'resume-resolution' ? 'POSTPONED' : 'PUBLISHED';
           if (target.rows[0]?.status !== expected || motionTypeId === 'postpone-resolution'
             && target.rows[0].direct_vote_started_at) throw new AppError({reason: 'DOCUMENT_STATE_CHANGED', code: 'RESOURCE_CONFLICT',
             message: 'The target resolution is not available for this motion.'});
+          if (['introduce-draft-resolution', 'vote-on-resolution'].includes(motionTypeId)) {
+            await requireDocumentBody(client, target.rows[0]!.current_version_id);
+          }
         }
         if (motionTypeId === 'introduce-amendment' || motionTypeId === 'vote-on-amendment') {
           const targetId = motionId(parameters as Record<string, unknown>, 'amendmentTarget', 'Target amendment ID');
@@ -2167,16 +2179,7 @@ export class Stage5Service {
       }
       if (document.status !== 'DRAFT') throw new AppError({reason: 'RESOLUTION_ALREADY_INTRODUCED', code: 'RESOURCE_CONFLICT',
         message: 'Only an unintroduced Draft Resolution can be introduced.'});
-      const contentSource = await client.query<{content_file_entry_id: string | null; file_status: string | null}>(
-        `SELECT v.content_file_entry_id,e.status AS file_status FROM document_versions v
-          LEFT JOIN file_entries linked ON linked.id=v.content_file_entry_id
-          LEFT JOIN file_entries e ON e.id=coalesce(linked.merged_into_file_entry_id,linked.id)
-          WHERE v.document_id=$1 AND v.id=$2`, [documentId, document.current_version_id]);
-      const source = contentSource.rows[0];
-      if (source?.content_file_entry_id && source.file_status !== 'PUBLISHED') {
-        throw new AppError({reason: 'DOCUMENT_FILE_NOT_PUBLISHED', code: 'RESOURCE_CONFLICT',
-          message: 'Publish the resolution content file before introducing the draft.'});
-      }
+      await requireDocumentBody(client, document.current_version_id);
       const updated = await client.query<DocumentRow>(`UPDATE documents SET status='PUBLISHED',is_public=true,
         revision=revision+1,updated_at=$2 WHERE id=$1 RETURNING *,NULL::uuid AS resolution_document_id`, [documentId, now]);
       await client.query(`INSERT INTO document_actions
@@ -2354,6 +2357,14 @@ export class Stage5Service {
       }
       if (document.status !== 'PUBLISHED') throw new AppError({reason: 'RESOLUTION_NOT_INTRODUCED', code: 'RESOURCE_CONFLICT',
         message: 'Only an introduced resolution can enter voting.'});
+      if (document.draft_type !== 'DIRECTIVE') {
+        await this.startDocumentVoteInTransaction(client, committee, document, actorUserId, now, context);
+        await client.query(`INSERT INTO document_actions
+          (id,committee_id,document_id,action,from_status,to_status,rule_stable_id,rule_evaluation,actor_user_id,created_at)
+          VALUES ($1,$2,$3,'RECOMMEND_BALLOT','PUBLISHED','VOTING',$4,$5,$6,$7)`,
+        [randomUUID(), committeeId, resolutionId, motion.motion_type_id, motion.rule_evaluation, actorUserId, now]);
+        return `/committees/${committeeId}/votes/${resolutionId}`;
+      }
       if (document.draft_type === 'DIRECTIVE') await requireDirectiveCrisis(client,document.id,committeeId);
       await requirePublishedDocumentFile(client, document.current_version_id);
       await client.query(`UPDATE documents SET status='VOTING',voting_version_id=current_version_id,
@@ -2560,6 +2571,7 @@ export class Stage5Service {
         if (!session.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Meeting session not found.'});
         if (session.rows[0].status !== 'OPEN') throw new AppError({reason: 'MEETING_CLOSED', code: 'RESOURCE_CONFLICT', message: 'Meeting session is closed.'});
         let subjectVersionId: string | null = null; let motionSubject: MotionRow | undefined;
+        let resolutionSubject: DocumentRow | undefined;
         if (subjectType === 'MOTION') {
           const motion = await client.query<MotionRow>(`SELECT * FROM motions
             WHERE id=$1 AND committee_id=$2 FOR UPDATE`, [subjectId, committeeId]);
@@ -2582,16 +2594,24 @@ export class Stage5Service {
             WHERE document_id=$1 AND direct_vote_started_at IS NOT NULL
             UNION ALL SELECT 1 FROM ballots WHERE subject_id=$1 AND subject_type=$2 LIMIT 1`, [subjectId, subjectType]);
           if (existingVote.rowCount) throw new AppError({code: 'RESOURCE_CONFLICT', reason: 'BALLOT_ALREADY_EXISTS', message: 'The draft already has a vote.'});
-          const document = await client.query<{status: ProceedingDocumentStatus; voting_version_id: string | null; draft_type: string | null}>(
-            `SELECT status,voting_version_id,draft_type FROM documents WHERE id=$1 AND committee_id=$2 AND kind=$3
+          const document = await client.query<DocumentRow>(
+            `SELECT * FROM documents WHERE id=$1 AND committee_id=$2 AND kind=$3
               AND deleted_at IS NULL FOR UPDATE`,
             [subjectId, committeeId, kind]);
           if (!document.rows[0]) throw new AppError({code: 'NOT_FOUND', message: 'Ballot document not found.'});
           if (document.rows[0].draft_type === 'DIRECTIVE') throw new AppError({code: 'VALIDATION_FAILED',reason: 'DIRECTIVE_VOTE_REQUIRED',message: 'Use directive voting.'});
-          if (document.rows[0].status !== 'VOTING' || !document.rows[0].voting_version_id) throw new AppError({reason: 'DOCUMENT_NOT_IN_VOTING',
-            code: 'RESOURCE_CONFLICT', message: 'The document has not entered formal voting.'});
-          subjectVersionId = document.rows[0].voting_version_id;
-          await requirePublishedDocumentFile(client, subjectVersionId);
+          if (kind === 'RESOLUTION') {
+            if (!['PUBLISHED', 'VOTING'].includes(document.rows[0].status)) throw new AppError({reason: 'RESOLUTION_NOT_INTRODUCED',
+              code: 'RESOURCE_CONFLICT', message: 'Only an introduced resolution can enter voting.'});
+            resolutionSubject = document.rows[0];
+            subjectVersionId = resolutionSubject.voting_version_id ?? resolutionSubject.current_version_id;
+            await requireDocumentBody(client, subjectVersionId);
+          } else {
+            if (document.rows[0].status !== 'VOTING' || !document.rows[0].voting_version_id) throw new AppError({reason: 'DOCUMENT_NOT_IN_VOTING',
+              code: 'RESOURCE_CONFLICT', message: 'The document has not entered formal voting.'});
+            subjectVersionId = document.rows[0].voting_version_id;
+            await requirePublishedDocumentFile(client, subjectVersionId);
+          }
         }
         const eligible = await client.query<{seat_id: string; display_name: string; must_vote: boolean; has_veto: boolean}>(`SELECT
           s.id AS seat_id,s.display_name,s.must_vote,s.has_veto FROM committee_seats s JOIN current_attendance a
@@ -2619,6 +2639,22 @@ export class Stage5Service {
         [id, committeeId, meetingSessionId, subjectType, subjectId, procedural, choices,
           session.rows[0].active_rule_package_version_id, evaluation, JSON.stringify(eligibility), {kind: thresholdKind, value: thresholdValue},
           thresholdValue, auth.user.id, now]);
+        if (resolutionSubject) {
+          const documentRule = await frozenDocumentRule(client, resolutionSubject, 'vote-on-resolution',
+            documentBallotRuleIds.RESOLUTION, now);
+          await client.query(`UPDATE documents SET status='VOTING',voting_version_id=$2,is_public=true,
+            revision=revision+1,updated_at=$3 WHERE id=$1`, [subjectId, subjectVersionId, now]);
+          await client.query(`INSERT INTO document_actions
+            (id,committee_id,document_id,action,from_status,to_status,rule_stable_id,rule_evaluation,actor_user_id,created_at)
+            VALUES ($1,$2,$3,'RECOMMEND_BALLOT',$4,'VOTING','vote-on-resolution',$5,$6,$7)`,
+          [randomUUID(), committeeId, subjectId, resolutionSubject.status, documentRule, auth.user.id, now]);
+          await appendEvent(client, committee, {type: 'document.status_changed', resourceType: 'document', resourceId: subjectId,
+            revision: resolutionSubject.revision + 1, payload: {kind: 'RESOLUTION', status: 'VOTING', votingVersionId: subjectVersionId, ballotId: id}, audience: 'PUBLIC'});
+          await audit(client, context, {committeeId, actorUserId: auth.user.id, capabilities: ['CHAIR'],
+            action: 'documents.status_changed', resourceType: 'document', resourceId: subjectId,
+            before: {status: resolutionSubject.status, revision: resolutionSubject.revision},
+            after: {status: 'VOTING', revision: resolutionSubject.revision + 1, votingVersionId: subjectVersionId, ballotId: id}});
+        }
         if (motionSubject) {
           await client.query(`UPDATE motions SET status='VOTING',revision=revision+1 WHERE id=$1`, [motionSubject.id]);
           await appendEvent(client, committee, {type: 'motion.voting_started', resourceType: 'motion',
@@ -3457,9 +3493,12 @@ export class Stage5Service {
         if (parent.rows[0]?.status === 'POSTPONED') throw new AppError({reason: 'DOCUMENT_STATE_CHANGED',
           code: 'RESOURCE_CONFLICT', message: 'The target Draft Resolution is postponed.'});
       }
-      await requirePublishedDocumentFile(client, document.current_version_id);
+      if (document.kind === 'RESOLUTION' && document.draft_type !== 'DIRECTIVE') {
+        await requireDocumentBody(client, document.current_version_id);
+      } else await requirePublishedDocumentFile(client, document.current_version_id);
       const now = this.now(); const evaluation = await frozenDocumentRule(client, document, ruleStableId,
-        documentBallotRuleIds[document.kind], now); const status = 'VOTING';
+        documentBallotRuleIds[document.kind], now);
+      const status = document.kind === 'RESOLUTION' && document.draft_type !== 'DIRECTIVE' ? 'PUBLISHED' : 'VOTING';
       const updated = await client.query<DocumentRow>(`UPDATE documents SET status=$2::proceeding_document_status,is_public=true,
         voting_version_id=CASE WHEN $2::proceeding_document_status='VOTING' THEN current_version_id ELSE voting_version_id END,
         revision=revision+1,updated_at=$3 WHERE id=$1 RETURNING *,
@@ -3620,6 +3659,43 @@ export class Stage5Service {
     });
   }
 
+  private async startDocumentVoteInTransaction(client: PoolClient, committee: Stage4CommitteeRow,
+    document: DocumentRow, actorUserId: string, now: Date, context: Stage4Context): Promise<void> {
+    const documentId = document.id;
+    await requireDirectVoteDocument(client, document);
+    const metadata = (await client.query<ResolutionRow>('SELECT * FROM document_voting WHERE document_id=$1 FOR UPDATE', [documentId])).rows[0]!;
+    if (metadata.direct_vote_started_at) return;
+    if (['PASSED','FAILED','INCORPORATED','REJECTED'].includes(document.status)) throw new AppError({code: 'RESOURCE_CONFLICT', reason: 'DOCUMENT_STATE_CHANGED', message: 'The draft already has a result.'});
+    await requireDocumentBody(client, document.current_version_id);
+    const eligible = await client.query(`SELECT 1 FROM committee_seats s JOIN current_attendance a
+      ON a.seat_id=s.id AND a.meeting_session_id=$2 AND a.state='PRESENT'
+      WHERE s.committee_id=$1 AND s.active AND s.can_vote LIMIT 1`, [committee.id, document.meeting_session_id]);
+    if (!eligible.rowCount) throw new AppError({code: 'VALIDATION_FAILED', reason: 'NO_ELIGIBLE_VOTERS', message: 'There are no eligible voters.'});
+    await client.query('UPDATE document_voting SET direct_vote_started_at=$2 WHERE document_id=$1', [documentId, now]);
+    const ordinaryResolution = document.kind === 'RESOLUTION' && document.draft_type !== 'DIRECTIVE';
+    const previousStatus = document.status;
+    await client.query(`UPDATE documents SET voting_version_id=coalesce(voting_version_id,current_version_id),is_public=true,
+      status=CASE WHEN $2 THEN 'VOTING'::proceeding_document_status ELSE status END,
+      revision=revision+CASE WHEN $2 THEN 1 ELSE 0 END,
+      updated_at=CASE WHEN $2 THEN $3 ELSE updated_at END WHERE id=$1`, [documentId, ordinaryResolution, now]);
+    document.voting_version_id = document.voting_version_id ?? document.current_version_id; document.is_public = true;
+    document.revision += ordinaryResolution ? 1 : 0;
+    if (ordinaryResolution) document.updated_at = now;
+    if (ordinaryResolution && previousStatus !== 'VOTING') {
+      document.status = 'VOTING';
+      await appendEvent(client, committee, {type: 'document.status_changed', resourceType: 'document', resourceId: documentId,
+        revision: document.revision, payload: {kind: document.kind, status: 'VOTING', votingVersionId: document.voting_version_id}, audience: 'PUBLIC'});
+      await audit(client, context, {committeeId: committee.id, actorUserId, capabilities: ['CHAIR'],
+        action: 'documents.status_changed', resourceType: 'document', resourceId: documentId,
+        before: {status: previousStatus, revision: document.revision - 1},
+        after: {status: 'VOTING', revision: document.revision, votingVersionId: document.voting_version_id}});
+    }
+    await appendEvent(client, committee, {type: 'document.direct_vote_changed', resourceType: 'document',
+      resourceId: documentId, revision: document.revision, payload: {started: true}, audience: 'PUBLIC'});
+    await audit(client, context, {committeeId: committee.id, actorUserId, capabilities: ['CHAIR'],
+      action: 'documents.direct_vote_started', resourceType: 'document', resourceId: documentId, after: {versionId: document.voting_version_id}});
+  }
+
   async startDocumentVote(auth: AuthenticatedSession, documentId: string, input: Record<string, unknown>,
     key: string, context: Stage4Context): Promise<ProceedingDocument> {
     requireBusinessIdentity(auth); assertExactBody(input, ['baseRevision']);
@@ -3635,26 +3711,7 @@ export class Stage5Service {
           (SELECT resolution_document_id FROM amendments WHERE document_id=d.id) AS resolution_document_id
           FROM documents d WHERE d.id=$1 FOR UPDATE`, [documentId])).rows[0]!;
         if (document.revision !== revision) throw new AppError({code: 'REVISION_CONFLICT', message: 'The draft changed.'});
-        await requireDirectVoteDocument(client, document);
-        const metadata = (await client.query<ResolutionRow>('SELECT * FROM document_voting WHERE document_id=$1 FOR UPDATE', [documentId])).rows[0]!;
-        if (metadata.direct_vote_started_at) return documentState(client, document);
-        if (['PASSED','FAILED','INCORPORATED','REJECTED'].includes(document.status)) throw new AppError({code: 'RESOURCE_CONFLICT', reason: 'DOCUMENT_STATE_CHANGED', message: 'The draft already has a result.'});
-        await requirePublishedDocumentFile(client, document.current_version_id);
-        const body = (await client.query<{content: string; content_file_entry_id: string | null}>(
-          'SELECT content,content_file_entry_id FROM document_versions WHERE id=$1', [document.current_version_id])).rows[0]!;
-        if (!body.content.trim() && !body.content_file_entry_id) throw new AppError({code: 'VALIDATION_FAILED', reason: 'DRAFT_BODY_REQUIRED', message: 'Add draft text or a file.'});
-        const eligible = await client.query(`SELECT 1 FROM committee_seats s JOIN current_attendance a
-          ON a.seat_id=s.id AND a.meeting_session_id=$2 AND a.state='PRESENT'
-          WHERE s.committee_id=$1 AND s.active AND s.can_vote LIMIT 1`, [committee.id, document.meeting_session_id]);
-        if (!eligible.rowCount) throw new AppError({code: 'VALIDATION_FAILED', reason: 'NO_ELIGIBLE_VOTERS', message: 'There are no eligible voters.'});
-        const now = this.now();
-        await client.query('UPDATE document_voting SET direct_vote_started_at=$2 WHERE document_id=$1', [documentId, now]);
-        await client.query('UPDATE documents SET voting_version_id=coalesce(voting_version_id,current_version_id),is_public=true WHERE id=$1', [documentId]);
-        document.voting_version_id = document.voting_version_id ?? document.current_version_id; document.is_public = true;
-        await appendEvent(client, committee, {type: 'document.direct_vote_changed', resourceType: 'document',
-          resourceId: documentId, revision: document.revision, payload: {started: true}, audience: 'PUBLIC'});
-        await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id, capabilities: ['CHAIR'],
-          action: 'documents.direct_vote_started', resourceType: 'document', resourceId: documentId, after: {versionId: document.voting_version_id}});
+        await this.startDocumentVoteInTransaction(client, committee, document, auth.user.id, this.now(), context);
         return documentState(client, document);
       }});
   }
@@ -3735,6 +3792,9 @@ export class Stage5Service {
           FROM document_direct_votes WHERE document_id=$1 FOR UPDATE`, [documentId]);
         const previousBySeat = new Map(existing.rows.map(vote => [vote.seat_id, vote]));
         const now = this.now();
+        if (document.kind === 'RESOLUTION' && document.draft_type !== 'DIRECTIVE' && !resolution.direct_vote_started_at) {
+          await this.startDocumentVoteInTransaction(client, committee, document, auth.user.id, now, context);
+        }
         for (const seat of currentEligibility.rows) {
           const choice = bySeat.get(seat.seat_id) as BallotChoice;
           const previous = previousBySeat.get(seat.seat_id);
@@ -3808,6 +3868,9 @@ export class Stage5Service {
       if (choice === previousChoice) throw new AppError({code: 'RESOURCE_CONFLICT', reason: choice === null ? 'NO_VOTE_TO_UNDO' : 'VOTE_ALREADY_RECORDED', message: choice === null
         ? 'This seat has no current vote to retract.' : 'This seat already has that vote.'});
       const now = this.now(); let voteId: string; let voteRevision: number;
+      if (document.kind === 'RESOLUTION' && document.draft_type !== 'DIRECTIVE') {
+        await this.startDocumentVoteInTransaction(client, committee, document, auth.user.id, now, context);
+      }
       if (!current) {
         if (choice === null) throw new AppError({reason: 'NO_VOTE_TO_UNDO', code: 'RESOURCE_CONFLICT', message: 'This seat has no current vote to retract.'});
         voteId = randomUUID(); voteRevision = 1;

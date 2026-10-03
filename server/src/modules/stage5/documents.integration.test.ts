@@ -136,7 +136,7 @@ integration('PostgreSQL stage 5 documents', () => {
     const f = await meetingFixture(); const other = await meetingFixture();
     const crisis=await stage5.createCrisis(f.firstChair,f.committee.id,{meetingSessionId:f.session.id},randomUUID(),context('purge-crisis'));
     const document = await stage5.createResolution(f.firstChair, f.committee.id,
-      {meetingSessionId: f.session.id, customTitle: null, content: ''}, randomUUID(), context('purge-document'));
+      {meetingSessionId: f.session.id, customTitle: null, content: 'Body'}, randomUUID(), context('purge-document'));
     await stage5.updateDocumentSettings(f.firstChair, document.id,
       {baseRevision: document.revision, proposerSeatIds: [f.firstSeat.id], seconderSeatIds: [f.secondSeat.id]}, context('purge-countries'));
     await stage5.setResolutionDirectVote(f.firstChair, document.id,
@@ -173,10 +173,10 @@ integration('PostgreSQL stage 5 documents', () => {
   it('introduces an existing draft without an initial seconder or replacing its countries with motion sponsors', async () => {
     const fixture = await meetingFixture();
     const draft = await stage5.createResolution(fixture.firstChair, fixture.committee.id,
-      {meetingSessionId: fixture.session.id, customTitle: null, content: ''},
+      {meetingSessionId: fixture.session.id, customTitle: null, content: 'Resolution body'},
       'empty-resolution-draft', context('empty-resolution-draft'));
     expect(draft).toMatchObject({title: 'Draft Resolution 1.1', status: 'DRAFT', proposers: [],
-      seconders: [], directVote: {majority: 'TWO_THIRDS'}, currentVersion: {content: ''}});
+      seconders: [], directVote: {majority: 'TWO_THIRDS'}, currentVersion: {content: 'Resolution body'}});
     await stage5.updateDocumentSettings(fixture.firstChair, draft.id,
       {baseRevision: draft.revision, proposerSeatIds: [fixture.secondSeat.id], seconderSeatIds: [fixture.firstSeat.id]}, context('draft-countries'));
     const motion = await stage5.proposeMotion(fixture.firstChair, fixture.committee.id,
@@ -570,20 +570,20 @@ integration('PostgreSQL stage 5 documents', () => {
     expect(workspace.documents?.find(document => document.id === draft.id)?.currentVersion.contentFile)
       .toMatchObject({id: fileId, logicalName: 'Draft body', originalName: 'draft.pdf', status: 'UPLOAD_COMPLETE'});
 
+    await expect(stage5.proposeMotion(fixture.firstChair, fixture.committee.id,
+      {meetingSessionId: fixture.session.id, motionTypeId: 'introduce-draft-resolution',
+        onBehalfOfSeatId: fixture.firstSeat.id,
+        parameters: {resolutionTarget: draft.id}}, 'file-resolution-motion', context('file-resolution-motion'))).rejects.toMatchObject({reason: 'DOCUMENT_FILE_NOT_PUBLISHED'});
+    expect((await pool!.query('SELECT 1 FROM motions WHERE committee_id=$1', [fixture.committee.id])).rowCount).toBe(0);
+    expect((await pool!.query('SELECT status,is_public FROM documents WHERE id=$1', [draft.id])).rows[0])
+      .toEqual({status: 'DRAFT', is_public: false});
+    await pool!.query("UPDATE file_entries SET status='PENDING_REVIEW',submitted_at=now(),revision=revision+1 WHERE id=$1", [fileId]);
+    await pool!.query(`UPDATE file_entries SET status='PUBLISHED',published_at=now(),published_by_user_id=$2,
+      revision=revision+1 WHERE id=$1`, [fileId, fixture.firstChair.user.id]);
     const motion = await stage5.proposeMotion(fixture.firstChair, fixture.committee.id,
       {meetingSessionId: fixture.session.id, motionTypeId: 'introduce-draft-resolution',
         onBehalfOfSeatId: fixture.firstSeat.id,
-        parameters: {resolutionTarget: draft.id}}, 'file-resolution-motion', context('file-resolution-motion'));
-    await expect(stage5.decideMotion(fixture.firstChair, motion.id,
-      {baseRevision: motion.revision, result: 'PASSED'}, context('blocked-file-introduction')))
-      .rejects.toMatchObject({code: 'RESOURCE_CONFLICT',
-        message: 'Publish the resolution content file before introducing the draft.'});
-    expect((await pool?.query('SELECT status FROM motions WHERE id=$1', [motion.id]))?.rows[0]).toEqual({status: 'SECONDED'});
-    expect((await pool?.query('SELECT status,is_public FROM documents WHERE id=$1', [draft.id]))?.rows[0])
-      .toEqual({status: 'DRAFT', is_public: false});
-    await pool?.query("UPDATE file_entries SET status='PENDING_REVIEW',submitted_at=now(),revision=revision+1 WHERE id=$1", [fileId]);
-    await pool?.query(`UPDATE file_entries SET status='PUBLISHED',published_at=now(),published_by_user_id=$2,
-      revision=revision+1 WHERE id=$1`, [fileId, fixture.firstChair.user.id]);
+        parameters: {resolutionTarget: draft.id}}, 'published-file-resolution-motion', context('published-file-resolution-motion'));
     const other = await meetingFixture();
     const otherDraft = await stage5.createResolution(other.firstChair, other.committee.id,
       {meetingSessionId:other.session.id,customTitle:null,content:'',onBehalfOfSeatId:other.firstSeat.id},
@@ -646,7 +646,7 @@ integration('PostgreSQL stage 5 documents', () => {
   it('lets the Chair pass an introduction motion without a seconder', async () => {
     const fixture = await meetingFixture();
     const draft = await stage5.createResolution(fixture.firstDelegate, fixture.committee.id,
-      {meetingSessionId: fixture.session.id, customTitle: null, content: ''},
+      {meetingSessionId: fixture.session.id, customTitle: null, content: 'Resolution body'},
       'unseconded-resolution-draft', context('unseconded-resolution-draft'));
     const motion = await stage5.proposeMotion(fixture.firstDelegate, fixture.committee.id,
       {meetingSessionId: fixture.session.id, motionTypeId: 'introduce-draft-resolution',
@@ -661,7 +661,7 @@ integration('PostgreSQL stage 5 documents', () => {
     const fixture = await meetingFixture();
     await pool?.query("UPDATE committees SET operation_mode='CHAIR_OPERATED' WHERE id=$1", [fixture.committee.id]);
     const draft = await stage5.createResolution(fixture.firstChair, fixture.committee.id,
-      {meetingSessionId: fixture.session.id, customTitle: null, content: ''},
+      {meetingSessionId: fixture.session.id, customTitle: null, content: 'Resolution body'},
       'chair-resolution-draft', context('chair-resolution-draft'));
     const motion = await stage5.proposeMotion(fixture.firstChair, fixture.committee.id,
       {meetingSessionId: fixture.session.id, motionTypeId: 'introduce-draft-resolution',

@@ -6,6 +6,7 @@ import {createPortal} from 'react-dom';
 import type {
   AuthoritativeTimer,
   CommitteeWorkspaceSnapshot,
+  ProceedingDocument,
   FileEntry,
   SpeakerList,
   SpeakerQueueEntry,
@@ -688,6 +689,7 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
 function Ballots({snapshot, run, api, canChair, subjectId, embedded = false, stopAction = false}: CommonProps & {
   subjectId?: string; embedded?: boolean; stopAction?: boolean;
 }) {
+  const history = useHistory();
   const ballots = (snapshot.ballots ?? []).filter(ballot => !subjectId || ballot.subjectId === subjectId);
   const [selectedSeats, setSelectedSeats] = React.useState<Record<string, string>>({});
   const canVote = snapshot.committee.status === 'ACTIVE' && (canChair
@@ -708,8 +710,19 @@ function Ballots({snapshot, run, api, canChair, subjectId, embedded = false, sto
         onClick={() => void run(() => api.castVote(ballot.id, choice, canChair ? seatId ?? undefined : undefined))}>{t(choice)}</Button>)}
       {canChair && ballot.status === 'OPEN' && !stopAction && <Button size="mini"
         onClick={() => void run(() => api.closeBallot(ballot.id, ballot.revision))}>{t('Close ballot')}</Button>}
-      {canChair && ballot.status === 'CLOSED' && <Button size="mini" primary onClick={() => void run(() => api.publishBallot(ballot.id,
-        ballot.revision))}>{t('Publish result')}</Button>}
+      {canChair && ballot.status === 'CLOSED' && <Button size="mini" primary onClick={async () => {
+        let destination: string | undefined;
+        await run(async () => {
+          const published = await api.publishBallot(ballot.id, ballot.revision);
+          const motion = snapshot.motions?.find(item => item.id === ballot.subjectId);
+          const target = snapshot.documents?.find(item => item.id === motion?.parameters.resolutionTarget);
+          if (ballot.subjectType === 'MOTION' && motion?.motionTypeId === 'vote-on-resolution'
+            && target?.draftType !== 'DIRECTIVE' && published.result?.outcome === 'PASSED') {
+            destination = `/committees/${snapshot.committee.id}/votes/${motion.parameters.resolutionTarget}`;
+          }
+        });
+        if (destination) history.push(destination);
+      }}>{t('Publish result')}</Button>}
       {canChair && ballot.chairMayCorrectVote && ballot.status === 'OPEN'
         && <BallotCorrection ballot={ballot} snapshot={snapshot} run={run} api={api} />}
       {ballot.votes.length > 0 && <List.Description>{ballot.votes.map(vote => `${vote.seatDisplayName}: ${t(vote.choice)}`).join(' · ')}</List.Description>}
@@ -1016,6 +1029,7 @@ function hiddenMotionTypeIds(snapshot: CommitteeWorkspaceSnapshot): Set<string> 
 }
 
 function Motions({snapshot, run, api, canChair}: CommonProps) {
+  const history = useHistory();
   const session = snapshot.meetingSession?.status === 'OPEN' ? snapshot.meetingSession : undefined;
   const types = [...snapshot.activeRules.motionTypes].sort((first, second) => {
     const firstPosition = motionTypePosition(first.id); const secondPosition = motionTypePosition(second.id);
@@ -1184,7 +1198,11 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
     ? document.status === 'DRAFT'
     : motionType === 'resume-resolution' ? document.status === 'POSTPONED'
       : motionType === 'postpone-resolution' ? postponableResolutions.some(item => item.id === document.id)
-        : motionType === 'vote-on-resolution' ? document.status === 'PUBLISHED' : true);
+        : motionType === 'vote-on-resolution' ? ['DRAFT', 'PUBLISHED'].includes(document.status) : true);
+  const unavailableResolution = (document: ProceedingDocument) =>
+    ['introduce-draft-resolution', 'vote-on-resolution'].includes(motionType)
+      && (!document.currentVersion.content.trim() && !document.currentVersion.contentFile
+        || motionType === 'vote-on-resolution' && document.status === 'DRAFT');
   const targetAmendments = amendments.filter(document => motionType === 'introduce-amendment'
     ? document.status === 'DRAFT' && eligibleResolutions.some(resolution => resolution.id === document.resolutionId)
       : motionType === 'vote-on-amendment' ? document.status === 'PUBLISHED'
@@ -1202,9 +1220,10 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
     && durationsValid && (chairAdvisoryMode || divisible)
     && (!hasMotionDetail(motionType) || proposal.trim())
     && (!hasCaucusTarget(motionType) || caucusTarget)
-    && (!hasResolutionTarget(motionType) || targetResolutions.some(document => document.id === resolutionTarget))
+    && (!hasResolutionTarget(motionType) || targetResolutions.some(document => document.id === resolutionTarget && !unavailableResolution(document)))
     && (!hasAmendmentTarget(motionType) || targetAmendments.some(document => document.id === amendmentTarget)));
   const propose = async () => {
+    if (!formValid) return;
     const parameters: Record<string, unknown> = {};
     if (hasMotionDetail(motionType)) parameters.proposal = proposal;
     if (hasMotionDuration(motionType) && caucusDurationValue !== undefined) Object.assign(parameters, {caucusDuration: caucusDurationValue, caucusUnit});
@@ -1304,11 +1323,21 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
           onChange={(_, data) => setCaucusTarget(String(data.value))} />}
         {hasResolutionTarget(motionType) && <Form.Select required key="resolutionTarget" search={searchOptions} selection fluid error={!resolutionTarget}
           icon="search" label={t('Target Draft Resolution')} value={resolutionTarget}
-          options={targetResolutions.map(document => ({key: document.id, value: document.id,
-            text: document.title, searchTerms: document.searchTerms,
-            ...(motionType === 'vote-on-resolution' && !discussedResolutionIds.has(document.id)
-              ? {description: t('Not yet discussed')} : {})}))}
-          onChange={(_, data) => setResolutionTarget(String(data.value))} />}
+          options={targetResolutions.map(document => {
+            const descriptions = ['introduce-draft-resolution', 'vote-on-resolution'].includes(motionType)
+              ? [!document.currentVersion.content.trim() && !document.currentVersion.contentFile ? t('No content') : '',
+                document.status === 'DRAFT' ? t('Not introduced') : '',
+                motionType === 'vote-on-resolution' && document.status === 'PUBLISHED'
+                  && !discussedResolutionIds.has(document.id) ? t('Not yet discussed') : ''].filter(Boolean) : [];
+            return {key: document.id, value: document.id, text: document.title, searchTerms: document.searchTerms,
+              disabled: unavailableResolution(document),
+              ...(descriptions.length ? {description: <span className="motion-hidden-label">{descriptions.join(' · ')}</span>} : {})};
+          })}
+          onChange={(_, data) => {
+            if (targetResolutions.some(document => document.id === data.value && !unavailableResolution(document))) {
+              setResolutionTarget(String(data.value));
+            }
+          }} />}
         {hasMotionDuration(motionType) && <Form.Field className="motion-time-field" error={!durationsValid || !divisible}>
           <label>{t(hasMotionSpeakers(motionType) ? 'Total duration' : 'Duration')}</label><Form.Group className="motion-time-inputs"><Form.Input className="motion-time-value"
             type="number" min={1} value={caucusDuration} onChange={event => setCaucusDuration(event.currentTarget.value)} />
@@ -1459,7 +1488,15 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
       </Card.Content>}
       {!decided && chairAdvisoryMode && <>
         <Button.Group fluid attached="bottom"><Button positive
-          onClick={() => void run(() => api.decideMotion(motion.id, motion.revision, 'PASSED'))}>{t('Passed')}</Button>
+          onClick={async () => {
+            let destination: string | undefined;
+            await run(async () => {
+              const passed = await api.decideMotion(motion.id, motion.revision, 'PASSED');
+              if (motion.motionTypeId === 'vote-on-resolution' && passed.destinationPath
+                && !passed.destinationPath.includes('/votes/new')) destination = passed.destinationPath;
+            });
+            if (destination) history.push(destination);
+          }}>{t('Passed')}</Button>
           <Button negative
             onClick={() => void run(() => api.decideMotion(motion.id, motion.revision, 'FAILED'))}>{t('Failed')}</Button>
         </Button.Group>

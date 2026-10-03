@@ -16,11 +16,11 @@ integration('PostgreSQL stage 5 voting', () => {
         {baseRevision: document.revision, majority}, context('result-majority'));
       document = await stage5.setResolutionDirectVote(f.firstChair, document.id,
         {seatId: f.firstSeat.id, choice: 'FOR'}, context('result-partial'));
-      expect(document).toMatchObject({status: 'DRAFT', resultDecisions: [], directVote: {completedAt: null}});
+      expect(document).toMatchObject({status: 'VOTING', resultDecisions: [], directVote: {completedAt: null}});
       document = await stage5.setResolutionDirectVote(f.firstChair, document.id,
         {seatId: f.secondSeat.id, choice: 'FOR'}, context('result-complete'));
       expect(document).toMatchObject({status: 'PASSED', public: true, revision: expect.any(Number),
-        resultDecisions: [{previousStatus: 'DRAFT', newStatus: 'PASSED'}], directVote: {automaticResult: 'PASSED'}});
+        resultDecisions: [{previousStatus: 'VOTING', newStatus: 'PASSED'}], directVote: {automaticResult: 'PASSED'}});
       expect((await stage4.snapshot(f.committee.id, f.firstChair)).documents?.find(item => item.id === document.id)?.status).toBe('PASSED');
       expect((await stage4.snapshot(f.committee.id)).documents?.find(item => item.id === document.id)?.status).toBe('PASSED');
       await stage4.updateSeat(f.firstChair, f.committee.id, f.firstSeat.id,
@@ -105,7 +105,7 @@ integration('PostgreSQL stage 5 voting', () => {
   it('records one vote under concurrent submissions and returns precise duplicate and undo reasons', async () => {
     const f = await meetingFixture();
     const document = await stage5.createResolution(f.firstChair, f.committee.id,
-      {meetingSessionId: f.session.id, customTitle: null, content: ''}, randomUUID(), context('rapid-document'));
+      {meetingSessionId: f.session.id, customTitle: null, content: 'Body'}, randomUUID(), context('rapid-document'));
     const raced = await Promise.allSettled([
       stage5.setResolutionDirectVote(f.firstChair, document.id,
         {seatId: f.firstSeat.id, choice: 'FOR'}, context('rapid-one')),
@@ -140,8 +140,8 @@ integration('PostgreSQL stage 5 voting', () => {
     const key = randomUUID();
     const submitted = await stage5.submitResolutionDirectVote(f.firstChair, document.id,
       request, key, context('batch-submit'));
-    expect(submitted).toMatchObject({status: 'FAILED', revision: document.revision + 1,
-      resultDecisions: [{previousStatus: 'DRAFT', newStatus: 'FAILED'}]});
+    expect(submitted).toMatchObject({status: 'FAILED', revision: document.revision + 2,
+      resultDecisions: [{previousStatus: 'VOTING', newStatus: 'FAILED'}]});
     expect(submitted.directVote).toMatchObject({castRevision: 1, completedAt: expect.any(String),
       votes: expect.arrayContaining([{seatId: f.firstSeat.id, choice: 'FOR',
         id: expect.any(String), seatDisplayName: expect.any(String), revision: 1, castAt: expect.any(String)}])});
@@ -191,7 +191,7 @@ integration('PostgreSQL stage 5 voting', () => {
           {baseRevision: seats[index].revision, patch: {canVote: false, canProceduralVote: true}}, context('disable-voting'));
       }
       let document = await stage5.createResolution(f.firstChair, f.committee.id,
-        {meetingSessionId: f.session.id, customTitle: null, content: ''}, 'empty-electorate', context('empty-electorate'));
+        {meetingSessionId: f.session.id, customTitle: null, content: 'Body'}, 'empty-electorate', context('empty-electorate'));
       expect(document.directVote).toMatchObject({eligibility: [], threshold: 0, automaticResult: null});
       document = await stage5.updateDocumentSettings(f.firstChair, document.id,
         {baseRevision: document.revision, majority, proposerSeatIds: [f.firstSeat.id]}, context('majority'));
@@ -431,10 +431,11 @@ integration('PostgreSQL stage 5 voting', () => {
     const passedVoteMotion = await stage5.decideMotion(fixture.firstChair, voteMotion.id,
       {baseRevision: voteMotion.revision, result: 'PASSED'}, context('pass-vote-on-resolution'));
     expect(passedVoteMotion.destinationPath).toBe(
-      `/committees/${fixture.committee.id}/votes/new?draft=${resolution.id}`);
+      `/committees/${fixture.committee.id}/votes/${resolution.id}`);
     const votingSnapshot = await stage4.snapshot(fixture.committee.id, fixture.firstChair);
     resolution = votingSnapshot.documents?.find(document => document.id === resolution.id) as typeof resolution;
     expect(resolution.status).toBe('VOTING');
+    expect(resolution.directVote?.startedAt).toBeTruthy();
     expect(resolution.votingVersionId).toBe(resolution.currentVersion.id);
     await expect(stage5.createDocumentVersion(fixture.firstDelegate, resolution.id, {baseRevision: resolution.revision,
       customTitle: 'A/RES/1', content: '静默替换'}, context('replace'))).rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});

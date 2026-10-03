@@ -1305,7 +1305,7 @@ describe('committee workspace routes and roles', () => {
         updatedAt: '2026-08-14T00:00:00.000Z'}],
       documents: [{id: 'resolution', committeeId: 'committee', meetingSessionId: 'meeting', kind: 'RESOLUTION',
         resolutionId: null, ordinal: 1, customTitle: null, title: 'New draft resolution 1', status: 'DRAFT', rulePackageVersionId: 'rules',
-        currentVersion: {id: 'version', versionNumber: 1, content: '', contentFile: null,
+        currentVersion: {id: 'version', versionNumber: 1, content: 'Resolution body', contentFile: null,
           createdAt: '2026-08-14T00:00:00.000Z'},
         votingVersionId: null, public: false, proposers: [], seconders: [], delegatesCanAmend: false,
         directVote: null, resultDecisions: [], revision: 1, discussion: [],
@@ -1327,6 +1327,87 @@ describe('committee workspace routes and roles', () => {
     await act(async () => {page.querySelector<HTMLButtonElement>('button[aria-label="Propose Motion"]')?.click(); await Promise.resolve();});
     expect(proposeMotion).toHaveBeenCalledWith('committee', {meetingSessionId: 'meeting', motionTypeId: 'introduce-draft-resolution',
       onBehalfOfSeatId: 'seat', parameters: {resolutionTarget: 'resolution'}});
+  });
+
+  it.each(['introduce-draft-resolution', 'vote-on-resolution'])('disables empty and unavailable resolution targets for %s', async motionTypeId => {
+    const proposeMotion = vi.fn();
+    const base: ProceedingDocument = {id: 'empty', committeeId: 'committee', meetingSessionId: 'meeting',
+      kind: 'RESOLUTION', draftType: 'RESOLUTION', resolutionId: null, ordinal: 1, customTitle: null,
+      title: 'Empty draft', status: motionTypeId === 'introduce-draft-resolution' ? 'DRAFT' : 'PUBLISHED',
+      rulePackageVersionId: 'rules', currentVersion: {id: 'version', versionNumber: 1, content: ' \n\t ',
+        contentFile: null, createdAt: '2026-10-04T00:00:00Z'}, votingVersionId: null, public: true,
+      proposers: [], seconders: [], delegatesCanAmend: false, directVote: null, resultDecisions: [],
+      revision: 1, discussion: [], createdAt: '2026-10-04T00:00:00Z', updatedAt: '2026-10-04T00:00:00Z'};
+    const documents: ProceedingDocument[] = [base,
+      {...base, id: 'body', title: 'Ready draft', currentVersion: {...base.currentVersion, content: 'Body'}},
+      {...base, id: 'unintroduced', title: 'Unintroduced draft', status: 'DRAFT',
+        currentVersion: {...base.currentVersion, content: 'Body'}},
+      {...base, id: 'file', title: 'File draft', currentVersion: {...base.currentVersion, content: '',
+        contentFile: {id: 'file', logicalName: 'Body file', originalName: 'body.pdf', mediaType: 'application/pdf',
+          status: 'PUBLISHED', fileType: null}}}];
+    const page = await render('CHAIR', '/committees/committee/motions', user, value => ({...value,
+      meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: 'Session 1', phaseId: 'formal-debate',
+        activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1, createdAt: '2026-10-04T00:00:00Z', closedAt: null},
+      attendance: [{seatId: 'seat', state: 'PRESENT', lastEventId: 'attendance', updatedAt: '2026-10-04T00:00:00Z'}],
+      documents, activeRules: {...value.activeRules, motionTypes: [{id: motionTypeId,
+        names: {en: 'Target motion'}, procedural: false, requiredSecondCount: 0}]}}), {proposeMotion});
+    const target = [...page.querySelectorAll<HTMLElement>('.motion-proposal-form .field')]
+      .find(field => field.querySelector('label')?.textContent === 'Target Draft Resolution')!;
+    const findOption = (title: string) => [...target.querySelectorAll<HTMLElement>('.menu .item')]
+      .find(item => item.querySelector('.text')?.textContent === title)!;
+    const empty = findOption('Empty draft');
+    expect(empty.classList.contains('disabled')).toBe(true);
+    expect(empty.querySelector('.description')?.textContent).toContain('No content');
+    const unintroduced = findOption('Unintroduced draft');
+    expect(unintroduced.classList.contains('disabled')).toBe(motionTypeId === 'vote-on-resolution');
+    expect(unintroduced.querySelector('.description')?.textContent).toContain('Not introduced');
+    const ready = findOption('Ready draft');
+    expect(ready.classList.contains('disabled')).toBe(false);
+    expect(findOption('File draft').classList.contains('disabled')).toBe(false);
+    if (motionTypeId === 'vote-on-resolution') expect(ready.querySelector('.description')?.textContent).toBe('Not yet discussed');
+    await act(async () => {empty.click();});
+    expect(page.querySelector<HTMLButtonElement>('button[aria-label="Propose Motion"]')?.disabled).toBe(true);
+    expect(proposeMotion).not.toHaveBeenCalled();
+    expect(target.querySelector('a')).toBeNull();
+    await act(async () => {setLanguage('zh-CN');});
+    expect(empty.querySelector('.description')?.textContent).toContain('无内容');
+    expect(unintroduced.querySelector('.description')?.textContent).toContain('未介绍');
+  });
+
+  it('opens the real document vote immediately after passing its motion', async () => {
+    let passed = false;
+    const resolution: ProceedingDocument = {id: 'resolution', committeeId: 'committee', meetingSessionId: 'meeting',
+      kind: 'RESOLUTION', draftType: 'RESOLUTION', resolutionId: null, ordinal: 1, customTitle: null,
+      title: 'Resolution ready to vote', status: 'PUBLISHED', rulePackageVersionId: 'rules',
+      currentVersion: {id: 'version', versionNumber: 1, content: 'Body', contentFile: null, createdAt: '2026-10-04T00:00:00Z'},
+      votingVersionId: null, public: true, proposers: [], seconders: [], delegatesCanAmend: false,
+      directVote: {majority: 'SIMPLE_MAJORITY', startedAt: null, completedAt: null, castRevision: 0, settingsRevision: 1,
+        eligibility: [{seatId: 'seat', seatDisplayName: 'China', mustVote: false, hasVeto: true}], threshold: 1,
+        automaticResult: null, votes: []}, resultDecisions: [], revision: 1, discussion: [],
+      createdAt: '2026-10-04T00:00:00Z', updatedAt: '2026-10-04T00:00:00Z'};
+    const motion: ProceedingMotion = {id: 'motion', committeeId: 'committee', meetingSessionId: 'meeting',
+      motionTypeId: 'vote-on-resolution', proposedBySeatId: 'seat', proposedBySeatDisplayName: 'China',
+      parameters: {resolutionTarget: 'resolution'}, status: 'SECONDED', rulePackageVersionId: 'rules',
+      ruleEvaluation: {schemaVersion: 1, packageVersionId: 'rules', definition: {}, facts: {}, resolvedValues: {}, frozenAt: '2026-10-04T00:00:00Z'},
+      requiredSecondCount: 0, seconds: [], directVote: {startedAt: null,
+        eligibility: [], choices: ['FOR', 'AGAINST'], threshold: 1, automaticResult: null, votes: []}, revision: 1,
+      createdAt: '2026-10-04T00:00:00Z', decidedAt: null, destinationPath: null};
+    const destinationPath = '/committees/committee/votes/resolution';
+    const decideMotion = vi.fn(async () => {passed = true; return {...motion, status: 'PASSED', destinationPath} as ProceedingMotion;});
+    const startDocumentVote = vi.fn();
+    const page = await render('CHAIR', '/committees/committee/motions', user, value => ({...value,
+      committee: {...value.committee, operationMode: 'CHAIR_OPERATED'},
+      meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: 'Session 1', phaseId: 'formal-debate',
+        activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1, createdAt: '2026-10-04T00:00:00Z', closedAt: null},
+      attendance: [{seatId: 'seat', state: 'PRESENT', lastEventId: 'attendance', updatedAt: '2026-10-04T00:00:00Z'}],
+      documents: [{...resolution, status: passed ? 'VOTING' : 'PUBLISHED', votingVersionId: passed ? 'version' : null,
+        directVote: {...resolution.directVote!, startedAt: passed ? '2026-10-04T00:00:00Z' : null}}],
+      motions: [{...motion, status: passed ? 'PASSED' : 'SECONDED', destinationPath: passed ? destinationPath : null}]}), {decideMotion, startDocumentVote});
+    await act(async () => {page.querySelector<HTMLButtonElement>('.motions-page .card .positive.button')!.click();});
+    expect(decideMotion).toHaveBeenCalledWith('motion', 1, 'PASSED');
+    expect(startDocumentVote).not.toHaveBeenCalled();
+    expect(page.querySelector('.new-document-vote-page')).toBeNull();
+    expect(page.querySelector('.document-voting-heading')?.textContent).toContain('Resolution ready to vote');
   });
 
   it('targets an existing amendment draft instead of creating one from the introduction motion', async () => {
