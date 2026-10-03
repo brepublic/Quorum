@@ -357,10 +357,6 @@
   flex-shrink: 0;
 }
 
-.committee-navigation-desktop:not([data-collapse-level="0"]) .committee-primary-navigation.ui.menu > .right.menu {
-  margin-left: 0 !important;
-}
-
 .ui.menu .dropdown.item.account-menu-compact {
   width: 2.5em;
   min-width: 0;
@@ -369,7 +365,7 @@
   justify-content: center;
 }
 
-.ui.menu .dropdown.item.account-menu-compact > .dropdown.icon {
+.ui.menu .dropdown.item.account-menu-compact > .icon {
   margin: 0;
 }
 
