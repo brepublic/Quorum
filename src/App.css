@@ -1500,24 +1500,65 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   min-height: 18rem;
 }
 
-.committee-settings-page > .ui.form + .ui.form {
-  margin-top: 2rem;
+.committee-settings-page.ui.container {
+  max-width: 800px !important;
+  padding-bottom: 1rem;
 }
 
-.committee-layout-toggles {
-  display: grid;
-  gap: 1.25rem;
-  margin-bottom: 1.5rem;
+.committee-settings-page > .ui.header { margin: .5rem 0 1.5rem; }
+.committee-settings-page .committee-setting-card.ui.card {
+  width: 100%;
+  margin: 0 0 1.25rem;
+  border: 1px solid rgba(34, 36, 38, .15);
+  border-radius: .4rem;
+  box-shadow: none;
 }
-
-.committee-lifecycle-actions {
-  border-top: 1px solid rgba(34, 36, 38, .15);
-  margin-top: 2rem;
-  padding-top: 1rem;
+.committee-settings-page .committee-setting-card.ui.card > .content { padding: 1.5rem; }
+.settings-card-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: .5rem 1rem;
+  margin-bottom: 1.25rem;
 }
-
-.committee-lifecycle-actions > .ui.button {
-  margin: 0 .75rem .75rem 0;
+.committee-settings-page .ui.header { font-size: 1.15rem; }
+.committee-settings-page > .ui.header { font-size: 1.6rem; }
+.settings-card-heading .ui.header { margin: 0; }
+.settings-save-status {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: .3rem;
+  margin-left: auto;
+  min-height: 1.4rem;
+  color: #62696f;
+  font-size: .85rem;
+}
+.settings-save-status.is-saved { color: #237653; }
+.settings-save-status.is-error { color: #9f3a38; }
+.settings-save-status .ui.button { margin: 0 0 0 .35rem; }
+.settings-language, .settings-field-help { color: #62696f; }
+.settings-field-help { font-size: .9rem; }
+.settings-field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+.settings-field-grid > .field { min-width: 0; }
+.committee-settings-page .committee-layout-toggles { display: grid; gap: 1.25rem; }
+.committee-layout-toggles + .ui.form { margin-top: 1.5rem; }
+.committee-settings-page .ui.toggle.checkbox label { overflow-wrap: anywhere; }
+.settings-action-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem; }
+.settings-action-row > div { flex: 1 1 18rem; min-width: 0; }
+.settings-action-row > p { margin: 0; }
+.settings-action-row > .ui.button { margin: 0 0 0 auto; }
+.settings-action-row .ui.header { margin: 0 0 .5rem; font-size: 1rem; }
+.committee-settings-page .settings-danger.ui.card { border-color: #e0b4b4; margin-top: 1.75rem; }
+.committee-settings-page .settings-danger.ui.card > .content > .ui.header { color: #9f3a38; margin: 0 0 1.25rem; }
+.settings-danger .settings-action-row { background: #fff6f6; border-radius: .3rem; padding: 1rem; }
+.settings-danger .settings-action-row p { margin: 0; }
+@media (max-width: 600px) {
+  .committee-settings-page .committee-setting-card.ui.card > .content { padding: 1rem; }
+  .settings-field-grid { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .committee-settings-page .settings-action-row > .ui.button { max-width: 100%; white-space: normal; }
 }
 
 .statistics-table-scroll {
