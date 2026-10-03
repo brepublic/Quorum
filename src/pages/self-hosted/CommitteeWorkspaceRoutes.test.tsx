@@ -1402,6 +1402,51 @@ describe('committee workspace routes and roles', () => {
     expect(field.querySelector('.menu .message')).not.toBeNull();
   });
 
+  it.each(['type', 'proposer', 'seconder'])('sizes the motion %s menu and avoids navigation when opening upward', async kind => {
+    const page = await render('CHAIR', '/committees/committee/motions', user, value => ({...value,
+      motionSettings: {...value.motionSettings, showMotionsOnDemand: false},
+      meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: 'Session 1', phaseId: 'formal-debate',
+        activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1, createdAt: '', closedAt: null},
+      activeRules: {...value.activeRules, motionTypes: [{id: 'open-debate', procedural: true, requiredSecondCount: 1}]}}));
+    const dropdown = page.querySelector<HTMLElement>(`.motion-${kind}-field .ui.dropdown`)!;
+    const menu = dropdown.querySelector<HTMLElement>('.menu')!;
+    let anchorTop = 100, viewportHeight = 900, contentHeight = 600;
+    const rect = vi.spyOn(dropdown, 'getBoundingClientRect').mockImplementation(() =>
+      ({top: anchorTop, bottom: anchorTop + 40, height: 40, left: 100, right: 400, width: 300} as DOMRect));
+    const nav = page.querySelector<HTMLElement>('.committee-navigation-desktop')!;
+    const navRect = vi.spyOn(nav, 'getBoundingClientRect').mockReturnValue(
+      {top: 0, bottom: 60, height: 60, left: 0, right: 900, width: 900} as DOMRect);
+    const viewportDescriptor = Object.getOwnPropertyDescriptor(document.documentElement, 'clientHeight');
+    Object.defineProperty(document.documentElement, 'clientHeight', {configurable: true, get: () => viewportHeight});
+    Object.defineProperty(menu, 'scrollHeight', {configurable: true, get: () => contentHeight});
+    try {
+      await act(async () => {dropdown.click();});
+      expect(dropdown.classList.contains('upward')).toBe(false);
+      expect(dropdown.style.getPropertyValue('--motion-menu-max-height')).toBe('744px');
+      anchorTop = 600;
+      await act(async () => {window.dispatchEvent(new Event('scroll'));});
+      expect(dropdown.classList.contains('upward')).toBe(true);
+      expect(dropdown.style.getPropertyValue('--motion-menu-max-height')).toBe('524px');
+      // A short search result fits below, so restore the default direction.
+      contentHeight = 80;
+      await act(async () => {menu.append(document.createTextNode('filtered'));});
+      expect(dropdown.classList.contains('upward')).toBe(false);
+      expect(dropdown.style.getPropertyValue('--motion-menu-max-height')).toBe('244px');
+      viewportHeight = 700; anchorTop = 100; contentHeight = 800;
+      await act(async () => {window.dispatchEvent(new Event('resize'));});
+      expect(dropdown.classList.contains('upward')).toBe(false);
+      expect(dropdown.style.getPropertyValue('--motion-menu-max-height')).toBe('544px');
+      await act(async () => {dropdown.querySelector('input')!.dispatchEvent(new KeyboardEvent('keydown',
+        {key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true}));});
+      expect(dropdown.style.getPropertyValue('--motion-menu-max-height')).toBe('');
+    } finally {
+      rect.mockRestore(); navRect.mockRestore();
+      if (viewportDescriptor) Object.defineProperty(document.documentElement, 'clientHeight', viewportDescriptor);
+      else Reflect.deleteProperty(document.documentElement, 'clientHeight');
+      Reflect.deleteProperty(menu, 'scrollHeight');
+    }
+  });
+
   it('widens motion menus within the viewport and restores indentation when space returns', async () => {
     const page = await render('CHAIR', '/committees/committee/motions', user, value => ({...value,
       motionSettings: {...value.motionSettings, showMotionsOnDemand: false},

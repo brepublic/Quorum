@@ -1030,6 +1030,51 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
   const motionFieldRef = React.useRef<HTMLDivElement>(null);
   const motionInputId = React.useId();
   const [motionMenuOpen, setMotionMenuOpen] = React.useState(false);
+  const [sizedMenu, setSizedMenu] = React.useState<'type' | 'proposer' | 'seconder' | null>(null);
+  const [menuUpward, setMenuUpward] = React.useState(false);
+  React.useLayoutEffect(() => {
+    if (!sizedMenu) return;
+    const form = motionFieldRef.current?.closest('.motion-proposal-form');
+    const dropdown = form?.querySelector<HTMLElement>(`.motion-${sizedMenu}-field .ui.dropdown`);
+    const menu = dropdown?.querySelector<HTMLElement>('.menu');
+    if (!dropdown || !menu) return;
+    const placeMenu = () => {
+      const anchor = dropdown.getBoundingClientRect();
+      const viewport = window.visualViewport;
+      const top = viewport?.offsetTop ?? 0;
+      const bottom = top + (viewport?.height ?? document.documentElement.clientHeight);
+      const navigationBottom = Math.max(top, ...Array.from(document.querySelectorAll<HTMLElement>(
+        '.committee-navigation-desktop, .committee-navigation-mobile'), navigation => {
+        const rect = navigation.getBoundingClientRect();
+        return rect.height > 0 && rect.top < bottom && rect.bottom > top ? rect.bottom : top;
+      }));
+      const below = Math.max(0, bottom - anchor.bottom - 16);
+      const above = Math.max(0, anchor.top - navigationBottom - 16);
+      // Prefer downward opening whenever the full content fits there.
+      const upward = menu.scrollHeight > below && above > below;
+      dropdown.style.setProperty('--motion-menu-max-height', `${upward ? above : below}px`);
+      setMenuUpward(upward);
+    };
+    placeMenu();
+    const resizeObserver = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(placeMenu);
+    resizeObserver?.observe(dropdown);
+    resizeObserver?.observe(menu);
+    const mutationObserver = new MutationObserver(placeMenu);
+    mutationObserver.observe(menu, {childList: true, subtree: true, characterData: true});
+    window.addEventListener('resize', placeMenu);
+    window.addEventListener('scroll', placeMenu, true);
+    window.visualViewport?.addEventListener('resize', placeMenu);
+    window.visualViewport?.addEventListener('scroll', placeMenu);
+    return () => {
+      resizeObserver?.disconnect();
+      mutationObserver.disconnect();
+      window.removeEventListener('resize', placeMenu);
+      window.removeEventListener('scroll', placeMenu, true);
+      window.visualViewport?.removeEventListener('resize', placeMenu);
+      window.visualViewport?.removeEventListener('scroll', placeMenu);
+      dropdown.style.removeProperty('--motion-menu-max-height');
+    };
+  }, [sizedMenu, motionSearch, snapshot]);
   React.useLayoutEffect(() => {
     const menu = motionFieldRef.current?.querySelector<HTMLElement>('.menu');
     if (motionMenuOpen && motionSearch && menu) menu.scrollTop = 0;
@@ -1200,9 +1245,10 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
       <div className="field motion-type-field" ref={motionFieldRef}>
         <label htmlFor={motionInputId}>{t('Type')}</label>
         <Dropdown placeholder={t('Select type')} search={(options, query) => groupedMotionOptions(options, query, snapshot.motionSettings.groupMotionTypes)} selection fluid icon="search"
-        searchInput={{id: motionInputId}} aria-label={t('Type')} onOpen={() => setMotionMenuOpen(true)}
+        searchInput={{id: motionInputId}} aria-label={t('Type')} upward={sizedMenu === 'type' && menuUpward}
+        onOpen={() => {setMotionMenuOpen(true); setSizedMenu('type');}}
         searchQuery={motionSearch} onSearchChange={(_, data) => setMotionSearch(data.searchQuery)}
-        onClose={() => {setMotionSearch(''); setMotionMenuOpen(false);}} text={selectedMotionOption?.text}
+        onClose={() => {setMotionSearch(''); setMotionMenuOpen(false); setSizedMenu(null); setMenuUpward(false);}} text={selectedMotionOption?.text}
         options={groupedMotionOptions(displayedMotionOptions, '', snapshot.motionSettings.groupMotionTypes)} value={selectedMotionOption ? motionChoice : ''} onChange={(_, data) => {
           if (!motionOptions.some(option => option.value === data.value)) return;
           setMotionSearch('');
@@ -1234,13 +1280,16 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
           value={proposal} onChange={event => setProposal(event.currentTarget.value)} />}</Form.Group>}
       <Form.Group widths="equal">
         <Form.Select key="proposer" icon="search" search={searchOptions} selection fluid
-          className="motion-proposer-field"
+          className="motion-proposer-field" upward={sizedMenu === 'proposer' && menuUpward}
+          onOpen={() => setSizedMenu('proposer')} onClose={() => {setSizedMenu(null); setMenuUpward(false);}}
           label={t('Proposer')}
           placeholder={t('Select a delegation')}
           value={proposerId || false} error={Boolean(proposerId) && (!presentSeatIds.has(proposerId) || identicalSeats)}
           options={seatOptions} disabled={!canChair}
           onChange={(_, data) => setProposerId(String(data.value))} />
         {needsSeconder && <Form.Select key="seconder" icon="search" search={searchOptions} selection fluid label={t('Seconder')}
+          className="motion-seconder-field" upward={sizedMenu === 'seconder' && menuUpward}
+          onOpen={() => setSizedMenu('seconder')} onClose={() => {setSizedMenu(null); setMenuUpward(false);}}
           value={seconderId || false} error={identicalSeats || !chairAdvisoryMode && (!seconderId || !presentSeatIds.has(seconderId))}
           options={seatOptions} disabled={!canChair}
           onChange={(_, data) => setSeconderId(String(data.value))} />}

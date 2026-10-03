@@ -1996,6 +1996,13 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   padding-left: calc(1.14285714rem + var(--motion-option-indent, 1em)) !important;
 }
 
+.motion-proposal-form .motion-type-field .ui.selection.dropdown > .menu,
+.motion-proposal-form .motion-proposer-field .ui.selection.dropdown > .menu,
+.motion-proposal-form .motion-seconder-field .ui.selection.dropdown > .menu {
+  max-height: var(--motion-menu-max-height);
+  overscroll-behavior-y: contain;
+}
+
 .motion-type-field .ui.selection.dropdown .menu {
   width: var(--motion-menu-width, 100%);
   min-width: 0;
