@@ -1235,6 +1235,48 @@ describe('committee workspace routes and roles', () => {
     expect(field.querySelector('.menu .message')).not.toBeNull();
   });
 
+  it('widens motion menus within the viewport and restores indentation when space returns', async () => {
+    const page = await render('CHAIR', '/committees/committee/motions', user, value => ({...value,
+      motionSettings: {...value.motionSettings, showMotionsOnDemand: false},
+      meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: 'Session 1', phaseId: 'formal-debate',
+        activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1, createdAt: '', closedAt: null},
+      activeRules: {...value.activeRules, motionTypes: [{id: 'open-debate', procedural: true, requiredSecondCount: 0}]}}));
+    const field = page.querySelector<HTMLElement>('.motion-type-field')!;
+    const dropdown = field.querySelector<HTMLElement>('.ui.dropdown')!;
+    const menu = field.querySelector<HTMLElement>('.menu')!;
+    const item = field.querySelector<HTMLElement>('.motion-type-option')!;
+    const name = item.querySelector<HTMLElement>('.text')!;
+    dropdown.style.fontSize = '14px'; item.style.paddingRight = '16px';
+    let viewportWidth = 1000, textWidth = 600;
+    const viewportDescriptor = Object.getOwnPropertyDescriptor(document.documentElement, 'clientWidth');
+    Object.defineProperty(document.documentElement, 'clientWidth', {configurable: true, get: () => viewportWidth});
+    const rect = vi.spyOn(dropdown, 'getBoundingClientRect').mockReturnValue(new DOMRect(100, 100, 300, 40));
+    Object.defineProperty(menu, 'offsetWidth', {configurable: true, get: () => 300});
+    Object.defineProperty(menu, 'clientWidth', {configurable: true, get: () => 288});
+    Object.defineProperty(name, 'scrollWidth', {configurable: true, get: () => textWidth});
+    try {
+      await act(async () => {dropdown.click();});
+      expect(Number.parseFloat(field.style.getPropertyValue('--motion-menu-width'))).toBeGreaterThan(650);
+      expect(field.style.getPropertyValue('--motion-menu-left')).toBe('0px');
+      viewportWidth = 350;
+      await act(async () => {window.dispatchEvent(new Event('resize'));});
+      expect(field.style.getPropertyValue('--motion-menu-width')).toBe('318px');
+      expect(field.style.getPropertyValue('--motion-menu-left')).toBe('-84px');
+      expect(field.style.getPropertyValue('--motion-option-indent')).toBe('0px');
+      viewportWidth = 1000; textWidth = 160;
+      await act(async () => {window.dispatchEvent(new Event('resize'));});
+      expect(field.style.getPropertyValue('--motion-menu-width')).toBe('300px');
+      expect(field.style.getPropertyValue('--motion-menu-left')).toBe('0px');
+      expect(field.style.getPropertyValue('--motion-option-indent')).toBe('14px');
+    } finally {
+      rect.mockRestore();
+      if (viewportDescriptor) Object.defineProperty(document.documentElement, 'clientWidth', viewportDescriptor);
+      else Reflect.deleteProperty(document.documentElement, 'clientWidth');
+      Reflect.deleteProperty(menu, 'offsetWidth'); Reflect.deleteProperty(menu, 'clientWidth');
+      Reflect.deleteProperty(name, 'scrollWidth');
+    }
+  });
+
   it.each([true, false])('uses the actual main list for motion visibility (open=%s)', async open => {
     const page = await render('CHAIR', '/committees/committee/motions', user, value => ({...value,
       meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: 'Session 1', phaseId: 'formal-debate',

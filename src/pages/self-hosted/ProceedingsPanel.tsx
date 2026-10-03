@@ -1021,6 +1021,48 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
   const [motionType, setMotionType] = React.useState(initialType);
   const [motionChoice, setMotionChoice] = React.useState(initialType);
   const [motionSearch, setMotionSearch] = React.useState('');
+  const motionFieldRef = React.useRef<HTMLDivElement>(null);
+  const motionInputId = React.useId();
+  const [motionMenuOpen, setMotionMenuOpen] = React.useState(false);
+  React.useLayoutEffect(() => {
+    const menu = motionFieldRef.current?.querySelector<HTMLElement>('.menu');
+    if (motionMenuOpen && motionSearch && menu) menu.scrollTop = 0;
+  }, [motionMenuOpen, motionSearch]);
+  React.useLayoutEffect(() => {
+    const field = motionFieldRef.current;
+    if (!motionMenuOpen || !field) return;
+    const dropdown = field.querySelector<HTMLElement>('.ui.dropdown');
+    const menu = dropdown?.querySelector<HTMLElement>('.menu');
+    if (!dropdown || !menu) return;
+    const placeMenu = () => {
+      const anchor = dropdown.getBoundingClientRect();
+      const viewportWidth = document.documentElement.clientWidth;
+      const availableWidth = Math.max(0, viewportWidth - 32);
+      const item = menu.querySelector<HTMLElement>('.motion-type-option');
+      const fontSize = parseFloat(getComputedStyle(dropdown).fontSize);
+      const padding = item ? parseFloat(getComputedStyle(item).paddingRight) : fontSize;
+      const scrollbar = Math.max(2, menu.offsetWidth - menu.clientWidth);
+      const nameWidth = Math.max(0, ...Array.from(menu.querySelectorAll<HTMLElement>('.motion-type-option > .text'),
+        name => name.scrollWidth + 1));
+      const indent = viewportWidth < 768 && nameWidth + padding * 2 + fontSize + scrollbar > availableWidth ? 0 : fontSize;
+      const width = Math.min(availableWidth, Math.max(anchor.width, nameWidth + padding * 2 + indent + scrollbar));
+      const left = Math.max(16, Math.min(anchor.left, viewportWidth - 16 - width)) - anchor.left;
+      field.style.setProperty('--motion-menu-width', `${width}px`);
+      field.style.setProperty('--motion-menu-left', `${left}px`);
+      field.style.setProperty('--motion-option-indent', `${indent}px`);
+    };
+    placeMenu();
+    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(placeMenu);
+    observer?.observe(dropdown);
+    observer?.observe(menu);
+    window.addEventListener('resize', placeMenu);
+    window.addEventListener('scroll', placeMenu, true);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', placeMenu);
+      window.removeEventListener('scroll', placeMenu, true);
+    };
+  }, [motionMenuOpen, motionSearch, snapshot]);
   const [proposal, setProposal] = React.useState('');
   const [proposerId, setProposerId] = React.useState(snapshot.viewer.seatId ?? '');
   const [seconderId, setSeconderId] = React.useState('');
@@ -1149,9 +1191,12 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
   return <Container text className="motions-page">
     {canPropose && <Form className="motion-proposal-form"
       error={(!chairAdvisoryMode && !divisible) || identicalSeats} onSubmit={propose}>
-      <Form.Select className="motion-type-field" placeholder={t('Select type')} search={groupedMotionOptions} selection fluid label={t('Type')} icon="search"
+      <div className="field motion-type-field" ref={motionFieldRef}>
+        <label htmlFor={motionInputId}>{t('Type')}</label>
+        <Dropdown placeholder={t('Select type')} search={groupedMotionOptions} selection fluid icon="search"
+        searchInput={{id: motionInputId}} aria-label={t('Type')} onOpen={() => setMotionMenuOpen(true)}
         searchQuery={motionSearch} onSearchChange={(_, data) => setMotionSearch(data.searchQuery)}
-        onClose={() => setMotionSearch('')} text={selectedMotionOption?.text}
+        onClose={() => {setMotionSearch(''); setMotionMenuOpen(false);}} text={selectedMotionOption?.text}
         options={groupedMotionOptions(displayedMotionOptions)} value={selectedMotionOption ? motionChoice : ''} onChange={(_, data) => {
           if (!motionOptions.some(option => option.value === data.value)) return;
           setMotionSearch('');
@@ -1171,6 +1216,7 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
             setMotionType(value); setResolutionTarget(''); setAmendmentTarget(''); setProposal('');
           }
         }} />
+      </div>
       {hasMotionDetail(motionType) && !hasAmendmentTarget(motionType) && <Form.Group widths="equal">{hasMotionTextArea(motionType)
         ? <Form.TextArea required rows={2}
           className={motionDetailLabel(motionType) === 'Topic' ? 'motion-topic-field' : undefined}
