@@ -196,6 +196,10 @@
   background: rgba(0, 0, 0, 0.03);
 }
 
+.committee-setup-page .seat-capability-linked .ui.checkbox label {
+  opacity: 0.5;
+}
+
 /* Center the mixed-state handle between the striped and grey halves. */
 .committee-setup-page .all-seats-row .ui.toggle.checkbox input:indeterminate ~ label::after {
   left: 1rem;

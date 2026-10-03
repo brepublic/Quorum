@@ -558,6 +558,99 @@ describe('committee workspace routes and roles', () => {
     expect(updateSeat).toHaveBeenCalledWith('committee', 'seat', 2, {canVote: true, canProceduralVote: true, hasVeto: true, mustVote: true});
   });
 
+  it('links the new-seat voting switches and clears veto and no-abstention when procedural voting is turned off', async () => {
+    const createSeat = vi.fn(async () => ({})) as unknown as SelfHostedApi['createSeat'];
+    const page = await render('CHAIR', '/committees/committee/setup', user, value => value, {createSeat});
+    const row = page.querySelector('.add-seat-row')!;
+    const input = (label: string) => row.querySelector<HTMLInputElement>(`[aria-label="${label}"]`)!;
+    const click = async (label: string) => act(async () => {clickSemanticCheckbox(input(label).parentElement);});
+    expect(input('Procedural voting').disabled).toBe(false);
+    expect(input('Procedural voting').closest('.seat-capability-linked')).not.toBeNull();
+    await click('Veto'); await click('No abstention'); await click('Procedural voting');
+    for (const label of ['Procedural voting', 'Voting', 'Veto', 'No abstention']) expect(input(label).checked).toBe(false);
+    expect(input('Voting').disabled).toBe(false);
+    expect(input('Voting').closest('.seat-capability-linked')).not.toBeNull();
+    await click('Voting');
+    expect(input('Procedural voting').checked).toBe(true);
+    expect(input('Voting').checked).toBe(true);
+    expect(input('Voting').closest('.seat-capability-linked')).toBeNull();
+    await click('Voting');
+    expect(input('Procedural voting').checked).toBe(true);
+    expect(input('Procedural voting').closest('.seat-capability-linked')).toBeNull();
+    await act(async () => {row.querySelector<HTMLButtonElement>('button')!.click();});
+    expect(createSeat).toHaveBeenCalledWith('committee', expect.objectContaining({canVote: false, canProceduralVote: true,
+      hasVeto: false, mustVote: false}));
+  });
+
+  it('links a single seat in one save and keeps procedural-only participation available', async () => {
+    const seat = {...snapshot('CHAIR').seats[0], mustVote: true};
+    const updateSeat = vi.fn(async (_committee, _id, _revision, patch) => {Object.assign(seat, patch); return {};}) as unknown as SelfHostedApi['updateSeat'];
+    const page = await render('CHAIR', '/committees/committee/setup', user, value => ({...value, seats: [seat]}), {updateSeat});
+    const input = (label: string) => page.querySelector<HTMLInputElement>(`[aria-label="${label} · China"]`)!;
+    const click = async (label: string) => act(async () => {clickSemanticCheckbox(input(label).parentElement);});
+    expect(input('Procedural voting').disabled).toBe(false);
+    expect(input('Procedural voting').closest('.seat-capability-linked')).not.toBeNull();
+    await click('Procedural voting');
+    expect(updateSeat).toHaveBeenLastCalledWith('committee', 'seat', 2, {canProceduralVote: false, canVote: false, hasVeto: false, mustVote: false});
+    expect(input('Voting').checked).toBe(false);
+    expect(input('Voting').disabled).toBe(false);
+    expect(input('Voting').closest('.seat-capability-linked')).not.toBeNull();
+    await click('Voting');
+    expect(updateSeat).toHaveBeenLastCalledWith('committee', 'seat', 2, {canProceduralVote: true, canVote: true, hasVeto: false, mustVote: false});
+    expect(input('Voting').closest('.seat-capability-linked')).toBeNull();
+    await click('Voting');
+    expect(updateSeat).toHaveBeenLastCalledWith('committee', 'seat', 2, {canProceduralVote: true, canVote: false, hasVeto: false, mustVote: false});
+    expect(input('Procedural voting').closest('.seat-capability-linked')).toBeNull();
+    expect(updateSeat).toHaveBeenCalledTimes(3);
+  });
+
+  it('previews and saves linked bulk switches with their final capabilities', async () => {
+    vi.useFakeTimers();
+    const seats = [snapshot('CHAIR').seats[0], {...snapshot('CHAIR').seats[0], id: 'second', displayName: 'France'}]
+      .map(seat => ({...seat, mustVote: true}));
+    const updateSeat = vi.fn(async (_committee, id, _revision, patch) => {Object.assign(seats.find(seat => seat.id === id)!, patch); return {};}) as unknown as SelfHostedApi['updateSeat'];
+    const page = await render('CHAIR', '/committees/committee/setup', user, value => ({...value, seats}), {updateSeat});
+    const input = (label: string) => page.querySelector<HTMLInputElement>(`[aria-label="${label} · All seats"]`)!;
+    const click = async (label: string) => act(async () => {clickSemanticCheckbox(input(label).parentElement);});
+    expect(input('Procedural voting').closest('.seat-capability-linked')).not.toBeNull();
+    expect(input('Procedural voting').disabled).toBe(false);
+    await click('Procedural voting');
+    expect(input('Procedural voting').checked).toBe(false);
+    expect(input('Voting').checked).toBe(false);
+    expect(input('Voting').disabled).toBe(false);
+    expect(input('Voting').closest('.seat-capability-linked')).not.toBeNull();
+    expect(updateSeat).not.toHaveBeenCalled();
+    await act(async () => {await vi.advanceTimersByTimeAsync(1500);});
+    for (const seat of seats) expect(updateSeat).toHaveBeenCalledWith('committee', seat.id, 2,
+      {canVote: false, canProceduralVote: false, hasVeto: false, mustVote: false});
+    vi.mocked(updateSeat).mockClear();
+    await click('Voting');
+    expect(input('Procedural voting').checked).toBe(true);
+    expect(input('Voting').checked).toBe(true);
+    expect(input('Voting').closest('.seat-capability-linked')).toBeNull();
+    expect(updateSeat).not.toHaveBeenCalled();
+    await act(async () => {await vi.advanceTimersByTimeAsync(1500);});
+    for (const seat of seats) expect(updateSeat).toHaveBeenCalledWith('committee', seat.id, 2,
+      {canVote: true, canProceduralVote: true, hasVeto: false, mustVote: false});
+  });
+
+  it('preserves linked individual changes made during the bulk preview', async () => {
+    vi.useFakeTimers();
+    const updateSeat = vi.fn(async () => ({})) as unknown as SelfHostedApi['updateSeat'];
+    const page = await render('CHAIR', '/committees/committee/setup', user, value => ({...value,
+      seats: [{...value.seats[0], canVote: false, canProceduralVote: false, hasVeto: false},
+        {...value.seats[0], id: 'second', displayName: 'France', canVote: false, canProceduralVote: false, hasVeto: false}]}), {updateSeat});
+    await act(async () => {clickSemanticCheckbox(page.querySelector('[aria-label="Voting · All seats"]')?.parentElement);});
+    await act(async () => {clickSemanticCheckbox(page.querySelector('[aria-label="Procedural voting · China"]')?.parentElement);});
+    expect(page.querySelector<HTMLInputElement>('[aria-label="Voting · China"]')?.checked).toBe(false);
+    expect(page.querySelector<HTMLInputElement>('[aria-label="Voting · France"]')?.checked).toBe(true);
+    expect(updateSeat).not.toHaveBeenCalled();
+    await act(async () => {await vi.advanceTimersByTimeAsync(1500);});
+    expect(updateSeat).toHaveBeenCalledTimes(1);
+    expect(updateSeat).toHaveBeenCalledWith('committee', 'second', 2,
+      {canVote: true, canProceduralVote: true, hasVeto: false, mustVote: false});
+  });
+
   it('clears no-abstention when all voting rights are removed', async () => {
     vi.useFakeTimers();
     const updateSeat = vi.fn(async () => ({})) as unknown as SelfHostedApi['updateSeat'];

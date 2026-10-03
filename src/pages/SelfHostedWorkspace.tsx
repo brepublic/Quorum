@@ -473,8 +473,8 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
     lastUniformVoting.current[field] = value;
     setQueuedVoting(current => Object.fromEntries(snapshot.seats.map(seat => {
       const next = {...seat, ...current?.[seat.id], [field]: value};
-      if (field === 'canProceduralVote' && next.canVote) next.canProceduralVote = true;
-      if (field === 'canVote' && !next.canProceduralVote) next.canVote = false;
+      if (field === 'canProceduralVote' && !value) next.canVote = false;
+      if (field === 'canVote' && value) next.canProceduralVote = true;
       if (field === 'hasVeto' && value) {next.canVote = true; next.canProceduralVote = true;}
       if (!next.canVote) {next.hasVeto = false; next.mustVote = false;}
       return [seat.id, {canVote: next.canVote, canProceduralVote: next.canProceduralVote, hasVeto: next.hasVeto, mustVote: next.mustVote}];
@@ -523,11 +523,15 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
         value={selectedCountryStableKey} options={countryOptions} onChange={(_, data) => setSelectedCountryStableKey(String(data.value ?? ''))} /></Table.HeaderCell>
         <Table.HeaderCell><Form.Select aria-label={t('Rank')} search selection fluid value={seatRank} options={rankOptions}
           onChange={(_, data) => {const rank = data.value as typeof seatRank; setSeatRank(rank); if (rank === 'MEDIA') {setSeatCanVote(false); setSeatCanProceduralVote(false); setSeatHasVeto(false); setSeatMustVote(false);}}} /></Table.HeaderCell>
-        <Table.HeaderCell collapsing data-label={t('Procedural voting')}><Form.Checkbox aria-label={t('Procedural voting')} toggle checked={seatCanProceduralVote} disabled={seatCanVote}
-          onChange={(_, data) => setSeatCanProceduralVote(data.checked ?? false)} /></Table.HeaderCell>
-        <Table.HeaderCell collapsing data-label={t('Voting rights')}><Form.Checkbox aria-label={t('Voting rights')} toggle checked={seatCanVote} disabled={!seatCanProceduralVote}
+        <Table.HeaderCell collapsing data-label={t('Procedural voting')}><Form.Checkbox aria-label={t('Procedural voting')} toggle checked={seatCanProceduralVote}
+          className={seatCanVote ? 'seat-capability-linked' : undefined}
+          onChange={(_, data) => {const canProceduralVote = data.checked ?? false; setSeatCanProceduralVote(canProceduralVote);
+            if (!canProceduralVote) {setSeatCanVote(false); setSeatMustVote(false); setSeatHasVeto(false);}}} /></Table.HeaderCell>
+        <Table.HeaderCell collapsing data-label={t('Voting rights')}><Form.Checkbox aria-label={t('Voting rights')} toggle checked={seatCanVote}
+          className={!seatCanProceduralVote ? 'seat-capability-linked' : undefined}
           onChange={(_, data) => {const canVote = data.checked ?? false;
-            setSeatCanVote(canVote); if (!canVote) {setSeatMustVote(false); setSeatHasVeto(false);}}} /></Table.HeaderCell>
+            setSeatCanVote(canVote); if (canVote) setSeatCanProceduralVote(true);
+            else {setSeatMustVote(false); setSeatHasVeto(false);}}} /></Table.HeaderCell>
         <Table.HeaderCell collapsing data-label={t('Veto power')}><Form.Checkbox aria-label={t('Veto power')} toggle checked={seatHasVeto}
           onChange={(_, data) => {setSeatHasVeto(data.checked ?? false); if (data.checked) {setSeatCanVote(true); setSeatCanProceduralVote(true);}}} /></Table.HeaderCell>
         <Table.HeaderCell collapsing data-label={t('No abstention')}><Form.Checkbox aria-label={t('No abstention')} toggle checked={seatMustVote}
@@ -554,10 +558,12 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
             void updateAllSeats('all-rank', () => rank === 'MEDIA' ? {rank, canVote: false, canProceduralVote: false, hasVeto: false, mustVote: false} : {rank});}} /></Table.Cell>
         <Table.Cell collapsing data-label={t('Procedural voting')}><Form.Checkbox aria-label={`${t('Procedural voting')} · ${t('All seats')}`}
           toggle checked={allCanProceduralVote} indeterminate={!allCanProceduralVote && displayedSeats.some(seat => seat.canProceduralVote)}
-          disabled={Boolean(pending) || allCanVote} onChange={() => queueAllVoting('canProceduralVote')} /></Table.Cell>
+          className={allCanVote ? 'seat-capability-linked' : undefined}
+          disabled={Boolean(pending)} onChange={() => queueAllVoting('canProceduralVote')} /></Table.Cell>
         <Table.Cell collapsing data-label={t('Voting rights')}><Form.Checkbox aria-label={`${t('Voting rights')} · ${t('All seats')}`}
           toggle checked={allCanVote} indeterminate={!allCanVote && displayedSeats.some(seat => seat.canVote)}
-          disabled={Boolean(pending) || displayedSeats.every(seat => !seat.canProceduralVote)}
+          className={displayedSeats.every(seat => !seat.canProceduralVote) ? 'seat-capability-linked' : undefined}
+          disabled={Boolean(pending)}
           onChange={() => queueAllVoting('canVote')} /></Table.Cell>
         <Table.Cell collapsing data-label={t('Veto power')}><Form.Checkbox aria-label={`${t('Veto power')} · ${t('All seats')}`}
           toggle checked={allHasVeto} indeterminate={!allHasVeto && displayedSeats.some(seat => seat.hasVeto)}
@@ -576,20 +582,26 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
               seat.id, seat.revision, rank === 'MEDIA' ? {rank, canVote: false, canProceduralVote: false, hasVeto: false, mustVote: false} : {rank}));
           }} /> : t(seat.rank)}</Table.Cell>
         <Table.Cell collapsing data-label={t('Procedural voting')}>{canChair && !readOnly ? <Form.Checkbox aria-label={`${t('Procedural voting')} · ${seat.displayName}`}
-          toggle checked={seat.canProceduralVote} disabled={Boolean(pending) || seat.canVote} onChange={(_, data) => {
+          toggle checked={seat.canProceduralVote} className={seat.canVote ? 'seat-capability-linked' : undefined}
+          disabled={Boolean(pending)} onChange={(_, data) => {
             const canProceduralVote = data.checked ?? false;
-            if (queuedVoting) {setQueuedVoting(current => ({...current, [seat.id]: {...current?.[seat.id], canProceduralVote}})); return;}
-            void execute(`procedural-${seat.id}`, () => api.updateSeat(snapshot.committee.id, seat.id, seat.revision, {canProceduralVote}));
+            const patch = {canProceduralVote, canVote: canProceduralVote && seat.canVote,
+              hasVeto: canProceduralVote && seat.hasVeto, mustVote: canProceduralVote && seat.mustVote};
+            if (queuedVoting) {setQueuedVoting(current => ({...current, [seat.id]: {...current?.[seat.id], ...patch}})); return;}
+            void execute(`procedural-${seat.id}`, () => api.updateSeat(snapshot.committee.id, seat.id, seat.revision, patch));
           }} /> : seat.canProceduralVote ? t('Yes') : t('No')}</Table.Cell>
         <Table.Cell collapsing data-label={t('Voting rights')}>{canChair && !readOnly ? <Form.Checkbox aria-label={`${t('Voting rights')} · ${seat.displayName}`}
-          toggle checked={seat.canVote} disabled={Boolean(pending) || !seat.canProceduralVote} onChange={(_, data) => {
+          toggle checked={seat.canVote} className={!seat.canProceduralVote ? 'seat-capability-linked' : undefined}
+          disabled={Boolean(pending)} onChange={(_, data) => {
             const canVote = data.checked ?? false;
+            const patch = {canVote, canProceduralVote: canVote || seat.canProceduralVote,
+              hasVeto: canVote && seat.hasVeto, mustVote: canVote && seat.mustVote};
             if (queuedVoting) {
-              setQueuedVoting(current => ({...current, [seat.id]: {...current?.[seat.id], canVote, hasVeto: canVote && seat.hasVeto, mustVote: canVote && seat.mustVote}}));
+              setQueuedVoting(current => ({...current, [seat.id]: {...current?.[seat.id], ...patch}}));
               return;
             }
             void execute(`voting-${seat.id}`, () => api.updateSeat(snapshot.committee.id,
-              seat.id, seat.revision, {canVote, hasVeto: canVote && seat.hasVeto, mustVote: canVote && seat.mustVote}));
+              seat.id, seat.revision, patch));
           }} /> : seat.canVote ? t('Voting rights') : t('Non-voting')}</Table.Cell>
         <Table.Cell collapsing data-label={t('Veto power')}>{canChair && !readOnly ? <Form.Checkbox aria-label={`${t('Veto power')} · ${seat.displayName}`}
           toggle checked={seat.hasVeto} disabled={Boolean(pending)} onChange={(_, data) => {
