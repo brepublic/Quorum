@@ -15,6 +15,7 @@ export default defineConfig({
     outDir: 'build',
   },
   server: {
+    host: '127.0.0.1',
     proxy: {
       '/api/v1': {
         target: devApiOrigin,

@@ -28,7 +28,7 @@ boundary, or deployment model.
 - Scripts/commands are defined in `package.json`. Notable gotchas:
   - `pnpm test` runs Vitest in watch mode (never exits). For a one-shot run use `pnpm exec vitest run`.
   - There is no `lint` script. Typecheck with `pnpm exec tsc --noEmit` (production `pnpm build` runs `tsc && vite build`).
-- The dev server (`pnpm start`, Vite) binds to `localhost` only, so `curl http://127.0.0.1:5173` fails while `curl http://localhost:5173` works. Pass `--host` to expose it on other interfaces.
+- The dev server (`pnpm start`, Vite) binds only to the IPv4 loopback address `127.0.0.1`. Use `http://localhost:5173` or `http://127.0.0.1:5173`; IPv6 and LAN interfaces are not bound by default.
 - `pnpm start` serves the self-hosted browser application and proxies `/api/v1` to the Compose deployment Caddy at `https://localhost` (override with `QUORUM_DEV_API_ORIGIN`), rewriting `Origin` to the target origin so the server-side `QUORUM_ALLOWED_ORIGINS` check passes. Frontend edits hot-reload without rebuilding the Docker image; backend changes still require rebuilding the app image.
 
 ## User-facing copy
