@@ -2965,6 +2965,98 @@ describe('committee workspace routes and roles', () => {
     expect(lists()[1].querySelectorAll('li .country-flag-display')).toHaveLength(1);
   });
 
+  it.each([0, 1, 7, 20, 22])('orders document voting by veto power with %s veto seats, preserving submission eligibility', async vetoCount => {
+    const eligibility = Array.from({length: 22}, (_, index) => ({seatId: `country-${index}`,
+      seatDisplayName: `Country ${index}`, hasVeto: index >= 22 - vetoCount, mustVote: false}));
+    const originalEligibility = structuredClone(eligibility);
+    const expected = [...eligibility.slice(22 - vetoCount), ...eligibility.slice(0, 22 - vetoCount)];
+    const document: ProceedingDocument = {id: 'resolution', committeeId: 'committee', meetingSessionId: 'meeting',
+      kind: 'RESOLUTION', resolutionId: null, ordinal: 1, customTitle: null, title: 'A/RES/1', status: 'VOTING',
+      rulePackageVersionId: 'rules', currentVersion: {id: 'version', versionNumber: 1, content: 'Text', contentFile: null,
+        createdAt: '2026-08-14T00:00:00.000Z'}, votingVersionId: 'version', public: true, proposers: [], seconders: [],
+      delegatesCanAmend: false, directVote: {majority: 'SIMPLE_MAJORITY', startedAt: '2026-09-30T00:00:00Z',
+        completedAt: null, castRevision: 0, settingsRevision: 1, eligibility, threshold: 12, automaticResult: null, votes: []},
+      resultDecisions: [], revision: 2, discussion: [], createdAt: '2026-08-14T00:00:00.000Z', updatedAt: '2026-08-14T00:00:00.000Z'};
+    const submitResolutionDirectVote = vi.fn<NonNullable<SelfHostedApi['submitResolutionDirectVote']>>(
+      () => new Promise(() => {}));
+    const page = await render('CHAIR', '/committees/committee/votes/resolution', user,
+      value => ({...value, documents: [document]}), {submitResolutionDirectVote});
+    const button = (label: string) => [...page.querySelectorAll<HTMLButtonElement>('button')]
+      .find(item => item.textContent?.trim() === label)!;
+    const members = () => [...page.querySelectorAll<HTMLButtonElement>('.resolution-voting-member')];
+    const current = () => page.querySelector('.resolution-voting-current-name > span')?.textContent;
+    const checkPage = (pageNumber: number) => {
+      expect(members().map(member => member.textContent)).toEqual(expected.slice(pageNumber * 18, (pageNumber + 1) * 18)
+        .map(seat => seat.seatDisplayName));
+      members().forEach((member, index) => {
+        const seat = expected[pageNumber * 18 + index];
+        expect(member.classList.contains('has-veto')).toBe(seat.hasVeto);
+        expect(member.classList.contains('veto-group-continuation')).toBe(seat.hasVeto && index % 6 !== 0);
+        if (seat.hasVeto) expect(member.getAttribute('aria-label')).toBe(`${seat.seatDisplayName}, Veto`);
+      });
+    };
+    checkPage(0);
+    expect(page.querySelector('.resolution-voting-veto-badge')).toBeNull();
+    expect(Boolean(page.querySelector('.resolution-voting-veto-legend'))).toBe(vetoCount > 0);
+    // Manual selection remains available, and returning to the first seat preserves the new sequence.
+    await act(async () => {members()[2].click();});
+    expect(current()).toBe(expected[2].seatDisplayName);
+    await act(async () => {members()[0].click();});
+    for (let index = 0; index < expected.length; index++) {
+      expect(current()).toBe(expected[index].seatDisplayName);
+      expect(page.querySelector('.resolution-voting-current-veto')?.textContent).toBe(expected[index].hasVeto ? 'Veto' : '');
+      if (index === 18) {
+        checkPage(1);
+        await act(async () => {button('Undo').click();});
+        expect(current()).toBe(expected[17].seatDisplayName);
+        checkPage(0);
+        await act(async () => {button('Yes').click();});
+        expect(current()).toBe(expected[18].seatDisplayName);
+        checkPage(1);
+      }
+      await act(async () => {button('Yes').click();});
+    }
+    expect(submitResolutionDirectVote).toHaveBeenCalledOnce();
+    expect(submitResolutionDirectVote.mock.calls[0][1].eligibility).toEqual(originalEligibility);
+    expect(submitResolutionDirectVote.mock.calls[0][1].votes).toEqual(expected.map(seat => ({seatId: seat.seatId, choice: 'FOR'})));
+    expect(eligibility).toEqual(originalEligibility);
+    await act(async () => {setLanguage('zh-CN'); members()[0].click();});
+    expect(page.querySelector('.resolution-voting-current-veto')?.textContent).toBe(expected[18].hasVeto ? '否决权' : '');
+  });
+
+  it.each(['resume', 'reload'])('locates the first unvoted country on its sorted page after %s', async mode => {
+    const eligibility = Array.from({length: 22}, (_, index) => ({seatId: `country-${index}`,
+      seatDisplayName: `Country ${index}`, hasVeto: index >= 20, mustVote: false}));
+    const expected = [...eligibility.slice(20), ...eligibility.slice(0, 20)];
+    const savedVotes = expected.slice(0, 19).map(seat => ({id: `vote-${seat.seatId}`, seatId: seat.seatId,
+      seatDisplayName: seat.seatDisplayName, choice: 'FOR' as const, revision: 1, castAt: '2026-10-04T00:00:00Z'}));
+    let document: ProceedingDocument = {id: 'resolution', committeeId: 'committee', meetingSessionId: 'meeting',
+      kind: 'RESOLUTION', resolutionId: null, ordinal: 1, customTitle: null, title: 'A/RES/1', status: 'VOTING',
+      rulePackageVersionId: 'rules', currentVersion: {id: 'version', versionNumber: 1, content: 'Text', contentFile: null,
+        createdAt: '2026-08-14T00:00:00.000Z'}, votingVersionId: 'version', public: true, proposers: [], seconders: [],
+      delegatesCanAmend: false, directVote: {majority: 'SIMPLE_MAJORITY', startedAt: '2026-09-30T00:00:00Z',
+        completedAt: null, castRevision: 0, settingsRevision: 1, eligibility, threshold: 12, automaticResult: null,
+        votes: mode === 'resume' ? savedVotes : []}, resultDecisions: [], revision: 2, discussion: [],
+      createdAt: '2026-08-14T00:00:00.000Z', updatedAt: '2026-08-14T00:00:00.000Z'};
+    let sequence = 1;
+    const page = await render('CHAIR', '/committees/committee/votes/resolution', user,
+      value => ({...value, documents: [document], sync: {...value.sync, committeeEventSequence: sequence}}));
+    const button = (label: string) => [...page.querySelectorAll<HTMLButtonElement>('button')]
+      .find(item => item.textContent?.trim() === label)!;
+    if (mode === 'reload') {
+      await act(async () => {button('Yes').click();});
+      document = {...document, revision: 3, directVote: {...document.directVote!, castRevision: 1, votes: savedVotes}};
+      sequence++;
+      await act(async () => {window.dispatchEvent(new Event('focus'));});
+      expect(button('Yes').disabled).toBe(true);
+      await act(async () => {button('Reload voting').click();});
+    }
+    expect(page.querySelector('.resolution-voting-current-name > span')?.textContent).toBe(expected[19].seatDisplayName);
+    expect([...page.querySelectorAll('.resolution-voting-member')].map(member => member.textContent))
+      .toEqual(expected.slice(18).map(seat => seat.seatDisplayName));
+    expect(button('Yes').disabled).toBe(false);
+  });
+
   it('updates an unfinished resolution vote locally and submits all seats once', async () => {
     let document: ProceedingDocument = {id: 'resolution', committeeId: 'committee', meetingSessionId: 'meeting',
       kind: 'RESOLUTION', resolutionId: null, ordinal: 1, customTitle: null, title: 'A/RES/1', status: 'PUBLISHED',
@@ -3068,8 +3160,12 @@ describe('committee workspace routes and roles', () => {
       value => ({...value, documents: [document]}), {submitResolutionDirectVote});
     const button = (label: string) => [...page.querySelectorAll<HTMLButtonElement>('button')]
       .find(item => item.textContent?.trim() === label)!;
-    await act(async () => {button(choices[0] === 'FOR' ? 'Yes' : 'Abstain').click();});
-    await act(async () => {button(choices[1] === 'FOR' ? 'Yes' : choices[1] === 'AGAINST' ? 'No' : 'Abstain').click();});
+    for (const [index, choice] of choices.entries()) {
+      const seatName = index === 0 ? 'China' : 'France';
+      await act(async () => {[...page.querySelectorAll<HTMLButtonElement>('.resolution-voting-member')]
+        .find(item => item.textContent === seatName)!.click();});
+      await act(async () => {button(choice === 'FOR' ? 'Yes' : choice === 'AGAINST' ? 'No' : 'Abstain').click();});
+    }
     expect(submitResolutionDirectVote).toHaveBeenCalledTimes(1);
     expect(page.querySelector('.resolution-result')?.textContent ?? null).toBe(expected);
     expect(page.querySelector('.resolution-voting-member:disabled')).toBeNull();

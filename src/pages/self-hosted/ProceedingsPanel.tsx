@@ -1680,14 +1680,21 @@ function completedResolutionVoteResult(draft: ResolutionVoteDraft): ResolutionDi
   return forCount >= threshold ? 'PASSED' : 'FAILED';
 }
 
+function orderedDocumentVotingSeats(eligibility: ResolutionDirectVoteState['eligibility'] = []) {
+  return [...eligibility].sort((a, b) => Number(b.hasVeto) - Number(a.hasVeto));
+}
+
 function DocumentVoting({snapshot, run, api, canChair, document}: CommonProps & {
   document: NonNullable<CommitteeWorkspaceSnapshot['documents']>[number];
 }) {
   const history = useHistory();
-  const [votingPage, setVotingPage] = React.useState(0);
-  const [currentVotingSeatId, setCurrentVotingSeatId] = React.useState(
-    document?.directVote?.eligibility.find(item => !document.directVote?.votes.some(vote => vote.seatId === item.seatId))?.seatId
-      ?? document?.directVote?.eligibility[0]?.seatId ?? '');
+  const snapshotEligibility = React.useMemo(() => orderedDocumentVotingSeats(document.directVote?.eligibility),
+    [document.directVote?.eligibility]);
+  const firstUnvotedSeat = snapshotEligibility.find(item =>
+    !document.directVote?.votes.some(vote => vote.seatId === item.seatId)) ?? snapshotEligibility[0];
+  const firstVotingPage = Math.floor(Math.max(0, snapshotEligibility.indexOf(firstUnvotedSeat)) / 18);
+  const [votingPage, setVotingPage] = React.useState(firstVotingPage);
+  const [currentVotingSeatId, setCurrentVotingSeatId] = React.useState(firstUnvotedSeat?.seatId ?? '');
   const [votingHistory, setVotingHistory] = React.useState<Array<{seatId: string; previousChoice: 'FOR' | 'AGAINST' | 'ABSTAIN' | null}>>([]);
   const [voteDraft, setVoteDraft] = React.useState<ResolutionVoteDraft>();
   const voteDraftRef = React.useRef<ResolutionVoteDraft>();
@@ -1703,12 +1710,10 @@ function DocumentVoting({snapshot, run, api, canChair, document}: CommonProps & 
     setVoteDraft(undefined);voteDraftRef.current=undefined;setSavedDirectVote(undefined);setVotingHistory([]);setVoteLeaveTarget(undefined);
   },[document.directVote?.invalidatedAt]);
   React.useEffect(() => {
-    setVotingPage(0); setVotingHistory([]); setVoteDraft(undefined); voteDraftRef.current = undefined;
+    setVotingPage(firstVotingPage); setVotingHistory([]); setVoteDraft(undefined); voteDraftRef.current = undefined;
     setSavedDirectVote(undefined);
     setVoteResultMismatch(false);
-    setCurrentVotingSeatId(document?.directVote?.eligibility.find(item =>
-      !document.directVote?.votes.some(vote => vote.seatId === item.seatId))?.seatId
-      ?? document?.directVote?.eligibility[0]?.seatId ?? '');
+    setCurrentVotingSeatId(firstUnvotedSeat?.seatId ?? '');
   }, [document?.id]);
   const updateVoteDraft = (next: ResolutionVoteDraft | undefined) => {voteDraftRef.current = next; setVoteDraft(next);};
   React.useEffect(() => {
@@ -1736,7 +1741,8 @@ function DocumentVoting({snapshot, run, api, canChair, document}: CommonProps & 
     : predictedResult !== undefined ? predictedResult : directVote?.automaticResult;
   const resultComplete = !!document.directVote?.invalidatedAt || predictedResult !== undefined || !!directVote?.completedAt;
   const directVoteBySeat = new Map(directVotes.map(vote => [vote.seatId, vote]));
-  const directEligibility = directVote?.eligibility ?? [];
+  const directEligibility = React.useMemo(() => orderedDocumentVotingSeats(directVote?.eligibility),
+    [directVote?.eligibility]);
   const directTotalPages = Math.max(1, Math.ceil(directEligibility.length / 18));
   const directVotingPage = Math.min(votingPage, directTotalPages - 1);
   const visibleDirectSeats = directEligibility.slice(directVotingPage * 18, (directVotingPage + 1) * 18);
@@ -1836,15 +1842,18 @@ function DocumentVoting({snapshot, run, api, canChair, document}: CommonProps & 
           <strong>{directEligibility.length > 0 ? Math.floor(directEligibility.length / 2) + 1 : '—'}</strong></div>
         <div className="resolution-voting-metric metric-two-thirds"><span>{t('Two-thirds majority')}</span>
           <strong>{directEligibility.length > 0 ? Math.ceil(directEligibility.length * 2 / 3) : '—'}</strong></div>
-      </aside><div className="resolution-voting-matrix-wrap"><div className="resolution-voting-grid">
-        {visibleDirectSeats.map(item => {const vote = directVoteBySeat.get(item.seatId); return <button type="button" key={item.seatId}
-          className={`resolution-voting-member${vote ? ` vote-${vote.choice === 'ABSTAIN' ? 'abstaining' : vote.choice.toLowerCase()}` : ''}${item.seatId === currentVotingSeatId ? ' is-current' : ''}`}
+      </aside><div className="resolution-voting-matrix-wrap">
+        {directEligibility.some(item => item.hasVeto) && <div className="resolution-voting-veto-legend">
+          <span aria-hidden="true" />{t('Veto power')}
+        </div>}
+        <div className="resolution-voting-grid">
+        {visibleDirectSeats.map((item, index) => {const vote = directVoteBySeat.get(item.seatId); return <button type="button" key={item.seatId}
+          className={`resolution-voting-member${item.hasVeto ? ` has-veto${index % 6 !== 0 ? ' veto-group-continuation' : ''}` : ''}${vote ? ` vote-${vote.choice === 'ABSTAIN' ? 'abstaining' : vote.choice.toLowerCase()}` : ''}${item.seatId === currentVotingSeatId ? ' is-current' : ''}`}
           disabled={voteConflict} aria-pressed={item.seatId === currentVotingSeatId}
+          aria-label={item.hasVeto ? `${item.seatDisplayName}, ${t('Veto power')}` : undefined}
           onClick={() => canChair && setCurrentVotingSeatId(item.seatId)}>
           <span className="resolution-voting-status-light" aria-hidden="true" />
-          <span className="resolution-voting-member-name"><span>{item.seatDisplayName}</span>
-            {item.hasVeto && <span className="resolution-voting-veto-badge">{t('Veto power')}</span>}
-          </span>
+          <span className="resolution-voting-member-name"><span>{item.seatDisplayName}</span></span>
         </button>;})}</div>{directTotalPages > 1 && <Pagination className="resolution-voting-pagination"
           activePage={directVotingPage + 1} totalPages={directTotalPages} boundaryRange={1} siblingRange={1} ellipsisItem={null}
           onPageChange={(_, data) => setVotingPage(Number(data.activePage) - 1)} />}</div>
@@ -1857,7 +1866,9 @@ function DocumentVoting({snapshot, run, api, canChair, document}: CommonProps & 
         {currentVotingSeat && currentVotingFlag && <div className="roll-call-flag-stage resolution-voting-flag-stage">
           <CountryFlagDisplay flag={currentVotingFlag} />
         </div>}
-        <Header as="h2" className="resolution-voting-current-name"><span>{currentVotingSeat?.seatDisplayName ?? t('No eligible delegations')}</span></Header>
+        <Header as="h2" className="resolution-voting-current-name"><span>{currentVotingSeat?.seatDisplayName ?? t('No eligible delegations')}</span>
+          <small className="resolution-voting-current-veto">{currentVotingSeat?.hasVeto ? t('Veto power') : null}</small>
+        </Header>
         {(voteDraft?.failure || voteConflict) && <Message error role="alert"
           header={t(voteConflict ? 'Resolution vote changed' : 'Submission failed')}
           content={voteDraft?.failure ? apiErrorText(voteDraft.failure) : undefined} />}
@@ -1865,10 +1876,8 @@ function DocumentVoting({snapshot, run, api, canChair, document}: CommonProps & 
         {canChair && <div className="resolution-voting-actions"><div className="resolution-voting-primary-actions">
           {voteConflict ? <Button primary content={t('Reload voting')} icon="refresh"
             onClick={() => {updateVoteDraft(undefined); setSavedDirectVote(undefined); setVoteResultMismatch(false);
-              const next = snapshotDirectVote?.eligibility.find(item =>
-                !snapshotDirectVote.votes.some(vote => vote.seatId === item.seatId));
-              setCurrentVotingSeatId(next?.seatId ?? snapshotDirectVote?.eligibility[0]?.seatId ?? '');
-              setVotingPage(Math.floor(Math.max(0, snapshotDirectVote?.eligibility.findIndex(item => item.seatId === next?.seatId) ?? 0) / 18));
+              setCurrentVotingSeatId(firstUnvotedSeat?.seatId ?? '');
+              setVotingPage(firstVotingPage);
             }} />
             : voteDraft?.failure ? <Button primary content={t('Retry submission')} icon="cloud upload"
               disabled={voteSaving || voteDraft.rejected} onClick={() => submitDirectVotes(voteDraft)} /> : null}

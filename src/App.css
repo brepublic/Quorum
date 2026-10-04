@@ -2627,6 +2627,7 @@ html[lang='zh-CN'] .ui {
 }
 
 .ui.segment.resolution-voting-board {
+  --resolution-veto-color: var(--q-theme-text-muted, #866642);
   background: #f8fafc;
   border-top: 0.25rem solid #2185d0;
   padding: clamp(1rem, 2.5vw, 2rem);
@@ -2710,6 +2711,42 @@ html[lang='zh-CN'] .ui {
   grid-auto-flow: column;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   grid-template-rows: repeat(6, minmax(3.25rem, auto));
+  padding-left: 0.6rem;
+}
+
+.resolution-voting-matrix-wrap {
+  min-width: 0;
+}
+
+.resolution-voting-veto-legend {
+  align-items: center;
+  color: var(--resolution-veto-color);
+  display: flex;
+  font-size: 0.85rem;
+  gap: 0.45rem;
+  justify-content: flex-end;
+  margin-bottom: 0.75rem;
+}
+
+.resolution-voting-veto-legend > span {
+  background: currentColor;
+  height: 1em;
+  width: 2px;
+}
+
+.resolution-voting-member.has-veto::before {
+  background: var(--resolution-veto-color);
+  bottom: 0;
+  content: '';
+  left: -0.6rem;
+  pointer-events: none;
+  position: absolute;
+  top: 0;
+  width: 2px;
+}
+
+.resolution-voting-member.veto-group-continuation::before {
+  top: -0.75rem;
 }
 
 .resolution-voting-member {
@@ -2723,6 +2760,7 @@ html[lang='zh-CN'] .ui {
   grid-template-columns: 3.25rem minmax(0, 1fr);
   min-height: 3.25rem;
   padding: 0;
+  position: relative;
   text-align: left;
 }
 
@@ -2807,26 +2845,19 @@ html[lang='zh-CN'] .ui {
   margin: 0.75rem auto 0;
 }
 
-.resolution-voting-veto-badge {
-  background: #fff5df;
-  border: 1px solid #e8d3a7;
-  border-radius: 999px;
-  color: #805b22;
-  flex-shrink: 0;
-  font-size: 0.85em;
-  font-weight: 500;
-  letter-spacing: 0.02em;
-  line-height: 1.2;
-  margin-left: auto;
-  max-width: 100%;
-  padding: 0.2em 0.5em;
-  text-transform: none;
-  white-space: normal;
+.resolution-voting-current-veto {
+  color: var(--resolution-veto-color);
+  font-size: 0.95rem;
+  font-weight: 400;
+  letter-spacing: 0.06em;
+  line-height: 1.5rem;
+  min-height: 1.5rem;
 }
 
 .resolution-voting-current .ui.header.resolution-voting-current-name {
   font-size: 51px;
-  min-height: max(6.25rem, 3em);
+  gap: 0.5rem;
+  min-height: calc(max(6.25rem, 3em) + 2rem);
 }
 
 .resolution-voting-actions {
