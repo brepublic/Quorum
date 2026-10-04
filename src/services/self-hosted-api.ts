@@ -315,6 +315,9 @@ export const selfHostedApi = {
   async listCommittees(): Promise<CommitteeSummary[]> {
     return (await request<{committees: CommitteeSummary[]}>('/api/v1/committees')).committees;
   },
+  getCommitteeCreationDefaults() {
+    return request<{defaultRulePackageVersionId: string | null}>('/api/v1/committee-defaults');
+  },
   createCommittee(input: CreateCommitteeFromTemplateRequest) {
     return request<CommitteeSummary>('/api/v1/committees', {method: 'POST', body: input, idempotencyKey: key()});
   },

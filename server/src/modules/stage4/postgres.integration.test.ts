@@ -170,11 +170,48 @@ integration('PostgreSQL stage 4 templates and seat snapshots', () => {
     await expect(service.getSettings(outsider, first.id)).rejects.toMatchObject({code:'FORBIDDEN'});
   });
 
+  it('freezes every creation default, validates updates, and uses the stored duration at first start', async () => {
+    const owner = await user('all-defaults');
+    const {revision, ...initial} = await identity.getDefaultCommitteeBehavior(administrator);
+    expect(initial.defaultRulePackageVersionId).toBeTruthy();
+    const input = {...initial, baseRevision: revision, generalSpeechMs: 90500, crisisAutoStartDelayMinutes: -1,
+      showMotionsOnDemand: false, groupMotionTypes: false, moveQueueUp: true, timersInSeparateColumns: true};
+    await expect(identity.updateDefaultCommitteeBehavior(owner, input, context('denied-defaults'))).rejects.toMatchObject({code: 'FORBIDDEN'});
+    for (const patch of [{generalSpeechMs: 0}, {generalSpeechMs: 1000.5}, {crisisAutoStartDelayMinutes: Infinity},
+      {showMotionsOnDemand: 'false'}, {defaultRulePackageVersionId: 'bad-id'}, {extra: true}]) {
+      await expect(identity.updateDefaultCommitteeBehavior(administrator, {...input, ...patch}, context('bad-defaults')))
+        .rejects.toMatchObject({code: 'VALIDATION_FAILED'});
+    }
+    await expect(identity.updateDefaultCommitteeBehavior(administrator, {...input, defaultRulePackageVersionId: randomUUID()},
+      context('unpublished-default'))).rejects.toMatchObject({code: 'VALIDATION_FAILED'});
+    const saved = await identity.updateDefaultCommitteeBehavior(administrator, input, context('save-defaults'));
+    expect(await identity.getCommitteeCreationDefaults(owner)).toEqual({defaultRulePackageVersionId: saved.defaultRulePackageVersionId});
+    await expect(identity.updateDefaultCommitteeBehavior(administrator, input, context('stale-defaults')))
+      .rejects.toMatchObject({code: 'REVISION_CONFLICT'});
+    const committee = await stage4.createCommittee(owner, await testCommitteeInput(pool!, owner,
+      {name: 'Frozen defaults', visibility: 'PRIVATE'}), randomUUID(), context('frozen-defaults'));
+    const snapshot = await stage4.snapshot(committee.id, owner);
+    expect(snapshot.motionSettings).toMatchObject({showMotionsOnDemand: false, groupMotionTypes: false});
+    expect(snapshot.layoutSettings).toMatchObject({moveQueueUp: true, timersInSeparateColumns: true});
+    expect(snapshot.crisisAutoStartDelayMinutes).toBe(-1);
+    await identity.updateDefaultCommitteeBehavior(administrator, {...initial, baseRevision: saved.revision}, context('reset-defaults'));
+    await stage4.startMeetingSession(owner, committee.id, {}, context('frozen-first-start'), randomUUID());
+    expect((await stage4.snapshot(committee.id, owner)).speakerLists?.find(list => list.kind === 'GENERAL')?.defaultSpeechMs).toBe(90500);
+    expect((await stage4.snapshot(committee.id, owner)).motionSettings.showMotionsOnDemand).toBe(false);
+    const later = await stage4.createCommittee(owner, await testCommitteeInput(pool!, owner,
+      {name: 'Later defaults', visibility: 'PRIVATE'}), randomUUID(), context('later-defaults'));
+    expect((await stage4.snapshot(later.id, owner)).motionSettings.showMotionsOnDemand).toBe(true);
+    // Upgraded committees without a copied initial time retain rule-derived behavior.
+    await pool!.query('UPDATE committees SET initial_general_speech_ms=NULL WHERE id=$1', [later.id]);
+    await stage4.startMeetingSession(owner, later.id, {}, context('legacy-first-start'), randomUUID());
+    expect((await stage4.snapshot(later.id, owner)).speakerLists?.find(list => list.kind === 'GENERAL')?.defaultSpeechMs).toBe(120000);
+  });
+
   it('applies only current administrator defaults when creating a committee', async () => {
     const owner = await user('defaultbehavior');
-    const initial = await identity.getDefaultCommitteeBehavior(administrator);
+    const {revision, ...initial} = await identity.getDefaultCommitteeBehavior(administrator);
     const chairDefault = await identity.updateDefaultCommitteeBehavior(administrator,
-      {creatorIsChair: true, operationMode: 'CHAIR_OPERATED', baseRevision: initial.revision}, context('defaults-chair'));
+      {...initial, creatorIsChair: true, operationMode: 'CHAIR_OPERATED', baseRevision: revision}, context('defaults-chair'));
     const chaired = await stage4.createCommittee(owner, await testCommitteeInput(pool!, owner, {name: 'Chaired by default', visibility: 'PRIVATE', countryTemplateKey: 'builtin:default'}),
       'default-chaired', context('default-chaired'));
     expect((await pool?.query(`SELECT operation_mode FROM committees WHERE id=$1`, [chaired.id]))?.rows).toEqual([{operation_mode: 'CHAIR_OPERATED'}]);
@@ -183,7 +220,7 @@ integration('PostgreSQL stage 4 templates and seat snapshots', () => {
     expect((await stage4.snapshot(chaired.id, owner)).viewer.audience).toBe('OWNER');
 
     await identity.updateDefaultCommitteeBehavior(administrator,
-      {creatorIsChair: false, operationMode: 'DELEGATE_OPERATED', baseRevision: chairDefault.revision}, context('defaults-delegate'));
+      {...initial, creatorIsChair: false, operationMode: 'DELEGATE_OPERATED', baseRevision: chairDefault.revision}, context('defaults-delegate'));
     const delegated = await stage4.createCommittee(owner, await testCommitteeInput(pool!, owner, {name: 'Delegate by default', visibility: 'PRIVATE', countryTemplateKey: 'builtin:default'}),
       'default-delegate', context('default-delegate'));
     const overridden = await stage4.createCommittee(owner, await testCommitteeInput(pool!, owner, {name: 'Explicit mode', visibility: 'PRIVATE', operationMode: 'CHAIR_OPERATED',

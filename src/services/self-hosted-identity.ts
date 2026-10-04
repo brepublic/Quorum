@@ -19,11 +19,8 @@ export interface AccountAnonymizationResult {
   transferred: {committees: number; countryTemplates: number; committeeTemplates: number; rulePackages: number};
 }
 
-export interface DefaultCommitteeBehavior {
-  creatorIsChair: boolean;
-  operationMode: 'DELEGATE_OPERATED' | 'CHAIR_OPERATED';
-  revision: number;
-}
+export type {DefaultCommitteeBehavior} from '@quorum/contracts';
+import type {DefaultCommitteeBehavior} from '@quorum/contracts';
 
 interface ApiSuccess<T> {
   data: T;
@@ -140,9 +137,9 @@ export const selfHostedIdentityClient: SelfHostedIdentityClient = {
     return request<DefaultCommitteeBehavior>('/api/v1/admin/default-committee-behavior');
   },
   updateDefaultCommitteeBehavior(input) {
+    const {revision, ...settings} = input;
     return request<DefaultCommitteeBehavior>('/api/v1/admin/default-committee-behavior', {
-      method: 'PUT', csrf: true,
-      body: {creatorIsChair: input.creatorIsChair, operationMode: input.operationMode, baseRevision: input.revision}
+      method: 'PUT', csrf: true, body: {...settings, baseRevision: revision}
     });
   },
   createUser(email, displayName) {

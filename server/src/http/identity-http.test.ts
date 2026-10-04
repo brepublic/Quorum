@@ -100,6 +100,18 @@ async function request(identity: IdentityService, options: {
 }
 
 describe('identity HTTP security boundary', () => {
+  it('authenticates the creation defaults read without exposing administrator write access', async () => {
+    const getCommitteeCreationDefaults = vi.fn(async () => ({defaultRulePackageVersionId: 'rules'}));
+    const identity = fakeIdentity({getCommitteeCreationDefaults});
+    const read = await request(identity, {path: '/api/v1/committee-defaults', headers: {cookie: '__Host-quorum_session=session'}});
+    expect(read.status).toBe(200);
+    expect(read.json.data).toEqual({defaultRulePackageVersionId: 'rules'});
+    expect(getCommitteeCreationDefaults).toHaveBeenCalledWith(expect.objectContaining({user}));
+    const denied = await request(fakeIdentity({authenticate: vi.fn(async () => {throw new AppError({code: 'AUTHENTICATION_REQUIRED', message: 'Login required'});})}),
+      {path: '/api/v1/committee-defaults'});
+    expect(denied.status).toBe(401);
+  });
+
   it('authenticates the administrator operations status route', async () => {
     const identity = fakeIdentity();
     const operationsStatus = {status: vi.fn(async () => ({storage: {state: 'normal'}}))};

@@ -42,7 +42,7 @@ function client(overrides: Partial<SelfHostedIdentityClient>): SelfHostedIdentit
     changePassword: vi.fn(async () => ({...admin, mustChangePassword: false})),
     elevate: vi.fn(async () => admin),
     listUsers: vi.fn(async () => [admin]),
-    getDefaultCommitteeBehavior: vi.fn(async () => ({creatorIsChair: true, operationMode: 'CHAIR_OPERATED' as const, revision: 1})),
+    getDefaultCommitteeBehavior: vi.fn(async () => ({defaultRulePackageVersionId: 'rules', showMotionsOnDemand: true, groupMotionTypes: true, moveQueueUp: false, timersInSeparateColumns: false, generalSpeechMs: 120000, crisisAutoStartDelayMinutes: 5, creatorIsChair: true, operationMode: 'CHAIR_OPERATED' as const, revision: 1})),
     updateDefaultCommitteeBehavior: vi.fn(async input => input),
     createUser: vi.fn(async () => ({user: admin, temporaryPassword: 'temporary'})),
     resetPassword: vi.fn(async () => ({user: admin, temporaryPassword: 'temporary'})),

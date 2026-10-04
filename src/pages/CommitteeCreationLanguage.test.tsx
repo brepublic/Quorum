@@ -26,7 +26,7 @@ describe('committee creation content language', () => {
       listCommittees: async () => [], listCommitteeTemplates: async () => [],
       listCountryTemplates: async () => [{id: 'countries', key: 'builtin:default', names: {en: 'Countries', 'zh-CN': '国家'},
         defaultLanguage: 'en', builtin: true, revision: 7, countries: [{stableKey: 'china', names: {en: 'China', 'zh-CN': '中国'}}]}],
-      listRulePackages: async () => [{scope: 'BUILTIN', key: 'builtin:beijing-academic', versions: [
+      getCommitteeCreationDefaults: async () => ({defaultRulePackageVersionId: 'rules'}), listRulePackages: async () => [{scope: 'BUILTIN', key: 'builtin:beijing-academic', versions: [
         {id: 'rules', names: {en: 'Beijing Academic Standard 2021', 'zh-CN': '北京学术标准 2021'}, version: 12,
           status: 'PUBLISHED', languageAvailability: {supportedLanguages: ['zh-CN', 'en'], missing: []}},
         {id: 'old-rules', names: {en: 'Beijing Academic Standard 2021', 'zh-CN': '北京学术标准 2021'}, version: 6,

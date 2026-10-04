@@ -69,10 +69,10 @@ describe('self-hosted identity client', () => {
       json: async () => ({data: {creatorIsChair: true, operationMode: 'CHAIR_OPERATED', revision: 2}, meta: {requestId: 'request'}})}));
     vi.stubGlobal('fetch', fetchMock);
 
-    await selfHostedIdentityClient.updateDefaultCommitteeBehavior({creatorIsChair: true, operationMode: 'CHAIR_OPERATED', revision: 1});
+    await selfHostedIdentityClient.updateDefaultCommitteeBehavior({defaultRulePackageVersionId: 'rules', showMotionsOnDemand: true, groupMotionTypes: true, moveQueueUp: false, timersInSeparateColumns: false, generalSpeechMs: 120000, crisisAutoStartDelayMinutes: 5, creatorIsChair: true, operationMode: 'CHAIR_OPERATED', revision: 1});
 
     expect(fetchMock).toHaveBeenCalledWith('/api/v1/admin/default-committee-behavior', expect.objectContaining({
-      method: 'PUT', body: JSON.stringify({creatorIsChair: true, operationMode: 'CHAIR_OPERATED', baseRevision: 1})
+      method: 'PUT', body: JSON.stringify({defaultRulePackageVersionId: 'rules', showMotionsOnDemand: true, groupMotionTypes: true, moveQueueUp: false, timersInSeparateColumns: false, generalSpeechMs: 120000, crisisAutoStartDelayMinutes: 5, creatorIsChair: true, operationMode: 'CHAIR_OPERATED', baseRevision: 1})
     }));
   });
 });

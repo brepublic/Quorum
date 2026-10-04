@@ -25,6 +25,7 @@ export interface Stage4CommitteeRow extends QueryResultRow {
   move_queue_up: boolean;
   timers_in_separate_columns: boolean;
   crisis_auto_start_delay_minutes: number;
+  initial_general_speech_ms: string | number | null;
   status: 'ACTIVE' | 'PAUSED' | 'ARCHIVED' | 'DELETING';
   meeting_ended_at: Date | null;
   active_rule_package_version_id: string;

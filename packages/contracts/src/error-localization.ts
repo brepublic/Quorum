@@ -145,7 +145,7 @@ export const ERROR_TEXT = {
   CACHE_REFILL_INCOMPLETE: {en: "The file cache is not ready. Wait for the Chair computer to sync.", 'zh-CN': "文件缓存尚未准备完成，请等待主席电脑同步。"},
   UPLOAD_ACCOUNT_INACTIVE: {en: "The upload account is inactive. Upload again using an active account.", 'zh-CN': "发起上传的账号已停用，请使用活动账号重新上传。"},
   INVALID_THEME_SETTINGS: {en: "Theme settings are invalid. Select the theme setting again.", 'zh-CN': "主题设置格式无效，请重新选择主题开关。"},
-  INVALID_COMMITTEE_DEFAULTS: {en: "Check the default operation mode and Chair assignment settings.", 'zh-CN': "请检查默认运作模式和主席权限设置。"},
+  INVALID_COMMITTEE_DEFAULTS: {en: "Check the committee default options and values.", 'zh-CN': "请检查委员会默认设置中的选项和数值。"},
   INSTANCE_ALREADY_INITIALIZED: {en: "This instance is already initialized. Sign in instead.", 'zh-CN': "系统已经初始化，请前往登录。"},
   INVALID_BOOTSTRAP_SECRET: {en: "The initialization secret is incorrect. Check the secret provided by the server.", 'zh-CN': "初始化密钥不正确，请检查服务器提供的密钥。"},
   INVALID_MOTION_DURATION: {en: "Enter a motion duration within the limits allowed by the rules.", 'zh-CN': "请填写规则允许范围内的动议时长。"},

@@ -209,16 +209,30 @@ export class IdentityService {
     return this.store.getDefaultCommitteeBehavior();
   }
 
+  async getCommitteeCreationDefaults(_auth: AuthenticatedSession): Promise<Pick<DefaultCommitteeBehavior, 'defaultRulePackageVersionId'>> {
+    const settings = await this.store.getDefaultCommitteeBehavior();
+    return {defaultRulePackageVersionId: settings.defaultRulePackageVersionId};
+  }
+
   async updateDefaultCommitteeBehavior(auth: AuthenticatedSession, input: Record<string, unknown>,
     context: RequestIdentityContext): Promise<DefaultCommitteeBehavior> {
     this.requireAdministrator(auth);
-    if (Object.keys(input).length !== 3 || typeof input.creatorIsChair !== 'boolean'
+    if (Object.keys(input).length !== 10 || typeof input.creatorIsChair !== 'boolean'
       || !['DELEGATE_OPERATED', 'CHAIR_OPERATED'].includes(input.operationMode as string)
+      || typeof input.defaultRulePackageVersionId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.defaultRulePackageVersionId)
+      || ['showMotionsOnDemand', 'groupMotionTypes', 'moveQueueUp', 'timersInSeparateColumns'].some(key => typeof input[key] !== 'boolean')
+      || !Number.isSafeInteger(input.generalSpeechMs) || (input.generalSpeechMs as number) < 1000
+      || typeof input.crisisAutoStartDelayMinutes !== 'number' || !Number.isSafeInteger(input.crisisAutoStartDelayMinutes * 60000)
+      || !Number.isFinite(new Date(Date.now() + input.crisisAutoStartDelayMinutes * 60000).getTime())
       || !Number.isInteger(input.baseRevision) || (input.baseRevision as number) < 1) {
       throw new AppError({reason: 'INVALID_COMMITTEE_DEFAULTS', code: 'VALIDATION_FAILED', message: 'Default committee behavior is invalid.'});
     }
     const result = await this.store.updateDefaultCommitteeBehavior({actor: auth, creatorIsChair: input.creatorIsChair,
       operationMode: input.operationMode as DefaultCommitteeBehavior['operationMode'], baseRevision: input.baseRevision as number,
+      settings: {defaultRulePackageVersionId: input.defaultRulePackageVersionId as string,
+        showMotionsOnDemand: input.showMotionsOnDemand as boolean, groupMotionTypes: input.groupMotionTypes as boolean,
+        moveQueueUp: input.moveQueueUp as boolean, timersInSeparateColumns: input.timersInSeparateColumns as boolean,
+        generalSpeechMs: input.generalSpeechMs as number, crisisAutoStartDelayMinutes: input.crisisAutoStartDelayMinutes as number},
       audit: this.audit(context)});
     if (result === 'revision_conflict') throw new AppError({code: 'REVISION_CONFLICT', message: 'The settings were changed by another administrator.'});
     return result;

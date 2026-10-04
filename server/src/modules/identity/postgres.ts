@@ -291,29 +291,34 @@ export class PostgresIdentityStore implements IdentityStore {
   }
 
   async getDefaultCommitteeBehavior(): Promise<DefaultCommitteeBehavior> {
-    const result = await this.pool.query<{
-      default_committee_creator_is_chair: boolean; default_committee_operation_mode: DefaultCommitteeBehavior['operationMode']; revision: number;
-    }>(`SELECT default_committee_creator_is_chair, default_committee_operation_mode, default_committee_behavior_revision AS revision
-        FROM system_settings WHERE singleton=true`);
+    const result = await this.pool.query(`SELECT default_committee_creator_is_chair, default_committee_operation_mode,
+      default_committee_behavior_revision AS revision, committee_creation_defaults,
+      (SELECT v.id FROM rule_package_versions v JOIN rule_packages p ON p.id=v.package_id
+        WHERE p.stable_key='builtin:beijing-academic' AND v.status='PUBLISHED' ORDER BY v.version DESC LIMIT 1) AS builtin_rule
+      FROM system_settings WHERE singleton=true`);
     const row = result.rows[0];
     if (!row) throw new Error('system_settings singleton is missing');
-    return {creatorIsChair: row.default_committee_creator_is_chair, operationMode: row.default_committee_operation_mode, revision: row.revision};
+    return {...row.committee_creation_defaults, creatorIsChair: row.default_committee_creator_is_chair,
+      operationMode: row.default_committee_operation_mode, revision: row.revision,
+      defaultRulePackageVersionId: row.committee_creation_defaults.defaultRulePackageVersionId ?? row.builtin_rule ?? null};
   }
 
   async updateDefaultCommitteeBehavior(input: Parameters<IdentityStore['updateDefaultCommitteeBehavior']>[0]):
     Promise<DefaultCommitteeBehavior | 'revision_conflict'> {
     return this.transaction(async client => {
-      const result = await client.query<{
-        default_committee_creator_is_chair: boolean; default_committee_operation_mode: DefaultCommitteeBehavior['operationMode']; revision: number;
-      }>(`UPDATE system_settings SET default_committee_creator_is_chair=$1, default_committee_operation_mode=$2,
-            default_committee_behavior_revision=default_committee_behavior_revision+1, default_committee_behavior_updated_at=now()
-          WHERE singleton=true AND default_committee_behavior_revision=$3
-          RETURNING default_committee_creator_is_chair, default_committee_operation_mode, default_committee_behavior_revision AS revision`,
-      [input.creatorIsChair, input.operationMode, input.baseRevision]);
-      const row = result.rows[0];
-      if (!row) return 'revision_conflict';
+      const rule = await client.query(`SELECT v.id FROM rule_package_versions v JOIN rule_packages p ON p.id=v.package_id
+        WHERE v.id=$1 AND v.status='PUBLISHED' AND p.scope IN ('BUILTIN','SYSTEM') FOR SHARE OF v`,
+      [input.settings.defaultRulePackageVersionId]);
+      if (!rule.rowCount) throw new AppError({code: 'VALIDATION_FAILED', reason: 'RULE_VERSION_NOT_PUBLISHED',
+        message: 'Rule package version is not published.'});
+      const result = await client.query(`UPDATE system_settings SET default_committee_creator_is_chair=$1,
+        default_committee_operation_mode=$2, committee_creation_defaults=$4,
+        default_committee_behavior_revision=default_committee_behavior_revision+1, default_committee_behavior_updated_at=now()
+        WHERE singleton=true AND default_committee_behavior_revision=$3 RETURNING default_committee_behavior_revision AS revision`,
+      [input.creatorIsChair, input.operationMode, input.baseRevision, JSON.stringify(input.settings)]);
+      if (!result.rowCount) return 'revision_conflict';
       await audit(client, input.audit, {actorUserId: input.actor.user.id, action: 'admin.default_committee_behavior_updated'});
-      return {creatorIsChair: row.default_committee_creator_is_chair, operationMode: row.default_committee_operation_mode, revision: row.revision};
+      return {...input.settings, creatorIsChair: input.creatorIsChair, operationMode: input.operationMode, revision: result.rows[0].revision};
     });
   }
 

@@ -1,3 +1,4 @@
+import type {DefaultCommitteeBehavior} from '@quorum/contracts';
 import {rejectionTypes} from '../delegate-files/settings.js';
 import {speakerListName} from '../stage5/service.js';
 import {crisisGroups} from '../stage5/crises.js';
@@ -1261,9 +1262,9 @@ export class Stage4Service {
     }
     return idempotentTransaction({pool: this.pool, auth, route: 'POST /api/v1/committees', key: idempotencyKey,
       request: input, status: 201, work: async client => {
-        const defaults = await client.query<{default_file_rejection_types: unknown; creator_is_chair: boolean; operation_mode: 'DELEGATE_OPERATED' | 'CHAIR_OPERATED'}>(
+        const defaults = await client.query<{committee_creation_defaults: Omit<DefaultCommitteeBehavior, 'creatorIsChair' | 'operationMode' | 'revision'>; default_file_rejection_types: unknown; creator_is_chair: boolean; operation_mode: 'DELEGATE_OPERATED' | 'CHAIR_OPERATED'}>(
           `SELECT default_committee_creator_is_chair AS creator_is_chair,
-            default_committee_operation_mode AS operation_mode,default_file_rejection_types FROM system_settings WHERE singleton=true FOR SHARE`);
+            default_committee_operation_mode AS operation_mode,default_file_rejection_types,committee_creation_defaults FROM system_settings WHERE singleton=true FOR SHARE`);
         const defaultBehavior = defaults.rows[0];
         if (!defaultBehavior) throw new Error('system_settings singleton is missing');
         const operationMode = (input.operationMode ?? defaultBehavior.operation_mode) as 'DELEGATE_OPERATED' | 'CHAIR_OPERATED';
@@ -1307,8 +1308,12 @@ export class Stage4Service {
         [id, auth.user.id, name, topic, conference, input.visibility, operationMode, versionId,
           template?.builtin ? null : committeeTemplateId, countryTemplateKey, !template, language, contentSnapshot]);
         const row = inserted.rows[0] as Stage4CommitteeRow;
-      await client.query(`UPDATE committees SET delegate_file_settings=jsonb_set(delegate_file_settings,
-        '{rejectionTypes}', $2::jsonb) WHERE id=$1`, [id, JSON.stringify(defaultRejections)]);
+        const creation = defaultBehavior.committee_creation_defaults;
+        await client.query(`UPDATE committees SET delegate_file_settings=jsonb_set(delegate_file_settings,
+          '{rejectionTypes}', $2::jsonb), show_motions_on_demand=$3, group_motion_types=$4, move_queue_up=$5,
+          timers_in_separate_columns=$6, crisis_auto_start_delay_minutes=$7, initial_general_speech_ms=$8 WHERE id=$1`,
+        [id, JSON.stringify(defaultRejections), creation.showMotionsOnDemand, creation.groupMotionTypes,
+          creation.moveQueueUp, creation.timersInSeparateColumns, creation.crisisAutoStartDelayMinutes, creation.generalSpeechMs]);
         await client.query(`INSERT INTO committee_rule_bindings
           (id,committee_id,package_version_id,effective_from_event_sequence,activated_by_user_id)
           VALUES ($1,$2,$3,1,$4)`, [randomUUID(), id, versionId, auth.user.id]);
@@ -1643,8 +1648,9 @@ export class Stage4Service {
       const generalRule = definition.rows[0].definition.speakerLists?.find(item => item.id === 'general-speakers-list');
       await ensureFileOnlyAttendance(client, committee, id, auth.user.id);
       const configuredDuration = generalRule?.defaultDurationSeconds;
-      const defaultSpeechMs = typeof configuredDuration === 'number' && Number.isSafeInteger(configuredDuration)
-        && configuredDuration > 0 ? configuredDuration * 1000 : 120_000;
+      const defaultSpeechMs = committee.initial_general_speech_ms !== null ? Number(committee.initial_general_speech_ms)
+        : typeof configuredDuration === 'number' && Number.isSafeInteger(configuredDuration)
+          && configuredDuration > 0 ? configuredDuration * 1000 : 120_000;
       let speakerListId: string; let createdReplacement = false;
       if (pendingSession) {
         const alreadyLinked = await client.query<{id: string}>(`SELECT id FROM speaker_lists

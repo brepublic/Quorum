@@ -49,11 +49,8 @@ export interface IdentityAnonymizationResult {
   transferred: IdentityResourceTransferCounts;
 }
 
-export interface DefaultCommitteeBehavior {
-  creatorIsChair: boolean;
-  operationMode: 'DELEGATE_OPERATED' | 'CHAIR_OPERATED';
-  revision: number;
-}
+export type {DefaultCommitteeBehavior} from '@quorum/contracts';
+import type {DefaultCommitteeBehavior} from '@quorum/contracts';
 
 export interface ThemeSettings {
   enabled: boolean;
@@ -104,6 +101,7 @@ export interface IdentityStore {
     actor: AuthenticatedSession;
     creatorIsChair: boolean;
     operationMode: DefaultCommitteeBehavior['operationMode'];
+    settings: Pick<DefaultCommitteeBehavior, 'defaultRulePackageVersionId' | 'showMotionsOnDemand' | 'groupMotionTypes' | 'moveQueueUp' | 'timersInSeparateColumns' | 'generalSpeechMs' | 'crisisAutoStartDelayMinutes'>;
     baseRevision: number;
     audit: AuditContext;
   }): Promise<DefaultCommitteeBehavior | 'revision_conflict'>;

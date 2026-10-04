@@ -1400,6 +1400,12 @@ async function handleIdentityRequest(options: {
     return true;
   }
 
+  if (method === 'GET' && pathname === '/api/v1/committee-defaults') {
+    const auth = await identity.authenticate(cookies.get(SESSION_COOKIE_NAME));
+    sendJson(response, 200, success(await identity.getCommitteeCreationDefaults(auth), requestId));
+    return true;
+  }
+
   if (method === 'GET' && pathname === '/api/v1/admin/default-committee-behavior') {
     const auth = await identity.authenticate(cookies.get(SESSION_COOKIE_NAME));
     sendJson(response, 200, success(await identity.getDefaultCommitteeBehavior(auth), requestId));

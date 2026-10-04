@@ -32,9 +32,9 @@ function clients() {
   updateStorageCacheConfig: vi.fn(async input => ({...input, revision: input.revision + 1})),
   getDefaultFileRejectionTypes: vi.fn(async () => ({revision: 1, rejectionTypes: [
     {id: 'format', label: {'zh-CN': '格式'}, message: {'zh-CN': '请修改'}, custom: false}]})),
-  listS3ProviderConfigs: vi.fn(async () => []), listCommittees: vi.fn(async () => []),
+  listRulePackages: vi.fn(async () => []), listS3ProviderConfigs: vi.fn(async () => []), listCommittees: vi.fn(async () => []),
   listCountryTemplates: vi.fn(async () => []), listCommitteeTemplates: vi.fn(async () => [])};
-  const client = {getDefaultCommitteeBehavior: vi.fn(async () => ({creatorIsChair: true,
+  const client = {getDefaultCommitteeBehavior: vi.fn(async () => ({defaultRulePackageVersionId: 'rules', showMotionsOnDemand: true, groupMotionTypes: true, moveQueueUp: false, timersInSeparateColumns: false, generalSpeechMs: 120000, crisisAutoStartDelayMinutes: 5, creatorIsChair: true,
     operationMode: 'CHAIR_OPERATED', revision: 1})), updateDefaultCommitteeBehavior: vi.fn(async value => value)};
   return {api, client};
 }
@@ -70,11 +70,11 @@ describe('system settings navigation and extracted settings', () => {
   });
   it('groups committee defaults and uses the supplied identity client when saving', async () => {
     const {api, client} = await render('/system-settings/defaults');
-    expect(host.textContent).toContain('默认行为');
+    expect(host.textContent).toContain('委员会运作');
     expect(host.textContent).toContain('默认驳回类型');
     expect(api.getDefaultFileRejectionTypes).toHaveBeenCalledOnce();
-    await act(async () => {host.querySelector('form')!.dispatchEvent(new Event('submit', {bubbles: true, cancelable: true}));});
-    expect(client.updateDefaultCommitteeBehavior).toHaveBeenCalledWith({creatorIsChair: true,
+    await act(async () => {(host.querySelector('input[type=checkbox]') as HTMLInputElement).click();});
+    expect(client.updateDefaultCommitteeBehavior).toHaveBeenCalledWith({defaultRulePackageVersionId: 'rules', showMotionsOnDemand: true, groupMotionTypes: true, moveQueueUp: false, timersInSeparateColumns: false, generalSpeechMs: 120000, crisisAutoStartDelayMinutes: 5, creatorIsChair: false,
       operationMode: 'CHAIR_OPERATED', revision: 1});
     expect(api.operationsStatus).not.toHaveBeenCalled();
   });

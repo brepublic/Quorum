@@ -362,3 +362,16 @@ export function localizedDisplayName(
     || Object.values(names).find(value => value.trim())?.trim()
     || '';
 }
+
+export interface DefaultCommitteeBehavior {
+  creatorIsChair: boolean;
+  operationMode: CommitteeOperationMode;
+  defaultRulePackageVersionId: string | null;
+  showMotionsOnDemand: boolean;
+  groupMotionTypes: boolean;
+  moveQueueUp: boolean;
+  timersInSeparateColumns: boolean;
+  generalSpeechMs: number;
+  crisisAutoStartDelayMinutes: number;
+  revision: number;
+}

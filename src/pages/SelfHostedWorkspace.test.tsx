@@ -36,7 +36,7 @@ describe('self-hosted stage 4 workspace', () => {
       : vi.fn().mockRejectedValue(failure);
     const api = {snapshot: read, openCommitteeEvents: vi.fn(() => () => undefined),
       listCommittees: vi.fn(async () => []), listCountryTemplates: vi.fn(async () => []),
-      listRulePackages: vi.fn(async () => []), listCommitteeTemplates: vi.fn(async () => [])} as unknown as SelfHostedApi;
+      getCommitteeCreationDefaults: async () => ({defaultRulePackageVersionId: 'rules'}), listRulePackages: vi.fn(async () => []), listCommitteeTemplates: vi.fn(async () => [])} as unknown as SelfHostedApi;
     container = document.createElement('div'); document.body.append(container); root = createRoot(container);
     await act(async () => {root?.render(<MemoryRouter initialEntries={['/committees/committee']}>
       {anonymous ? <Route path="/committees/:id"><SelfHostedCommitteeWorkspace api={api} /></Route>
@@ -115,7 +115,7 @@ describe('self-hosted stage 4 workspace', () => {
 
   it('hides the committee creation form for the system administrator', async () => {
     const api = {listCommittees: vi.fn(async () => []), listCountryTemplates: vi.fn(async () => []),
-      listRulePackages: vi.fn(async () => []), listCommitteeTemplates: vi.fn(async () => [])} as unknown as SelfHostedApi;
+      getCommitteeCreationDefaults: async () => ({defaultRulePackageVersionId: 'rules'}), listRulePackages: vi.fn(async () => []), listCommitteeTemplates: vi.fn(async () => [])} as unknown as SelfHostedApi;
     container = document.createElement('div'); document.body.append(container); root = createRoot(container);
     await act(async () => { root?.render(<MemoryRouter initialEntries={['/committees']}>
       <SelfHostedWorkspace user={{...user, isSystemAdmin: true}} logout={vi.fn()} api={api} />
@@ -134,7 +134,7 @@ describe('self-hosted stage 4 workspace', () => {
         name: 'Managed Committee', status: 'ACTIVE'}]),
       listCountryTemplates: vi.fn(async () => [{key: 'builtin:default', names: {en: 'Default countries'},
         defaultLanguage: 'en', builtin: true, revision: 1, countries: []}]),
-      listRulePackages: vi.fn(async () => []), listCommitteeTemplates: vi.fn(async () => []),
+      getCommitteeCreationDefaults: async () => ({defaultRulePackageVersionId: 'rules'}), listRulePackages: vi.fn(async () => []), listCommitteeTemplates: vi.fn(async () => []),
       archiveCommittee, requestCommitteeDeletion,
     } as unknown as SelfHostedApi;
     container = document.createElement('div'); document.body.append(container); root = createRoot(container);
@@ -226,7 +226,7 @@ describe('self-hosted stage 4 workspace', () => {
     const archiveCommittee = vi.fn(async () => ({...ownerSnapshot.committee, status: 'ARCHIVED' as const, revision: 2}));
     const activeApi = {snapshot: vi.fn(async () => ownerSnapshot), openCommitteeEvents: vi.fn(() => () => undefined),
       archiveCommittee, committeeExportUrl: vi.fn(() => '/api/v1/committees/committee/export'),
-      listRulePackages: vi.fn(async () => [])} as unknown as SelfHostedApi;
+      getCommitteeCreationDefaults: async () => ({defaultRulePackageVersionId: 'rules'}), listRulePackages: vi.fn(async () => [])} as unknown as SelfHostedApi;
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     container = document.createElement('div'); document.body.append(container); root = createRoot(container);
     await act(async () => { root?.render(<MemoryRouter initialEntries={['/committees/committee/settings']}>

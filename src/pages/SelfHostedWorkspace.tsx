@@ -75,13 +75,12 @@ function CommitteeList({api, user, logout}: {api: SelfHostedApi; user: SelfHoste
   const [loading, setLoading] = React.useState(true);
   const refresh = React.useCallback(async () => {
     try {
-      const [nextCommittees, nextCountries, nextTemplates, nextRules] = await Promise.all([
-        api.listCommittees(), api.listCountryTemplates(), api.listCommitteeTemplates(), api.listRulePackages()
+      const [nextCommittees, nextCountries, nextTemplates, nextRules, defaults] = await Promise.all([
+        api.listCommittees(), api.listCountryTemplates(), api.listCommitteeTemplates(), api.listRulePackages(), api.getCommitteeCreationDefaults()
       ]);
       setCommittees(nextCommittees); setCountryTemplates(nextCountries); setCommitteeTemplates(nextTemplates);
       setRulePackages(nextRules);
-      setRuleVersionId(current => current || nextRules.find(pkg => pkg.key === 'builtin:beijing-academic')?.versions
-        .filter(version => version.status === 'PUBLISHED').sort((a, b) => a.version - b.version).at(-1)?.id || '');
+      setRuleVersionId(current => current || defaults.defaultRulePackageVersionId || '');
     } catch (caught) { setError(caught); } finally { setLoading(false); }
   }, [api]);
   React.useEffect(() => void refresh(), [refresh]);

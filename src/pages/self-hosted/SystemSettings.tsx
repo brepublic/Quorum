@@ -29,8 +29,11 @@ export default function SystemSettings({api, client}: {api: SelfHostedApi; clien
       <Route exact path={`${base}/interface`}><ThemeSettingsPanel /></Route>
       <Route exact path={`${base}/operations`}><OperationsPanel api={api} /></Route>
       <Route exact path={`${base}/defaults`}>
-        <DefaultCommitteeBehaviorPanel client={client} />
-        <DelegateFileSettingsPanel api={api} />
+        <Container className="committee-settings-page">
+          <p className="settings-field-help">{t("Used for new committees.")}</p>
+          <DefaultCommitteeBehaviorPanel client={client} api={api} />
+          <DelegateFileSettingsPanel api={api} />
+        </Container>
       </Route>
       <Route exact path={`${base}/cache`}><StorageCacheSettingsPanel api={api} /></Route>
       <Route exact path={`${base}/storage`}><StorageAdminPanel api={api} /></Route>
