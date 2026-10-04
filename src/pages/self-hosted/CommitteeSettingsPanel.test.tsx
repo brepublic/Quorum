@@ -69,6 +69,27 @@ beforeEach(() => {
 afterEach(async () => {await act(async () => root.unmount()); host.remove(); vi.useRealTimers(); vi.restoreAllMocks();});
 
 describe('committee settings autosave', () => {
+  it.each(['ACTIVE', 'ARCHIVED'] as const)('offers only the latest Beijing version while displaying the current historical rule for %s committees', async status => {
+    current.committee.status = status; chair = status === 'ACTIVE';
+    api.listRulePackages = vi.fn(async () => [{scope: 'BUILTIN', key: 'builtin:beijing-academic', versions: [
+      {id: 'latest-rules', version: 12, status: 'PUBLISHED', names: {'zh-CN': '北京学术标准 2021'}},
+      {id: 'rules', version: 6, status: 'PUBLISHED', names: {'zh-CN': '北京学术标准 2021'}},
+      {id: 'draft-rules', version: 13, status: 'DRAFT', names: {'zh-CN': '北京规则草稿'}}]},
+      {scope: 'SYSTEM', key: 'system:custom', versions: [1, 2].map(version => ({id: `custom-${version}`, version,
+        status: 'PUBLISHED', names: {'zh-CN': `自定义规则 ${version}`}}))}] as unknown as Awaited<ReturnType<SelfHostedApi['listRulePackages']>>);
+    await render();
+    const dropdown = card('operation').querySelectorAll('.ui.dropdown')[1];
+    expect(dropdown.querySelector('.text')?.textContent).toBe('北京学术标准 2021');
+    expect([...dropdown.querySelectorAll('.item')].filter(item => item.textContent === '北京学术标准 2021')).toHaveLength(1);
+    expect(dropdown.textContent).not.toContain('北京规则草稿');
+    expect(dropdown.textContent).toContain('自定义规则 1'); expect(dropdown.textContent).toContain('自定义规则 2');
+    expect(api.activateRules).not.toHaveBeenCalled();
+    if (status === 'ACTIVE') {
+      await act(async () => dropdown.querySelector('.item')!.dispatchEvent(new MouseEvent('click', {bubbles: true})));
+      expect(api.activateRules).toHaveBeenCalledWith('committee', 'latest-rules', 4);
+    } else expect(dropdown.classList.contains('disabled')).toBe(true);
+  });
+
   it('groups settings into cards with no save or activate button', async () => {
     await render(); expect(host.querySelectorAll('.committee-setting-card')).toHaveLength(7);
     expect(buttons('保存更改')).toHaveLength(0); expect(buttons('保存运作模式')).toHaveLength(0); expect(buttons('启用规则版本')).toHaveLength(0);

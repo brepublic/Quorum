@@ -26,8 +26,16 @@ describe('committee creation content language', () => {
       listCommittees: async () => [], listCommitteeTemplates: async () => [],
       listCountryTemplates: async () => [{id: 'countries', key: 'builtin:default', names: {en: 'Countries', 'zh-CN': '国家'},
         defaultLanguage: 'en', builtin: true, revision: 7, countries: [{stableKey: 'china', names: {en: 'China', 'zh-CN': '中国'}}]}],
-      listRulePackages: async () => [{scope: 'BUILTIN', key: 'builtin:beijing-academic', versions: [{id: 'rules', names: {en: 'Beijing Academic Standard 2021', 'zh-CN': '北京学术标准 2021'}, version: 6,
-        status: 'PUBLISHED', languageAvailability: {supportedLanguages: ['zh-CN', 'en'], missing: []}}]}],
+      listRulePackages: async () => [{scope: 'BUILTIN', key: 'builtin:beijing-academic', versions: [
+        {id: 'rules', names: {en: 'Beijing Academic Standard 2021', 'zh-CN': '北京学术标准 2021'}, version: 12,
+          status: 'PUBLISHED', languageAvailability: {supportedLanguages: ['zh-CN', 'en'], missing: []}},
+        {id: 'old-rules', names: {en: 'Beijing Academic Standard 2021', 'zh-CN': '北京学术标准 2021'}, version: 6,
+          status: 'PUBLISHED', languageAvailability: {supportedLanguages: ['zh-CN', 'en'], missing: []}},
+        {id: 'draft-rules', names: {en: 'Beijing Draft', 'zh-CN': '北京规则草稿'}, version: 13,
+          status: 'DRAFT', languageAvailability: {supportedLanguages: ['zh-CN', 'en'], missing: []}}]},
+        {scope: 'SYSTEM', key: 'system:custom', versions: [1, 2].map(version => ({id: `custom-${version}`, version,
+          status: 'PUBLISHED', names: {en: `Custom Rules ${version}`},
+          languageAvailability: {supportedLanguages: ['en'], missing: []}}))}],
       createCommittee
     } as unknown as SelfHostedApi;
     container = document.createElement('div'); document.body.append(container); root = createRoot(container);
@@ -39,8 +47,10 @@ describe('committee creation content language', () => {
     });
     act(() => setLanguage(interfaceLanguage));
     const ruleName = interfaceLanguage === 'en' ? 'Beijing Academic Standard 2021' : '北京学术标准 2021';
-    const ruleOption = Array.from(container.querySelectorAll('[role="option"]')).find(option => option.textContent?.includes(ruleName));
-    expect(ruleOption?.textContent).toBe(ruleName);
+    const ruleOptions = Array.from(container.querySelectorAll('[role="option"]')).filter(option => option.textContent === ruleName);
+    expect(ruleOptions).toHaveLength(1);
+    expect(container.textContent).not.toContain(interfaceLanguage === 'en' ? 'Beijing Draft' : '北京规则草稿');
+    expect(container.textContent).toContain('Custom Rules 1'); expect(container.textContent).toContain('Custom Rules 2');
     expect(container.textContent).not.toContain(interfaceLanguage === 'en' ? '北京学术标准 2021' : 'Beijing Academic Standard 2021');
     expect(container.querySelector('input[required]')).toBe(input);
     expect(input.value).toBe('Custom committee name');

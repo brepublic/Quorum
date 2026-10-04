@@ -81,14 +81,16 @@ function CommitteeList({api, user, logout}: {api: SelfHostedApi; user: SelfHoste
       setCommittees(nextCommittees); setCountryTemplates(nextCountries); setCommitteeTemplates(nextTemplates);
       setRulePackages(nextRules);
       setRuleVersionId(current => current || nextRules.find(pkg => pkg.key === 'builtin:beijing-academic')?.versions
-        .filter(version => version.status === 'PUBLISHED').at(-1)?.id || '');
+        .filter(version => version.status === 'PUBLISHED').sort((a, b) => a.version - b.version).at(-1)?.id || '');
     } catch (caught) { setError(caught); } finally { setLoading(false); }
   }, [api]);
   React.useEffect(() => void refresh(), [refresh]);
   const selectedTemplate = committeeTemplates.find(item => item.id === templateId);
   const selectedCountries = countryTemplates.find(item => item.key === (selectedTemplate?.countryTemplateKey ?? countryKey));
   const ruleOptions = rulePackages.filter(pkg => pkg.scope !== 'COMMITTEE').flatMap(pkg => pkg.versions
-    .filter(version => version.status === 'PUBLISHED').map(version => ({key: version.id, value: version.id,
+    .filter(version => version.status === 'PUBLISHED' && (pkg.scope !== 'BUILTIN' || pkg.key !== 'builtin:beijing-academic'
+      || !pkg.versions.some(next => next.status === 'PUBLISHED' && next.version > version.version)))
+    .map(version => ({key: version.id, value: version.id,
       text: localizedDisplayName(version.names, 'en'), version})));
   const selectedRule = ruleOptions.find(item => item.value === ruleVersionId)?.version;
   const templateAvailability = selectedCountries ? templateLanguageAvailability(selectedCountries, selectedTemplate?.members) : undefined;
