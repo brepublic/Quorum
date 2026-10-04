@@ -2388,7 +2388,7 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
 .roll-call-current .ui.header.roll-call-current-name,
 .resolution-voting-current .ui.header.resolution-voting-current-name {
   flex: 0 0 max(6.25rem, 3em);
-  font-size: 36px;
+  font-size: 51px;
   line-height: 1.5;
   margin: 0.75rem 0 0;
   width: 100%;
