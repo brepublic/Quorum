@@ -2368,7 +2368,8 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   width: 100%;
 }
 
-.roll-call-current .ui.header {
+.roll-call-current .ui.header,
+.resolution-voting-current .ui.header.resolution-voting-current-name {
   align-items: center;
   display: flex;
   flex-direction: column;
@@ -2384,7 +2385,8 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   margin-right: 0;
 }
 
-.roll-call-current .ui.header.roll-call-current-name {
+.roll-call-current .ui.header.roll-call-current-name,
+.resolution-voting-current .ui.header.resolution-voting-current-name {
   flex: 0 0 max(6.25rem, 3em);
   font-size: 36px;
   line-height: 1.5;
@@ -2392,7 +2394,8 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   width: 100%;
 }
 
-.roll-call-current-name > span {
+.roll-call-current-name > span,
+.resolution-voting-current-name > span {
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   display: -webkit-box;
@@ -2821,9 +2824,8 @@ html[lang='zh-CN'] .ui {
   white-space: normal;
 }
 
-.resolution-voting-current .ui.header {
-  font-size: clamp(2.25rem, 5vw, 4.5rem);
-  margin: 0.35rem 0 1.25rem;
+.resolution-voting-current .ui.header.resolution-voting-current-name {
+  min-height: max(6.25rem, 3em);
 }
 
 .resolution-voting-actions {

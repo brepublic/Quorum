@@ -1857,7 +1857,7 @@ function DocumentVoting({snapshot, run, api, canChair, document}: CommonProps & 
         {currentVotingSeat && currentVotingFlag && <div className="roll-call-flag-stage resolution-voting-flag-stage">
           <CountryFlagDisplay flag={currentVotingFlag} />
         </div>}
-        <Header as="h2">{currentVotingSeat?.seatDisplayName ?? t('No eligible delegations')}</Header>
+        <Header as="h2" className="resolution-voting-current-name"><span>{currentVotingSeat?.seatDisplayName ?? t('No eligible delegations')}</span></Header>
         {(voteDraft?.failure || voteConflict) && <Message error role="alert"
           header={t(voteConflict ? 'Resolution vote changed' : 'Submission failed')}
           content={voteDraft?.failure ? apiErrorText(voteDraft.failure) : undefined} />}

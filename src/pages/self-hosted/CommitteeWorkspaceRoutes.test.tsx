@@ -3182,6 +3182,7 @@ describe('committee workspace routes and roles', () => {
     expect(page.querySelector('.resolution-voting-board')).not.toBeNull();
     expect(page.querySelectorAll('.resolution-voting-member')).toHaveLength(1);
     expect(page.textContent).toContain('Now voting');
+    expect(page.querySelector('.resolution-voting-current-name > span')?.textContent).toBe('China');
     expect(page.textContent).not.toContain('Open Formal Ballot');
     const undo = [...page.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.trim() === 'Undo');
     expect(Boolean(undo)).toBe(automaticResult === null);
