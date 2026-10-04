@@ -25,7 +25,7 @@ import {CountryFlagDisplay} from '../components/CountryFlagDisplay';
 import {apiErrorText, LanguageMenuItem, LANGUAGE_OPTIONS, getLanguage, t} from '../i18n';
 import {selfHostedApi, SelfHostedApiError, type SelfHostedApi} from '../services/self-hosted-api';
 import {selfHostedIdentityClient, type SelfHostedIdentityClient, type SelfHostedUser} from '../services/self-hosted-identity';
-import ProceedingsPanel from './self-hosted/ProceedingsPanel';
+import ProceedingsPanel, {attendanceSeatOptions} from './self-hosted/ProceedingsPanel';
 import MeetingEmptyState from './self-hosted/MeetingEmptyState';
 import CrisisPanel from './self-hosted/CrisisPanel';
 import FilesPanel from './self-hosted/FilesPanel';
@@ -970,7 +970,10 @@ function PointsPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspa
   const [seatId, setSeatId] = React.useState(snapshot.viewer.seatId ?? '');
   const chairOperated = snapshot.committee.operationMode === 'CHAIR_OPERATED';
   const session = snapshot.meetingSession;
-  const create = async () => {if (!session) return; await run(() => api.createPoint(snapshot.committee.id,
+  const presentSeatIds = new Set(snapshot.attendance.filter(item => item.state === 'PRESENT'
+    && snapshot.seats.some(seat => seat.id === item.seatId && seat.canProceduralVote)).map(item => item.seatId));
+  const invalidProposer = canChair && !presentSeatIds.has(seatId);
+  const create = async () => {if (!session || invalidProposer) return; await run(() => api.createPoint(snapshot.committee.id,
     {meetingSessionId: session.id, pointTypeId: type, content: content.trim(),
       ...(canChair && seatId ? {onBehalfOfSeatId: seatId} : {})})); setContent('');};
   const resolve = (point: CommitteePoint, status: Exclude<PointStatus, 'PENDING' | 'WITHDRAWN'>) =>
@@ -1011,12 +1014,13 @@ function PointsPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspa
           searchTerms: item.searchTerms}))}
         onChange={(_, data) => setType(String(data.value))} />
       {canChair && <ViewportFormSelect label={t('Point proposer')} placeholder={t('Select point proposer')} search={searchOptions} selection
-        fluid icon="search" value={seatId || false} options={snapshot.seats.map(seat => ({key: seat.id,
-          value: seat.id, text: seat.displayName, searchTerms: seat.searchTerms}))} onChange={(_, data) => setSeatId(String(data.value))} />}
+        className="motion-proposer-field" fluid icon="search" value={seatId || false}
+        error={Boolean(seatId) && invalidProposer} options={attendanceSeatOptions(snapshot, presentSeatIds)}
+        onChange={(_, data) => setSeatId(String(data.value))} />}
       <Form.TextArea label={chairOperated ? t('Reason (optional)') : t('Reason')} required={!chairOperated}
         value={content} onChange={(_, data) => setContent(String(data.value))} />
       <Button type="submit" icon="plus" basic primary fluid aria-label={t('Raise point')}
-        disabled={!type || canChair && !seatId || !chairOperated && !content.trim()} />
+        disabled={!type || invalidProposer || !chairOperated && !content.trim()} />
     </Form>}<Divider hidden />
     {snapshot.meetingSession && <Divider horizontal className="history-session-divider current-session-divider">{snapshot.meetingSession.name}</Divider>}
     {pointGroups.map(group => <React.Fragment key={group.meetingSessionId}>

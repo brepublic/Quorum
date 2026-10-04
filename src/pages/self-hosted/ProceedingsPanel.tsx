@@ -183,7 +183,7 @@ function seatOptionContent(seat: CommitteeWorkspaceSnapshot['seats'][number]) {
   return <span className="motion-seat-option">{flag}<span>{seat.displayName}</span></span>;
 }
 
-function attendanceSeatOptions(snapshot: CommitteeWorkspaceSnapshot, presentSeatIds: Set<string>): SpeakerSeatOption[] {
+export function attendanceSeatOptions(snapshot: CommitteeWorkspaceSnapshot, presentSeatIds: Set<string>): SpeakerSeatOption[] {
   return snapshot.seats.filter(seat => seat.canProceduralVote).map(seat => ({key: seat.id, value: seat.id, text: seat.displayName, content: seatOptionContent(seat),
     searchTerms: seat.searchTerms, disabled: !presentSeatIds.has(seat.id),
     description: presentSeatIds.has(seat.id) ? undefined : t('Absent')}));

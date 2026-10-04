@@ -991,6 +991,59 @@ describe('committee workspace routes and roles', () => {
     expect((page.querySelector('textarea') as HTMLTextAreaElement).value).toBe('Draft two');
   });
 
+  it.each(['ABSENT', 'TEMPORARILY_LEFT', undefined] as const)(
+    'shows flags and blocks unavailable point proposers (%s), including after attendance changes', async state => {
+      let present = true;
+      let callbacks!: Parameters<SelfHostedApi['openCommitteeEvents']>[2];
+      const createPoint = vi.fn(async () => undefined);
+      const page = await render('CHAIR', '/committees/committee/points', user, value => ({...value,
+        committee: {...value.committee, operationMode: 'CHAIR_OPERATED'},
+        seats: [...value.seats,
+          {...value.seats[0], id: 'france', displayName: 'France', flag: {type: 'STANDARD', value: 'fr'}, searchTerms: ['FRTEST']},
+          {...value.seats[0], id: 'media', displayName: 'Media', canVote: false, canProceduralVote: false}],
+        meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: 'Session 1', phaseId: 'formal-debate',
+          activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1, createdAt: '', closedAt: null},
+        attendance: [
+          {seatId: 'seat', state: present ? 'PRESENT' : 'ABSENT', lastEventId: 'china', updatedAt: ''},
+          ...(state ? [{seatId: 'france', state, lastEventId: 'france', updatedAt: ''}] : [])],
+        activeRules: {...value.activeRules, pointTypes: [{id: 'point-of-order', names: {en: 'Point of order'}, interruptRequested: true}]}
+      }), {createPoint: createPoint as unknown as SelfHostedApi['createPoint'],
+        openCommitteeEvents: vi.fn((id, after, handlers) => {callbacks = handlers; return () => undefined;})});
+      const field = page.querySelector<HTMLElement>('.point-proposal-form .motion-proposer-field .ui.dropdown')!;
+      const submit = page.querySelector<HTMLButtonElement>('button[aria-label="Raise Point"]')!;
+      expect(submit.disabled).toBe(true);
+      await act(async () => {field.click();});
+      const options = field.querySelectorAll<HTMLElement>('[role="option"]');
+      expect(options).toHaveLength(2);
+      expect(options[0].querySelector('.motion-seat-option .country-flag-display')).not.toBeNull();
+      expect(options[1].textContent).toContain('Absent');
+      expect(options[1].getAttribute('aria-disabled')).toBe('true');
+      await act(async () => {options[1].click();});
+      expect(submit.disabled).toBe(true);
+      const search = field.querySelector<HTMLInputElement>('input.search')!;
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(search, 'FRTEST');
+        search.dispatchEvent(new Event('input', {bubbles: true}));
+      });
+      expect(field.querySelectorAll('[role="option"]')).toHaveLength(1);
+      expect(field.querySelector('[role="option"]')?.getAttribute('aria-disabled')).toBe('true');
+      await act(async () => {search.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', keyCode: 13, bubbles: true}));});
+      expect(submit.disabled).toBe(true);
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(search, '');
+        search.dispatchEvent(new Event('input', {bubbles: true}));
+      });
+      await act(async () => {field.querySelector<HTMLElement>('[role="option"]')!.click();});
+      expect(field.querySelector(':scope > .text')?.textContent).toBe('China');
+      expect(submit.disabled).toBe(false);
+      present = false;
+      await act(async () => {callbacks.onEvent({type: 'attendance.changed'} as Parameters<typeof callbacks.onEvent>[0]);});
+      expect(submit.disabled).toBe(true);
+      expect(field.closest('.field')?.classList.contains('error')).toBe(true);
+      await act(async () => {page.querySelector('form.point-proposal-form')!.dispatchEvent(new Event('submit', {bubbles: true, cancelable: true}));});
+      expect(createPoint).not.toHaveBeenCalled();
+    });
+
   it('gives Chairs a ruling and attendance form for a pending personal privilege point', async () => {
     const page = await render('CHAIR', '/committees/committee/points', user, value => ({...value,
       meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: '第1会期', phaseId: 'formal-debate',
