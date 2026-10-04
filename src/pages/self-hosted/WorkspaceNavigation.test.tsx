@@ -6,7 +6,7 @@ import {afterEach, describe, expect, it, vi} from 'vitest';
 import type {CommitteeWorkspaceSnapshot} from '@quorum/contracts';
 import type {SelfHostedUser} from '../../services/self-hosted-identity';
 import {setLanguage} from '../../i18n';
-import {AccountMenu, CommitteeNavigation} from './WorkspaceNavigation';
+import {AccountMenu, CommitteeNavigation, RealtimeStatusItem} from './WorkspaceNavigation';
 
 (globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT: boolean}).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -50,6 +50,18 @@ function render(node: React.ReactNode, path = '/') {
 }
 
 describe('self-hosted workspace navigation', () => {
+  it.each(['CONNECTING', 'RESYNCING', 'RECONNECTING', 'LIVE'] as const)('keeps abnormal status text visible in compact mode (%s)', status => {
+    const page = render(<RealtimeStatusItem status={status} compact lastSyncedAt={Date.now()} onRetry={vi.fn()} />);
+    expect(page.querySelector('.realtime-status-label')?.hasAttribute('hidden')).toBe(status === 'LIVE');
+    const button = page.querySelector('button')!;
+    expect(button.type).toBe('button');
+    act(() => button.click());
+    expect(document.body.querySelector('[role="dialog"]')?.textContent).toContain('Last synchronized');
+    expect(button.getAttribute('aria-expanded')).toBe('true');
+    act(() => button.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true})));
+    expect(button.getAttribute('aria-expanded')).toBe('false');
+  });
+
   it('keeps an open crisis dropdown synchronized for multiple cycles while viewing another page', async () => {
     vi.useFakeTimers();
     const current = {...snapshot, crises: [
@@ -101,7 +113,7 @@ describe('self-hosted workspace navigation', () => {
     });
     const page = render(<CommitteeNavigation snapshot={{...snapshot, crises: [{id: 'pending', committeeId: 'committee',
       sessionOrdinal: 1, ordinal: 1, endedAt: null, timer: {remainingMs: 0, running: false}, updates: [{status: 'PENDING'}]}]
-    } as unknown as CommitteeWorkspaceSnapshot} user={user} logout={() => undefined} hasPendingFileReview>
+    } as unknown as CommitteeWorkspaceSnapshot} user={user} logout={() => undefined} hasPendingFileReview realtimeStatus="LIVE">
       <input defaultValue="unsaved draft" />
     </CommitteeNavigation>, '/committees/committee/strawpolls/poll');
     const nav = page.querySelector('.committee-navigation-desktop')!;
@@ -116,7 +128,7 @@ describe('self-hosted workspace navigation', () => {
     };
     for (const [width, level] of [[2100, 0], [1980, 1], [1900, 2], [1780, 3], [1700, 4], [1600, 5], [1500, 6], [1400, 7], [1300, 8], [1200, 9], [1100, 10], [1000, 11], [900, 12], [800, 13]]) {
       assertLevel(width, level);
-      expect(Boolean(nav.querySelector('.realtime-status-label'))).toBe(level < 3);
+      expect(Boolean(nav.querySelector('.realtime-status-label:not([hidden])'))).toBe(level < 3);
       expect(nav.querySelector('.account-menu')?.classList.contains('account-menu-compact')).toBe(level >= 1);
       expect(nav.querySelector('.account-menu-name')?.textContent ?? null).toBe(level >= 1 ? null : user.displayName);
       expect(nav.querySelector('.account-menu > .text')).toBeNull();

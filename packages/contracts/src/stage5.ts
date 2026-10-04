@@ -2,7 +2,7 @@ import type {CommitteeEventName, EventAudience} from './registry.js';
 import type {FrozenRuleEvaluation} from './stage3.js';
 import type {FlagSnapshot} from './stage4.js';
 
-export type RealtimeSyncState = 'LIVE' | 'DEGRADED' | 'OFFLINE_READONLY' | 'RESYNCING';
+export type RealtimeSyncState = 'CONNECTING' | 'LIVE' | 'RESYNCING' | 'RECONNECTING';
 
 export interface CommitteeEventEnvelope {
   id: number;

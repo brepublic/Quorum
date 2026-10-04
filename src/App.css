@@ -511,10 +511,22 @@
   color: #18794e !important;
 }
 
-.realtime-status-degraded,
-.realtime-status-offline_readonly {
-  color: #9c2f2f !important;
-}
+.realtime-status-connecting { color: #687078 !important; }
+.realtime-status-resyncing { color: #2267a5 !important; }
+.realtime-status-reconnecting { color: #98610b !important; }
+.realtime-status { font: inherit; background: transparent; border: 0; border-radius: 0; }
+.realtime-status:focus-visible { outline: 2px solid #2185d0; outline-offset: -3px; }
+.realtime-dot { width: 0.55em; height: 0.55em; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+.realtime-status-label:not([hidden]) { margin-left: 0.5em; }
+.realtime-status-label[hidden] { display: none; }
+.realtime-details { max-width: 18em; line-height: 1.5; }
+.realtime-details p { margin: 0.6em 0; }
+.committee-sync-fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.committee-sync-fieldset:disabled .ui.button:not(a),
+.committee-sync-fieldset:disabled .ui.selection.dropdown,
+.committee-sync-fieldset:disabled .ui.checkbox { opacity: 0.45; cursor: default; }
+.committee-navigation-mobile .header.item { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.committee-navigation-mobile > .right.menu { flex-shrink: 0; }
 
 .account-language {
   cursor: default !important;

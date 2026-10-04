@@ -209,14 +209,6 @@ export interface S3ProviderConfigInput {
 
 const knownCommitteeEvents = new Set<string>(COMMITTEE_EVENT_DEFINITIONS.map(item => item.name));
 
-function realtimeClientId(): string {
-  const storageKey = 'quorum-self-hosted-realtime-client';
-  const existing = window.localStorage.getItem(storageKey);
-  if (existing && /^[A-Za-z0-9_-]{8,128}$/.test(existing)) return existing;
-  const created = crypto.randomUUID();
-  window.localStorage.setItem(storageKey, created);
-  return created;
-}
 
 export function parseSseFrame(frame: string): {id?: number; type?: string; data?: unknown} {
   let id: number | undefined; let type: string | undefined; const data: string[] = [];
@@ -238,52 +230,82 @@ export interface CommitteeEventStreamCallbacks {
   onEvent(event: CommitteeEventEnvelope): void;
   onState(state: RealtimeSyncState): void;
   onResyncRequired(): Promise<number>;
+  onAccessDenied(error: SelfHostedApiError): void;
 }
 
 function openCommitteeEventStream(committeeId: string, initialAfter: number,
   callbacks: CommitteeEventStreamCallbacks): () => void {
-  const controller = new AbortController(); let cursor = initialAfter;
-  const clientId = realtimeClientId();
-  const resync = async () => { callbacks.onState('RESYNCING'); cursor = await callbacks.onResyncRequired(); };
-  const delay = () => new Promise<void>(resolve => {
-    const timer = window.setTimeout(resolve, 1_000);
-    controller.signal.addEventListener('abort', () => {window.clearTimeout(timer); resolve();}, {once: true});
-  });
-  void (async () => {
-    while (!controller.signal.aborted) {
-      try {
-        const response = await fetch(`/api/v1/committees/${committeeId}/events?after=${cursor}&clientId=${encodeURIComponent(clientId)}`,
-          {credentials: 'same-origin', headers: {'last-event-id': String(cursor)}, signal: controller.signal});
-        if (response.status === 410) { await resync(); continue; }
-        if (response.status === 401 || response.status === 403 || response.status === 404) {
-          callbacks.onState('OFFLINE_READONLY'); return;
+  let stopped = false; let cursor = initialAfter;
+  let attempt: AbortController | undefined;
+  let retryTimer: number | undefined; let watchdog: number | undefined;
+  // Reconnects share this ID, but separate tabs/stream owners must not evict one another.
+  const clientId = crypto.randomUUID();
+  const resync = async (restoreConnected = true) => {
+    callbacks.onState('RESYNCING');
+    cursor = await callbacks.onResyncRequired();
+    if (restoreConnected && !stopped && !attempt?.signal.aborted) callbacks.onState('LIVE');
+  };
+  const connect = async () => {
+    if (stopped) return;
+    attempt = new AbortController();
+    const signal = attempt.signal;
+    const touch = () => {
+      window.clearTimeout(watchdog);
+      watchdog = window.setTimeout(() => {
+        callbacks.onState('RECONNECTING'); attempt?.abort();
+      }, 45_000);
+    };
+    touch();
+    try {
+      const response = await fetch(`/api/v1/committees/${committeeId}/events?after=${cursor}&clientId=${encodeURIComponent(clientId)}`,
+        {credentials: 'same-origin', headers: {'last-event-id': String(cursor)}, signal});
+      if (stopped || signal.aborted) {await response.body?.cancel(); return;}
+      if ([401, 403, 404].includes(response.status)) {
+        stopped = true;
+        callbacks.onAccessDenied(new SelfHostedApiError(response.status,
+          response.status === 401 ? 'AUTHENTICATION_REQUIRED' : response.status === 403 ? 'FORBIDDEN' : 'NOT_FOUND', ''));
+        await response.body?.cancel(); return;
+      }
+      if (response.status === 410) {
+        await response.body?.cancel(); await resync(false);
+      } else {
+        if (!response.ok || !response.body || !response.headers.get('content-type')?.startsWith('text/event-stream')) {
+          throw new Error('SSE unavailable');
         }
-        if (!response.ok || !response.body) throw new Error('SSE unavailable');
-        callbacks.onState('LIVE');
         const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = '';
-        while (!controller.signal.aborted) {
+        callbacks.onState('LIVE');
+        while (!stopped && !signal.aborted) {
           const chunk = await reader.read();
-          buffer += decoder.decode(chunk.value ?? new Uint8Array(), {stream: !chunk.done}).replaceAll('\r\n', '\n');
-          let boundary = buffer.indexOf('\n\n');
-          while (boundary >= 0) {
-            const frame = parseSseFrame(buffer.slice(0, boundary)); buffer = buffer.slice(boundary + 2);
-            boundary = buffer.indexOf('\n\n');
+          if (stopped || signal.aborted) return;
+          buffer += decoder.decode(chunk.value ?? new Uint8Array(), {stream: !chunk.done});
+          let match: RegExpExecArray | null;
+          while ((match = /\r?\n\r?\n/.exec(buffer))) {
+            const raw = buffer.slice(0, match.index); buffer = buffer.slice(match.index + match[0].length);
+            const frame = parseSseFrame(raw);
+            if (/^: (connected|heartbeat)(?: |$)/m.test(raw)) touch();
             if (frame.id === undefined || !frame.type || frame.data === undefined) continue;
+            touch();
             if (frame.id <= cursor) continue;
-            if (frame.id !== cursor + 1 || !knownCommitteeEvents.has(frame.type)) { await resync(); continue; }
+            if (frame.id !== cursor + 1 || !knownCommitteeEvents.has(frame.type)) {await resync(); continue;}
             cursor = frame.id;
             callbacks.onEvent(frame.data as CommitteeEventEnvelope);
           }
           if (chunk.done) break;
         }
-      } catch {
-        if (controller.signal.aborted) return;
-        callbacks.onState('DEGRADED');
       }
-      if (!controller.signal.aborted) await delay();
+    } catch {
+      // Both rejected reads and a clean EOF invalidate the connection below.
+    } finally {
+      window.clearTimeout(watchdog);
+      attempt?.abort();
+      if (!stopped) {
+        callbacks.onState('RECONNECTING');
+        retryTimer = window.setTimeout(() => void connect(), 1_000);
+      }
     }
-  })();
-  return () => controller.abort();
+  };
+  void connect();
+  return () => {stopped = true; window.clearTimeout(retryTimer); window.clearTimeout(watchdog); attempt?.abort();};
 }
 
 export const selfHostedApi = {
@@ -321,12 +343,12 @@ export const selfHostedApi = {
   createCommittee(input: CreateCommitteeFromTemplateRequest) {
     return request<CommitteeSummary>('/api/v1/committees', {method: 'POST', body: input, idempotencyKey: key()});
   },
-  snapshot(id: string) {
+  snapshot(id: string, signal?: AbortSignal) {
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id)) {
       return Promise.reject(new SelfHostedApiError(400, 'BAD_REQUEST', 'Invalid committee address.',
         undefined, undefined, {reason: 'INVALID_PAGE_ADDRESS'}));
     }
-    return request<CommitteeWorkspaceSnapshot>(`/api/v1/committees/${id}/snapshot`);
+    return request<CommitteeWorkspaceSnapshot>(`/api/v1/committees/${id}/snapshot`, {signal});
   },
   openCommitteeEvents: openCommitteeEventStream,
   createTimer(committeeId: string, ownerType: 'COMMITTEE' | 'SPEAKER_LIST' | 'CAUCUS' | 'SPEECH', ownerId: string,

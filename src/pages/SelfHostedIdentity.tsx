@@ -314,11 +314,20 @@ export default function SelfHostedIdentity({client = selfHostedIdentityClient}: 
   const [user, setUser] = React.useState<SelfHostedUser>();
   const [error, setError] = React.useState<unknown>();
   const [attempt, setAttempt] = React.useState(0);
+  const loginState = location.state as {reauthenticate?: boolean; returnTo?: string} | undefined;
+  const reauthenticate = location.pathname === '/login' && loginState?.reauthenticate === true;
+  const returnTo = React.useRef<string>();
+  if (reauthenticate && loginState?.returnTo?.startsWith('/committees/') && !loginState.returnTo.startsWith('//')) {
+    returnTo.current = loginState.returnTo;
+  }
 
   const authenticated = React.useCallback((identity: SelfHostedUser) => {
     setUser(identity);
     setScreen(identity.mustChangePassword ? 'change-password' : 'home');
-  }, []);
+    if (!identity.mustChangePassword && returnTo.current) {
+      const destination = returnTo.current; returnTo.current = undefined; history.replace(destination);
+    }
+  }, [history]);
 
   React.useEffect(() => {
     let active = true;
@@ -364,6 +373,7 @@ export default function SelfHostedIdentity({client = selfHostedIdentityClient}: 
         && <Button primary fluid as={Link} to="/login" onClick={() => {setError(undefined); setScreen('login');}}>{t('Login')}</Button>}
     </div>
   </IdentityShell>;
+  if (reauthenticate && screen !== 'change-password') return <LoginForm client={client} onAuthenticated={authenticated} />;
   if (screen === 'loading') return <Loading />;
   if (screen === 'bootstrap') return <BootstrapForm client={client} onAuthenticated={authenticated} />;
   if (screen === 'login' && location.pathname === '/committees') return <SelfHostedPublicCommittees />;

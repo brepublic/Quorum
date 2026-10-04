@@ -34,7 +34,7 @@ describe('self-hosted stage 4 workspace', () => {
   async function renderFailure(failure: SelfHostedApiError, anonymous = false, recover = false) {
     const read = recover ? vi.fn().mockRejectedValueOnce(failure).mockResolvedValue(snapshot)
       : vi.fn().mockRejectedValue(failure);
-    const api = {snapshot: read, openCommitteeEvents: vi.fn(() => () => undefined),
+    const api = {snapshot: read, openCommitteeEvents: vi.fn((_id, _after, handlers: Parameters<SelfHostedApi['openCommitteeEvents']>[2]) => {handlers.onState('LIVE'); return () => undefined;}),
       listCommittees: vi.fn(async () => []), listCountryTemplates: vi.fn(async () => []),
       getCommitteeCreationDefaults: async () => ({defaultRulePackageVersionId: 'rules'}), listRulePackages: vi.fn(async () => []), listCommitteeTemplates: vi.fn(async () => [])} as unknown as SelfHostedApi;
     container = document.createElement('div'); document.body.append(container); root = createRoot(container);
@@ -51,7 +51,7 @@ describe('self-hosted stage 4 workspace', () => {
     expect(container?.textContent).not.toContain('Private server diagnostic');
     expect(container?.textContent).not.toContain('Retry');
     expect(Boolean(container?.querySelector('a[href="/login"]'))).toBe(anonymous);
-    const home = container?.querySelector<HTMLAnchorElement>('a[href="/committees"]');
+    const home = container?.querySelector<HTMLAnchorElement>('.committee-load-error-actions a[href="/committees"]');
     expect(home?.textContent).toBe('Return home');
     if (!anonymous) {
       await act(async () => {home?.click();});
@@ -59,12 +59,11 @@ describe('self-hosted stage 4 workspace', () => {
       expect(container?.textContent).not.toContain('does not exist');
     }
     expect(api.snapshot).toHaveBeenCalledTimes(1);
-    expect(api.snapshot).toHaveBeenCalledWith('committee');
+    expect(api.snapshot).toHaveBeenCalledWith('committee', expect.any(AbortSignal));
     expect(api.openCommitteeEvents).not.toHaveBeenCalled();
   });
 
   it.each([
-    [401, 'AUTHENTICATION_REQUIRED', undefined, 'Please log in again.'],
     [403, 'FORBIDDEN', undefined, 'You do not have permission'],
     [400, 'BAD_REQUEST', 'INVALID_PAGE_ADDRESS', 'page address is invalid'],
     [404, 'NOT_FOUND', 'API_ROUTE_NOT_FOUND', 'deployed version and configuration']
@@ -74,7 +73,7 @@ describe('self-hosted stage 4 workspace', () => {
     expect(container?.textContent).toContain(text);
     expect(container?.textContent).not.toContain('Retry');
     expect(container?.querySelector('a[href="/committees"]')).toBeTruthy();
-    expect(Boolean(container?.querySelector('a[href="/login"]'))).toBe(status === 401);
+    expect(Boolean(container?.querySelector('a[href="/login"]'))).toBe(false);
   });
 
   it.each([
@@ -84,11 +83,11 @@ describe('self-hosted stage 4 workspace', () => {
     [429, 'RATE_LIMITED', 'Too many requests'], [200, 'INVALID_RESPONSE', 'invalid response']
   ])('retries a transient load failure and opens the recovered workspace (%s)', async (status, code, text) => {
     const api = await renderFailure(new SelfHostedApiError(status, code, 'Private server diagnostic'), false, true);
-    expect(container?.querySelector('[role="alert"]')?.textContent).toContain(text);
+    expect(container?.querySelector('.error.message[role="alert"]')?.textContent).toContain(text);
     const retry = [...container!.querySelectorAll('button')].find(button => button.textContent === 'Retry');
     expect(retry).toBeTruthy();
     await act(async () => {retry?.click();});
-    expect(api.snapshot).toHaveBeenCalledTimes(2);
+    expect(api.snapshot).toHaveBeenCalledTimes(3);
     expect(api.openCommitteeEvents).toHaveBeenCalledOnce();
     expect(container?.textContent).toContain('Security Council');
     expect(container?.querySelector('.error.message[role="alert"]')).toBeNull();
@@ -101,7 +100,7 @@ describe('self-hosted stage 4 workspace', () => {
     ['resolutions/missing', 'Draft Resolution not found.'], ['directives/missing', 'Draft not found.'],
     ['votes/missing', 'Draft not found.']
   ])('offers a way home for invalid committee detail addresses (%s)', async (path, text) => {
-    const api = {snapshot: vi.fn(async () => snapshot), openCommitteeEvents: vi.fn(() => () => undefined),
+    const api = {snapshot: vi.fn(async () => snapshot), openCommitteeEvents: vi.fn((_id, _after, handlers: Parameters<SelfHostedApi['openCommitteeEvents']>[2]) => {handlers.onState('LIVE'); return () => undefined;}),
       listFiles: vi.fn(async () => [])} as unknown as SelfHostedApi;
     container = document.createElement('div'); document.body.append(container); root = createRoot(container);
     await act(async () => {root?.render(<MemoryRouter initialEntries={['/committees/committee/' + path]}>
@@ -156,6 +155,8 @@ describe('self-hosted stage 4 workspace', () => {
     expect(document.body.textContent).toContain('This permanently deletes the committee and all of its records and uploaded files.');
     const confirm = Array.from(document.body.querySelectorAll('button')).find(button => button.textContent === 'Delete committee');
     await act(async () => { confirm?.click(); await Promise.resolve(); await Promise.resolve(); });
+    const confirmArchive = document.body.querySelector<HTMLButtonElement>('.ui.modal .actions .negative.button');
+    await act(async () => confirmArchive?.click());
     expect(archiveCommittee).toHaveBeenCalledWith('committee', 1);
     expect(requestCommitteeDeletion).toHaveBeenCalledWith('committee', 2, 'Security Council');
     expect(page?.textContent).not.toContain('Security Council');
@@ -166,24 +167,25 @@ describe('self-hosted stage 4 workspace', () => {
   it('loads the API snapshot and revalidates when the window regains focus', async () => {
     let callbacks: Parameters<SelfHostedApi['openCommitteeEvents']>[2] | undefined;
     const api = {snapshot: vi.fn(async () => snapshot), openCommitteeEvents: vi.fn((_id, _after, next) => {
-      callbacks = next; return () => undefined;
+      callbacks = next; next.onState('LIVE'); return () => undefined;
     })} as unknown as SelfHostedApi;
     container = document.createElement('div'); document.body.append(container); root = createRoot(container);
     await act(async () => { root?.render(<MemoryRouter initialEntries={['/committees/committee']}>
       <SelfHostedWorkspace user={user} logout={() => undefined} api={api} />
     </MemoryRouter>); await Promise.resolve(); await Promise.resolve(); });
     expect(container.textContent).toContain('Security Council');
-    expect(api.snapshot).toHaveBeenCalledTimes(1);
+    expect(api.snapshot).toHaveBeenCalledTimes(2);
     expect(api.openCommitteeEvents).toHaveBeenCalledWith('committee', 7, expect.any(Object));
-    act(() => callbacks?.onState('OFFLINE_READONLY'));
-    expect(container.textContent).toContain('Offline read-only');
+    act(() => callbacks?.onState('RECONNECTING'));
+    expect(container.textContent).toContain('Reconnecting');
     const notes = container.querySelector<HTMLAnchorElement>('a[href="/committees/committee/notes"]');
     await act(async () => {notes?.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true}));});
     expect(container.textContent).toContain('Opening debate');
-    expect(container.textContent).not.toContain('New note');
+    expect(container.textContent).toContain('New note');
+    expect(container.querySelector('.committee-sync-fieldset')?.hasAttribute('disabled')).toBe(true);
     expect(container.textContent).not.toContain('Save note');
     await act(async () => { window.dispatchEvent(new Event('focus')); await Promise.resolve(); await Promise.resolve(); });
-    expect(api.snapshot).toHaveBeenCalledTimes(2);
+    expect(api.snapshot).toHaveBeenCalledTimes(4);
   });
 
   it('exposes stage 5 proceedings from the same-origin workspace', async () => {
@@ -191,7 +193,7 @@ describe('self-hosted stage 4 workspace', () => {
       meetingSession: {id: 'session', committeeId: 'committee', ordinal: 1, name: '第1会期', phaseId: 'formal-debate', activeRulePackageVersionId: 'rules',
         status: 'OPEN', revision: 1, createdAt: '2026-08-13T00:00:00.000Z', closedAt: null},
       timers: [], speakerLists: [], motions: [], ballots: [], strawpolls: [], documents: []};
-    const api = {snapshot: vi.fn(async () => proceedings), openCommitteeEvents: vi.fn(() => () => undefined)} as unknown as SelfHostedApi;
+    const api = {snapshot: vi.fn(async () => proceedings), openCommitteeEvents: vi.fn((_id, _after, handlers: Parameters<SelfHostedApi['openCommitteeEvents']>[2]) => {handlers.onState('LIVE'); return () => undefined;})} as unknown as SelfHostedApi;
     container = document.createElement('div'); document.body.append(container); root = createRoot(container);
     await act(async () => { root?.render(<MemoryRouter initialEntries={['/committees/committee']}>
       <SelfHostedWorkspace user={user} logout={() => undefined} api={api} />
@@ -211,7 +213,7 @@ describe('self-hosted stage 4 workspace', () => {
       activeRules: {...snapshot.activeRules, activePhaseId: 'formal-debate', pointTypes: [
         {id: 'point-of-order', names: {en: 'Point of order', 'zh-CN': '程序性问题'}, interruptRequested: true}
       ]}};
-    const api = {snapshot: vi.fn(async () => ruleDriven), openCommitteeEvents: vi.fn(() => () => undefined)} as unknown as SelfHostedApi;
+    const api = {snapshot: vi.fn(async () => ruleDriven), openCommitteeEvents: vi.fn((_id, _after, handlers: Parameters<SelfHostedApi['openCommitteeEvents']>[2]) => {handlers.onState('LIVE'); return () => undefined;})} as unknown as SelfHostedApi;
     container = document.createElement('div'); document.body.append(container); root = createRoot(container);
     await act(async () => { root?.render(<MemoryRouter initialEntries={['/committees/committee/points']}>
       <SelfHostedWorkspace user={user} logout={() => undefined} api={api} />
@@ -224,7 +226,7 @@ describe('self-hosted stage 4 workspace', () => {
     const ownerSnapshot: CommitteeWorkspaceSnapshot = {...snapshot,
       viewer: {audience: 'OWNER', seatId: null}, committee: {...snapshot.committee, ownerUserId: user.id}};
     const archiveCommittee = vi.fn(async () => ({...ownerSnapshot.committee, status: 'ARCHIVED' as const, revision: 2}));
-    const activeApi = {snapshot: vi.fn(async () => ownerSnapshot), openCommitteeEvents: vi.fn(() => () => undefined),
+    const activeApi = {snapshot: vi.fn(async () => ownerSnapshot), openCommitteeEvents: vi.fn((_id, _after, handlers: Parameters<SelfHostedApi['openCommitteeEvents']>[2]) => {handlers.onState('LIVE'); return () => undefined;}),
       archiveCommittee, committeeExportUrl: vi.fn(() => '/api/v1/committees/committee/export'),
       getCommitteeCreationDefaults: async () => ({defaultRulePackageVersionId: 'rules'}), listRulePackages: vi.fn(async () => [])} as unknown as SelfHostedApi;
     vi.spyOn(window, 'confirm').mockReturnValue(true);
@@ -234,6 +236,8 @@ describe('self-hosted stage 4 workspace', () => {
     </MemoryRouter>); await Promise.resolve(); await Promise.resolve(); });
     const archive = Array.from(container.querySelectorAll('button')).find(item => item.textContent === 'Archive committee');
     await act(async () => { archive?.click(); await Promise.resolve(); await Promise.resolve(); });
+    const confirmArchive = document.body.querySelector<HTMLButtonElement>('.ui.modal .actions .negative.button');
+    await act(async () => confirmArchive?.click());
     expect(archiveCommittee).toHaveBeenCalledWith('committee', 1);
     act(() => root?.unmount()); root = undefined; container.remove();
 
@@ -243,7 +247,7 @@ describe('self-hosted stage 4 workspace', () => {
         status: 'OPEN', revision: 1, createdAt: '2026-08-13T00:00:00.000Z', closedAt: null},
       timers: [], speakerLists: [], motions: [], ballots: [], strawpolls: [], documents: []};
     const requestCommitteeDeletion = vi.fn(async () => { throw new Error('cleanup queued'); });
-    const archivedApi = {snapshot: vi.fn(async () => archived), openCommitteeEvents: vi.fn(() => () => undefined),
+    const archivedApi = {snapshot: vi.fn(async () => archived), openCommitteeEvents: vi.fn((_id, _after, handlers: Parameters<SelfHostedApi['openCommitteeEvents']>[2]) => {handlers.onState('LIVE'); return () => undefined;}),
       committeeExportUrl: vi.fn(() => '/api/v1/committees/committee/export'), requestCommitteeDeletion} as unknown as SelfHostedApi;
     container = document.createElement('div'); document.body.append(container); root = createRoot(container);
     await act(async () => { root?.render(<MemoryRouter initialEntries={['/committees/committee/settings']}>
@@ -251,10 +255,12 @@ describe('self-hosted stage 4 workspace', () => {
     </MemoryRouter>); await Promise.resolve(); await Promise.resolve(); });
     const link = Array.from(container.querySelectorAll('a')).find(item => item.textContent === 'Export records');
     expect(link?.getAttribute('href')).toBe('/api/v1/committees/committee/export');
-    const confirmation = container.querySelector('input');
+const openDelete = Array.from(container.querySelectorAll('button')).find(item => item.textContent === 'Permanently delete committee');
+    await act(async () => openDelete?.click());
+    const confirmation = document.body.querySelector<HTMLInputElement>('.ui.modal input');
     await act(async () => {if (confirmation) {Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
       ?.call(confirmation, 'Security Council'); confirmation.dispatchEvent(new Event('input', {bubbles: true}));}});
-    const remove = Array.from(container.querySelectorAll('button')).find(item => item.textContent === 'Permanently delete committee');
+    const remove = Array.from(document.body.querySelectorAll<HTMLButtonElement>('.ui.modal button')).find(item => item.textContent === 'Permanently delete committee');
     await act(async () => {remove?.click(); await Promise.resolve(); await Promise.resolve();});
     expect(requestCommitteeDeletion).toHaveBeenCalledWith('committee', 2, 'Security Council');
     expect(container.textContent).not.toContain('Save changes');

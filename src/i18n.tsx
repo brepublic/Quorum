@@ -703,6 +703,17 @@ const zhCN: Record<string, string> = {
   'Storage configuration': '存储配置',
   'Operations status': '运行状态',
   'Connecting': '正在连接',
+  'Synchronizing': '正在同步',
+  'Reconnecting': '正在重连',
+  'Real-time synchronization': '实时同步',
+  'Last synchronized': '上次成功同步',
+  'Not yet synchronized': '尚未同步',
+  'Synchronize again': '重新同步',
+  'Retry now': '立即重试',
+  'The browser reports no network connection. Retrying when it returns.': '浏览器报告网络已断开，恢复后自动重试。',
+  'Data refresh failed. Retrying automatically.': '数据更新失败，正在自动重试。',
+  'Connection interrupted. Retrying automatically.': '连接中断，正在自动重连。',
+  'Wait for synchronization before submitting changes.': '请等待同步完成后再提交。',
   'Live': '实时',
   'Resyncing': '正在重新同步',
   'Offline read-only': '离线只读',
@@ -1530,7 +1541,12 @@ export function setLanguage(language: Language) {
   listeners.forEach(listener => listener(language));
 }
 
-export function apiErrorText(error: unknown): string { return formatApiError(error, getLanguage()); }
+export function apiErrorText(error: unknown): string {
+  if (error && typeof error === 'object' && 'code' in error && error.code === 'SYNC_PENDING') {
+    return t('Wait for synchronization before submitting changes.');
+  }
+  return formatApiError(error, getLanguage());
+}
 
 export function t(key: string, values: Record<string, string | number> = {}): string {
   const template = currentLanguage === 'zh-CN' ? zhCN[key] ?? en[key] ?? key : en[key] ?? key;

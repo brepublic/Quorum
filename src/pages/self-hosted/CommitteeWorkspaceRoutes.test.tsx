@@ -50,7 +50,7 @@ async function render(audience: CommitteeWorkspaceSnapshot['viewer']['audience']
   currentUser: SelfHostedUser = user,
   customize: (value: CommitteeWorkspaceSnapshot) => CommitteeWorkspaceSnapshot = value => value,
   apiOverrides: Partial<SelfHostedApi> = {}) {
-  const api = {snapshot: vi.fn(async () => customize(snapshot(audience))), openCommitteeEvents: vi.fn(() => () => undefined),
+  const api = {snapshot: vi.fn(async () => customize(snapshot(audience))), openCommitteeEvents: vi.fn((_id, _after, handlers: Parameters<SelfHostedApi['openCommitteeEvents']>[2]) => {handlers.onState('LIVE'); return () => undefined;}),
     committeeExportUrl: vi.fn(() => '/api/v1/committees/committee/export'), listRulePackages: vi.fn(async () => []),
     fileDownloadUrl: vi.fn((fileId: string) => `/api/v1/files/${fileId}/download`),
     listStorageBindings: vi.fn(async () => []), listFiles: vi.fn(async () => []),
@@ -101,7 +101,7 @@ describe('committee workspace routes and roles', () => {
     let audience: CommitteeWorkspaceSnapshot['viewer']['audience'] = 'CHAIR';
     let callbacks!: Parameters<SelfHostedApi['openCommitteeEvents']>[2];
     const listFiles = vi.fn(async () => [{status}] as Awaited<ReturnType<SelfHostedApi['listFiles']>>);
-    const openCommitteeEvents = vi.fn((id, after, handlers) => {callbacks = handlers; return () => undefined;});
+    const openCommitteeEvents = vi.fn((id, after, handlers) => {callbacks = handlers; handlers.onState('LIVE'); return () => undefined;});
     const page = await render('CHAIR', '/committees/committee/unmod', user, value => value, {
       snapshot: vi.fn(async () => ({...snapshot(audience), sync: {committeeEventSequence: sequence}})),
       openCommitteeEvents, listFiles
@@ -145,7 +145,7 @@ describe('committee workspace routes and roles', () => {
     const listFiles = vi.fn().mockReturnValueOnce(old).mockResolvedValue([]);
     const page = await render('CHAIR', '/committees/committee/unmod', user, value => value, {
       snapshot: vi.fn(async () => ({...snapshot('CHAIR'), sync: {committeeEventSequence: sequence}})),
-      openCommitteeEvents: vi.fn((id, after, handlers) => {callbacks = handlers; return () => undefined;}),
+      openCommitteeEvents: vi.fn((id, after, handlers) => {callbacks = handlers; handlers.onState('LIVE'); return () => undefined;}),
       listFiles
     });
     sequence++;
@@ -202,7 +202,7 @@ describe('committee workspace routes and roles', () => {
     await act(async () => {await vi.advanceTimersByTimeAsync(4_000);});
     await navigate('crises/crisis');
     expect(time()).toBe('0:04');
-    expect(readSnapshot).toHaveBeenCalledTimes(1);
+    expect(readSnapshot).toHaveBeenCalledTimes(2);
 
     remainingMs = 4_000;
     await act(async () => {window.dispatchEvent(new Event('focus')); await Promise.resolve();});
@@ -418,7 +418,7 @@ describe('committee workspace routes and roles', () => {
     const workspace = page.querySelector('.committee-workspace-page');
 
     expect(workspace?.classList.contains('fluid')).toBe(true);
-    expect(workspace?.querySelector(':scope > .roll-call-start-card')).toBeTruthy();
+    expect(workspace?.querySelector(':scope > fieldset > .roll-call-start-card')).toBeTruthy();
     expect(workspace?.textContent).toContain('Start meeting');
   });
 
@@ -1008,7 +1008,7 @@ describe('committee workspace routes and roles', () => {
           ...(state ? [{seatId: 'france', state, lastEventId: 'france', updatedAt: ''}] : [])],
         activeRules: {...value.activeRules, pointTypes: [{id: 'point-of-order', names: {en: 'Point of order'}, interruptRequested: true}]}
       }), {createPoint: createPoint as unknown as SelfHostedApi['createPoint'],
-        openCommitteeEvents: vi.fn((id, after, handlers) => {callbacks = handlers; return () => undefined;})});
+        openCommitteeEvents: vi.fn((id, after, handlers) => {callbacks = handlers; handlers.onState('LIVE'); return () => undefined;})});
       const field = page.querySelector<HTMLElement>('.point-proposal-form .motion-proposer-field .ui.dropdown')!;
       const submit = page.querySelector<HTMLButtonElement>('button[aria-label="Raise Point"]')!;
       expect(submit.disabled).toBe(true);
@@ -3349,7 +3349,7 @@ describe('committee workspace routes and roles', () => {
     expect(stats).toContain('China');
   });
   it('redirects hidden resource routes to attachments', async () => { const page = await render('CHAIR', '/committees/committee/posts/links', user, value => ({...value, textPosts: [{id: 'link', title: 'Research', content: 'link:https://example.test/research', sortOrder: 0, revision: 1, authorSeatId: 'seat', authorDisplayName: 'China', actorUserId: 'chair', createdAt: '2026-08-16T00:00:00.000Z', updatedAt: '2026-08-16T00:00:00.000Z', deletedAt: null}]})); expect(page.textContent).toContain('File overview'); expect(page.textContent).not.toContain('Link resources'); expect(page.textContent).not.toContain('Publisher: China'); expect(page.querySelector('a[href="https://example.test/research"]')).toBeNull(); });
-  it('retains prefetched file data across routes and clears it when access becomes read-only', async () => {
+  it('retains prefetched file data and permissions while reconnecting', async () => {
     const share = {id: 'share', url: 'https://example.test/delegate-files#test', revision: 1};
     const getDelegateFileShare = vi.fn().mockResolvedValueOnce(share).mockImplementation(() => new Promise(() => {}));
     const listDelegateReviewFiles = vi.fn().mockResolvedValueOnce([{
@@ -3364,7 +3364,7 @@ describe('committee workspace routes and roles', () => {
       listStorageBindings: vi.fn().mockResolvedValueOnce([{status: 'ACTIVE', providerType: 'CHAIR_AGENT'}])
         .mockRejectedValue(new Error('binding refresh failed')),
       getDelegateFileShare, listDelegateReviewFiles,
-      openCommitteeEvents: (_id, _after, handlers) => {disconnect = () => handlers.onState('OFFLINE_READONLY'); return () => undefined;}
+      openCommitteeEvents: (_id, _after, handlers) => {handlers.onState('LIVE'); disconnect = () => handlers.onState('RECONNECTING'); return () => undefined;}
     });
     expect(getDelegateFileShare).toHaveBeenCalledTimes(1);
     expect(page.textContent).toContain('cached.pdf');
@@ -3379,9 +3379,10 @@ describe('committee workspace routes and roles', () => {
     expect(page.textContent).toContain('Request failed. Try again later.');
     expect(page.textContent).toContain('cached.pdf');
     await act(async () => disconnect!());
-    expect(page.querySelector('.delegate-file-review-panel')).toBeNull();
-    expect(page.textContent).not.toContain('cached.pdf');
-    expect(page.querySelector('a[href="/committees/committee/posts/share"]')).toBeNull();
+    expect(page.querySelector('.delegate-file-review-panel')).not.toBeNull();
+    expect(page.textContent).toContain('cached.pdf');
+    expect(page.querySelector('a[href="/committees/committee/posts/share"]')).not.toBeNull();
+    expect(page.querySelector('fieldset')?.disabled).toBe(true);
   });
   it.each(['SERVER_VOLUME', 'CHAIR_AGENT', 'S3_COMPATIBLE', 'UNCONFIGURED'])('keeps the same file menu for %s', async providerType => {
     const page = await render('CHAIR', '/committees/committee/posts/attachments', user, value => ({...value,

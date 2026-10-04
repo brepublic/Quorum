@@ -61,7 +61,7 @@ async function mount({linked = true, delayedSave = false, failSave = false} = {}
     group = {...group, updates: [{...group.updates[0], status: 'PENDING', publishedAt: '2026-09-30T00:00:00Z'}]};
     return group;
   });
-  const api = {snapshot: vi.fn(async () => read()), openCommitteeEvents: vi.fn(() => () => undefined),
+  const api = {snapshot: vi.fn(async () => read()), openCommitteeEvents: vi.fn((_id, _after, handlers: Parameters<SelfHostedApi['openCommitteeEvents']>[2]) => {handlers.onState('LIVE'); return () => undefined;}),
     listDelegateReviewFiles: vi.fn(async () => files), updateCrisisCard, publishCrisis} as unknown as SelfHostedApi;
   const render = async (key = 'page') => act(async () => root.render(<MemoryRouter key={key}>
     <CommitteeWorkspaceProvider committeeId="committee" api={api}><Panel api={api} /></CommitteeWorkspaceProvider>

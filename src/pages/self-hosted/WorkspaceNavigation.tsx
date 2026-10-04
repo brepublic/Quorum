@@ -1,24 +1,47 @@
 import * as React from 'react';
 import {useThemeFeature} from '../../theme/ThemeProvider';
-import {formatCommitteeContent, type CommitteeWorkspaceSnapshot} from '@quorum/contracts';
-import {Dropdown, Icon, Menu, Sidebar} from 'semantic-ui-react';
+import {formatCommitteeContent, type CommitteeWorkspaceSnapshot, type RealtimeSyncState} from '@quorum/contracts';
+import {Button, Dropdown, Icon, Menu, Popup, Sidebar} from 'semantic-ui-react';
 import {Link, useLocation} from 'react-router-dom';
 import {LanguageSwitcher, t, useLanguage} from '../../i18n';
 import type {SelfHostedUser} from '../../services/self-hosted-identity';
 
-export type RealtimeStatus = 'CONNECTING' | 'LIVE' | 'RESYNCING' | 'OFFLINE_READONLY' | 'DEGRADED';
+export type RealtimeStatus = RealtimeSyncState;
 
 const realtimeLabels: Record<RealtimeStatus, string> = {
-  CONNECTING: 'Connecting', LIVE: 'Live', RESYNCING: 'Resyncing', OFFLINE_READONLY: 'Offline read-only', DEGRADED: 'Connection interrupted'
+  CONNECTING: 'Connecting', LIVE: 'Live', RESYNCING: 'Synchronizing', RECONNECTING: 'Reconnecting'
 };
 
-export function RealtimeStatusItem({status, compact = false}: {status: RealtimeStatus; compact?: boolean}) {
-  const icon = status === 'LIVE' ? 'check circle' : status === 'RESYNCING' || status === 'CONNECTING'
-    ? 'sync alternate' : status === 'OFFLINE_READONLY' ? 'eye' : 'warning sign';
-  return <Menu.Item className={`realtime-status realtime-status-${status.toLowerCase()}`} aria-live="polite"
-    title={t(realtimeLabels[status])} aria-label={t(realtimeLabels[status])}>
-    <Icon name={icon} aria-hidden="true" />{!compact && <span className="realtime-status-label">{t(realtimeLabels[status])}</span>}
-  </Menu.Item>;
+interface RealtimeDetails {
+  lastSyncedAt?: number;
+  syncFailed?: boolean;
+  networkOffline?: boolean;
+  onRetry?(): void;
+}
+
+export function RealtimeStatusItem({status, compact = false, lastSyncedAt, syncFailed, networkOffline, onRetry}: {
+  status: RealtimeStatus; compact?: boolean;
+} & RealtimeDetails) {
+  const [open, setOpen] = React.useState(false);
+  const label = t(realtimeLabels[status]);
+  const detail = networkOffline ? 'The browser reports no network connection. Retrying when it returns.'
+    : syncFailed ? 'Data refresh failed. Retrying automatically.'
+    : status === 'RECONNECTING' ? 'Connection interrupted. Retrying automatically.' : undefined;
+  return <Popup on="click" position="bottom right" open={open} onOpen={() => setOpen(true)} onClose={() => setOpen(false)}
+    trigger={<Menu.Item as="button" type="button" className={`realtime-status realtime-status-${status.toLowerCase()}`}
+      title={label} aria-label={label} aria-expanded={open} aria-haspopup="dialog"
+      onKeyDown={(event: React.KeyboardEvent) => {if (event.key === 'Escape') setOpen(false);}}>
+      {status === 'RESYNCING' ? <Icon name="sync alternate" aria-hidden="true" /> : <span className="realtime-dot" aria-hidden="true" />}
+      <span className="realtime-status-label" hidden={compact && status === 'LIVE'} aria-live="polite">{label}</span>
+    </Menu.Item>}>
+    <div className="realtime-details" role="dialog" aria-label={t('Real-time synchronization')}>
+      <strong>{label}</strong>
+      {detail && <p>{t(detail)}</p>}
+      <p>{t('Last synchronized')}: {lastSyncedAt ? new Date(lastSyncedAt).toLocaleTimeString() : t('Not yet synchronized')}</p>
+      {status !== 'LIVE' && onRetry && <Button size="small" onClick={onRetry}>
+        {t(status === 'RESYNCING' ? 'Synchronize again' : 'Retry now')}</Button>}
+    </div>
+  </Popup>;
 }
 
 function AttendanceThresholdItem({snapshot}: {snapshot: CommitteeWorkspaceSnapshot}) {
@@ -240,10 +263,10 @@ function PrimaryItems({snapshot, onNavigate, onCreateCaucus, level = 0, hasPendi
   </>;
 }
 
-export function CommitteeNavigation({snapshot, user, logout, realtimeStatus = 'CONNECTING', onCreateCaucus, hasPendingFileReview = false, children}: {
+export function CommitteeNavigation({snapshot, user, logout, realtimeStatus = 'CONNECTING', onCreateCaucus, hasPendingFileReview = false, lastSyncedAt, syncFailed, networkOffline, onRetry, children}: {
   snapshot: CommitteeWorkspaceSnapshot; user?: SelfHostedUser; logout(): void; realtimeStatus?: RealtimeStatus;
   onCreateCaucus?(): void; hasPendingFileReview?: boolean; children?: React.ReactNode;
-}) {
+} & RealtimeDetails) {
   const language = useLanguage();
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
   const [level, setLevel] = React.useState(0);
@@ -278,7 +301,7 @@ export function CommitteeNavigation({snapshot, user, logout, realtimeStatus = 'C
         + width(`[data-navigation-key="${path}"] .navigation-caucus-label`)
         - width(`[data-navigation-key="${path}"] .navigation-caucus-short-measurement`), 0) : 0;
       required.push(required[1] - caucusSavings);
-      required.push(required[2] - width('.realtime-status-label'));
+      required.push(required[2] - (realtimeStatus === 'LIVE' ? width('.realtime-status-label') : 0));
       required.push(required[3] - width('[data-navigation-key="/settings"]') - width('[data-navigation-key="/help"]') + more - moreFiles);
       for (const path of ['/stats', '/posts', '/notes', '/strawpolls', '/votes', '/resolutions', '/directives', '/crises', '/caucuses']) {
         required.push(required[required.length - 1] - width(`[data-navigation-key="${path}"]`)
@@ -305,7 +328,8 @@ export function CommitteeNavigation({snapshot, user, logout, realtimeStatus = 'C
     <nav data-navigation-mode={mode} data-collapse-level={level} className="committee-navigation-desktop" aria-label={t('Committee navigation')}>
       <Menu className="committee-primary-navigation" size="large" fluid data-crisis-reminder={crisisReminder}>
         <PrimaryItems snapshot={snapshot} onCreateCaucus={onCreateCaucus} level={level} hasPendingFileReview={hasPendingFileReview} />
-        <Menu.Menu position="right"><AttendanceThresholdItem snapshot={snapshot} /><RealtimeStatusItem status={realtimeStatus} compact={level >= 3} />
+        <Menu.Menu position="right"><AttendanceThresholdItem snapshot={snapshot} /><RealtimeStatusItem status={realtimeStatus} compact={level >= 3} lastSyncedAt={lastSyncedAt}
+          syncFailed={syncFailed} networkOffline={networkOffline} onRetry={onRetry} />
           {user && <AccountMenu user={user} logout={logout} compact={level >= 1} />}</Menu.Menu>
       </Menu>
     </nav>
@@ -328,7 +352,7 @@ export function CommitteeNavigation({snapshot, user, logout, realtimeStatus = 'C
       <Sidebar className="committee-mobile-sidebar" as={Menu} animation="uncover" vertical visible={sidebarOpen}
         data-crisis-reminder={crisisReminder}
         onHide={() => setSidebarOpen(false)}>
-        <AttendanceThresholdItem snapshot={snapshot} /><RealtimeStatusItem status={realtimeStatus} />
+        <AttendanceThresholdItem snapshot={snapshot} />
         <PrimaryItems snapshot={snapshot} onNavigate={() => setSidebarOpen(false)} onCreateCaucus={onCreateCaucus} hasPendingFileReview={hasPendingFileReview} />
       </Sidebar>
       <Sidebar.Pusher dimmed={sidebarOpen} onClick={() => sidebarOpen && setSidebarOpen(false)}>
@@ -338,7 +362,9 @@ export function CommitteeNavigation({snapshot, user, logout, realtimeStatus = 'C
               <Icon name="sidebar" />
             </Menu.Item>
             <Menu.Item header as={Link} to={'/committees/' + snapshot.committee.id + '/info'}>{snapshot.committee.name}</Menu.Item>
-            <Menu.Menu position="right">{user && <AccountMenu user={user} logout={logout} />}</Menu.Menu>
+            <Menu.Menu position="right"><RealtimeStatusItem status={realtimeStatus} compact lastSyncedAt={lastSyncedAt}
+              syncFailed={syncFailed} networkOffline={networkOffline} onRetry={onRetry} />
+              {user && <AccountMenu user={user} logout={logout} compact />}</Menu.Menu>
           </Menu>
         </nav>
         {children}

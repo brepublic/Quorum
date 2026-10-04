@@ -23,7 +23,7 @@ it.each<TimerOwnerType>(['COMMITTEE', 'SPEAKER_LIST', 'CAUCUS', 'SPEECH', 'CRISI
   '%s counts while away, reloads from server state, and survives closing and revisiting', async ownerType => {
     vi.useFakeTimers({toFake: ['Date', 'performance', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval']});
     const startedAt = Date.now(); const commandTimer = vi.fn(); const disconnect = vi.fn();
-    const openCommitteeEvents = vi.fn(() => disconnect);
+    const openCommitteeEvents = vi.fn((_id, _after, handlers: Parameters<SelfHostedApi['openCommitteeEvents']>[2]) => {handlers.onState('LIVE'); return disconnect;});
     const api = {commandTimer, openCommitteeEvents, snapshot: vi.fn(async () => {
       const timer: AuthoritativeTimer = {id: 'timer', committeeId: 'committee', ownerType, ownerId: 'owner',
         running: Date.now() - startedAt < 120_000, startedAt: new Date(startedAt).toISOString(),
@@ -49,7 +49,7 @@ it.each<TimerOwnerType>(['COMMITTEE', 'SPEAKER_LIST', 'CAUCUS', 'SPEECH', 'CRISI
     // No page or event connection remains during the closed-browser interval.
     unmount(); await advance(30_000); await mount(); expect(time()).toBe('0:50');
     unmount(); await advance(60_000); await mount(); expect(time()).toBe('0:00');
-    expect(api.snapshot).toHaveBeenCalledTimes(4);
+    expect(api.snapshot).toHaveBeenCalledTimes(8);
     expect(commandTimer).not.toHaveBeenCalled();
     expect(disconnect).toHaveBeenCalledTimes(3);
   });

@@ -272,6 +272,7 @@ function TextResources({kind, snapshot, run, api}: {kind: 'notes' | 'posts'; sna
 
 function NotesPanel({snapshot, run, api}: {snapshot: CommitteeWorkspaceSnapshot; run: WorkspaceCommand; api: SelfHostedApi}) {
   useLanguage();
+  const {writesBlocked} = useCommitteeWorkspace();
   const [selectedId, setSelectedId] = React.useState<string | undefined>(snapshot.notes[0]?.id);
   const selected = snapshot.notes.find(note => note.id === selectedId);
   const [title, setTitle] = React.useState(selected?.title ?? ''); const [content, setContent] = React.useState(selected?.content ?? '');
@@ -303,10 +304,10 @@ function NotesPanel({snapshot, run, api}: {snapshot: CommitteeWorkspaceSnapshot;
     return saved;
   }, [api, canWrite, content, dirty, pending, run, selected, snapshot.committee.id, title]);
   React.useEffect(() => {
-    if (!canWrite || !dirty || !content.trim() || pending) return;
+    if (writesBlocked || !canWrite || !dirty || !content.trim() || pending) return;
     const timeout = window.setTimeout(() => {void saveDraft(true);}, 600);
     return () => window.clearTimeout(timeout);
-  }, [canWrite, content, dirty, pending, saveDraft]);
+  }, [writesBlocked, canWrite, content, dirty, pending, saveDraft]);
   const selectNote = async (id: string | undefined) => {
     if (id === selectedId || pending) return;
     if (!await saveDraft(false)) return;
@@ -1230,16 +1231,25 @@ export function SelfHostedCommitteeWorkspace({api = selfHostedApi, user, logout 
 }) {
   useLanguage();
   const {id} = useParams<{id: string}>();
-  return <CommitteeWorkspaceProvider committeeId={id} api={api}>
+  return <CommitteeWorkspaceProvider key={id} committeeId={id} api={api}>
     <CommitteeWorkspaceContent id={id} api={api} user={user} logout={logout} />
   </CommitteeWorkspaceProvider>;
 }
 
-function CommitteeWorkspaceContent({id, api, user, logout}: {
+function CommitteeWorkspaceContent({id, api: sourceApi, user, logout}: {
   id: string; api: SelfHostedApi; user?: SelfHostedUser; logout(): void;
 }) {
   useLanguage();
-  const {snapshot, snapshotReceivedAt, error, failure, realtimeStatus, refresh, run} = useCommitteeWorkspace();
+  const {snapshot, snapshotReceivedAt, error, failure, accessFailure, realtimeStatus, refresh, run,
+    writesBlocked, canWrite, lastSyncedAt, syncFailed, networkOffline, retry} = useCommitteeWorkspace();
+  // Some forms save directly (including autosave); guard those calls as well as run().
+  const api = React.useMemo(() => Object.fromEntries(Object.entries(sourceApi).map(([name, method]) => [name,
+    /^(get|list|preview)|Url$|^(snapshot|openCommitteeEvents|prepareFileDownload|fileDownloadReadiness)$/.test(name) ? method
+      : (...args: unknown[]) => {
+        if (!canWrite()) return Promise.reject({code: 'SYNC_PENDING'});
+        return (method as (...input: unknown[]) => unknown)(...args);
+      }
+  ])) as SelfHostedApi, [sourceApi, canWrite]);
   const fileReviewScope = snapshot && (snapshot.viewer.audience === 'CHAIR' || snapshot.viewer.audience === 'OWNER')
     ? `${id}:${user?.id}:${snapshot.viewer.audience}` : undefined;
   const [fileReview, setFileReview] = React.useState<{scope: string; pending: boolean}>();
@@ -1262,34 +1272,46 @@ function CommitteeWorkspaceContent({id, api, user, logout}: {
   const newCaucusPath = `/committees/${id}/caucuses/new`;
   const [createCaucusOpen, setCreateCaucusOpen] = React.useState(location.pathname === newCaucusPath);
   React.useEffect(() => {if (location.pathname === newCaucusPath) setCreateCaucusOpen(true);}, [location.pathname, newCaucusPath]);
-  if (!snapshot && !error) return <Loading />;
-  if (!snapshot) {
-    const status = failure instanceof SelfHostedApiError ? failure.status : undefined;
-    const reason = failure instanceof SelfHostedApiError ? failure.localization?.reason : undefined;
-    const unavailable = failure instanceof SelfHostedApiError && failure.code === 'NOT_FOUND'
+  if (!snapshot && !error && !accessFailure) return <Loading />;
+  if (!snapshot || accessFailure && accessFailure.status !== 401) {
+    const pageFailure = accessFailure ?? failure;
+    const status = pageFailure instanceof SelfHostedApiError ? pageFailure.status : undefined;
+    const reason = pageFailure instanceof SelfHostedApiError ? pageFailure.localization?.reason : undefined;
+    const unavailable = pageFailure instanceof SelfHostedApiError && pageFailure.code === 'NOT_FOUND'
       && reason !== 'API_ROUTE_NOT_FOUND';
     const retryable = reason !== 'API_ROUTE_NOT_FOUND' && (status === undefined || status === 0
       || status === 408 || status === 429 || status >= 500 || status >= 200 && status < 300);
-    return <Container text>
+    return <>{user && <AppMenu user={user} logout={logout} />}<Container text>
       <Message error role="alert" content={unavailable ? t(user
         ? 'The committee does not exist, or your account does not have access.'
-        : 'The committee does not exist, or you need to log in to view it.') : error} />
+        : 'The committee does not exist, or you need to log in to view it.') : accessFailure ? apiErrorText(accessFailure) : error} />
       <div className="committee-load-error-actions">
         {retryable && <Button primary onClick={() => void refresh()}>{t('Retry')}</Button>}
         {(status === 401 || !user && unavailable) && <Button primary as="a" href="/login">{t('Login')}</Button>}
         <Button basic as={Link} to="/committees">{t('Return home')}</Button>
       </div>
-    </Container>;
+    </Container></>;
   }
-  const interactionSnapshot: CommitteeWorkspaceSnapshot = realtimeStatus === 'OFFLINE_READONLY'
-    ? {...snapshot, viewer: {audience: 'PUBLIC', seatId: null}} : snapshot;
+  const interactionSnapshot = snapshot;
   const canChair = (interactionSnapshot.viewer.audience === 'CHAIR' || interactionSnapshot.viewer.audience === 'OWNER')
     && snapshot.committee.status !== 'ARCHIVED' && snapshot.committee.status !== 'DELETING';
   const base = `/committees/${id}`;
   return <CommitteeNavigation snapshot={snapshot} user={user} logout={logout} realtimeStatus={realtimeStatus}
+    lastSyncedAt={lastSyncedAt} syncFailed={syncFailed} networkOffline={networkOffline} onRetry={retry}
     hasPendingFileReview={fileReviewScope !== undefined && fileReview?.scope === fileReviewScope && fileReview.pending}
     onCreateCaucus={() => setCreateCaucusOpen(true)}>
     <Container fluid className="committee-workspace-page">{error && <Message error content={error} />}
+      <fieldset className="committee-sync-fieldset" disabled={writesBlocked} aria-busy={writesBlocked}
+        onClickCapture={event => {
+          if (writesBlocked && (event.target as Element).closest('.ui.button:not(a), .ui.selection.dropdown, .ui.checkbox')) {
+            event.preventDefault(); event.stopPropagation();
+          }
+        }} onKeyDownCapture={event => {
+          if (writesBlocked && ['Enter', ' '].includes(event.key)
+            && (event.target as Element).closest('.ui.button:not(a), .ui.selection.dropdown, .ui.checkbox')) {
+            event.preventDefault(); event.stopPropagation();
+          }
+        }}>
         <Switch>
           <Route exact path={base}><Redirect to={base + '/roll-call'} /></Route>
           <Route exact path={base + '/info'}><CommitteeOverviewPanel snapshot={snapshot} /></Route>
@@ -1321,6 +1343,7 @@ function CommitteeWorkspaceContent({id, api, user, logout}: {
           <Route><Message error role="alert" content={t('This page address is invalid. Check the address or return home.')} />
             <Button as={Link} to="/committees">{t('Return home')}</Button></Route>
         </Switch>
+      </fieldset>
     </Container>
     <ModeratedCaucusCreateModal open={createCaucusOpen} snapshot={interactionSnapshot} run={run} api={api}
       canChair={canChair} onClose={() => setCreateCaucusOpen(false)} onCreated={listId => {

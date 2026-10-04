@@ -2,7 +2,8 @@ import * as React from 'react';
 import {act} from 'react';
 import {createRoot, type Root} from 'react-dom/client';
 import {afterEach, describe, expect, it, vi} from 'vitest';
-import {MemoryRouter} from 'react-router-dom';
+import {MemoryRouter, Router} from 'react-router-dom';
+import {createMemoryHistory} from 'history';
 import SelfHostedIdentity from './SelfHostedIdentity';
 import {IdentityApiError, type SelfHostedIdentityClient, type SelfHostedUser} from '../services/self-hosted-identity';
 import {selfHostedApi, SelfHostedApiError} from '../services/self-hosted-api';
@@ -71,6 +72,26 @@ async function renderClient(identityClient: SelfHostedIdentityClient, path = '/'
 }
 
 describe('self-hosted identity screens', () => {
+  it('reopens login for an expired identity and returns to the previous committee after login', async () => {
+    const history = createMemoryHistory({initialEntries: ['/admin']});
+    const identityClient = client({});
+    container = document.createElement('div'); document.body.append(container); root = createRoot(container);
+    await act(async () => root?.render(<Router history={history}><SelfHostedIdentity client={identityClient} /></Router>));
+    await act(async () => history.replace('/login', {reauthenticate: true, returnTo: '/committees/one/settings'}));
+    expect(container.querySelector('input[type="password"]')).not.toBeNull();
+    for (const [selector, value] of [['input[type="email"]', 'admin@example.com'], ['input[type="password"]', 'existing-password']]) {
+      await act(async () => {
+        const input = container!.querySelector<HTMLInputElement>(selector)!;
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value);
+        input.dispatchEvent(new Event('input', {bubbles: true}));
+      });
+    }
+    vi.spyOn(selfHostedApi, 'snapshot').mockImplementation(() => new Promise(() => {}));
+    await act(async () => container!.querySelector('form')!.dispatchEvent(new Event('submit', {bubbles: true, cancelable: true})));
+    expect(identityClient.login).toHaveBeenCalledWith('admin@example.com', 'existing-password');
+    expect(history.location.pathname).toBe('/committees/one/settings');
+  });
+
   it.each([
     [0, 'NETWORK_ERROR', 'Connection failed'],
     [500, 'HTTP_ERROR', 'Server error'],
@@ -173,7 +194,7 @@ describe('self-hosted identity screens', () => {
       <SelfHostedIdentity client={identityClient} />
     </MemoryRouter>);});
     expect(read).toHaveBeenCalledTimes(1);
-    expect(read).toHaveBeenCalledWith(id);
+    expect(read).toHaveBeenCalledWith(id, expect.any(AbortSignal));
     expect(container.textContent).toContain('you need to log in');
     expect(container.textContent).not.toContain('Retry');
     expect(container.querySelector('a[href="/login"]')).toBeTruthy();
