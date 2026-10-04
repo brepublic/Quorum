@@ -1103,6 +1103,7 @@ function HelpPanel({snapshot, api}: {snapshot: CommitteeWorkspaceSnapshot; api: 
     return () => {active = false;};
   }, [api]);
   const ruleVersion = rulePackages.flatMap(pkg => pkg.versions).find(version => version.id === snapshot.activeRules.versionId);
+  const ruleNames = ruleVersion?.names ?? snapshot.activeRules.names;
   const role = {PUBLIC: 'Public visitor', MEMBER: 'Member', CHAIR: 'Chair', OWNER: 'Owner'}[snapshot.viewer.audience];
   const shortcut = (key: string, label: string) => <List.Item><Button size="mini">Alt</Button>
     <Button size="mini">{key}</Button>{t(label)}</List.Item>;
@@ -1112,7 +1113,7 @@ function HelpPanel({snapshot, api}: {snapshot: CommitteeWorkspaceSnapshot; api: 
     </List></Segment>
     <Header as="h3" attached="top">{t('Permissions')}</Header><Segment attached="bottom"><List>
       <List.Item><List.Header>{t('Current role')}</List.Header>{t(role)}</List.Item>
-      <List.Item><List.Header>{t('Rule version')}</List.Header>{ruleVersion ? localizedDisplayName(ruleVersion.names, 'en') : '—'}</List.Item>
+      <List.Item><List.Header>{t('Rule version')}</List.Header>{ruleNames ? localizedDisplayName(ruleNames, 'en') : '—'}</List.Item>
     </List></Segment>
     <Header as="h3" attached="top">{t('Bug reporting & help requests')}</Header><Segment attached="bottom">
       <List ordered><List.Item><a href="https://github.com/brepublic/Quorum/issues">{t('Quorum issue tracking page')}</a></List.Item>

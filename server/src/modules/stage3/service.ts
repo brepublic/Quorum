@@ -322,8 +322,11 @@ export class Stage3Service {
   private async accessibleRuleVersion(versionId: string, auth: AuthenticatedSession): Promise<RulePackageDefinition> {
     requireBusinessIdentity(auth);
     const result = await this.pool.query<{definition: RulePackageDefinition; scope: string; committee_id: string | null; status: string}>(
-      `SELECT v.definition,v.status,p.scope,p.committee_id FROM rule_package_versions v
-       JOIN rule_packages p ON p.id=v.package_id WHERE v.id=$1`, [versionId]);
+      `SELECT v.definition,v.status,p.scope,p.committee_id FROM (
+         SELECT id,package_id,status,definition FROM rule_package_versions WHERE id=$1
+         UNION ALL SELECT id,package_id,status,definition FROM rule_version_snapshots WHERE id=$1
+           AND NOT EXISTS(SELECT 1 FROM rule_package_versions WHERE id=$1)
+       ) v JOIN rule_packages p ON p.id=v.package_id`, [versionId]);
     const row = result.rows[0];
     if (!row) throw new AppError({code: 'NOT_FOUND', message: 'Rule package version not found.'});
     if (row.scope === 'COMMITTEE') {
@@ -351,7 +354,9 @@ export class Stage3Service {
           if (!validated.ok) throw new Error(`Invalid built-in rule package: ${definition.key} v${version}: ${JSON.stringify(validated.issues)}`);
           await client.query(`INSERT INTO rule_package_versions
             (id, package_id, version, status, definition, schema_version, validation_result, published_at)
-            VALUES ($1,$2,$3,'PUBLISHED',$4,$5,$6,now()) ON CONFLICT (package_id, version) DO NOTHING`,
+            SELECT $1,$2,$3,'PUBLISHED',$4,$5,$6,now()
+            WHERE NOT EXISTS(SELECT 1 FROM rule_package_versions WHERE package_id=$2 AND version>$3 AND status='PUBLISHED')
+            ON CONFLICT (package_id, version) DO NOTHING`,
           [randomUUID(), inserted.rows[0]?.id, version, versionDefinition, RULE_SCHEMA_VERSION, {valid: true, issues: []}]);
         }
       }
@@ -857,7 +862,7 @@ export class Stage3Service {
     return transaction(this.pool, async client => {
       const row = await lockedCommittee(client, committeeId); await requireChair(client, row, auth.user.id); requireEditable(row);
       const active = await client.query<{definition: RulePackageDefinition}>(
-        'SELECT definition FROM rule_package_versions WHERE id=$1', [row.active_rule_package_version_id]);
+        'SELECT definition FROM rule_version_snapshots WHERE id=$1', [row.active_rule_package_version_id]);
       if (!active.rows[0]) throw new AppError({reason: 'ACTIVE_RULES_UNAVAILABLE', expose: true, code: 'SERVICE_NOT_READY', message: 'Active rules are unavailable.'});
       let createdVersionId: string | null = null;
       if (scope === 'FUTURE') {

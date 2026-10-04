@@ -10,6 +10,11 @@ import pg from 'pg';
 import {afterEach, beforeEach, describe, expect, it} from 'vitest';
 import {loadMigrations, migrationStatus, runMigrations} from './migrations';
 import {Stage3Service} from '../modules/stage3/service';
+import {Stage4Service} from '../modules/stage4/service';
+import {Stage5Service} from '../modules/stage5/service';
+import {Stage8ArchiveService} from '../modules/operations/archive-service';
+import {Stage8DeletionService} from '../modules/operations/deletion-service';
+import type {AuthenticatedSession} from '../modules/identity/store';
 
 const {Client, Pool} = pg;
 const adminUrl = process.env.TEST_DATABASE_ADMIN_URL;
@@ -58,6 +63,9 @@ integration('PostgreSQL migrations', () => {
     const staged = await mkdtemp(join(tmpdir(), 'quorum-migrations-0084-')); temporaryDirectories.push(staged);
     const owner = randomUUID(), administrator = randomUUID(), packageId = randomUUID(), countryTemplate = randomUUID(), template = randomUUID();
     const oldDefinition = JSON.parse(await readFile('packages/rule-schema/fixtures/beijing-academic.v1.json', 'utf8'));
+    oldDefinition.ballots.chairMayCorrectVote = false;
+    oldDefinition.speakerLists[0].yieldTypes = ['CHAIR'];
+    oldDefinition.metadata.names.en = 'Historical Beijing Rules';
     const committees: Array<{id: string; versionId: string; sessions: Array<{id: string; status: string}>}> = [];
     try {
       for (const file of (await readdir(source)).filter(file => file.endsWith('.sql') && Number(file.slice(0, 4)) < 84))
@@ -108,11 +116,18 @@ integration('PostgreSQL migrations', () => {
         }
         committees.push({id: committeeId, versionId, sessions});
         const sessionId = sessions[0].id, motionId = randomUUID(), ballotId = randomUUID();
+        const rollCallId = randomUUID();
         await pool.query(`INSERT INTO roll_calls(id,committee_id,meeting_session_id,current_seat_id,rule_package_version_id,allowed_responses,started_by_user_id)
-          VALUES($1,$2,$3,$4,$5,ARRAY['PRESENT','ABSENT'],$6)`, [randomUUID(), committeeId, sessionId, seatId, versionId, owner]);
+          VALUES($1,$2,$3,$4,$5,ARRAY['PRESENT','ABSENT'],$6)`, [rollCallId, committeeId, sessionId, seatId, versionId, owner]);
+        await pool.query(`INSERT INTO roll_call_entries(id,committee_id,roll_call_id,seat_id,seat_display_name,response,actor_user_id,on_behalf_of_seat_id,rule_package_version_id)
+          VALUES($1,$2,$3,$4,'China','PRESENT',$5,$4,$6)`, [randomUUID(), committeeId, rollCallId, seatId, owner, versionId]);
+        await pool.query(`INSERT INTO points(id,committee_id,meeting_session_id,point_type_id,content,raised_by_seat_id,
+          raised_by_seat_display_name,actor_user_id,on_behalf_of_seat_id,rule_package_version_id,interrupt_requested)
+          VALUES($1,$2,$3,$4,'Historical point',$5,'China',$6,$5,$7,false)`,
+        [randomUUID(), committeeId, sessionId, oldDefinition.points[0].id, seatId, owner, versionId]);
         await pool.query(`INSERT INTO motions(id,committee_id,meeting_session_id,motion_type_id,proposed_by_seat_id,
           proposed_by_seat_display_name,actor_user_id,on_behalf_of_seat_id,rule_package_version_id,rule_evaluation,required_second_count)
-          VALUES($1,$2,$3,'open-unmoderated-caucus',$4,'China',$5,$4,$6,'{}',0)`, [motionId, committeeId, sessionId, seatId, owner, versionId]);
+          VALUES($1,$2,$3,'open-unmoderated-caucus',$4,'China',$5,$4,$6,'{"resolvedValues":{"procedural":true},"definition":{},"facts":{}}',0)`, [motionId, committeeId, sessionId, seatId, owner, versionId]);
         await pool.query(`INSERT INTO ballots(id,committee_id,meeting_session_id,subject_type,subject_id,procedural,choices,
           rule_package_version_id,rule_evaluation,eligibility_snapshot,threshold_definition,threshold_value,opened_by_user_id)
           VALUES($1,$2,$3,'MOTION',$4,true,ARRAY['FOR','AGAINST']::ballot_choice[],$5,'{}','[]','{}',1,$6)`,
@@ -127,6 +142,7 @@ integration('PostgreSQL migrations', () => {
             VALUES($1,$2,$3,'RESOLUTION',$4,$5,$6)`, [documentId, committeeId, sessionId, versionId, owner, documentVersionId]);
           await client.query(`INSERT INTO document_versions(id,document_id,version_number,content,created_by_user_id)
             VALUES($1,$2,1,'Historical draft content',$3)`, [documentVersionId, documentId, owner]);
+          await client.query("INSERT INTO document_voting(document_id,direct_vote_majority) VALUES($1,'TWO_THIRDS')", [documentId]);
           await client.query('COMMIT');
         } catch (error) { await client.query('ROLLBACK'); throw error; }
         finally { client.release(); }
@@ -137,10 +153,10 @@ integration('PostgreSQL migrations', () => {
           VALUES($1,$2,$3,'GENERAL',120000,$4,$5,$6)`, [speakerListId, committeeId, sessionId, versionId, timerId, owner]);
       }
       const tables = ['users', 'country_templates', 'country_template_countries', 'committee_templates', 'committee_template_members',
-        'committee_seats', 'committee_notes', 'committee_rule_bindings', 'roll_calls', 'motions', 'ballots', 'ballot_votes',
-        'documents', 'document_versions', 'speaker_lists', 'timer_states'];
+        'committee_seats', 'committee_notes', 'committee_rule_bindings', 'roll_calls', 'roll_call_entries', 'points', 'motions', 'ballots', 'ballot_votes',
+        'documents', 'document_versions', 'document_voting', 'speaker_lists', 'timer_states'];
       const preserved = async () => {
-        const rows = await Promise.all(tables.map(async table => (await pool.query(`SELECT * FROM ${table} ORDER BY id`)).rows));
+        const rows = await Promise.all(tables.map(async table => (await pool.query(`SELECT * FROM ${table} t ORDER BY to_jsonb(t)::text`)).rows));
         return [...rows, (await pool.query("SELECT to_jsonb(s)-'schema_compatibility' AS settings FROM system_settings s")).rows,
           (await pool.query('SELECT id,content_snapshot FROM committees ORDER BY id')).rows];
       };
@@ -180,6 +196,80 @@ integration('PostgreSQL migrations', () => {
       await runMigrations(pool, staged); await new Stage3Service(pool).ensureBuiltins();
       expect((await pool.query("SELECT * FROM audit_log WHERE request_id='migration:0084'")).rows).toEqual(audits);
       expect((await pool.query('SELECT revision FROM committees')).rows.every(row => row.revision === 2)).toBe(true);
+      // The next release retires old Beijing catalog rows without changing any
+      // frozen proceedings or IDs. Unrelated built-in packages remain intact.
+      await cp(join(source, '0085_committee_creation_defaults.sql'), join(staged, '0085_committee_creation_defaults.sql'));
+      await runMigrations(pool, staged);
+      const archived = committees[0];
+      await pool.query("UPDATE committees SET status='ARCHIVED',active_rule_package_version_id=$2 WHERE id=$1", [archived.id, archived.versionId]);
+      await pool.query(`UPDATE system_settings SET committee_creation_defaults=jsonb_set(committee_creation_defaults,
+        '{defaultRulePackageVersionId}',to_jsonb($1::text))`, [archived.versionId]);
+      const frozen = await preserved();
+      const allVersions = (await pool.query('SELECT * FROM rule_package_versions ORDER BY id')).rows;
+      await cp(join(source, '0086_rule_version_snapshots.sql'), join(staged, '0086_rule_version_snapshots.sql'));
+      await pool.query("ALTER TABLE audit_log ADD CONSTRAINT reject_snapshots CHECK(request_id<>'migration:0086')");
+      await expect(runMigrations(pool, staged)).rejects.toThrow('reject_snapshots');
+      expect((await migrationStatus(pool, staged)).latestAppliedVersion).toBe(85);
+      expect((await pool.query("SELECT to_regclass('rule_version_snapshots') AS relation")).rows[0].relation).toBeNull();
+      expect((await pool.query('SELECT * FROM rule_package_versions ORDER BY id')).rows).toEqual(allVersions);
+      expect(await preserved()).toEqual(frozen);
+      await pool.query('ALTER TABLE audit_log DROP CONSTRAINT reject_snapshots');
+      await runMigrations(pool, staged);
+      expect((await pool.query('SELECT * FROM rule_version_snapshots ORDER BY id')).rows).toEqual(allVersions);
+      expect((await pool.query('SELECT * FROM rule_package_versions WHERE package_id<>$1 ORDER BY id', [packageId])).rows)
+        .toEqual(allVersions.filter(row => row.package_id !== packageId));
+      expect((await pool.query('SELECT id FROM rule_package_versions WHERE package_id=$1', [packageId])).rows).toEqual([{id: latest.id}]);
+      expect((await pool.query("SELECT 1 FROM pg_constraint WHERE contype='f' AND confrelid='rule_package_versions'::regclass")).rows).toEqual([]);
+      expect((await pool.query('SELECT committee_creation_defaults FROM system_settings')).rows[0].committee_creation_defaults.defaultRulePackageVersionId).toBe(latest.id);
+      // Everything but the intentionally migrated system default is unchanged.
+      const after = await preserved(); expect(after.slice(0, tables.length)).toEqual(frozen.slice(0, tables.length));
+      expect(after.at(-1)).toEqual(frozen.at(-1));
+      const auth = {sessionId: randomUUID(), user: {id: owner, isSystemAdmin: false, mustChangePassword: false}} as AuthenticatedSession;
+      const stage3 = new Stage3Service(pool), stage4 = new Stage4Service(pool), stage5 = new Stage5Service(pool);
+      const context = {requestId: 'snapshot-history', sourceIp: '127.0.0.1', userAgent: 'Vitest'};
+      expect(await stage3.validateRuleVersion(auth, archived.versionId)).toEqual({valid: true, issues: []});
+      for (const item of committees) {
+        const snapshot = await stage4.snapshot(item.id, auth);
+        expect(snapshot.activeRules.versionId).toBe(item.id === archived.id ? archived.versionId : latest.id);
+        expect(snapshot.activeRules.names).toEqual(item.id === archived.id ? oldDefinition.metadata.names : latest.definition.metadata.names);
+        expect(snapshot.rollCall?.rulePackageVersionId).toBe(item.versionId);
+        expect(snapshot.points[0].typeNames).toEqual(oldDefinition.points[0].names);
+        expect(snapshot.speakerLists?.[0].yieldTypes).toEqual(oldDefinition.speakerLists[0].yieldTypes);
+        expect(snapshot.ballots?.[0]).toMatchObject({rulePackageVersionId: item.versionId, chairMayCorrectVote: false});
+        expect(snapshot.documents?.[0].rulePackageVersionId).toBe(item.versionId);
+      }
+      const exported = await new Stage8ArchiveService(pool).exportCommittee(auth, archived.id);
+      let archiveText = ''; for await (const chunk of exported.content) archiveText += chunk.toString();
+      const records = archiveText.trim().split('\n').map(line => JSON.parse(line));
+      expect(records).toContainEqual(expect.objectContaining({section: 'rule_versions', record: expect.objectContaining({id: archived.versionId, definition: oldDefinition})}));
+      await expect(pool.query('UPDATE rule_version_snapshots SET definition=definition WHERE id=$1', [archived.versionId])).rejects.toThrow('rule snapshots are immutable');
+      await expect(pool.query('DELETE FROM rule_version_snapshots WHERE id=$1', [archived.versionId])).rejects.toThrow('rule snapshots are immutable');
+      await pool.query("INSERT INTO committee_capabilities(committee_id,user_id,capability,granted_by_user_id) VALUES($1,$2,'CHAIR',$2)", [committees[1].id, owner]);
+      await expect(stage3.activateRules(auth, committees[1].id, archived.versionId, 2, context)).rejects.toMatchObject({reason: 'RULE_VERSION_NOT_PUBLISHED'});
+      const snapshotAudits = (await pool.query("SELECT * FROM audit_log WHERE request_id='migration:0086' ORDER BY id")).rows;
+      await runMigrations(pool, staged); await stage3.ensureBuiltins();
+      expect((await pool.query("SELECT * FROM audit_log WHERE request_id='migration:0086' ORDER BY id")).rows).toEqual(snapshotAudits);
+      expect((await pool.query('SELECT * FROM rule_version_snapshots ORDER BY id')).rows).toEqual(allVersions);
+      // A normal command still reads a retired rule's original speaker settings.
+      const active = committees[2];
+      await pool.query("INSERT INTO committee_capabilities(committee_id,user_id,capability,granted_by_user_id) VALUES($1,$2,'CHAIR',$2)", [active.id, owner]);
+      const list = (await stage4.snapshot(active.id, auth)).speakerLists![0];
+      expect((await stage5.updateSpeakerList(auth, list.id, {baseRevision: list.revision, defaultSpeechMs: 75000}, context)).yieldTypes)
+        .toEqual(oldDefinition.speakerLists[0].yieldTypes);
+      const override = await stage3.overrideRule(auth, active.id, {scope: 'FUTURE', path: 'ballots.chairMayCorrectVote', value: false}, context);
+      expect((await pool.query('SELECT id FROM rule_version_snapshots WHERE id=$1', [override.createdVersionId])).rowCount).toBe(1);
+      let revision = (await stage4.snapshot(active.id, auth)).committee.revision;
+      await stage3.activateRules(auth, active.id, override.createdVersionId!, revision, context);
+      await pool.query("UPDATE committees SET visibility='PUBLIC' WHERE id=$1", [active.id]);
+      expect((await stage4.snapshot(active.id)).activeRules.names).toBeUndefined();
+      expect((await stage4.snapshot(active.id, auth)).activeRules.names).toEqual(expectedDefinition.metadata.names);
+      revision = (await stage4.snapshot(active.id, auth)).committee.revision;
+      await stage3.archiveCommittee(auth, active.id, revision, context);
+      const deletion = new Stage8DeletionService(pool);
+      await deletion.requestDeletion(auth, active.id, {baseRevision: revision+1, confirmationName: 'Beijing v10'}, randomUUID(), context);
+      expect((await deletion.processNext())?.status).toBe('COMPLETED');
+      expect((await pool.query('SELECT id FROM rule_version_snapshots WHERE id=$1', [override.createdVersionId])).rowCount).toBe(0);
+      expect((await pool.query('SELECT id FROM rule_version_snapshots WHERE id=$1', [archived.versionId])).rowCount).toBe(1);
     } finally { await pool.end(); }
   });
 
@@ -247,6 +337,17 @@ integration('PostgreSQL migrations', () => {
       await runMigrations(pool, staged); await new Stage3Service(pool).ensureBuiltins();
       expect((await pool.query("SELECT before_summary,after_summary FROM audit_log WHERE request_id='migration:0084'")).rows).toEqual(audits);
       expect((await pool.query('SELECT * FROM rule_package_versions ORDER BY id')).rows).toEqual(beforeVersions);
+      await cp(join(source, '0085_committee_creation_defaults.sql'), join(staged, '0085_committee_creation_defaults.sql'));
+      await cp(join(source, '0086_rule_version_snapshots.sql'), join(staged, '0086_rule_version_snapshots.sql'));
+      await runMigrations(pool, staged);
+      expect((await pool.query('SELECT * FROM rule_version_snapshots ORDER BY id')).rows).toEqual(beforeVersions);
+      expect((await pool.query('SELECT id FROM rule_package_versions WHERE package_id=$1', [latest.package_id])).rows).toEqual([{id: futureId}]);
+      expect((await pool.query('SELECT * FROM rule_package_versions WHERE package_id=$1', [customPackage])).rows)
+        .toEqual(beforeVersions.filter(row => row.package_id === customPackage));
+      expect((await pool.query("SELECT active_rule_package_version_id FROM committees WHERE status IN ('ARCHIVED','DELETING')")).rows)
+        .toEqual([{active_rule_package_version_id: oldId}, {active_rule_package_version_id: oldId}]);
+      await runMigrations(pool, staged); await new Stage3Service(pool).ensureBuiltins();
+      expect((await pool.query('SELECT id FROM rule_package_versions WHERE package_id=$1', [latest.package_id])).rows).toEqual([{id: futureId}]);
     } finally { await pool.end(); }
   });
 
@@ -276,7 +377,8 @@ integration('PostgreSQL migrations', () => {
           CASE WHEN $5::meeting_session_status='CLOSED' THEN now() END)`, [id, committeeId, versionId, owner, status]);
       await runMigrations(pool, source);
       await runMigrations(pool, source);
-      const versions = (await pool.query('SELECT id,version,definition FROM rule_package_versions ORDER BY version')).rows;
+      const versions = (await pool.query('SELECT id,version,definition FROM rule_version_snapshots ORDER BY version')).rows;
+      expect((await pool.query('SELECT version FROM rule_package_versions')).rows).toEqual([{version: 12}]);
       expect(versions).toHaveLength(2);
       expect(versions[0]).toMatchObject({id: versionId, version: 11, definition});
       expect(versions[1].definition.motions).toEqual([{id: 'open-debate'}, {id: 'close-debate'}]);

@@ -109,6 +109,8 @@ export const COMMITTEE_PURGE_QUERIES = [
   `DELETE FROM committee_events WHERE committee_id=$1`,
   `DELETE FROM rule_package_versions WHERE package_id IN
     (SELECT id FROM rule_packages WHERE committee_id=$1)`,
+  `DELETE FROM rule_version_snapshots WHERE package_id IN
+    (SELECT id FROM rule_packages WHERE committee_id=$1)`,
   `DELETE FROM rule_packages WHERE committee_id=$1`,
   `DELETE FROM idempotency_keys WHERE route LIKE '%'||$1::text||'%'
     OR response_body::text LIKE '%'||$1::text||'%'`,

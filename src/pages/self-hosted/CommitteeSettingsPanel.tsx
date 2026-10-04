@@ -254,6 +254,7 @@ export default function CommitteeSettingsPanel({snapshot, api, canChair, refresh
     setDialog(next); setDialogRevision(latest.current.committee.revision); setDeleteName(''); setLifecycleError(undefined);
   };
   const selectedRule = rulePackages.flatMap(pkg => pkg.versions).find(version => version.id === value('rules'));
+  const selectedRuleNames = selectedRule?.names ?? (value('rules') === snapshot.activeRules.versionId ? snapshot.activeRules.names : undefined);
   const ruleOptions = rulePackages.flatMap(pkg => pkg.versions.filter(version => version.status === 'PUBLISHED'
     && (pkg.scope !== 'BUILTIN' || pkg.key !== 'builtin:beijing-academic'
       || !pkg.versions.some(next => next.status === 'PUBLISHED' && next.version > version.version)))
@@ -280,7 +281,7 @@ export default function CommitteeSettingsPanel({snapshot, api, canChair, refresh
             disabled={!canEdit('operationMode') || pending} options={['DELEGATE_OPERATED', 'CHAIR_OPERATED'].map(item => ({key: item, value: item, text: t(item)}))}
             onChange={(_, data) => select('operationMode', String(data.value))} />
           <ViewportFormSelect label={t('Rule version')} aria-label={t('Rule version')} value={String(value('rules'))} selectOnBlur={false}
-            text={selectedRule ? localizedDisplayName(selectedRule.names, 'en') : undefined}
+            text={selectedRuleNames ? localizedDisplayName(selectedRuleNames, 'en') : undefined}
             disabled={!canEdit('rules') || pending || !!ruleError} options={ruleOptions}
             onChange={(_, data) => select('rules', String(data.value))} />
         </div></Form>{errors('operation')}{Boolean(ruleError) && <Message negative role="alert">{apiErrorText(ruleError)} <Button size="mini" onClick={() => void loadRules()}>{t('Retry')}</Button></Message>}

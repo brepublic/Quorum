@@ -544,7 +544,7 @@ async function insertAttendanceEvent(client: PoolClient, input: {
 
 async function pointTypeNames(client: PoolClient, row: PointRow): Promise<LocalizedNames> {
   const result = await client.query<{definition: {points?: Array<{id: string; names?: LocalizedNames}>}}>(
-    'SELECT definition FROM rule_package_versions WHERE id=$1', [row.rule_package_version_id]);
+    'SELECT definition FROM rule_version_snapshots WHERE id=$1', [row.rule_package_version_id]);
   const names = result.rows[0]?.definition.points?.find(item => item.id === row.point_type_id)?.names;
   if (!names) throw new AppError({reason: 'POINT_RULE_UNAVAILABLE', expose: true, code: 'SERVICE_NOT_READY', message: 'Point rule definition is unavailable.'});
   return names;
@@ -938,7 +938,8 @@ export class Stage4Service {
         }
       }
       const summary = committeeSummary(committee); const {ownerUserId: _ownerUserId, ...publicCommittee} = summary;
-      const ruleResult = await client.query<{definition: {
+      const ruleResult = await client.query<{scope: string; definition: {
+        metadata?: {names?: Record<string, string>};
         phases?: Array<{id: string; names?: Record<string, string>}>;
         attendance?: {responses?: string[]};
         points?: Array<{id: string; names?: Record<string, string>; interruptRequested?: boolean}>;
@@ -948,7 +949,8 @@ export class Stage4Service {
         ballots?: {delegateMayChangeVote?: boolean; chairMayCorrectVote?: boolean; anonymousStrawpoll?: boolean;
           mustCollectAllVotesWhenVetoSeatEligible?: boolean};
         documents?: {amendmentsPublicByDefault?: boolean};
-      }}>('SELECT definition FROM rule_package_versions WHERE id=$1', [committee.active_rule_package_version_id]);
+      }}>(`SELECT v.definition,p.scope FROM rule_version_snapshots v JOIN rule_packages p ON p.id=v.package_id
+        WHERE v.id=$1`, [committee.active_rule_package_version_id]);
       const rules = ruleResult.rows[0]?.definition;
       if (!rules) throw new AppError({reason: 'ACTIVE_RULES_UNAVAILABLE', expose: true, code: 'SERVICE_NOT_READY', message: 'Active rules are unavailable.'});
       const result: CommitteeWorkspaceSnapshot = {schemaVersion: 3,
@@ -961,6 +963,8 @@ export class Stage4Service {
         layoutSettings: {moveQueueUp: committee.move_queue_up,
           timersInSeparateColumns: committee.timers_in_separate_columns},
         activeRules: {versionId: committee.active_rule_package_version_id,
+          ...(ruleResult.rows[0]?.scope !== 'COMMITTEE' || viewer.audience === 'CHAIR' || viewer.audience === 'OWNER'
+            ? {names: rules.metadata?.names} : {}),
           activePhaseId: currentSession?.status === 'OPEN' ? currentSession.phase_id : null,
           phases: rules.phases ?? [], attendanceResponses: rules.attendance?.responses ?? [],
           pointTypes: (rules.points ?? []).map(item => ({id: item.id, ...(item.names ? {names: item.names} : {}),
@@ -983,7 +987,7 @@ export class Stage4Service {
         nextMeetingSessionOrdinal: currentSession?.status === 'PENDING' ? currentSession.ordinal : committee.next_session_ordinal,
         ...(currentRollCall ? {rollCall: currentRollCall} : {})};
       const speakerRows = await client.query<SnapshotSpeakerListRow>(`SELECT s.*,v.definition AS rule_definition FROM speaker_lists s
-        JOIN rule_package_versions v ON v.id=s.rule_package_version_id WHERE s.committee_id=$1 ORDER BY s.created_at,s.id`, [committeeId]);
+        JOIN rule_version_snapshots v ON v.id=s.rule_package_version_id WHERE s.committee_id=$1 ORDER BY s.created_at,s.id`, [committeeId]);
       result.speakerLists = await Promise.all(speakerRows.rows.map(async row => {
         const queue = await client.query<{id: string; seat_id: string; seat_display_name: string; position: number;
           status: SpeakerList['queue'][number]['status']; stance: SpeakerList['queue'][number]['stance'];
@@ -1044,7 +1048,7 @@ export class Stage4Service {
       }));
       const ballotRows = await client.query<SnapshotBallotRow & {chair_may_correct_vote: boolean}>(`SELECT b.*,
         COALESCE((v.definition->'ballots'->>'chairMayCorrectVote')::boolean,false) AS chair_may_correct_vote
-        FROM ballots b JOIN rule_package_versions v ON v.id=b.rule_package_version_id
+        FROM ballots b JOIN rule_version_snapshots v ON v.id=b.rule_package_version_id
         WHERE b.committee_id=$1 ORDER BY b.opened_at,b.id`, [committeeId]);
       result.ballots = await Promise.all(ballotRows.rows.map(async row => {
         const revealVotes = viewer.audience === 'CHAIR' || viewer.audience === 'OWNER' || row.status === 'PUBLISHED';
@@ -1618,7 +1622,7 @@ export class Stage4Service {
       const committee = await lockedCommittee(client, committeeId); await requireChair(client, committee, auth.user.id);
       requireProceedingsActive(committee);
       const definition = await client.query<{definition: {phases?: unknown; speakerLists?: Array<{
-        id?: unknown; defaultDurationSeconds?: unknown}>}}>(`SELECT definition FROM rule_package_versions
+        id?: unknown; defaultDurationSeconds?: unknown}>}}>(`SELECT definition FROM rule_version_snapshots
         WHERE id=$1 AND status='PUBLISHED'`, [committee.active_rule_package_version_id]);
       const phases = definition.rows[0]?.definition.phases;
       if (!definition.rows[0] || !Array.isArray(phases)) {
@@ -1755,7 +1759,7 @@ export class Stage4Service {
         if (!session) throw new AppError({code: 'NOT_FOUND', message: 'Meeting session not found.'});
         if (session.status !== 'OPEN') throw new AppError({reason: 'MEETING_CLOSED', code: 'RESOURCE_CONFLICT', message: 'Meeting session is closed.'});
         const version = await client.query<{definition: {attendance?: {responses?: unknown}}}>(`SELECT definition
-          FROM rule_package_versions WHERE id=$1 AND status='PUBLISHED'`, [session.active_rule_package_version_id]);
+          FROM rule_version_snapshots WHERE id=$1 AND status='PUBLISHED'`, [session.active_rule_package_version_id]);
         const rawResponses = version.rows[0]?.definition.attendance?.responses;
         const responses = Array.isArray(rawResponses) ? rawResponses : [];
         const allowedValues = new Set(['PRESENT', 'PRESENT_AND_VOTING', 'ABSENT']);
@@ -2113,7 +2117,7 @@ export class Stage4Service {
         const seat = await client.query<{display_name: string}>(`SELECT display_name FROM committee_seats
           WHERE id=$1 AND committee_id=$2 AND active=true AND can_procedural_vote=true`, [seatId, committeeId]);
         if (!seat.rows[0]) throw new AppError({reason: 'INVALID_SEAT_REFERENCE', code: 'VALIDATION_FAILED', message: 'Seat is invalid.'});
-        const version = await client.query<{definition: {points?: unknown}}>(`SELECT definition FROM rule_package_versions
+        const version = await client.query<{definition: {points?: unknown}}>(`SELECT definition FROM rule_version_snapshots
           WHERE id=$1 AND status='PUBLISHED'`, [meeting.active_rule_package_version_id]);
         const rawPoints = version.rows[0]?.definition.points;
         if (!Array.isArray(rawPoints)) throw new AppError({reason: 'INVALID_POINT_RULES', code: 'VALIDATION_FAILED', message: 'The rule package has invalid point types.'});

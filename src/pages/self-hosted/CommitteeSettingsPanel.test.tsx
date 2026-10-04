@@ -17,7 +17,7 @@ const fixture = (): Snapshot => ({committee: {id: 'committee', committeeLanguage
   motionSettings: {showMotionsOnDemand: true, groupMotionTypes: true, delegateMotionProposalsEnabled: false, delegateMotionVotingEnabled: true},
   layoutSettings: {moveQueueUp: false, timersInSeparateColumns: false}, crisisAutoStartDelayMinutes: 5,
   speakerLists: [{id: 'general', kind: 'GENERAL', revision: 8, defaultSpeechMs: 120_000} as SpeakerList],
-  crises: [], sync: {committeeEventSequence: 1}} as unknown as Snapshot);
+  activeRules: {versionId: 'rules'}, crises: [], sync: {committeeEventSequence: 1}} as unknown as Snapshot);
 async function render() {
   await act(async () => root.render(<MemoryRouter><CommitteeSettingsPanel snapshot={current} api={api} canChair={chair} refresh={refresh} /></MemoryRouter>));
 }
@@ -88,6 +88,19 @@ describe('committee settings autosave', () => {
       await act(async () => dropdown.querySelector('.item')!.dispatchEvent(new MouseEvent('click', {bubbles: true})));
       expect(api.activateRules).toHaveBeenCalledWith('committee', 'latest-rules', 4);
     } else expect(dropdown.classList.contains('disabled')).toBe(true);
+  });
+
+  it('displays archived snapshot names after the old version leaves the selectable catalog', async () => {
+    current.committee.status = 'ARCHIVED'; chair = false;
+    current.activeRules.names = {'zh-CN': '历史北京规则'};
+    api.listRulePackages = vi.fn(async () => [{scope: 'BUILTIN', key: 'builtin:beijing-academic', versions: [
+      {id: 'latest-rules', version: 12, status: 'PUBLISHED', names: {'zh-CN': '北京学术标准 2021'}}]}] as unknown as Awaited<ReturnType<SelfHostedApi['listRulePackages']>>);
+    await render();
+    const dropdown = card('operation').querySelectorAll('.ui.dropdown')[1];
+    expect(dropdown.querySelector('.text')?.textContent).toBe('历史北京规则');
+    expect(dropdown.classList.contains('disabled')).toBe(true);
+    expect(dropdown.querySelectorAll('.item')).toHaveLength(1);
+    expect(api.activateRules).not.toHaveBeenCalled();
   });
 
   it('groups settings into cards with no save or activate button', async () => {

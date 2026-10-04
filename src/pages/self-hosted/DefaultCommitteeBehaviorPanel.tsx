@@ -128,7 +128,7 @@ export default function DefaultCommitteeBehaviorPanel({client, api}: {client: Se
     onChange={(_, data) => change(field, data.value)} onBlur={() => commit(field)}
     onKeyDown={(event: React.KeyboardEvent<HTMLInputElement>) => {if (event.key === 'Enter' && !event.nativeEvent.isComposing) {event.preventDefault(); commit(field);}}} /></Form>;
   const options = rules.filter(pkg => pkg.scope !== 'COMMITTEE').flatMap(pkg => pkg.versions.filter(version => version.status === 'PUBLISHED'
-    && (version.id === value('defaultRulePackageVersionId') || pkg.key !== 'builtin:beijing-academic'
+    && (pkg.scope !== 'BUILTIN' || pkg.key !== 'builtin:beijing-academic'
       || !pkg.versions.some(next => next.status === 'PUBLISHED' && next.version > version.version)))
     .map(version => ({key: version.id, value: version.id, text: localizedDisplayName(version.names, 'en')})));
   return <>

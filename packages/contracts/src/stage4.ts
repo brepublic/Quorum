@@ -303,6 +303,7 @@ export interface ResolvePointRequest {
 
 export interface CommitteeRuleReadModel {
   versionId: string;
+  names?: LocalizedNames;
   activePhaseId: string | null;
   phases: Array<{id: string; names?: LocalizedNames}>;
   attendanceResponses: string[];

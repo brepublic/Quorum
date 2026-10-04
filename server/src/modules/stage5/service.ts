@@ -151,7 +151,7 @@ export async function speakerListName(client: PoolClient,
 
 async function speakerListState(client: PoolClient, row: SpeakerListRow): Promise<SpeakerList> {
   const context = (await client.query<{committee_language: ContentLanguage; definition: {speakerLists?: Array<{id: string; yieldTypes?: string[]}>}}>(
-    'SELECT c.committee_language,v.definition FROM committees c JOIN rule_package_versions v ON v.id=$2 WHERE c.id=$1',
+    'SELECT c.committee_language,v.definition FROM committees c JOIN rule_version_snapshots v ON v.id=$2 WHERE c.id=$1',
     [row.committee_id, row.rule_package_version_id])).rows[0]!;
   const language = context.committee_language;
   const yieldTypes = context.definition.speakerLists?.find(item => item.id === (row.kind === 'GENERAL' ? 'general-speakers-list' : 'moderated-caucus'))?.yieldTypes;
@@ -231,7 +231,7 @@ async function motionState(client: PoolClient, row: MotionRow): Promise<Proceedi
 async function ballotState(client: PoolClient, row: BallotRow, includeVotes = true): Promise<FormalBallot> {
   const rules = await client.query<{allowed: boolean}>(`SELECT
     COALESCE((definition->'ballots'->>'chairMayCorrectVote')::boolean,false) AS allowed
-    FROM rule_package_versions WHERE id=$1`, [row.rule_package_version_id]);
+    FROM rule_version_snapshots WHERE id=$1`, [row.rule_package_version_id]);
   const votes = includeVotes ? await client.query<{id: string; seat_id: string; seat_display_name: string;
     current_choice: BallotChoice; revision: number; cast_at: Date}>(`SELECT id,seat_id,seat_display_name,current_choice,
     revision,cast_at FROM ballot_votes WHERE ballot_id=$1 AND retracted_at IS NULL ORDER BY seat_id`, [row.id]) : {rows: []};
@@ -487,7 +487,7 @@ async function formalDebateClosed(client: PoolClient, meetingSessionId: string):
 async function frozenDocumentRule(client: PoolClient, row: DocumentRow, suppliedId: string, expectedId: string,
   now: Date): Promise<FrozenRuleEvaluation> {
   if (suppliedId !== expectedId) throw new AppError({reason: 'INVALID_DOCUMENT_ACTION', code: 'VALIDATION_FAILED', message: 'Document rule action is invalid.'});
-  const packageResult = await client.query<{definition: {motions?: unknown}}>(`SELECT definition FROM rule_package_versions
+  const packageResult = await client.query<{definition: {motions?: unknown}}>(`SELECT definition FROM rule_version_snapshots
     WHERE id=$1 AND status='PUBLISHED'`, [row.rule_package_version_id]);
   const motions = packageResult.rows[0]?.definition.motions;
   const matches = Array.isArray(motions) ? motions.filter(item => item && typeof item === 'object'
@@ -1728,7 +1728,7 @@ export class Stage5Service {
           JOIN current_attendance a ON a.seat_id=s.id AND a.meeting_session_id=$3 AND a.state='PRESENT'
           WHERE s.id=$1 AND s.committee_id=$2 AND s.active=true AND s.can_procedural_vote=true`, [seatId, committeeId, meetingSessionId]);
         if (!seat.rows[0]) throw new AppError({reason: 'PRESENT_SEAT_REQUIRED', code: 'VALIDATION_FAILED', message: 'Only a present active seat may propose a motion.'});
-        const version = await client.query<{definition: {motions?: unknown}}>(`SELECT definition FROM rule_package_versions
+        const version = await client.query<{definition: {motions?: unknown}}>(`SELECT definition FROM rule_version_snapshots
           WHERE id=$1 AND status='PUBLISHED'`, [session.rows[0].active_rule_package_version_id]);
         const definitions = version.rows[0]?.definition.motions;
         const matches = Array.isArray(definitions) ? definitions.filter(item => item && typeof item === 'object'

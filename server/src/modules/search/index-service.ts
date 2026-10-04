@@ -125,7 +125,8 @@ async function allSubjects(client: PoolClient): Promise<SearchSubject[]> {
   for (const row of custom.rows) subjects.push({kind: 'country',
     key: searchKey(`custom:${row.template_id}`, row.stable_key), names: row.names});
   const versions = await client.query<{id: string; definition: {motions?: Array<{id: string; names?: LocalizedNames}>;
-    points?: Array<{id: string; names?: LocalizedNames}>}}>('SELECT id,definition FROM rule_package_versions');
+    points?: Array<{id: string; names?: LocalizedNames}>}}>(`SELECT id,definition FROM rule_version_snapshots
+      UNION ALL SELECT id,definition FROM rule_package_versions WHERE status='DRAFT'`);
   for (const row of versions.rows) {
     for (const item of row.definition.motions ?? []) if (item.names) subjects.push({kind: 'motion',
       key: searchKey(row.id, item.id), names: item.names});

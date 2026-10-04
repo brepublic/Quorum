@@ -25,9 +25,9 @@ export const ARCHIVE_SECTIONS: readonly ArchiveSection[] = Object.freeze([
   {name: 'committee_seats', query: `SELECT id,stable_key,display_name,flag_type,flag_value,rank,can_vote,can_procedural_vote,has_veto,must_vote,sort_order,active,revision,created_at,updated_at FROM committee_seats WHERE committee_id=$1 ORDER BY sort_order,id`},
   {name: 'seat_assignments', query: `SELECT id,seat_id,user_id,status,assigned_at,ended_at FROM seat_assignments WHERE committee_id=$1 ORDER BY assigned_at,id`},
   {name: 'seat_invitations', query: `SELECT id,seat_id,max_uses,use_count,expires_at,revoked_at,created_at FROM seat_invitations WHERE committee_id=$1 ORDER BY created_at,id`},
-  {name: 'rule_bindings', query: `SELECT b.id,b.package_version_id,b.effective_from_event_sequence,b.activated_at,v.version,v.schema_version,v.definition FROM committee_rule_bindings b JOIN rule_package_versions v ON v.id=b.package_version_id WHERE b.committee_id=$1 ORDER BY b.effective_from_event_sequence,b.id`},
+  {name: 'rule_bindings', query: `SELECT b.id,b.package_version_id,b.effective_from_event_sequence,b.activated_at,v.version,v.schema_version,v.definition FROM committee_rule_bindings b JOIN rule_version_snapshots v ON v.id=b.package_version_id WHERE b.committee_id=$1 ORDER BY b.effective_from_event_sequence,b.id`},
   {name: 'rule_versions', query: `SELECT v.id,v.package_id,v.version,v.schema_version,v.definition
-    FROM rule_package_versions v WHERE v.id IN (
+    FROM rule_version_snapshots v WHERE v.id IN (
       SELECT active_rule_package_version_id FROM committees WHERE id=$1
       UNION SELECT (content_snapshot->>'initialRulePackageVersionId')::uuid FROM committees WHERE id=$1
       UNION SELECT package_version_id FROM committee_rule_bindings WHERE committee_id=$1
