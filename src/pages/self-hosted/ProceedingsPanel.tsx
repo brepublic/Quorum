@@ -1884,7 +1884,7 @@ function DocumentVoting({snapshot, run, api, canChair, document}: CommonProps & 
           <Button positive content={t('yes')} icon="plus" disabled={!currentVotingSeat || voteSaving && !voteDraft?.submissionKey || voteConflict}
             aria-disabled={!!voteDraft?.submissionKey || voteConflict}
             onClick={() => void setDirectResolutionVote('FOR')} />
-          <Button negative content={t('no')} icon="remove" disabled={!currentVotingSeat || voteSaving && !voteDraft?.submissionKey || voteConflict}
+          <Button negative content={t(currentVotingSeat?.hasVeto ? 'Cast veto' : 'no')} icon="remove" disabled={!currentVotingSeat || voteSaving && !voteDraft?.submissionKey || voteConflict}
             aria-disabled={!!voteDraft?.submissionKey || voteConflict}
             onClick={() => void setDirectResolutionVote('AGAINST')} />
           <Button color="yellow" content={t('abstaining')} icon="minus"

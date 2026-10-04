@@ -2847,8 +2847,8 @@ html[lang='zh-CN'] .ui {
 
 .resolution-voting-current-veto {
   color: var(--resolution-veto-color);
-  font-size: 0.95rem;
-  font-weight: 400;
+  font-size: 18px;
+  font-weight: 500;
   letter-spacing: 0.06em;
   line-height: 1.5rem;
   min-height: 1.5rem;

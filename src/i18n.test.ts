@@ -19,6 +19,7 @@ describe('i18n', () => {
     expect(t('Motion action: Open')).toBe('Open');
     expect(t('Voting rights')).toBe('Voting');
     expect(t('Veto power')).toBe('Veto');
+    expect(t('Cast veto')).toBe('Veto');
     expect(t('No abstention')).toBe('No abstention');
   });
 
@@ -80,6 +81,7 @@ describe('i18n', () => {
     expect(t('Introduce Draft Resolution')).toBe('展示决议草案');
     expect(t('Introduce Working Paper')).toBe('展示工作文件');
     expect(t('Veto')).toBe('一票否决');
+    expect(t('Cast veto')).toBe('否决');
     expect(t('Roll Call')).toBe('点名');
     expect(t('Absent')).toBe('缺席');
     expect(t('Voting delegation')).toBe('投票代表团');

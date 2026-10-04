@@ -3005,6 +3005,8 @@ describe('committee workspace routes and roles', () => {
     for (let index = 0; index < expected.length; index++) {
       expect(current()).toBe(expected[index].seatDisplayName);
       expect(page.querySelector('.resolution-voting-current-veto')?.textContent).toBe(expected[index].hasVeto ? 'Veto' : '');
+      expect(page.querySelector('.resolution-voting-primary-actions .negative.button')?.textContent)
+        .toBe(expected[index].hasVeto ? 'Veto' : 'No');
       if (index === 18) {
         checkPage(1);
         await act(async () => {button('Undo').click();});
@@ -3022,6 +3024,8 @@ describe('committee workspace routes and roles', () => {
     expect(eligibility).toEqual(originalEligibility);
     await act(async () => {setLanguage('zh-CN'); members()[0].click();});
     expect(page.querySelector('.resolution-voting-current-veto')?.textContent).toBe(expected[18].hasVeto ? '否决权' : '');
+    expect(page.querySelector('.resolution-voting-primary-actions .negative.button')?.textContent)
+      .toBe(expected[18].hasVeto ? '否决' : '反对');
   });
 
   it.each(['resume', 'reload'])('locates the first unvoted country on its sorted page after %s', async mode => {
@@ -3164,9 +3168,14 @@ describe('committee workspace routes and roles', () => {
       const seatName = index === 0 ? 'China' : 'France';
       await act(async () => {[...page.querySelectorAll<HTMLButtonElement>('.resolution-voting-member')]
         .find(item => item.textContent === seatName)!.click();});
-      await act(async () => {button(choice === 'FOR' ? 'Yes' : choice === 'AGAINST' ? 'No' : 'Abstain').click();});
+      await act(async () => {button(choice === 'FOR' ? 'Yes' : choice === 'AGAINST'
+        ? index === 1 && veto ? 'Veto' : 'No' : 'Abstain').click();});
     }
     expect(submitResolutionDirectVote).toHaveBeenCalledTimes(1);
+    expect(submitResolutionDirectVote.mock.calls[0][1].votes).toHaveLength(choices.length);
+    expect(submitResolutionDirectVote.mock.calls[0][1].votes).toEqual(expect.arrayContaining(choices.map((choice, index) => ({
+      seatId: index === 0 ? 'seat' : 'second', choice,
+    }))));
     expect(page.querySelector('.resolution-result')?.textContent ?? null).toBe(expected);
     expect(page.querySelector('.resolution-voting-member:disabled')).toBeNull();
     expect(page.textContent).not.toContain('Submitting votes');
@@ -3287,6 +3296,11 @@ describe('committee workspace routes and roles', () => {
     await act(async () => {yes?.click(); await Promise.resolve();});
     expect(setResolutionDirectVote).toHaveBeenCalledWith('resolution', 'seat', 'FOR');
     if (automaticResult === null) expect(undo?.disabled).toBe(false);
+    await act(async () => {setLanguage('zh-CN');});
+    const veto = [...page.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.trim() === '否决');
+    expect(veto).toBeDefined();
+    await act(async () => {veto!.click();});
+    expect(setResolutionDirectVote).toHaveBeenLastCalledWith('resolution', 'seat', 'AGAINST');
   });
 
   it('keeps storage inside the account-authorized resource tabs', async () => {
