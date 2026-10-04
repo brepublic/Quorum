@@ -1,3 +1,4 @@
+import {ViewportFormDropdown, ViewportDropdown} from '../../components/ViewportDropdown';
 import {useApiFieldErrors} from '../../components/useApiFieldErrors';
 import {apiErrorText} from '../../i18n';
 import {committeeContentName, normalizeSearchTerm, searchOptions, type ContentLanguage} from '@quorum/contracts';
@@ -384,7 +385,7 @@ export function CommitteeTemplateManager({api}: {api: SelfHostedApi}) {
           </Form.Group>)}{unusedLanguages.length > 0 && <Button type="button" fluid className="add-template-language"
             onClick={() => setLocalizedNames(current => [...current, {id: draftId('language'), language: unusedLanguages[0]!, name: ''}])}>
             <Icon name="plus" />{t('Other language')}</Button>}</div>
-          <Form.Dropdown className="template-picker-field" required search fluid selection label={t('Country template')} value={countryKey}
+          <ViewportFormDropdown className="template-picker-field" required search fluid selection label={t('Country template')} value={countryKey}
             options={countryTemplates.map(template => ({key: template.key, value: template.key, text: localizedDisplayName(template.names, template.defaultLanguage),
               description: template.builtin ? t('Built-in') : t('My template')}))}
             onChange={(_event, data) => {setCountryKey(String(data.value)); setMemberName(''); setSaved(false);}} />
@@ -413,7 +414,7 @@ export function CommitteeTemplateManager({api}: {api: SelfHostedApi}) {
             <Table.Cell collapsing><Button type="button" basic negative icon="trash" aria-label={t('Remove')}
               onClick={() => setMembers(current => current.filter(item => item.id !== member.id))} /></Table.Cell>
           </Table.Row>)}</Table.Body><Table.Footer fullWidth><Table.Row><Table.HeaderCell>
-            <Dropdown fluid search={searchOptions} selection allowAdditions value={memberName} options={countryOptions}
+            <ViewportDropdown fluid search={searchOptions} selection allowAdditions value={memberName} options={countryOptions}
               onAddItem={(_event, data) => selectCountryOrCustom(String(data.value))}
               onChange={(_event, data) => selectCountryOrCustom(String(data.value))} />
           </Table.HeaderCell><Table.HeaderCell><Dropdown fluid selection value={rank} options={RANKS.map(value => ({key: value, value, text: t(value)}))}

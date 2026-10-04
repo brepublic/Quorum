@@ -1,3 +1,4 @@
+import {ViewportFormSelect} from '../../components/ViewportDropdown';
 import {apiErrorText} from '../../i18n';
 import {t, useLanguage, getLanguage} from '../../i18n';
 import * as React from 'react';
@@ -367,7 +368,7 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
         : activeBinding.providerType === 'CHAIR_AGENT' ? t("Chair computer")
           : `S3 · ${configs.find(config => config.id === activeBinding.providerConfigId)?.displayName ?? t("Configured storage")}`}</p>}
       <Form onSubmit={activeBinding ? createMigration : initializeStorage}>
-        <Form.Select label={activeBinding ? t("Migrate to") : t("Initial storage")} options={targetOptions}
+        <ViewportFormSelect label={activeBinding ? t("Migrate to") : t("Initial storage")} options={targetOptions}
           value={targetType === 'S3_COMPATIBLE' ? `S3:${targetConfigId}` : targetType}
           onChange={(_, data) => setTarget(String(data.value))} />
         <Button primary disabled={working || targetOptions.length === 0

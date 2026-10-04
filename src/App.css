@@ -2037,10 +2037,8 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   padding-left: calc(1.14285714rem + var(--motion-option-indent, 1em)) !important;
 }
 
-.motion-proposal-form .motion-type-field .ui.selection.dropdown > .menu,
-.motion-proposal-form .motion-proposer-field .ui.selection.dropdown > .menu,
-.motion-proposal-form .motion-seconder-field .ui.selection.dropdown > .menu {
-  max-height: var(--motion-menu-max-height);
+.ui.selection.dropdown.viewport-dropdown > .menu {
+  max-height: var(--dropdown-menu-max-height, calc(100dvh - 32px));
   overscroll-behavior-y: contain;
 }
 

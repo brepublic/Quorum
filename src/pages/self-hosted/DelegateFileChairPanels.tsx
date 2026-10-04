@@ -1,3 +1,4 @@
+import {ViewportFormSelect} from '../../components/ViewportDropdown';
 import {t, useLanguage, getLanguage} from '../../i18n';
 import {customDelegateFileType, DELEGATE_FILE_TYPES, delegateFileTypeName, isCustomDelegateFileType, committeeContentName, formatCommitteeContent, suggestCrisisNoticeName} from '@quorum/contracts';
 import * as React from 'react';
@@ -303,7 +304,7 @@ function DelegateFileReviewPanel({snapshot, api, files, refresh}: {
     <Modal size="tiny" open={Boolean(rejecting)} closeOnDimmerClick={!working} closeOnEscape={!working}
       onClose={() => {if (!working) setRejecting(undefined);}}>
       <Modal.Header>{t("Reject file")}</Modal.Header><Modal.Content>
-        <Form loading={!settings && !error}><Form.Select label={t("Rejection reason")} aria-label={t("Rejection reason")} selection
+        <Form loading={!settings && !error}><ViewportFormSelect label={t("Rejection reason")} aria-label={t("Rejection reason")} selection
           options={settings?.rejectionTypes.map(item => ({key: item.id, value: item.id, text: committeeContentName(item.label, snapshot.committee.committeeLanguage)})) ?? []}
           value={rejectionTypeId} disabled={working} onChange={(_, data) => {setRejectionTypeId(String(data.value)); setReason('');}} />
           {settings?.rejectionTypes.find(item => item.id === rejectionTypeId)?.custom

@@ -79,6 +79,7 @@ i.flag.sx:not(.icon):before {
   margin: 0;
   max-height: inherit;
   overflow-y: auto;
+  overscroll-behavior-y: contain;
   position: static;
   width: 100%;
 }

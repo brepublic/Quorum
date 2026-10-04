@@ -1,3 +1,4 @@
+import {ViewportDropdown, ViewportFormSelect, ViewportFormDropdown, dropdownPlacement} from '../../components/ViewportDropdown';
 import {FileStatusLabel} from '../../components/FileStatusLabel';
 import {apiErrorText} from '../../i18n';
 import {delegateFileTypeName, motionContentName, searchOptions, type ContentLanguage} from '@quorum/contracts';
@@ -68,25 +69,31 @@ function SpeakerSeatDropdown({value, options, disabled = false, error = false, p
     const anchor = anchorRef.current;
     if (!anchor) return;
     const rect = anchor.getBoundingClientRect();
-    const below = Math.max(0, window.innerHeight - rect.bottom - 8);
-    const above = Math.max(0, rect.top - 8);
-    const upward = below < 240 && above > below;
+    const {upward, maxHeight} = dropdownPlacement(rect, menuRef.current?.scrollHeight ?? 0);
     const width = Math.min(rect.width, Math.max(0, window.innerWidth - 16));
     setMenuStyle({left: Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)), width,
       ...(upward ? {bottom: window.innerHeight - rect.top - 1} : {top: rect.bottom - 1}),
-      maxHeight: Math.min(320, upward ? above : below)});
+      maxHeight});
   }, []);
 
   React.useLayoutEffect(() => {
     if (!open) return;
     placeMenu();
+    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(placeMenu);
+    if (anchorRef.current) observer?.observe(anchorRef.current);
+    if (menuRef.current) observer?.observe(menuRef.current);
     window.addEventListener('resize', placeMenu);
     window.addEventListener('scroll', placeMenu, true);
+    window.visualViewport?.addEventListener('resize', placeMenu);
+    window.visualViewport?.addEventListener('scroll', placeMenu);
     return () => {
+      observer?.disconnect();
       window.removeEventListener('resize', placeMenu);
       window.removeEventListener('scroll', placeMenu, true);
+      window.visualViewport?.removeEventListener('resize', placeMenu);
+      window.visualViewport?.removeEventListener('scroll', placeMenu);
     };
-  }, [open, placeMenu]);
+  }, [open, placeMenu, query, options]);
 
   React.useLayoutEffect(() => {
     const menu = menuRef.current;
@@ -882,7 +889,7 @@ function AmendmentCard({snapshot, amendment, run, api, canChair, representedSeat
           : files.length === 0 ? <><Message content={t('No published files')} />
             <Button as={Link} to={`/committees/${snapshot.committee.id}/posts`}>{t('Files')}</Button></>
           : <Form onSubmit={() => void useFile()}>
-            <Form.Select label={t('Choose file')} selection fluid search={files.length > 10}
+            <ViewportFormSelect label={t('Choose file')} selection fluid search={files.length > 10}
               value={selectedFileId || false} disabled={fileSaving}
               options={files.map(file => ({key: file.id, value: file.id,
                 text: file.logicalName, description: file.fileType ? delegateFileTypeName(file.fileType, snapshot.committee.committeeLanguage) : undefined}))}
@@ -1044,51 +1051,6 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
   const motionFieldRef = React.useRef<HTMLDivElement>(null);
   const motionInputId = React.useId();
   const [motionMenuOpen, setMotionMenuOpen] = React.useState(false);
-  const [sizedMenu, setSizedMenu] = React.useState<'type' | 'proposer' | 'seconder' | null>(null);
-  const [menuUpward, setMenuUpward] = React.useState(false);
-  React.useLayoutEffect(() => {
-    if (!sizedMenu) return;
-    const form = motionFieldRef.current?.closest('.motion-proposal-form');
-    const dropdown = form?.querySelector<HTMLElement>(`.motion-${sizedMenu}-field .ui.dropdown`);
-    const menu = dropdown?.querySelector<HTMLElement>('.menu');
-    if (!dropdown || !menu) return;
-    const placeMenu = () => {
-      const anchor = dropdown.getBoundingClientRect();
-      const viewport = window.visualViewport;
-      const top = viewport?.offsetTop ?? 0;
-      const bottom = top + (viewport?.height ?? document.documentElement.clientHeight);
-      const navigationBottom = Math.max(top, ...Array.from(document.querySelectorAll<HTMLElement>(
-        '.committee-navigation-desktop, .committee-navigation-mobile'), navigation => {
-        const rect = navigation.getBoundingClientRect();
-        return rect.height > 0 && rect.top < bottom && rect.bottom > top ? rect.bottom : top;
-      }));
-      const below = Math.max(0, bottom - anchor.bottom - 16);
-      const above = Math.max(0, anchor.top - navigationBottom - 16);
-      // Prefer downward opening whenever the full content fits there.
-      const upward = menu.scrollHeight > below && above > below;
-      dropdown.style.setProperty('--motion-menu-max-height', `${upward ? above : below}px`);
-      setMenuUpward(upward);
-    };
-    placeMenu();
-    const resizeObserver = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(placeMenu);
-    resizeObserver?.observe(dropdown);
-    resizeObserver?.observe(menu);
-    const mutationObserver = new MutationObserver(placeMenu);
-    mutationObserver.observe(menu, {childList: true, subtree: true, characterData: true});
-    window.addEventListener('resize', placeMenu);
-    window.addEventListener('scroll', placeMenu, true);
-    window.visualViewport?.addEventListener('resize', placeMenu);
-    window.visualViewport?.addEventListener('scroll', placeMenu);
-    return () => {
-      resizeObserver?.disconnect();
-      mutationObserver.disconnect();
-      window.removeEventListener('resize', placeMenu);
-      window.removeEventListener('scroll', placeMenu, true);
-      window.visualViewport?.removeEventListener('resize', placeMenu);
-      window.visualViewport?.removeEventListener('scroll', placeMenu);
-      dropdown.style.removeProperty('--motion-menu-max-height');
-    };
-  }, [sizedMenu, motionSearch, snapshot]);
   React.useLayoutEffect(() => {
     const menu = motionFieldRef.current?.querySelector<HTMLElement>('.menu');
     if (motionMenuOpen && motionSearch && menu) menu.scrollTop = 0;
@@ -1263,11 +1225,11 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
       error={(!chairAdvisoryMode && !divisible) || identicalSeats} onSubmit={propose}>
       <div className="field motion-type-field" ref={motionFieldRef}>
         <label htmlFor={motionInputId}>{t('Type')}</label>
-        <Dropdown placeholder={t('Select type')} search={(options, query) => groupedMotionOptions(options, query, snapshot.motionSettings.groupMotionTypes)} selection fluid icon="search"
-        searchInput={{id: motionInputId}} aria-label={t('Type')} upward={sizedMenu === 'type' && menuUpward}
-        onOpen={() => {setMotionMenuOpen(true); setSizedMenu('type');}}
+        <ViewportDropdown placeholder={t('Select type')} search={(options, query) => groupedMotionOptions(options, query, snapshot.motionSettings.groupMotionTypes)} selection fluid icon="search"
+        searchInput={{id: motionInputId}} aria-label={t('Type')}
+        onOpen={() => setMotionMenuOpen(true)}
         searchQuery={motionSearch} onSearchChange={(_, data) => setMotionSearch(data.searchQuery)}
-        onClose={() => {setMotionSearch(''); setMotionMenuOpen(false); setSizedMenu(null); setMenuUpward(false);}} text={selectedMotionOption?.text}
+        onClose={() => {setMotionSearch(''); setMotionMenuOpen(false);}} text={selectedMotionOption?.text}
         options={groupedMotionOptions(displayedMotionOptions, '', snapshot.motionSettings.groupMotionTypes)} value={selectedMotionOption ? motionChoice : ''} onChange={(_, data) => {
           if (!motionOptions.some(option => option.value === data.value)) return;
           setMotionSearch('');
@@ -1298,17 +1260,15 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
           label={t(motionDetailLabel(motionType))} placeholder={t(motionDetailLabel(motionType))}
           value={proposal} onChange={event => setProposal(event.currentTarget.value)} />}</Form.Group>}
       <Form.Group widths="equal">
-        <Form.Select key="proposer" icon="search" search={searchOptions} selection fluid
-          className="motion-proposer-field" upward={sizedMenu === 'proposer' && menuUpward}
-          onOpen={() => setSizedMenu('proposer')} onClose={() => {setSizedMenu(null); setMenuUpward(false);}}
+        <ViewportFormSelect key="proposer" icon="search" search={searchOptions} selection fluid
+          className="motion-proposer-field"
           label={t('Proposer')}
           placeholder={t('Select a delegation')}
           value={proposerId || false} error={Boolean(proposerId) && (!presentSeatIds.has(proposerId) || identicalSeats)}
           options={seatOptions} disabled={!canChair}
           onChange={(_, data) => setProposerId(String(data.value))} />
-        {needsSeconder && <Form.Select key="seconder" icon="search" search={searchOptions} selection fluid label={t('Seconder')}
-          className="motion-seconder-field" upward={sizedMenu === 'seconder' && menuUpward}
-          onOpen={() => setSizedMenu('seconder')} onClose={() => {setSizedMenu(null); setMenuUpward(false);}}
+        {needsSeconder && <ViewportFormSelect key="seconder" icon="search" search={searchOptions} selection fluid label={t('Seconder')}
+          className="motion-seconder-field"
           value={seconderId || false} error={identicalSeats || !chairAdvisoryMode && (!seconderId || !presentSeatIds.has(seconderId))}
           options={seatOptions} disabled={!canChair}
           onChange={(_, data) => setSeconderId(String(data.value))} />}
@@ -1321,7 +1281,7 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
           icon="search" label={t('Target caucus')} value={caucusTarget}
           options={openCaucuses.map(list => ({key: list.id, value: list.id, text: list.topic || t('Moderated Caucus')}))}
           onChange={(_, data) => setCaucusTarget(String(data.value))} />}
-        {hasResolutionTarget(motionType) && <Form.Select required key="resolutionTarget" search={searchOptions} selection fluid error={!resolutionTarget}
+        {hasResolutionTarget(motionType) && <ViewportFormSelect required key="resolutionTarget" search={searchOptions} selection fluid error={!resolutionTarget}
           icon="search" label={t('Target Draft Resolution')} value={resolutionTarget}
           options={targetResolutions.map(document => {
             const descriptions = ['introduce-draft-resolution', 'vote-on-resolution'].includes(motionType)
@@ -2000,7 +1960,7 @@ function VotingWorkspace({snapshot, run, api, canChair, resourceId}: CommonProps
   };
   if (!resourceId || resourceId === 'new') return <Container className="new-document-vote-page">
     <Card centered className="new-document-vote-card"><Card.Content><Form onSubmit={() => void create()}>
-      <Form.Field><Dropdown aria-label={t('Choose draft')} placeholder={t('Choose draft')} selection fluid
+      <Form.Field><ViewportDropdown aria-label={t('Choose draft')} placeholder={t('Choose draft')} selection fluid
         className="new-document-vote-selector" selectOnBlur={false}
         value={candidates.some(item => item.id === draftId) ? draftId : ''} disabled={!canChair || saving}
         onChange={(_, data) => {if (candidates.some(item => item.id === data.value)) setDraftId(String(data.value));}}
@@ -2012,7 +1972,7 @@ function VotingWorkspace({snapshot, run, api, canChair, resourceId}: CommonProps
           }).map(item => ({key: item.id, value: item.id, text: item.title, className: 'draft-group-option',
             description: !item.currentVersion.contentFile && !item.currentVersion.content.trim() ? t('No content') : undefined}))
         ]) : [{key: 'empty', value: 'empty', text: t('(Empty)'), disabled: true, className: 'draft-empty'}]} /></Form.Field>
-      {selectedDraft?.draftType==='DIRECTIVE' && <Form.Select fluid selection label={t('Responding to crisis')} aria-label={t('Responding to crisis')}
+      {selectedDraft?.draftType==='DIRECTIVE' && <ViewportFormSelect fluid selection label={t('Responding to crisis')} aria-label={t('Responding to crisis')}
         value={crisisId} disabled={!canChair || saving || Boolean(selectedDraft.directVote?.crisisGroupId)}
         options={(selectedDraft.directVote?.crisisGroupId
           ? (snapshot.crises ?? []).filter(group=>group.id===selectedDraft.directVote?.crisisGroupId) : activeCrises).map(group=> {
@@ -2175,7 +2135,7 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab, draft
         <Menu.Item key={path} as={Link} to={path === 'text' ? base : `${base}/${path}`}
           active={activeTab === path}>{t(label)}</Menu.Item>)}</Menu></Grid.Column></Grid.Row>
     <Grid.Row><Grid.Column width={11}>
-    {draftType==='DIRECTIVE' && <Form><Form.Select fluid selection label={t('Responding to crisis')} aria-label={t('Responding to crisis')}
+    {draftType==='DIRECTIVE' && <Form><ViewportFormSelect fluid selection label={t('Responding to crisis')} aria-label={t('Responding to crisis')}
       value={document.directVote?.crisisGroupId ?? ''} disabled={!canChair || !canParticipate || Boolean(document.directVote?.startedAt || document.directVote?.invalidatedAt)}
       options={(snapshot.crises ?? []).flatMap(group=> {
         const update=group.updates.find(update=>update.id===document.directVote?.crisisUpdateId)
@@ -2209,7 +2169,7 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab, draft
           : availableFiles.length === 0 ? <><Message content={t('No published files')} />
             <Button as={Link} to={`/committees/${snapshot.committee.id}/posts`}>{t('Files')}</Button></>
           : <Form onSubmit={() => void useFile()}>
-            <Form.Select label={t('Choose file')} selection fluid search={availableFiles.length > 10}
+            <ViewportFormSelect label={t('Choose file')} selection fluid search={availableFiles.length > 10}
               value={selectedExistingFileId || false} disabled={fileSaving}
               options={availableFiles.map(file => ({key: file.id, value: file.id,
                 text: file.logicalName, description: file.fileType ? delegateFileTypeName(file.fileType, snapshot.committee.committeeLanguage) : undefined}))}
@@ -2250,7 +2210,7 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab, draft
             aria-label={`${t('Remove')} ${country.seatDisplayName}`}
             onClick={() => void saveCountries(role, countryDocument[role].filter(item => item.seatId !== country.seatId).map(item => item.seatId))} />}
         </li>)}</ul>
-        {canEditCountries && <><Form.Dropdown search={searchOptions} selection fluid placeholder={t('Country or delegation')}
+        {canEditCountries && <><ViewportFormDropdown search={searchOptions} selection fluid placeholder={t('Country or delegation')}
           aria-label={t(role === 'proposers' ? 'Resolution proposer' : 'Resolution seconder')}
           value={countrySelections[role] || false} options={countryOptions} disabled={countriesSaving}
           onChange={(_, data) => setCountrySelections(previous => ({...previous, [role]: String(data.value)}))} />

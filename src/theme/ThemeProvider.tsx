@@ -1,10 +1,10 @@
+import {ViewportDropdown} from '../components/ViewportDropdown';
 import * as React from 'react';
 import {createPortal} from 'react-dom';
 import {useLocation} from 'react-router-dom';
 import {saveAs} from 'file-saver';
 import {
   Button,
-  Dropdown,
   Form,
   Header,
   Icon,
@@ -187,7 +187,7 @@ function ThemeManager(props: {
         <Form>
           <Form.Field>
             <label>{t('Active theme')}</label>
-            <Dropdown
+            <ViewportDropdown
               fluid
               selection
               options={options}

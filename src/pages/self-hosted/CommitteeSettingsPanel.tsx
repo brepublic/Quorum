@@ -1,3 +1,4 @@
+import {ViewportFormSelect} from '../../components/ViewportDropdown';
 import * as React from 'react';
 import type {CommitteeWorkspaceSnapshot} from '@quorum/contracts';
 import {Prompt, useHistory} from 'react-router-dom';
@@ -275,7 +276,7 @@ export default function CommitteeSettingsPanel({snapshot, api, canChair, refresh
           <Form.Select label={t('Operation mode')} aria-label={t('Operation mode')} value={String(value('operationMode'))} selectOnBlur={false}
             disabled={!canEdit('operationMode') || pending} options={['DELEGATE_OPERATED', 'CHAIR_OPERATED'].map(item => ({key: item, value: item, text: t(item)}))}
             onChange={(_, data) => select('operationMode', String(data.value))} />
-          <Form.Select label={t('Rule version')} aria-label={t('Rule version')} value={String(value('rules'))} selectOnBlur={false}
+          <ViewportFormSelect label={t('Rule version')} aria-label={t('Rule version')} value={String(value('rules'))} selectOnBlur={false}
             disabled={!canEdit('rules') || pending || !!ruleError} options={ruleOptions}
             onChange={(_, data) => select('rules', String(data.value))} />
         </div></Form>{errors('operation')}{Boolean(ruleError) && <Message negative role="alert">{apiErrorText(ruleError)} <Button size="mini" onClick={() => void loadRules()}>{t('Retry')}</Button></Message>}

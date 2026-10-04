@@ -1,3 +1,4 @@
+import {ViewportFormSelect} from '../../components/ViewportDropdown';
 import * as React from 'react';
 import {Link, useHistory} from 'react-router-dom';
 import {Button, Card, Form, Icon, Input, Label, Message, Modal, Table} from 'semantic-ui-react';
@@ -110,7 +111,7 @@ function CrisisCard({group,card,files,api,run,editable}: {
     {editable ? <Form>
       <Table compact celled unstackable className="motion-metadata-table crisis-metadata"><Table.Body>
       <Table.Row><Table.Cell className="motion-metadata-key">{t('Crisis notice')}</Table.Cell><Table.Cell>
-      <Form.Select fluid selection aria-label={t('Crisis notice')} value={draft.fileId ?? ''} disabled={working}
+      <ViewportFormSelect fluid selection aria-label={t('Crisis notice')} value={draft.fileId ?? ''} disabled={working}
         options={choices.map(file=>({key:file.id,value:file.id,text:file.logicalName,description:file.originalName}))}
         onChange={(_,data)=> {
           const id=String(data.value);

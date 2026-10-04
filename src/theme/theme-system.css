@@ -267,6 +267,7 @@
 #quorum-app[data-theme-api='2'] .ui.table thead th { color: var(--q-theme-text-muted) !important; background: var(--q-theme-surface-raised) !important; border-color: var(--q-theme-border) !important; }
 #quorum-app[data-theme-api='2'] .ui.table td { color: var(--q-theme-text) !important; border-color: var(--q-theme-border) !important; }
 #quorum-app[data-theme-api='2'][data-theme-tables='cards'] [data-theme-component~='table'] { overflow: hidden; border-radius: var(--q-theme-radius-md) !important; box-shadow: var(--q-theme-shadow-sm) !important; }
+#quorum-app[data-theme-api='2'] :is([data-theme-component~='table'], .ui.segments):has(.viewport-dropdown.active) { overflow: visible; }
 
 #quorum-app[data-theme-api='2'] [data-theme-component~='label'] { color: var(--q-theme-text) !important; background: var(--q-theme-surface-raised) !important; border-color: var(--q-theme-border) !important; border-radius: var(--q-theme-control-radius) !important; }
 #quorum-app[data-theme-api='2'] .ui.blue.label,

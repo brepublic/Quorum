@@ -1,3 +1,4 @@
+import {ViewportFormDropdown, ViewportFormSelect} from '../components/ViewportDropdown';
 import {useApiFieldErrors} from '../components/useApiFieldErrors';
 import {useLanguage} from '../i18n';
 import * as React from 'react';
@@ -153,7 +154,7 @@ function CommitteeList({api, user, logout}: {api: SelfHostedApi; user: SelfHoste
       </Segment></Grid.Column>
       {!user.isSystemAdmin && <Grid.Column width={10}><Segment><Form onSubmit={create} loading={working}>
       <Form.Group unstackable className="template-picker-row">
-        <Form.Dropdown {...field('committeeTemplateId', 'committeeTemplateRevision', 'members')} className="template-picker-field" label={t('Template')} search clearable fluid selection
+        <ViewportFormDropdown {...field('committeeTemplateId', 'committeeTemplateRevision', 'members')} className="template-picker-field" label={t('Template')} search clearable fluid selection
           placeholder={t('Template to skip manual member creation (optional)')} value={templateId}
           options={committeeTemplates.map(item => ({key: item.id, value: item.id,
             text: localizedDisplayName(item.names, item.defaultLanguage), description: item.builtin ? t('Built-in') : t('My template')}))}
@@ -163,11 +164,11 @@ function CommitteeList({api, user, logout}: {api: SelfHostedApi; user: SelfHoste
           <Popup.Content><TemplatePreview template={selectedTemplate} language={selectedLanguageValid ? committeeLanguage || undefined : undefined} /></Popup.Content>
         </Popup>
       </Form.Group>
-      <Form.Select {...field('countryTemplateKey', 'countryTemplateRevision', 'countries')} className="template-picker-field" label={t('Country template')} required disabled={!!templateId} value={countryKey}
+      <ViewportFormSelect {...field('countryTemplateKey', 'countryTemplateRevision', 'countries')} className="template-picker-field" label={t('Country template')} required disabled={!!templateId} value={countryKey}
         options={countryTemplates.map(item => ({key: item.key, value: item.key, text: localizedDisplayName(item.names, item.defaultLanguage),
           description: item.builtin ? t('Built-in') : t('My template')}))}
         onChange={(_, data) => setCountryKey(String(data.value))} />
-      <Form.Select {...field('activeRulePackageVersionId', 'rules')} label={t('Rules')} required value={ruleVersionId} options={ruleOptions}
+      <ViewportFormSelect {...field('activeRulePackageVersionId', 'rules')} label={t('Rules')} required value={ruleVersionId} options={ruleOptions}
         onChange={(_, data) => setRuleVersionId(String(data.value))} />
       <Form.Select {...field('committeeLanguage')} label={t('Committee language')} required value={committeeLanguage}
         options={LANGUAGE_OPTIONS.filter(option => supportedLanguages.includes(option.value))}
@@ -520,7 +521,7 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
       <Table.HeaderCell>{t('Seat')}</Table.HeaderCell><Table.HeaderCell>{t('Rank')}</Table.HeaderCell>
       <Table.HeaderCell>{t('Procedural voting')}</Table.HeaderCell><Table.HeaderCell>{t('Voting rights')}</Table.HeaderCell><Table.HeaderCell>{t('Veto power')}</Table.HeaderCell><Table.HeaderCell>{t('No abstention')}</Table.HeaderCell>
       {canChair && !readOnly && <Table.HeaderCell />}</Table.Row>
-      {canChair && !readOnly && <Table.Row className="add-seat-row"><Table.HeaderCell><Form.Select aria-label={t('Seat')} search={searchOptions} selection
+      {canChair && !readOnly && <Table.Row className="add-seat-row"><Table.HeaderCell><ViewportFormSelect aria-label={t('Seat')} search={searchOptions} selection
         value={selectedCountryStableKey} options={countryOptions} onChange={(_, data) => setSelectedCountryStableKey(String(data.value ?? ''))} /></Table.HeaderCell>
         <Table.HeaderCell><Form.Select aria-label={t('Rank')} search selection fluid value={seatRank} options={rankOptions}
           onChange={(_, data) => {const rank = data.value as typeof seatRank; setSeatRank(rank); if (rank === 'MEDIA') {setSeatCanVote(false); setSeatCanProceduralVote(false); setSeatHasVeto(false); setSeatMustVote(false);}}} /></Table.HeaderCell>
@@ -648,7 +649,7 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
       <Card fluid><Card.Content><Header as="h2">{t('Seat assignments')}</Header>
       <Form onSubmit={async () => {await execute('assign-seat', () => api.assignSeat(snapshot.committee.id,
         assignmentSeatId, assignmentEmail.trim())); setAssignmentEmail('');}}>
-        <Form.Select label={t('Seat')} search={searchOptions} value={assignmentSeatId} options={displayedSeats.map(seat =>
+        <ViewportFormSelect label={t('Seat')} search={searchOptions} value={assignmentSeatId} options={displayedSeats.map(seat =>
           ({key: seat.id, value: seat.id, text: seat.displayName, searchTerms: seat.searchTerms}))} onChange={(_, data) => setAssignmentSeatId(String(data.value))} />
         <Form.Input label={t('Email')} required type="email" value={assignmentEmail} onChange={(_, data) => setAssignmentEmail(String(data.value ?? ""))} />
         <Button primary loading={pending === 'assign-seat'} disabled={!assignmentSeatId || !assignmentEmail.trim()}>{t('Assign seat')}</Button>
@@ -663,7 +664,7 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
       </Card.Content></Card>
       <Card fluid><Card.Content><Header as="h2">{t('One-time seat invitation')}</Header>
       <Form onSubmit={createInvitation}>
-        <Form.Select label={t('Seat')} search={searchOptions} value={invitationSeatId} options={displayedSeats.map(seat =>
+        <ViewportFormSelect label={t('Seat')} search={searchOptions} value={invitationSeatId} options={displayedSeats.map(seat =>
           ({key: seat.id, value: seat.id, text: seat.displayName, searchTerms: seat.searchTerms}))} onChange={(_, data) => setInvitationSeatId(String(data.value))} />
         <Form.Input label={t('Expires at')} type="datetime-local" required value={invitationExpiresAt}
           onChange={event => setInvitationExpiresAt(event.currentTarget.value)} />
@@ -1004,12 +1005,12 @@ function PointsPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspa
     <Container text className="points-page">
     {canRaise && session?.status === 'OPEN' && types.length === 0 && <Message content={t('The current rules do not enable points.')} />}
     {canRaise && session?.status === 'OPEN' && types.length > 0 && <Form className="point-proposal-form" onSubmit={create}>
-      <Form.Select label={t('Point type')} placeholder={t('Select type')} search={searchOptions} selection fluid icon="search"
+      <ViewportFormSelect label={t('Point type')} placeholder={t('Select type')} search={searchOptions} selection fluid icon="search"
         value={type} options={types.map(item => ({key: item.id, value: item.id,
           text: item.names ? committeeContentName(item.names, snapshot.committee.committeeLanguage) : t(item.id),
           searchTerms: item.searchTerms}))}
         onChange={(_, data) => setType(String(data.value))} />
-      {canChair && <Form.Select label={t('Point proposer')} placeholder={t('Select point proposer')} search={searchOptions} selection
+      {canChair && <ViewportFormSelect label={t('Point proposer')} placeholder={t('Select point proposer')} search={searchOptions} selection
         fluid icon="search" value={seatId || false} options={snapshot.seats.map(seat => ({key: seat.id,
           value: seat.id, text: seat.displayName, searchTerms: seat.searchTerms}))} onChange={(_, data) => setSeatId(String(data.value))} />}
       <Form.TextArea label={chairOperated ? t('Reason (optional)') : t('Reason')} required={!chairOperated}

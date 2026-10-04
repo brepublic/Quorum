@@ -1503,23 +1503,23 @@ describe('committee workspace routes and roles', () => {
     try {
       await act(async () => {dropdown.click();});
       expect(dropdown.classList.contains('upward')).toBe(false);
-      expect(dropdown.style.getPropertyValue('--motion-menu-max-height')).toBe('744px');
+      expect(dropdown.style.getPropertyValue('--dropdown-menu-max-height')).toBe('744px');
       anchorTop = 600;
       await act(async () => {window.dispatchEvent(new Event('scroll'));});
       expect(dropdown.classList.contains('upward')).toBe(true);
-      expect(dropdown.style.getPropertyValue('--motion-menu-max-height')).toBe('524px');
+      expect(dropdown.style.getPropertyValue('--dropdown-menu-max-height')).toBe('524px');
       // A short search result fits below, so restore the default direction.
       contentHeight = 80;
       await act(async () => {menu.append(document.createTextNode('filtered'));});
       expect(dropdown.classList.contains('upward')).toBe(false);
-      expect(dropdown.style.getPropertyValue('--motion-menu-max-height')).toBe('244px');
+      expect(dropdown.style.getPropertyValue('--dropdown-menu-max-height')).toBe('244px');
       viewportHeight = 700; anchorTop = 100; contentHeight = 800;
       await act(async () => {window.dispatchEvent(new Event('resize'));});
       expect(dropdown.classList.contains('upward')).toBe(false);
-      expect(dropdown.style.getPropertyValue('--motion-menu-max-height')).toBe('544px');
+      expect(dropdown.style.getPropertyValue('--dropdown-menu-max-height')).toBe('544px');
       await act(async () => {dropdown.querySelector('input')!.dispatchEvent(new KeyboardEvent('keydown',
         {key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true}));});
-      expect(dropdown.style.getPropertyValue('--motion-menu-max-height')).toBe('');
+      expect(dropdown.style.getPropertyValue('--dropdown-menu-max-height')).toBe('');
     } finally {
       rect.mockRestore(); navRect.mockRestore();
       if (viewportDescriptor) Object.defineProperty(document.documentElement, 'clientHeight', viewportDescriptor);
@@ -2425,6 +2425,26 @@ describe('committee workspace routes and roles', () => {
         {removeSpeakerQueueEntry});
       const dropdown = page.querySelector<HTMLElement>('.speaker-seat-dropdown .ui.dropdown');
       await act(async () => {dropdown?.click(); await Promise.resolve();});
+      const portal = document.body.querySelector<HTMLElement>('.speaker-seat-dropdown-portal')!;
+      const menu = portal.querySelector<HTMLElement>('.menu')!;
+      let anchorTop = 100, contentHeight = 1000;
+      const anchorRect = vi.spyOn(dropdown!, 'getBoundingClientRect').mockImplementation(() =>
+        ({top: anchorTop, bottom: anchorTop + 40, height: 40, left: 100, width: 300} as DOMRect));
+      const navigationRect = vi.spyOn(page.querySelector('.committee-navigation-desktop')!, 'getBoundingClientRect')
+        .mockReturnValue({top: 0, bottom: 60, height: 60} as DOMRect);
+      Object.defineProperty(menu, 'scrollHeight', {configurable: true, get: () => contentHeight});
+      const viewportHeight = document.documentElement.clientHeight || window.innerHeight;
+      await act(async () => {window.dispatchEvent(new Event('resize'));});
+      expect(portal.style.maxHeight).toBe(`${viewportHeight - 156}px`);
+      expect(Number.parseFloat(portal.style.maxHeight)).toBeGreaterThan(320);
+      anchorTop = viewportHeight - 100;
+      await act(async () => {window.dispatchEvent(new Event('scroll'));});
+      expect(portal.style.bottom).not.toBe('');
+      expect(portal.style.maxHeight).toBe(`${anchorTop - 76}px`);
+      contentHeight = 20;
+      await act(async () => {window.dispatchEvent(new Event('resize'));});
+      expect(portal.style.bottom).toBe('');
+      anchorRect.mockRestore(); navigationRect.mockRestore();
       const absent = document.body.querySelector<HTMLElement>('.speaker-seat-dropdown-portal [role="option"]:nth-child(2)');
       expect(absent?.textContent).toContain('France');
       expect(absent?.textContent).toContain('Absent');

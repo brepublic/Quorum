@@ -1,3 +1,4 @@
+import {ViewportFormSelect} from '../../components/ViewportDropdown';
 import {apiErrorText} from '../../i18n';
 import {t, useLanguage, getLanguage} from '../../i18n';
 import * as React from 'react';
@@ -251,7 +252,7 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
   if (!portal.claimedSeat) return <Container className="delegate-file-claim-page">
     {error && <Message error content={error} />}
     <Card centered className="delegate-file-claim-card"><Card.Content><Card.Header>{t("Select a delegation")}</Card.Header>
-      <Form><Form.Select fluid selection search={(options, query) => {
+      <Form><ViewportFormSelect fluid selection search={(options, query) => {
         const matching = searchOptions(options.filter(option => !option.disabled), query);
         const ids = new Set(matching.map(option => option.value));
         const ranks = new Set(portal.eligibleSeats.filter(seat => ids.has(seat.id)).map(seat => seat.rank));
