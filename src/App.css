@@ -2825,6 +2825,7 @@ html[lang='zh-CN'] .ui {
 }
 
 .resolution-voting-current .ui.header.resolution-voting-current-name {
+  font-size: 41px;
   min-height: max(6.25rem, 3em);
 }
 
