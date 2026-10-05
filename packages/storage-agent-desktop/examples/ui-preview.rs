@@ -502,6 +502,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         row.stem = "长文件名-Long filename with spaces and 中文, supplementary materials and revisions-final".into(); row.extension = ".docx".into();
         rows.set_row_data(0, row);
     }
+    if std::env::args().any(|arg| arg == "--short-size") {
+        let mut row = window.get_files().row_data(0).unwrap();
+        row.name = "工作文件 1.1".into(); row.actual_name = "content".into(); row.stem = "content".into(); row.extension = "".into();
+        row.size = "36 B".into(); row.progressing = false; row.local = translate("READY_PUBLISHED", language).into();
+        window.set_files(ModelRc::new(VecModel::from(vec![row])));
+    }
+    let size_width = window.get_files().iter().fold(window.invoke_measure_size(translate("Size", language).into()), |width, row| width.max(window.invoke_measure_size(row.size)));
+    window.set_size_column_width(size_width.ceil());
+    assert!(size_width > 0. && size_width < 80., "Size column must fit the actual samples without the old reserved width");
+    if std::env::args().any(|arg| arg == "--short-size") {assert!(size_width < 40., "36 B must not retain a wide column");}
     window.show()?;
     if let Some(adapter) = offscreen {
         let (width, height) = if std::env::args().any(|arg| arg == "--small") {
@@ -515,6 +525,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         adapter.draw_if_needed(|renderer| {
             renderer.render(pixels.make_mut_slice(), width as usize);
         });
+        if std::env::args().any(|arg| arg == "--short-size") {
+            let position = slint::LogicalPosition::new(if width == 760 {250.} else {400.}, if width == 760 {360.} else {375.});
+            for pressed in [true, false] {
+                let button = slint::platform::PointerEventButton::Left;
+                window.window().dispatch_event(if pressed {slint::platform::WindowEvent::PointerPressed {position, button}} else {slint::platform::WindowEvent::PointerReleased {position, button}});
+            }
+            slint::platform::update_timers_and_animations();
+            assert_eq!(window.get_selected_name_key(), "file-1:actual");
+            window.window().request_redraw();
+            adapter.draw_if_needed(|renderer| {renderer.render(pixels.make_mut_slice(), width as usize);});
+        }
         if std::env::args().any(|arg| arg == "--name-popup" || arg == "--name-menu") {
             let position = slint::LogicalPosition::new(if width == 760 {250.} else {400.}, if width == 760 {337.} else {350.});
             window.window().dispatch_event(slint::platform::WindowEvent::PointerMoved {position});

@@ -89,6 +89,9 @@ fn render(ui: &MainWindow, rows: &[Value], logs: &[String]) {
             }
         })
         .collect();
+    let mut size_width = ui.invoke_measure_size(translate("Size", ui.get_language().as_str()).into());
+    for row in &model {size_width = size_width.max(ui.invoke_measure_size(row.size.clone()));}
+    ui.set_size_column_width(size_width.ceil());
     let current = ui.get_files();
     if let Some(existing) = current.as_any().downcast_ref::<VecModel<FileRow>>() {
         // Update matching rows in place so snapshots preserve selection and focus.
