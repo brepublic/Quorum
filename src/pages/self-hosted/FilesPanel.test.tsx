@@ -190,7 +190,7 @@ describe('self-hosted stage 6 file panel', () => {
     expect(createStoragePairingCode).toHaveBeenCalledWith(committeeId, 2, 'INITIAL');
     expect(manager.textContent).toContain('QRM-ABCD-EFGH');
     expect(openChairAgent).toHaveBeenCalledWith(pairingConfiguration);
-    await act(async () => {button('下载配置文件')?.click();});
+    await act(async () => {button('下载配对文件')?.click();});
     expect(downloadChairConfiguration).toHaveBeenCalledWith(pairingConfiguration);
     expect(createStoragePairingCode).toHaveBeenCalledTimes(1);
     act(() => root?.unmount()); manager.remove(); root = undefined; container = undefined;
@@ -198,6 +198,21 @@ describe('self-hosted stage 6 file panel', () => {
     const member = await render('MEMBER', api({createStoragePairingCode}), 'member');
     expect(member.textContent).not.toContain('配对主席电脑');
     expect(createStoragePairingCode).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports an unfinished launch without claiming that the Agent paired', async () => {
+    const createStoragePairingCode = vi.fn(async () => ({code:'QRM-ABCD-EFGH',purpose:'INITIAL' as const,
+      expiresAt:'2099-08-13T01:00:00.000Z',configuration:pairingConfiguration}));
+    const view = await render('CHAIR', api({listFiles:vi.fn(async()=>[]),createStoragePairingCode}), 'chair');
+    vi.useFakeTimers();
+    try {
+      await act(async () => {button('配对主席电脑')?.click();});
+      expect(view.textContent).toContain('等待主席 Agent 配对');
+      expect(view.textContent).not.toContain('配对完成');
+      await act(async () => {await vi.advanceTimersByTimeAsync(8000);});
+      expect(view.textContent).toContain('若 Agent 未打开，请下载配对文件');
+      expect(view.textContent).not.toContain('配对完成');
+    } finally {vi.useRealTimers();}
   });
 
   it('uses the loaded committee revision when transferring or revoking the active host', async () => {

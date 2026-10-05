@@ -76,6 +76,7 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
   const [pairing, setPairing] = React.useState<StoragePairingSetup>();
   const pairingHostId = React.useRef<string>();
   const [pairingExpired, setPairingExpired] = React.useState(false);
+  const [pairingWaiting, setPairingWaiting] = React.useState(false);
   const [pairingFeedback, setPairingFeedback] = React.useState('');
   const [conflicts, setConflicts] = React.useState<StorageAgentConflict[]>([]);
   const [conflictNames, setConflictNames] = React.useState<Record<string, string>>({});
@@ -198,7 +199,7 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
     try {
       const result = await api.createStoragePairingCode(committeeId, snapshot.committee.revision, purpose);
       pairingHostId.current = activeHost?.id;
-      setPairing(result); setPairingExpired(false); setPairingFeedback('');
+      setPairing(result); setPairingExpired(false); setPairingWaiting(false); setPairingFeedback('');
       openChairAgent(result.configuration);
     }
     catch (caught) { setError(caught); await refresh(false); }
@@ -209,7 +210,8 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
     const checkExpiry = () => setPairingExpired(Date.now() >= Date.parse(pairing.expiresAt));
     checkExpiry();
     const timer = window.setInterval(checkExpiry, 1000);
-    return () => window.clearInterval(timer);
+    const waiting = window.setTimeout(() => setPairingWaiting(true), 8000);
+    return () => {window.clearInterval(timer); window.clearTimeout(waiting);};
   }, [pairing]);
   React.useEffect(() => {
     if (pairing && activeHost && activeHost.id !== pairingHostId.current) {
@@ -359,11 +361,12 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
             {pairingExpired ? <Button type="button" primary onClick={() => void createPairing(activeHost ? 'TRANSFER' : 'INITIAL')}>
               {t("Generate new configuration")}</Button> : <>
               <Button type="button" primary onClick={() => openChairAgent(pairing.configuration)}>{t("Open Chair Agent")}</Button>
-              <Button type="button" onClick={() => downloadChairConfiguration(pairing.configuration)}>{t("Download configuration")}</Button>
+              <Button type="button" onClick={() => downloadChairConfiguration(pairing.configuration)}>{t("Download pairing file")}</Button>
             </>}
             <Button type="button" basic onClick={() => setPairing(undefined)}>{t("Close")}</Button>
           </div>
         </div>
+        {!pairingExpired && pairingWaiting && <p>{t("Pairing is not complete. If the Agent did not open, download the pairing file and select it in the Agent.")}</p>}
         {!pairingExpired && <details className="storage-pairing-manual"><summary>{t("Manual pairing")}</summary>
           <code className="self-hosted-pairing-code">{pairing.code}</code>
           <Button type="button" basic size="small" onClick={async () => {
