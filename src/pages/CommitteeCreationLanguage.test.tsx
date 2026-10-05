@@ -1,7 +1,7 @@
 import * as React from 'react';
 import {act} from 'react';
 import {createRoot, type Root} from 'react-dom/client';
-import {MemoryRouter} from 'react-router-dom';
+import {MemoryRouter, useLocation} from 'react-router-dom';
 import {afterEach, describe, expect, it, vi} from 'vitest';
 import type {ContentLanguage} from '@quorum/contracts';
 import SelfHostedWorkspace from './SelfHostedWorkspace';
@@ -15,13 +15,16 @@ let root: Root | undefined; let container: HTMLDivElement;
 afterEach(() => {act(() => root?.unmount()); root = undefined; container?.remove(); setLanguage('en');});
 function Page({api}: {api: SelfHostedApi}) {
   useLanguage();
-  return <SelfHostedWorkspace user={user} api={api} logout={() => undefined} />;
+  const location = useLocation();
+  return <><output data-testid="creation-location">{location.pathname}</output>
+    <SelfHostedWorkspace user={user} api={api} logout={() => undefined} /></>;
 }
 const combinations: Array<[ContentLanguage, ContentLanguage]> = [['en','en'], ['en','zh-CN'], ['zh-CN','en'], ['zh-CN','zh-CN']];
 describe('committee creation content language', () => {
   it.each(combinations)('keeps %s content while displaying the %s interface', async (contentLanguage, interfaceLanguage) => {
     setLanguage(contentLanguage);
-    const createCommittee = vi.fn(() => new Promise(() => undefined));
+    let finishCreation!: (value: {id: string}) => void;
+    const createCommittee = vi.fn(() => new Promise<{id: string}>(resolve => {finishCreation = resolve;}));
     const api = {
       listCommittees: async () => [], listCommitteeTemplates: async () => [],
       listCountryTemplates: async () => [{id: 'countries', key: 'builtin:default', names: {en: 'Countries', 'zh-CN': '国家'},
@@ -36,7 +39,7 @@ describe('committee creation content language', () => {
         {scope: 'SYSTEM', key: 'system:custom', versions: [1, 2].map(version => ({id: `custom-${version}`, version,
           status: 'PUBLISHED', names: {en: `Custom Rules ${version}`},
           languageAvailability: {supportedLanguages: ['en'], missing: []}}))}],
-      createCommittee
+      createCommittee, snapshot: vi.fn(() => new Promise(() => undefined))
     } as unknown as SelfHostedApi;
     container = document.createElement('div'); document.body.append(container); root = createRoot(container);
     await act(async () => {root!.render(<MemoryRouter initialEntries={['/committees']}><Page api={api} /></MemoryRouter>);});
@@ -59,5 +62,8 @@ describe('committee creation content language', () => {
     await act(async () => {container.querySelector('form')!.dispatchEvent(new Event('submit', {bubbles: true, cancelable: true}));});
     expect(createCommittee).toHaveBeenCalledWith(expect.objectContaining({name: 'Custom committee name', committeeLanguage: contentLanguage,
       activeRulePackageVersionId: 'rules', countryTemplateRevision: 7, countryTemplateKey: 'builtin:default'}));
+    await act(async () => {finishCreation({id: 'new-committee'});});
+    expect(container.querySelector('[data-testid="creation-location"]')?.textContent)
+      .toBe('/committees/new-committee/info');
   });
 });

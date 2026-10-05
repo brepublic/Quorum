@@ -436,6 +436,7 @@ describe('committee workspace routes and roles', () => {
     expect(page.querySelector('[aria-label="Create seat"]')).toBeTruthy();
     expect(page.querySelector<HTMLElement>('.committee-member-panel')?.hidden).toBe(true);
     expect(page.querySelector<HTMLElement>('.committee-seat-editor')?.hidden).toBe(false);
+    expect(page.querySelector('.committee-seat-editor h2')).toBeNull();
   });
 
   it('lets Chairs manage seats, assignments, and one-time invitations from the information tabs', async () => {

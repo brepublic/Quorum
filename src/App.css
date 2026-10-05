@@ -428,6 +428,11 @@
   text-overflow: ellipsis;
 }
 
+.ui.menu.committee-primary-navigation > .header.item,
+.ui.menu.committee-mobile-sidebar > .header.item {
+  font-weight: bold;
+}
+
 .committee-primary-navigation > .right.menu {
   flex-shrink: 0;
 }

@@ -107,7 +107,7 @@ function CommitteeList({api, user, logout}: {api: SelfHostedApi; user: SelfHoste
         committeeLanguage, activeRulePackageVersionId: selectedRule.id, countryTemplateRevision: selectedCountries.revision,
         ...(selectedTemplate ? {committeeTemplateId: selectedTemplate.id, committeeTemplateRevision: selectedTemplate.revision}
           : {countryTemplateKey: countryKey})});
-      history.push(`/committees/${committee.id}`);
+      history.push(`/committees/${committee.id}/info`);
     } catch (caught) { setError(caught); } finally { setWorking(false); }
   };
   const remove = async () => {
@@ -541,7 +541,6 @@ function CommitteeInfoPanel({snapshot, run, api, canChair}: {snapshot: Committee
     <div className="committee-info-content">
     <section className="committee-seat-editor ui segment" id={`${tabId}-seats-panel`} hidden={activeTab !== 'seats'}
       role={hasSeatManagement ? 'tabpanel' : undefined} aria-labelledby={hasSeatManagement ? `${tabId}-seats-tab` : undefined}>
-      <Header as="h2">{t('Seats')}</Header>
     {canChair && !readOnly && countryOptions.length > 0 && <Table className="members-table seat-create-table" compact celled definition stackable><Table.Header fullWidth><Table.Row>
       <Table.HeaderCell>{t('Seat')}</Table.HeaderCell><Table.HeaderCell>{t('Rank')}</Table.HeaderCell>
       <Table.HeaderCell>{t('Procedural voting')}</Table.HeaderCell><Table.HeaderCell>{t('Voting rights')}</Table.HeaderCell><Table.HeaderCell>{t('Veto power')}</Table.HeaderCell><Table.HeaderCell>{t('No abstention')}</Table.HeaderCell>
