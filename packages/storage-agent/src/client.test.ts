@@ -60,6 +60,34 @@ describe('Chair Agent HTTP client', () => {
       'x-storage-lease-generation': '7', accept: 'text/event-stream'});
   });
 
+  it.each([false, true])('cancels an idle event reader on shutdown (already aborted: %s)', async alreadyAborted => {
+    let streamController!: ReadableStreamDefaultController<Uint8Array>;
+    const cancel = vi.fn();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {streamController = controller;}, cancel,
+    });
+    const shutdown = new AbortController();
+    const fetcher = vi.fn(async () => {
+      if (alreadyAborted) shutdown.abort();
+      return new Response(stream, {status: 200});
+    });
+    const client = new StorageAgentHttpClient('https://quorum.example.com', credential, fetcher as typeof fetch);
+    const running = client.events(7, shutdown.signal, vi.fn());
+    await new Promise(resolve => setTimeout(resolve, 0));
+    shutdown.abort();
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const result = await Promise.race([running.then(() => 'stopped'),
+        new Promise(resolve => {timeout = setTimeout(() => resolve('still waiting'), 250);})]);
+      expect(result).toBe('stopped');
+      expect(cancel).toHaveBeenCalledOnce();
+    } finally {
+      clearTimeout(timeout);
+      if (!cancel.mock.calls.length) streamController.close();
+      await running;
+    }
+  });
+
   it('turns a durable Chair conflict response back into its typed result', async () => {
     const details = {status: 'CONFLICT', changeRequestId: 'change', conflictId: 'conflict',
       reasonCode: 'REVISION_CONFLICT'};

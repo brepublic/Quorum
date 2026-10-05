@@ -105,6 +105,47 @@ fn exercise_login(window: &MainWindow, redraw: impl Fn()) {
     assert_eq!(actions.borrow().last().unwrap(), "open-web");
     println!("Slint interaction smoke passed: disclosure, keyboard activation, import/manual actions, email → Tab → password → Enter, language/Escape, draft preservation and application menu actions");
 }
+fn exercise_connection(window: &MainWindow, redraw: impl Fn()) {
+    use slint::platform::{PointerEventButton, WindowEvent};
+    let actions = Rc::new(RefCell::new(Vec::<String>::new()));
+    let recorded = actions.clone();
+    window.on_action(move |action| recorded.borrow_mut().push(action.to_string()));
+    let click = |x, y| {
+        let position = slint::LogicalPosition::new(x, y);
+        window.window().dispatch_event(WindowEvent::PointerPressed {position, button: PointerEventButton::Left});
+        window.window().dispatch_event(WindowEvent::PointerReleased {position, button: PointerEventButton::Left});
+        redraw();
+    };
+    assert!(window.get_show_settings() && window.get_loaded() && window.get_running());
+    click(200., 301.);
+    assert_eq!(actions.borrow().last().unwrap(), "confirm-switch");
+    click(300., 301.);
+    assert_eq!(actions.borrow().last().unwrap(), "confirm-unpair");
+    // Inject the confirmation state; this preview never invokes the Node bridge.
+    window.set_switch_committee(true);
+    window.set_confirm_unpair(true);
+    redraw();
+    click(590., 436.);
+    assert_eq!(actions.borrow().last().unwrap(), "unpair", "Confirmation must work while syncing");
+    window.set_busy(true);
+    window.set_status("STOPPING".into());
+    redraw();
+    click(320., 436.);
+    assert!(window.get_confirm_unpair(), "An active disconnect cannot be cancelled midway");
+    window.set_busy(false);
+    redraw();
+    click(320., 436.);
+    assert!(!window.get_confirm_unpair());
+    window.set_page("login".into());
+    window.set_loaded(false);
+    window.set_show_settings(false);
+    window.set_feedback("Authorization revoked".into());
+    redraw();
+    click(678., 198.);
+    assert!(window.get_feedback().is_empty(), "Result notices must be dismissible");
+    println!("Connection entry points, running confirmation, busy guard and notice dismissal passed");
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let offscreen = std::env::args().any(|arg| arg == "--offscreen").then(|| {
         let adapter = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
@@ -198,6 +239,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if window.get_editing() || window.get_confirm_unpair() {
         window.set_status("STOPPED".into());
     }
+    if std::env::args().any(|arg| arg == "--switch-committee") {
+        window.set_switch_committee(true);
+        window.set_confirm_unpair(true);
+        window.set_running(true);
+        window.set_status("RUNNING".into());
+    }
+    if std::env::args().any(|arg| arg == "--stopping") {
+        window.set_busy(true);
+        window.set_status("STOPPING".into());
+    }
+    if std::env::args().any(|arg| arg == "--disconnected-notice") {
+        window.set_feedback("Authorization revoked".into());
+    }
+    if std::env::args().any(|arg| arg == "--local-disconnect-notice") {
+        window.set_feedback("Unpaired locally; server authorization has not been confirmed revoked".into());
+    }
     window.set_files(ModelRc::new(VecModel::from(vec![
         FileRow {
             name: "决议草案 - 中文显示测试.pdf".into(),
@@ -265,8 +322,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         adapter.draw_if_needed(|renderer| {
             renderer.render(pixels.make_mut_slice(), width as usize);
         });
-        if std::env::args().any(|arg| arg == "--exercise-login") {
-            exercise_login(&window, || {
+        if std::env::args().any(|arg| matches!(arg.as_str(), "--exercise-login" | "--exercise-connection")) {
+            let exercise = if std::env::args().any(|arg| arg == "--exercise-connection") {exercise_connection} else {exercise_login};
+            exercise(&window, || {
                 slint::platform::update_timers_and_animations();
                 let mut frame = slint::SharedPixelBuffer::<slint::Rgb8Pixel>::new(width, height);
                 adapter.draw_if_needed(|renderer| {

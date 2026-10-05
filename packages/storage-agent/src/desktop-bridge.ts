@@ -239,6 +239,7 @@ async function command(input: Record<string, unknown>) {
       committeeStatus: value.committeeStatus, storageProvider: value.storageProvider, accountSetup: false});
     return;
   }
+  if (action === 'unpair') await stop();
   if (child) throw new Error('STOP_FIRST');
   if (action === 'setup-pair') {
     if (!setup) throw new Error('PAIRING_CONFIG_INVALID');

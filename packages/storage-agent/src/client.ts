@@ -82,17 +82,31 @@ export class StorageAgentHttpClient {
     });
     if (!response.ok) throw await error(response);
     if (!response.body) throw new AgentApiError(502, 'INCOMPLETE_RESPONSE', 'Storage Agent event response is empty.');
+    const reader = response.body.getReader();
+    // Own the response reader as well as the request: an idle body must not keep
+    // shutdown waiting for the next server event after fetch has returned headers.
+    const cancel = () => {void reader.cancel().catch(() => undefined);};
+    signal.addEventListener('abort', cancel, {once: true});
+    if (signal.aborted) cancel();
     const decoder = new TextDecoder();
     let buffer = '';
-    for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
-      buffer += decoder.decode(chunk, {stream: true}).replace(/\r\n/g, '\n');
-      let boundary = buffer.indexOf('\n\n');
-      while (boundary >= 0) {
-        const event = buffer.slice(0, boundary);
-        buffer = buffer.slice(boundary + 2);
-        if (event.split('\n').some(line => line === 'event: wake')) wake();
-        boundary = buffer.indexOf('\n\n');
+    try {
+      while (!signal.aborted) {
+        const {value: chunk, done} = await reader.read();
+        if (done || signal.aborted) break;
+        buffer += decoder.decode(chunk, {stream: true}).replace(/\r\n/g, '\n');
+        let boundary = buffer.indexOf('\n\n');
+        while (boundary >= 0) {
+          const event = buffer.slice(0, boundary);
+          buffer = buffer.slice(boundary + 2);
+          if (event.split('\n').some(line => line === 'event: wake')) wake();
+          boundary = buffer.indexOf('\n\n');
+        }
       }
+    } finally {
+      signal.removeEventListener('abort', cancel);
+      await reader.cancel().catch(() => undefined);
+      reader.releaseLock();
     }
   }
 

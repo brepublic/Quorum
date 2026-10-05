@@ -64,6 +64,41 @@ async function fixture(pairStatus = 200, revokeStatus = 200, mustChangePassword 
   return {root,process,events,wait,command,settings,requests};
 }
 describe('desktop bridge process lifecycle',()=>{
+  it.each([200, 503])('stops before revoking a running connection (HTTP %s)', async status => {
+    const f = await fixture(200, status);
+    await f.command('pair', f.settings);
+    await f.command('start');
+    await f.wait(e => e.event === 'snapshot' && e.connected === true);
+    const result = await f.command('unpair');
+    const exited = result.findIndex(e => e.event === 'state' && e.state === 'EXITED');
+    expect(exited).toBeGreaterThanOrEqual(0);
+    expect(f.requests.filter(r => r.url === '/api/v1/storage-agent/revoke')).toHaveLength(1);
+    await (await lockAgentRoot(f.settings.rootPath))();
+    if (status === 200) {
+      expect(result.findIndex(e => e.event === 'unpaired')).toBeGreaterThan(exited);
+      expect(await f.command('start')).toContainEqual(expect.objectContaining({code:'CONFIG_REQUIRED'}));
+    } else {
+      expect(result).toContainEqual(expect.objectContaining({event:'error', operation:'unpair'}));
+      expect(result.some(e => e.event === 'unpaired')).toBe(false);
+      expect(await f.command('start')).toContainEqual(expect.objectContaining({state:'STARTING'}));
+      await f.command('stop');
+    }
+  });
+
+  it('stops an idle connected Agent promptly and releases its directory', async () => {
+    const f = await fixture();
+    await f.command('pair', f.settings);
+    await f.command('start');
+    await f.wait(e => e.event === 'snapshot' && e.connected === true);
+    await new Promise(resolve => setTimeout(resolve, 200));
+    const started = performance.now();
+    const stopped = await f.command('stop');
+    expect(performance.now() - started).toBeLessThan(1500);
+    expect(stopped).toContainEqual(expect.objectContaining({event:'state', state:'EXITED'}));
+    expect(stopped.some(e => e.event === 'log' && e.text.includes('storage_agent.stopped'))).toBe(true);
+    await (await lockAgentRoot(f.settings.rootPath))();
+  }, 25000);
+
   it('recovers local persistence after server pairing without pairing a second device', async () => {
     const f = await fixture(200, 200, false, true);
     const failed = await f.command('pair', f.settings);

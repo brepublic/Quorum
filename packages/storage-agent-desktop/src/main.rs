@@ -243,12 +243,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ui.set_pairing_code("".into()); return;
         }
         if action == "discard" {ui.set_confirm_discard("settings".into()); return;}
-        if matches!(action,"start"|"restart"|"unpair"|"unpair-local"|"confirm-unpair") && (form_state(&ui) != *saved_action.borrow() || ui.get_config_path() != ui.get_saved_config_path()) {
+        if matches!(action,"start"|"restart"|"unpair"|"unpair-local"|"confirm-unpair"|"confirm-switch") && (form_state(&ui) != *saved_action.borrow() || ui.get_config_path() != ui.get_saved_config_path()) {
             ui.set_error_code("Settings changed. Save them first, or import the original configuration again.".into()); return;
         }
-        if action == "confirm-unpair" {
+        if matches!(action, "confirm-unpair" | "confirm-switch") {
+            ui.set_switch_committee(action == "confirm-switch");
             ui.set_unpair_failed(false); ui.set_confirm_unpair(true); return;
         }
+        if action == "unpair" {ui.set_resume_after_edit(false);}
         if action == "open-root" || action == "open-web" {
             let target = if action == "open-root" {ui.get_root_path()} else {ui.get_committee_url()};
             if !target.is_empty() {let _ = Command::new("xdg-open").arg(target.as_str()).spawn();} return;
