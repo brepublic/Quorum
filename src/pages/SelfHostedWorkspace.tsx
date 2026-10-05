@@ -515,7 +515,9 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
         }
       }
     });
-  const hasSeatManagement = !readOnly && (owner || (canChair && snapshot.seats.length > 0));
+  const showSeatAssignments = canChair && !readOnly && snapshot.seats.length > 0
+    && snapshot.committee.operationMode === 'DELEGATE_OPERATED';
+  const hasSeatManagement = (owner && !readOnly) || showSeatAssignments;
   return <Container fluid className="committee-setup-page">
     <div className={`committee-setup-layout${hasSeatManagement ? ' has-seat-management' : ''}`}>
     <section className="committee-seat-editor"><Header as="h2">{t('Seats')}</Header>
@@ -647,7 +649,7 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
         </li>)}
       </ul>}
     </Card.Content></Card>}
-    {canChair && !readOnly && snapshot.seats.length > 0 && <>
+    {showSeatAssignments && <>
       <Card fluid><Card.Content><Header as="h2">{t('Seat assignments')}</Header>
       <Form onSubmit={async () => {await execute('assign-seat', () => api.assignSeat(snapshot.committee.id,
         assignmentSeatId, assignmentEmail.trim())); setAssignmentEmail('');}}>

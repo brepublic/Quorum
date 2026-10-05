@@ -451,6 +451,41 @@ describe('committee workspace routes and roles', () => {
     expect(page.textContent).not.toContain('Grant Chair');
   });
 
+  it.each(['CHAIR', 'OWNER'] as const)('updates assignment cards and layout when the operation mode changes for %s', async audience => {
+    let operationMode: CommitteeWorkspaceSnapshot['committee']['operationMode'] = 'CHAIR_OPERATED';
+    let sequence = 1;
+    let callbacks!: Parameters<SelfHostedApi['openCommitteeEvents']>[2];
+    const page = await render(audience, '/committees/committee/setup', user, value => value, {
+      snapshot: vi.fn(async () => {
+        const value = snapshot(audience);
+        return {...value, committee: {...value.committee, operationMode}, sync: {committeeEventSequence: sequence}};
+      }),
+      openCommitteeEvents: vi.fn((_id, _after, handlers) => {callbacks = handlers; handlers.onState('LIVE'); return () => undefined;})
+    });
+    const expectChairMode = () => {
+      expect(page.textContent).not.toContain('Seat assignments');
+      expect(page.textContent).not.toContain('One-time seat invitation');
+      expect(page.textContent).not.toContain('delegate@example.com');
+      expect(page.querySelector('[aria-label="Create seat"]')).toBeTruthy();
+      expect(page.querySelectorAll('.committee-seat-management > .ui.card')).toHaveLength(audience === 'OWNER' ? 1 : 0);
+      expect(Boolean(page.querySelector('.committee-setup-layout.has-seat-management'))).toBe(audience === 'OWNER');
+      expect(Boolean(page.querySelector('.committee-seat-management'))).toBe(audience === 'OWNER');
+      if (audience === 'OWNER') expect(page.textContent).toContain('Grant Chair');
+    };
+    expectChairMode();
+    const changeMode = async (mode: typeof operationMode) => {
+      operationMode = mode; sequence++;
+      await act(async () => {callbacks.onEvent({type: 'committee.updated'} as Parameters<typeof callbacks.onEvent>[0]);});
+    };
+    await changeMode('DELEGATE_OPERATED');
+    expect(page.textContent).toContain('Seat assignments');
+    expect(page.textContent).toContain('One-time seat invitation');
+    expect(page.textContent).toContain('delegate@example.com');
+    expect(page.querySelectorAll('.committee-seat-management > .ui.card')).toHaveLength(audience === 'OWNER' ? 3 : 2);
+    await changeMode('CHAIR_OPERATED');
+    expectChairMode();
+  });
+
   it('hides seat creation when all template countries are seated and restores it after deactivation', async () => {
     let franceSeated = true;
     const updateSeat = vi.fn(async () => {franceSeated = false;}) as unknown as SelfHostedApi['updateSeat'];
