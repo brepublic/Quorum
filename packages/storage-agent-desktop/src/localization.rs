@@ -2,6 +2,9 @@ use std::path::PathBuf;
 
 pub fn translate(key: &str, language: &str) -> &'static str {
     let (en, zh) = match key {
+        "Certificate files" => ("CA certificates (*.crt, *.pem, *.cer)", "CA 证书 (*.crt, *.pem, *.cer)"),
+        "Quorum configuration files" => ("Quorum files (*.quorum-agent, *.json)", "Quorum 配置文件 (*.quorum-agent, *.json)"),
+        "All files" => ("All files", "所有文件"),
         "Open connection file" => ("Open pairing or connection file…", "打开配对或连接文件…"),
         "Sign in to connect a committee" => ("Choose a committee after signing in.", "登录后选择要连接的委员会。"),
         "Connection settings" => ("Connection settings", "连接设置"),

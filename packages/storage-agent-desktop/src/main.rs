@@ -213,8 +213,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         if action == "import" {
             let weak = ui.as_weak();
+            let language = ui.get_language().to_string();
             thread::spawn(move || {
-                if let Some(path) = rfd::FileDialog::new().add_filter("Quorum configuration", &["quorum-agent", "json"]).pick_file() {
+                if let Some(path) = rfd::FileDialog::new()
+                    .add_filter(translate("Quorum configuration files", &language), &["quorum-agent", "json"])
+                    .add_filter(translate("All files", &language), &["*"])
+                    .pick_file() {
                     let _ = weak.upgrade_in_event_loop(move |ui| {
                         ui.set_pending_target(path.to_string_lossy().into_owned().into()); ui.invoke_action("open".into());
                     });
@@ -309,10 +313,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ui.on_choose(move |kind| {
         let weak = weak.clone();
         let kind = kind.to_string();
-        let initial = weak.upgrade().map(|ui| ui.get_root_path().to_string()).unwrap_or_default();
+        let (initial, language) = weak.upgrade().map(|ui| (ui.get_root_path().to_string(), ui.get_language().to_string())).unwrap_or_default();
         thread::spawn(move || {
             let path = if kind == "root" {
                 rfd::FileDialog::new().set_directory(&initial).pick_folder()
+            } else if kind == "certificate" {
+                rfd::FileDialog::new()
+                    .add_filter(translate("Certificate files", &language), &["crt", "pem", "cer"])
+                    .add_filter(translate("All files", &language), &["*"])
+                    .pick_file()
             } else {
                 rfd::FileDialog::new().pick_file()
             };
