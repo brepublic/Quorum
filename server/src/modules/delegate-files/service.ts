@@ -105,13 +105,23 @@ export class DelegateFileService {
       const types = rejectionTypes(body.rejectionTypes, language);
       if (committeeId) {
         const extensions = allowedExtensions(body.allowedExtensions);
+        if (body.storageSetupHintSuppressed !== undefined && typeof body.storageSetupHintSuppressed !== 'boolean') {
+          throw new AppError({reason: 'INVALID_STORAGE_HINT_SETTING', code: 'VALIDATION_FAILED', message: 'Invalid storage hint setting.'});
+        }
+        const storageSetupHintSuppressed = body.storageSetupHintSuppressed
+          ?? (before as DelegateFileSettings).storageSetupHintSuppressed;
         await client.query(`UPDATE committees SET delegate_file_settings=$2,delegate_file_settings_revision=delegate_file_settings_revision+1
-          WHERE id=$1`, [committeeId, {rejectionTypes: types, allowedExtensions: extensions}]);
+          WHERE id=$1`, [committeeId, {rejectionTypes: types, allowedExtensions: extensions, ...(storageSetupHintSuppressed === undefined ? {} : {storageSetupHintSuppressed})}]);
       } else {
         await client.query(`UPDATE system_settings SET default_file_rejection_types=$1,file_rejection_revision=file_rejection_revision+1
           WHERE singleton=true`, [JSON.stringify(types)]);
       }
       const after = await this.readSettings(client, committeeId);
+      if (committeeId && (before as DelegateFileSettings).storageSetupHintSuppressed !== (after as DelegateFileSettings).storageSetupHintSuppressed) {
+        await appendEvent(client, await lockedCommittee(client, committeeId), {
+          type: 'storage.setup_hint_changed', resourceType: 'committee', resourceId: committeeId,
+          revision: after.revision, audience: 'CHAIR'});
+      }
       await audit(client, context, {committeeId, actorUserId: auth.user.id,
         capabilities: committeeId ? ['CHAIR'] : ['SYSTEM_ADMIN'], action: 'storage.delegate_file_settings_updated',
         resourceType: committeeId ? 'committee' : 'system_settings', resourceId: committeeId, before, after});

@@ -113,7 +113,7 @@ describe('self-hosted workspace navigation', () => {
     });
     const page = render(<CommitteeNavigation snapshot={{...snapshot, crises: [{id: 'pending', committeeId: 'committee',
       sessionOrdinal: 1, ordinal: 1, endedAt: null, timer: {remainingMs: 0, running: false}, updates: [{status: 'PENDING'}]}]
-    } as unknown as CommitteeWorkspaceSnapshot} user={user} logout={() => undefined} hasPendingFileReview realtimeStatus="LIVE">
+    } as unknown as CommitteeWorkspaceSnapshot} user={user} logout={() => undefined} hasPendingFileReview hasStorageSetupHint realtimeStatus="LIVE">
       <input defaultValue="unsaved draft" />
     </CommitteeNavigation>, '/committees/committee/strawpolls/poll');
     const nav = page.querySelector('.committee-navigation-desktop')!;
@@ -138,6 +138,8 @@ describe('self-hosted workspace navigation', () => {
         .toBe(level >= 2 ? 'Caucus' : 'Moderated Caucuses');
       expect(nav.querySelector('a[href="/committees/committee/posts"] .file-review-dot')?.getAttribute('aria-label')).toBe('Pending review');
       expect(Boolean(nav.querySelector('.committee-navigation-more > .committee-navigation-more-files .file-review-dot'))).toBe(level >= 6);
+      expect(Boolean(nav.querySelector('.committee-navigation-more > .committee-navigation-more-files .storage-setup-dot'))).toBe(level >= 6);
+      expect(nav.querySelector('a[href="/committees/committee/posts"] .storage-setup-dot')).not.toBeNull();
       expect(Boolean(nav.querySelector('.committee-navigation-more > .crisis-time-dot'))).toBe(level >= 12);
       expect(nav.querySelector('.account-menu')?.getAttribute('title')).toBe(user.displayName);
       expect(nav.querySelector('[data-navigation-key="/unmod"]')?.getAttribute('aria-label')).toBe('Unmoderated Caucus');
@@ -163,6 +165,7 @@ describe('self-hosted workspace navigation', () => {
     assertLevel(500, 14);
     expect(nav.getAttribute('data-navigation-mode')).toBe('sidebar');
     expect(page.querySelector('.committee-mobile-sidebar a[href="/committees/committee/posts"] .file-review-dot')).not.toBeNull();
+    expect(page.querySelector('.committee-mobile-sidebar a[href="/committees/committee/posts"] .storage-setup-dot')).not.toBeNull();
     for (const [width, level] of [[700, 13], [800, 12], [900, 11], [1000, 10], [1100, 9], [1200, 8], [1300, 7], [1400, 6], [1500, 5], [1600, 4], [1680, 3], [1800, 2], [1880, 1], [2000, 0]]) assertLevel(width, level);
     // Restore Statistics as soon as it fits, even with only one pixel to spare.
     assertLevel(1500, 5);

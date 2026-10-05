@@ -112,6 +112,7 @@ export const COMMITTEE_EVENT_DEFINITIONS = [
   {name: 'file.published', defaultAudience: 'PUBLIC'},
   {name: 'file.sync_state_changed', defaultAudience: 'MEMBER'},
   {name: 'file.deleted', defaultAudience: 'MEMBER'},
+  {name: 'storage.setup_hint_changed', defaultAudience: 'CHAIR'},
   {name: 'storage.migration_created', defaultAudience: 'CHAIR'},
   {name: 'storage.migration_retried', defaultAudience: 'CHAIR'},
   {name: 'storage.migration_ready', defaultAudience: 'CHAIR'},

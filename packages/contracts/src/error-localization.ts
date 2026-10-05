@@ -57,6 +57,7 @@ export const ERROR_TEXT = {
   REJECTION_TEXT_REQUIRED: {en: "Enter a rejection label and message.", 'zh-CN': "请填写驳回类型名称和提示内容。"},
   DUPLICATE_REJECTION_TYPE: {en: "Rejection identifiers and labels must be unique.", 'zh-CN': "驳回类型的标识和名称不能重复。"},
   FILE_EXTENSIONS_REQUIRED: {en: "Set the allowed extensions for each file type.", 'zh-CN': "请为每种文件类型设置允许的后缀名。"},
+  INVALID_STORAGE_HINT_SETTING: {en: "Select whether to suppress the storage reminder.", 'zh-CN': "请重新选择是否抑制存储提示。"},
   INVALID_EXTENSION_SETTINGS: {en: "Enter 1–50 extensions per type, each containing 1–16 letters or digits without a dot.", 'zh-CN': "每种类型请填写 1–50 个后缀，每个后缀使用 1–16 位字母或数字，不含点号。"},
   INVALID_REVISION: {en: "The page version is invalid. Reload and try again.", 'zh-CN': "页面版本信息无效，请刷新后重试。"},
   INVALID_FILE_TYPE: {en: "Choose a valid file type or enter a custom type (up to 100 characters).", 'zh-CN': "请选择有效文件类型，或填写不超过 100 字的自定义类型。"},

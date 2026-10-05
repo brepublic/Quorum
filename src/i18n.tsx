@@ -222,6 +222,8 @@ const zhCN: Record<string, string> = {
   "Review": "审核",
   "Share": "分享",
   "Storage settings": "存储设置",
+  "Storage is not configured.": "存储未设置",
+  "Suppress reminder": "抑制提示",
   "File settings": "文件设置",
   "Topic is required.": "议题不能为空。",
   "Speaking time must be a number greater than zero.": "每次发言时长必须是大于 0 的数字。",

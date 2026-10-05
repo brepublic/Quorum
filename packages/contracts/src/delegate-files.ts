@@ -84,6 +84,7 @@ export interface FileRejectionType {
   custom: boolean;
 }
 export interface DelegateFileSettings {
+  storageSetupHintSuppressed?: boolean;
   rejectionTypes: FileRejectionType[];
   allowedExtensions: Record<DelegateFileExtensionType, string[]>;
   revision: number;

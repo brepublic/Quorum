@@ -338,8 +338,8 @@ function NotesPanel({snapshot, run, api}: {snapshot: CommitteeWorkspaceSnapshot;
 
 function LinkResources({snapshot, run, api}: {snapshot: CommitteeWorkspaceSnapshot; run: WorkspaceCommand; api: SelfHostedApi}) {
   useLanguage(); const [title, setTitle] = React.useState(''); const [url, setUrl] = React.useState(''); const canWrite = snapshot.viewer.audience !== 'PUBLIC' && snapshot.committee.status === 'ACTIVE'; const links = snapshot.textPosts.filter(post => post.content.startsWith('link:')).map(post => ({post, url: post.content.slice(5)})).filter(({url}) => {try {return ['http:', 'https:'].includes(new URL(url).protocol);} catch {return false;}}); const create = async () => {if (url.trim()) {await run(() => api.createTextPost(snapshot.committee.id, {title, content: `link:${url.trim()}`})); setTitle(''); setUrl('');}}; return <><Form onSubmit={create}>{canWrite && <><Form.Input label={t('Title')} value={title} onChange={event => setTitle(event.currentTarget.value)} /><Form.Input label={t('URL')} type="url" required value={url} onChange={event => setUrl(event.currentTarget.value)} /><Button primary disabled={!url.trim()}>{t('Publish link')}</Button></>}</Form><List divided relaxed>{links.map(({post, url}) => <List.Item key={post.id}>{canWrite && <List.Content floated="right"><Button size="mini" negative onClick={() => void run(() => api.deleteTextPost(post.id, post.revision))}>{t('Delete')}</Button></List.Content>}<List.Header>{post.title || t('Untitled')}</List.Header><List.Description><a href={url} target="_blank" rel="noreferrer">{url}</a></List.Description><List.Description>{t('Publisher')}: {post.authorDisplayName}</List.Description></List.Item>)}</List></>; }
-function PostsPanel({snapshot, api, userId, tab}: {snapshot: CommitteeWorkspaceSnapshot;
-  api: SelfHostedApi; userId?: string; tab?: string}) {
+function PostsPanel({snapshot, api, userId, tab, hasStorageSetupHint, suppressStorageHint}: {snapshot: CommitteeWorkspaceSnapshot;
+  api: SelfHostedApi; userId?: string; tab?: string; hasStorageSetupHint: boolean; suppressStorageHint(): Promise<void>}) {
   useLanguage();
   const canManageStorage = snapshot.viewer.audience === 'CHAIR' || snapshot.viewer.audience === 'OWNER';
   const canShare = canManageStorage && snapshot.committee.operationMode === 'CHAIR_OPERATED';
@@ -347,6 +347,7 @@ function PostsPanel({snapshot, api, userId, tab}: {snapshot: CommitteeWorkspaceS
   const [storageConfigured, setStorageConfigured] = React.useState<boolean>();
   const [bindingError, setBindingError] = React.useState<string>();
   const [bindingReload, setBindingReload] = React.useState(0);
+  const [suppressing, setSuppressing] = React.useState(false);
   React.useEffect(() => {
     let active = true;
     if (!canManageStorage) return;
@@ -365,9 +366,14 @@ function PostsPanel({snapshot, api, userId, tab}: {snapshot: CommitteeWorkspaceS
     <Menu.Item as={Link} to={`${base}/attachments`} active={active === 'attachments'}>{t('File overview')}</Menu.Item>
     {canShare && <Menu.Item as={Link} to={`${base}/share`} active={active === 'share'}>{t('Share')}</Menu.Item>}
     {canUpload && <Menu.Item as={Link} to={`${base}/upload`} active={active === 'upload'}>{t('Upload files')}</Menu.Item>}
-    {canManageStorage && <Menu.Item as={Link} to={`${base}/storage`} active={active === 'storage'}>{t('Storage settings')}</Menu.Item>}
+    {canManageStorage && <Menu.Item as={Link} to={`${base}/storage`} active={active === 'storage'}>{t('Storage settings')}{hasStorageSetupHint && <span className="storage-setup-dot" aria-label={t('Storage is not configured.')} />}</Menu.Item>}
     {canManageStorage && <Menu.Item as={Link} to={`${base}/file-settings`} active={active === 'file-settings'}>{t('File settings')}</Menu.Item>}
   </Menu>
+    {active === 'storage' && hasStorageSetupHint && <Message warning className="storage-setup-reminder">
+      <span>{t('Storage is not configured.')}</span>{' '}
+      <Button size="mini" disabled={suppressing || !['ACTIVE', 'PAUSED'].includes(snapshot.committee.status)} loading={suppressing}
+        onClick={() => {setSuppressing(true); void suppressStorageHint().finally(() => setSuppressing(false));}}>{t('Suppress reminder')}</Button>
+    </Message>}
     {bindingError && <Message error><p>{bindingError}</p><Button onClick={() => setBindingReload(value => value + 1)}>{t('Retry')}</Button></Message>}
     {needsStorage && <Message warning><Link to={`${base}/storage`}>{t('Configure storage before uploading or sharing files.')}</Link></Message>}
     {active === 'file-settings' && canManageStorage && <DelegateFileSettingsPanel committeeLanguage={snapshot.committee.committeeLanguage} key={snapshot.committee.id} committeeId={snapshot.committee.id} api={api}
@@ -1296,6 +1302,28 @@ function CommitteeWorkspaceContent({id, api: sourceApi, user, logout}: {
     void refreshFileReview();
     return () => {active = false;};
   }, [api, id, fileReviewScope, snapshotReceivedAt]);
+  const [storageHint, setStorageHint] = React.useState<{scope: string; visible: boolean}>();
+  React.useEffect(() => {
+    if (!fileReviewScope) {setStorageHint(undefined); return;}
+    let active = true;
+    const refreshStorageHint = async () => {
+      try {
+        const [bindings, settings] = await Promise.all([api.listStorageBindings(id), api.getDelegateFileSettings(id)]);
+        if (active) setStorageHint({scope: fileReviewScope,
+          visible: !bindings.some(binding => binding.status === 'ACTIVE') && settings.storageSetupHintSuppressed !== true});
+      } catch {if (active) setStorageHint(undefined);}
+    };
+    void refreshStorageHint();
+    return () => {active = false;};
+  }, [api, id, fileReviewScope, snapshotReceivedAt]);
+  const hasStorageSetupHint = fileReviewScope !== undefined && storageHint?.scope === fileReviewScope && storageHint.visible;
+  const suppressStorageHint = async () => {
+    await run(async () => {
+      const settings = await api.getDelegateFileSettings(id);
+      await api.updateDelegateFileSettings(id, {...settings, storageSetupHintSuppressed: true});
+      setStorageHint({scope: fileReviewScope!, visible: false});
+    });
+  };
   const location = useLocation(); const history = useHistory();
   const newCaucusPath = `/committees/${id}/caucuses/new`;
   const [createCaucusOpen, setCreateCaucusOpen] = React.useState(location.pathname === newCaucusPath);
@@ -1326,6 +1354,7 @@ function CommitteeWorkspaceContent({id, api: sourceApi, user, logout}: {
   const base = `/committees/${id}`;
   return <CommitteeNavigation snapshot={snapshot} user={user} logout={logout} realtimeStatus={realtimeStatus}
     lastSyncedAt={lastSyncedAt} syncFailed={syncFailed} networkOffline={networkOffline} onRetry={retry}
+    hasStorageSetupHint={hasStorageSetupHint}
     hasPendingFileReview={fileReviewScope !== undefined && fileReview?.scope === fileReviewScope && fileReview.pending}
     onCreateCaucus={() => setCreateCaucusOpen(true)}>
     <Container fluid className="committee-workspace-page">{error && <Message error content={error} />}
@@ -1348,7 +1377,7 @@ function CommitteeWorkspaceContent({id, api: sourceApi, user, logout}: {
           <Route exact path={`${base}/points`}><PointsPanel snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} /></Route>
           <Route exact path={`${base}/notes`}><NotesPanel snapshot={interactionSnapshot} run={run} api={api} /></Route>
           <Route exact path={`${base}/posts/:tab?`} render={({match}) => <PostsPanel key={`${interactionSnapshot.committee.id}:${user?.id}:${interactionSnapshot.viewer.audience}:${interactionSnapshot.committee.operationMode}`} snapshot={interactionSnapshot} api={api}
-            userId={user?.id} tab={match.params.tab} />} />
+            userId={user?.id} tab={match.params.tab} hasStorageSetupHint={hasStorageSetupHint} suppressStorageHint={suppressStorageHint} />} />
           <Route exact path={`${base}/files`}><Redirect to={`${base}/posts/attachments`} /></Route>
           <Route exact path={`${base}/motions`}><ProceedingsPanel view="motions" snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} /></Route>
           <Route exact path={`${base}/unmod`}><ProceedingsPanel view="unmod" snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} /></Route>

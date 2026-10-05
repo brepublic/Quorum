@@ -719,7 +719,8 @@
   align-items: center;
 }
 
-.file-review-dot {
+.file-review-dot,
+.storage-setup-dot {
   display: inline-block;
   flex-shrink: 0;
   width: 0.5rem;
@@ -728,6 +729,10 @@
   border-radius: 50%;
   background: #2185d0;
   vertical-align: middle;
+}
+
+.storage-setup-dot {
+  background: #f2711c;
 }
 
 .committee-primary-navigation.ui.menu .committee-navigation-more > .menu {

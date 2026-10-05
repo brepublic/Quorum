@@ -90,8 +90,8 @@ function routeActive(pathname: string, destination: string, prefix = false) {
   return prefix ? pathname === destination || pathname.startsWith(`${destination}/`) : pathname === destination;
 }
 
-function PrimaryItems({snapshot, onNavigate, onCreateCaucus, level = 0, hasPendingFileReview = false, measureLabels = false}: {
-  snapshot: CommitteeWorkspaceSnapshot; onNavigate?(): void; onCreateCaucus?(): void; level?: number; hasPendingFileReview?: boolean;
+function PrimaryItems({snapshot, onNavigate, onCreateCaucus, level = 0, hasPendingFileReview = false, hasStorageSetupHint = false, measureLabels = false}: {
+  snapshot: CommitteeWorkspaceSnapshot; onNavigate?(): void; onCreateCaucus?(): void; level?: number; hasPendingFileReview?: boolean; hasStorageSetupHint?: boolean;
   measureLabels?: boolean;
 }) {
   const language = useLanguage();
@@ -156,11 +156,11 @@ function PrimaryItems({snapshot, onNavigate, onCreateCaucus, level = 0, hasPendi
     }
   };
   const base = `/committees/${snapshot.committee.id}`;
-  const fileReviewDot = hasPendingFileReview && <span className="file-review-dot" aria-label={t('Pending review')} />;
+  const fileStatusDots = <>{hasPendingFileReview && <span className="file-review-dot" aria-label={t('Pending review')} />}{hasStorageSetupHint && <span className="storage-setup-dot" aria-label={t('Storage is not configured.')} />}</>;
   const item = (path: string, label: string) => <Menu.Item key={path} data-navigation-key={path} as={Link} to={`${base}${path}`}
     active={routeActive(location.pathname, `${base}${path}`, true)} onClick={onNavigate}
     {...(path === '/unmod' ? {title: t(label), 'aria-label': t(label)} : {})}>
-    {path === '/unmod' ? caucusLabel(label, 'Unmod') : t(label)}{path === '/posts' && fileReviewDot}</Menu.Item>;
+    {path === '/unmod' ? caucusLabel(label, 'Unmod') : t(label)}{path === '/posts' && fileStatusDots}</Menu.Item>;
   const dynamic = (kind: 'caucuses' | 'crises' | 'resolutions' | 'directives' | 'votes' | 'strawpolls', label: string, createLabel: string,
     resources: Array<{id: string; label: string; awaiting?: boolean; dot?: string}>, activeOverride?: boolean, nested = false) => {
     const destination = `${base}/${kind}`;
@@ -241,7 +241,7 @@ function PrimaryItems({snapshot, onNavigate, onCreateCaucus, level = 0, hasPendi
           [['/settings', 4], ['/help', 4], ['/stats', 5], ['/posts', 6], ['/notes', 7], ['/strawpolls', 8], ['/votes', 9], ['/resolutions', 10], ['/directives', 11], ['/crises', 12], ['/caucuses', 13]]
             .some(([path, minimum]) => level >= Number(minimum) && routeActive(location.pathname, `${base}${path}`, true)) ? 'active' : ''
         ].join(' ')} open={moreOpen} onOpen={() => setMoreOpen(true)}
-        trigger={<><Icon name="ellipsis horizontal" />{level >= 6 && hasPendingFileReview && <span className="committee-navigation-more-files">{fileReviewDot}</span>}
+        trigger={<><Icon name="ellipsis horizontal" />{level >= 6 && (hasPendingFileReview || hasStorageSetupHint) && <span className="committee-navigation-more-files">{fileStatusDots}</span>}
           {level>=12 && crisisDot && <span className={`crisis-time-dot ${crisisDot}`} aria-label={t(crisisDot==='red' ? 'Crisis time expired' : 'Crisis time below five minutes')} />}</>}
         onClose={() => {setMoreOpen(false); setPollOpen(null);}}>
         <Dropdown.Menu>
@@ -252,7 +252,7 @@ function PrimaryItems({snapshot, onNavigate, onCreateCaucus, level = 0, hasPendi
           {level >= 9 && dynamic('votes', 'Voting', 'New Vote', votes, undefined, true)}
           {level >= 8 && dynamic('strawpolls', 'Strawpolls', 'New Strawpoll', strawpolls, undefined, true)}
           {level >= 7 && <Dropdown.Item as={Link} to={`${base}/notes`} active={routeActive(location.pathname, `${base}/notes`, true)} text={t('Notes')} onClick={navigate} />}
-          {level >= 6 && <Dropdown.Item as={Link} to={`${base}/posts`} active={routeActive(location.pathname, `${base}/posts`, true)} text={<>{t('Files')}{fileReviewDot}</>} onClick={navigate} />}
+          {level >= 6 && <Dropdown.Item as={Link} to={`${base}/posts`} active={routeActive(location.pathname, `${base}/posts`, true)} text={<>{t('Files')}{fileStatusDots}</>} onClick={navigate} />}
           {level >= 5 && <Dropdown.Item as={Link} to={`${base}/stats`} active={routeActive(location.pathname, `${base}/stats`, true)} text={t('Statistics')} onClick={navigate} />}
           <Dropdown.Item as={Link} to={`${base}/settings`} active={routeActive(location.pathname, `${base}/settings`, true)} text={t('Settings')} onClick={navigate} />
           <Dropdown.Item as={Link} to={`${base}/help`} active={routeActive(location.pathname, `${base}/help`, true)} text={t('Help')} onClick={navigate} />
@@ -262,9 +262,9 @@ function PrimaryItems({snapshot, onNavigate, onCreateCaucus, level = 0, hasPendi
   </>;
 }
 
-export function CommitteeNavigation({snapshot, user, logout, realtimeStatus = 'CONNECTING', onCreateCaucus, hasPendingFileReview = false, lastSyncedAt, syncFailed, networkOffline, onRetry, children}: {
+export function CommitteeNavigation({snapshot, user, logout, realtimeStatus = 'CONNECTING', onCreateCaucus, hasPendingFileReview = false, hasStorageSetupHint = false, lastSyncedAt, syncFailed, networkOffline, onRetry, children}: {
   snapshot: CommitteeWorkspaceSnapshot; user?: SelfHostedUser; logout(): void; realtimeStatus?: RealtimeStatus;
-  onCreateCaucus?(): void; hasPendingFileReview?: boolean; children?: React.ReactNode;
+  onCreateCaucus?(): void; hasPendingFileReview?: boolean; hasStorageSetupHint?: boolean; children?: React.ReactNode;
 } & RealtimeDetails) {
   const language = useLanguage();
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
@@ -320,13 +320,13 @@ export function CommitteeNavigation({snapshot, user, logout, realtimeStatus = 'C
     if (compactAccount) observer.observe(compactAccount);
     measure();
     return () => observer.disconnect();
-  }, [snapshot, user, realtimeStatus, language, hasPendingFileReview]);
+  }, [snapshot, user, realtimeStatus, language, hasPendingFileReview, hasStorageSetupHint]);
   React.useEffect(() => { setSidebarOpen(false); }, [level]);
   const mode = level === 14 ? 'sidebar' : 'desktop';
   return <>
     <nav data-navigation-mode={mode} data-collapse-level={level} className="committee-navigation-desktop" aria-label={t('Committee navigation')}>
       <Menu className="committee-primary-navigation" size="large" fluid data-crisis-reminder={crisisReminder}>
-        <PrimaryItems snapshot={snapshot} onCreateCaucus={onCreateCaucus} level={level} hasPendingFileReview={hasPendingFileReview} />
+        <PrimaryItems snapshot={snapshot} onCreateCaucus={onCreateCaucus} level={level} hasPendingFileReview={hasPendingFileReview} hasStorageSetupHint={hasStorageSetupHint} />
         <Menu.Menu position="right"><AttendanceThresholdItem snapshot={snapshot} /><RealtimeStatusItem status={realtimeStatus} compact={level >= 3} lastSyncedAt={lastSyncedAt}
           syncFailed={syncFailed} networkOffline={networkOffline} onRetry={onRetry} />
           {user && <AccountMenu user={user} logout={logout} compact={level >= 1} />}</Menu.Menu>
@@ -337,9 +337,9 @@ export function CommitteeNavigation({snapshot, user, logout, realtimeStatus = 'C
       element?.setAttribute('inert', '');
     }}>
       <Menu className="committee-primary-navigation" size="large" data-crisis-reminder={crisisReminder}>
-        <PrimaryItems snapshot={snapshot} hasPendingFileReview={hasPendingFileReview} measureLabels />
+        <PrimaryItems snapshot={snapshot} hasPendingFileReview={hasPendingFileReview} hasStorageSetupHint={hasStorageSetupHint} measureLabels />
         <Menu.Item className="committee-navigation-more"><Icon name="ellipsis horizontal" />
-          {hasPendingFileReview && <span className="committee-navigation-more-files"><span className="file-review-dot" /></span>}</Menu.Item>
+          {(hasPendingFileReview || hasStorageSetupHint) && <span className="committee-navigation-more-files">{hasPendingFileReview && <span className="file-review-dot" />}{hasStorageSetupHint && <span className="storage-setup-dot" />}</span>}</Menu.Item>
         <Menu.Menu position="right"><AttendanceThresholdItem snapshot={snapshot} /><RealtimeStatusItem status={realtimeStatus} />
           {user && <AccountMenu user={user} logout={logout} />}</Menu.Menu>
       </Menu>
@@ -352,7 +352,7 @@ export function CommitteeNavigation({snapshot, user, logout, realtimeStatus = 'C
         data-crisis-reminder={crisisReminder}
         onHide={() => setSidebarOpen(false)}>
         <AttendanceThresholdItem snapshot={snapshot} />
-        <PrimaryItems snapshot={snapshot} onNavigate={() => setSidebarOpen(false)} onCreateCaucus={onCreateCaucus} hasPendingFileReview={hasPendingFileReview} />
+        <PrimaryItems snapshot={snapshot} onNavigate={() => setSidebarOpen(false)} onCreateCaucus={onCreateCaucus} hasPendingFileReview={hasPendingFileReview} hasStorageSetupHint={hasStorageSetupHint} />
       </Sidebar>
       <Sidebar.Pusher dimmed={sidebarOpen} onClick={() => sidebarOpen && setSidebarOpen(false)}>
         <nav aria-label={t('Committee navigation')}>

@@ -168,6 +168,23 @@ integration('PostgreSQL stage 4 templates and seat snapshots', () => {
     await expect(service.getSettings(administrator, first.id)).rejects.toMatchObject({code:'FORBIDDEN'});
     const outsider = await user('outsider-settings');
     await expect(service.getSettings(outsider, first.id)).rejects.toMatchObject({code:'FORBIDDEN'});
+    const settings = await service.getSettings(owner, first.id);
+    await expect(service.updateSettings(owner, first.id, {...settings, baseRevision: settings.revision,
+      storageSetupHintSuppressed: 'true'}, context('invalid-hint'))).rejects.toMatchObject({code: 'VALIDATION_FAILED'});
+    await expect(service.updateSettings(outsider, first.id, {...settings, baseRevision: settings.revision,
+      storageSetupHintSuppressed: true}, context('unauthorized-hint'))).rejects.toMatchObject({code: 'FORBIDDEN'});
+    await service.updateSettings(owner, first.id, {...settings, baseRevision: settings.revision,
+      storageSetupHintSuppressed: true}, context('suppress-hint'));
+    const otherChair = await user('other-chair-settings');
+    await stage3.setChair(owner, first.id, otherChair.user.email, true, first.revision, context('hint-chair'));
+    const persisted = await new DelegateFileService(pool!, {} as never, {} as never, {} as never, {} as never).getSettings(otherChair, first.id);
+    expect(persisted).toMatchObject({storageSetupHintSuppressed: true, allowedExtensions: extensions, rejectionTypes: newTypes});
+    expect(await service.getSettings(owner, second.id)).not.toHaveProperty('storageSetupHintSuppressed');
+    expect((await pool!.query("SELECT event_type,audience FROM committee_events WHERE committee_id=$1 AND event_type='storage.setup_hint_changed'", [first.id])).rows)
+      .toEqual([{event_type: 'storage.setup_hint_changed', audience: 'CHAIR'}]);
+    const {storageSetupHintSuppressed: _suppressed, ...withoutHint} = persisted;
+    await service.updateSettings(owner, first.id, {...withoutHint, baseRevision: persisted.revision}, context('preserve-hint'));
+    expect(await service.getSettings(owner, first.id)).toMatchObject({storageSetupHintSuppressed: true});
   });
 
   it('freezes every creation default, validates updates, and uses the stored duration at first start', async () => {

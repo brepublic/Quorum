@@ -3401,6 +3401,70 @@ describe('committee workspace routes and roles', () => {
     expect(setResolutionDirectVote).toHaveBeenLastCalledWith('resolution', 'seat', 'AGAINST');
   });
 
+  it('keeps the storage reminder after visiting and suppresses it for the committee', async () => {
+    let settings: Awaited<ReturnType<SelfHostedApi['getDelegateFileSettings']>> = {revision: 1, rejectionTypes: [],
+      allowedExtensions: {WORKING_PAPER: ['pdf'], DIRECTIVE_DRAFT: ['pdf'], RESOLUTION_DRAFT: ['pdf'], NEWS: ['pdf'], INSTANT_MESSAGE: ['pdf'], OTHER: ['pdf'], CRISIS_NOTICE: ['pdf']}, storageSetupHintSuppressed: false};
+    const getDelegateFileSettings = vi.fn(async () => settings as Awaited<ReturnType<SelfHostedApi['getDelegateFileSettings']>>);
+    const updateDelegateFileSettings = vi.fn(async (_id, next) => {settings = {...next, revision: 2}; return settings;});
+    const overrides = {getDelegateFileSettings, updateDelegateFileSettings};
+    const page = await render('CHAIR', '/committees/committee/posts/attachments', user, value => value, overrides);
+    expect(page.querySelector('.committee-navigation-desktop a[href="/committees/committee/posts"] .storage-setup-dot')).not.toBeNull();
+    expect(page.querySelector('[aria-label="Resource sections"] .storage-setup-dot')).not.toBeNull();
+    await act(async () => page.querySelector<HTMLAnchorElement>('a[href="/committees/committee/posts/storage"]')!.click());
+    expect(page.querySelector('.storage-setup-reminder')?.textContent).toContain('Storage is not configured.');
+    expect(updateDelegateFileSettings).not.toHaveBeenCalled();
+    await act(async () => page.querySelector<HTMLButtonElement>('.storage-setup-reminder button')!.click());
+    expect(updateDelegateFileSettings).toHaveBeenCalledWith('committee', expect.objectContaining({storageSetupHintSuppressed: true, revision: 1}));
+    expect(page.querySelector('.storage-setup-dot')).toBeNull();
+    expect(page.querySelector('.storage-setup-reminder')).toBeNull();
+    act(() => root?.unmount()); root = undefined; container?.remove(); container = undefined;
+    const ownerPage = await render('OWNER', '/committees/committee/posts/storage', {...user, id: 'other'}, value => value, overrides);
+    expect(ownerPage.querySelector('.storage-setup-dot')).toBeNull();
+    expect(ownerPage.querySelector('.storage-setup-reminder')).toBeNull();
+  });
+
+  it('refreshes storage reminders when another Chair suppresses them or enables storage', async () => {
+    let suppressed = false; let configured = false; let sequence = 1;
+    let eventHandlers: Parameters<SelfHostedApi['openCommitteeEvents']>[2] | undefined;
+    const page = await render('OWNER', '/committees/committee/posts/storage', user,
+      value => ({...value, sync: {committeeEventSequence: sequence}}), {
+        getDelegateFileSettings: vi.fn(async () => ({revision: sequence, rejectionTypes: [], allowedExtensions: {},
+          storageSetupHintSuppressed: suppressed} as never)),
+        listStorageBindings: vi.fn(async () => configured ? [{status: 'ACTIVE'}] as never : []),
+        openCommitteeEvents: (_id, _after, handlers) => {eventHandlers = handlers; handlers.onState('LIVE'); return () => undefined;}
+      });
+    expect(page.querySelector('.storage-setup-reminder')).not.toBeNull();
+    const notify = async () => {
+      sequence++;
+      await act(async () => {eventHandlers!.onEvent({sequence, type: 'storage.setup_hint_changed'} as never);});
+    };
+    suppressed = true; await notify();
+    expect(page.querySelector('.storage-setup-reminder')).toBeNull();
+    expect(page.querySelector('.storage-setup-dot')).toBeNull();
+    suppressed = false; await notify();
+    expect(page.querySelector('.storage-setup-reminder')).not.toBeNull();
+    configured = true; await notify();
+    expect(page.querySelector('.storage-setup-reminder')).toBeNull();
+    expect(page.querySelector('.storage-setup-dot')).toBeNull();
+  });
+
+  it('retains the reminder when suppression fails', async () => {
+    const page = await render('CHAIR', '/committees/committee/posts/storage', user, value => value, {
+      getDelegateFileSettings: vi.fn(async () => ({revision: 1, rejectionTypes: [], allowedExtensions: {}} as never)),
+      updateDelegateFileSettings: vi.fn(async () => {throw new Error('failed');})});
+    await act(async () => page.querySelector<HTMLButtonElement>('.storage-setup-reminder button')!.click());
+    expect(page.querySelector('.storage-setup-dot')).not.toBeNull();
+    expect(page.querySelector('.storage-setup-reminder')).not.toBeNull();
+  });
+
+  it.each(['MEMBER', 'PUBLIC', 'CHAIR'] as const)('hides storage reminders for %s with active storage', async audience => {
+    const getDelegateFileSettings = vi.fn(async () => ({revision: 1, rejectionTypes: [], allowedExtensions: {}} as never));
+    const page = await render(audience, '/committees/committee/posts/attachments', user, value => value, {
+      getDelegateFileSettings, listStorageBindings: vi.fn(async () => [{status: 'ACTIVE'}] as never)});
+    expect(page.querySelector('.storage-setup-dot')).toBeNull();
+    if (audience !== 'CHAIR') expect(getDelegateFileSettings).not.toHaveBeenCalled();
+  });
+
   it('keeps storage inside the account-authorized resource tabs', async () => {
     const apiOverrides = {listFiles: vi.fn(async () => []), listPendingHostCommits: vi.fn(async () => []),
       listStorageBindings: vi.fn(async () => []), listS3ProviderConfigs: vi.fn(async () => []),
