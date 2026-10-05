@@ -735,6 +735,34 @@
   background: #f2711c;
 }
 
+.ui.message.storage-setup-reminder {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem 1.5rem;
+  padding: 1.25rem 1.5rem;
+}
+
+.storage-setup-reminder-label {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 1.125rem;
+  font-weight: 600;
+}
+
+.storage-setup-reminder-label > .icon {
+  margin: 0;
+  opacity: 0.8;
+}
+
+.ui.message.storage-setup-reminder > .ui.button {
+  flex-shrink: 0;
+  margin: 0 0 0 auto;
+  font-size: 1.125rem;
+}
+
 .committee-primary-navigation.ui.menu .committee-navigation-more > .menu {
   width: max-content;
   min-width: 11rem;

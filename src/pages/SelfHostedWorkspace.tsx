@@ -370,8 +370,8 @@ function PostsPanel({snapshot, api, userId, tab, hasStorageSetupHint, suppressSt
     {canManageStorage && <Menu.Item as={Link} to={`${base}/file-settings`} active={active === 'file-settings'}>{t('File settings')}</Menu.Item>}
   </Menu>
     {active === 'storage' && hasStorageSetupHint && <Message warning className="storage-setup-reminder">
-      <span>{t('Storage is not configured.')}</span>{' '}
-      <Button size="mini" disabled={suppressing || !['ACTIVE', 'PAUSED'].includes(snapshot.committee.status)} loading={suppressing}
+      <div className="storage-setup-reminder-label"><Icon name="info circle" aria-hidden="true" /><span>{t('Storage is not configured.')}</span></div>
+      <Button basic color="orange" size="small" disabled={suppressing || !['ACTIVE', 'PAUSED'].includes(snapshot.committee.status)} loading={suppressing}
         onClick={() => {setSuppressing(true); void suppressStorageHint().finally(() => setSuppressing(false));}}>{t('Suppress reminder')}</Button>
     </Message>}
     {bindingError && <Message error><p>{bindingError}</p><Button onClick={() => setBindingReload(value => value + 1)}>{t('Retry')}</Button></Message>}
