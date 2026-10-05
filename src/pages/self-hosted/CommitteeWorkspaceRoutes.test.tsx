@@ -422,40 +422,95 @@ describe('committee workspace routes and roles', () => {
     expect(workspace?.textContent).toContain('Start meeting');
   });
 
-  it('opens a committee on roll call and keeps information in a centered card', async () => {
+  it('opens a committee on roll call and combines information with the seat tab', async () => {
     const defaultPage = await render('OWNER', '/committees/committee');
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
     expect(defaultPage.textContent).toContain('Start meeting');
 
     const page = await render('OWNER', '/committees/committee/info');
-    expect(page.querySelector('.committee-overview-page > .committee-overview-card')).toBeTruthy();
+    expect(page.querySelector('.committee-info-page > .committee-overview-card')).toBeTruthy();
     expect(page.textContent).toContain('Climate security');
     expect(page.textContent).toContain('Main Hall');
     expect(page.textContent).toContain('Active');
     expect(page.textContent).toContain('Share committee');
-    expect(page.textContent).not.toContain('Create seat');
-    expect(page.textContent).not.toContain('Grant Chair');
+    expect(page.querySelector('[aria-label="Create seat"]')).toBeTruthy();
+    expect(page.querySelector<HTMLElement>('.committee-member-panel')?.hidden).toBe(true);
+    expect(page.querySelector<HTMLElement>('.committee-seat-editor')?.hidden).toBe(false);
   });
 
-  it('lets Chairs manage seats, assignments, and one-time invitations from setup', async () => {
-    const page = await render('CHAIR', '/committees/committee/setup');
+  it('lets Chairs manage seats, assignments, and one-time invitations from the information tabs', async () => {
+    const page = await render('CHAIR', '/committees/committee/info');
     expect(page.querySelector('[aria-label="Create seat"]')).toBeTruthy();
     expect(page.querySelector('[aria-label="Seat name"]')).toBeNull();
     expect(page.textContent).toContain('France');
     expect(page.textContent).toContain('No abstention');
     expect(page.querySelector('.committee-setup-page')?.classList.contains('fluid')).toBe(true);
-    expect(page.querySelector('.committee-setup-layout.has-seat-management > .committee-seat-editor .seat-list-table')).toBeTruthy();
-    expect(page.querySelectorAll('.committee-setup-layout > .committee-seat-management > .ui.card')).toHaveLength(2);
+    expect(page.querySelector('.committee-info-content > .committee-seat-editor .seat-list-table')).toBeTruthy();
+    expect(page.querySelectorAll('.committee-member-panel > .committee-seat-management > .ui.card')).toHaveLength(2);
     expect(page.textContent).toContain('Assign seat');
     expect(page.textContent).toContain('Create invitation');
     expect(page.textContent).not.toContain('Grant Chair');
+    await act(async () => {page.querySelector<HTMLButtonElement>('[role="tab"][aria-controls$="members-panel"]')?.click();});
+    expect(page.querySelector<HTMLElement>('.committee-member-panel')?.hidden).toBe(false);
+    expect(page.querySelector<HTMLElement>('.committee-seat-editor')?.hidden).toBe(true);
+    expect(page.querySelector('.committee-overview-card')).toBeTruthy();
+  });
+
+  it('redirects the old seat URL to committee information', async () => {
+    const page = await render('OWNER', '/committees/committee/setup');
+    expect(page.querySelector('.committee-info-page')).toBeTruthy();
+    expect(page.querySelector('.committee-navigation-desktop a.active')?.getAttribute('href'))
+      .toBe('/committees/committee/info');
+    expect(page.querySelector('a[href="/committees/committee/setup"]')).toBeNull();
+  });
+
+  it('keeps member drafts and the generated invitation across tab switches with one event connection', async () => {
+    const openCommitteeEvents = vi.fn((_id, _after, handlers) => {handlers.onState('LIVE'); return () => undefined;});
+    const createSeatInvitation = vi.fn(async () => ({code: 'test-invitation'})) as unknown as SelfHostedApi['createSeatInvitation'];
+    const page = await render('OWNER', '/committees/committee/info', user, value => value, {openCommitteeEvents, createSeatInvitation});
+    const seatsTab = page.querySelector<HTMLButtonElement>('[role="tab"][aria-controls$="seats-panel"]')!;
+    const membersTab = page.querySelector<HTMLButtonElement>('[role="tab"][aria-controls$="members-panel"]')!;
+    await act(async () => {membersTab.click();});
+    const input = page.querySelector<HTMLInputElement>('.committee-chair-grant input')!;
+    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    await act(async () => {
+      setValue.call(input, 'next-chair@example.com');
+      input.dispatchEvent(new Event('input', {bubbles: true}));
+      page.querySelectorAll<HTMLFormElement>('.committee-seat-management form')[2]
+        .dispatchEvent(new Event('submit', {bubbles: true, cancelable: true}));
+    });
+    expect(createSeatInvitation).toHaveBeenCalledWith('committee', expect.objectContaining({seatId: 'seat', maxUses: 1}));
+    await act(async () => {seatsTab.click();});
+    expect(page.querySelector<HTMLElement>('.committee-member-panel')?.hidden).toBe(true);
+    await act(async () => {membersTab.click();});
+    expect(page.querySelector<HTMLInputElement>('.committee-chair-grant input')?.value).toBe('next-chair@example.com');
+    expect(page.querySelector('.committee-member-panel code')?.textContent).toBe('test-invitation');
+    expect(openCommitteeEvents).toHaveBeenCalledTimes(1);
+  });
+
+  it('supports keyboard tab navigation and localizes the member controls', async () => {
+    const page = await render('OWNER', '/committees/committee/info');
+    const seatsTab = page.querySelector<HTMLButtonElement>('[role="tab"][aria-controls$="seats-panel"]')!;
+    const membersTab = page.querySelector<HTMLButtonElement>('[role="tab"][aria-controls$="members-panel"]')!;
+    await act(async () => {seatsTab.dispatchEvent(new KeyboardEvent('keydown', {key: 'ArrowRight', bubbles: true}));});
+    expect(document.activeElement).toBe(membersTab);
+    expect(membersTab.getAttribute('aria-selected')).toBe('true');
+    await act(async () => {membersTab.dispatchEvent(new KeyboardEvent('keydown', {key: 'Home', bubbles: true}));});
+    expect(document.activeElement).toBe(seatsTab);
+    expect(seatsTab.getAttribute('aria-selected')).toBe('true');
+    await act(async () => {setLanguage('zh-CN');});
+    expect(membersTab.textContent).toBe('成员管理');
+    expect(page.querySelector('.committee-chair-card h2')?.textContent).toBe('主席账号与权限');
+    expect(page.querySelector('.committee-chair-grant label')?.textContent).toBe('账号邮箱');
+    expect(page.querySelector('.committee-chair-accounts h3')?.textContent).toBe('已获授权账号');
+    expect(page.querySelector('.committee-chairs-list button')?.textContent).toBe('撤销权限');
   });
 
   it.each(['CHAIR', 'OWNER'] as const)('updates assignment cards and layout when the operation mode changes for %s', async audience => {
     let operationMode: CommitteeWorkspaceSnapshot['committee']['operationMode'] = 'CHAIR_OPERATED';
     let sequence = 1;
     let callbacks!: Parameters<SelfHostedApi['openCommitteeEvents']>[2];
-    const page = await render(audience, '/committees/committee/setup', user, value => value, {
+    const page = await render(audience, '/committees/committee/info', user, value => value, {
       snapshot: vi.fn(async () => {
         const value = snapshot(audience);
         return {...value, committee: {...value.committee, operationMode}, sync: {committeeEventSequence: sequence}};
@@ -468,7 +523,7 @@ describe('committee workspace routes and roles', () => {
       expect(page.textContent).not.toContain('delegate@example.com');
       expect(page.querySelector('[aria-label="Create seat"]')).toBeTruthy();
       expect(page.querySelectorAll('.committee-seat-management > .ui.card')).toHaveLength(audience === 'OWNER' ? 1 : 0);
-      expect(Boolean(page.querySelector('.committee-setup-layout.has-seat-management'))).toBe(audience === 'OWNER');
+      expect(Boolean(page.querySelector('.committee-info-tabs'))).toBe(audience === 'OWNER');
       expect(Boolean(page.querySelector('.committee-seat-management'))).toBe(audience === 'OWNER');
       if (audience === 'OWNER') expect(page.textContent).toContain('Grant Chair');
     };
@@ -482,8 +537,13 @@ describe('committee workspace routes and roles', () => {
     expect(page.textContent).toContain('One-time seat invitation');
     expect(page.textContent).toContain('delegate@example.com');
     expect(page.querySelectorAll('.committee-seat-management > .ui.card')).toHaveLength(audience === 'OWNER' ? 3 : 2);
+    await act(async () => {page.querySelector<HTMLButtonElement>('[role="tab"][aria-controls$="members-panel"]')?.click();});
     await changeMode('CHAIR_OPERATED');
     expectChairMode();
+    expect(page.querySelector<HTMLElement>('.committee-seat-editor')?.hidden).toBe(audience === 'OWNER');
+    await changeMode('DELEGATE_OPERATED');
+    expect(page.querySelector('[role="tab"][aria-selected="true"]')?.textContent)
+      .toBe(audience === 'OWNER' ? 'Member management' : 'Seats');
   });
 
   it('hides seat creation when all template countries are seated and restores it after deactivation', async () => {
@@ -491,7 +551,7 @@ describe('committee workspace routes and roles', () => {
     const updateSeat = vi.fn(async () => {franceSeated = false;}) as unknown as SelfHostedApi['updateSeat'];
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
     try {
-      const page = await render('CHAIR', '/committees/committee/setup', user, value => ({...value,
+      const page = await render('CHAIR', '/committees/committee/info', user, value => ({...value,
         seats: franceSeated ? [...value.seats, {...value.seats[0], id: 'france-seat', stableKey: 'france',
           displayName: 'France'}] : value.seats}), {updateSeat});
       expect(page.querySelector('.seat-create-table')).toBeNull();
@@ -505,7 +565,7 @@ describe('committee workspace routes and roles', () => {
   });
 
   it('preserves the fixed member name instead of overwriting it from the country directory', async () => {
-    const page = await render('CHAIR', '/committees/committee/setup', user, value => ({...value,
+    const page = await render('CHAIR', '/committees/committee/info', user, value => ({...value,
       seats: [...value.seats, {...value.seats[0], id: 'france-seat', stableKey: 'france', displayName: 'French delegation'}]}));
     expect(page.querySelector('.seat-list-table')?.textContent).toContain('French delegation');
     expect(page.querySelector('.seat-list-table')?.textContent).toContain('China');
@@ -516,7 +576,7 @@ describe('committee workspace routes and roles', () => {
   it.each(['OWNER', 'PUBLIC'] as const)('preserves complete country names of varied lengths in the %s seat list', async audience => {
     const names = ['Chad', 'United Kingdom of Great Britain and Northern Ireland', '中华人民共和国',
       'Côte d’Ivoire', '圣文森特和格林纳丁斯', 'A'.repeat(160)];
-    const page = await render(audience, '/committees/committee/setup', user, value => ({...value,
+    const page = await render(audience, '/committees/committee/info', user, value => ({...value,
       seats: names.map((displayName, index) => ({...value.seats[0], id: `seat-${index}`,
         stableKey: `country-${index}`, displayName}))}));
     expect([...page.querySelectorAll('.committee-seat-name')].map(element => element.textContent)).toEqual(names);
@@ -527,30 +587,32 @@ describe('committee workspace routes and roles', () => {
   });
 
   it('lets only Owners manage Chairs', async () => {
-    const page = await render('OWNER', '/committees/committee/setup');
+    const page = await render('OWNER', '/committees/committee/info');
     expect(page.textContent).toContain('Grant Chair');
     expect(page.querySelector('.committee-chairs-list')?.textContent).toContain('Revoke');
-    expect(page.querySelectorAll('.committee-setup-page .ui.card')).toHaveLength(3);
+    expect(page.querySelectorAll('.committee-seat-management > .ui.card')).toHaveLength(3);
   });
 
   it('preserves full Chair emails and revokes the selected account from the compact list', async () => {
     const longEmail = `${'longchairaccount'.repeat(8)}@example.com`;
     const revokeChair = vi.fn(async () => ({})) as unknown as SelfHostedApi['revokeChair'];
-    const page = await render('OWNER', '/committees/committee/setup', user, value => ({...value,
+    const page = await render('OWNER', '/committees/committee/info', user, value => ({...value,
       chairs: [{userEmail: 'first@example.com'}, {userEmail: longEmail}]}), {revokeChair});
+    await act(async () => {page.querySelector<HTMLButtonElement>('[role="tab"][aria-controls$="members-panel"]')?.click();});
     expect([...page.querySelectorAll('.committee-chair-email')].map(item => item.textContent))
       .toEqual(['first@example.com', longEmail]);
     const button = [...page.querySelectorAll<HTMLButtonElement>('.committee-chairs-list button')]
-      .find(item => item.getAttribute('aria-label') === `Revoke · ${longEmail}`);
+      .find(item => item.getAttribute('aria-label') === `Revoke permission · ${longEmail}`);
     expect(button).toBeTruthy();
     await act(async () => button?.click());
     expect(revokeChair).toHaveBeenCalledWith('committee', longEmail, 4);
   });
 
   it('omits the Chair list when empty and keeps the grant form available', async () => {
-    const page = await render('OWNER', '/committees/committee/setup', user, value => ({...value, chairs: []}));
+    const page = await render('OWNER', '/committees/committee/info', user, value => ({...value, chairs: []}));
     expect(page.querySelector('.committee-chairs-list')).toBeNull();
     expect(page.textContent).toContain('Grant Chair');
+    expect(page.querySelector('.committee-chair-accounts')?.textContent).toContain('No authorized accounts');
   });
 
   it('uses the full seat area without an empty sidebar for read-only and empty Chair views', async () => {
@@ -559,16 +621,16 @@ describe('committee workspace routes and roles', () => {
       ['OWNER', (value: CommitteeWorkspaceSnapshot) => ({...value, committee: {...value.committee, status: 'ARCHIVED' as const}})],
       ['CHAIR', (value: CommitteeWorkspaceSnapshot) => ({...value, seats: []})]
     ] as const) {
-      const page = await render(audience, '/committees/committee/setup', user, customize);
+      const page = await render(audience, '/committees/committee/info', user, customize);
       expect(page.querySelector('.committee-seat-editor')).toBeTruthy();
       expect(page.querySelector('.committee-seat-management')).toBeNull();
-      expect(page.querySelector('.committee-setup-layout.has-seat-management')).toBeNull();
+      expect(page.querySelector('.committee-info-tabs')).toBeNull();
       await act(async () => root?.unmount()); root = undefined; page.remove();
     }
   });
 
   it('keeps Chair management available for an Owner with no seats', async () => {
-    const page = await render('OWNER', '/committees/committee/setup', user, value => ({...value, seats: []}));
+    const page = await render('OWNER', '/committees/committee/info', user, value => ({...value, seats: []}));
     expect(page.querySelectorAll('.committee-seat-management > .ui.card')).toHaveLength(1);
     expect(page.textContent).toContain('Grant Chair');
     expect(page.textContent).not.toContain('Assign seat');
@@ -577,7 +639,7 @@ describe('committee workspace routes and roles', () => {
   it('updates all seats while preserving voting constraints and skips unchanged seats', async () => {
     vi.useFakeTimers();
     const updateSeat = vi.fn(async () => ({})) as unknown as SelfHostedApi['updateSeat'];
-    const page = await render('CHAIR', '/committees/committee/setup', user, value => ({...value,
+    const page = await render('CHAIR', '/committees/committee/info', user, value => ({...value,
       seats: [value.seats[0], {...value.seats[0], id: 'second', displayName: 'France', rank: 'STANDARD',
         hasVeto: false, mustVote: true, revision: 3}]}), {updateSeat});
     const all = page.querySelector('.all-seats-row')!;
@@ -595,7 +657,7 @@ describe('committee workspace routes and roles', () => {
 
   it('links the new-seat voting switches and clears veto and no-abstention when procedural voting is turned off', async () => {
     const createSeat = vi.fn(async () => ({})) as unknown as SelfHostedApi['createSeat'];
-    const page = await render('CHAIR', '/committees/committee/setup', user, value => value, {createSeat});
+    const page = await render('CHAIR', '/committees/committee/info', user, value => value, {createSeat});
     const row = page.querySelector('.add-seat-row')!;
     const input = (label: string) => row.querySelector<HTMLInputElement>(`[aria-label="${label}"]`)!;
     const click = async (label: string) => act(async () => {clickSemanticCheckbox(input(label).parentElement);});
@@ -620,7 +682,7 @@ describe('committee workspace routes and roles', () => {
   it('links a single seat in one save and keeps procedural-only participation available', async () => {
     const seat = {...snapshot('CHAIR').seats[0], mustVote: true};
     const updateSeat = vi.fn(async (_committee, _id, _revision, patch) => {Object.assign(seat, patch); return {};}) as unknown as SelfHostedApi['updateSeat'];
-    const page = await render('CHAIR', '/committees/committee/setup', user, value => ({...value, seats: [seat]}), {updateSeat});
+    const page = await render('CHAIR', '/committees/committee/info', user, value => ({...value, seats: [seat]}), {updateSeat});
     const input = (label: string) => page.querySelector<HTMLInputElement>(`[aria-label="${label} · China"]`)!;
     const click = async (label: string) => act(async () => {clickSemanticCheckbox(input(label).parentElement);});
     expect(input('Procedural voting').disabled).toBe(false);
@@ -644,7 +706,7 @@ describe('committee workspace routes and roles', () => {
     const seats = [snapshot('CHAIR').seats[0], {...snapshot('CHAIR').seats[0], id: 'second', displayName: 'France'}]
       .map(seat => ({...seat, mustVote: true}));
     const updateSeat = vi.fn(async (_committee, id, _revision, patch) => {Object.assign(seats.find(seat => seat.id === id)!, patch); return {};}) as unknown as SelfHostedApi['updateSeat'];
-    const page = await render('CHAIR', '/committees/committee/setup', user, value => ({...value, seats}), {updateSeat});
+    const page = await render('CHAIR', '/committees/committee/info', user, value => ({...value, seats}), {updateSeat});
     const input = (label: string) => page.querySelector<HTMLInputElement>(`[aria-label="${label} · All seats"]`)!;
     const click = async (label: string) => act(async () => {clickSemanticCheckbox(input(label).parentElement);});
     expect(input('Procedural voting').closest('.seat-capability-linked')).not.toBeNull();
@@ -672,7 +734,7 @@ describe('committee workspace routes and roles', () => {
   it('preserves linked individual changes made during the bulk preview', async () => {
     vi.useFakeTimers();
     const updateSeat = vi.fn(async () => ({})) as unknown as SelfHostedApi['updateSeat'];
-    const page = await render('CHAIR', '/committees/committee/setup', user, value => ({...value,
+    const page = await render('CHAIR', '/committees/committee/info', user, value => ({...value,
       seats: [{...value.seats[0], canVote: false, canProceduralVote: false, hasVeto: false},
         {...value.seats[0], id: 'second', displayName: 'France', canVote: false, canProceduralVote: false, hasVeto: false}]}), {updateSeat});
     await act(async () => {clickSemanticCheckbox(page.querySelector('[aria-label="Voting · All seats"]')?.parentElement);});
@@ -689,7 +751,7 @@ describe('committee workspace routes and roles', () => {
   it('clears no-abstention when all voting rights are removed', async () => {
     vi.useFakeTimers();
     const updateSeat = vi.fn(async () => ({})) as unknown as SelfHostedApi['updateSeat'];
-    const page = await render('CHAIR', '/committees/committee/setup', user, value => ({...value,
+    const page = await render('CHAIR', '/committees/committee/info', user, value => ({...value,
       seats: [{...value.seats[0], rank: 'STANDARD', hasVeto: false, mustVote: true},
         {...value.seats[0], id: 'second', rank: 'OBSERVER', hasVeto: false}]}), {updateSeat});
     await act(async () => {clickSemanticCheckbox(page.querySelector('[aria-label="Voting · All seats"]')?.parentElement);});
@@ -705,7 +767,7 @@ describe('committee workspace routes and roles', () => {
     vi.useFakeTimers();
     let finishSave!: () => void;
     const updateSeat = vi.fn(() => new Promise<void>(resolve => {finishSave = resolve;})) as unknown as SelfHostedApi['updateSeat'];
-    const page = await render('CHAIR', '/committees/committee/setup', user, value => value, {updateSeat});
+    const page = await render('CHAIR', '/committees/committee/info', user, value => value, {updateSeat});
     const all = () => page.querySelector<HTMLInputElement>('[aria-label="No abstention · All seats"]')!;
     const seat = () => page.querySelector<HTMLInputElement>('[aria-label="No abstention · China"]')!;
     await act(async () => {clickSemanticCheckbox(all().parentElement);});
@@ -733,7 +795,7 @@ describe('committee workspace routes and roles', () => {
       Object.assign(seats.find(seat => seat.id === id)!, patch);
       return {};
     }) as unknown as SelfHostedApi['updateSeat'];
-    const page = await render('CHAIR', '/committees/committee/setup', user, value => ({...value, seats}), {updateSeat});
+    const page = await render('CHAIR', '/committees/committee/info', user, value => ({...value, seats}), {updateSeat});
     await act(async () => {clickSemanticCheckbox(page.querySelector('[aria-label="No abstention · China"]')?.parentElement);});
     expect(page.querySelector('.all-seats-row .indeterminate')).toBeTruthy();
     vi.mocked(updateSeat).mockClear();
@@ -748,7 +810,7 @@ describe('committee workspace routes and roles', () => {
   it('cancels queued changes on leaving setup', async () => {
     vi.useFakeTimers();
     const updateSeat = vi.fn() as unknown as SelfHostedApi['updateSeat'];
-    const page = await render('CHAIR', '/committees/committee/setup', user, value => value, {updateSeat});
+    const page = await render('CHAIR', '/committees/committee/info', user, value => value, {updateSeat});
     await act(async () => {clickSemanticCheckbox(page.querySelector('[aria-label="No abstention · All seats"]')?.parentElement);});
     act(() => {root?.unmount(); root = undefined;});
     await act(async () => {await vi.advanceTimersByTimeAsync(2000);});
@@ -757,7 +819,7 @@ describe('committee workspace routes and roles', () => {
 
   it.each(['outside', 'tab', 'escape'] as const)('does not save a mixed seat rank when dismissed by %s', async dismissal => {
     const updateSeat = vi.fn(async () => ({})) as unknown as SelfHostedApi['updateSeat'];
-    const page = await render('CHAIR', '/committees/committee/setup', user, value => ({...value,
+    const page = await render('CHAIR', '/committees/committee/info', user, value => ({...value,
       seats: [value.seats[0], {...value.seats[0], id: 'second', rank: 'NGO'}]}), {updateSeat});
     const dropdown = page.querySelector<HTMLElement>('[aria-label="Seat type · All seats"]')!;
     const input = dropdown.querySelector<HTMLInputElement>('input')!;
@@ -779,7 +841,7 @@ describe('committee workspace routes and roles', () => {
 
   it('changes rank without changing capabilities', async () => {
     const updateSeat = vi.fn(async () => ({})) as unknown as SelfHostedApi['updateSeat'];
-    const page = await render('CHAIR', '/committees/committee/setup', user, value => ({...value,
+    const page = await render('CHAIR', '/committees/committee/info', user, value => ({...value,
       seats: [{...value.seats[0], rank: 'STANDARD', hasVeto: false, canVote: false, canProceduralVote: true},
         {...value.seats[0], id: 'second', rank: 'OBSERVER', hasVeto: false, canVote: false, canProceduralVote: true}]}), {updateSeat});
     expect(page.querySelector<HTMLInputElement>('[aria-label="No abstention · All seats"]')?.disabled).toBe(true);
@@ -796,7 +858,7 @@ describe('committee workspace routes and roles', () => {
   it('saves the final full combination after enabling veto, disabling voting and re-enabling voting', async () => {
     vi.useFakeTimers();
     const updateSeat = vi.fn(async () => ({})) as unknown as SelfHostedApi['updateSeat'];
-    const page = await render('CHAIR', '/committees/committee/setup', user, value => ({...value,
+    const page = await render('CHAIR', '/committees/committee/info', user, value => ({...value,
       seats: [{...value.seats[0], rank: 'OBSERVER', canVote: false, canProceduralVote: true, hasVeto: false, mustVote: false}]}), {updateSeat});
     const click = async (label: string) => act(async () => {
       clickSemanticCheckbox(page.querySelector(`[aria-label="${label} · All seats"]`)?.parentElement);
@@ -813,7 +875,7 @@ describe('committee workspace routes and roles', () => {
   });
 
   it('does not turn a system administrator into a Committee Chair', async () => {
-    const page = await render('PUBLIC', '/committees/committee/setup', {...user, isSystemAdmin: true});
+    const page = await render('PUBLIC', '/committees/committee/info', {...user, isSystemAdmin: true});
     expect(page.textContent).toContain('China');
     expect(page.textContent).not.toContain('Create seat');
     expect(page.textContent).not.toContain('Assign seat');
@@ -3133,7 +3195,7 @@ describe('committee workspace routes and roles', () => {
     expect(currentFlag()).toBe('/flags/fr.svg');
     expect(page.querySelector('.resolution-vote-counts')?.textContent).toContain('1');
     await act(async () => {([...page.querySelectorAll<HTMLAnchorElement>('a')]
-      .find(item => item.textContent?.trim() === 'Seats'))?.click();});
+      .find(item => item.getAttribute('href') === '/committees/committee/info'))?.click();});
     expect(globalThis.document.body.textContent).toContain('Discard unsubmitted votes?');
     expect(current()).toBe('France');
     await act(async () => {([...globalThis.document.querySelectorAll<HTMLButtonElement>('button')]

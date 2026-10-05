@@ -212,7 +212,6 @@ function PrimaryItems({snapshot, onNavigate, onCreateCaucus, level = 0, hasPendi
 
   return <>
     <Menu.Item header title={snapshot.committee.name} as={Link} to={base + '/info'} active={location.pathname === base + '/info'} onClick={onNavigate}>{snapshot.committee.name}</Menu.Item>
-    {item('/setup', 'Seats')}
     {item('/roll-call', 'Roll Call')}
     {item('/motions', 'Motions')}
     {item('/points', 'Points')}

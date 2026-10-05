@@ -389,11 +389,13 @@ function rollCallResponseLabel(response: string) {
 function CommitteeOverviewPanel({snapshot}: {snapshot: CommitteeWorkspaceSnapshot}) {
   useLanguage();
   const share = async () => navigator.clipboard?.writeText(`${window.location.origin}/committees/${snapshot.committee.id}`);
-  return <Container className="committee-overview-page">
-    <Card fluid className="committee-overview-card">
+  return <Card fluid className="committee-overview-card">
       <Card.Content>
-        <Card.Header as="h1">{snapshot.committee.name}</Card.Header>
-        <List relaxed>
+        <div className="committee-overview-heading">
+          <Header as="h1">{snapshot.committee.name}</Header>
+          <Button icon="share alternate" content={t('Share committee')} onClick={() => void share()} />
+        </div>
+        <List relaxed className="committee-overview-details">
           <List.Item><List.Icon name="conversation" /><List.Content><List.Header>{t('Topic')}</List.Header>
             <List.Description>{snapshot.committee.topic || '—'}</List.Description></List.Content></List.Item>
           <List.Item><List.Icon name="building outline" /><List.Content><List.Header>{t('Conference')}</List.Header>
@@ -403,14 +405,14 @@ function CommitteeOverviewPanel({snapshot}: {snapshot: CommitteeWorkspaceSnapsho
           </List.Content></List.Item>
         </List>
       </Card.Content>
-      <Card.Content extra><Button icon="share alternate" content={t('Share committee')} onClick={() => void share()} /></Card.Content>
-    </Card>
-  </Container>;
+    </Card>;
 }
 
-function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspaceSnapshot; run: WorkspaceCommand;
+function CommitteeInfoPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspaceSnapshot; run: WorkspaceCommand;
   api: SelfHostedApi; canChair: boolean}) {
   useLanguage();
+  const [tab, setTab] = React.useState<'seats' | 'members'>('seats');
+  const tabId = React.useId();
   const [selectedCountryStableKey, setSelectedCountryStableKey] = React.useState('');
   const [seatRank, setSeatRank] = React.useState<'STANDARD' | 'NGO' | 'OBSERVER' | 'MEDIA'>('STANDARD');
   const [seatHasVeto, setSeatHasVeto] = React.useState(false);
@@ -518,9 +520,28 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
   const showSeatAssignments = canChair && !readOnly && snapshot.seats.length > 0
     && snapshot.committee.operationMode === 'DELEGATE_OPERATED';
   const hasSeatManagement = (owner && !readOnly) || showSeatAssignments;
-  return <Container fluid className="committee-setup-page">
-    <div className={`committee-setup-layout${hasSeatManagement ? ' has-seat-management' : ''}`}>
-    <section className="committee-seat-editor"><Header as="h2">{t('Seats')}</Header>
+  const activeTab = hasSeatManagement ? tab : 'seats';
+  React.useEffect(() => {if (!hasSeatManagement) setTab('seats');}, [hasSeatManagement]);
+  return <Container fluid className="committee-setup-page committee-info-page">
+    <CommitteeOverviewPanel snapshot={snapshot} />
+    {hasSeatManagement && <Menu pointing secondary role="tablist" aria-label={t('Committee information')}
+      className="committee-info-tabs" onKeyDown={(event: React.KeyboardEvent<HTMLElement>) => {
+        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+        event.preventDefault();
+        const next = event.key === 'Home' ? 'seats' : event.key === 'End' ? 'members' : activeTab === 'seats' ? 'members' : 'seats';
+        setTab(next);
+        event.currentTarget.querySelector<HTMLButtonElement>(`[id="${tabId}-${next}-tab"]`)?.focus();
+      }}>
+      {(['seats', 'members'] as const).map(value => <Menu.Item as="button" type="button" role="tab" key={value}
+        id={`${tabId}-${value}-tab`} aria-controls={`${tabId}-${value}-panel`} aria-selected={activeTab === value}
+        tabIndex={activeTab === value ? 0 : -1} active={activeTab === value} onClick={() => setTab(value)}>
+        {t(value === 'seats' ? 'Seats' : 'Member management')}
+      </Menu.Item>)}
+    </Menu>}
+    <div className="committee-info-content">
+    <section className="committee-seat-editor ui segment" id={`${tabId}-seats-panel`} hidden={activeTab !== 'seats'}
+      role={hasSeatManagement ? 'tabpanel' : undefined} aria-labelledby={hasSeatManagement ? `${tabId}-seats-tab` : undefined}>
+      <Header as="h2">{t('Seats')}</Header>
     {canChair && !readOnly && countryOptions.length > 0 && <Table className="members-table seat-create-table" compact celled definition stackable><Table.Header fullWidth><Table.Row>
       <Table.HeaderCell>{t('Seat')}</Table.HeaderCell><Table.HeaderCell>{t('Rank')}</Table.HeaderCell>
       <Table.HeaderCell>{t('Procedural voting')}</Table.HeaderCell><Table.HeaderCell>{t('Voting rights')}</Table.HeaderCell><Table.HeaderCell>{t('Veto power')}</Table.HeaderCell><Table.HeaderCell>{t('No abstention')}</Table.HeaderCell>
@@ -633,21 +654,26 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
       </Table.Row>)}</Table.Body></Table>
       {snapshot.seats.length > 0 && <Button as={Link} to={`/committees/${snapshot.committee.id}/roll-call`} primary fluid>
         {t('Roll Call')}<Icon name="arrow right" /></Button>}
-    </section>{hasSeatManagement && <aside className="committee-seat-management">
-    {owner && !readOnly && <Card fluid><Card.Content><Header as="h2">{t('Chairs')}</Header>
-      <Form onSubmit={async () => {await execute('grant-chair', () => api.grantChair(snapshot.committee.id,
+    </section>{hasSeatManagement && <section className="committee-member-panel" id={`${tabId}-members-panel`}
+      role="tabpanel" aria-labelledby={`${tabId}-members-tab`} hidden={activeTab !== 'members'}>
+    <div className="committee-seat-management">
+    {owner && !readOnly && <Card fluid className="committee-chair-card"><Card.Content><Header as="h2">{t('Chair accounts and permissions')}</Header>
+      <div className="committee-chair-content">
+      <Form className="committee-chair-grant" onSubmit={async () => {await execute('grant-chair', () => api.grantChair(snapshot.committee.id,
         chairEmail.trim(), snapshot.committee.revision)); setChairEmail('');}}>
-        <Form.Input label={t('Email')} required type="email" value={chairEmail} onChange={(_, data) => setChairEmail(String(data.value ?? ""))} />
+        <Form.Input label={t('Account email')} required type="email" value={chairEmail} onChange={(_, data) => setChairEmail(String(data.value ?? ""))} />
         <Button primary loading={pending === 'grant-chair'} disabled={!chairEmail.trim()}>{t('Grant Chair')}</Button>
       </Form>
-      {Boolean(snapshot.chairs?.length) && <ul className="committee-chairs-list" aria-label={t('Chairs')}>
+      <div className="committee-chair-accounts"><Header as="h3">{t('Authorized accounts')}</Header>
+      {snapshot.chairs?.length ? <ul className="committee-chairs-list" aria-label={t('Authorized accounts')}>
         {(snapshot.chairs ?? []).map(chair => <li key={chair.userEmail}>
           <span className="committee-chair-email">{chair.userEmail}</span>
-          <Button negative size="mini" aria-label={`${t('Revoke')} · ${chair.userEmail}`} loading={pending === `chair-${chair.userEmail}`}
+          <Button negative size="mini" aria-label={`${t('Revoke permission')} · ${chair.userEmail}`} loading={pending === `chair-${chair.userEmail}`}
             onClick={() => void execute(`chair-${chair.userEmail}`, () => api.revokeChair(snapshot.committee.id,
-              chair.userEmail, snapshot.committee.revision))}>{t('Revoke')}</Button>
+              chair.userEmail, snapshot.committee.revision))}>{t('Revoke permission')}</Button>
         </li>)}
-      </ul>}
+      </ul> : <p>{t('No authorized accounts')}</p>}
+      </div></div>
     </Card.Content></Card>}
     {showSeatAssignments && <>
       <Card fluid><Card.Content><Header as="h2">{t('Seat assignments')}</Header>
@@ -677,7 +703,7 @@ function SetupPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspac
       {invitationCode && <Message positive header={t('Invitation created')} content={<code>{invitationCode}</code>} />}
       </Card.Content></Card>
     </>}
-    </aside>}</div></Container>;
+    </div></section>}</div></Container>;
 }
 
 
@@ -1317,8 +1343,8 @@ function CommitteeWorkspaceContent({id, api: sourceApi, user, logout}: {
         }}>
         <Switch>
           <Route exact path={base}><Redirect to={base + '/roll-call'} /></Route>
-          <Route exact path={base + '/info'}><CommitteeOverviewPanel snapshot={snapshot} /></Route>
-          <Route exact path={`${base}/setup`}><SetupPanel snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} /></Route>
+          <Route exact path={base + '/info'}><CommitteeInfoPanel key={id} snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} /></Route>
+          <Route exact path={`${base}/setup`}><Redirect to={base + '/info'} /></Route>
           <Route exact path={`${base}/roll-call`}><RollCallPanel snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} /></Route>
           <Route exact path={`${base}/points`}><PointsPanel snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} /></Route>
           <Route exact path={`${base}/notes`}><NotesPanel snapshot={interactionSnapshot} run={run} api={api} /></Route>

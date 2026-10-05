@@ -93,7 +93,7 @@ describe('self-hosted workspace navigation', () => {
   });
 
   it('folds only as much as needed, restores items, and preserves the workspace', () => {
-    let available = 2000;
+    let available = 1900;
     let resize = () => {};
     vi.stubGlobal('ResizeObserver', class {
       constructor(callback: () => void) { resize = callback; }
@@ -126,7 +126,7 @@ describe('self-hosted workspace navigation', () => {
       expect(page.querySelector('input')).toBe(draft);
       expect(draft.value).toBe('unsaved draft');
     };
-    for (const [width, level] of [[2100, 0], [1980, 1], [1900, 2], [1780, 3], [1700, 4], [1600, 5], [1500, 6], [1400, 7], [1300, 8], [1200, 9], [1100, 10], [1000, 11], [900, 12], [800, 13]]) {
+    for (const [width, level] of [[2000, 0], [1880, 1], [1800, 2], [1680, 3], [1600, 4], [1500, 5], [1400, 6], [1300, 7], [1200, 8], [1100, 9], [1000, 10], [900, 11], [800, 12], [700, 13]]) {
       assertLevel(width, level);
       expect(Boolean(nav.querySelector('.realtime-status-label:not([hidden])'))).toBe(level < 3);
       expect(nav.querySelector('.account-menu')?.classList.contains('account-menu-compact')).toBe(level >= 1);
@@ -160,21 +160,21 @@ describe('self-hosted workspace navigation', () => {
     expect(poll.querySelector('a.active')?.getAttribute('href')).toBe('/committees/committee/strawpolls/poll');
     act(() => poll.querySelector<HTMLElement>('a.active')?.click());
     expect(more.classList.contains('visible')).toBe(false);
-    assertLevel(600, 14);
+    assertLevel(500, 14);
     expect(nav.getAttribute('data-navigation-mode')).toBe('sidebar');
     expect(page.querySelector('.committee-mobile-sidebar a[href="/committees/committee/posts"] .file-review-dot')).not.toBeNull();
-    for (const [width, level] of [[800, 13], [900, 12], [1000, 11], [1100, 10], [1200, 9], [1300, 8], [1400, 7], [1500, 6], [1600, 5], [1700, 4], [1780, 3], [1900, 2], [1980, 1], [2100, 0]]) assertLevel(width, level);
+    for (const [width, level] of [[700, 13], [800, 12], [900, 11], [1000, 10], [1100, 9], [1200, 8], [1300, 7], [1400, 6], [1500, 5], [1600, 4], [1680, 3], [1800, 2], [1880, 1], [2000, 0]]) assertLevel(width, level);
     // Restore Statistics as soon as it fits, even with only one pixel to spare.
-    assertLevel(1600, 5);
-    assertLevel(1637, 4);
-    assertLevel(2100, 0);
+    assertLevel(1500, 5);
+    assertLevel(1537, 4);
+    assertLevel(2000, 0);
     expect(page.querySelector('.committee-navigation-measurement')?.hasAttribute('inert')).toBe(true);
-    expect(nav.querySelector('a[href="/committees/committee/setup"]')?.textContent).toBe('Seats');
-    assertLevel(1900, 2);
+    expect(nav.querySelector('a[href="/committees/committee/setup"]')).toBeNull();
+    assertLevel(1800, 2);
     act(() => setLanguage('zh-CN'));
     expect(nav.querySelector('[data-navigation-key="/unmod"] .navigation-caucus-label')?.textContent).toBe('自由磋商');
     expect(nav.querySelector('[data-navigation-key="/caucuses"] .navigation-caucus-label')?.textContent).toBe('有主持核心磋商');
-    expect(nav.querySelector('a[href="/committees/committee/setup"]')?.textContent).toBe('席位');
+    expect(nav.querySelector('a[href="/committees/committee/setup"]')).toBeNull();
     expect(nav.querySelector('a[href="/committees/committee/posts"] .file-review-dot')?.getAttribute('aria-label')).toBe('待审核');
     act(() => root?.render(<MemoryRouter initialEntries={['/committees/committee']}>
       <CommitteeNavigation snapshot={snapshot} user={user} logout={() => undefined} />
@@ -186,7 +186,7 @@ describe('self-hosted workspace navigation', () => {
     const page = render(<CommitteeNavigation snapshot={snapshot} user={user} logout={() => undefined} />,
       '/committees/committee/caucuses/mod');
     const links = Array.from(page.querySelectorAll('a')).map(link => link.getAttribute('href'));
-    expect(links).toContain('/committees/committee/setup');
+    expect(links).not.toContain('/committees/committee/setup');
     expect(links).toContain('/committees/committee/info');
     expect(links).toContain('/committees/committee/roll-call');
     expect(links).toContain('/committees/committee/caucuses/gsl');
