@@ -1,7 +1,7 @@
 mod localization;
 mod desktop;
 use slint::winit_030::WinitWindowAccessor;
-use localization::{translate, load_language, save_language};
+use localization::{translate, load_language, save_language, stale_time};
 use serde_json::{json, Value};
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 use std::{
@@ -12,7 +12,7 @@ use std::{
     rc::Rc,
     sync::{mpsc, Arc, Mutex},
     thread,
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 slint::include_modules!();
 
@@ -592,6 +592,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     _ => {}
                 }
             }
+            let now = SystemTime::now();
+            ui.set_last_connection_age(stale_time(ui.get_last_connection().as_str(), now, ui.get_language().as_str()).into());
+            ui.set_observed_age(stale_time(ui.get_observed().as_str(), now, ui.get_language().as_str()).into());
             ui.set_dirty(matches!(ui.get_page().as_str(), "home" | "manual") && form_state(&ui) != *saved_form.borrow());
             if ui.get_dirty() {
                 ui.set_feedback("".into());

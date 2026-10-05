@@ -8,6 +8,7 @@ license = "GPL-3.0-only"
 slint = { version = "=1.17.1", default-features = false, features = ["std", "backend-winit", "renderer-software", "compat-1-2", "unstable-winit-030"] }
 serde_json = "1"
 rfd = "0.15"
+chrono = { version = "=0.4.45", default-features = false, features = ["std"] }
 
 [build-dependencies]
 slint-build = "=1.17.1"

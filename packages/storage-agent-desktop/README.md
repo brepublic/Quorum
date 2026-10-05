@@ -27,6 +27,8 @@ pnpm start:storage-agent:desktop
 
 同步主页提供按当前状态显示的开始／停止、文件状态和存储位置；应用菜单进入“连接与存储”、独立诊断日志、语言选择及委员会网页。查看设置不停止同步，点击“停止同步并编辑”后修改；保存和取消按进入编辑前的运行状态恢复同步。原本停止时保存和取消仍保持停止。关闭窗口停止同步进程。
 
+最近连接和缓存状态的更新时间各自超过 30 秒后才显示，使用“31 秒前”“2 分钟前”“1 小时前”等相对时间，英文使用对应单复数。正好 30 秒、未来时间或无有效记录时不显示；停止接收快照后仍随时间更新，恢复新记录后隐藏。该阈值只影响时间提示，不更改同步间隔或连接判断。
+
 同一 Linux 用户只运行一个桌面窗口，通过用户私有目录中的 Unix socket 转交再次打开的文件/链接，文件锁保护窗口实例；原有同步目录 `flock` 继续保护 CLI 与桌面核心。其他委员会配置不会静默替换已配对身份，需先停止并解除本机绑定。带未保存输入时使用居中放弃确认。
 
 ## 配置约束
@@ -93,7 +95,7 @@ cargo run --locked --manifest-path packages/storage-agent-desktop/Cargo.toml --e
 
 将发布目录放在稳定位置后运行 `./register-desktop.sh`（或程序的 `--register`）。程序正常启动也会更新当前用户的注册。注册使用 `xdg-mime`、`update-mime-database` 和 `update-desktop-database`，不需要 root。
 
-统一应用标识为 `org.quorum.ChairAgent`：Wayland app_id、X11 WM_CLASS、`org.quorum.ChairAgent.desktop` 的 StartupWMClass 及图标名一致。图标作为 SVG 内嵌窗口并安装到用户的 hicolor 图标目录。注册 `quorum-agent:` 协议及 `.quorum-agent` 文件关联，桌面入口固定 Node/bridge 路径，因此开发启动也能正确接收浏览器链接。移动发布目录后重新注册。
+统一应用标识为 `org.quorum.ChairAgent`：Wayland app_id、X11 WM_CLASS、`org.quorum.ChairAgent.desktop` 的 StartupWMClass 及图标名一致。图标作为 SVG 内嵌窗口并安装到用户的 hicolor 图标目录；桌面入口的 `Icon` 直接引用所安装文件的绝对路径，避免运行中的桌面仍通过旧图标主题缓存查找。注册 `quorum-agent:` 协议及 `.quorum-agent` 文件关联，桌面入口固定 Node/bridge 路径，因此开发启动也能正确接收浏览器链接。移动发布目录后重新注册。
 
 项目沿用 GPLv3，Slint 按其 GPLv3 选项使用；Cargo.lock 固定依赖。二进制发行须附源码与相应第三方许可。
 
@@ -125,5 +127,7 @@ QUORUM_UI_CAPTURE=/tmp/quorum-settings.ppm packages/storage-agent-desktop/target
 ```
 
 预览页面参数包括 `--login`、`--password`、`--committees`、`--manual`、`--setup`、`--settings --paired`、`--logs`，无页面参数为同步页。`--options`、`--network`、`--transfer`、`--error`、`--empty`、`--offline`、`--language` 用于对应状态。`--scroll-bottom` 通过滚轮事件检查滚动后内容。
+
+`--fresh-times`、`--stale-times`、`--stale-cache` 分别检查两项时间均新鲜、均超时、仅缓存超时的显示，可与 `--small`、`--en`、`--light`／`--dark` 组合。
 
 `--exercise-login` 必须与默认尺寸的 `--offscreen --login` 配合，通过真实 Slint 鼠标／键盘事件检查展开、空格激活、文件导入／手动入口回调、邮箱 → Tab → 密码 → Enter、语言切换、Escape 关闭、保留输入及应用菜单的设置／日志／网页回调。回调仅记录，不请求服务器；这些检查不代表系统输入法、文件选择器或完整原生账号连接已经验收。

@@ -1,4 +1,30 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, time::SystemTime};
+
+/// Fresh observations need no timestamp; stale ones age even without another snapshot.
+pub fn stale_time(timestamp: &str, now: SystemTime, language: &str) -> String {
+    let Ok(observed) = chrono::DateTime::parse_from_rfc3339(timestamp) else {
+        return String::new();
+    };
+    let age = chrono::DateTime::<chrono::Utc>::from(now).signed_duration_since(observed);
+    if age <= chrono::TimeDelta::seconds(30) {
+        return String::new();
+    }
+    let seconds = age.num_seconds();
+    let (amount, en, zh) = if seconds < 60 {
+        (seconds, "second", "秒")
+    } else if seconds < 3600 {
+        (seconds / 60, "minute", "分钟")
+    } else if seconds < 86400 {
+        (seconds / 3600, "hour", "小时")
+    } else {
+        (seconds / 86400, "day", "天")
+    };
+    if language == "zh-CN" {
+        format!("{amount} {zh}前")
+    } else {
+        format!("{amount} {en}{} ago", if amount == 1 { "" } else { "s" })
+    }
+}
 
 pub fn translate(key: &str, language: &str) -> &'static str {
     let (en, zh) = match key {
@@ -204,7 +230,7 @@ pub fn translate(key: &str, language: &str) -> &'static str {
         "CONFIG_PRIVATE_REQUIRED" => ("The configuration must be a regular private file readable and writable only by the current user. Links are not allowed.", "配置必须为普通私有文件，仅允许当前用户读写，不能使用链接。"),
         "CONFIG_REQUIRED" => ("Import a configuration or pair the device first.", "请先导入配置或配对。"),
         "CONFLICT" => ("Conflict", "存在冲突"),
-        "Cache status updated at " => ("Cache status updated at ", "缓存状态更新于 "),
+        "Cache status updated" => ("Cache status updated", "缓存状态更新于"),
         "Cancel" => ("Cancel", "取消"),
         "Cannot export logs. Check directory permissions and free space." => ("Cannot export logs. Check directory permissions and free space.", "导出日志：无法写入目标文件，请检查目录权限和磁盘空间。"),
         "Choose a storage directory." => ("Choose a storage directory.", "请选择存储目录。"),
@@ -433,6 +459,37 @@ pub fn save_language(language: &str) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn timestamps_appear_only_after_thirty_seconds_and_hide_on_recovery() {
+        let observed = "2026-10-05T12:00:00.000Z";
+        let start: SystemTime = chrono::DateTime::parse_from_rfc3339(observed).unwrap().into();
+        for millis in [0, 29_999, 30_000] {
+            assert_eq!(stale_time(observed, start + std::time::Duration::from_millis(millis), "zh-CN"), "");
+        }
+        assert_eq!(stale_time(observed, start + std::time::Duration::from_millis(30_001), "zh-CN"), "30 秒前");
+        let later = start + std::time::Duration::from_secs(120);
+        assert_eq!(stale_time(observed, later, "zh-CN"), "2 分钟前");
+        assert_eq!(stale_time("2026-10-05T20:00:00+08:00", later, "zh-CN"), "2 分钟前");
+        assert_eq!(stale_time("2026-10-05T12:02:00Z", later, "zh-CN"), "");
+        for invalid in ["", "invalid", "2026-02-30T00:00:00Z", "2026-10-05T12:03:00Z"] {
+            assert_eq!(stale_time(invalid, later, "zh-CN"), "");
+        }
+    }
+    #[test]
+    fn stale_timestamps_use_localized_relative_units() {
+        let observed = "2026-10-05T12:00:00Z";
+        let start: SystemTime = chrono::DateTime::parse_from_rfc3339(observed).unwrap().into();
+        for (seconds, zh, en) in [
+            (31, "31 秒前", "31 seconds ago"), (59, "59 秒前", "59 seconds ago"),
+            (60, "1 分钟前", "1 minute ago"), (3599, "59 分钟前", "59 minutes ago"),
+            (3600, "1 小时前", "1 hour ago"), (86399, "23 小时前", "23 hours ago"),
+            (86400, "1 天前", "1 day ago"), (172800, "2 天前", "2 days ago"),
+        ] {
+            let now = start + std::time::Duration::from_secs(seconds);
+            assert_eq!(stale_time(observed, now, "zh-CN"), zh);
+            assert_eq!(stale_time(observed, now, "en"), en);
+        }
+    }
     #[test]
     fn localized_states_and_errors_do_not_depend_on_business_names() {
         assert_eq!(translate("PENDING_DOWNLOAD", "en"), "Pending download");

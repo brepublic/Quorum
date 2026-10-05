@@ -106,3 +106,17 @@
 最终 contracts／Agent 构建及 Rust release 构建通过。打包脚本尝试原地复制正在使用的 `runtime/node` 时收到 `Text file busy`；随后在临时目录完成组装，仅原子替换 2 个有变化的发布文件，并逐文件校验核心文件和桌面可执行文件。现有进程未停止，发布目录下次启动使用新界面；未扩大本轮范围修改打包脚本。
 
 `pnpm release:storage-agent:verify release/storage-agent-desktop-core` 通过。桌面可执行文件 SHA-256：`9ce2f76534dacb6e2f7086b81cd65355d57a9504686e8b83ecdbe804665a6271`；核心归档未改变，为 `ed0059837806d04c1424e910838cd3f1de3e095731b8ca72768e19b1c625de06`。
+
+
+## 桌面图标与更新时间提示（2026-10-05）
+
+- 用户确认两项时间统一使用 30 秒阈值。最近连接和缓存更新时间独立判断；只有超过阈值才显示相对时间。界面定时器持续计算年龄，断流后无需等待下一张快照也能出现提示，收到新记录后隐藏。空值、无效日期和未来时间不显示原始字符串或负数。
+- 6 项 Rust 回归通过，覆盖 30 秒边界（包括 30.001 秒）、时区等价、恢复、无效／未来记录、中英文单位与单复数、桌面入口路径转义以及原有单实例行为。
+- 正式 Slint 组件的样例渲染检查三种画面：960×720 中文深色的两项新鲜／两项超时，760×600 英文浅色的仅缓存超时。没有重新执行无关的账号／服务器同步测试。
+- 本机 Wayland 协议追踪确认实际窗口发送 `set_app_id("org.quorum.ChairAgent")`；既有 SVG 可被 GTK 正常解码。桌面入口改为 SVG 文件的绝对路径，使用[桌面入口规范](https://specifications.freedesktop.org/desktop-entry/latest/recognized-keys.html)支持的文件图标，避开图标主题的名称查找。不能仅据此断言原来的 GNOME 默认图标必定由缓存导致。
+
+样例截图目录：`/home/makoto/.codex/visualizations/2026/10/05/01a10a15-2946-7130-8e26-94373052324e/chair-agent-status-review`，包含 `fresh-zh-dark.png`、`stale-zh-dark.png`、`cache-only-en-light-small.png`。这些截图不包含系统标题栏或 GNOME 概览，不作为其实际外观验收依据。
+
+发布版 `cargo build --release --locked --offline` 通过，原子更新本机发布目录中的可执行文件及 `DESKTOP.md`。新可执行文件 SHA-256 为 `507560d827b2d75046a026f42f828bbc61f28195aed988391724faceb1418d8a`。运行新版 `--register` 后，`desktop-file-validate` 通过；Gio 将桌面入口解析为指向已安装 SVG 的 `FileIcon`，GTK 按 128×128 成功解码。未重新启动既有 Agent，未取得 GNOME 概览最终图标截图，因此不把注册／解码检查写成概览外观已通过。
+
+系统标题乱码另已定位：当前 Winit 使用 sctk-adwaita 的 ab_glyph 标题绘制，按系统标题字体选取单个字体，本机 Adwaita Sans 缺少中文字形；窗口内部 Slint 能回退到中文字体。直接启用 crossfont 与当前 Slint 的 fontconfig 绑定版本冲突，实验依赖已撤回，未升级窗口库或修改系统字体。已向用户确认是否采用英文系统标题，或继续保留中文并维护窗口库局部补丁；本阶段提交不声称该问题已经修复。

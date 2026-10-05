@@ -159,6 +159,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     window.set_committee_status("PAUSED".into());
     window.set_editing(std::env::args().any(|arg| arg == "--edit"));
     window.set_status("RUNNING".into());
+    if std::env::args().any(|arg| matches!(arg.as_str(), "--fresh-times" | "--stale-times" | "--stale-cache")) {
+        window.set_committee_status("ACTIVE".into());
+        let now = std::time::SystemTime::now();
+        let stale = std::env::args().any(|arg| arg == "--stale-times");
+        let stale_cache = stale || std::env::args().any(|arg| arg == "--stale-cache");
+        let timestamp = |seconds| chrono::DateTime::<chrono::Utc>::from(now - std::time::Duration::from_secs(seconds)).to_rfc3339();
+        window.set_last_connection(timestamp(if stale { 120 } else { 10 }).into());
+        window.set_observed(timestamp(if stale_cache { 3600 } else { 10 }).into());
+        window.set_last_connection_age(localization::stale_time(window.get_last_connection().as_str(), now, language).into());
+        window.set_observed_age(localization::stale_time(window.get_observed().as_str(), now, language).into());
+    }
     window.set_committee_name("联合国安全理事会".into());
     window.set_root_path("/home/chair/Documents/Quorum/联合国安全理事会-1".into());
     window.set_server_url("https://quorum.example.com".into());

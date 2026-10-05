@@ -3531,6 +3531,7 @@ dependencies = [
 name = "quorum-storage-agent-desktop"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "rfd",
  "serde_json",
  "slint",

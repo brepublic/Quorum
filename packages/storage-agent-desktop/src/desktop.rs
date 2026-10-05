@@ -53,17 +53,23 @@ fn exec_quote(value: &str) -> String {
     let escaped = value.replace('\\', "\\\\\\\\").replace('"', "\\\"").replace('`', "\\\\`").replace('$', "\\\\$").replace('%', "%%");
     format!("\"{escaped}\"")
 }
+fn desktop_value(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('\n', "\\n").replace('\r', "\\r").replace('\t', "\\t")
+}
 pub fn register(exe: &Path, node: &Path, bridge: &Path) -> io::Result<()> {
     let data = user_directory("XDG_DATA_HOME", ".local/share")?;
     let applications = data.join("applications");
     let icons = data.join("icons/hicolor/scalable/apps");
     let mime = data.join("mime/packages");
     for directory in [&applications, &icons, &mime] {fs::create_dir_all(directory)?;}
-    fs::write(icons.join(format!("{APP_ID}.svg")), include_str!("../assets/quorum-agent.svg"))?;
+    let icon_path = icons.join(format!("{APP_ID}.svg"));
+    fs::write(&icon_path, include_str!("../assets/quorum-agent.svg"))?;
+    // A file icon also works before a running desktop refreshes its icon theme cache.
+    let icon = desktop_value(&icon_path.to_string_lossy());
     let launch = format!("env {} {} {} --open %u", exec_quote(&format!("QUORUM_AGENT_NODE={}", node.display())),
         exec_quote(&format!("QUORUM_AGENT_BRIDGE={}", bridge.display())), exec_quote(&exe.to_string_lossy()));
     fs::write(applications.join(format!("{APP_ID}.desktop")), format!(
-        "[Desktop Entry]\nType=Application\nName=Quorum Chair Agent\nName[zh_CN]=Quorum 主席 Agent\nExec={launch}\nIcon={APP_ID}\nStartupWMClass={APP_ID}\nTerminal=false\nCategories=Office;\nMimeType=x-scheme-handler/quorum-agent;application/x-quorum-agent-pairing;\n"))?;
+        "[Desktop Entry]\nType=Application\nName=Quorum Chair Agent\nName[zh_CN]=Quorum 主席 Agent\nExec={launch}\nIcon={icon}\nStartupWMClass={APP_ID}\nTerminal=false\nCategories=Office;\nMimeType=x-scheme-handler/quorum-agent;application/x-quorum-agent-pairing;\n"))?;
     fs::write(mime.join("quorum-agent.xml"), "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<mime-info xmlns=\"http://www.freedesktop.org/standards/shared-mime-info\"><mime-type type=\"application/x-quorum-agent-pairing\"><comment>Quorum Agent pairing configuration</comment><glob pattern=\"*.quorum-agent\"/></mime-type></mime-info>\n")?;
     for (program, args) in [
         ("update-desktop-database", vec![applications.to_string_lossy().into_owned()]),
@@ -94,5 +100,9 @@ mod tests {
     #[test] fn quotes_desktop_arguments() {
         assert_eq!(exec_quote("/a b/100%/agent"), "\"/a b/100%%/agent\"");
         assert!(exec_quote("$(touch nope)").contains("\\\\$"));
+    }
+    #[test] fn escapes_desktop_icon_paths_without_shell_quoting() {
+        assert_eq!(desktop_value("/home/a b/图标.svg"), "/home/a b/图标.svg");
+        assert_eq!(desktop_value("/a\\b\nIcon=other\r\t.svg"), "/a\\\\b\\nIcon=other\\r\\t.svg");
     }
 }
