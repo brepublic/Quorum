@@ -149,8 +149,11 @@ fn exercise_files(window: &MainWindow, redraw: impl Fn()) {
         key("c".into());
         window.window().dispatch_event(WindowEvent::KeyReleased {text:Key::Control.into()}); redraw();
     };
-    // Size/blank area selects, without opening; the first name is short enough to fit.
-    click(420., 385., PointerEventButton::Left);
+    // Size is an independent, inert column; blank name-cell space selects.
+    click(550., 365., PointerEventButton::Left);
+    assert!(opened.borrow().is_empty());
+    assert!(window.get_selected_name_key().is_empty());
+    click(420., 398., PointerEventButton::Left);
     assert!(opened.borrow().is_empty());
     assert_eq!(window.get_selected_name_key(), "file-1:actual");
     copy();

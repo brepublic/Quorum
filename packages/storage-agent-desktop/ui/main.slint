@@ -41,7 +41,6 @@ component FileNameCell inherits Rectangle {
     in property <string> text;
     in property <string> stem: root.text;
     in property <string> extension;
-    in property <string> subtitle;
     in property <string> copy-label;
     in property <bool> can-open: false;
     in property <bool> enabled: true;
@@ -58,7 +57,7 @@ component FileNameCell inherits Rectangle {
     private property <bool> menu-mode;
     private property <bool> popup-hover;
     private property <bool> popup-keyboard;
-    private property <length> name-y: root.subtitle == "" ? (root.height - label.height) / 2 : max(8px, (root.height - label.height - size-label.height - 4px) / 2);
+    private property <length> name-y: (root.height - label.height) / 2;
     private property <color> link-color: Palette.color-scheme == ColorScheme.dark ? #80c7ff : #005aa3;
     min-width: 0px;
     background: root.selected ? Palette.accent-background.with-alpha(0.13) : transparent;
@@ -76,7 +75,6 @@ component FileNameCell inherits Rectangle {
         suffix := Text { x: parent.width - self.width; width: root.truncated && root.extension != "" ? self.preferred-width : 0px; height: parent.height; text: root.truncated ? root.extension : ""; color: root.can-open ? root.link-color : Palette.foreground; font-size: 14px; vertical-alignment: center; }
         if root.can-open && (link-touch.has-hover || keyboard.has-focus): Rectangle { y: parent.height - 1px; height: 1px; background: root.link-color; }
     }
-    size-label := Text { x: 6px; y: label.y + label.height + 4px; width: root.width - 12px; visible: root.subtitle != ""; text: root.subtitle; font-size: 13px; color: Palette.foreground.with-alpha(0.72); overflow: elide; }
     cell-touch := TouchArea { enabled: root.valid;
         clicked => {root.focus();}
         pointer-event(event) => {if event.kind == PointerEventKind.up && event.button == PointerEventButton.right {root.show-menu();}}
@@ -175,8 +173,8 @@ export component MainWindow inherits Window {
     out property <string> display-status: root.status != "RUNNING" ? root.status : root.status-delayed || root.last-connection-age != "" || root.observed-age != "" ? "STATUS_DELAYED" : root.committee-status == "PAUSED" ? "COMMITTEE_PAUSED_STATUS" : !root.files-loaded ? "STARTING" : "RUNNING";
     out property <bool> field-error: (root.page == "login" || root.page == "password") && (root.error-code == "INCORRECT_CREDENTIALS" || root.error-code == "INVALID_EMAIL" || root.error-code == "PASSWORD_TOO_SHORT" || root.error-code == "PASSWORD_TOO_LONG");
     callback open-file(string);
-    // Shared column geometry: padding, three gaps, status columns and scrollbar.
-    private property <length> names-width: min(1400px, root.width - (root.width < 850px ? 48px : 64px)) - 366px;
+    // Shared column geometry: padding, four gaps, size/status columns and scrollbar.
+    private property <length> names-width: min(1400px, root.width - (root.width < 850px ? 48px : 64px)) - 458px;
     in-out property <string> selected-name-key;
     in-out property <string> focused-file-action;
     in-out property <length> file-scroll;
@@ -489,6 +487,7 @@ export component MainWindow inherits Window {
                                 HorizontalLayout { padding-left: 12px; padding-right: 12px; spacing: 12px;
                                     Rectangle { width: root.names-width * 0.45; Caption { x: 6px; width: parent.width - 6px; text: root.translate("Files", root.language); } }
                                     Rectangle { width: root.names-width * 0.55; Caption { x: 6px; width: parent.width - 6px; text: root.translate("Actual filename", root.language); } }
+                                    Caption { text: root.translate("Size", root.language); width: 80px; horizontal-alignment: right; }
                                     Caption { text: root.translate("Local status", root.language); width: 150px; }
                                     Caption { text: root.translate("Server cache", root.language); horizontal-stretch: 1; }
                                 }
@@ -506,12 +505,13 @@ export component MainWindow inherits Window {
                                             selected-name => {root.focused-file-action = ""; root.selected-name-key = row.id + ":name";}
                                             copied(value) => {root.name-copied(value); root.copied-notice = root.translate("Copied", root.language);}
                                         }
-                                        actual-name := FileNameCell { accessible-role: button; width: root.names-width * 0.55; text: row.actual-name; stem: row.stem; extension: row.extension; subtitle: row.size; can-open: row.can-open; copy-label: root.translate("Copy actual filename", root.language); enabled: root.controls-enabled;
+                                        actual-name := FileNameCell { accessible-role: button; width: root.names-width * 0.55; text: row.actual-name; stem: row.stem; extension: row.extension; can-open: row.can-open; copy-label: root.translate("Copy actual filename", root.language); enabled: root.controls-enabled;
                                             window-width: root.width; window-height: root.height; selected: root.selected-name-key == row.id + ":actual";
                                             selected-name => {root.focused-file-action = ""; root.selected-name-key = row.id + ":actual";}
                                             open-file => {root.open-file(row.id);}
                                             copied(value) => {root.name-copied(value); root.copied-notice = root.translate("Copied", root.language);}
                                         }
+                                        Text { width: 80px; text: row.size; font-size: 13px; color: Palette.foreground; horizontal-alignment: right; vertical-alignment: center; wrap: no-wrap; }
                                         VerticalLayout { width: 150px; spacing: 4px; alignment: center; padding-top: 8px; padding-bottom: 8px;
                                             Text { text: (file-row.conflict || file-row.local-log ? "! " : "") + row.local; color: row.local-code == "FAILED" || file-row.conflict ? root.error-color : row.local-code == "RETRYING" ? root.warning-color : Palette.foreground; wrap: word-wrap; font-size: 13px; }
                                             if row.progressing: Caption { text: row.transfer; font-size: 13px; }
