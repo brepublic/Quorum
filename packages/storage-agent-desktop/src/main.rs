@@ -1,4 +1,6 @@
 mod localization;
+mod desktop;
+use slint::winit_030::WinitWindowAccessor;
 use localization::{translate, load_language, save_language};
 use serde_json::{json, Value};
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
@@ -28,6 +30,7 @@ fn bytes(n: f64) -> String {
 }
 fn form_state(ui: &MainWindow) -> Value {
     json!([
+        ui.get_config_path().as_str(),
         ui.get_server_url().as_str(),
         ui.get_root_path().as_str(),
         ui.get_certificate().as_str(),
@@ -83,20 +86,38 @@ fn render(ui: &MainWindow, rows: &[Value], logs: &[String]) {
     );
 }
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let arguments: Vec<String> = std::env::args().skip(1).collect();
+    let target = match arguments.as_slice() {
+        [] => String::new(),
+        [flag] if flag == "--open" => String::new(),
+        [flag, target] if flag == "--open" => target.clone(),
+        [target] if target != "--register" => target.clone(),
+        [flag] if flag == "--register" => String::new(),
+        _ => return Err("Use --open <configuration or pairing URL>".into()),
+    };
+    let exe = std::env::current_exe()?;
+    let node = std::env::var_os("QUORUM_AGENT_NODE").map(PathBuf::from)
+        .unwrap_or_else(|| exe.parent().unwrap().join("runtime/node"));
+    let bridge = std::env::var_os("QUORUM_AGENT_BRIDGE").map(PathBuf::from)
+        .unwrap_or_else(|| exe.parent().unwrap().join("app/desktop-bridge.js"));
+    if arguments.first().is_some_and(|arg| arg == "--register") {
+        desktop::register(&exe, &node, &bridge)?; return Ok(());
+    }
+    let Some(instance) = desktop::Instance::open(&target)? else {return Ok(());};
+    slint::BackendSelector::new().backend_name("winit".into())
+        .with_winit_window_attributes_hook(|attributes| {
+            let attributes = slint::winit_030::winit::platform::wayland::WindowAttributesExtWayland::with_name(
+                attributes, desktop::APP_ID, desktop::APP_ID);
+            slint::winit_030::winit::platform::x11::WindowAttributesExtX11::with_name(
+                attributes, desktop::APP_ID, desktop::APP_ID)
+        }).select()?;
     let ui = MainWindow::new()?;
     ui.set_show_settings(true);
     ui.on_translate(|key, language| translate(key.as_str(), language.as_str()).into());
     ui.set_language(load_language().into());
     let saved_form = Rc::new(RefCell::new(form_state(&ui)));
-    let exe = std::env::current_exe()?;
-    let node = std::env::var_os("QUORUM_AGENT_NODE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| exe.parent().unwrap().join("runtime/node"));
-    let bridge = std::env::var_os("QUORUM_AGENT_BRIDGE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| exe.parent().unwrap().join("app/desktop-bridge.js"));
-    let mut process = Command::new(node)
-        .arg(bridge)
+    let mut process = Command::new(&node)
+        .arg(&bridge)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -105,6 +126,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let output = process.stdout.take().unwrap();
     let (tx, rx) = mpsc::channel::<Value>();
     let tx2 = tx.clone();
+    if target.is_empty() {
+        if let Some(stdin) = input.lock().unwrap().as_mut() {writeln!(stdin, "{}", json!({"command":"restore"}))?;}
+    } else {tx.send(json!({"event":"open-request", "target":target}))?;}
+    if desktop::register(&exe, &node, &bridge).is_err() {ui.set_error_code("DESKTOP_REGISTRATION_FAILED".into());}
     thread::spawn(move || {
         for line in BufReader::new(output).lines().map_while(Result::ok) {
             if let Ok(v) = serde_json::from_str::<Value>(&line) {
@@ -126,7 +151,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let Some(ui) = weak.upgrade() else {return};
         if ui.get_busy() || ui.get_closing() {return;}
         let action = action.as_str();
+        if !ui.get_confirm_discard().is_empty() && !action.starts_with("discard-") {return;}
         let dirty = form_state(&ui) != *saved_action.borrow();
+        if action == "import" {
+            let weak = ui.as_weak();
+            thread::spawn(move || {
+                if let Some(path) = rfd::FileDialog::new().add_filter("Quorum configuration", &["quorum-agent", "json"]).pick_file() {
+                    let _ = weak.upgrade_in_event_loop(move |ui| {
+                        ui.set_pending_target(path.to_string_lossy().into_owned().into()); ui.invoke_action("open".into());
+                    });
+                }
+            }); return;
+        }
+        if action == "open" && (dirty || !ui.get_pairing_code().is_empty() || ui.get_setup_mode()) {
+            ui.set_confirm_discard("open".into()); return;
+        }
         if action == "load" && (dirty || !ui.get_pairing_code().is_empty()) {
             ui.set_confirm_discard("load".into()); return;
         }
@@ -134,7 +173,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ui.set_confirm_discard("".into()); ui.set_closing(true); ui.set_status("STOPPING".into());
             input_action.lock().unwrap().take(); return;
         }
-        let action = if action == "discard-load" {ui.set_confirm_discard("".into()); "load"} else {action};
+        let action = if action == "discard-load" {ui.set_confirm_discard("".into()); "load"}
+            else if action == "discard-open" {ui.set_confirm_discard("".into()); "open"} else {action};
+        if action == "discard-settings" {
+            ui.set_confirm_discard("".into());
+            let old = saved_action.borrow();
+            ui.set_config_path(old[0].as_str().unwrap_or("").into());
+            ui.set_server_url(old[1].as_str().unwrap_or("").into());
+            ui.set_root_path(old[2].as_str().unwrap_or("").into());
+            ui.set_certificate(old[3].as_str().unwrap_or("").into());
+            ui.set_scan_seconds(old[4].as_str().unwrap_or("30").into());
+            if !ui.get_loaded() {ui.set_device_label(old[5].as_str().unwrap_or("").into());}
+            ui.set_pairing_code("".into()); return;
+        }
+        if action == "discard" {ui.set_confirm_discard("settings".into()); return;}
         if matches!(action,"start"|"restart"|"unpair"|"unpair-local"|"confirm-unpair") && (dirty || ui.get_config_path() != ui.get_saved_config_path()) {
             ui.set_error_code("Settings changed. Save them first, or import the original configuration again.".into()); return;
         }
@@ -158,7 +210,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }); return;
         }
-        let mut value = json!({"command":action,"configPath":ui.get_config_path().as_str(),"serverUrl":ui.get_server_url().as_str(),
+        let mut value = json!({"command":action,"target":ui.get_pending_target().as_str(),"configPath":ui.get_config_path().as_str(),"serverUrl":ui.get_server_url().as_str(),
             "rootPath":ui.get_root_path().as_str(),"caCertificatePath":ui.get_certificate().as_str(),"scanSeconds":ui.get_scan_seconds().as_str(),
             "pairingCode":ui.get_pairing_code().as_str(),"deviceLabel":ui.get_device_label().as_str()});
         ui.set_error_code("".into()); ui.set_error_stage("".into()); ui.set_feedback("".into()); ui.set_busy(true);
@@ -203,9 +255,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ui.on_choose(move |kind| {
         let weak = weak.clone();
         let kind = kind.to_string();
+        let initial = weak.upgrade().map(|ui| ui.get_root_path().to_string()).unwrap_or_default();
         thread::spawn(move || {
             let path = if kind == "root" {
-                rfd::FileDialog::new().pick_folder()
+                rfd::FileDialog::new().set_directory(&initial).pick_folder()
             } else {
                 rfd::FileDialog::new().pick_file()
             };
@@ -251,7 +304,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if ui.get_busy() {
                 return slint::CloseRequestResponse::KeepWindowShown;
             }
-            if form_state(&ui) != *saved_close.borrow() || !ui.get_pairing_code().is_empty() {
+            if form_state(&ui) != *saved_close.borrow() || !ui.get_pairing_code().is_empty() || ui.get_setup_mode() {
                 ui.set_confirm_discard("close".into());
                 return slint::CloseRequestResponse::KeepWindowShown;
             }
@@ -269,10 +322,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         move || {
             let Some(ui) = weak.upgrade() else { return };
             let mut redraw = false;
+            for target in instance.requests.try_iter() {ui.set_pending_target(target.into()); ui.set_open_pending(true);}
+            if ui.get_open_pending() && !ui.get_busy() && !ui.get_closing() {
+                ui.set_open_pending(false);
+                let _ = ui.show();
+                ui.window().with_winit_window(|window| {window.set_minimized(false); window.focus_window();});
+                if !ui.get_pending_target().is_empty() {ui.invoke_action("open".into());}
+            }
             for value in rx.try_iter() {
                 match text(&value, "event") {
+                    "defaults" => {
+                        ui.set_config_path(text(&value, "configPath").into()); ui.set_saved_config_path(ui.get_config_path());
+                        *saved_form.borrow_mut() = form_state(&ui);
+                    }
+                    "open-request" => {ui.set_pending_target(text(&value, "target").into()); ui.set_open_pending(true);}
+                    "setup" => {
+                        ui.set_setup_mode(true); ui.set_loaded(false); ui.set_show_settings(true);
+                        ui.set_committee_name(text(&value, "committeeName").into());
+                        ui.set_config_path(text(&value, "configPath").into());
+                        ui.set_server_url(text(&value, "serverUrl").into());
+                        ui.set_root_path(text(&value, "rootPath").into());
+                        ui.set_certificate("".into()); ui.set_scan_seconds("30".into());
+                        ui.set_pairing_code("".into()); ui.set_status("UNPAIRED".into());
+                        ui.set_saved_config_path(ui.get_config_path());
+                        *saved_form.borrow_mut() = form_state(&ui);
+                        rows.borrow_mut().clear(); redraw = true;
+                    }
                     "unpaired" => {
-                        ui.set_loaded(false);
+                        ui.set_loaded(false); ui.set_setup_mode(false); ui.set_show_settings(true);
+                        ui.set_committee_name("".into());
                         ui.set_confirm_unpair(false);
                         ui.set_committee_url("".into());
                         ui.set_pairing_code("".into());
@@ -291,6 +369,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         ui.set_last_connection("".into());
                         ui.set_observed("".into());
                         let paired = value["paired"] == true;
+                        ui.set_setup_mode(false); ui.set_committee_name(text(&value, "committeeName").into());
                         ui.set_loaded(paired);
                         ui.set_status(if paired { "STOPPED" } else { "UNPAIRED" }.into());
                         if !paired {
@@ -308,6 +387,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "state" => {
                         let state = text(&value, "state");
                         ui.set_status(state.into());
+                        if state == "STARTING" {ui.set_show_settings(false);}
                         ui.set_running(matches!(state, "STARTING" | "RUNNING" | "STOPPING"));
                         if state == "EXITED" {
                             for row in rows.borrow_mut().iter_mut() {
@@ -347,15 +427,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             match operation {
                                 "save" | "save-as" => "Configuration saved",
                                 "load" => "Configuration imported",
-                                "pair" => "Pairing completed",
+                                "pair" | "setup-pair" => "Pairing completed",
                                 "unpair" => "Authorization revoked",
                                 "unpair-local" => "Unpaired locally; server authorization has not been confirmed revoked",
                                 _ => "",
                             }
                             .into(),
                         );
-                        if matches!(operation, "pair" | "load") {
+                        if matches!(operation, "pair" | "load" | "setup-pair") {
                             ui.set_pairing_code("".into());
+                            ui.set_pending_target("".into());
                         }
                     }
                     "error" => {

@@ -32,7 +32,7 @@ async function fixture(pairStatus = 200, revokeStatus = 200) {
   });
   await new Promise<void>(done=>server.listen(0,'127.0.0.1',done));cleanup.push(async()=>{server.closeAllConnections();await new Promise<void>(done=>server.close(()=>done()));});
   const address=server.address();if(!address||typeof address==='string')throw Error('address');
-  const process=spawn(globalThis.process.execPath,[resolve('packages/storage-agent/dist/desktop-bridge.js')],{stdio:'pipe'});
+  const process=spawn(globalThis.process.execPath,[resolve('packages/storage-agent/dist/desktop-bridge.js')],{stdio:'pipe',env:{...globalThis.process.env, XDG_CONFIG_HOME:join(root,'config-home')}});
   cleanup.push(async()=>{if(process.exitCode===null){process.kill('SIGKILL');await new Promise(done=>process.once('close',done));}});
   const events:Record<string,any>[]=[];createInterface({input:process.stdout}).on('line',line=>events.push(JSON.parse(line)));
   async function wait(predicate:(e:Record<string,any>)=>boolean, from=0) {
@@ -48,6 +48,48 @@ async function fixture(pairStatus = 200, revokeStatus = 200) {
   return {root,process,events,wait,command,settings,requests};
 }
 describe('desktop bridge process lifecycle',()=>{
+  it('imports a normal downloaded pairing file, confirms storage, starts and restores without re-pairing', async () => {
+    const f = await fixture();
+    const setup = {schemaVersion: 1, kind: 'quorum-agent-pairing', serverUrl: f.settings.serverUrl,
+      committeeId: '10000000-0000-4000-8000-000000000001', committeeName: '安理会',
+      pairingCode: f.settings.pairingCode, purpose: 'INITIAL', expiresAt: '2099-01-01T00:00:00Z'};
+    const downloaded = join(f.root, 'council.quorum-agent');
+    await writeFile(downloaded, JSON.stringify(setup), {mode: 0o644});
+    const opened = await f.command('open', {target: downloaded});
+    const preview = opened.find(e => e.event === 'setup')!;
+    expect(preview.committeeName).toBe('安理会');
+    expect(f.requests).toHaveLength(0);
+    expect(JSON.stringify(opened)).not.toContain(f.settings.pairingCode);
+    await f.command('setup-pair', {...f.settings, rootPath: join(f.root, 'chosen')});
+    await f.wait(e => e.event === 'snapshot' && e.connected === true);
+    const privateConfig = JSON.parse(await readFile(preview.configPath, 'utf8'));
+    expect(privateConfig.committeeName).toBe('安理会');
+    expect((await stat(preview.configPath)).mode & 0o777).toBe(0o600);
+    expect(await readFile(downloaded, 'utf8')).toBe(JSON.stringify(setup));
+    await f.command('stop');
+    await f.command('restore');
+    expect(f.requests.filter(r => r.url === '/api/v1/storage-agent/pair')).toHaveLength(1);
+    const reopened = await f.command('open', {target: downloaded});
+    expect(reopened.some(e => e.event === 'setup')).toBe(false);
+    const other = {...setup, committeeId: '10000000-0000-4000-8000-000000000002'};
+    expect(await f.command('open', {target: 'quorum-agent://pair#' + encodeURIComponent(JSON.stringify(other))}))
+      .toContainEqual(expect.objectContaining({code: 'STOP_AND_UNPAIR_FIRST'}));
+    expect(f.requests.filter(r => r.url === '/api/v1/storage-agent/pair')).toHaveLength(1);
+    await f.command('stop'); await f.command('unpair-local');
+    const restored = await f.command('restore');
+    expect(restored.some(e => e.paired === true)).toBe(false);
+  }, 30000);
+  it('rejects expired and credential-bearing pairing downloads before a network request', async () => {
+    const f = await fixture();
+    const setup = {schemaVersion: 1, kind: 'quorum-agent-pairing', serverUrl: f.settings.serverUrl,
+      committeeId: '10000000-0000-4000-8000-000000000001', committeeName: '安理会',
+      pairingCode: f.settings.pairingCode, purpose: 'INITIAL', expiresAt: '2000-01-01T00:00:00Z'};
+    const url = (v: unknown) => 'quorum-agent://pair#' + encodeURIComponent(JSON.stringify(v));
+    expect(await f.command('open', {target: url(setup)})).toContainEqual(expect.objectContaining({code: 'LINK_EXPIRED'}));
+    expect(await f.command('open', {target: url({...setup, credential: 'secret'})}))
+      .toContainEqual(expect.objectContaining({code: 'PAIRING_CONFIG_INVALID'}));
+    expect(f.requests).toHaveLength(0);
+  }, 30000);
   it('reports validation and TLS failures at the failing step without submitting pairing', async () => {
     const f = await fixture();
     expect(await f.command('pair',{...f.settings,serverUrl:'not a URL'}))

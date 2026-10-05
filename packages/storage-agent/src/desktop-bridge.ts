@@ -3,7 +3,7 @@ import {spawn, type ChildProcessWithoutNullStreams} from 'node:child_process';
 import {createInterface} from 'node:readline';
 import {fileURLToPath} from 'node:url';
 import {dirname, basename, join, resolve, relative, isAbsolute} from 'node:path';
-import {lstat, mkdir, readFile, realpath, rm, writeFile, access, rename} from 'node:fs/promises';
+import {lstat, mkdir, readFile, realpath, rm, writeFile, access, rename, readdir} from 'node:fs/promises';
 import {constants} from 'node:fs';
 import {X509Certificate, randomUUID} from 'node:crypto';
 import {connect} from 'node:tls';
@@ -13,6 +13,8 @@ import {agentErrorCode} from './errors.js';
 import {AGENT_METADATA_FILE, AgentStateStore} from './state.js';
 import {AgentFileStore} from './files.js';
 import {lockAgentRoot} from './runtime-lock.js';
+import {type AgentPairingConfig} from '@quorum/contracts';
+import {desktopConfigDirectory, readPairingInput, proposedDirectory, allocateDirectory, rememberConfiguration, lastConfiguration} from './desktop-setup.js';
 
 const send = (value: unknown) => process.stdout.write(JSON.stringify(value) + '\n');
 const cli = fileURLToPath(new URL('./cli.js', import.meta.url));
@@ -22,7 +24,8 @@ let draft: DraftConfig | undefined;
 let draftSource = '';
 let child: ChildProcessWithoutNullStreams | undefined;
 let exiting = false;
-function publicConfig() {if (config) send({event: 'config', paired: true, configPath, serverUrl: config.serverUrl,
+let setup: {value: AgentPairingConfig; rootPath: string; ordinal: number; allocated: boolean; chosenRoot?: string} | undefined;
+function publicConfig() {if (config) send({event: 'config', paired: true, committeeName: config.committeeName ?? config.committeeId, configPath, serverUrl: config.serverUrl,
   rootPath: config.rootPath, caCertificatePath: config.caCertificatePath ?? '',
   scanSeconds: (config.scanIntervalMs ?? 30000) / 1000,
   committeeUrl: new URL(`/committees/${config.committeeId}/files`, config.serverUrl).href});}
@@ -110,6 +113,10 @@ async function stop() {
 async function start() {
   if (child) return;
   if (!config) throw new Error('CONFIG_REQUIRED');
+  stage = 'storage-directory';
+  // Restoring a config must never recreate a missing synchronized directory.
+  const metadata = JSON.parse(await readPrivateAgentFile(join(config.rootPath, AGENT_METADATA_FILE)));
+  if (metadata.committeeId !== config.committeeId || metadata.deviceId !== config.deviceId) throw new Error('ROOT_IDENTITY_MISMATCH');
   send({event: 'state', state: 'STARTING'});
   const running = spawn(process.execPath, [cli, 'start', '--config', configPath, '--desktop', 'true'], {
     env: {...process.env, NODE_EXTRA_CA_CERTS: config.caCertificatePath || process.env.NODE_EXTRA_CA_CERTS || ''}, stdio: 'pipe'});
@@ -132,7 +139,54 @@ async function command(input: Record<string, unknown>) {
   if (action === 'stop') {await stop(); return;}
   if (action === 'restart') {await stop(); await start(); return;}
   if (action === 'start') {await start(); return;}
+  if (action === 'restore') {
+    const previous = await lastConfiguration();
+    if (previous) {await command({command: 'load', configPath: previous}); if (config) await start();}
+    else send({event: 'defaults', configPath: join(desktopConfigDirectory(), 'configurations', `${randomUUID()}.json`)});
+    return;
+  }
+  if (action === 'open') {
+    const target = String(input.target ?? '');
+    stage = 'config-read';
+    const value = await readPairingInput(target);
+    if (!value) {
+      if (child) throw new Error('STOP_FIRST');
+      await command({command: 'load', configPath: target.startsWith('file:') ? fileURLToPath(target) : target});
+      if (config) await start();
+      return;
+    }
+    if (config?.committeeId === value.committeeId && config.serverUrl === value.serverUrl) {
+      publicConfig(); if (!child) await start(); return;
+    }
+    if (child || config) throw new Error('STOP_AND_UNPAIR_FIRST');
+    if (Date.parse(value.expiresAt) <= Date.now()) throw new Error('LINK_EXPIRED');
+    if (!setup || setup.value.pairingCode !== value.pairingCode) {
+      setup = {value, ...await proposedDirectory(value), allocated: false};
+      configPath = join(desktopConfigDirectory(), 'configurations', `${randomUUID()}.json`);
+    }
+    send({event: 'setup', configPath, serverUrl: value.serverUrl, committeeName: value.committeeName,
+      rootPath: setup.rootPath, purpose: value.purpose, expiresAt: value.expiresAt});
+    return;
+  }
   if (child) throw new Error('STOP_FIRST');
+  if (action === 'setup-pair') {
+    if (!setup) throw new Error('PAIRING_CONFIG_INVALID');
+    if (Date.parse(setup.value.expiresAt) <= Date.now()) throw new Error('LINK_EXPIRED');
+    const chosen = resolve(String(input.rootPath || setup.rootPath));
+    if (chosen === setup.rootPath && !setup.allocated) {
+      try {await allocateDirectory(setup.value, chosen, setup.ordinal); setup.allocated = true;}
+      catch (error) {if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new Error('DIRECTORY_EXISTS'); throw error;}
+    }
+    if (chosen !== setup.rootPath && chosen !== setup.chosenRoot) {
+      try {if ((await readdir(chosen)).length > 0) throw new Error('DIRECTORY_NOT_EMPTY');}
+      catch (error) {if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;}
+    }
+    setup.chosenRoot = chosen;
+    await command({...input, rootPath: chosen, command: 'pair', configPath, serverUrl: setup.value.serverUrl,
+      pairingCode: setup.value.pairingCode, committeeName: setup.value.committeeName});
+    setup = undefined;
+    await start(); return;
+  }
   if (action === 'load') {
     if (!String(input.configPath ?? '').trim()) throw new Error('CONFIG_PATH_REQUIRED');
     const path = resolve(String(input.configPath));
@@ -151,20 +205,22 @@ async function command(input: Record<string, unknown>) {
       const next = await settings({...value, scanSeconds: value.scanIntervalMs / 1000});
       const loaded: DraftConfig = {schemaVersion: 1, kind: 'unpaired', ...next, deviceLabel: value.deviceLabel};
       await checkDraftDestination(path, loaded);
-      config = undefined; draft = loaded; configPath = path; draftSource = source; publicDraft();
+      config = undefined; draft = loaded; configPath = path; draftSource = source; setup = undefined; publicDraft(); await rememberConfiguration(path);
     } else {
       let loaded: StorageAgentLocalConfig;
       try {loaded = await readAgentConfig(path);} catch (error) {
         if (safeError(error) !== 'OPERATION_FAILED') throw error;
         throw new Error('CONFIG_INVALID');
       }
-      configPath = path; config = loaded; draft = undefined; draftSource = ''; publicConfig();
+      configPath = path; config = loaded; draft = undefined; draftSource = ''; setup = undefined; publicConfig();
+      await rememberConfiguration(path);
     }
     return;
   }
   if (action === 'unpair-local') {
     if (!config) throw new Error('CONFIG_REQUIRED');
     config = undefined; draft = undefined; draftSource = ''; configPath = '';
+    setup = undefined; await rememberConfiguration();
     send({event: 'unpaired'});
     return;
   }
@@ -199,6 +255,7 @@ async function command(input: Record<string, unknown>) {
         request.on('error', fail); request.end('{}');
       });
       config = undefined; draft = undefined; draftSource = ''; configPath = '';
+      setup = undefined; await rememberConfiguration();
       send({event: 'unpaired'});
     } finally {await unlock();}
     return;
@@ -221,7 +278,7 @@ async function command(input: Record<string, unknown>) {
         try {await writeFile(temporary, source, {flag:'wx',mode:0o600}); await rename(temporary,destination);}
         finally {await rm(temporary,{force:true});}
       } else await writeDesktopConfig(destination, source, input.overwrite === true);
-      draft = next; draftSource = source; configPath = destination; publicDraft(); return;
+      draft = next; draftSource = source; configPath = destination; publicDraft(); await rememberConfiguration(destination); return;
     }
     if (!config) throw new Error('CONFIG_REQUIRED');
     const destination = action === 'save-as' ? resolve(String(input.savePath)) : configPath;
@@ -267,7 +324,7 @@ async function command(input: Record<string, unknown>) {
         outside(root, join(await realpath(dirname(destination)), basename(destination)));
         await writeDesktopConfig(destination, JSON.stringify(updated, null, 2) + '\n', input.overwrite === true);
       } else {await checkOverwriteTarget(destination); await writeAgentConfig(destination, updated); }
-      configPath = destination; config = updated; publicConfig();
+      configPath = destination; config = updated; publicConfig(); await rememberConfiguration(destination);
     } finally {await unlock?.(); await oldUnlock?.();}
     return;
   }
@@ -323,11 +380,12 @@ async function command(input: Record<string, unknown>) {
         pairing.on('error', rej); pairing.on('close', code => code === 0 ? res() : rej(new Error(failure)));
       });
       stage = 'config-write';
-      const paired = {...await readAgentConfig(pairedPath), ...next};
+      const paired = {...await readAgentConfig(pairedPath), ...next,
+        ...(typeof input.committeeName === 'string' ? {committeeName: input.committeeName} : {})};
       if (input.overwrite === true) await checkOverwriteTarget(path);
       else if (replacingDraft) await unchangedDraft(path);
       await writeAgentConfig(path, paired);
-      config = paired; draft = undefined; draftSource = ''; configPath = path; publicConfig();
+      config = paired; draft = undefined; draftSource = ''; configPath = path; publicConfig(); await rememberConfiguration(path);
     } finally {await unlock(); await rm(codePath, {force: true}); if (pairedPath !== path) await rm(pairedPath,{force:true});}
   }
 }
@@ -340,7 +398,7 @@ input.on('line', line => {
     let operation = 'unknown';
     try {
       const input = JSON.parse(line);
-      if (['load','save','save-as','pair','unpair','unpair-local','start','stop','restart'].includes(input.command)) operation = input.command;
+      if (['open','restore','setup-pair','load','save','save-as','pair','unpair','unpair-local','start','stop','restart'].includes(input.command)) operation = input.command;
       await command(input); send({event:'completed',operation});
     } catch (error) {
       send({event:'error',code:safeError(error),operation,stage});

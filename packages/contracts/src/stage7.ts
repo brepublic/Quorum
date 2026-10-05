@@ -25,6 +25,10 @@ export interface StoragePairingCode {
   expiresAt: string;
 }
 
+export interface StoragePairingSetup extends StoragePairingCode {
+  configuration: import('./agent-pairing.js').AgentPairingConfig;
+}
+
 export interface StorageAgentPairingResult {
   credential: string;
   host: StorageHost;

@@ -11,11 +11,19 @@ source scripts/wsl-env.sh
 pnpm start:storage-agent:desktop
 ```
 
-需要 Node 22、pnpm、Rust 工具链、Linux `flock`（util-linux）、桌面文件选择 portal、`zenity`（覆盖确认弹窗）和 `xdg-open`。当前 checkout 的 Rust 安装于忽略的 `.tools/cargo`、`.tools/rustup`，脚本自动使用；其他 checkout 可使用系统 Rust。首次 Cargo 构建需要联网，之后使用 Cargo.lock 重现依赖。
+需要 Node 22、pnpm、Rust 1.89 或更新的工具链、Linux `flock`（util-linux）、桌面文件选择 portal、`zenity`（覆盖确认弹窗）和 `xdg-open`。当前 checkout 的 Rust 安装于忽略的 `.tools/cargo`、`.tools/rustup`，脚本自动使用；其他 checkout 可使用系统 Rust。首次 Cargo 构建需要联网，之后使用 Cargo.lock 重现依赖。
 
-启动脚本构建 contracts、Agent 和原生窗口。窗口最初不启动同步：导入已有配置或输入配对信息，再点击“启动”。已有旧版终端 Agent 必须先退出；旧版不参加新版本的目录进程锁。新版本 CLI 与 GUI 通过同一个内核文件锁防止重复运行。
+启动脚本构建 contracts、Agent 和原生窗口。网页“配对主席电脑”生成有效期内的一次性配对配置，尝试通过 `quorum-agent://pair` 打开窗口，同时提供 `.quorum-agent` 配置下载。桌面也可点击“导入配置”选择下载文件或已有私有配置。浏览器可能要求确认打开外部应用；未安装或未注册时使用下载导入。
 
-配置文件栏初始为空；可以先保存未配对设置；未填写路径时“保存设置”会打开保存位置选择框。选择已有配置后点击“导入”；秘密仍由 Node 读取，不发送给 Rust 界面。关闭窗口等待 Agent 退出；异常关闭 GUI 会关闭管道，控制进程随之停止 Agent。停止宽限期为 15 秒，超时强制结束并保留现有恢复机制。
+配对配置只包含 HTTPS 服务器地址、委员会 ID/名称、一次性配对码、用途和到期时间，不接受设备凭据、私钥、存储路径或 CA 路径。普通下载文件不要求 0600；长期私有配置继续要求独立普通文件、0600 权限。界面显示服务器和建议目录，点击“确认目录并启动”后配对、保存私有配置并启动同步。未配置任何存储的委员会由服务器在同一配对事务中自动启用 CHAIR_AGENT；已有服务器卷/S3 保持原样，不增加跨 provider 迁移。
+
+默认目录取 `xdg-user-dir DOCUMENTS`，不可用或被禁用时回退到 `~/Documents`，在其下创建 `Quorum/<委员会名称>-<编号>`。按服务器与委员会 ID 独立记录编号，预览不占号，确认后独占创建目录，跳过已有路径，删除目录也不回收号码。自选目录必须为空；同一次失败重试复用已选目录。配对后的目录变更仍需完整搬迁和身份校验。
+
+自动生成的私有配置位于 `$XDG_CONFIG_HOME/quorum-agent/configurations/`，缺省为 `~/.config/quorum-agent/configurations/`。`desktop-state.json` 只记录最后配置路径和各委员会编号，不保存配对码或凭据。正常启动恢复最后配置及原目录并启动；丢失或无效目录报错，不自动重建同步根目录。解除服务器配对或仅解除本机绑定都会清除自动恢复记录，磁盘配置和文件仍保留。
+
+“运行详情”提供启动/停止/重启、文件状态、存储位置和折叠日志；“配置”提供导入、保存/另存为/放弃修改、解除配对，高级设置包含 CA 和扫描间隔。运行时提供“停止并编辑”。关闭窗口停止同步进程；不后台驻留、不注册自启动服务。
+
+同一 Linux 用户只运行一个桌面窗口，通过用户私有目录中的 Unix socket 转交再次打开的文件/链接，文件锁保护窗口实例；原有同步目录 `flock` 继续保护 CLI 与桌面核心。其他委员会配置不会静默替换已配对身份，需先停止并解除本机绑定。带未保存输入时使用居中放弃确认。
 
 ## 配置约束
 
@@ -28,11 +36,11 @@ pnpm start:storage-agent:desktop
 
 “保存设置”和“另存为”在停止时可用，无需先配对。未配对文件只保存服务器地址、存储目录、CA 路径、扫描间隔、设备名称，不保存一次性配对码。导入后显示“未配对”，不能启动；配对成功后同一文件更新为完整配置。保存未配对设置不连接服务器，不要求存储目录已创建。
 
-“另存为”选择一个不存在的配置文件路径；保存后切换到新文件，原文件保留。已配对配置的副本仍是同一设备身份。导入未配对配置不会撤销先前加载的设备授权。
+“另存为”选择目标配置路径，已有文件经确认后覆盖；保存后切换到新文件，原路径文件保留。已配对配置的副本仍是同一设备身份。导入未配对配置不会撤销先前加载的设备授权。
 
 “解除配对”使用居中模态弹窗确认，并请求原服务器撤销当前设备授权。失败时可重试，也可显式选择“仅解除本机绑定”返回配对表单（无需原委员会或服务器可用）。两种解绑方式均保留界面中的配置路径、服务器地址、存储目录、CA 证书、扫描间隔和设备名称，清除已加载身份和旧委员会状态；本机解绑不表示服务器授权已撤销，旧配置仍可能连接。两种方式都保留旧配置与存储文件；重新配对时可确认覆盖原配置文件，选择新的存储目录，并从目标服务器网页取得一次性配对码。
 
-系统标题栏使用 ASCII 标题 `Quorum Chair Agent`，避免标题栏字体缺少中文字形；页面内标题跟随界面语言。设置表单支持滚动；配对码输入框、配对及保存按钮固定在底部，错误栏与日志展开时仍可访问。
+系统标题栏使用 `Quorum Chair Agent`；页面内标题跟随语言。设置表单可滚动，确认配对/保存操作固定在底部。日志只在运行详情显示。
 
 未保存修改显示“未保存”，启动、重启和撤销授权前须保存或重新导入。导入其他配置及关闭窗口前会确认是否放弃未保存的设置或配对码；取消保留输入。保存和失败重试保留配对码，配对成功或成功导入后清空。保存、导入、配对和日志导出提供结果反馈。
 
@@ -46,7 +54,7 @@ pnpm start:storage-agent:desktop
 
 GUI 状态查询约每 3 秒一次，10 秒查询超时；断网标记缓存未知。状态是观察快照，不承诺服务器之后仍保有缓存。当前版本对应的本地文件必须通过大小和哈希校验才显示就绪。上传进度是 Agent 已读取并交给 HTTP 流的字节数，不等同服务器确认；下载是已接收字节数。100% 后仍有校验/提交阶段。回传与普通上传分别显示。
 
-控制协议：Rust → `desktop-bridge.js` 标准输入逐行 JSON（load/pair/save/save-as/unpair/unpair-local/start/stop/restart）；桥接器 → Rust 标准输出 JSON（config/unpaired/completed/busy/state/snapshot/log/error）。同步进程标准输出仅发送展示快照；内部日志走标准错误并被桥接器过滤。进度最多约 10 次/秒。展示快照不含凭据、私钥、claim token、哈希或正文。日志保留最近 1000 行；复制/导出不含文件名、用户路径或秘密。
+控制协议：Rust → `desktop-bridge.js` 标准输入逐行 JSON（open/restore/setup-pair/load/pair/save/save-as/unpair/unpair-local/start/stop/restart）；桥接器 → Rust 标准输出 JSON（setup/defaults/config/unpaired/completed/busy/state/snapshot/log/error）。同步进程标准输出仅发送展示快照；内部日志走标准错误并被桥接器过滤。进度最多约 10 次/秒。展示快照不含凭据、私钥、claim token、哈希或正文。日志保留最近 1000 行；复制/导出不含文件名、用户路径或秘密。
 
 ## 验证
 
@@ -75,6 +83,12 @@ cargo run --locked --manifest-path packages/storage-agent-desktop/Cargo.toml --e
 运行 `pnpm release:storage-agent:desktop -- --offline` 可使用现有 Node 运行时缓存组装 `release/storage-agent-desktop/`；缺少缓存时去掉 `--offline`。Cargo 首次仍需下载依赖。程序位于该目录的 `quorum-storage-agent-desktop`，无需另装 Node，但仍使用当前系统的桌面库和 portal。
 
 也可将 release 编译的 `quorum-storage-agent-desktop` 放到现有 Linux Agent 自包含发布包根目录（与 `runtime/node`、`app/desktop-bridge.js` 相邻）。开发时脚本用 `QUORUM_AGENT_NODE`、`QUORUM_AGENT_BRIDGE` 指定当前构建。第一版仅验收当前 Linux 环境；未声称 Windows/macOS 可直接发行。
+
+### Linux 桌面注册
+
+将发布目录放在稳定位置后运行 `./register-desktop.sh`（或程序的 `--register`）。程序正常启动也会更新当前用户的注册。注册使用 `xdg-mime`、`update-mime-database` 和 `update-desktop-database`，不需要 root。
+
+统一应用标识为 `org.quorum.ChairAgent`：Wayland app_id、X11 WM_CLASS、`org.quorum.ChairAgent.desktop` 的 StartupWMClass 及图标名一致。图标作为 SVG 内嵌窗口并安装到用户的 hicolor 图标目录。注册 `quorum-agent:` 协议及 `.quorum-agent` 文件关联，桌面入口固定 Node/bridge 路径，因此开发启动也能正确接收浏览器链接。移动发布目录后重新注册。
 
 项目沿用 GPLv3，Slint 按其 GPLv3 选项使用；Cargo.lock 固定依赖。二进制发行须附源码与相应第三方许可。
 

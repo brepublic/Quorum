@@ -1,9 +1,10 @@
+import {openChairAgent, downloadChairConfiguration} from '../../services/agent-pairing';
 import {ViewportFormSelect} from '../../components/ViewportDropdown';
 import {apiErrorText} from '../../i18n';
 import {t, useLanguage, getLanguage} from '../../i18n';
 import * as React from 'react';
 import type {CommitteeWorkspaceSnapshot, FileEntry, FileUpload, StorageMigration, DelegateReviewFile,
-  StorageAgentConflict, StorageAgentConflictResolution, StoragePairingCode, StorageProviderType} from '@quorum/contracts';
+  StorageAgentConflict, StorageAgentConflictResolution, StoragePairingSetup, StorageProviderType} from '@quorum/contracts';
 import {Button, Card, Divider, Form, Modal, Header, Icon, Label, Message, Progress, Segment, Table} from 'semantic-ui-react';
 import {SelfHostedApiError, newIdempotencyKey, type SelfHostedApi} from '../../services/self-hosted-api';
 import {delegateFileTypeName, ERROR_TEXT} from '@quorum/contracts';
@@ -72,7 +73,10 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
   const [configs, setConfigs] = React.useState<Awaited<ReturnType<SelfHostedApi['listS3ProviderConfigs']>>>([]);
   const [migrations, setMigrations] = React.useState<StorageMigration[]>([]);
   const [hosts, setHosts] = React.useState<Awaited<ReturnType<SelfHostedApi['listStorageHosts']>>>([]);
-  const [pairing, setPairing] = React.useState<StoragePairingCode>();
+  const [pairing, setPairing] = React.useState<StoragePairingSetup>();
+  const pairingHostId = React.useRef<string>();
+  const [pairingExpired, setPairingExpired] = React.useState(false);
+  const [pairingFeedback, setPairingFeedback] = React.useState('');
   const [conflicts, setConflicts] = React.useState<StorageAgentConflict[]>([]);
   const [conflictNames, setConflictNames] = React.useState<Record<string, string>>({});
   const [selectedFile, setSelectedFile] = React.useState<File>();
@@ -191,10 +195,28 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
   const activeHost = hosts.find(host => host.status === 'ACTIVE' || host.status === 'DEGRADED');
   const createPairing = async (purpose: 'INITIAL' | 'TRANSFER') => {
     setWorking(true); setError(undefined);
-    try { setPairing(await api.createStoragePairingCode(committeeId, snapshot.committee.revision, purpose)); }
+    try {
+      const result = await api.createStoragePairingCode(committeeId, snapshot.committee.revision, purpose);
+      pairingHostId.current = activeHost?.id;
+      setPairing(result); setPairingExpired(false); setPairingFeedback('');
+      openChairAgent(result.configuration);
+    }
     catch (caught) { setError(caught); await refresh(false); }
     finally { setWorking(false); }
   };
+  React.useEffect(() => {
+    if (!pairing) return;
+    const checkExpiry = () => setPairingExpired(Date.now() >= Date.parse(pairing.expiresAt));
+    checkExpiry();
+    const timer = window.setInterval(checkExpiry, 1000);
+    return () => window.clearInterval(timer);
+  }, [pairing]);
+  React.useEffect(() => {
+    if (pairing && activeHost && activeHost.id !== pairingHostId.current) {
+      setPairing(undefined); setPairingFeedback('Pairing completed');
+    }
+  }, [pairing, activeHost]);
+  React.useEffect(() => {setPairing(undefined); setPairingFeedback('');}, [committeeId, canManage]);
   const resolveConflict = (item: StorageAgentConflict, action: StorageAgentConflictResolution) => {
     if (!activeHost) return Promise.reject(Object.assign(new Error(), {code: 'CHAIR_HOST_REQUIRED'}));
     const resolvedName = item.change.kind === 'DELETE' ? ''
@@ -311,35 +333,45 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
 
     {(section === 'storage' || section === 'all') && canManage && <Segment loading={working && !progress} className="self-hosted-storage-panel">
       <Header as="h3">{t("File storage")}</Header>
-      <Header as="h4">{t("Chair computer")}</Header>
-      {activeHost ? <p>{activeHost.deviceLabel} · {t(HOST_STATUS[activeHost.status])}
-        {activeHost.lastSeenAt ? ` · ${new Date(activeHost.lastSeenAt).toLocaleString(getLanguage())}` : ''}</p>
-        : <p>{t("Not paired")}</p>}
-      {pairing && <Message info><Message.Header>{t("Pairing code")}</Message.Header>
-        <code className="self-hosted-pairing-code">{pairing.code}</code>
-        <span className="self-hosted-pairing-code-meta">
-
-          {t("· Expires at")} {new Date(pairing.expiresAt).toLocaleTimeString(getLanguage())}
-        </span>
-        <span className="self-hosted-pairing-code-actions">
-          <Button type="button" basic size="small" onClick={() => void navigator.clipboard?.writeText(pairing.code)}>
-
-            <Icon name="copy" />{t("Copy pairing code")}
-          </Button>
-        </span>
-      </Message>}
-      <div className="self-hosted-storage-host-actions">
-      {!pairing && <Button type="button" size="small" disabled={working}
-        onClick={() => void createPairing(activeHost ? 'TRANSFER' : 'INITIAL')}>
-        {activeHost ? t("Transfer to another computer") : t("Pair chair computer")}
-      </Button>}
-      {pairing && <Button type="button" size="small" onClick={() => setPairing(undefined)}>{t("Close pairing code")}</Button>}
-      {activeHost && <Button type="button" negative size="small" disabled={working} onClick={() => {
-        if (window.confirm(t('Revoke “{name}”?', {name: activeHost.deviceLabel}))) {
-          void run(() => api.revokeStorageHost(committeeId, activeHost.id, snapshot.committee.revision));
-        }
-      }}>{t("Revoke chair computer")}</Button>}
+      <div className="storage-settings-row">
+        <div><Header as="h4">{t("Chair computer")}</Header>
+          {activeHost ? <span>{activeHost.deviceLabel} · {t(HOST_STATUS[activeHost.status])}
+            {activeHost.lastSeenAt ? ` · ${new Date(activeHost.lastSeenAt).toLocaleString(getLanguage())}` : ''}</span>
+            : <span>{t("Not paired")}</span>}
+        </div>
+        <div className="self-hosted-storage-host-actions">
+          {!pairing && <Button type="button" primary size="small" disabled={working}
+            onClick={() => void createPairing(activeHost ? 'TRANSFER' : 'INITIAL')}>
+            {activeHost ? t("Transfer to another computer") : t("Pair chair computer")}</Button>}
+          {activeHost && <Button type="button" basic negative size="small" disabled={working} onClick={() => {
+            if (window.confirm(t('Revoke “{name}”?', {name: activeHost.deviceLabel}))) {
+              void run(() => api.revokeStorageHost(committeeId, activeHost.id, snapshot.committee.revision));
+            }
+          }}>{t("Revoke chair computer")}</Button>}
+        </div>
       </div>
+      {pairingFeedback && <Message positive={pairingFeedback !== "Copy failed. Select and copy the code."} warning={pairingFeedback === "Copy failed. Select and copy the code."} role="status">{t(pairingFeedback)}</Message>}
+      {pairing && <Message info={!pairingExpired} warning={pairingExpired}>
+        <div className="storage-settings-row">
+          <div><Message.Header>{t(pairingExpired ? "Pairing configuration expired" : "Waiting for Chair Agent")}</Message.Header>
+            <span>{t("· Expires at")} {new Date(pairing.expiresAt).toLocaleTimeString(getLanguage())}</span></div>
+          <div className="self-hosted-storage-host-actions">
+            {pairingExpired ? <Button type="button" primary onClick={() => void createPairing(activeHost ? 'TRANSFER' : 'INITIAL')}>
+              {t("Generate new configuration")}</Button> : <>
+              <Button type="button" primary onClick={() => openChairAgent(pairing.configuration)}>{t("Open Chair Agent")}</Button>
+              <Button type="button" onClick={() => downloadChairConfiguration(pairing.configuration)}>{t("Download configuration")}</Button>
+            </>}
+            <Button type="button" basic onClick={() => setPairing(undefined)}>{t("Close")}</Button>
+          </div>
+        </div>
+        {!pairingExpired && <details className="storage-pairing-manual"><summary>{t("Manual pairing")}</summary>
+          <code className="self-hosted-pairing-code">{pairing.code}</code>
+          <Button type="button" basic size="small" onClick={async () => {
+            try {await navigator.clipboard.writeText(pairing.code); setPairingFeedback('Pairing code copied');}
+            catch {setPairingFeedback('Copy failed. Select and copy the code.');}
+          }}><Icon name="copy" />{t("Copy pairing code")}</Button>
+        </details>}
+      </Message>}
       {conflicts.some(item => item.status === 'PENDING') && <div className="self-hosted-storage-conflicts">
         <Header as="h4">{t("Sync conflicts")}</Header>
         {conflicts.filter(item => item.status === 'PENDING').map(item => <Card key={item.id} fluid>
@@ -367,15 +399,15 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
       {activeBinding && <p>{t("Current:")}{activeBinding.providerType === 'SERVER_VOLUME' ? t("Server volume")
         : activeBinding.providerType === 'CHAIR_AGENT' ? t("Chair computer")
           : `S3 · ${configs.find(config => config.id === activeBinding.providerConfigId)?.displayName ?? t("Configured storage")}`}</p>}
-      <Form onSubmit={activeBinding ? createMigration : initializeStorage}>
-        <ViewportFormSelect label={activeBinding ? t("Migrate to") : t("Initial storage")} options={targetOptions}
-          value={targetType === 'S3_COMPATIBLE' ? `S3:${targetConfigId}` : targetType}
-          onChange={(_, data) => setTarget(String(data.value))} />
-        <Button primary disabled={working || targetOptions.length === 0
-          || (targetType === 'S3_COMPATIBLE' && !targetConfigId)}>
-          {activeBinding ? t("Start migration") : t("Enable storage")}
-        </Button>
-      </Form>
+      {targetOptions.length > 0 ? <Form onSubmit={activeBinding ? createMigration : initializeStorage}>
+        <div className="storage-settings-row storage-target-row">
+          <ViewportFormSelect label={activeBinding ? t("Migrate to") : t("Initial storage")} options={targetOptions}
+            value={targetType === 'S3_COMPATIBLE' ? `S3:${targetConfigId}` : targetType}
+            onChange={(_, data) => setTarget(String(data.value))} />
+          <Button primary disabled={working || (targetType === 'S3_COMPATIBLE' && !targetConfigId)}>
+            {activeBinding ? t("Start migration") : t("Enable storage")}</Button>
+        </div>
+      </Form> : <p className="storage-empty-target">{t("No available storage migration targets")}</p>}
       {migrations.length > 0 && <Card.Group stackable className="self-hosted-migrations">{migrations.map(migration =>
         <Card key={migration.id}><Card.Content><Card.Header>{t(MIGRATION_STATUS[migration.status])}</Card.Header>
           <Card.Meta>{migration.completedItems}/{migration.totalItems}</Card.Meta>

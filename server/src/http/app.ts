@@ -378,7 +378,12 @@ async function handleStage7AgentRequest(options: {
   if (method === 'POST' && pairing && identity) {
     requireOrigin(request, allowedOrigins);
     const auth = await authenticatedWrite(request, identity); const body = await readJson(request);
-    sendJson(response, 201, success(await storageAgent.createPairing(auth, pairing[1] as string, body, context), requestId));
+    const result = await storageAgent.createPairing(auth, pairing[1] as string, body, context);
+    const {committeeName, ...code} = result;
+    sendJson(response, 201, success({...code, configuration: {
+      schemaVersion: 1, kind: 'quorum-agent-pairing', serverUrl: publicOrigin(request, allowedOrigins),
+      committeeId: pairing[1], committeeName, pairingCode: code.code, purpose: code.purpose, expiresAt: code.expiresAt
+    }}, requestId));
     return true;
   }
   const revoke = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/storage-hosts\/([0-9a-f-]{36})\/revoke$/.exec(pathname);

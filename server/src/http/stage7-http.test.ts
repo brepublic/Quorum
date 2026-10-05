@@ -97,14 +97,19 @@ describe('stage 7 storage Agent HTTP boundary', () => {
     const committeeId = '20000000-0000-4000-8000-000000000001';
     const hostId = '30000000-0000-4000-8000-000000000001';
     const listHosts = vi.fn(async () => [{id: hostId}]);
-    const createPairing = vi.fn(async () => ({code: 'QRM-SECRET', purpose: 'INITIAL'}));
+    const createPairing = vi.fn(async () => ({code: 'QRM-SECRET', purpose: 'INITIAL', committeeName: 'Council', expiresAt: '2099-01-01T00:00:00Z'}));
     const revokeHost = vi.fn(async () => ({id: hostId, status: 'REVOKED'}));
     const service = {listHosts, createPairing, revokeHost} as unknown as Stage7StorageAgentService;
     expect((await send(service, {method: 'GET', path: `/api/v1/committees/${committeeId}/storage-hosts`}))
       .response.statusCode).toBe(200);
     const body = {baseRevision: 2, purpose: 'INITIAL'};
-    expect((await send(service, {method: 'POST',
-      path: `/api/v1/committees/${committeeId}/storage-agent/pairing-codes`, body})).response.statusCode).toBe(201);
+    const setup = await send(service, {method: 'POST',
+      path: `/api/v1/committees/${committeeId}/storage-agent/pairing-codes`, body});
+    expect(setup.response.statusCode).toBe(201);
+    expect(JSON.parse(setup.response.body).data.configuration).toEqual({schemaVersion: 1,
+      kind: 'quorum-agent-pairing', serverUrl: 'https://quorum.example.com', committeeId,
+      committeeName: 'Council', pairingCode: 'QRM-SECRET', purpose: 'INITIAL', expiresAt: '2099-01-01T00:00:00Z'});
+    expect(setup.logs.join('')).not.toContain('QRM-SECRET');
     expect(createPairing).toHaveBeenCalledWith(authenticated, committeeId, body,
       expect.objectContaining({requestId: expect.any(String)}));
     expect((await send(service, {method: 'POST',

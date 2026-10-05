@@ -11,6 +11,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     window.on_translate(|key, language| translate(key.as_str(), language.as_str()).into());
     window.set_language(language.into());
     window.set_status("RUNNING".into());
+    window.set_committee_name("联合国安全理事会".into());
+    window.set_root_path("/home/chair/Documents/Quorum/联合国安全理事会-1".into());
+    window.set_server_url("https://quorum.example.com".into());
+    window.set_config_path("/home/chair/.config/quorum-agent/configurations/agent.json".into());
+    window.set_setup_mode(std::env::args().any(|arg| arg == "--setup"));
+    window.set_show_advanced(std::env::args().any(|arg| arg == "--advanced"));
+    window.set_show_logs(std::env::args().any(|arg| arg == "--logs"));
+    if std::env::args().any(|arg| arg == "--discard") {window.set_confirm_discard("open".into());}
+
     let settings = std::env::args().any(|arg| arg == "--settings");
     window.set_loaded(!settings || std::env::args().any(|arg| arg == "--paired"));
     window.set_confirm_unpair(std::env::args().any(|arg| arg == "--confirm-unpair"));
@@ -60,10 +69,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         window.set_error_stage("tls".into());
         window.set_error_code("UNABLE_TO_GET_ISSUER_CERT_LOCALLY".into());
     }
+    window.show()?;
     if std::env::args().any(|arg| arg == "--small") {
         window
             .window()
-            .set_size(slint::LogicalSize::new(920.0, 660.0));
+            .set_size(slint::LogicalSize::new(820.0, 660.0));
     }
     let weak = window.as_weak();
     let timer = slint::Timer::default();

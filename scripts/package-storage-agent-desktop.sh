@@ -18,4 +18,6 @@ cp -a release/storage-agent-desktop-core/staging/quorum-storage-agent-0.1.0-linu
 cp packages/storage-agent-desktop/target/release/quorum-storage-agent-desktop "$quorum_desktop_output/"
 cp packages/storage-agent-desktop/README.md "$quorum_desktop_output/DESKTOP.md"
 cp LICENSE "$quorum_desktop_output/LICENSE.Quorum"
+cp packages/storage-agent-desktop/register-desktop.sh "$quorum_desktop_output/"
+chmod +x "$quorum_desktop_output/register-desktop.sh"
 printf '%s\n' "$quorum_desktop_output/quorum-storage-agent-desktop"

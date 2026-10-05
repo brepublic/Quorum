@@ -30,6 +30,7 @@ async function packageTarget(target) {
   const archive = await readFile(source); const runtime = runtimeFilesFromArchive(target, pinned.archive, archive);
   const rootName = `quorum-storage-agent-${agentPackage.version}-${target}`; const stage = join(stageDirectory, rootName);
   await materializeReleaseStage({rootDirectory: stage, distDirectory,
+    pairingModulePath: join(repository, 'packages/contracts/dist/agent-pairing.js'),
     releaseReadmePath: join(repository, 'packages/storage-agent/RELEASE_README.md'),
     target, agentVersion: agentPackage.version, nodeVersion: lock.nodeVersion, ...runtime});
   return archiveTarget(target);

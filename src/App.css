@@ -3358,3 +3358,15 @@ html[lang='zh-CN'] .ui.grid > .column {
 .delegate-file-claim-card .ui.dropdown .menu > .delegate-seat-member.item {
   font-weight: 400;
 }
+
+.storage-settings-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+.storage-settings-row .ui.header { margin-bottom: .5rem; }
+.storage-settings-row .self-hosted-storage-host-actions { margin: 0; }
+.storage-target-row { align-items: flex-end; }
+.storage-target-row > .field { flex: 1 1 16rem; margin: 0 !important; min-width: 0; }
+.storage-target-row > .ui.button { margin: 0; }
+.storage-pairing-manual { margin-top: 1rem; }
+.storage-pairing-manual summary { cursor: pointer; margin-bottom: .5rem; }
+.storage-pairing-manual code { overflow-wrap: anywhere; }
+.storage-empty-target { color: #666; }
+.self-hosted-storage-panel > .storage-settings-row { margin-bottom: 1.5rem; }

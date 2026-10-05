@@ -54,6 +54,7 @@ describe('Storage Agent release archives', () => {
       await mkdir(cache, {recursive: true}); await mkdir(dist, {recursive: true});
       await writeFile(join(dist, 'cli.js'), '#!/usr/bin/env node\nconsole.log("agent");\n');
       await writeFile(join(dist, 'runtime.js'), 'export const runtime = true;\n');
+      await writeFile(join(dist, 'desktop-setup.js'), "import { parseAgentPairingConfig } from '@quorum/contracts';\ntry { parseAgentPairingConfig({}); } catch (error) { console.log(error.message); }\n");
       const targets: Record<string, {archive: string; sha256: string}> = {};
       for (const target of ['darwin-arm64', 'darwin-x64', 'linux-x64', 'win-x64']) {
         const archive = `node-v99.0.0-${target}.${target === 'win-x64' ? 'zip' : 'tar.gz'}`;
@@ -76,6 +77,8 @@ describe('Storage Agent release archives', () => {
       const firstManifest = JSON.parse(await readFile(join(first, 'release-manifest.json'), 'utf8'));
       const secondManifest = JSON.parse(await readFile(join(second, 'release-manifest.json'), 'utf8'));
       expect(firstManifest.artifacts).toHaveLength(4);
+      const packagedSetup = join(first, 'staging/quorum-storage-agent-0.1.0-linux-x64/app/desktop-setup.js');
+      expect((await run(process.execPath, [packagedSetup], {cwd: temporary})).stdout.trim()).toBe('PAIRING_CONFIG_INVALID');
       expect(secondManifest).toEqual(firstManifest);
       expect(firstManifest.artifacts.every((value: {signed: boolean; notarized: boolean}) => !value.signed && !value.notarized)).toBe(true);
       for (const artifact of firstManifest.artifacts) {

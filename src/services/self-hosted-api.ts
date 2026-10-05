@@ -37,7 +37,7 @@ import type {
   S3ProviderConfigSummary,
   StorageBinding,
   StorageMigration,
-  StoragePairingCode,
+  StoragePairingSetup,
   StorageProviderType,
   StorageHost,
   StorageAgentConflict,
@@ -757,7 +757,7 @@ export const selfHostedApi = {
     return request<StorageHost[]>(`/api/v1/committees/${committeeId}/storage-hosts`);
   },
   createStoragePairingCode(committeeId: string, baseRevision: number, purpose: 'INITIAL' | 'TRANSFER') {
-    return request<StoragePairingCode>(
+    return request<StoragePairingSetup>(
       `/api/v1/committees/${committeeId}/storage-agent/pairing-codes`, {
         method: 'POST', body: {baseRevision, purpose}
       });

@@ -181,7 +181,7 @@ export class Stage7StorageAgentService {
   }
 
   async createPairing(auth: AuthenticatedSession, committeeId: string, body: unknown,
-    context: Stage4Context): Promise<StoragePairingCode> {
+    context: Stage4Context): Promise<StoragePairingCode & {committeeName: string}> {
     requireBusinessIdentity(auth);
     assertExactBody(body as Record<string, unknown>, ['baseRevision', 'purpose']);
     const request = body as {baseRevision?: unknown; purpose?: unknown};
@@ -219,7 +219,7 @@ export class Stage7StorageAgentService {
         capabilities: [committee.owner_user_id === auth.user.id ? 'OWNER' : 'CHAIR'],
         action: 'storage.pairing_code_created', resourceType: 'storage_pairing', resourceId: id,
         after: {purpose, expiresAt: expiresAt.toISOString()}});
-      return {code, purpose, expiresAt: expiresAt.toISOString()};
+      return {code, purpose, expiresAt: expiresAt.toISOString(), committeeName: committee.name};
     });
   }
 
@@ -279,6 +279,22 @@ export class Stage7StorageAgentService {
       if (active && transferredBinding.rowCount) {
         await client.query(`UPDATE file_entries SET sync_state='OUT_OF_SYNC',updated_at=$2
           WHERE committee_id=$1 AND status<>'DELETED'`, [committee.id, now]);
+      }
+      // Pairing and first storage activation share the committee lock and transaction.
+      if (!committee.active_storage_binding_id) {
+        const bindingId = randomUUID();
+        await client.query(`INSERT INTO storage_bindings
+          (id,committee_id,provider_type,storage_host_id,status,created_by_user_id)
+          VALUES ($1,$2,'CHAIR_AGENT',$3,'ACTIVE',$4)`,
+          [bindingId, committee.id, hostId, pairing.created_by_user_id]);
+        await client.query('UPDATE committees SET active_storage_binding_id=$2 WHERE id=$1', [committee.id, bindingId]);
+        await appendEvent(client, committee, {type: 'committee.updated', resourceType: 'storage_binding',
+          resourceId: bindingId, revision: committee.revision, audience: 'CHAIR',
+          payload: {storageBindingId: bindingId, providerType: 'CHAIR_AGENT'}});
+        await audit(client, context, {committeeId: committee.id, actorUserId: pairing.created_by_user_id,
+          capabilities: [committee.owner_user_id === pairing.created_by_user_id ? 'OWNER' : 'CHAIR'],
+          action: 'storage.binding_changed', resourceType: 'storage_binding', resourceId: bindingId,
+          after: {providerType: 'CHAIR_AGENT', storageHostId: hostId, status: 'ACTIVE', revision: 1}});
       }
       const pendingUploads = await client.query<{
         upload_id: string; task_id: string; task_type: 'HOST_COMMIT_BLOB' | 'UPLOAD_BLOB'; host_id: string; file_entry_id: string;

@@ -2,6 +2,23 @@ use std::path::PathBuf;
 
 pub fn translate(key: &str, language: &str) -> &'static str {
     let (en, zh) = match key {
+        "Run details" => ("Run details", "运行详情"),
+        "Configuration" => ("Configuration", "配置"),
+        "Choose file storage" => ("Choose file storage", "选择文件存储位置"),
+        "Stop to edit" => ("Stop to edit", "停止并编辑"),
+        "Import configuration" => ("Import configuration", "导入配置"),
+        "Advanced settings" => ("Advanced settings", "高级设置"),
+        "Hide advanced settings" => ("Hide advanced settings", "收起高级设置"),
+        "Confirm directory and start" => ("Confirm directory and start", "确认目录并启动"),
+        "Discard changes" => ("Discard changes", "放弃修改"),
+        "Import configuration to begin" => ("Import configuration to begin", "请导入网页生成的配对配置"),
+        "No files yet" => ("No files yet", "暂无文件"),
+        "PAIRING_CONFIG_INVALID" => ("Invalid pairing configuration. Download it again from the web.", "配对配置无效，请从网页重新下载。"),
+        "DESKTOP_STATE_INVALID" => ("Cannot read desktop settings. Import your configuration again.", "本机配置记录无法读取，请重新导入配置。"),
+        "STOP_AND_UNPAIR_FIRST" => ("Stop and unpair the current Agent before importing another committee.", "请先停止当前 Agent 并解除本机绑定，再导入其他委员会的配置。"),
+        "DIRECTORY_NOT_EMPTY" => ("Choose an empty directory for this committee.", "请选择一个空目录存储本委员会文件。"),
+        "DIRECTORY_EXISTS" => ("This directory already exists. Choose a new storage directory.", "目录已存在，请选择一个新的存储目录。"),
+        "DESKTOP_REGISTRATION_FAILED" => ("Desktop registration failed. Check user directory permissions and xdg tools.", "桌面注册失败，请检查用户目录权限和 xdg 工具。"),
         "AGENT_CONTENT_ALREADY_VERIFIED" => ("The sync file is already verified. Refresh task status.", "同步文件已校验完成，请刷新任务状态。"),
         "AGENT_CONTENT_NOT_STAGED" => ("The sync file has not been staged. Sync it again.", "同步文件尚未保存到暂存区，请重新同步。"),
         "AGENT_TASK_ALREADY_CLAIMED" => ("The sync task is already claimed. Wait for the current sync to finish.", "同步任务已被领取，请等待当前同步完成。"),

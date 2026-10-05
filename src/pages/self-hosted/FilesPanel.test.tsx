@@ -7,12 +7,17 @@ import type {CommitteeWorkspaceSnapshot, FileEntry, StorageHost, StorageMigratio
 import type {SelfHostedApi} from '../../services/self-hosted-api';
 import {SelfHostedApiError} from '../../services/self-hosted-api';
 import {MemoryRouter} from 'react-router-dom';
+import {openChairAgent, downloadChairConfiguration} from '../../services/agent-pairing';
+vi.mock('../../services/agent-pairing', () => ({openChairAgent: vi.fn(), downloadChairConfiguration: vi.fn()}));
 import FilesPanel, {storageErrorText} from './FilesPanel';
 
 beforeEach(() => setLanguage('zh-CN'));
 
 (globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT: boolean}).IS_REACT_ACT_ENVIRONMENT = true;
 const committeeId = '20000000-0000-4000-8000-000000000001';
+const pairingConfiguration = {schemaVersion: 1 as const, kind: 'quorum-agent-pairing' as const,
+  serverUrl: 'https://quorum.example.com', committeeId, committeeName: '安理会',
+  pairingCode: 'QRM-ABCD-EFGH', purpose: 'INITIAL' as const, expiresAt: '2099-08-13T01:00:00.000Z'};
 const file: FileEntry = {id: '30000000-0000-4000-8000-000000000001', committeeId, logicalName: '工作文件一',
   mediaType: 'image/svg+xml', status: 'UPLOAD_COMPLETE', syncState: 'SYNCED', createdByUserId: 'member', revision: 1,
   currentVersion: {id: 'version', versionNumber: 1, originalName: 'draft.svg', mediaType: 'image/svg+xml',
@@ -179,11 +184,15 @@ describe('self-hosted stage 6 file panel', () => {
 
   it('creates a one-time pairing or transfer code only for a storage manager', async () => {
     const createStoragePairingCode = vi.fn(async () => ({code: 'QRM-ABCD-EFGH', purpose: 'INITIAL' as const,
-      expiresAt: '2026-08-13T01:00:00.000Z'}));
+      expiresAt: '2099-08-13T01:00:00.000Z', configuration: pairingConfiguration}));
     const manager = await render('CHAIR', api({listFiles: vi.fn(async () => []), createStoragePairingCode}), 'chair');
     await act(async () => {button('配对主席电脑')?.click(); await new Promise(resolve => setTimeout(resolve, 0));});
     expect(createStoragePairingCode).toHaveBeenCalledWith(committeeId, 2, 'INITIAL');
     expect(manager.textContent).toContain('QRM-ABCD-EFGH');
+    expect(openChairAgent).toHaveBeenCalledWith(pairingConfiguration);
+    await act(async () => {button('下载配置文件')?.click();});
+    expect(downloadChairConfiguration).toHaveBeenCalledWith(pairingConfiguration);
+    expect(createStoragePairingCode).toHaveBeenCalledTimes(1);
     act(() => root?.unmount()); manager.remove(); root = undefined; container = undefined;
 
     const member = await render('MEMBER', api({createStoragePairingCode}), 'member');
@@ -196,7 +205,7 @@ describe('self-hosted stage 6 file panel', () => {
       status: 'DEGRADED' as const, revision: 2, lastSeenAt: '2026-08-13T00:00:00.000Z',
       pairedAt: '2026-08-12T00:00:00.000Z', revokedAt: null, agentProtocolVersion: null, capabilities: []};
     const createStoragePairingCode = vi.fn(async () => ({code: 'QRM-TRANSFER', purpose: 'TRANSFER' as const,
-      expiresAt: '2026-08-13T01:00:00.000Z'}));
+      expiresAt: '2099-08-13T01:00:00.000Z', configuration: pairingConfiguration}));
     const revokeStorageHost = vi.fn(async () => ({...host, status: 'REVOKED' as const}));
     const client = api({listFiles: vi.fn(async () => []), listStorageHosts: vi.fn(async () => [host]),
       createStoragePairingCode, revokeStorageHost});
@@ -204,7 +213,7 @@ describe('self-hosted stage 6 file panel', () => {
     expect(view.textContent).toContain('主席电脑 · 离线');
     await act(async () => {button('转移到其他电脑')?.click(); await new Promise(resolve => setTimeout(resolve, 0));});
     expect(createStoragePairingCode).toHaveBeenCalledWith(committeeId, 2, 'TRANSFER');
-    await act(async () => {button('关闭配对码')?.click();});
+    await act(async () => {button('关闭')?.click();});
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     await act(async () => {button('撤销主席电脑')?.click(); await new Promise(resolve => setTimeout(resolve, 0));});
     expect(revokeStorageHost).toHaveBeenCalledWith(committeeId, 'host', 2);

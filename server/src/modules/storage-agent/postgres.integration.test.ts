@@ -140,8 +140,7 @@ async function committedFile(owner: AuthenticatedSession, committeeId: string) {
 
 async function chairStorage(owner: AuthenticatedSession, committeeId: string) {
   const paired = await pairInitial(owner, committeeId);
-  const binding = await storage.createChairAgentBinding(owner, committeeId,
-    {baseRevision: await committeeRevision(committeeId)}, randomUUID(), context('chair-binding'));
+  const binding = (await storage.listBindings(owner, committeeId)).find(item => item.status === 'ACTIVE')!;
   return {paired: paired.paired, binding};
 }
 
@@ -458,6 +457,22 @@ integration('PostgreSQL stage 7 storage Agent identity', () => {
     expect(recorded).not.toContain(pairing.code);
     expect(recorded).not.toContain(paired.credential);
     expect(recorded).not.toContain(key);
+  });
+
+  it('activates Chair storage in the pairing transaction and preserves existing storage', async () => {
+    const fresh = await fixture();
+    const {paired} = await pairInitial(fresh.owner, fresh.committee.id);
+    const bindings = await storage.listBindings(fresh.owner, fresh.committee.id);
+    expect(bindings).toHaveLength(1);
+    expect(bindings[0]).toMatchObject({providerType: 'CHAIR_AGENT', status: 'ACTIVE', revision: 1});
+    const row = (await pool!.query('SELECT active_storage_binding_id FROM committees WHERE id=$1', [fresh.committee.id])).rows[0];
+    expect(row.active_storage_binding_id).toBe(bindings[0]?.id);
+    expect((await pool!.query('SELECT storage_host_id FROM storage_bindings WHERE id=$1', [bindings[0]?.id])).rows[0].storage_host_id).toBe(paired.host.id);
+    const existing = await fixture();
+    await committedFile(existing.owner, existing.committee.id);
+    const before = await storage.listBindings(existing.owner, existing.committee.id);
+    await pairInitial(existing.owner, existing.committee.id);
+    expect(await storage.listBindings(existing.owner, existing.committee.id)).toEqual(before);
   });
 
   it('uses a one-time code and atomically fences the old host during transfer', async () => {

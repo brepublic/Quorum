@@ -193,11 +193,20 @@ export async function collectStageEntries(stageDirectory) {
   await visit(root); return entries;
 }
 
-export async function materializeReleaseStage({rootDirectory, distDirectory, releaseReadmePath, target, agentVersion, nodeVersion, runtime, license}) {
+export async function materializeReleaseStage({rootDirectory, distDirectory, pairingModulePath, releaseReadmePath, target, agentVersion, nodeVersion, runtime, license}) {
   await rm(rootDirectory, {recursive: true, force: true}); await mkdir(join(rootDirectory, 'app'), {recursive: true});
   const jsFiles = (await readdir(distDirectory)).filter(name => name.endsWith('.js')).sort();
   if (!jsFiles.includes('cli.js')) throw new Error('Storage Agent dist/cli.js is missing.');
-  for (const name of jsFiles) await copyFile(join(distDirectory, name), join(rootDirectory, 'app', name));
+  for (const name of jsFiles) {
+    let source = await readFile(join(distDirectory, name), 'utf8');
+    // Ship the one dependency-free shared validator; the archive verifier still rejects other package imports.
+    const pairingImport = "import { parseAgentPairingConfig } from '@quorum/contracts';";
+    if (name === 'desktop-setup.js' && source.includes(pairingImport)) {
+      await copyFile(pairingModulePath, join(rootDirectory, 'app', 'agent-pairing.js'));
+      source = source.replace(pairingImport, "import { parseAgentPairingConfig } from './agent-pairing.js';");
+    }
+    await writeFile(join(rootDirectory, 'app', name), source);
+  }
   await writeFile(join(rootDirectory, 'app', 'package.json'), '{"type":"module"}\n', {mode: 0o644});
   const runtimeName = target.startsWith('win-') ? 'node.exe' : 'node';
   await mkdir(join(rootDirectory, 'runtime'), {recursive: true});

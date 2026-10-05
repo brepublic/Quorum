@@ -6,6 +6,7 @@ import {AgentFileSystemError} from './errors.js';
 
 export interface StorageAgentLocalConfig {
   schemaVersion: 1;
+  committeeName?: string;
   scanIntervalMs?: number;
   caCertificatePath?: string;
   serverUrl: string;
