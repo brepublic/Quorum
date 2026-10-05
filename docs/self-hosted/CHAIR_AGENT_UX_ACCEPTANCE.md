@@ -290,3 +290,10 @@
 - 证据目录：`/home/makoto/.codex/visualizations/2026/10/05/01a10a15-2946-7130-8e26-94373052324e/agent-content-sized-column/`。
 
 离线锁定发布构建通过，已原子更新本机桌面程序及说明；程序 SHA-256：`6c9338ff87f08eeed5d2591e2785409c7b32c393de37a942b0ca9dc067864cab`。当前运行实例未重启，下次启动生效。
+
+
+## 2026-10-06 英文系统窗口标题
+
+- 按用户确认，将系统窗口标题固定为 `Quorum Chair Agent`；页面内标题继续按界面语言翻译。自绘标题栏转入 `CHAIR_AGENT_ROADMAP.md`，本轮未实施。
+- 已核对 Slint 生成代码：系统窗口使用英文常量，页头仍调用翻译；离线锁定依赖的 Rust release 构建通过，`git diff --check` 通过。
+- 已原子更新本地 `release/storage-agent-desktop/` 的桌面程序和说明，未重启或重配用户当前 Agent。重新打开后生效；本轮未进行真实 GNOME 窗口截图验收。
