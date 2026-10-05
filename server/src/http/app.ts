@@ -354,6 +354,10 @@ async function handleStage7AgentRequest(options: {
     });
     response.end(); return true;
   }
+  if (method === 'GET' && pathname === '/api/v1/storage-agent/committees' && identity) {
+    sendJson(response, 200, success(await storageAgent.listCandidates(await authenticatedRead(request, identity)), requestId));
+    return true;
+  }
   const hosts = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/storage-hosts$/.exec(pathname);
   if (method === 'GET' && hosts && identity) {
     sendJson(response, 200, success(await storageAgent.listHosts(await authenticatedRead(request, identity),

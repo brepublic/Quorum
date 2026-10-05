@@ -1,6 +1,7 @@
 import {randomUUID} from 'node:crypto';
 import type {Pool, PoolClient, QueryResultRow} from 'pg';
 import type {
+  AgentCommitteeCandidate,
   StorageAgentIdentity,
   StorageAgentPairingResult,
   StorageHost,
@@ -162,6 +163,32 @@ export class Stage7StorageAgentService {
     this.pairingTtlMs = options.pairingTtlMs ?? DEFAULT_PAIRING_TTL_MS;
     this.offlineGraceMs = options.offlineGraceMs ?? DEFAULT_OFFLINE_GRACE_MS;
     this.now = options.now ?? (() => new Date());
+  }
+
+  async listCandidates(auth: AuthenticatedSession): Promise<AgentCommitteeCandidate[]> {
+    requireBusinessIdentity(auth);
+    return transaction(this.pool, async client => {
+      const result = await client.query<Stage4CommitteeRow & {
+        current_host: HostRow | null;
+        storage_provider: AgentCommitteeCandidate['storageProvider'];
+      }>(`SELECT c.*, row_to_json(h) AS current_host, b.provider_type AS storage_provider
+        FROM committees c
+        LEFT JOIN storage_hosts h ON h.committee_id=c.id AND h.status IN ('ACTIVE','DEGRADED')
+        LEFT JOIN storage_bindings b ON b.id=c.active_storage_binding_id AND b.status='ACTIVE'
+        WHERE c.status IN ('ACTIVE','PAUSED') AND (c.owner_user_id=$1 OR EXISTS (
+          SELECT 1 FROM committee_capabilities p JOIN users u ON u.id=p.user_id
+          WHERE p.committee_id=c.id AND p.user_id=$1 AND p.capability='CHAIR'
+            AND p.revoked_at IS NULL AND u.is_system_admin=false))
+        ORDER BY c.name,c.id`, [auth.user.id]);
+      return result.rows.map(row => ({id: row.id, name: row.name, conference: row.conference,
+        topic: row.topic, role: row.owner_user_id === auth.user.id ? 'OWNER' : 'CHAIR',
+        status: row.status as AgentCommitteeCandidate['status'], revision: row.revision,
+        storageProvider: row.storage_provider,
+        currentHost: row.current_host ? host({...row.current_host,
+          paired_at: new Date(row.current_host.paired_at),
+          last_seen_at: row.current_host.last_seen_at ? new Date(row.current_host.last_seen_at) : null,
+          revoked_at: row.current_host.revoked_at ? new Date(row.current_host.revoked_at) : null}) : null}));
+    });
   }
 
   async listHosts(auth: AuthenticatedSession, committeeId: string): Promise<StorageHost[]> {

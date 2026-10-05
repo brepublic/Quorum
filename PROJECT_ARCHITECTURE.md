@@ -155,6 +155,8 @@ CHAIR_AGENT 字节的权威持久副本仍在主席电脑。服务器使用同�
 
 ### Linux 主席 Agent 桌面外壳
 
+`GET /api/v1/storage-agent/committees` 使用账号 Session 返回可连接委员会，只包含所有者或有效主席有权管理的活动／暂停委员会，附当前设备、实际存储方式及版本；公开浏览和系统管理员身份本身不授予绑定权。该查询只提供选择快照，授权生成和最终配对仍走原有事务校验。
+
 `packages/storage-agent-desktop/` 用 Rust + Slint 提供非 WebView 的单窗口、单委员会管理界面，复用 Node 同步核心。Rust 经子进程管道与 `desktop-bridge.ts` 交换命令与脱敏快照；不开放本地 HTTP/TCP 监听端口。Linux 桌面使用用户私有 Unix socket 和进程文件锁将重复唤起转交同一窗口，目录同步锁仍独立保留。关闭窗口先停止 Agent，Linux CLI/GUI 对存储目录使用 `flock`，锁文件 `.quorum-storage.lock` 是保留路径。旧版 Agent 没有此锁，升级时仍须先停止旧进程。
 
 配置新增可选扫描间隔与 CA 路径，保持 schema 1 和已有身份；GUI 只在停止时修改，目录迁移由用户完成并经检查。CA 仅注入 Agent 子进程。新增只读 `/api/v1/storage-agent/file-status` 沿用当前设备认证和 generation 校验，仅返回绑定委员会的文件审核/发布与缓存状态，不返回服务器路径、不触发回传、不增加表。UI 按当前 blob 与本地校验合并状态，传输 100% 后仍需校验成功；离线缓存状态标记未知。

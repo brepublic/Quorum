@@ -1,3 +1,18 @@
+import type {StorageHost} from './stage7.js';
+
+/** Account-authorized snapshot; pairing must recheck permission and revision. */
+export interface AgentCommitteeCandidate {
+  id: string;
+  name: string;
+  conference: string;
+  topic: string;
+  role: 'OWNER' | 'CHAIR';
+  status: 'ACTIVE' | 'PAUSED';
+  revision: number;
+  currentHost: StorageHost | null;
+  storageProvider: 'SERVER_VOLUME' | 'S3_COMPATIBLE' | 'CHAIR_AGENT' | null;
+}
+
 /** Portable, short-lived pairing input. Never a private device configuration. */
 export interface AgentPairingConfig {
   schemaVersion: 1;

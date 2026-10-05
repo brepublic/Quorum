@@ -55,6 +55,17 @@ async function send(storageAgent: Stage7StorageAgentService, options: {
 }
 
 describe('stage 7 storage Agent HTTP boundary', () => {
+  it('uses account authentication for connection candidates, never device credentials', async () => {
+    const listCandidates = vi.fn(async () => []);
+    const service = {listCandidates} as unknown as Stage7StorageAgentService;
+    const result = await send(service, {method: 'GET', path: '/api/v1/storage-agent/committees'});
+    expect(result.response.statusCode).toBe(200);
+    expect(listCandidates).toHaveBeenCalledWith(authenticated);
+    const identity = {authenticate: vi.fn(async () => {throw new AppError({code: 'AUTHENTICATION_REQUIRED', message: 'Login required.'});})} as unknown as IdentityService;
+    expect((await send(service, {method: 'GET', path: '/api/v1/storage-agent/committees', identity,
+      headers: {authorization: 'QuorumAgent qsa1.device.secret'}})).response.statusCode).toBe(401);
+    expect(listCandidates).toHaveBeenCalledTimes(1);
+  });
   it('only uses the authenticated device and generation for self revocation', async () => {
     const revokeSelf = vi.fn(async () => ({revoked: true}));
     const service = {revokeSelf} as unknown as Stage7StorageAgentService;

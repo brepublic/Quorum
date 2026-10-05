@@ -155,6 +155,36 @@ async function stagedUpload(owner: AuthenticatedSession, committeeId: string, na
 }
 
 integration('PostgreSQL stage 7 storage Agent identity', () => {
+  it('lists only manageable active or paused candidates with current host and storage', async () => {
+    const {owner, chair, member, committee} = await fixture();
+    expect(await agent.listCandidates(member)).toEqual([]);
+    expect(await agent.listCandidates(administrator)).toEqual([]);
+    expect(await agent.listCandidates(owner)).toEqual([expect.objectContaining({id: committee.id,
+      role: 'OWNER', status: 'ACTIVE', currentHost: null, storageProvider: null})]);
+    expect(await agent.listCandidates(chair)).toEqual([expect.objectContaining({role: 'CHAIR'})]);
+    await pool!.query("UPDATE committees SET status='PAUSED' WHERE id=$1", [committee.id]);
+    await pairInitial(owner, committee.id);
+    const candidates = await agent.listCandidates(chair);
+    expect(candidates).toEqual([expect.objectContaining({status: 'PAUSED', storageProvider: 'CHAIR_AGENT',
+      currentHost: expect.objectContaining({deviceLabel: 'Chair laptop', status: 'ACTIVE'})})]);
+    expect(JSON.stringify(candidates)).not.toMatch(/credential|public_key/);
+    await stage3.setChair(owner, committee.id, chair.user.email, false,
+      await committeeRevision(committee.id), context('remove-chair'));
+    expect(await agent.listCandidates(chair)).toEqual([]);
+    for (const status of ['ARCHIVED', 'DELETING']) {
+      await pool!.query('UPDATE committees SET status=$2 WHERE id=$1', [committee.id, status]);
+      expect(await agent.listCandidates(owner)).toEqual([]);
+    }
+  });
+
+  it('reports existing server storage without changing it when a host pairs', async () => {
+    const {owner, committee} = await fixture();
+    await storage.createServerVolumeBinding(owner, committee.id,
+      {baseRevision: await committeeRevision(committee.id)}, randomUUID(), context('candidate-storage'));
+    await pairInitial(owner, committee.id);
+    expect(await agent.listCandidates(owner)).toEqual([expect.objectContaining({storageProvider: 'SERVER_VOLUME',
+      currentHost: expect.objectContaining({deviceLabel: 'Chair laptop'})})]);
+  });
   it('retains Chair replacement sources for online refill and offline cache without allowing local overwrite', async () => {
     const value=await fixture();const chair=await chairStorage(value.owner,value.committee.id);
     const refill=new StorageCacheRefillService(pool!,cache);
