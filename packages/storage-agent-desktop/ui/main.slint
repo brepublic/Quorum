@@ -3,7 +3,7 @@ export { Palette }
 
 export struct CommitteeRow { id: string, name: string, detail: string, paused: bool, host: string, provider: string }
 
-export struct FileRow { id: string, name: string, actual-name: string, can-open: bool, size: string, local: string, cache: string, local-code: string, cache-code: string, transfer: string, fraction: float, progressing: bool }
+export struct FileRow { id: string, name: string, actual-name: string, stem: string, extension: string, can-open: bool, size: string, local: string, cache: string, local-code: string, cache-code: string, transfer: string, fraction: float, progressing: bool }
 
 component Caption inherits Text { color: Palette.foreground.with-alpha(0.68); font-size: 13px; overflow: elide; vertical-alignment: center; }
 component Rule inherits Rectangle { height: 1px; vertical-stretch: 0; background: Palette.foreground.with-alpha(0.12); }
@@ -13,10 +13,10 @@ component QuietButton inherits Rectangle {
     in property <string> accessible-name: root.text;
     in property <bool> enabled: true;
     in property <bool> danger: false;
-    in property <bool> file-link: false;
     private property <color> danger-color: Palette.color-scheme == ColorScheme.dark ? #ffaaa5 : #a4262c;
+    out property <bool> has-focus: focus.has-focus;
     callback clicked();
-    min-width: root.file-link ? 0px : content.min-width;
+    min-width: content.min-width;
     min-height: 32px;
     horizontal-stretch: 0; vertical-stretch: 0;
     border-radius: 5px;
@@ -28,14 +28,113 @@ component QuietButton inherits Rectangle {
     accessible-enabled: root.enabled;
     accessible-action-default => {if root.enabled {root.clicked();}}
     forward-focus: focus;
-    content := HorizontalLayout { padding-left: root.file-link ? 0px : root.danger ? 12px : 6px; padding-right: root.file-link ? 0px : root.danger ? 12px : 6px;
-        Text { text: root.text; overflow: elide; color: !root.enabled ? Palette.foreground.with-alpha(0.35) : root.danger ? root.danger-color : root.file-link ? Palette.accent-background : Palette.foreground.with-alpha(0.8); font-size: root.danger ? 14px : 13px; vertical-alignment: center; horizontal-alignment: root.danger ? center : left; }
+    content := HorizontalLayout { padding-left: root.danger ? 12px : 6px; padding-right: root.danger ? 12px : 6px;
+        Text { text: root.text; overflow: elide; color: !root.enabled ? Palette.foreground.with-alpha(0.35) : root.danger ? root.danger-color : Palette.foreground.with-alpha(0.8); font-size: root.danger ? 14px : 13px; vertical-alignment: center; horizontal-alignment: root.danger ? center : left; }
     }
-    touch := TouchArea { enabled: root.enabled; mouse-cursor: root.file-link && root.enabled ? pointer : default; clicked => {focus.focus(); root.clicked();} }
+    touch := TouchArea { enabled: root.enabled; clicked => {focus.focus(); root.clicked();} }
     focus := FocusScope { width: 0px; height: 0px; enabled: root.enabled;
         key-pressed(event) => {if event.text == " " || event.text == "\n" {root.clicked(); return accept;} return reject;}
     }
 }
+// A name is selectable across its cell; only the text hit target opens a file.
+component FileNameCell inherits Rectangle {
+    in property <string> text;
+    in property <string> stem: root.text;
+    in property <string> extension;
+    in property <string> subtitle;
+    in property <string> copy-label;
+    in property <bool> can-open: false;
+    in property <bool> enabled: true;
+    in property <length> window-width;
+    in property <length> window-height;
+    in property <bool> selected;
+    callback selected-name();
+    callback open-file();
+    callback copied(string);
+    out property <bool> has-focus: keyboard.has-focus;
+    private property <bool> valid: root.enabled && root.text != "" && root.text != "-";
+    private property <bool> truncated: measure.preferred-width > root.width - 12px;
+    private property <bool> dismissed;
+    private property <bool> menu-mode;
+    private property <bool> popup-hover;
+    private property <bool> popup-keyboard;
+    private property <length> name-y: root.subtitle == "" ? (root.height - label.height) / 2 : max(8px, (root.height - label.height - size-label.height - 4px) / 2);
+    private property <color> link-color: Palette.color-scheme == ColorScheme.dark ? #80c7ff : #005aa3;
+    min-width: 0px;
+    background: root.selected ? Palette.accent-background.with-alpha(0.13) : transparent;
+    border-radius: 4px;
+    border-width: keyboard.has-focus ? 2px : 0px;
+    border-color: Palette.accent-background;
+    forward-focus: keyboard;
+    accessible-role: AccessibleRole.text;
+    accessible-label: root.text;
+    accessible-enabled: root.valid;
+    accessible-action-default => {if root.can-open && root.valid {root.open-file();}}
+    measure := Text { visible: false; text: root.text; font-size: 14px; }
+    label := Rectangle { x: 6px; y: root.name-y; width: min(root.width - 12px, measure.preferred-width + 2px); height: max(32px, measure.preferred-height);
+        Text { x: 0px; width: parent.width - suffix.width; height: parent.height; text: root.truncated && root.extension != "" ? root.stem : root.text; color: root.can-open ? root.link-color : Palette.foreground; font-size: 14px; vertical-alignment: center; overflow: elide; }
+        suffix := Text { x: parent.width - self.width; width: root.truncated && root.extension != "" ? self.preferred-width : 0px; height: parent.height; text: root.truncated ? root.extension : ""; color: root.can-open ? root.link-color : Palette.foreground; font-size: 14px; vertical-alignment: center; }
+        if root.can-open && (link-touch.has-hover || keyboard.has-focus): Rectangle { y: parent.height - 1px; height: 1px; background: root.link-color; }
+    }
+    size-label := Text { x: 6px; y: label.y + label.height + 4px; width: root.width - 12px; visible: root.subtitle != ""; text: root.subtitle; font-size: 13px; color: Palette.foreground.with-alpha(0.72); overflow: elide; }
+    cell-touch := TouchArea { enabled: root.valid;
+        clicked => {root.focus();}
+        pointer-event(event) => {if event.kind == PointerEventKind.up && event.button == PointerEventButton.right {root.show-menu();}}
+        changed has-hover => {if !self.has-hover {root.dismissed = false;}}
+    }
+    link-touch := TouchArea { x: label.x; y: label.y; width: label.width; height: label.height; enabled: root.valid && root.can-open; mouse-cursor: pointer;
+        clicked => {root.focus(); root.dismissed = true; name-popup.close(); root.open-file();}
+        pointer-event(event) => {if event.kind == PointerEventKind.up && event.button == PointerEventButton.right {root.show-menu();}}
+    }
+    keyboard := FocusScope { width: 0px; height: 0px; enabled: root.valid;
+        changed has-focus => {if self.has-focus {root.selected-name(); if root.truncated && !root.dismissed && !root.menu-mode {root.menu-mode = false; root.popup-keyboard = true; name-popup.show();}} else {root.dismissed = false;}}
+        key-pressed(event) => {
+            if event.text == Key.Escape {root.dismissed = true; name-popup.close(); return accept;}
+            if event.modifiers.control && (event.text == "c" || event.text == "C") {root.copy-name(); return accept;}
+            if event.text == Key.Menu || (event.text == Key.F10 && event.modifiers.shift) {root.show-menu(); return accept;}
+            if event.text == "\n" && root.can-open {root.dismissed = true; name-popup.close(); root.open-file(); return accept;}
+            return reject;
+        }
+    }
+    // Use Slint's existing clipboard path; this input never takes focus.
+    clipboard := TextInput { visible: false; text: root.text; read-only: true; }
+    function show-menu() {name-popup.close(); root.menu-mode = true; root.popup-keyboard = true; root.dismissed = true; keyboard.focus(); name-popup.show();}
+    function copy-name() {clipboard.select-all(); clipboard.copy(); root.copied(root.text); root.dismissed = true; name-popup.close();}
+    Timer { interval: 500ms; running: root.valid && root.truncated && (cell-touch.has-hover || link-touch.has-hover) && !root.dismissed && !name-popup.is-open;
+        triggered => {root.menu-mode = false; root.popup-keyboard = false; name-popup.show();}
+    }
+    Timer { interval: 100ms; running: name-popup.is-open && !root.menu-mode;
+        triggered => {if !cell-touch.has-hover && !link-touch.has-hover && !keyboard.has-focus && !root.popup-keyboard && !root.popup-hover {name-popup.close();}}
+    }
+    name-popup := PopupWindow {
+        close-policy: close-on-click-outside;
+        x: max(8px - root.absolute-position.x, min(0px, root.window-width - root.absolute-position.x - self.width - 8px));
+        y: max(8px - root.absolute-position.y, min(root.name-y + label.height + 4px, root.window-height - root.absolute-position.y - self.height - 8px));
+        width: min(420px, root.window-width - 32px);
+        height: min(root.window-height - 32px, full-name.preferred-height + (root.menu-mode ? 64px : 24px));
+        Rectangle { background: Palette.background; border-width: 1px; border-color: Palette.foreground.with-alpha(0.3); border-radius: 6px;
+            TouchArea { changed has-hover => {root.popup-hover = self.has-hover;} }
+            FocusScope { init => {if root.popup-keyboard {self.focus();}}
+                key-pressed(event) => {
+                    if event.text == Key.Escape {root.dismissed = true; name-popup.close(); if root.popup-keyboard {keyboard.focus();} return accept;}
+                    if event.text == Key.Menu || (event.text == Key.F10 && event.modifiers.shift) {root.show-menu(); return accept;}
+                    if event.text == Key.Tab {root.dismissed = true; name-popup.close(); keyboard.focus(); return reject;}
+                    if root.menu-mode && (event.text == Key.UpArrow || event.text == Key.DownArrow) {copy-button.focus(); return accept;}
+                    if event.modifiers.control && (event.text == "c" || event.text == "C") {root.copy-name(); keyboard.focus(); return accept;}
+                    if event.text == "\n" {if root.menu-mode {root.copy-name();} else {root.dismissed = true; name-popup.close(); if root.can-open {root.open-file();}} keyboard.focus(); return accept;}
+                    return reject;
+                }
+                VerticalLayout { padding: 12px; spacing: 8px;
+                    ScrollView { viewport-width: self.width; viewport-height: full-name.preferred-height;
+                        full-name := Text { width: name-popup.width - 24px; text: root.text; font-size: 14px; color: Palette.foreground; wrap: word-wrap; }
+                    }
+                    copy-button := QuietButton { text: root.copy-label; visible: root.menu-mode; min-height: self.visible ? 32px : 0px; max-height: self.visible ? 32px : 0px; clicked => {root.copy-name(); keyboard.focus();} }
+                }
+            }
+        }
+    }
+}
+
 component Notice inherits Rectangle {
     in property <string> text;
     in property <bool> error: false;
@@ -71,16 +170,21 @@ export component MainWindow inherits Window {
     in-out property <string> previous-committee;
     in-out property <string> previous-site;
     in-out property <bool> status-delayed: false;
-    in-out property <bool> file-details: false;
-    in-out property <FileRow> selected-file;
     in property <color> warning-color: Palette.color-scheme == ColorScheme.dark ? #edc36b : #825600;
     in property <color> error-color: Palette.color-scheme == ColorScheme.dark ? #ffaaa5 : #a4262c;
     out property <string> display-status: root.status != "RUNNING" ? root.status : root.status-delayed || root.last-connection-age != "" || root.observed-age != "" ? "STATUS_DELAYED" : root.committee-status == "PAUSED" ? "COMMITTEE_PAUSED_STATUS" : !root.files-loaded ? "STARTING" : "RUNNING";
     out property <bool> field-error: (root.page == "login" || root.page == "password") && (root.error-code == "INCORRECT_CREDENTIALS" || root.error-code == "INVALID_EMAIL" || root.error-code == "PASSWORD_TOO_SHORT" || root.error-code == "PASSWORD_TOO_LONG");
-    callback show-file(string);
     callback open-file(string);
-    // Reserve table padding, gaps, status/action columns and the list scrollbar.
-    private property <length> file-name-column-width: (min(1400px, root.width - (root.width < 850px ? 48px : 64px)) - 434px) / 2;
+    // Shared column geometry: padding, three gaps, status columns and scrollbar.
+    private property <length> names-width: min(1400px, root.width - (root.width < 850px ? 48px : 64px)) - 366px;
+    in-out property <string> selected-name-key;
+    in-out property <string> focused-file-action;
+    in-out property <length> file-scroll;
+    in-out property <length> page-scroll;
+    in-out property <length> home-scroll;
+    in-out property <string> copied-notice;
+    callback name-copied(string);
+    Timer { interval: 1800ms; running: root.copied-notice != ""; triggered => {root.copied-notice = "";} }
     private property <int> password-focus-request;
     public function focus-password() {root.password-focus-request += 1;}
     private property <int> email-focus-request;
@@ -100,7 +204,7 @@ export component MainWindow inherits Window {
     in-out property <bool> language-menu: false;
     in-out property <bool> login-options: false;
     in-out property <bool> login-network: false;
-    out property <bool> controls-enabled: !root.confirm-unpair && root.confirm-discard == "" && !root.language-menu && !root.file-details && !root.closing;
+    out property <bool> controls-enabled: !root.confirm-unpair && root.confirm-discard == "" && !root.language-menu && !root.closing;
     out property <bool> certificate-error: root.error-stage == "tls" || root.error-code == "UNABLE_TO_GET_ISSUER_CERT_LOCALLY" || root.error-code == "DEPTH_ZERO_SELF_SIGNED_CERT" || root.error-code == "SELF_SIGNED_CERT_IN_CHAIN";
     in-out property <bool> files-loaded: false;
     in-out property <bool> setup-mode: false;
@@ -161,7 +265,8 @@ export component MainWindow inherits Window {
             }
         }
         Rule { }
-        page-scroll := ScrollView {
+        page-view := ScrollView {
+            viewport-y <=> root.page-scroll;
             viewport-height: page-layout.preferred-height;
             page-layout := HorizontalLayout { padding: root.width < 850px ? 24px : 32px; spacing: 0px;
                 Rectangle { horizontal-stretch: 1; }
@@ -382,30 +487,52 @@ export component MainWindow inherits Window {
                         if root.files.length > 0: VerticalLayout { spacing: 0px;
                             Rectangle { height: 36px; background: Palette.alternate-background; border-radius: 6px;
                                 HorizontalLayout { padding-left: 12px; padding-right: 12px; spacing: 12px;
-                                    Caption { text: root.translate("Files", root.language); width: root.file-name-column-width; }
-                                    Caption { text: root.translate("Actual filename", root.language); width: root.file-name-column-width; }
+                                    Rectangle { width: root.names-width * 0.45; Caption { x: 6px; width: parent.width - 6px; text: root.translate("Files", root.language); } }
+                                    Rectangle { width: root.names-width * 0.55; Caption { x: 6px; width: parent.width - 6px; text: root.translate("Actual filename", root.language); } }
                                     Caption { text: root.translate("Local status", root.language); width: 150px; }
-                                    Caption { text: root.translate("Server cache", root.language); width: 140px; }
-                                    Rectangle { horizontal-stretch: 1; min-width: 56px; }
+                                    Caption { text: root.translate("Server cache", root.language); horizontal-stretch: 1; }
                                 }
                             }
-                            ListView { height: max(180px, root.height - 405px);
-                                for row in root.files: Rectangle { height: row.progressing ? 80px : 64px; background: Palette.control-background;
-                                    HorizontalLayout { padding-left: 12px; padding-right: 12px; spacing: 12px;
-                                        VerticalLayout { alignment: center; spacing: 4px; width: root.file-name-column-width;
-                                            Text { text: row.name; color: Palette.foreground; overflow: elide; }
-                                            Caption { text: row.size; }
+                            ListView { viewport-y <=> root.file-scroll; height: max(180px, root.height - 405px);
+                                for row in root.files: file-row := Rectangle {
+                                    private property <bool> local-log: row.local-code == "FAILED" || row.local-code == "RETRYING";
+                                    private property <bool> conflict: row.local-code == "CONFLICT";
+                                    private property <bool> cache-log: row.cache-code == "REFILL_FAILED" && !self.local-log;
+                                    height: max(row.progressing || self.local-log || self.conflict || self.cache-log ? 80px : 64px, row-content.min-height);
+                                    background: Palette.control-background;
+                                    row-content := HorizontalLayout { padding-left: 12px; padding-right: 12px; spacing: 12px;
+                                        logical-name := FileNameCell { width: root.names-width * 0.45; text: row.name; copy-label: root.translate("Copy file name", root.language); enabled: root.controls-enabled;
+                                            window-width: root.width; window-height: root.height; selected: root.selected-name-key == row.id + ":name";
+                                            selected-name => {root.focused-file-action = ""; root.selected-name-key = row.id + ":name";}
+                                            copied(value) => {root.name-copied(value); root.copied-notice = root.translate("Copied", root.language);}
                                         }
-                                        QuietButton { text: row.actual-name; file-link: true; width: root.file-name-column-width; enabled: root.controls-enabled && row.can-open; clicked => {root.open-file(row.id);} }
-                                        VerticalLayout { width: 150px; spacing: 5px; alignment: center;
-                                            Text { text: (row.local-code == "FAILED" || row.local-code == "CONFLICT" || row.local-code == "RETRYING" ? "! " : "") + row.local; color: row.local-code == "FAILED" || row.local-code == "CONFLICT" ? root.error-color : row.local-code == "RETRYING" ? root.warning-color : Palette.foreground; wrap: word-wrap; font-size: 13px; }
-                                            if row.progressing: Caption { text: row.transfer; font-size: 12px; }
+                                        actual-name := FileNameCell { accessible-role: button; width: root.names-width * 0.55; text: row.actual-name; stem: row.stem; extension: row.extension; subtitle: row.size; can-open: row.can-open; copy-label: root.translate("Copy actual filename", root.language); enabled: root.controls-enabled;
+                                            window-width: root.width; window-height: root.height; selected: root.selected-name-key == row.id + ":actual";
+                                            selected-name => {root.focused-file-action = ""; root.selected-name-key = row.id + ":actual";}
+                                            open-file => {root.open-file(row.id);}
+                                            copied(value) => {root.name-copied(value); root.copied-notice = root.translate("Copied", root.language);}
+                                        }
+                                        VerticalLayout { width: 150px; spacing: 4px; alignment: center; padding-top: 8px; padding-bottom: 8px;
+                                            Text { text: (file-row.conflict || file-row.local-log ? "! " : "") + row.local; color: row.local-code == "FAILED" || file-row.conflict ? root.error-color : row.local-code == "RETRYING" ? root.warning-color : Palette.foreground; wrap: word-wrap; font-size: 13px; }
+                                            if row.progressing: Caption { text: row.transfer; font-size: 13px; }
                                             if row.progressing: Rectangle { height: 4px; background: Palette.alternate-background; border-radius: 2px;
                                                 Rectangle { width: parent.width * row.fraction; height: parent.height; background: Palette.accent-background; border-radius: 2px; }
                                             }
+                                            local-action := QuietButton { text: root.translate(file-row.conflict ? "Resolve on website" : "View logs", root.language); visible: file-row.conflict || file-row.local-log; enabled: root.controls-enabled && self.visible;
+                                                min-height: self.visible ? 32px : 0px; max-height: self.visible ? 32px : 0px;
+                                                changed has-focus => {if self.has-focus {root.focused-file-action = row.id + ":local";} else if self.visible && root.focused-file-action == row.id + ":local" {root.focused-file-action = "";}}
+                                                changed visible => {if !self.visible && root.focused-file-action == row.id + ":local" {if row.actual-name != "-" {actual-name.focus();} else {logical-name.focus();}}}
+                                                clicked => {root.action(file-row.conflict ? "open-conflicts" : "navigate-logs");}
+                                            }
                                         }
-                                        Text { text: (row.cache-code == "REFILL_FAILED" ? "! " : "") + row.cache; color: row.cache-code == "REFILL_FAILED" ? root.error-color : Palette.foreground; width: 140px; wrap: word-wrap; font-size: 13px; vertical-alignment: center; }
-                                        QuietButton { text: root.translate("Details", root.language); accessible-name: root.translate("Details", root.language) + ": " + row.name; min-width: 56px; enabled: root.controls-enabled; clicked => {root.show-file(row.id);} }
+                                        VerticalLayout { width: 140px; spacing: 4px; alignment: center; padding-top: 8px; padding-bottom: 8px;
+                                            Text { text: (row.cache-code == "REFILL_FAILED" ? "! " : "") + row.cache; color: row.cache-code == "REFILL_FAILED" ? root.error-color : Palette.foreground; wrap: word-wrap; font-size: 13px; }
+                                            cache-action := QuietButton { text: root.translate("View logs", root.language); visible: file-row.cache-log; enabled: root.controls-enabled && self.visible; min-height: self.visible ? 32px : 0px; max-height: self.visible ? 32px : 0px;
+                                                changed has-focus => {if self.has-focus {root.focused-file-action = row.id + ":cache";} else if self.visible && root.focused-file-action == row.id + ":cache" {root.focused-file-action = "";}}
+                                                changed visible => {if !self.visible && root.focused-file-action == row.id + ":cache" {if row.actual-name != "-" {actual-name.focus();} else {logical-name.focus();}}}
+                                                clicked => {root.action("navigate-logs");}
+                                            }
+                                        }
                                     }
                                     Rectangle { y: parent.height - 1px; height: 1px; background: Palette.foreground.with-alpha(0.08); }
                                 }
@@ -518,33 +645,8 @@ export component MainWindow inherits Window {
         }
     }
 
-    if root.file-details: Rectangle {
-        background: #00000060;
-        TouchArea { }
-        FocusScope { init => {self.focus();}
-            key-pressed(event) => {if event.text == Key.Escape {root.file-details = false; return accept;} return reject;}
-            Rectangle { x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2; width: min(620px, root.width - 48px); height: min(root.height - 80px, 180px + detail-content.preferred-height); background: Palette.background; border-radius: 12px;
-                VerticalLayout { padding: 24px; spacing: 16px;
-                    Text { text: root.translate("File details", root.language); color: Palette.foreground; font-size: 20px; font-weight: 600; }
-                    ScrollView { viewport-height: detail-content.preferred-height;
-                        detail-content := VerticalLayout { spacing: 12px;
-                            PathText { text: root.selected-file.name; }
-                            Caption { text: root.translate("Actual filename", root.language); }
-                            PathText { text: root.selected-file.actual-name; }
-                            Caption { text: root.selected-file.size; }
-                            Text { text: root.translate("Local status", root.language) + ": " + root.selected-file.local; color: root.selected-file.local-code == "FAILED" || root.selected-file.local-code == "CONFLICT" ? root.error-color : Palette.foreground; wrap: word-wrap; }
-                            Text { text: root.translate("Server cache", root.language) + ": " + root.selected-file.cache; color: root.selected-file.cache-code == "REFILL_FAILED" ? root.error-color : Palette.foreground; wrap: word-wrap; }
-                        }
-                    }
-                    HorizontalLayout { spacing: 12px;
-                        if root.selected-file.local-code == "CONFLICT": Button { text: root.translate("Resolve on website", root.language); clicked => {root.action("open-conflicts");} }
-                        if root.selected-file.local-code == "FAILED" || root.selected-file.local-code == "RETRYING" || root.selected-file.cache-code == "REFILL_FAILED": Button { text: root.translate("View logs", root.language); clicked => {root.file-details = false; root.action("navigate-logs");} }
-                        Rectangle { horizontal-stretch: 1; }
-                        Button { text: root.translate("Close", root.language); clicked => {root.file-details = false;} }
-                    }
-                }
-            }
-        }
+    if root.copied-notice != "": Rectangle { x: (root.width - self.width) / 2; y: root.height - self.height - 20px; width: toast.preferred-width + 32px; height: 40px; background: Palette.foreground; border-radius: 6px;
+        toast := Text { text: root.copied-notice; color: Palette.background; horizontal-alignment: center; vertical-alignment: center; }
     }
 
     if root.confirm-discard != "": Rectangle {

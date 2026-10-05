@@ -42,9 +42,8 @@ pub fn translate(key: &str, language: &str) -> &'static str {
         "Connected" => ("Connected", "连接正常"),
         "Paused changes reminder" => ("Local file changes will sync when the committee resumes.", "本地文件变更将在委员会恢复后同步。"),
         "Restart sync" => ("Restart syncing", "重新启动同步"),
-        "Details" => ("Details", "详情"),
-        "File details" => ("File details", "文件详情"),
-        "Resolve on website" => ("Resolve conflict on website", "在网页处理冲突"),
+        "View logs" => ("View logs", "查看日志"),
+        "Resolve on website" => ("Resolve on website ↗", "到网页处理 ↗"),
         "Cancel switch" => ("Cancel switch · return to current connection", "取消更换，返回当前连接"),
         "Leave switch setup" => ("Return to sign in", "返回登录"),
         "Previous connection removed" => ("The previous connection has been removed. Complete the new connection or select another committee.", "旧连接已解除。请完成新连接或重新选择委员会。"),
@@ -306,6 +305,9 @@ pub fn translate(key: &str, language: &str) -> &'static str {
         "Export" => ("Export", "导出"),
         "FAILED" => ("Failed", "失败"),
         "FORBIDDEN" => ("Device authorization is unavailable. Check pairing on the committee page.", "设备授权不可用，请在委员会网页核对配对状态。"),
+        "Copy file name" => ("Copy file name", "复制文件名称"),
+        "Copy actual filename" => ("Copy actual filename", "复制实际文件名"),
+        "Copied" => ("Copied", "已复制"),
         "Actual filename" => ("Actual filename", "实际文件名"),
         "Cannot open local file" => ("Cannot open the local file. Check that it exists and a default application is available.", "无法打开本地文件，请检查文件是否存在以及是否已设置默认打开程序。"),
         "Files" => ("Files", "文件"),
@@ -523,6 +525,9 @@ mod tests {
     }
     #[test]
     fn localized_states_and_errors_do_not_depend_on_business_names() {
+        assert_eq!(translate("View logs", "zh-CN"), "查看日志");
+        assert_eq!(translate("Copy actual filename", "en"), "Copy actual filename");
+        assert_eq!(translate("Copied", "zh-CN"), "已复制");
         assert_eq!(translate("PENDING_DOWNLOAD", "en"), "Pending download");
         assert_eq!(translate("PENDING_DOWNLOAD", "zh-CN"), "待下载");
         assert_eq!(translate("ENOSPC", "en"), "The disk is full.");

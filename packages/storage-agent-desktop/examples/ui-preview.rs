@@ -3,15 +3,18 @@ mod localization;
 use localization::translate;
 // Native Wayland layout smoke test. Uses clearly labelled synthetic rows, never an Agent config.
 use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferType};
-use slint::{ComponentHandle, ModelRc, VecModel};
+use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::cell::RefCell;
 use std::io::Write;
 use std::rc::Rc;
 slint::include_modules!();
 // Render the production Slint component at exact sizes without compositor tiling.
 // This is a layout fixture, not an account or file-sync simulation.
+thread_local! {static TEST_CLIPBOARD: RefCell<String> = RefCell::new(String::new());}
 struct PreviewPlatform(Rc<MinimalSoftwareWindow>);
 impl slint::platform::Platform for PreviewPlatform {
+    fn set_clipboard_text(&self, text: &str, _: slint::platform::Clipboard) {TEST_CLIPBOARD.with(|c| *c.borrow_mut() = text.into());}
+    fn clipboard_text(&self, _: slint::platform::Clipboard) -> Option<String> {Some(TEST_CLIPBOARD.with(|c| c.borrow().clone()))}
     fn create_window_adapter(
         &self,
     ) -> Result<Rc<dyn slint::platform::WindowAdapter>, slint::PlatformError> {
@@ -131,16 +134,78 @@ fn exercise_files(window: &MainWindow, redraw: impl Fn()) {
     let opened = Rc::new(RefCell::new(Vec::<String>::new()));
     let recorded = opened.clone();
     window.on_open_file(move |id| recorded.borrow_mut().push(id.to_string()));
-    let position = slint::LogicalPosition::new(400., 358.);
-    window.window().dispatch_event(WindowEvent::PointerPressed {position, button: PointerEventButton::Left});
-    window.window().dispatch_event(WindowEvent::PointerReleased {position, button: PointerEventButton::Left});
-    redraw();
+    let click = |x, y, button| {
+        let position = slint::LogicalPosition::new(x, y);
+        window.window().dispatch_event(WindowEvent::PointerMoved {position});
+        window.window().dispatch_event(WindowEvent::PointerPressed {position, button});
+        window.window().dispatch_event(WindowEvent::PointerReleased {position, button}); redraw();
+    };
+    let key = |text: slint::SharedString| {
+        window.window().dispatch_event(WindowEvent::KeyPressed {text:text.clone()});
+        window.window().dispatch_event(WindowEvent::KeyReleased {text}); redraw();
+    };
+    let copy = || {
+        window.window().dispatch_event(WindowEvent::KeyPressed {text:Key::Control.into()});
+        key("c".into());
+        window.window().dispatch_event(WindowEvent::KeyReleased {text:Key::Control.into()}); redraw();
+    };
+    // Size/blank area selects, without opening; the first name is short enough to fit.
+    click(420., 385., PointerEventButton::Left);
+    assert!(opened.borrow().is_empty());
+    assert_eq!(window.get_selected_name_key(), "file-1:actual");
+    copy();
+    TEST_CLIPBOARD.with(|c| assert_eq!(c.borrow().as_str(), "决议草案 - 中文显示测试.pdf"));
+    assert_eq!(window.get_copied_notice(), translate("Copied", window.get_language().as_str()));
+    click(400., 348., PointerEventButton::Left);
     assert_eq!(&*opened.borrow(), &["file-1"]);
-    window.window().dispatch_event(WindowEvent::KeyPressed {text: Key::Return.into()});
-    window.window().dispatch_event(WindowEvent::KeyReleased {text: Key::Return.into()});
-    redraw();
+    key(Key::Return.into());
     assert_eq!(&*opened.borrow(), &["file-1", "file-1"]);
-    println!("Actual filename mouse and keyboard checks passed");
+    click(400., 348., PointerEventButton::Right);
+    key(Key::DownArrow.into()); key(Key::Return.into());
+    assert_eq!(opened.borrow().len(), 2, "Context menu copies, never opens");
+    TEST_CLIPBOARD.with(|c| assert_eq!(c.borrow().as_str(), "决议草案 - 中文显示测试.pdf"));
+    // Long names are copied in full, and snapshots retain the focused cell.
+    use slint::Model;
+    let files = window.get_files();
+    let long_name = "长文件名-Long filename with spaces and 中文, supplementary materials and revisions-final.docx";
+    let mut row = files.row_data(0).unwrap();
+    row.actual_name = long_name.into(); row.stem = long_name.trim_end_matches(".docx").into(); row.extension = ".docx".into();
+    files.set_row_data(0, row.clone()); redraw();
+    copy(); TEST_CLIPBOARD.with(|c| assert_eq!(c.borrow().as_str(), long_name));
+    click(400., 348., PointerEventButton::Right); key(Key::Return.into());
+    assert_eq!(opened.borrow().len(), 2, "Long-name context menu must copy, not open");
+    key(Key::Menu.into()); key(Key::Escape.into()); copy();
+    TEST_CLIPBOARD.with(|c| assert_eq!(c.borrow().as_str(), long_name));
+    // Dash is not selectable; logical names copy but do not open.
+    click(90., 430., PointerEventButton::Left);
+    assert_eq!(window.get_selected_name_key(), "file-1:actual");
+    click(90., 351., PointerEventButton::Left); copy(); key(Key::Return.into());
+    assert_eq!(opened.borrow().len(), 2);
+    TEST_CLIPBOARD.with(|c| assert_eq!(c.borrow().as_str(), "决议草案 - 中文显示测试.pdf"));
+    window.window().dispatch_event(WindowEvent::PointerMoved {position: slint::LogicalPosition::new(400., 348.)});
+    redraw(); std::thread::sleep(std::time::Duration::from_millis(550)); redraw(); copy();
+    TEST_CLIPBOARD.with(|c| assert_eq!(c.borrow().as_str(), "决议草案 - 中文显示测试.pdf", "Hovering another name must not change the copy target"));
+    key(Key::Escape.into());
+    let actions = Rc::new(RefCell::new(Vec::<String>::new())); let recorded = actions.clone();
+    window.on_action(move |action| recorded.borrow_mut().push(action.to_string()));
+    row.local_code = "CONFLICT".into(); row.local = translate("CONFLICT", window.get_language().as_str()).into(); row.progressing = false;
+    files.set_row_data(0, row.clone()); redraw();
+    click(659., 375., PointerEventButton::Left);
+    assert_eq!(actions.borrow().last().unwrap(), "open-conflicts");
+    row.local_code = "READY_PUBLISHED".into(); row.local = translate("READY_PUBLISHED", window.get_language().as_str()).into();
+    files.set_row_data(0, row.clone()); redraw(); copy();
+    TEST_CLIPBOARD.with(|c| assert_eq!(c.borrow().as_str(), long_name, "Disappearing action returns focus to actual name"));
+    row.local_code = "FAILED".into(); row.cache_code = "REFILL_FAILED".into();
+    files.set_row_data(0, row); redraw(); click(653., 375., PointerEventButton::Left);
+    assert_eq!(actions.borrow().last().unwrap(), "navigate-logs");
+    // Preserve list position when the diagnostics view temporarily replaces it.
+    let sample = files.row_data(0).unwrap();
+    window.set_files(ModelRc::new(VecModel::from((0..20).map(|i| {let mut r = sample.clone(); r.id = format!("scroll-{i}").into(); r}).collect::<Vec<_>>())));
+    redraw(); window.set_file_scroll(-240.); redraw();
+    let scroll = window.get_file_scroll(); assert!(scroll < -100.);
+    window.set_show_logs(true); redraw(); window.set_show_logs(false); redraw();
+    assert_eq!(window.get_file_scroll(), scroll, "Returning from logs preserves list scroll");
+    println!("Selection vs open, clipboard, menus, full names, stable updates, inline actions and scroll retention passed");
 }
 fn exercise_connection(window: &MainWindow, redraw: impl Fn()) {
     use slint::platform::{PointerEventButton, WindowEvent};
@@ -224,27 +289,7 @@ fn exercise_connection(window: &MainWindow, redraw: impl Fn()) {
     assert!(window.get_feedback().is_empty(), "Result notices must be dismissible");
     window.set_page("home".into()); window.set_loaded(true); window.set_running(true);
     window.set_status("RUNNING".into()); window.set_committee_status("PAUSED".into());
-    let opened = Rc::new(RefCell::new(String::new())); let recorded = opened.clone();
-    window.on_show_file(move |id| *recorded.borrow_mut() = id.to_string()); redraw();
-    click(885., 359.);
-    assert_eq!(opened.borrow().as_str(), "file-1", "File details must be clickable");
-    *opened.borrow_mut() = String::new();
-    let key = |key: slint::platform::Key| {
-        let text: slint::SharedString = key.into();
-        window.window().dispatch_event(WindowEvent::KeyPressed {text: text.clone()});
-        window.window().dispatch_event(WindowEvent::KeyReleased {text}); redraw();
-    };
-    key(slint::platform::Key::Return);
-    assert_eq!(opened.borrow().as_str(), "file-1", "File details must be keyboard accessible");
-    for (code, action) in [("CONFLICT", "open-conflicts"), ("FAILED", "navigate-logs")] {
-        window.set_selected_file(FileRow {name: "完整文件名称 - working paper.pdf".into(), local_code: code.into(), local: translate(code, "zh-CN").into(), ..Default::default()});
-        window.set_file_details(true); redraw();
-        key(slint::platform::Key::Tab); key(slint::platform::Key::Tab); key(slint::platform::Key::Tab); key(slint::platform::Key::Return);
-        assert_eq!(actions.borrow().last().unwrap(), action);
-        if window.get_file_details() {key(slint::platform::Key::Escape);}
-        assert!(!window.get_file_details());
-    }
-    println!("Connection actions, safe confirmation, busy guard, status recovery and keyboard file details/actions passed");
+    println!("Connection actions, safe confirmation, busy guard and status recovery passed");
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -359,7 +404,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     window.set_files(ModelRc::new(VecModel::from(vec![
         FileRow {
-            id: "file-1".into(), actual_name: "决议草案 - 中文显示测试.pdf".into(), can_open: true, local_code: "DOWNLOADING".into(), cache_code: "CACHE_READY".into(),
+            id: "file-1".into(), actual_name: "决议草案 - 中文显示测试.pdf".into(), stem: "决议草案 - 中文显示测试".into(), extension: ".pdf".into(), can_open: true, local_code: "DOWNLOADING".into(), cache_code: "CACHE_READY".into(),
             name: "决议草案 - 中文显示测试.pdf".into(),
             size: "12.4 MiB".into(),
             local: translate("DOWNLOADING", language).into(),
@@ -370,7 +415,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ..Default::default()
         },
         FileRow {
-            id: "file-2".into(), actual_name: "工作文件.docx".into(), can_open: true, local_code: "READY_REVIEW".into(), cache_code: "CACHE_READY".into(),
+            id: "file-2".into(), actual_name: "工作文件.docx".into(), stem: "工作文件".into(), extension: ".docx".into(), can_open: true, local_code: "READY_REVIEW".into(), cache_code: "CACHE_READY".into(),
             name: "-".into(),
             size: "542 KiB".into(),
             local: translate("READY_REVIEW", language).into(),
@@ -378,7 +423,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ..Default::default()
         },
         FileRow {
-            id: "file-3".into(), actual_name: "已公开的立场文件.pdf".into(), can_open: true, local_code: "READY_PUBLISHED".into(), cache_code: "REFILLING".into(),
+            stem: "已公开的立场文件".into(), extension: ".pdf".into(), id: "file-3".into(), actual_name: "已公开的立场文件.pdf".into(), can_open: true, local_code: "READY_PUBLISHED".into(), cache_code: "REFILLING".into(),
             name: "已公开的立场文件.pdf".into(),
             size: "24 MiB".into(),
             local: translate("READY_PUBLISHED", language).into(),
@@ -388,7 +433,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             progressing: true,
         },
         FileRow {
-            id: "file-4".into(), actual_name: "本地笔记.txt".into(), can_open: true, local_code: "READY_UNSUBMITTED".into(), cache_code: "CACHE_MISSING_LOCAL_READY".into(),
+            id: "file-4".into(), actual_name: "本地笔记.txt".into(), stem: "本地笔记".into(), extension: ".txt".into(), can_open: true, local_code: "READY_UNSUBMITTED".into(), cache_code: "CACHE_MISSING_LOCAL_READY".into(),
             name: "本地笔记.txt".into(),
             size: "2 KiB".into(),
             local: translate("READY_UNSUBMITTED", language).into(),
@@ -423,14 +468,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         window.set_switching(true); window.set_setup_mode(true); window.set_account_setup(true); window.set_loaded(false); window.set_running(false);
         window.set_previous_site("https://quorum.example.com".into());
     }
-    if std::env::args().any(|arg| arg == "--file-details") {
-        window.set_selected_file(FileRow {id: "file-1".into(), name: "关于跨境合作与可持续发展特别会议的修订决议草案（完整名称与键盘选择测试）- final revised version with a long descriptive filename.pdf".into(), size: "12.4 MiB".into(), local_code: "CONFLICT".into(), local: translate("CONFLICT", language).into(), cache: translate("CACHE_READY", language).into(), ..Default::default()});
-        window.set_file_details(true);
-    }
+
     if std::env::args().any(|arg| arg == "--file-errors") {
-        window.set_files(ModelRc::new(VecModel::from(["FAILED", "CONFLICT", "RETRYING"].iter().enumerate().map(|(i, code)| FileRow {id: format!("file-{i}").into(), name: "关于跨境合作与可持续发展的决议草案 - long filename with supplementary materials.pdf".into(), size: "1 MiB".into(), local_code: (*code).into(), local: translate(code, language).into(), cache_code: "REFILL_FAILED".into(), cache: translate("REFILL_FAILED", language).into(), ..Default::default()}).collect::<Vec<_>>())));
+        window.set_files(ModelRc::new(VecModel::from(["FAILED", "CONFLICT", "RETRYING"].iter().enumerate().map(|(i, code)| FileRow {id: format!("file-{i}").into(), actual_name: "关于跨境合作与可持续发展的决议草案 - long filename with supplementary materials.pdf".into(), stem: "关于跨境合作与可持续发展的决议草案 - long filename with supplementary materials".into(), extension: ".pdf".into(), can_open: true, name: "委员会工作文件".into(), size: "1 MiB".into(), local_code: (*code).into(), local: translate(code, language).into(), cache_code: "REFILL_FAILED".into(), cache: translate("REFILL_FAILED", language).into(), ..Default::default()}).collect::<Vec<_>>())));
     }
     if std::env::args().any(|arg| arg == "--switch-revoked") {window.set_switch_revoked(true); window.set_error_stage("server-pairing".into()); window.set_error_code("LINK_EXPIRED".into());}
+    if std::env::args().any(|arg| arg == "--name-popup" || arg == "--name-menu") {
+        let rows = window.get_files(); let mut row = rows.row_data(0).unwrap();
+        row.actual_name = "长文件名-Long filename with spaces and 中文, supplementary materials and revisions-final.docx".into();
+        row.stem = "长文件名-Long filename with spaces and 中文, supplementary materials and revisions-final".into(); row.extension = ".docx".into();
+        rows.set_row_data(0, row);
+    }
     window.show()?;
     if let Some(adapter) = offscreen {
         let (width, height) = if std::env::args().any(|arg| arg == "--small") {
@@ -444,6 +492,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         adapter.draw_if_needed(|renderer| {
             renderer.render(pixels.make_mut_slice(), width as usize);
         });
+        if std::env::args().any(|arg| arg == "--name-popup" || arg == "--name-menu") {
+            let position = slint::LogicalPosition::new(if width == 760 {250.} else {400.}, if width == 760 {337.} else {350.});
+            window.window().dispatch_event(slint::platform::WindowEvent::PointerMoved {position});
+            if std::env::args().any(|arg| arg == "--name-menu") {
+                let button = slint::platform::PointerEventButton::Right;
+                window.window().dispatch_event(slint::platform::WindowEvent::PointerPressed {position,button});
+                window.window().dispatch_event(slint::platform::WindowEvent::PointerReleased {position,button});
+            } else {std::thread::sleep(std::time::Duration::from_millis(550));}
+            for _ in 0..3 {
+                slint::platform::update_timers_and_animations(); window.window().request_redraw();
+                adapter.draw_if_needed(|renderer| {renderer.render(pixels.make_mut_slice(), width as usize);});
+            }
+            if std::env::args().any(|arg| arg == "--hover-popup") {
+                window.window().dispatch_event(slint::platform::WindowEvent::PointerMoved {position: slint::LogicalPosition::new(350., 380.)});
+                std::thread::sleep(std::time::Duration::from_millis(150));
+            }
+            if std::env::args().any(|arg| arg == "--escape-popup") {
+                let text = slint::platform::Key::Escape.into();
+                window.window().dispatch_event(slint::platform::WindowEvent::KeyPressed {text});
+            }
+            slint::platform::update_timers_and_animations(); window.window().request_redraw();
+            adapter.draw_if_needed(|renderer| {renderer.render(pixels.make_mut_slice(), width as usize);});
+        }
         if std::env::args().any(|arg| matches!(arg.as_str(), "--exercise-login" | "--exercise-connection" | "--exercise-files")) {
             let exercise = if std::env::args().any(|arg| arg == "--exercise-files") {exercise_files} else if std::env::args().any(|arg| arg == "--exercise-connection") {exercise_connection} else {exercise_login};
             exercise(&window, || {

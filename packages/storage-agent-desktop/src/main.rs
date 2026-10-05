@@ -3,7 +3,7 @@ mod desktop;
 use slint::winit_030::WinitWindowAccessor;
 use localization::{translate, load_language, save_language, stale_time};
 use serde_json::{json, Value};
-use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
+use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 use std::{
     cell::{Cell, RefCell},
     io::{BufRead, BufReader, Write},
@@ -67,6 +67,8 @@ fn render(ui: &MainWindow, rows: &[Value], logs: &[String]) {
                 id: text(v, "id").into(),
                 name: text(v, "name").into(),
                 actual_name: text(v, "actualName").into(),
+                stem: filename_parts(text(v, "actualName")).0.into(),
+                extension: filename_parts(text(v, "actualName")).1.into(),
                 can_open: !text(v, "relativePath").is_empty(),
                 local_code: text(v, "local").into(),
                 cache_code: text(v, "cache").into(),
@@ -87,10 +89,19 @@ fn render(ui: &MainWindow, rows: &[Value], logs: &[String]) {
             }
         })
         .collect();
-    if ui.get_file_details() {
-        if let Some(row) = model.iter().find(|row| row.id == ui.get_selected_file().id) {ui.set_selected_file(row.clone());} else {ui.set_file_details(false);}
-    }
-    ui.set_files(ModelRc::new(VecModel::from(model)));
+    let current = ui.get_files();
+    if let Some(existing) = current.as_any().downcast_ref::<VecModel<FileRow>>() {
+        // Update matching rows in place so snapshots preserve selection and focus.
+        for (index, row) in model.iter().enumerate() {
+            if existing.row_data(index).is_some_and(|old| old.id == row.id) {
+                if existing.row_data(index).as_ref() != Some(row) {existing.set_row_data(index, row.clone());}
+            } else if let Some(found) = (index..existing.row_count()).find(|&i| existing.row_data(i).is_some_and(|old| old.id == row.id)) {
+                for _ in index..found {existing.remove(index);}
+                existing.set_row_data(index, row.clone());
+            } else {existing.insert(index, row.clone());}
+        }
+        while existing.row_count() > model.len() {existing.remove(model.len());}
+    } else {ui.set_files(ModelRc::new(VecModel::from(model)));}
     let filter = ui.get_log_filter().to_lowercase();
     ui.set_log_text(
         logs.iter()
@@ -176,13 +187,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let input_action = input.clone();
     let logs_action = logs.clone();
     let saved_action = saved_form.clone();
-    let weak_file = ui.as_weak();
-    ui.on_show_file(move |id| {
-        use slint::Model;
-        if let Some(ui) = weak_file.upgrade() {
-            if let Some(row) = ui.get_files().iter().find(|row| row.id == id) {ui.set_selected_file(row); ui.set_file_details(true);}
-        }
-    });
     let weak_open = ui.as_weak();
     let open_rows = rows.clone();
     let open_form = saved_form.clone();
@@ -223,8 +227,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         if action.starts_with("navigate-") {
             if dirty && ui.get_editing() {ui.set_pending_navigation(action.into()); ui.set_confirm_discard("navigate".into()); return;}
+            if !ui.get_show_settings() && !ui.get_show_logs() {ui.set_home_scroll(ui.get_page_scroll());}
             ui.set_show_settings(action == "navigate-settings");
             ui.set_show_logs(action == "navigate-logs");
+            ui.set_page_scroll(if action == "navigate-home" {ui.get_home_scroll()} else {0.0});
             ui.set_editing(false);
             if ui.get_resume_after_edit() {ui.set_resume_after_edit(false); action = "start";} else {return;}
         }
@@ -513,7 +519,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "config" => {
                         ui.set_password("".into()); ui.set_show_password(false);
                         ui.set_switching(false); ui.set_switch_revoked(false); ui.set_switch_committee(false);
-                        ui.set_file_details(false); ui.set_files_loaded(false); ui.set_status_delayed(false); last_snapshot.set(None);
+                        ui.set_files_loaded(false); ui.set_status_delayed(false); last_snapshot.set(None);
                         ui.set_confirm_unpair(false);
                         rows.borrow_mut().clear();
                         redraw = true;
@@ -672,4 +678,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ui.run()?;
     input.lock().unwrap().take();
     Ok(())
+}
+
+fn filename_parts(name: &str) -> (&str, &str) {
+    match name.rfind('.') {
+        Some(index) if index > 0 && index + 1 < name.len() && name[index + 1..].chars().count() <= 16 => (&name[..index], &name[index..]),
+        _ => (name, ""),
+    }
+}
+#[cfg(test)] mod filename_tests {
+    use super::*;
+    #[test] fn preserves_extensions_without_splitting_unicode_or_dotfiles() {
+        for (name, stem, ext) in [("中文 修订版.docx", "中文 修订版", ".docx"), ("a.tar.gz", "a.tar", ".gz"), (".notes", ".notes", ""), ("README", "README", "")] {
+            assert_eq!(filename_parts(name), (stem, ext));
+        }
+    }
 }
