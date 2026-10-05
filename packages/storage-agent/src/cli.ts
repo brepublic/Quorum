@@ -43,12 +43,16 @@ async function pair(values: Map<string, string>): Promise<void> {
   failureStage = 'server-pairing';
   const paired = await StorageAgentHttpClient.pair(serverUrl, {pairingCode, deviceLabel,
     devicePublicKey: publicDer.subarray(-32).toString('base64url')});
-  failureStage = 'local-state';
-  await AgentStateStore.initialize(rootPath, {committeeId: paired.host.committeeId, deviceId: paired.host.deviceId});
   const config: StorageAgentLocalConfig = {schemaVersion: 1, serverUrl, credential: paired.credential,
     committeeId: paired.host.committeeId, deviceId: paired.host.deviceId,
     leaseGeneration: paired.host.leaseGeneration, rootPath,
     devicePrivateKey: keys.privateKey.export({format: 'pem', type: 'pkcs8'}).toString()};
+  // The desktop parent can retry local persistence without issuing another pairing request.
+  // This private IPC channel is never stdout, a log or a UI event.
+  if (process.send) await new Promise<void>((resolve, reject) => process.send!({event: 'paired-config', config},
+    (error: Error | null) => error ? reject(error) : resolve()));
+  failureStage = 'local-state';
+  await AgentStateStore.initialize(rootPath, {committeeId: paired.host.committeeId, deviceId: paired.host.deviceId});
   failureStage = 'config-write';
   await writeAgentConfig(configPath, config);
   logger.info('storage_agent.paired', {leaseGeneration: paired.host.leaseGeneration});

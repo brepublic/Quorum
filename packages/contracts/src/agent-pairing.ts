@@ -23,13 +23,18 @@ export interface AgentPairingConfig {
   pairingCode: string;
   purpose: 'INITIAL' | 'TRANSFER';
   expiresAt: string;
+  committeeStatus?: 'ACTIVE' | 'PAUSED';
+  storageProvider?: AgentCommitteeCandidate['storageProvider'];
 }
 
 export function parseAgentPairingConfig(value: unknown): AgentPairingConfig {
   const keys = ['schemaVersion', 'kind', 'serverUrl', 'committeeId', 'committeeName', 'pairingCode', 'purpose', 'expiresAt'];
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('PAIRING_CONFIG_INVALID');
   const v = value as Record<string, unknown>;
-  if (Object.keys(v).some(key => !keys.includes(key)) || v.schemaVersion !== 1 || v.kind !== 'quorum-agent-pairing'
+  if (Object.keys(v).some(key => ![...keys, 'committeeStatus', 'storageProvider'].includes(key))
+    || (v.committeeStatus !== undefined && !['ACTIVE', 'PAUSED'].includes(String(v.committeeStatus)))
+    || (v.storageProvider !== undefined && v.storageProvider !== null && !['SERVER_VOLUME', 'S3_COMPATIBLE', 'CHAIR_AGENT'].includes(String(v.storageProvider)))
+    || v.schemaVersion !== 1 || v.kind !== 'quorum-agent-pairing'
     || keys.slice(2).some(key => typeof v[key] !== 'string')
     || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(v.committeeId))
     || !String(v.committeeName).trim() || String(v.committeeName).length > 300

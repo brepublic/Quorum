@@ -11,7 +11,7 @@ import {lockAgentRoot} from './runtime-lock';
 
 const cleanup: (()=>Promise<unknown>)[]=[];
 afterEach(async()=>{for(const fn of cleanup.splice(0).reverse()) await fn();});
-async function fixture(pairStatus = 200, revokeStatus = 200) {
+async function fixture(pairStatus = 200, revokeStatus = 200, mustChangePassword = false, failLocalSave = false) {
   const root=await mkdtemp(join(tmpdir(),'quorum-desktop-'));cleanup.push(()=>rm(root,{recursive:true,force:true}));
   const key=join(root,'key.pem'),crt=join(root,'ca.pem');
   execFileSync('openssl',['req','-x509','-newkey','rsa:2048','-nodes','-days','1','-keyout',key,'-out',crt,
@@ -20,9 +20,25 @@ async function fixture(pairStatus = 200, revokeStatus = 200) {
   const server=createServer({key:await readFile(key),cert:await readFile(crt)}, async(req,res)=>{
     let body='';for await(const chunk of req)body+=chunk;
     requests.push({url:req.url!,authorization:req.headers.authorization,body});
+    if (req.url === '/api/v1/auth/login') {
+      if (JSON.parse(body).password === 'wrong') {res.statusCode = 401; res.end(JSON.stringify({error:{code:'AUTHENTICATION_REQUIRED',reason:'INCORRECT_CREDENTIALS'}})); return;}
+      res.setHeader('set-cookie', ['__Host-quorum_session=account-secret; Secure; HttpOnly; Path=/', '__Host-quorum_csrf=csrf; Secure; Path=/']);
+      res.end(JSON.stringify({data: {user: {mustChangePassword}}})); return;
+    }
+    if (req.url === '/api/v1/storage-agent/committees') {
+      res.end(JSON.stringify({data: [{id:'10000000-0000-4000-8000-000000000001', name:'Paused Council',
+        conference:'Meeting', topic:'Files', role:'CHAIR', status:'PAUSED', revision:2,
+        currentHost:null, storageProvider:'SERVER_VOLUME'}]})); return;
+    }
+    if (req.url?.endsWith('/pairing-codes')) {
+      res.end(JSON.stringify({data: {configuration: {schemaVersion:1, kind:'quorum-agent-pairing',
+        serverUrl:`https://127.0.0.1:${(server.address() as {port:number}).port}`, committeeId:'10000000-0000-4000-8000-000000000001',
+        committeeName:'Paused Council', pairingCode:'QRM-test-secret', purpose:'INITIAL', expiresAt:'2099-01-01T00:00:00Z'}}})); return;
+    }
     if(req.url==='/api/v1/storage-agent/events'){res.writeHead(200,{'content-type':'text/event-stream'});res.write(': ready\n\n');return;}
     if(req.url==='/api/v1/storage-agent/pair' && pairStatus !== 200){res.writeHead(pairStatus,{'content-type':'application/json'});res.end(JSON.stringify({error:{code:'LINK_EXPIRED',message:'Pairing code expired.'}}));return;}
     if(req.url==='/api/v1/storage-agent/revoke' && revokeStatus !== 200){res.writeHead(revokeStatus,{'content-type':'application/json'});res.end(JSON.stringify({error:{code:revokeStatus === 401 ? 'AUTHENTICATION_REQUIRED' : 'NOT_FOUND',message:'Revoke failed.'}}));return;}
+    if (req.url === '/api/v1/storage-agent/pair' && failLocalSave) await mkdir(join(root, 'private.json'));
     const data=req.url==='/api/v1/storage-agent/revoke'?{revoked:true}:req.url==='/api/v1/storage-agent/pair'?{credential:'qsa1.20000000-0000-4000-8000-000000000001.'+'a'.repeat(43),
       host:{committeeId:'10000000-0000-4000-8000-000000000001',deviceId:'20000000-0000-4000-8000-000000000001',leaseGeneration:1}}
       :req.url?.includes('file-status')?{files:[],nextId:null,observedAt:new Date().toISOString()}
@@ -48,6 +64,47 @@ async function fixture(pairStatus = 200, revokeStatus = 200) {
   return {root,process,events,wait,command,settings,requests};
 }
 describe('desktop bridge process lifecycle',()=>{
+  it('recovers local persistence after server pairing without pairing a second device', async () => {
+    const f = await fixture(200, 200, false, true);
+    const failed = await f.command('pair', f.settings);
+    expect(failed).toContainEqual(expect.objectContaining({event:'error',stage:'paired-local-recovery'}));
+    await rm(f.settings.configPath, {recursive:true});
+    const recovered = await f.command('pair', f.settings);
+    expect(recovered).toContainEqual(expect.objectContaining({event:'config',paired:true}));
+    expect(f.requests.filter(r=>r.url==='/api/v1/storage-agent/pair')).toHaveLength(1);
+    expect(JSON.stringify(f.events)).not.toContain('qsa1.');
+  });
+
+  it('keeps initial password changes inside the native account flow and translates incorrect credentials', async () => {
+    const f = await fixture(200, 200, true);
+    const wrong = await f.command('login', {...f.settings, email:'chair@example.com', password:'wrong'});
+    expect(wrong).toContainEqual(expect.objectContaining({event:'error',code:'INCORRECT_CREDENTIALS'}));
+    const login = await f.command('login', {...f.settings, email:'chair@example.com', password:'temporary'});
+    expect(login).toContainEqual(expect.objectContaining({event:'account',page:'password'}));
+    expect(f.requests.some(r=>r.url==='/api/v1/storage-agent/committees')).toBe(false);
+    expect(await f.command('change-password', {password:'new-private-password'})).toContainEqual(expect.objectContaining({event:'candidates'}));
+    expect(JSON.stringify(f.events)).not.toContain('new-private-password');
+    expect(await f.command('logout')).toContainEqual(expect.objectContaining({event:'account',page:'login'}));
+  });
+  it('logs in, selects a paused committee and pairs without exposing or persisting account secrets', async () => {
+    const f = await fixture();
+    expect(await f.command('restore')).toContainEqual(expect.objectContaining({event:'defaults', serverUrl:'https://quorum.sramun.org'}));
+    const login = await f.command('login', {...f.settings, email:'chair@example.com', password:'account-password'});
+    expect(login).toContainEqual(expect.objectContaining({event:'candidates', candidates:[expect.objectContaining({status:'PAUSED'})]}));
+    const selected = await f.command('select-committee', {committeeId:'10000000-0000-4000-8000-000000000001'});
+    expect(selected).toContainEqual(expect.objectContaining({event:'setup', committeeStatus:'PAUSED', storageProvider:'SERVER_VOLUME'}));
+    expect(f.requests.filter(r=>r.url.endsWith('/pairing-codes'))).toHaveLength(0);
+    const paired = await f.command('account-pair', f.settings);
+    expect(paired).toContainEqual(expect.objectContaining({event:'config', paired:true}));
+    expect(f.requests.filter(r=>r.url==='/api/v1/auth/logout')).toHaveLength(1);
+    const saved = paired.find(e=>e.event==='config')!;
+    expect(await readFile(saved.configPath,'utf8')).not.toMatch(/account-secret|account-password/);
+    expect(JSON.stringify(f.events)).not.toMatch(/account-secret|account-password/);
+    expect(await f.command('stop')).toContainEqual(expect.objectContaining({event:'state',state:'EXITED'}));
+    expect(await f.command('save', {...f.settings,configPath:saved.configPath,serverUrl:'https://other.example.com'}))
+      .toContainEqual(expect.objectContaining({event:'error',code:'STOP_AND_UNPAIR_FIRST'}));
+  });
+
   it('imports a normal downloaded pairing file, confirms storage, starts and restores without re-pairing', async () => {
     const f = await fixture();
     const setup = {schemaVersion: 1, kind: 'quorum-agent-pairing', serverUrl: f.settings.serverUrl,

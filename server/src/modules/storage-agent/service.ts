@@ -208,7 +208,8 @@ export class Stage7StorageAgentService {
   }
 
   async createPairing(auth: AuthenticatedSession, committeeId: string, body: unknown,
-    context: Stage4Context): Promise<StoragePairingCode & {committeeName: string}> {
+    context: Stage4Context): Promise<StoragePairingCode & {committeeName: string;
+      committeeStatus: 'ACTIVE' | 'PAUSED'; storageProvider: AgentCommitteeCandidate['storageProvider']}> {
     requireBusinessIdentity(auth);
     assertExactBody(body as Record<string, unknown>, ['baseRevision', 'purpose']);
     const request = body as {baseRevision?: unknown; purpose?: unknown};
@@ -246,7 +247,10 @@ export class Stage7StorageAgentService {
         capabilities: [committee.owner_user_id === auth.user.id ? 'OWNER' : 'CHAIR'],
         action: 'storage.pairing_code_created', resourceType: 'storage_pairing', resourceId: id,
         after: {purpose, expiresAt: expiresAt.toISOString()}});
-      return {code, purpose, expiresAt: expiresAt.toISOString(), committeeName: committee.name};
+      const binding = await client.query('SELECT provider_type FROM storage_bindings WHERE id=$1 AND status=\'ACTIVE\'',
+        [committee.active_storage_binding_id]);
+      return {code, purpose, expiresAt: expiresAt.toISOString(), committeeName: committee.name,
+        committeeStatus: committee.status as 'ACTIVE' | 'PAUSED', storageProvider: binding.rows[0]?.provider_type ?? null};
     });
   }
 

@@ -251,6 +251,11 @@ integration('PostgreSQL stage 7 storage Agent identity', () => {
     await committedFile(b.owner, b.committee.id);
     const {paired} = await pairInitial(a.owner, a.committee.id);
     const first = await tasks.fileStatus(paired.credential, paired.host.leaseGeneration);
+    expect(first.committee).toMatchObject({name:a.committee.name,status:'ACTIVE',storageProvider:'SERVER_VOLUME'});
+    await pool!.query("UPDATE committees SET status='PAUSED' WHERE id=$1", [a.committee.id]);
+    expect((await tasks.fileStatus(paired.credential,paired.host.leaseGeneration)).committee?.status).toBe('PAUSED');
+    await pool!.query("UPDATE committees SET status='ACTIVE' WHERE id=$1", [a.committee.id]);
+    expect((await tasks.fileStatus(paired.credential,paired.host.leaseGeneration)).committee?.status).toBe('ACTIVE');
     expect(first.files).toHaveLength(1);
     expect(first.files[0]).toMatchObject({fileEntryId:file.id,logicalName:file.logicalName,status:'PENDING_REVIEW',cacheState:null});
     expect(JSON.stringify(first)).not.toContain('storage_key');
@@ -861,6 +866,18 @@ integration('PostgreSQL stage 7 storage Agent identity', () => {
     const content = Buffer.from('local Chair edit');
     const sha256 = createHash('sha256').update(content).digest('hex');
     const requestId = randomUUID();
+    await pool?.query("UPDATE committees SET status='PAUSED' WHERE id=$1", [value.committee.id]);
+    for (const change of [
+      {kind: 'UPSERT', logicalName: '本地文件', originalName: 'local.txt', mediaType: 'text/plain', sizeBytes: content.length, sha256},
+      {kind: 'RENAME', fileEntryId: randomUUID(), baseRevision: 1, logicalName: 'renamed.txt'},
+      {kind: 'DELETE', fileEntryId: randomUUID(), baseRevision: 1},
+    ]) {
+      await expect(localChanges.submit(chair.paired.credential, {leaseGeneration: chair.paired.host.leaseGeneration,
+        requestId, manifestSequence: 0, change}, context('local-paused'))).rejects.toMatchObject({code: 'RESOURCE_CONFLICT'});
+    }
+    expect((await pool?.query('SELECT count(*)::int AS count FROM storage_agent_change_requests WHERE host_id=$1',
+      [chair.paired.host.id]))?.rows[0].count).toBe(0);
+    await pool?.query("UPDATE committees SET status='ACTIVE' WHERE id=$1", [value.committee.id]);
     const pending = await localChanges.submit(chair.paired.credential, {leaseGeneration: chair.paired.host.leaseGeneration,
       requestId, manifestSequence: 0, change: {kind: 'UPSERT', logicalName: '本地文件', originalName: 'local.txt',
         mediaType: 'text/plain', sizeBytes: content.length, sha256}}, context('local-upsert'));

@@ -6,16 +6,18 @@ import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {randomUUID} from 'node:crypto';
 import {parseAgentPairingConfig, type AgentPairingConfig} from '@quorum/contracts';
+import {normalizeDesktopSite} from './desktop-auth.js';
 
 export function desktopConfigDirectory(): string {
   return join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'quorum-agent');
 }
-type Preferences = {lastConfig?: string; ordinals: Record<string, number>};
+type Preferences = {lastConfig?: string; serverUrl?: string; ordinals: Record<string, number>};
 async function preferences(): Promise<Preferences> {
   try {
     const value = JSON.parse(await readFile(join(desktopConfigDirectory(), 'desktop-state.json'), 'utf8'));
     if (!value || !value.ordinals || typeof value.ordinals !== 'object' || Array.isArray(value.ordinals)
       || (value.lastConfig !== undefined && typeof value.lastConfig !== 'string')) throw new Error();
+    if (value.serverUrl !== undefined && (typeof value.serverUrl !== 'string' || normalizeDesktopSite(value.serverUrl) !== value.serverUrl)) throw new Error();
     return value;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {ordinals: {}};
@@ -33,6 +35,11 @@ export async function rememberConfiguration(path?: string) {
   const value = await preferences(); value.lastConfig = path; await savePreferences(value);
 }
 export async function lastConfiguration() {return (await preferences()).lastConfig;}
+export async function desktopSite() {return (await preferences()).serverUrl ?? 'https://quorum.sramun.org';}
+export async function rememberSite(site: string) {
+  const value = await preferences(); value.serverUrl = normalizeDesktopSite(site); await savePreferences(value);
+  return value.serverUrl;
+}
 
 /** Downloaded pairing files have no long-lived credentials and need not be mode 0600. */
 export async function readPairingInput(target: string): Promise<AgentPairingConfig | undefined> {
@@ -65,8 +72,8 @@ function documentsDirectory(): string {
   } catch { /* Environments without xdg-user-dirs use the conventional Documents folder. */ }
   return join(homedir(), 'Documents');
 }
-function ordinalKey(config: AgentPairingConfig) {return `${config.serverUrl}/${config.committeeId}`;}
-export async function proposedDirectory(config: AgentPairingConfig): Promise<{rootPath: string; ordinal: number}> {
+function ordinalKey(config: Pick<AgentPairingConfig, 'serverUrl' | 'committeeId' | 'committeeName'>) {return `${config.serverUrl}/${config.committeeId}`;}
+export async function proposedDirectory(config: Pick<AgentPairingConfig, 'serverUrl' | 'committeeId' | 'committeeName'>): Promise<{rootPath: string; ordinal: number}> {
   const saved = (await preferences()).ordinals[ordinalKey(config)];
   let ordinal = typeof saved === 'number' && Number.isSafeInteger(saved) && saved >= 0 ? saved + 1 : 1;
   const parent = join(documentsDirectory(), 'Quorum');
@@ -76,7 +83,7 @@ export async function proposedDirectory(config: AgentPairingConfig): Promise<{ro
     catch (error) {if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {rootPath, ordinal}; throw error;}
   }
 }
-export async function allocateDirectory(config: AgentPairingConfig, rootPath: string, ordinal: number) {
+export async function allocateDirectory(config: Pick<AgentPairingConfig, 'serverUrl' | 'committeeId' | 'committeeName'>, rootPath: string, ordinal: number) {
   await mkdir(dirname(rootPath), {recursive: true, mode: 0o700});
   // Exclusive creation protects another committee and concurrently created folders.
   await mkdir(rootPath, {mode: 0o700});

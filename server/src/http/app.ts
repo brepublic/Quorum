@@ -383,10 +383,11 @@ async function handleStage7AgentRequest(options: {
     requireOrigin(request, allowedOrigins);
     const auth = await authenticatedWrite(request, identity); const body = await readJson(request);
     const result = await storageAgent.createPairing(auth, pairing[1] as string, body, context);
-    const {committeeName, ...code} = result;
+    const {committeeName, committeeStatus, storageProvider, ...code} = result;
     sendJson(response, 201, success({...code, configuration: {
       schemaVersion: 1, kind: 'quorum-agent-pairing', serverUrl: publicOrigin(request, allowedOrigins),
-      committeeId: pairing[1], committeeName, pairingCode: code.code, purpose: code.purpose, expiresAt: code.expiresAt
+      committeeId: pairing[1], committeeName, committeeStatus, storageProvider,
+      pairingCode: code.code, purpose: code.purpose, expiresAt: code.expiresAt
     }}, requestId));
     return true;
   }

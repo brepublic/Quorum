@@ -1,15 +1,33 @@
 import { Palette, ListView, Button, LineEdit, CheckBox, ScrollView, VerticalBox, HorizontalBox, ComboBox, TextEdit } from "std-widgets.slint";
 
+export struct CommitteeRow { id: string, name: string, detail: string, paused: bool, host: string, provider: string }
+
 export struct FileRow { name: string, size: string, local: string, cache: string, transfer: string, fraction: float, progressing: bool }
 
-component Caption inherits Text { color: #536176; font-size: 13px; overflow: elide; vertical-alignment: center; }
+component Caption inherits Text { color: Palette.alternate-foreground; font-size: 13px; overflow: elide; vertical-alignment: center; }
 export component MainWindow inherits Window {
-    init => { Palette.color-scheme = ColorScheme.light; }
-    title: "Quorum Chair Agent";
+    title: root.translate("Quorum Chair Agent", root.language);
     icon: @image-url("../assets/quorum-agent.svg");
     preferred-width: 1160px; preferred-height: 800px; min-width: 820px; min-height: 660px;
-    background: #f5f7fb;
+    background: Palette.background;
     default-font-size: 14px;
+    in-out property <string> pending-navigation;
+    in-out property <string> page: "login";
+    in-out property <string> email;
+    in-out property <string> password;
+    in-out property <string> committee-id;
+    in-out property <string> committee-status;
+    in-out property <string> storage-provider;
+    in-out property <string> current-host;
+    in-out property <bool> account-setup: false;
+    in-out property <bool> transfer-confirmed: false;
+    in-out property <bool> candidates-loaded: false;
+    in property <[CommitteeRow]> committees;
+    in-out property <string> committee-search;
+    in-out property <bool> editing: false;
+    in-out property <bool> resume-after-edit: false;
+    in-out property <bool> language-menu: false;
+    in-out property <bool> files-loaded: false;
     in-out property <bool> setup-mode: false;
     in-out property <bool> show-advanced: false;
     in-out property <bool> open-pending: false;
@@ -53,34 +71,46 @@ export component MainWindow inherits Window {
     callback action(string);
     callback choose(string);
     callback filter-changed();
+    callback committee-filter-changed();
 
     VerticalBox {
         padding: 24px; spacing: 16px;
-        HorizontalBox {
+        HorizontalBox { vertical-stretch: 0;
             VerticalBox { padding: 0px; spacing: 5px; horizontal-stretch: 1;
-                Text { text: root.translate("Quorum / Chair Storage Agent", root.language); font-size: 22px; font-weight: 700; color: #18273c; }
-                Caption { text: root.translate(root.status, root.language) + (root.dirty ? root.translate(" · Unsaved", root.language) : "") + (root.last-connection == "" ? "" : root.translate("  ·  Last connected ", root.language) + root.last-connection); }
+                Text { text: root.translate("Quorum Chair Agent", root.language); font-size: 22px; font-weight: 700; color: Palette.foreground; }
+                if root.loaded: Caption { text: root.translate(root.status, root.language) + (root.dirty ? root.translate(" · Unsaved", root.language) : "") + (root.last-connection == "" ? "" : root.translate("  ·  Last connected ", root.language) + root.last-connection); }
             }
-            ComboBox { enabled: !root.confirm-unpair && root.confirm-discard == ""; horizontal-stretch: 0; width: 150px; model: ["English", "简体中文"]; current-index: root.language == "zh-CN" ? 1 : 0;
+            if !root.loaded && root.page != "login" && root.page != "password": Button { text: "Language / 语言"; clicked => {root.language-menu = !root.language-menu;} }
+            if root.language-menu: ComboBox { enabled: !root.confirm-unpair && root.confirm-discard == ""; horizontal-stretch: 0; width: 150px; model: ["English", "简体中文"]; current-index: root.language == "zh-CN" ? 1 : 0;
                 selected(value) => { root.language = value == "English" ? "en" : "zh-CN"; root.language-changed(); }
             }
         }
-        HorizontalBox { padding: 0px; spacing: 8px;
-            Button { text: root.translate("Run details", root.language); primary: !root.show-settings; enabled: !root.confirm-unpair && root.confirm-discard == "" && !root.closing; clicked => {root.show-settings = false;} }
-            Button { text: root.translate("Configuration", root.language); primary: root.show-settings; enabled: !root.confirm-unpair && root.confirm-discard == "" && !root.closing; clicked => {root.show-settings = true;} }
+        if root.page == "home" && root.loaded: HorizontalBox { padding: 0px; height: 36px; vertical-stretch: 0;
+            if root.show-settings || root.show-logs: Button { text: root.translate("Back to sync", root.language); enabled: !root.busy; clicked => {root.action("navigate-home");} }
             Rectangle { horizontal-stretch: 1; }
-            Text { text: root.committee-name; font-weight: 600; color: #18273c; overflow: elide; }
+            ComboBox { width: 200px; enabled: !root.busy && root.confirm-discard == "" && !root.confirm-unpair;
+                model: [root.translate("Menu", root.language), root.translate("Configuration", root.language), root.translate("Diagnostics", root.language), "Language / 语言", root.translate("Open committee page", root.language)];
+                selected(value) => {
+                    if self.current-index == 1 {root.action("navigate-settings");}
+                    if self.current-index == 2 {root.action("navigate-logs");}
+                    if self.current-index == 3 {root.language-menu = !root.language-menu;}
+                    if self.current-index == 4 {root.action("open-web");}
+                    self.current-index = 0;
+                }
+            }
         }
-        if !root.show-settings: HorizontalBox { padding: 0px; spacing: 8px;
-            Text { text: root.translate("Run details", root.language); font-size: 20px; font-weight: 600; horizontal-stretch: 1; }
-            Button { text: root.translate("Start", root.language); primary: true; enabled: !root.confirm-unpair && root.confirm-discard == "" && root.loaded && !root.dirty && !root.running && !root.busy && !root.closing; clicked => {root.action("start");} }
-            Button { text: root.translate("Stop", root.language); enabled: !root.confirm-unpair && root.confirm-discard == "" && root.running && !root.busy && !root.closing; clicked => {root.action("stop");} }
-            Button { text: root.translate("Restart", root.language); enabled: !root.confirm-unpair && root.confirm-discard == "" && root.running && !root.dirty && !root.busy && !root.closing; clicked => {root.action("restart");} }
+        if root.page == "home" && !root.show-settings && !root.show-logs: HorizontalBox { padding: 0px; spacing: 8px; vertical-stretch: 0;
+            Text { text: root.committee-name; font-size: 25px; font-weight: 600; horizontal-stretch: 1; }
+            if !root.running: Button { text: root.translate("Start", root.language); primary: true; enabled: !root.confirm-unpair && root.confirm-discard == "" && root.loaded && !root.dirty && !root.running && !root.busy && !root.closing; clicked => {root.action("start");} }
+            if root.running: Button { text: root.translate("Stop", root.language); enabled: !root.confirm-unpair && root.confirm-discard == "" && root.running && !root.busy && !root.closing; clicked => {root.action("stop");} }
         }
-        if root.show-settings: HorizontalBox { padding: 0px;
+        if root.page == "home": Caption { text: root.server-url; }
+        if root.page == "home" && root.setup-mode: Text { text: root.committee-name; font-size: 25px; font-weight: 600; wrap: word-wrap; }
+        if root.page == "home" && root.show-settings: HorizontalBox { padding: 0px; vertical-stretch: 0;
             Text { text: root.setup-mode ? root.translate("Choose file storage", root.language) : root.translate("Configuration", root.language); font-size: 20px; font-weight: 600; horizontal-stretch: 1; }
-            if root.running: Button { text: root.translate("Stop to edit", root.language); enabled: !root.confirm-unpair && root.confirm-discard == "" && !root.busy; clicked => {root.action("stop");} }
-            Button { text: root.translate("Import configuration", root.language); enabled: !root.confirm-unpair && root.confirm-discard == "" && !root.running && !root.busy; clicked => {root.action("import");} }
+            if root.loaded && !root.editing: Button { text: root.translate(root.running ? "Stop to edit" : "Edit settings", root.language); enabled: !root.busy; clicked => {root.action("edit-settings");} }
+            if !root.loaded && !root.setup-mode: Button { text: root.translate("Back to sign in", root.language); enabled: !root.busy; clicked => {root.action("logout");} }
+            if !root.setup-mode: Button { text: root.translate("Import configuration", root.language); enabled: !root.confirm-unpair && root.confirm-discard == "" && !root.running && !root.busy; clicked => {root.action("import");} }
         }
         if root.error-text != "": Rectangle {
             background: #fff0ee; border-radius: 8px; min-height: 46px;
@@ -89,49 +119,106 @@ export component MainWindow inherits Window {
                 Button { text: root.translate("Close", root.language); horizontal-stretch: 0; enabled: !root.confirm-unpair && root.confirm-discard == ""; clicked => {root.error-code = ""; root.error-stage = "";} }
             }
         }
-        if root.show-settings: ScrollView {
+        if root.page == "login" || root.page == "password": ScrollView {
+            viewport-height: login-content.preferred-height;
+            login-content := HorizontalBox {
+            Rectangle { horizontal-stretch: 1; }
+            VerticalBox { preferred-width: 580px; max-width: 580px; spacing: 12px;
+                Text { text: root.translate(root.page == "password" ? "Change initial password" : "Sign in", root.language); font-size: 25px; font-weight: 600; }
+                if root.page == "login": VerticalBox { padding: 0px; spacing: 8px;
+                    Caption { text: root.translate("Quorum website", root.language); }
+                    LineEdit { text <=> root.server-url; enabled: !root.busy; }
+                    Caption { text: root.translate("Email", root.language); }
+                    LineEdit { text <=> root.email; enabled: !root.busy; }
+                }
+                Caption { text: root.translate(root.page == "password" ? "New password" : "Password", root.language); }
+                LineEdit { text <=> root.password; input-type: InputType.password; enabled: !root.busy; accepted => {root.action(root.page == "password" ? "change-password" : "login");} }
+                Button { text: root.translate(root.busy ? "Connecting" : root.page == "password" ? "Save and continue" : "Sign in", root.language); primary: true; enabled: !root.busy; clicked => {root.action(root.page == "password" ? "change-password" : "login");} }
+                if root.page == "login": HorizontalBox { padding: 0px;
+                    Caption { text: root.translate("CA certificate", root.language); }
+                    LineEdit { text <=> root.certificate; read-only: true; }
+                    Button { text: root.translate("Choose certificate", root.language); enabled: !root.busy; clicked => {root.choose("certificate");} }
+                }
+                if root.page == "login": Button { text: root.translate("Select pairing file", root.language); enabled: !root.busy; clicked => {root.action("import");} }
+                Button { text: "Language / 语言"; clicked => {root.language-menu = !root.language-menu;} }
+                if root.page == "login": Button { text: root.translate("More connection options", root.language); enabled: !root.busy; clicked => {root.page = "home"; root.show-settings = true;} }
+                if root.page == "password": Button { text: root.translate("Back to sign in", root.language); enabled: !root.busy; clicked => {root.action("logout");} }
+            }
+            Rectangle { horizontal-stretch: 1; }
+            }
+        }
+        if root.page == "committees": VerticalBox { spacing: 12px;
+            Text { text: root.translate("Choose committee", root.language); font-size: 25px; font-weight: 600; }
+            LineEdit { text <=> root.committee-search; placeholder-text: root.translate("Search committees", root.language); edited => {root.committee-filter-changed();} }
+            if !root.candidates-loaded: Caption { text: root.translate(root.busy ? "Loading committees" : "Retry loading committees", root.language); }
+            if root.candidates-loaded && root.committees.length == 0: Caption { text: root.translate(root.committee-search == "" ? "No available committees" : "No matching committees", root.language); }
+            ScrollView { viewport-height: committee-content.preferred-height; committee-content := VerticalBox { spacing: 8px; vertical-stretch: 0;
+                for committee in root.committees: VerticalBox { padding: 12px; spacing: 6px; vertical-stretch: 0;
+                    Text { text: committee.name; font-size: 17px; font-weight: 600; wrap: word-wrap; }
+                    Caption { text: committee.detail; }
+                    if committee.paused: Text { text: "⚠ " + root.translate("Committee paused reminder", root.language); color: Palette.foreground; wrap: word-wrap; }
+                    Caption { text: committee.host == "" ? root.translate(committee.provider, root.language) : committee.host + " · " + root.translate(committee.provider, root.language); }
+                    Button { height: 36px; vertical-stretch: 0; text: root.translate(committee.host == "" ? "Continue" : "Replace chair computer", root.language); enabled: !root.busy; clicked => {root.committee-id = committee.id; root.action("select-committee");} }
+                }
+            } }
+            HorizontalBox {
+                Button { text: root.translate("Back to sign in", root.language); enabled: !root.busy; clicked => {root.action("logout");} }
+                Button { text: root.translate("Retry", root.language); enabled: !root.busy; clicked => {root.action("list-committees");} }
+            }
+        }
+        if root.page == "home" && root.committee-status == "PAUSED": Text { text: "⚠ " + root.translate("Committee paused reminder", root.language); color: Palette.foreground; wrap: word-wrap; }
+        if root.page == "home" && root.setup-mode && root.current-host != "": VerticalBox { padding: 8px;
+            Text { text: root.current-host; font-weight: 600; }
+            CheckBox { text: root.translate("Confirm replacing computer", root.language); checked <=> root.transfer-confirmed; enabled: !root.busy; }
+        }
+        if root.page == "home" && (root.storage-provider == "SERVER_VOLUME" || root.storage-provider == "S3_COMPATIBLE"): Text { text: root.translate("Existing storage retained", root.language); wrap: word-wrap; }
+        if root.page == "home" && root.show-settings: ScrollView {
             viewport-height: settings-content.preferred-height;
-            settings-content := VerticalBox { padding: 12px; spacing: 8px;
-                Caption { text: root.translate("Server address", root.language); }
-                LineEdit { text <=> root.server-url; read-only: root.setup-mode; enabled: !root.confirm-unpair && root.confirm-discard == "" && (!root.running && !root.busy); }
+            HorizontalBox {
+            Rectangle { horizontal-stretch: 1; }
+            settings-content := VerticalBox { preferred-width: 760px; max-width: 760px; padding: 12px; spacing: 8px;
+                if !root.setup-mode: Caption { text: root.translate("Server address", root.language); }
+                if !root.setup-mode: LineEdit { text <=> root.server-url; read-only: root.setup-mode || root.loaded; enabled: !root.confirm-unpair && root.confirm-discard == "" && !root.busy; }
+                if root.loaded: Button { text: root.translate("Reconnect to another website", root.language); enabled: !root.running && !root.busy && !root.dirty; clicked => {root.action("confirm-unpair");} }
                 Caption { text: root.translate("Storage directory", root.language); }
                 HorizontalBox { padding: 0px; spacing: 8px;
-                    LineEdit { text <=> root.root-path; enabled: !root.confirm-unpair && root.confirm-discard == "" && (!root.running && !root.busy); }
-                    Button { text: root.translate("Choose directory", root.language); enabled: !root.confirm-unpair && root.confirm-discard == "" && (!root.running && !root.busy); clicked => {root.choose("root");} }
+                    LineEdit { text <=> root.root-path; read-only: true; enabled: !root.confirm-unpair && root.confirm-discard == "" && !root.busy; }
+                    Button { text: root.translate(root.loaded ? "Relocate moved folder" : "Choose directory", root.language); enabled: !root.confirm-unpair && root.confirm-discard == "" && (!root.running && !root.busy && (!root.loaded || root.editing)); clicked => {root.choose("root");} }
                 }
-                HorizontalBox { padding: 0px;
+                HorizontalBox { padding: 0px; height: 36px; vertical-stretch: 0;
                 Button { horizontal-stretch: 0; text: root.show-advanced ? root.translate("Hide advanced settings", root.language) : root.translate("Advanced settings", root.language); clicked => {root.show-advanced = !root.show-advanced;} }
                 Rectangle { horizontal-stretch: 1; }
                 }
                 if root.show-advanced: VerticalBox { padding: 0px; spacing: 8px;
                 Caption { text: root.translate("CA certificate", root.language); }
                 HorizontalBox { padding: 0px; spacing: 8px;
-                    LineEdit { placeholder-text: root.translate("Select if the server certificate is not trusted by the system", root.language); text <=> root.certificate; enabled: !root.confirm-unpair && root.confirm-discard == "" && (!root.running && !root.busy); }
-                    Button { text: root.translate("Choose certificate", root.language); enabled: !root.confirm-unpair && root.confirm-discard == "" && (!root.running && !root.busy); clicked => {root.choose("certificate");} }
+                    LineEdit { placeholder-text: root.translate("Select if the server certificate is not trusted by the system", root.language); text <=> root.certificate; enabled: !root.confirm-unpair && root.confirm-discard == "" && (!root.running && !root.busy && (!root.loaded || root.editing)); }
+                    Button { text: root.translate("Choose certificate", root.language); enabled: !root.confirm-unpair && root.confirm-discard == "" && (!root.running && !root.busy && (!root.loaded || root.editing)); clicked => {root.choose("certificate");} }
                 }
                 HorizontalBox { padding: 0px; spacing: 8px;
                     Caption { text: root.translate("Full scan interval (seconds)", root.language); }
-                    LineEdit { text <=> root.scan-seconds; input-type: number; enabled: !root.confirm-unpair && root.confirm-discard == "" && (!root.running && !root.busy); }
+                    LineEdit { text <=> root.scan-seconds; input-type: number; enabled: !root.confirm-unpair && root.confirm-discard == "" && (!root.running && !root.busy && (!root.loaded || root.editing)); }
                 }
-                    Caption { text: root.translate("Private configuration", root.language); }
-                    LineEdit { text: root.config-path; read-only: true; }
+                    if !root.setup-mode: Caption { text: root.translate("Private configuration", root.language); }
+                    if !root.setup-mode: LineEdit { text: root.config-path; read-only: true; }
                 }
-                if !root.loaded: VerticalBox { padding: 0px; spacing: 8px;
-                    Text { text: root.translate("Pairing", root.language); font-size: 18px; font-weight: 600; }
+                if !root.loaded && root.show-advanced: VerticalBox { padding: 0px; spacing: 8px;
                     Caption { text: root.translate("Device name", root.language); }
                     LineEdit { text <=> root.device-label; enabled: !root.confirm-unpair && root.confirm-discard == "" && (!root.busy); }
 
                 }
             }
+            Rectangle { horizontal-stretch: 1; }
+            }
         }
-        if !root.show-settings: VerticalBox { padding: 0px; spacing: 10px;
+        if root.page == "home" && !root.show-settings && !root.show-logs: VerticalBox { padding: 0px; spacing: 10px;
             HorizontalBox {
                 LineEdit { enabled: !root.confirm-unpair && root.confirm-discard == ""; placeholder-text: root.translate("Search files", root.language); text <=> root.search; edited => {root.filter-changed();} }
                 CheckBox { enabled: !root.confirm-unpair && root.confirm-discard == ""; text: root.translate("Show deleted", root.language); checked <=> root.show-deleted; toggled => {root.filter-changed();} }
                 Button { text: root.translate("Open directory", root.language); enabled: !root.confirm-unpair && root.confirm-discard == "" && (root.loaded); clicked => {root.action("open-root");} }
                 Button { text: root.translate("Committee web page", root.language); enabled: !root.confirm-unpair && root.confirm-discard == "" && (root.loaded); clicked => {root.action("open-web");} }
             }
-            Rectangle { height: 34px; background: #e9eef5; border-radius: 6px;
+            Rectangle { height: 34px; background: Palette.alternate-background; border-radius: 6px;
                 HorizontalBox { padding-left: 12px; padding-right: 12px;
                     Caption { text: root.translate("Files", root.language); horizontal-stretch: 1; }
                     Caption { text: root.translate("Size", root.language); width: 85px; }
@@ -141,56 +228,57 @@ export component MainWindow inherits Window {
                 }
             }
             ListView {
-                    for row in root.files: Rectangle { height: 72px; background: #ffffff; border-radius: 5px;
+                    for row in root.files: Rectangle { height: 72px; background: Palette.control-background; border-radius: 5px;
                         HorizontalLayout { padding-left: 12px; padding-right: 12px; spacing: 12px;
-                            Text { text: row.name; color: #18273c; wrap: word-wrap; overflow: clip; vertical-alignment: center; horizontal-stretch: 1; }
+                            Text { text: row.name; color: Palette.foreground; wrap: word-wrap; overflow: clip; vertical-alignment: center; horizontal-stretch: 1; }
                             Caption { text: row.size; width: 85px; }
                             Caption { text: row.local; width: 145px; wrap: word-wrap; overflow: clip; }
                             Caption { text: row.cache; width: 145px; wrap: word-wrap; overflow: clip; }
                             VerticalLayout { width: 125px; alignment: center; spacing: 5px;
                                 Caption { text: row.transfer; }
-                                if row.progressing: Rectangle { height: 5px; background: #e9eef5; border-radius: 2px;
-                                    Rectangle { width: parent.width * row.fraction; height: parent.height; background: #3375de; border-radius: 2px; }
+                                if row.progressing: Rectangle { height: 5px; background: Palette.alternate-background; border-radius: 2px;
+                                    Rectangle { width: parent.width * row.fraction; height: parent.height; background: Palette.accent-background; border-radius: 2px; }
                                 }
                             }
                         }
                     }
             }
             if root.files.length == 0: VerticalBox { padding: 8px;
-                Caption { text: !root.loaded ? root.translate("Import configuration to begin", root.language) : root.running ? (root.search != "" ? root.translate("No matching files", root.language) : root.translate("No files yet", root.language)) : root.translate("Start the Agent to load file status", root.language); horizontal-alignment: center; }
+                Caption { text: !root.loaded ? root.translate("Import configuration to begin", root.language) : root.running ? (root.status == "DISCONNECTED" ? root.translate("Waiting to reconnect", root.language) : !root.files-loaded ? root.translate("Loading files", root.language) : root.search != "" ? root.translate("No matching files", root.language) : root.translate("No files yet", root.language)) : root.translate("Start the Agent to load file status", root.language); horizontal-alignment: center; }
                 if !root.loaded: Button { text: root.translate("Import configuration", root.language); clicked => {root.action("import");} }
             }
+            Caption { text: root.translate("Storage directory", root.language); }
             LineEdit { text: root.root-path; read-only: true; }
 
             Caption { text: root.observed == "" ? "" : root.translate("Cache status updated at ", root.language) + root.observed; }
         }
-        if root.show-settings: VerticalBox { padding: 0px; spacing: 6px;
+        if root.page == "home" && root.show-settings: VerticalBox { padding: 0px; spacing: 6px;
             if !root.loaded && !root.setup-mode: HorizontalBox { padding: 0px;
                 Caption { text: root.translate("One-time pairing code", root.language); }
-                LineEdit { text <=> root.pairing-code; input-type: password; enabled: !root.confirm-unpair && root.confirm-discard == "" && (!root.busy && !root.closing); }
+                LineEdit { text <=> root.pairing-code; input-type: InputType.password; enabled: !root.confirm-unpair && root.confirm-discard == "" && (!root.busy && !root.closing); }
                 Button { text: root.translate("Pair this computer", root.language); enabled: !root.confirm-unpair && root.confirm-discard == "" && (!root.busy && !root.running && !root.closing); clicked => {root.action("pair");} }
             }
-            if !root.setup-mode: HorizontalBox { padding: 0px;
-                Button { text: root.translate("Save settings", root.language); enabled: !root.confirm-unpair && root.confirm-discard == "" && (!root.running && !root.busy && !root.closing); clicked => {root.action("save");} }
+            if !root.setup-mode && (!root.loaded || root.editing): HorizontalBox { padding: 0px; height: 36px; vertical-stretch: 0;
+                Button { text: root.translate(root.resume-after-edit ? "Save and resume" : "Save settings", root.language); enabled: !root.confirm-unpair && root.confirm-discard == "" && (!root.running && !root.busy && !root.closing); clicked => {root.action("save");} }
                 Button { text: root.translate("Save as", root.language); enabled: !root.confirm-unpair && root.confirm-discard == "" && (!root.running && !root.busy && !root.closing); clicked => {root.action("save-as");} }
-                Button { text: root.translate("Discard changes", root.language); enabled: root.dirty && !root.busy; clicked => {root.action("discard");} }
+                Button { text: root.translate(root.resume-after-edit ? "Cancel and resume" : "Cancel", root.language); enabled: !root.busy; clicked => {root.action("cancel-settings");} }
                 Rectangle { horizontal-stretch: 1; }
-                if root.loaded: Button { text: root.translate("Unpair", root.language); enabled: !root.confirm-unpair && root.confirm-discard == "" && (!root.running && !root.busy && !root.closing); clicked => {root.action("confirm-unpair");} }
             }
         }
-        if root.show-settings && root.setup-mode: HorizontalBox { padding: 0px;
+        if root.page == "home" && root.show-settings && root.setup-mode: HorizontalBox { padding: 0px; height: 36px; vertical-stretch: 0;
             Rectangle { horizontal-stretch: 1; }
-            Button { text: root.translate("Confirm directory and start", root.language); primary: true; enabled: !root.busy && !root.running && !root.closing; clicked => {root.action("setup-pair");} }
+            Button { text: root.translate("Confirm directory and start", root.language); primary: true; enabled: !root.busy && !root.running && !root.closing && (root.current-host == "" || root.transfer-confirmed); clicked => {root.action(root.account-setup ? "account-pair" : "setup-pair");} }
         }
         if root.feedback != "": Caption { text: root.translate(root.feedback, root.language); }
-        if !root.show-settings: HorizontalBox {
-            Button { text: root.show-logs ? root.translate("Hide logs", root.language) : root.translate("Show logs", root.language); enabled: !root.confirm-unpair && root.confirm-discard == ""; clicked => {root.show-logs = !root.show-logs;} }
+        if root.page == "home" && root.show-logs: Text { text: root.translate("Diagnostics", root.language); font-size: 20px; font-weight: 600; }
+        if root.page == "home" && root.show-logs: HorizontalBox { vertical-stretch: 0;
+            Button { text: root.translate("Restart", root.language); enabled: root.running && !root.busy; clicked => {root.action("restart");} }
             if !root.show-logs: Rectangle { horizontal-stretch: 1; }
             if root.show-logs: LineEdit { enabled: !root.confirm-unpair && root.confirm-discard == ""; placeholder-text: root.translate("Filter logs", root.language); text <=> root.log-filter; edited => {root.filter-changed();} }
             if root.show-logs: Button { text: root.translate("Copy", root.language); enabled: !root.confirm-unpair && root.confirm-discard == ""; clicked => {log-edit.select-all(); log-edit.copy();} }
             if root.show-logs: Button { text: root.translate("Export", root.language); enabled: !root.confirm-unpair && root.confirm-discard == ""; clicked => {root.action("export-logs");} }
         }
-        log-edit := TextEdit { enabled: !root.confirm-unpair && root.confirm-discard == ""; visible: root.show-logs && !root.show-settings; text: root.log-text; read-only: true; height: root.show-logs && !root.show-settings ? 150px : 0px; }
+        log-edit := TextEdit { enabled: !root.confirm-unpair && root.confirm-discard == ""; visible: root.show-logs && !root.show-settings; text: root.log-text; read-only: true; vertical-stretch: 1; height: root.show-logs && !root.show-settings ? 450px : 0px; }
     }
     if root.confirm-unpair: Rectangle {
         background: #18273c80;
@@ -206,14 +294,14 @@ export component MainWindow inherits Window {
                 y: (parent.height - self.height) / 2;
                 width: 580px;
                 height: dialog-content.preferred-height;
-                background: #ffffff; border-radius: 12px;
+                background: Palette.control-background; border-radius: 12px;
                 dialog-content := VerticalBox {
                     padding: 24px; spacing: 16px;
-                    Text { text: root.translate("Unpair this computer?", root.language); font-size: 20px; font-weight: 700; color: #18273c; }
-                    Text { text: root.translate("Revoke this device's authorization? This device will no longer provide access to the committee's local files.", root.language); wrap: word-wrap; color: #18273c; }
+                    Text { text: root.translate("Unpair this computer?", root.language); font-size: 20px; font-weight: 700; color: Palette.foreground; }
+                    Text { text: root.translate("Revoke this device's authorization? This device will no longer provide access to the committee's local files.", root.language); wrap: word-wrap; color: Palette.foreground; }
                     if root.unpair-failed: Text { text: root.error-text; wrap: word-wrap; color: #9a3028; }
-                    if root.unpair-failed: Text { text: root.translate("You can unpair locally. Server authorization has not been confirmed revoked; saved configurations may still connect.", root.language); wrap: word-wrap; color: #18273c; }
-                    Text { text: root.translate("Configuration and local files will be kept. Use a new storage directory to pair again.", root.language); wrap: word-wrap; color: #536176; }
+                    if root.unpair-failed: Text { text: root.translate("You can unpair locally. Server authorization has not been confirmed revoked; saved configurations may still connect.", root.language); wrap: word-wrap; color: Palette.foreground; }
+                    Text { text: root.translate("Configuration and local files will be kept. Use a new storage directory to pair again.", root.language); wrap: word-wrap; color: Palette.alternate-foreground; }
                     HorizontalBox { padding: 0px; spacing: 8px;
                         Button { text: root.translate("Cancel", root.language); enabled: !root.busy; clicked => {root.confirm-unpair = false;} }
                         if root.unpair-failed: Button { text: root.translate("Unpair locally", root.language); enabled: !root.busy && !root.running; clicked => {root.action("unpair-local");} }
@@ -231,9 +319,9 @@ export component MainWindow inherits Window {
             init => {self.focus();}
             key-pressed(event) => {if event.text == Key.Escape {root.confirm-discard = ""; return accept;} return reject;}
             Rectangle { x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
-                width: 520px; height: discard-content.preferred-height; background: #fff; border-radius: 12px;
+                width: 520px; height: discard-content.preferred-height; background: Palette.control-background; border-radius: 12px;
                 discard-content := VerticalBox { padding: 24px; spacing: 20px;
-                    Text { text: root.translate("Discard unsaved changes and continue?", root.language); wrap: word-wrap; color: #18273c; font-size: 18px; }
+                    Text { text: root.translate("Discard unsaved changes and continue?", root.language); wrap: word-wrap; color: Palette.foreground; font-size: 18px; }
                     HorizontalBox {
                         Button { text: root.translate("Cancel", root.language); clicked => {root.confirm-discard = "";} }
                         Button { text: root.translate("Discard and continue", root.language); clicked => {root.action("discard-" + root.confirm-discard);} }

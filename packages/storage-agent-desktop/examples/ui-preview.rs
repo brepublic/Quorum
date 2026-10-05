@@ -10,6 +10,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let language = if std::env::args().any(|arg| arg == "--en") { "en" } else { "zh-CN" };
     window.on_translate(|key, language| translate(key.as_str(), language.as_str()).into());
     window.set_language(language.into());
+    window.set_page(if std::env::args().any(|arg| arg == "--login") {"login"}
+        else if std::env::args().any(|arg| arg == "--committees") {"committees"} else {"home"}.into());
+    window.set_candidates_loaded(true);
+    window.set_committees(ModelRc::new(VecModel::from(vec![CommitteeRow {
+        id: "preview".into(), name: "联合国安全理事会".into(), detail: "样例会议 · 样例议题".into(),
+        paused: true, host: "".into(), provider: "SERVER_VOLUME".into(),
+    }])));
+    window.set_files_loaded(true);
+    window.set_committee_status("PAUSED".into());
+    window.set_editing(std::env::args().any(|arg| arg == "--edit"));
     window.set_status("RUNNING".into());
     window.set_committee_name("联合国安全理事会".into());
     window.set_root_path("/home/chair/Documents/Quorum/联合国安全理事会-1".into());
@@ -21,14 +31,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if std::env::args().any(|arg| arg == "--discard") {window.set_confirm_discard("open".into());}
 
     let settings = std::env::args().any(|arg| arg == "--settings");
-    window.set_loaded(!settings || std::env::args().any(|arg| arg == "--paired"));
+    window.set_loaded(window.get_page() == "home" && !window.get_setup_mode() && (!settings || std::env::args().any(|arg| arg == "--paired")));
     window.set_confirm_unpair(std::env::args().any(|arg| arg == "--confirm-unpair"));
     if std::env::args().any(|arg| arg == "--unpair-failed") {
         window.set_unpair_failed(true);
         window.set_error_stage("revoke".into());
         window.set_error_code("AUTHENTICATION_REQUIRED".into());
     }
-    window.set_running(!settings);
+    window.set_running(window.get_loaded() && !settings);
     if settings { window.set_status("STOPPED".into()); }
     window.set_files(ModelRc::new(VecModel::from(vec![
         FileRow {

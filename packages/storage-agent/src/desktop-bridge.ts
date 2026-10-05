@@ -13,7 +13,9 @@ import {agentErrorCode} from './errors.js';
 import {AGENT_METADATA_FILE, AgentStateStore} from './state.js';
 import {AgentFileStore} from './files.js';
 import {lockAgentRoot} from './runtime-lock.js';
-import {type AgentPairingConfig} from '@quorum/contracts';
+import {type AgentPairingConfig, type AgentCommitteeCandidate} from '@quorum/contracts';
+import {DesktopAccount, normalizeDesktopSite} from './desktop-auth.js';
+import {desktopSite, rememberSite} from './desktop-setup.js';
 import {desktopConfigDirectory, readPairingInput, proposedDirectory, allocateDirectory, rememberConfiguration, lastConfiguration} from './desktop-setup.js';
 
 const send = (value: unknown) => process.stdout.write(JSON.stringify(value) + '\n');
@@ -24,6 +26,20 @@ let draft: DraftConfig | undefined;
 let draftSource = '';
 let child: ChildProcessWithoutNullStreams | undefined;
 let exiting = false;
+let account: DesktopAccount | undefined;
+let candidates: AgentCommitteeCandidate[] = [];
+let selected: AgentCommitteeCandidate | undefined;
+let selectedDirectory: {rootPath: string; ordinal: number} | undefined;
+let pendingPair: {path: string; config: StorageAgentLocalConfig} | undefined;
+async function logout() {const previous = account; account = undefined; candidates = []; selected = undefined;
+  if (previous) try {await previous.logout();} catch (error) {
+    if (safeError(error) !== 'AUTHENTICATION_REQUIRED') send({event: 'error', code: 'ACCOUNT_LOGOUT_FAILED', stage: 'login'});
+  }}
+async function listCandidates() {
+  if (!account) throw new Error('AUTHENTICATION_REQUIRED');
+  candidates = await account.call<AgentCommitteeCandidate[]>('/api/v1/storage-agent/committees');
+  send({event: 'candidates', candidates});
+}
 let setup: {value: AgentPairingConfig; rootPath: string; ordinal: number; allocated: boolean; chosenRoot?: string} | undefined;
 function publicConfig() {if (config) send({event: 'config', paired: true, committeeName: config.committeeName ?? config.committeeId, configPath, serverUrl: config.serverUrl,
   rootPath: config.rootPath, caCertificatePath: config.caCertificatePath ?? '',
@@ -136,16 +152,69 @@ async function start() {
 async function command(input: Record<string, unknown>) {
   const action = input.command;
   stage = 'settings';
+  if (pendingPair && !['pair', 'setup-pair', 'account-pair', 'stop'].includes(String(action))) {
+    throw new Error('PAIRING_RECOVERY_REQUIRED');
+  }
+  if (action === 'login') {
+    if (config || child) throw new Error('STOP_AND_UNPAIR_FIRST');
+    await logout();
+    stage = 'server-address';
+    const site = normalizeDesktopSite(String(input.serverUrl ?? ''));
+    stage = 'ca-certificate'; await cert(String(input.caCertificatePath ?? ''));
+    await rememberSite(site);
+    account = new DesktopAccount(site, String(input.caCertificatePath ?? ''));
+    stage = 'login';
+    const result = await account.call<{user: {mustChangePassword: boolean}}>('/api/v1/auth/login',
+      {email: String(input.email ?? ''), password: String(input.password ?? '')});
+    send({event: 'account', page: result.user.mustChangePassword ? 'password' : 'committees', serverUrl: site});
+    if (!result.user.mustChangePassword) await listCandidates();
+    return;
+  }
+  if (action === 'change-password') {
+    if (!account) throw new Error('AUTHENTICATION_REQUIRED');
+    stage = 'login'; await account.call('/api/v1/auth/change-password', {newPassword: String(input.password ?? '')});
+    send({event: 'account', page: 'committees', serverUrl: account.origin}); await listCandidates(); return;
+  }
+  if (action === 'list-committees') {await listCandidates(); return;}
+  if (action === 'logout') {await logout(); setup = undefined; send({event: 'account', page: 'login', serverUrl: await desktopSite()}); return;}
+  if (action === 'select-committee') {
+    if (!account) throw new Error('AUTHENTICATION_REQUIRED');
+    selected = candidates.find(item => item.id === input.committeeId);
+    if (!selected) throw new Error('INVALID_REFERENCE');
+    setup = undefined;
+    const directory = await proposedDirectory({serverUrl: account.origin, committeeId: selected.id, committeeName: selected.name});
+    selectedDirectory = directory;
+    send({event: 'setup', serverUrl: account.origin, committeeName: selected.name, rootPath: directory.rootPath,
+      committeeStatus: selected.status, storageProvider: selected.storageProvider, currentHost: selected.currentHost});
+    return;
+  }
+  if (action === 'account-pair') {
+    if (setup && (config || pendingPair)) {await command({...input, command: 'setup-pair'}); return;}
+    if (!account || !selected) throw new Error('AUTHENTICATION_REQUIRED');
+    if (selected.currentHost && input.transferConfirmed !== true) throw new Error('CHAIR_HOST_ALREADY_PAIRED');
+    stage = 'pairing';
+    if (!setup) {
+      const result = await account.call<{configuration: AgentPairingConfig}>(
+        `/api/v1/committees/${selected.id}/storage-agent/pairing-codes`,
+        {baseRevision: selected.revision, purpose: selected.currentHost ? 'TRANSFER' : 'INITIAL'});
+      setup = {value: result.configuration, ...selectedDirectory!, allocated: false};
+      configPath = join(desktopConfigDirectory(), 'configurations', `${randomUUID()}.json`);
+    }
+    try {await command({...input, command: 'setup-pair'});}
+    finally {if (config || pendingPair) await logout();}
+    return;
+  }
   if (action === 'stop') {await stop(); return;}
   if (action === 'restart') {await stop(); await start(); return;}
   if (action === 'start') {await start(); return;}
   if (action === 'restore') {
     const previous = await lastConfiguration();
     if (previous) {await command({command: 'load', configPath: previous}); if (config) await start();}
-    else send({event: 'defaults', configPath: join(desktopConfigDirectory(), 'configurations', `${randomUUID()}.json`)});
+    else send({event: 'defaults', serverUrl: await desktopSite(), configPath: join(desktopConfigDirectory(), 'configurations', `${randomUUID()}.json`)});
     return;
   }
   if (action === 'open') {
+    if (pendingPair) throw new Error('PAIRING_RECOVERY_REQUIRED');
     const target = String(input.target ?? '');
     stage = 'config-read';
     const value = await readPairingInput(target);
@@ -159,19 +228,22 @@ async function command(input: Record<string, unknown>) {
       publicConfig(); if (!child) await start(); return;
     }
     if (child || config) throw new Error('STOP_AND_UNPAIR_FIRST');
+    await logout();
     if (Date.parse(value.expiresAt) <= Date.now()) throw new Error('LINK_EXPIRED');
     if (!setup || setup.value.pairingCode !== value.pairingCode) {
       setup = {value, ...await proposedDirectory(value), allocated: false};
       configPath = join(desktopConfigDirectory(), 'configurations', `${randomUUID()}.json`);
     }
     send({event: 'setup', configPath, serverUrl: value.serverUrl, committeeName: value.committeeName,
-      rootPath: setup.rootPath, purpose: value.purpose, expiresAt: value.expiresAt});
+      rootPath: setup.rootPath, purpose: value.purpose, expiresAt: value.expiresAt,
+      committeeStatus: value.committeeStatus, storageProvider: value.storageProvider, accountSetup: false});
     return;
   }
   if (child) throw new Error('STOP_FIRST');
   if (action === 'setup-pair') {
     if (!setup) throw new Error('PAIRING_CONFIG_INVALID');
-    if (Date.parse(setup.value.expiresAt) <= Date.now()) throw new Error('LINK_EXPIRED');
+    if (config) {await rememberConfiguration(configPath); setup = undefined; await start(); return;}
+    if (!pendingPair && Date.parse(setup.value.expiresAt) <= Date.now()) throw new Error('LINK_EXPIRED');
     const chosen = resolve(String(input.rootPath || setup.rootPath));
     if (chosen === setup.rootPath && !setup.allocated) {
       try {await allocateDirectory(setup.value, chosen, setup.ordinal); setup.allocated = true;}
@@ -213,7 +285,7 @@ async function command(input: Record<string, unknown>) {
         throw new Error('CONFIG_INVALID');
       }
       configPath = path; config = loaded; draft = undefined; draftSource = ''; setup = undefined; publicConfig();
-      await rememberConfiguration(path);
+      await rememberConfiguration(path); await rememberSite(loaded.serverUrl);
     }
     return;
   }
@@ -309,12 +381,7 @@ async function command(input: Record<string, unknown>) {
     let unlock: (() => Promise<void>) | undefined;
     try {
       unlock = await lockAgentRoot(root);
-      if (new URL(config.serverUrl).origin !== next.serverUrl) {
-        // Before sending a credential to a new address, require the old service's
-        // authenticated TLS certificate. Different certificates require pairing.
-        if (await fingerprint(config.serverUrl, config.caCertificatePath ?? '') !== await fingerprint(next.serverUrl, next.caCertificatePath))
-          throw new Error('SERVER_CERTIFICATE_CHANGED');
-      }
+      if (new URL(config.serverUrl).origin !== next.serverUrl) throw new Error('STOP_AND_UNPAIR_FIRST');
       stage = 'config-write';
       const updated = {...config, ...next};
       if (action === 'save-as') {
@@ -329,6 +396,15 @@ async function command(input: Record<string, unknown>) {
     return;
   }
   if (action === 'pair') {
+    if (pendingPair) {
+      stage = 'local-state';
+      await AgentStateStore.initialize(pendingPair.config.rootPath,
+        {committeeId: pendingPair.config.committeeId, deviceId: pendingPair.config.deviceId});
+      stage = 'config-write';
+      await writeAgentConfig(pendingPair.path, pendingPair.config);
+      config = pendingPair.config; configPath = pendingPair.path; draft = undefined; draftSource = '';
+      pendingPair = undefined; publicConfig(); await rememberConfiguration(configPath); return;
+    }
     const next = await settings(input);
     stage = 'pairing-input';
     if (!String(input.pairingCode ?? '').trim()) throw new Error('PAIRING_CODE_REQUIRED');
@@ -361,7 +437,12 @@ async function command(input: Record<string, unknown>) {
         let failure = 'PAIRING_FAILED';
         const pairing = spawn(process.execPath, [cli, 'pair', '--server', next.serverUrl, '--root', root,
           '--config', pairedPath, '--pairing-code-file', codePath, '--device-label', String(input.deviceLabel || 'Linux Chair')],
-          {env: {...process.env, NODE_EXTRA_CA_CERTS: next.caCertificatePath}, stdio: ['ignore','ignore','pipe']});
+          {env: {...process.env, NODE_EXTRA_CA_CERTS: next.caCertificatePath}, stdio: ['ignore','ignore','pipe','ipc']});
+        pairing.on('message', message => {
+          const value = message as {event?: string; config?: StorageAgentLocalConfig};
+          if (value.event === 'paired-config' && value.config) pendingPair = {path, config: {...value.config, ...next,
+            ...(typeof input.committeeName === 'string' ? {committeeName: input.committeeName} : {})}};
+        });
         let output = '';
         pairing.stderr!.on('data', chunk => {
           output += chunk.toString();
@@ -385,6 +466,7 @@ async function command(input: Record<string, unknown>) {
       if (input.overwrite === true) await checkOverwriteTarget(path);
       else if (replacingDraft) await unchangedDraft(path);
       await writeAgentConfig(path, paired);
+      pendingPair = undefined;
       config = paired; draft = undefined; draftSource = ''; configPath = path; publicConfig(); await rememberConfiguration(path);
     } finally {await unlock(); await rm(codePath, {force: true}); if (pairedPath !== path) await rm(pairedPath,{force:true});}
   }
@@ -398,15 +480,19 @@ input.on('line', line => {
     let operation = 'unknown';
     try {
       const input = JSON.parse(line);
-      if (['open','restore','setup-pair','load','save','save-as','pair','unpair','unpair-local','start','stop','restart'].includes(input.command)) operation = input.command;
+      if (['login','logout','change-password','list-committees','select-committee','account-pair','open','restore','setup-pair','load','save','save-as','pair','unpair','unpair-local','start','stop','restart'].includes(input.command)) operation = input.command;
       await command(input); send({event:'completed',operation});
     } catch (error) {
-      send({event:'error',code:safeError(error),operation,stage});
+      if (safeError(error) === 'AUTHENTICATION_REQUIRED' && operation !== 'login') {
+        account?.clear(); account = undefined; candidates = []; selected = undefined;
+        send({event: 'account', page: 'login', serverUrl: await desktopSite()});
+      }
+      send({event:'error',code:safeError(error),operation,stage: pendingPair ? 'paired-local-recovery' : stage});
     }
     finally {send({event: 'busy', value: false});}
   });
 });
-async function shutdown() {if (exiting) return; exiting = true; await pending; await stop(); process.exit(0);}
+async function shutdown() {if (exiting) return; exiting = true; await pending; await stop(); try {await logout();} catch { /* Account cookies are cleared even when offline. */ } process.exit(0);}
 input.on('close', () => void shutdown());
 process.on('SIGTERM', () => void shutdown()); process.on('SIGINT', () => void shutdown());
 process.stdout.on('error', () => void shutdown());

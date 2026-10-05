@@ -1,4 +1,4 @@
-import type {StorageAgentFileStatus, StorageAgentTask} from '@quorum/contracts';
+import type {StorageAgentFileStatus, StorageAgentTask, StorageAgentFileStatusPage} from '@quorum/contracts';
 import {StorageAgentHttpClient} from './client.js';
 import type {StorageAgentLocalConfig} from './config.js';
 import {AgentFileStore} from './files.js';
@@ -19,8 +19,10 @@ export async function runDesktop(config: StorageAgentLocalConfig, state: AgentSt
   let remote: StorageAgentFileStatus[] = []; let tasks: StorageAgentTask[] = [];
   let verified = new Set<string>(); let fresh = false; let updatedAt = ''; let lastConnected = '';
   const activities = new Map<string, AgentActivity>();
+  let committee: StorageAgentFileStatusPage['committee'];
   const emit = () => process.stdout.write(JSON.stringify({event: 'snapshot', connected: fresh, updatedAt,
-    lastConnected, files: desktopFiles(remote, state.snapshot(), tasks, verified, activities, fresh)}) + '\n');
+    lastConnected, committee: fresh ? committee : undefined,
+    files: desktopFiles(remote, state.snapshot(), tasks, verified, activities, fresh)}) + '\n');
   let lastEmit = 0; let pollAgain = false;
   const runtime = new StorageAgentRuntime(client, config.leaseGeneration, state, files,
     new AgentDirectoryScanner(state, files), logger, {
@@ -42,6 +44,7 @@ export async function runDesktop(config: StorageAgentLocalConfig, state: AgentSt
     try {
       const next: StorageAgentFileStatus[] = []; let after = ''; const seen = new Set<string>();
       do {const page = await statusClient.fileStatus(config.leaseGeneration, after);
+        committee = page.committee;
         next.push(...page.files); updatedAt = page.observedAt; after = page.nextId ?? '';
         if (after && seen.has(after)) throw new Error('Invalid file status cursor'); seen.add(after);
       } while (after && !signal.aborted);

@@ -185,6 +185,8 @@ export interface StorageAgentFileStatus {
   updatedAt: string;
 }
 export interface StorageAgentFileStatusPage {
+  committee?: {name: string; status: 'ACTIVE' | 'PAUSED' | 'ARCHIVED' | 'DELETING';
+    storageProvider: 'SERVER_VOLUME' | 'S3_COMPATIBLE' | 'CHAIR_AGENT' | null};
   files: StorageAgentFileStatus[];
   nextId: string | null;
   observedAt: string;

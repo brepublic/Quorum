@@ -6,7 +6,7 @@ import {beforeEach, afterEach, describe, it, expect, vi} from 'vitest';
 import type {AgentPairingConfig} from '@quorum/contracts';
 const paths = vi.hoisted(() => ({documents: ''}));
 vi.mock('node:child_process', () => ({execFileSync: () => paths.documents}));
-import {proposedDirectory, allocateDirectory, rememberConfiguration, lastConfiguration} from './desktop-setup';
+import {proposedDirectory, allocateDirectory, rememberConfiguration, lastConfiguration, desktopSite, rememberSite} from './desktop-setup';
 let directory: string;
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), 'quorum-setup-'));
@@ -18,6 +18,15 @@ const council: AgentPairingConfig = {schemaVersion: 1, kind: 'quorum-agent-pairi
   committeeId: '10000000-0000-4000-8000-000000000001', committeeName: '安理会',
   pairingCode: 'QRM-ABCDE-FGHIJ', purpose: 'INITIAL', expiresAt: '2099-01-01T00:00:00Z'};
 describe('desktop storage defaults', () => {
+  it('remembers the site alongside existing recovery and directory preferences', async () => {
+    expect(await desktopSite()).toBe('https://quorum.sramun.org');
+    await rememberConfiguration('/private/connection.json');
+    await rememberSite('quorum.example.com');
+    expect(await desktopSite()).toBe('https://quorum.example.com');
+    expect(await lastConfiguration()).toBe('/private/connection.json');
+    await expect(rememberSite('http://wrong.example.com')).rejects.toThrow('HTTPS_REQUIRED');
+    expect(await desktopSite()).toBe('https://quorum.example.com');
+  });
   it('allocates independent durable numbers, and previews do not consume numbers', async () => {
     const a = await proposedDirectory(council);
     expect(a.rootPath).toBe(join(paths.documents, 'Quorum', '安理会-1'));
