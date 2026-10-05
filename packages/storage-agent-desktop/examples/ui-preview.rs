@@ -119,8 +119,27 @@ fn exercise_connection(window: &MainWindow, redraw: impl Fn()) {
     assert!(window.get_show_settings() && window.get_loaded() && window.get_running());
     click(200., 301.);
     assert_eq!(actions.borrow().last().unwrap(), "confirm-switch");
-    click(300., 301.);
+    click(740., 303.);
     assert_eq!(actions.borrow().last().unwrap(), "confirm-unpair");
+    // The outlined disconnect control must retain keyboard activation and guards.
+    for text in [" ", "\n"] {
+        let before = actions.borrow().len();
+        window.window().dispatch_event(WindowEvent::KeyPressed {text: text.into()});
+        window.window().dispatch_event(WindowEvent::KeyReleased {text: text.into()});
+        assert_eq!(actions.borrow().len(), before + 1);
+        assert_eq!(actions.borrow().last().unwrap(), "confirm-unpair");
+    }
+    for busy in [false, true] {
+        window.set_dirty(!busy);
+        window.set_busy(busy);
+        redraw();
+        let before = actions.borrow().len();
+        click(200., 303.);
+        click(740., 303.);
+        assert_eq!(actions.borrow().len(), before, "Both connection actions must respect busy and unsaved changes");
+    }
+    window.set_dirty(false);
+    window.set_busy(false);
     // Inject the confirmation state; this preview never invokes the Node bridge.
     window.set_switch_committee(true);
     window.set_confirm_unpair(true);

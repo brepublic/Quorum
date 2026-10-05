@@ -133,6 +133,6 @@ QUORUM_UI_CAPTURE=/tmp/quorum-settings.ppm packages/storage-agent-desktop/target
 `--exercise-login` 必须与默认尺寸的 `--offscreen --login` 配合，通过真实 Slint 鼠标／键盘事件检查展开、空格激活、文件导入／手动入口回调、邮箱 → Tab → 密码 → Enter、语言切换、Escape 关闭、保留输入及应用菜单的设置／日志／网页回调。回调仅记录，不请求服务器；这些检查不代表系统输入法、文件选择器或完整原生账号连接已经验收。
 
 
-`--switch-committee`、`--stopping`、`--disconnected-notice`、`--local-disconnect-notice` 可预览更换确认、停止中及两种解除结果。`--exercise-connection` 与默认尺寸 `--offscreen --settings --paired --dark` 配合，通过 Slint 实际鼠标事件检查两个连接入口、运行中确认、操作期间禁止取消以及提示条关闭；回调只记录，不调用 Node 桥接。
+`--switch-committee`、`--stopping`、`--disconnected-notice`、`--local-disconnect-notice` 可预览更换确认、停止中及两种解除结果。`--exercise-connection` 与默认尺寸 `--offscreen --settings --paired --dark` 配合，通过 Slint 实际鼠标／键盘事件检查两个连接入口、解除按钮的空格／回车激活、忙碌及未保存时禁止操作、运行中确认、操作期间禁止取消以及提示条关闭；回调只记录，不调用 Node 桥接。
 
 停止同步同时取消服务器事件连接的响应读取器，随后等待同步清理并释放目录锁。保留原有 15 秒异常退出兜底，正常空闲停止不等待下一条服务器事件。对本机真实 HTTPS 服务的三轮发布包验收为 134／60／81 毫秒，均记录正常停止；该结果不承诺大文件正在校验等所有场景的固定耗时。

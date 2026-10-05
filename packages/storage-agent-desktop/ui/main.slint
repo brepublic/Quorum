@@ -13,21 +13,22 @@ component QuietButton inherits Rectangle {
     in property <string> accessible-name: root.text;
     in property <bool> enabled: true;
     in property <bool> danger: false;
+    private property <color> danger-color: Palette.color-scheme == ColorScheme.dark ? #ffaaa5 : #a4262c;
     callback clicked();
     min-width: content.min-width;
     min-height: 32px;
     horizontal-stretch: 0; vertical-stretch: 0;
     border-radius: 5px;
-    background: touch.has-hover && root.enabled ? Palette.foreground.with-alpha(0.06) : transparent;
-    border-width: focus.has-focus ? 2px : 0px;
-    border-color: Palette.accent-background;
+    background: root.danger && root.enabled ? root.danger-color.with-alpha(touch.pressed ? 0.16 : touch.has-hover ? 0.1 : 0.04) : touch.has-hover && root.enabled ? Palette.foreground.with-alpha(0.06) : transparent;
+    border-width: focus.has-focus ? 2px : root.danger ? 1px : 0px;
+    border-color: focus.has-focus ? Palette.accent-background : !root.enabled ? Palette.foreground.with-alpha(0.2) : root.danger-color;
     accessible-role: button;
     accessible-label: root.accessible-name;
     accessible-enabled: root.enabled;
     accessible-action-default => {if root.enabled {root.clicked();}}
     forward-focus: focus;
-    content := HorizontalLayout { padding-left: 6px; padding-right: 6px;
-        Text { text: root.text; color: !root.enabled ? Palette.foreground.with-alpha(0.35) : root.danger ? #cc5b59 : Palette.foreground.with-alpha(0.8); font-size: 13px; vertical-alignment: center; }
+    content := HorizontalLayout { padding-left: root.danger ? 12px : 6px; padding-right: root.danger ? 12px : 6px;
+        Text { text: root.text; color: !root.enabled ? Palette.foreground.with-alpha(0.35) : root.danger ? root.danger-color : Palette.foreground.with-alpha(0.8); font-size: root.danger ? 14px : 13px; vertical-alignment: center; horizontal-alignment: root.danger ? center : left; }
     }
     touch := TouchArea { enabled: root.enabled; clicked => {focus.focus(); root.clicked();} }
     focus := FocusScope { width: 0px; height: 0px; enabled: root.enabled;
@@ -270,9 +271,9 @@ export component MainWindow inherits Window {
                             Text { text: root.committee-name; font-size: 19px; font-weight: 600; wrap: word-wrap; color: Palette.foreground; }
                             PathText { enabled: root.controls-enabled; text: root.server-url; }
                             if root.loaded: HorizontalLayout { spacing: 12px;
-                                Button { text: root.translate("Change committee", root.language); enabled: root.controls-enabled && !root.busy && !root.dirty; clicked => {root.action("confirm-switch");} }
-                                Button { text: root.translate("Disconnect", root.language); enabled: root.controls-enabled && !root.busy && !root.dirty; clicked => {root.action("confirm-unpair");} }
+                                Button { text: root.translate("Change committee", root.language); min-width: 160px; min-height: 36px; enabled: root.controls-enabled && !root.busy && !root.dirty; clicked => {root.action("confirm-switch");} }
                                 Rectangle { horizontal-stretch: 1; }
+                                QuietButton { text: root.translate("Disconnect", root.language); danger: true; min-width: 160px; min-height: 36px; enabled: root.controls-enabled && !root.busy && !root.dirty; clicked => {root.action("confirm-unpair");} }
                             }
                         }
                         if root.setup-mode && root.current-host != "": Rectangle { background: #c9902d18; border-radius: 8px; height: transfer-content.preferred-height;
