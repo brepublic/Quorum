@@ -173,6 +173,8 @@ GUI 状态显示合并原连接状态、委员会暂停及既定 30 秒的新鲜
 
 开发使用 `pnpm start:storage-agent:desktop`，需要 Rust、Slint 构建依赖、Linux 桌面 portal 及 Zenity（现有 rfd 的覆盖确认弹窗后端）；新增 Rust 锁文件不改变现有 Web/服务器构建命令。详情与验收边界见 `packages/storage-agent-desktop/README.md`，产品取舍见 `.agents/CHAIR_AGENT_GUI.md`。
 
+桌面文件快照附带本地记录的相对路径和实际文件名；审核中及已驳回记录的逻辑名称显示为 `-`。原生端按行 ID 查找当前快照，用已保存的存储根目录解析路径，拒绝路径越界、符号链接及非普通文件，再使用现有系统 `xdg-open` 打开，失败返回界面错误提示。
+
 ### 网页配对配置与 Linux 桌面入口（2026-10-05）
 
 配对码接口附带 `quorum-agent-pairing` schema 1 配置：HTTPS origin 由既有 `publicOrigin` 和允许来源推导，委员会名称来自已授权事务；Vite 继续重写 Origin 指向后端。网页将同一配置用于专用链接唤起和 `.quorum-agent` 下载，不把长期设备凭据传给浏览器。Agent 严格验证短期配置白名单和有效期，允许读取正常下载权限的配对文件；已有私有配置的 0600/非链接检查不放宽。

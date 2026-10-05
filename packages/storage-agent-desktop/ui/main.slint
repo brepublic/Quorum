@@ -3,7 +3,7 @@ export { Palette }
 
 export struct CommitteeRow { id: string, name: string, detail: string, paused: bool, host: string, provider: string }
 
-export struct FileRow { id: string, name: string, size: string, local: string, cache: string, local-code: string, cache-code: string, transfer: string, fraction: float, progressing: bool }
+export struct FileRow { id: string, name: string, actual-name: string, can-open: bool, size: string, local: string, cache: string, local-code: string, cache-code: string, transfer: string, fraction: float, progressing: bool }
 
 component Caption inherits Text { color: Palette.foreground.with-alpha(0.68); font-size: 13px; overflow: elide; vertical-alignment: center; }
 component Rule inherits Rectangle { height: 1px; vertical-stretch: 0; background: Palette.foreground.with-alpha(0.12); }
@@ -13,9 +13,10 @@ component QuietButton inherits Rectangle {
     in property <string> accessible-name: root.text;
     in property <bool> enabled: true;
     in property <bool> danger: false;
+    in property <bool> file-link: false;
     private property <color> danger-color: Palette.color-scheme == ColorScheme.dark ? #ffaaa5 : #a4262c;
     callback clicked();
-    min-width: content.min-width;
+    min-width: root.file-link ? 0px : content.min-width;
     min-height: 32px;
     horizontal-stretch: 0; vertical-stretch: 0;
     border-radius: 5px;
@@ -27,10 +28,10 @@ component QuietButton inherits Rectangle {
     accessible-enabled: root.enabled;
     accessible-action-default => {if root.enabled {root.clicked();}}
     forward-focus: focus;
-    content := HorizontalLayout { padding-left: root.danger ? 12px : 6px; padding-right: root.danger ? 12px : 6px;
-        Text { text: root.text; color: !root.enabled ? Palette.foreground.with-alpha(0.35) : root.danger ? root.danger-color : Palette.foreground.with-alpha(0.8); font-size: root.danger ? 14px : 13px; vertical-alignment: center; horizontal-alignment: root.danger ? center : left; }
+    content := HorizontalLayout { padding-left: root.file-link ? 0px : root.danger ? 12px : 6px; padding-right: root.file-link ? 0px : root.danger ? 12px : 6px;
+        Text { text: root.text; overflow: elide; color: !root.enabled ? Palette.foreground.with-alpha(0.35) : root.danger ? root.danger-color : root.file-link ? Palette.accent-background : Palette.foreground.with-alpha(0.8); font-size: root.danger ? 14px : 13px; vertical-alignment: center; horizontal-alignment: root.danger ? center : left; }
     }
-    touch := TouchArea { enabled: root.enabled; clicked => {focus.focus(); root.clicked();} }
+    touch := TouchArea { enabled: root.enabled; mouse-cursor: root.file-link && root.enabled ? pointer : default; clicked => {focus.focus(); root.clicked();} }
     focus := FocusScope { width: 0px; height: 0px; enabled: root.enabled;
         key-pressed(event) => {if event.text == " " || event.text == "\n" {root.clicked(); return accept;} return reject;}
     }
@@ -77,6 +78,9 @@ export component MainWindow inherits Window {
     out property <string> display-status: root.status != "RUNNING" ? root.status : root.status-delayed || root.last-connection-age != "" || root.observed-age != "" ? "STATUS_DELAYED" : root.committee-status == "PAUSED" ? "COMMITTEE_PAUSED_STATUS" : !root.files-loaded ? "STARTING" : "RUNNING";
     out property <bool> field-error: (root.page == "login" || root.page == "password") && (root.error-code == "INCORRECT_CREDENTIALS" || root.error-code == "INVALID_EMAIL" || root.error-code == "PASSWORD_TOO_SHORT" || root.error-code == "PASSWORD_TOO_LONG");
     callback show-file(string);
+    callback open-file(string);
+    // Reserve table padding, gaps, status/action columns and the list scrollbar.
+    private property <length> file-name-column-width: (min(1400px, root.width - (root.width < 850px ? 48px : 64px)) - 434px) / 2;
     private property <int> password-focus-request;
     public function focus-password() {root.password-focus-request += 1;}
     private property <int> email-focus-request;
@@ -378,19 +382,21 @@ export component MainWindow inherits Window {
                         if root.files.length > 0: VerticalLayout { spacing: 0px;
                             Rectangle { height: 36px; background: Palette.alternate-background; border-radius: 6px;
                                 HorizontalLayout { padding-left: 12px; padding-right: 12px; spacing: 12px;
-                                    Caption { text: root.translate("Files", root.language); horizontal-stretch: 1; }
+                                    Caption { text: root.translate("Files", root.language); width: root.file-name-column-width; }
+                                    Caption { text: root.translate("Actual filename", root.language); width: root.file-name-column-width; }
                                     Caption { text: root.translate("Local status", root.language); width: 150px; }
                                     Caption { text: root.translate("Server cache", root.language); width: 140px; }
-                                    Rectangle { width: 56px; }
+                                    Rectangle { horizontal-stretch: 1; min-width: 56px; }
                                 }
                             }
                             ListView { height: max(180px, root.height - 405px);
                                 for row in root.files: Rectangle { height: row.progressing ? 80px : 64px; background: Palette.control-background;
                                     HorizontalLayout { padding-left: 12px; padding-right: 12px; spacing: 12px;
-                                        VerticalLayout { alignment: center; spacing: 4px; horizontal-stretch: 1;
+                                        VerticalLayout { alignment: center; spacing: 4px; width: root.file-name-column-width;
                                             Text { text: row.name; color: Palette.foreground; overflow: elide; }
                                             Caption { text: row.size; }
                                         }
+                                        QuietButton { text: row.actual-name; file-link: true; width: root.file-name-column-width; enabled: root.controls-enabled && row.can-open; clicked => {root.open-file(row.id);} }
                                         VerticalLayout { width: 150px; spacing: 5px; alignment: center;
                                             Text { text: (row.local-code == "FAILED" || row.local-code == "CONFLICT" || row.local-code == "RETRYING" ? "! " : "") + row.local; color: row.local-code == "FAILED" || row.local-code == "CONFLICT" ? root.error-color : row.local-code == "RETRYING" ? root.warning-color : Palette.foreground; wrap: word-wrap; font-size: 13px; }
                                             if row.progressing: Caption { text: row.transfer; font-size: 12px; }
@@ -523,6 +529,8 @@ export component MainWindow inherits Window {
                     ScrollView { viewport-height: detail-content.preferred-height;
                         detail-content := VerticalLayout { spacing: 12px;
                             PathText { text: root.selected-file.name; }
+                            Caption { text: root.translate("Actual filename", root.language); }
+                            PathText { text: root.selected-file.actual-name; }
                             Caption { text: root.selected-file.size; }
                             Text { text: root.translate("Local status", root.language) + ": " + root.selected-file.local; color: root.selected-file.local-code == "FAILED" || root.selected-file.local-code == "CONFLICT" ? root.error-color : Palette.foreground; wrap: word-wrap; }
                             Text { text: root.translate("Server cache", root.language) + ": " + root.selected-file.cache; color: root.selected-file.cache-code == "REFILL_FAILED" ? root.error-color : Palette.foreground; wrap: word-wrap; }

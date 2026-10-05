@@ -306,6 +306,8 @@ pub fn translate(key: &str, language: &str) -> &'static str {
         "Export" => ("Export", "导出"),
         "FAILED" => ("Failed", "失败"),
         "FORBIDDEN" => ("Device authorization is unavailable. Check pairing on the committee page.", "设备授权不可用，请在委员会网页核对配对状态。"),
+        "Actual filename" => ("Actual filename", "实际文件名"),
+        "Cannot open local file" => ("Cannot open the local file. Check that it exists and a default application is available.", "无法打开本地文件，请检查文件是否存在以及是否已设置默认打开程序。"),
         "Files" => ("Files", "文件"),
         "Filter logs" => ("Filter logs", "筛选日志"),
         "Full scan interval (seconds)" => ("Full scan interval (seconds)", "完整扫描间隔（秒）"),

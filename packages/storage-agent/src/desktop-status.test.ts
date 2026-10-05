@@ -43,3 +43,21 @@ describe('desktop file status uses content and server authority separately', () 
       .toBe('CACHE_MISSING_LOCAL_READY');
   });
 });
+
+describe('desktop actual filenames', () => {
+  it.each(['PENDING_REVIEW', 'REJECTED'] as const)('masks the logical title for %s even while disconnected or transferring', status => {
+    const local = {...state, files: {file: {...state.files.file!, relativePath: '材料/真实文件名.pdf'}}};
+    const active = new Map([['file', {fileEntryId:'file', type:'STORE_BLOB', phase:'transfer', bytes:1, total:100}]]);
+    expect(rows([{...file,status}],local,[],active,false)[0]).toMatchObject({name:'-', actualName:'真实文件名.pdf', relativePath:'材料/真实文件名.pdf'});
+  });
+  it('keeps published titles and does not invent paths for undownloaded files', () => {
+    expect(rows()[0]).toMatchObject({name:'决议.pdf',actualName:'决议.pdf',relativePath:'决议.pdf'});
+    expect(rows([file],{...state,files:{}})[0]).toMatchObject({actualName:'-',relativePath:''});
+  });
+});
+
+it('uses the current local name when a rename is awaiting conflict resolution', () => {
+  const renamed = {...state, conflicts: {conflict: {conflictId:'conflict',relativePath:'材料/已改名.pdf',
+    change:{kind:'RENAME',fileEntryId:'file',baseRevision:1,logicalName:'材料/已改名.pdf'}}}} as AgentDirectoryState;
+  expect(rows([file],renamed)[0]).toMatchObject({name:'决议.pdf',actualName:'已改名.pdf',relativePath:'材料/已改名.pdf',local:'CONFLICT'});
+});

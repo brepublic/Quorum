@@ -126,6 +126,22 @@ fn exercise_login(window: &MainWindow, redraw: impl Fn()) {
     assert_eq!(actions.borrow().last().unwrap(), "open-web");
     println!("Slint interaction smoke passed: disclosure, keyboard activation, import/manual actions, email → Tab → password → Enter, language/Escape, draft preservation and application menu actions");
 }
+fn exercise_files(window: &MainWindow, redraw: impl Fn()) {
+    use slint::platform::{Key, PointerEventButton, WindowEvent};
+    let opened = Rc::new(RefCell::new(Vec::<String>::new()));
+    let recorded = opened.clone();
+    window.on_open_file(move |id| recorded.borrow_mut().push(id.to_string()));
+    let position = slint::LogicalPosition::new(400., 358.);
+    window.window().dispatch_event(WindowEvent::PointerPressed {position, button: PointerEventButton::Left});
+    window.window().dispatch_event(WindowEvent::PointerReleased {position, button: PointerEventButton::Left});
+    redraw();
+    assert_eq!(&*opened.borrow(), &["file-1"]);
+    window.window().dispatch_event(WindowEvent::KeyPressed {text: Key::Return.into()});
+    window.window().dispatch_event(WindowEvent::KeyReleased {text: Key::Return.into()});
+    redraw();
+    assert_eq!(&*opened.borrow(), &["file-1", "file-1"]);
+    println!("Actual filename mouse and keyboard checks passed");
+}
 fn exercise_connection(window: &MainWindow, redraw: impl Fn()) {
     use slint::platform::{PointerEventButton, WindowEvent};
     let actions = Rc::new(RefCell::new(Vec::<String>::new()));
@@ -223,7 +239,7 @@ fn exercise_connection(window: &MainWindow, redraw: impl Fn()) {
     for (code, action) in [("CONFLICT", "open-conflicts"), ("FAILED", "navigate-logs")] {
         window.set_selected_file(FileRow {name: "完整文件名称 - working paper.pdf".into(), local_code: code.into(), local: translate(code, "zh-CN").into(), ..Default::default()});
         window.set_file_details(true); redraw();
-        key(slint::platform::Key::Tab); key(slint::platform::Key::Tab); key(slint::platform::Key::Return);
+        key(slint::platform::Key::Tab); key(slint::platform::Key::Tab); key(slint::platform::Key::Tab); key(slint::platform::Key::Return);
         assert_eq!(actions.borrow().last().unwrap(), action);
         if window.get_file_details() {key(slint::platform::Key::Escape);}
         assert!(!window.get_file_details());
@@ -343,7 +359,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     window.set_files(ModelRc::new(VecModel::from(vec![
         FileRow {
-            id: "file-1".into(), local_code: "DOWNLOADING".into(), cache_code: "CACHE_READY".into(),
+            id: "file-1".into(), actual_name: "决议草案 - 中文显示测试.pdf".into(), can_open: true, local_code: "DOWNLOADING".into(), cache_code: "CACHE_READY".into(),
             name: "决议草案 - 中文显示测试.pdf".into(),
             size: "12.4 MiB".into(),
             local: translate("DOWNLOADING", language).into(),
@@ -354,15 +370,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ..Default::default()
         },
         FileRow {
-            id: "file-2".into(), local_code: "READY_REVIEW".into(), cache_code: "CACHE_READY".into(),
-            name: "工作文件.docx".into(),
+            id: "file-2".into(), actual_name: "工作文件.docx".into(), can_open: true, local_code: "READY_REVIEW".into(), cache_code: "CACHE_READY".into(),
+            name: "-".into(),
             size: "542 KiB".into(),
             local: translate("READY_REVIEW", language).into(),
             cache: translate("CACHE_READY", language).into(),
             ..Default::default()
         },
         FileRow {
-            id: "file-3".into(), local_code: "READY_PUBLISHED".into(), cache_code: "REFILLING".into(),
+            id: "file-3".into(), actual_name: "已公开的立场文件.pdf".into(), can_open: true, local_code: "READY_PUBLISHED".into(), cache_code: "REFILLING".into(),
             name: "已公开的立场文件.pdf".into(),
             size: "24 MiB".into(),
             local: translate("READY_PUBLISHED", language).into(),
@@ -372,7 +388,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             progressing: true,
         },
         FileRow {
-            id: "file-4".into(), local_code: "READY_UNSUBMITTED".into(), cache_code: "CACHE_MISSING_LOCAL_READY".into(),
+            id: "file-4".into(), actual_name: "本地笔记.txt".into(), can_open: true, local_code: "READY_UNSUBMITTED".into(), cache_code: "CACHE_MISSING_LOCAL_READY".into(),
             name: "本地笔记.txt".into(),
             size: "2 KiB".into(),
             local: translate("READY_UNSUBMITTED", language).into(),
@@ -428,8 +444,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         adapter.draw_if_needed(|renderer| {
             renderer.render(pixels.make_mut_slice(), width as usize);
         });
-        if std::env::args().any(|arg| matches!(arg.as_str(), "--exercise-login" | "--exercise-connection")) {
-            let exercise = if std::env::args().any(|arg| arg == "--exercise-connection") {exercise_connection} else {exercise_login};
+        if std::env::args().any(|arg| matches!(arg.as_str(), "--exercise-login" | "--exercise-connection" | "--exercise-files")) {
+            let exercise = if std::env::args().any(|arg| arg == "--exercise-files") {exercise_files} else if std::env::args().any(|arg| arg == "--exercise-connection") {exercise_connection} else {exercise_login};
             exercise(&window, || {
                 slint::platform::update_timers_and_animations();
                 let mut frame = slint::SharedPixelBuffer::<slint::Rgb8Pixel>::new(width, height);

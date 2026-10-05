@@ -1,8 +1,9 @@
+import {basename} from 'node:path';
 import type {StorageAgentFileStatus, StorageAgentTask} from '@quorum/contracts';
 import type {AgentDirectoryState} from './state.js';
 import type {AgentActivity} from './runtime.js';
 
-export interface DesktopFile {id: string; name: string; size: number; local: string; cache: string;
+export interface DesktopFile {id: string; name: string; actualName?: string; relativePath?: string; size: number; local: string; cache: string;
   bytes: number; total: number; progress: boolean; deleted: boolean}
 
 export function desktopFiles(remote: StorageAgentFileStatus[], state: AgentDirectoryState,
@@ -64,5 +65,15 @@ export function desktopFiles(remote: StorageAgentFileStatus[], state: AgentDirec
       size: conflict.change.kind === 'UPSERT' ? conflict.change.sizeBytes : 0,
       local: 'CONFLICT', cache: 'UNKNOWN', bytes: 0, total: 0, progress: false, deleted: false});
   }
-  return [...rows.values()].sort((a,b) => Number(a.deleted)-Number(b.deleted) || a.name.localeCompare(b.name));
+  const result = [...rows.values()].sort((a,b) => Number(a.deleted)-Number(b.deleted) || a.name.localeCompare(b.name));
+  for (const row of result) {
+    const path = Object.values(state.conflicts).find(conflict => (conflict.change.fileEntryId ?? conflict.conflictId) === row.id)?.relativePath
+      ?? Object.values(state.pendingUploads).find(upload => upload.fileEntryId === row.id)?.relativePath
+      ?? state.files[row.id]?.relativePath;
+    row.relativePath = path ?? '';
+    row.actualName = path ? basename(path) : '-';
+    const status = remote.find(file => file.fileEntryId === row.id)?.status;
+    if (status === 'PENDING_REVIEW' || status === 'REJECTED') row.name = '-';
+  }
+  return result;
 }

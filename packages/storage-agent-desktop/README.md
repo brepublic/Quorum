@@ -146,3 +146,7 @@ QUORUM_UI_CAPTURE=/tmp/quorum-settings.ppm packages/storage-agent-desktop/target
 新增预览状态：`--password-error`、`--file-errors`、`--file-details`、`--switch-revoked`（与 `--switch-committee` 配合）。登录事件检查覆盖显示／隐藏、错误反馈后保留输入与回车重试；连接事件检查覆盖最终更换回调、默认回车取消、暂停／更新延迟／恢复状态。
 
 `--menu` 预览应用菜单；`--exercise-menu` 与 `--offscreen --menu` 检查重新启动同步的真实点击回调。菜单低频操作按所在页面显示，使用既有控件的可见性属性保持可点击。
+
+文件列表分别显示“文件”和“实际文件名”。待审核、已驳回记录隐藏逻辑名称为 `-`；实际文件名取自本地状态中的路径，搜索同时匹配两列。点击实际文件名使用 `xdg-open` 调用系统默认程序；尚无本地记录的行显示 `-`。文件详情可选择、复制完整实际文件名。
+
+`--exercise-files` 与默认尺寸 `--offscreen` 配合，检查实际文件名的鼠标点击和回车回调。

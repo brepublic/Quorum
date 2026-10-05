@@ -57,7 +57,7 @@ fn render(ui: &MainWindow, rows: &[Value], logs: &[String]) {
         .iter()
         .filter(|v| {
             (show_deleted || v["deleted"] != true)
-                && text(v, "name").to_lowercase().contains(&search)
+                && (text(v, "name").to_lowercase().contains(&search) || text(v, "actualName").to_lowercase().contains(&search))
         })
         .map(|v| {
             let sent = v["bytes"].as_f64().unwrap_or(0.0);
@@ -66,6 +66,8 @@ fn render(ui: &MainWindow, rows: &[Value], logs: &[String]) {
             FileRow {
                 id: text(v, "id").into(),
                 name: text(v, "name").into(),
+                actual_name: text(v, "actualName").into(),
+                can_open: !text(v, "relativePath").is_empty(),
                 local_code: text(v, "local").into(),
                 cache_code: text(v, "cache").into(),
                 size: bytes(v["size"].as_f64().unwrap_or(0.0)).into(),
@@ -180,6 +182,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if let Some(ui) = weak_file.upgrade() {
             if let Some(row) = ui.get_files().iter().find(|row| row.id == id) {ui.set_selected_file(row); ui.set_file_details(true);}
         }
+    });
+    let weak_open = ui.as_weak();
+    let open_rows = rows.clone();
+    let open_form = saved_form.clone();
+    ui.on_open_file(move |id| {
+        let Some(ui) = weak_open.upgrade() else {return};
+        if !ui.get_controls_enabled() {return;}
+        let relative = open_rows.borrow().iter().find(|row| text(row, "id") == id.as_str())
+            .map(|row| text(row, "relativePath").to_owned()).unwrap_or_default();
+        let root = open_form.borrow()[2].as_str().unwrap_or("").to_owned();
+        let weak = ui.as_weak();
+        thread::spawn(move || {
+            let result = desktop::local_file_path(std::path::Path::new(&root), &relative)
+                .and_then(|path| Command::new("xdg-open").arg(path).status())
+                .map(|status| status.success()).unwrap_or(false);
+            if !result {let _ = weak.upgrade_in_event_loop(|ui| {ui.set_error_stage("".into()); ui.set_error_code("Cannot open local file".into());});}
+        });
     });
     ui.on_action(move |action| {
         let Some(ui) = weak.upgrade() else {return};
