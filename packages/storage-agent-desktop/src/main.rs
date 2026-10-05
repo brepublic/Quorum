@@ -99,7 +99,7 @@ fn render_committees(ui: &MainWindow, values: &[Value]) {
         format!("{} {} {}", text(item, "name"), text(item, "conference"), text(item, "topic")).to_lowercase().contains(&search)
     }).map(|item| CommitteeRow {
         id: text(item, "id").into(), name: text(item, "name").into(),
-        detail: format!("{} · {}", text(item, "conference"), text(item, "topic")).into(),
+        detail: [text(item, "conference"), text(item, "topic")].into_iter().filter(|part| !part.is_empty()).collect::<Vec<_>>().join(" · ").into(),
         paused: text(item, "status") == "PAUSED", host: text(&item["currentHost"], "deviceLabel").into(),
         provider: text(item, "storageProvider").into(),
     }).collect();
@@ -173,7 +173,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if ui.get_busy() || ui.get_closing() {return;}
         let mut action = action.as_str();
         if !ui.get_confirm_discard().is_empty() && !action.starts_with("discard-") {return;}
-        let dirty = ui.get_page() == "home" && form_state(&ui) != *saved_action.borrow();
+        let dirty = matches!(ui.get_page().as_str(), "home" | "manual") && form_state(&ui) != *saved_action.borrow();
+        if action == "enter-manual" {
+            ui.set_page("manual".into()); ui.set_show_advanced(false);
+            ui.set_error_code("".into()); ui.set_error_stage("".into()); ui.set_feedback("".into()); return;
+        }
+        if matches!(action, "back-manual" | "back-setup") {
+            if dirty || !ui.get_pairing_code().is_empty() {
+                ui.set_confirm_discard(if action == "back-setup" {"setup"} else {"manual"}.into()); return;
+            }
+            action = if action == "back-setup" && ui.get_account_setup() {"list-committees"} else {"logout"};
+        }
+        if matches!(action, "discard-manual" | "discard-setup") {
+            restore_form(&ui, &saved_action.borrow()); ui.set_pairing_code("".into()); ui.set_confirm_discard("".into());
+            action = if action == "discard-setup" && ui.get_account_setup() {"list-committees"} else {"logout"};
+        }
         if action.starts_with("navigate-") {
             if dirty && ui.get_editing() {ui.set_pending_navigation(action.into()); ui.set_confirm_discard("navigate".into()); return;}
             ui.set_show_settings(action == "navigate-settings");
@@ -323,12 +337,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let weak = ui.as_weak();
     let language_rows = rows.clone();
     let language_logs = logs.clone();
+    let language_committees = committees.clone();
     ui.on_language_changed(move || {
         if let Some(ui) = weak.upgrade() {
             if save_language(ui.get_language().as_str()).is_err() {
                 ui.set_error_code("LANGUAGE_SAVE_FAILED".into());
             }
             render(&ui, &language_rows.borrow(), &language_logs.borrow());
+            render_committees(&ui, &language_committees.borrow());
         }
     });
     let weak = ui.as_weak();
@@ -349,7 +365,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if ui.get_busy() {
                 return slint::CloseRequestResponse::KeepWindowShown;
             }
-            if ui.get_error_stage() == "paired-local-recovery" || (ui.get_page() == "home" && (form_state(&ui) != *saved_close.borrow() || !ui.get_pairing_code().is_empty())) {
+            if ui.get_error_stage() == "paired-local-recovery" || (matches!(ui.get_page().as_str(), "home" | "manual") && (form_state(&ui) != *saved_close.borrow() || !ui.get_pairing_code().is_empty())) {
                 ui.set_confirm_discard("close".into());
                 return slint::CloseRequestResponse::KeepWindowShown;
             }
@@ -383,12 +399,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         ui.set_candidates_loaded(false);
                         ui.set_account_setup(text(&value, "page") != "login");
                         ui.set_password("".into());
+                        ui.set_editing(false); ui.set_resume_after_edit(false);
+                        ui.set_setup_mode(false); ui.set_show_advanced(false);
+                        ui.set_show_settings(false); ui.set_show_logs(false);
+                        ui.set_committee_status("".into()); ui.set_current_host("".into());
                     }
                     "candidates" => {
                         *committees.borrow_mut() = value["candidates"].as_array().cloned().unwrap_or_default();
                         render_committees(&ui, &committees.borrow());
                         ui.set_candidates_loaded(true);
                         ui.set_page("committees".into());
+                        ui.set_setup_mode(false); ui.set_show_settings(false); ui.set_show_logs(false);
                     }
                     "defaults" => {
                         ui.set_server_url(text(&value, "serverUrl").into());
@@ -403,7 +424,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         ui.set_storage_provider(text(&value, "storageProvider").into());
                         ui.set_current_host(text(&value["currentHost"], "deviceLabel").into());
                         ui.set_transfer_confirmed(false);
+                        ui.set_editing(false); ui.set_resume_after_edit(false);
                         ui.set_setup_mode(true); ui.set_loaded(false); ui.set_show_settings(true);
+                        ui.set_show_logs(false); ui.set_show_advanced(false); ui.set_feedback("".into());
                         ui.set_committee_name(text(&value, "committeeName").into());
                         ui.set_config_path(text(&value, "configPath").into());
                         ui.set_server_url(text(&value, "serverUrl").into());
@@ -416,6 +439,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     "unpaired" => {
                         ui.set_page("login".into());
+                        ui.set_editing(false); ui.set_resume_after_edit(false);
                         ui.set_loaded(false); ui.set_setup_mode(false); ui.set_show_settings(true);
                         ui.set_committee_name("".into());
                         ui.set_confirm_unpair(false);
@@ -430,13 +454,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         redraw = true;
                     }
                     "config" => {
-                        ui.set_page("home".into());
                         ui.set_confirm_unpair(false);
                         rows.borrow_mut().clear();
                         redraw = true;
                         ui.set_last_connection("".into());
                         ui.set_observed("".into());
                         let paired = value["paired"] == true;
+                        let keep_settings = ui.get_loaded() && ui.get_show_settings();
+                        ui.set_page(if paired {"home"} else {"manual"}.into());
+                        ui.set_show_settings(paired && keep_settings);
+                        ui.set_show_logs(false);
                         ui.set_setup_mode(false); ui.set_committee_name(text(&value, "committeeName").into());
                         ui.set_loaded(paired);
                         ui.set_status(if paired { "STOPPED" } else { "UNPAIRED" }.into());
@@ -556,7 +583,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     _ => {}
                 }
             }
-            ui.set_dirty(ui.get_page() == "home" && form_state(&ui) != *saved_form.borrow());
+            ui.set_dirty(matches!(ui.get_page().as_str(), "home" | "manual") && form_state(&ui) != *saved_form.borrow());
             if ui.get_dirty() {
                 ui.set_feedback("".into());
             }
