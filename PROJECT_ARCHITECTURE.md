@@ -133,7 +133,7 @@ SERVER_VOLUME 使用 0600 临时文件、fsync 和无覆盖原子发布。S3 end
 
 逻辑删除立即隐藏文件并写不可恢复墓碑，再由 durable job 幂等清理每个物理副本。provider migration 复制全部历史 blob 并复验后才原子切换 binding；失败时旧 provider 继续服务。maintenance worker 只清理明确终态且可删除的 staging，唯一暂存副本、待重试 copy 和退休源副本不因期限、LRU 或容量压力删除。
 
-Chair Agent 使用独立 `QuorumAgent` authorization scheme。一次性配对码和设备凭据只保存哈希；一个委员会最多一个活动 host。单调 lease generation fence 使转移或撤销后的旧设备不能 heartbeat、claim、上传或完成任务。Agent 对本地路径做规范化并拒绝链接、硬链接、非普通文件和目录逃逸；服务端下发内容先完整校验再原子替换。本地并发编辑、墓碑冲突和主机转移不会静默覆盖，均形成 durable 冲突供 Chair 显式裁决。Agent 以独立 heartbeat 维持 lease，以不含任务内容的 SSE `wake` 近实时触发同一个单飞同步循环，并保留 30 秒 durable reconciliation；SSE 断线不改变 PostgreSQL task 的权威性。
+Chair Agent 使用独立 `QuorumAgent` authorization scheme。一次性配对码和设备凭据只保存哈希；一个委员会最多一个活动 host。单调 lease generation fence 使转移或撤销后的旧设备不能 heartbeat、claim、上传或完成任务。Agent 对本地路径做规范化并拒绝链接、硬链接、非普通文件和目录逃逸；服务端下发内容先完整校验再原子替换。本地并发编辑、墓碑冲突和主机转移不会静默覆盖，均形成 durable 冲突供 Chair 显式裁决。Agent 以独立 heartbeat 维持 lease，以不含任务内容的 SSE `wake` 近实时触发同一个单飞同步循环，并保留 30 秒 durable reconciliation；SSE 断线不改变 PostgreSQL task 的权威性。 本轮任务完成可能推进服务端文件清单；检测到新的本地变更后、提交前重新读取清单，避免使用本轮开始时的旧序号。已提交上传的恢复仍重放原请求，服务端版本及冲突校验保持不变。
 
 存储位置只决定文件字节保存在哪里，不决定菜单、审核或分享能力。SERVER_VOLUME、S3_COMPATIBLE、CHAIR_AGENT 都通过 `Stage6StorageService.recordProviderCommitInTransaction` 在持久保存与校验成功后原子创建待审核文件和提交来源；主席上传来源为 CHAIR，代表上传沿用分享发起主席作为技术保管人，另存代表团、类型和提交时间。上传及代表来源在同一幂等事务创建，文件类型改变后的重试返回冲突。保存失败或未完成的主机任务不创建可批准的文件；网页显示正在保存或保存故障。尚未正式发布的文件追加内容后重新待审核并清除旧审核结果；正式文件只能通过独立提交的批准替换，原发布版本在审核期间继续可用。缺失来源继续显示未知。
 

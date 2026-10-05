@@ -121,6 +121,47 @@ describe('Chair Agent recovery loop', () => {
     expect(value.client.localChange).toHaveBeenCalledTimes(2);
   });
 
+  it.each(['UPLOAD_BLOB', 'HOST_COMMIT_BLOB'] as const)(
+    'refreshes the manifest advanced by %s before submitting the next local file', async type => {
+      const value = await fixture();
+      await writeFile(join(value.root, 'second.txt'), 'second');
+      const first = task(type, {logicalName: 'first.txt', expectedSizeBytes: 5, expectedSha256: digest('first')});
+      const event: StorageManifestEvent = {sequence: 1, kind: 'UPSERT', fileEntryId,
+        fileRevision: 1, versionId: randomUUID(), blobId, logicalName: 'first.txt', originalName: 'first.txt',
+        mediaType: 'text/plain', sizeBytes: 5, sha256: digest('first'), createdAt: first.createdAt};
+      let committed = false;
+      vi.mocked(value.client.manifest).mockImplementation(async () => ({
+        events: committed ? [event] : [], nextSequence: committed ? 1 : 0, hasMore: false}));
+      vi.mocked(value.client.tasks).mockResolvedValue({tasks: [first], nextSequence: 1, hasMore: false});
+      vi.mocked(value.client.complete).mockImplementation(async () => {committed = true; return {...first, status: 'COMPLETED'};});
+      const firstRequest = randomUUID();
+      if (type === 'UPLOAD_BLOB') {
+        await writeFile(join(value.root, 'first.txt'), 'first');
+        const detected = await value.scanner.detectOne();
+        if (!detected || detected.relativePath !== 'first.txt') throw new Error('Expected first local file.');
+        await value.scanner.recordResult(detected, firstRequest, 0,
+          {status: 'PENDING_CONTENT', changeRequestId: firstRequest, task: first});
+      } else {
+        vi.mocked(value.client.download).mockResolvedValue((async function* () {yield Buffer.from('first');})());
+      }
+      const second = task('UPLOAD_BLOB', {fileEntryId: randomUUID(), blobId: randomUUID(),
+        expectedSizeBytes: 6, expectedSha256: digest('second')});
+      vi.mocked(value.client.localChange).mockImplementation(async (_generation, requestId, sequence, change) => {
+        if (requestId === firstRequest) return {status: 'COMPLETED', changeRequestId: firstRequest,
+          fileEntryId, fileRevision: 1};
+        expect(change).toMatchObject({kind: 'UPSERT', logicalName: 'second.txt'});
+        return sequence === 1
+          ? {status: 'PENDING_CONTENT', changeRequestId: requestId, task: second}
+          : {status: 'CONFLICT', changeRequestId: requestId, conflictId: randomUUID(), reasonCode: 'MANIFEST_STALE'};
+      });
+      await value.runtime.synchronizeOnce();
+      expect(value.state.snapshot().conflicts).toEqual({});
+      expect(value.state.snapshot().pendingUploads[second.id]).toMatchObject({relativePath: 'second.txt', manifestSequence: 1});
+      if (type === 'UPLOAD_BLOB') {
+        expect(value.client.localChange).toHaveBeenCalledWith(1, firstRequest, 0, expect.anything());
+      }
+    });
+
   it('recovers local state after the server completed a task before the process persisted the result', async () => {
     const value = await fixture(); await writeFile(join(value.root, 'local.txt'), 'local');
     const uploadTask = task('UPLOAD_BLOB', {expectedSizeBytes: 5, expectedSha256: digest('local')});

@@ -331,6 +331,8 @@ export class StorageAgentRuntime {
   private async reportOneLocalChange(): Promise<void> {
     const detected: DetectedLocalChange | null = await this.scanner.detectOne();
     if (!detected) return;
+    // Completing tasks in this cycle may have advanced the server manifest.
+    this.manifest = latest(await this.loadManifest());
     const requestId = randomUUID(); const manifestSequence = Math.max(0,
       ...[...this.manifest.values()].map(event => event.sequence));
     const result = await this.client.localChange(this.leaseGeneration, requestId, manifestSequence, detected.change);
