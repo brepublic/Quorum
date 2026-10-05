@@ -12,7 +12,7 @@ use std::{
     rc::Rc,
     sync::{mpsc, Arc, Mutex},
     thread,
-    time::{Duration, SystemTime},
+    time::{Duration, SystemTime, Instant},
 };
 slint::include_modules!();
 
@@ -64,7 +64,10 @@ fn render(ui: &MainWindow, rows: &[Value], logs: &[String]) {
             let total = v["total"].as_f64().unwrap_or(0.0);
             let progressing = v["progress"].as_bool().unwrap_or(false);
             FileRow {
+                id: text(v, "id").into(),
                 name: text(v, "name").into(),
+                local_code: text(v, "local").into(),
+                cache_code: text(v, "cache").into(),
                 size: bytes(v["size"].as_f64().unwrap_or(0.0)).into(),
                 local: translate(text(v, "local"), ui.get_language().as_str()).into(),
                 cache: translate(text(v, "cache"), ui.get_language().as_str()).into(),
@@ -82,6 +85,9 @@ fn render(ui: &MainWindow, rows: &[Value], logs: &[String]) {
             }
         })
         .collect();
+    if ui.get_file_details() {
+        if let Some(row) = model.iter().find(|row| row.id == ui.get_selected_file().id) {ui.set_selected_file(row.clone());} else {ui.set_file_details(false);}
+    }
     ui.set_files(ModelRc::new(VecModel::from(model)));
     let filter = ui.get_log_filter().to_lowercase();
     ui.set_log_text(
@@ -168,12 +174,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let input_action = input.clone();
     let logs_action = logs.clone();
     let saved_action = saved_form.clone();
+    let weak_file = ui.as_weak();
+    ui.on_show_file(move |id| {
+        use slint::Model;
+        if let Some(ui) = weak_file.upgrade() {
+            if let Some(row) = ui.get_files().iter().find(|row| row.id == id) {ui.set_selected_file(row); ui.set_file_details(true);}
+        }
+    });
     ui.on_action(move |action| {
         let Some(ui) = weak.upgrade() else {return};
         if ui.get_busy() || ui.get_closing() {return;}
         let mut action = action.as_str();
         if !ui.get_confirm_discard().is_empty() && !action.starts_with("discard-") {return;}
         let dirty = matches!(ui.get_page().as_str(), "home" | "manual") && form_state(&ui) != *saved_action.borrow();
+        if matches!(action, "enter-manual" | "logout" | "cancel-switch") {ui.set_password("".into()); ui.set_show_password(false);}
         if action == "enter-manual" {
             ui.set_page("manual".into()); ui.set_show_advanced(false);
             ui.set_error_code("".into()); ui.set_error_stage("".into()); ui.set_feedback("".into()); return;
@@ -235,7 +249,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ui.set_confirm_discard("".into()); ui.set_closing(true); ui.set_status("STOPPING".into());
             input_action.lock().unwrap().take(); return;
         }
-        let action = if action == "discard-load" {ui.set_confirm_discard("".into()); "load"}
+        let mut action = if action == "discard-load" {ui.set_confirm_discard("".into()); "load"}
             else if action == "discard-open" {ui.set_confirm_discard("".into()); "open"} else {action};
         if action == "discard-settings" {
             ui.set_confirm_discard("".into());
@@ -246,13 +260,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if matches!(action,"start"|"restart"|"unpair"|"unpair-local"|"confirm-unpair"|"confirm-switch") && (form_state(&ui) != *saved_action.borrow() || ui.get_config_path() != ui.get_saved_config_path()) {
             ui.set_error_code("Settings changed. Save them first, or import the original configuration again.".into()); return;
         }
-        if matches!(action, "confirm-unpair" | "confirm-switch") {
-            ui.set_switch_committee(action == "confirm-switch");
+        if action == "confirm-switch" {action = "begin-switch";}
+        if matches!(action, "confirm-unpair" | "confirm-switch-target") {
+            ui.set_switch_committee(action == "confirm-switch-target");
             ui.set_unpair_failed(false); ui.set_confirm_unpair(true); return;
         }
         if action == "unpair" {ui.set_resume_after_edit(false);}
-        if action == "open-root" || action == "open-web" {
-            let target = if action == "open-root" {ui.get_root_path()} else {ui.get_committee_url()};
+        if matches!(action, "open-root" | "open-web" | "open-conflicts") {
+            let target = if action == "open-root" {ui.get_root_path()} else if action == "open-conflicts" {format!("{}/posts/storage#sync-conflicts", ui.get_committee_url().trim_end_matches("/files")).into()} else {ui.get_committee_url()};
             if !target.is_empty() {let _ = Command::new("xdg-open").arg(target.as_str()).spawn();} return;
         }
         if action == "export-logs" {
@@ -271,8 +286,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut value = json!({"command":action,"target":ui.get_pending_target().as_str(),"configPath":ui.get_config_path().as_str(),"serverUrl":ui.get_server_url().as_str(),
             "rootPath":ui.get_root_path().as_str(),"caCertificatePath":ui.get_certificate().as_str(),"scanSeconds":ui.get_scan_seconds().as_str(),
             "pairingCode":ui.get_pairing_code().as_str(),"deviceLabel":ui.get_device_label().as_str(),
-            "email":ui.get_email().as_str(),"password":ui.get_password().as_str(),"committeeId":ui.get_committee_id().as_str(),"transferConfirmed":ui.get_transfer_confirmed()});
-        if matches!(action, "login" | "change-password") {ui.set_password("".into());}
+            "email":ui.get_email().as_str(),"password":if matches!(action, "login" | "change-password") {ui.get_password().to_string()} else {String::new()},"committeeId":ui.get_committee_id().as_str(),"transferConfirmed":ui.get_transfer_confirmed()});
         ui.set_error_code("".into()); ui.set_error_stage("".into()); ui.set_feedback("".into()); ui.set_busy(true);
         if matches!(action, "save" | "save-as" | "pair") {
             let choose_path = action == "save-as" || (action == "save" && ui.get_config_path().trim().is_empty());
@@ -389,6 +403,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let weak = ui.as_weak();
     let timer_input = input.clone();
     let timer = slint::Timer::default();
+    let last_snapshot = Cell::new(None::<Instant>);
     timer.start(
         slint::TimerMode::Repeated,
         Duration::from_millis(100),
@@ -404,18 +419,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             for value in rx.try_iter() {
                 match text(&value, "event") {
+                    "switching" => {
+                        ui.set_switching(value["active"] == true);
+                        ui.set_switch_revoked(value["revoked"] == true);
+                        ui.set_previous_committee(text(&value, "committeeName").into());
+                        ui.set_previous_site(text(&value, "serverUrl").into());
+                        if value["active"] == true {ui.set_loaded(false); ui.set_running(false);}
+                        else {ui.set_confirm_unpair(false); ui.set_switch_committee(false);}
+                    }
                     "account" => {
+                        ui.set_confirm_unpair(false); ui.set_unpair_failed(false);
                         ui.set_page(text(&value, "page").into());
                         ui.set_server_url(text(&value, "serverUrl").into());
                         ui.set_candidates_loaded(false);
                         ui.set_account_setup(text(&value, "page") != "login");
-                        ui.set_password("".into());
+                        ui.set_password("".into()); ui.set_show_password(false);
+                        ui.set_account_email(text(&value, "email").into());
                         ui.set_editing(false); ui.set_resume_after_edit(false);
                         ui.set_setup_mode(false); ui.set_show_advanced(false);
                         ui.set_show_settings(false); ui.set_show_logs(false);
                         ui.set_committee_status("".into()); ui.set_current_host("".into());
                     }
                     "candidates" => {
+                        ui.set_account_email(text(&value, "email").into());
                         *committees.borrow_mut() = value["candidates"].as_array().cloned().unwrap_or_default();
                         render_committees(&ui, &committees.borrow());
                         ui.set_candidates_loaded(true);
@@ -429,6 +455,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     "open-request" => {ui.set_pending_target(text(&value, "target").into()); ui.set_open_pending(true);}
                     "setup" => {
+                        ui.set_password("".into()); ui.set_show_password(false);
                         if value["accountSetup"] == false {ui.set_account_setup(false);}
                         ui.set_page("home".into());
                         ui.set_committee_status(text(&value, "committeeStatus").into());
@@ -465,6 +492,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         redraw = true;
                     }
                     "config" => {
+                        ui.set_password("".into()); ui.set_show_password(false);
+                        ui.set_switching(false); ui.set_switch_revoked(false); ui.set_switch_committee(false);
+                        ui.set_file_details(false); ui.set_files_loaded(false); ui.set_status_delayed(false); last_snapshot.set(None);
                         ui.set_confirm_unpair(false);
                         rows.borrow_mut().clear();
                         redraw = true;
@@ -491,6 +521,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         *saved_form.borrow_mut() = form_state(&ui);
                     }
                     "state" => {
+                        if ui.get_switching() && !ui.get_confirm_unpair() {continue;}
                         let state = text(&value, "state");
                         ui.set_status(state.into());
                         if state == "STARTING" {ui.set_show_settings(false);}
@@ -511,8 +542,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             redraw = true;
                         }
                     }
-                    "busy" => ui.set_busy(value["value"] == true),
+                    "busy" => {
+                        ui.set_busy(value["value"] == true);
+                        if !ui.get_busy() {
+                            match ui.get_error_code().as_str() {
+                                "INVALID_EMAIL" => ui.invoke_focus_email(),
+                                "INCORRECT_CREDENTIALS" | "PASSWORD_TOO_SHORT" | "PASSWORD_TOO_LONG" => ui.invoke_focus_password(),
+                                _ => {}
+                            }
+                        }
+                    },
                     "snapshot" => {
+                        if ui.get_switching() {continue;}
+                        last_snapshot.set(Some(Instant::now()));
+                        ui.set_status_delayed(false);
                         ui.set_committee_status(text(&value["committee"], "status").into());
                         ui.set_storage_provider(text(&value["committee"], "storageProvider").into());
                         if !text(&value["committee"], "name").is_empty() {ui.set_committee_name(text(&value["committee"], "name").into());}
@@ -559,7 +602,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                     "error" => {
-                        if text(&value, "operation") == "unpair" { ui.set_unpair_failed(true); }
+                        if matches!(text(&value, "operation"), "unpair" | "switch-committee") {ui.set_unpair_failed(true);}
                         let code = text(&value, "code");
                         let stage = text(&value, "stage");
                         ui.set_error_stage(stage.into());
@@ -597,6 +640,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let now = SystemTime::now();
             ui.set_last_connection_age(stale_time(ui.get_last_connection().as_str(), now, ui.get_language().as_str()).into());
             ui.set_observed_age(stale_time(ui.get_observed().as_str(), now, ui.get_language().as_str()).into());
+            ui.set_status_delayed(last_snapshot.get().is_some_and(|received| received.elapsed() > Duration::from_secs(30)));
             ui.set_dirty(matches!(ui.get_page().as_str(), "home" | "manual") && form_state(&ui) != *saved_form.borrow());
             if ui.get_dirty() {
                 ui.set_feedback("".into());

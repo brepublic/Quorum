@@ -79,6 +79,14 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
   const [pairingWaiting, setPairingWaiting] = React.useState(false);
   const [pairingFeedback, setPairingFeedback] = React.useState('');
   const [conflicts, setConflicts] = React.useState<StorageAgentConflict[]>([]);
+  const conflictList = React.useRef<HTMLDivElement>(null);
+  const hasPendingConflicts = conflicts.some(item => item.status === 'PENDING');
+  React.useEffect(() => {
+    if (hasPendingConflicts && window.location.hash === '#sync-conflicts') {
+      conflictList.current?.scrollIntoView({block: 'start'});
+      conflictList.current?.focus({preventScroll: true});
+    }
+  }, [hasPendingConflicts, section]);
   const [conflictNames, setConflictNames] = React.useState<Record<string, string>>({});
   const [selectedFile, setSelectedFile] = React.useState<File>();
   const [logicalName, setLogicalName] = React.useState('');
@@ -375,7 +383,7 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
           }}><Icon name="copy" />{t("Copy pairing code")}</Button>
         </details>}
       </Message>}
-      {conflicts.some(item => item.status === 'PENDING') && <div className="self-hosted-storage-conflicts">
+      {conflicts.some(item => item.status === 'PENDING') && <div id="sync-conflicts" ref={conflictList} tabIndex={-1} aria-label={t("Sync conflicts")} className="self-hosted-storage-conflicts">
         <Header as="h4">{t("Sync conflicts")}</Header>
         {conflicts.filter(item => item.status === 'PENDING').map(item => <Card key={item.id} fluid>
           <Card.Content><Card.Header>{item.change.kind === 'DELETE' ? t("Local deletion") : item.change.logicalName}</Card.Header>

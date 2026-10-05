@@ -31,14 +31,20 @@ let candidates: AgentCommitteeCandidate[] = [];
 let selected: AgentCommitteeCandidate | undefined;
 let selectedDirectory: {rootPath: string; ordinal: number} | undefined;
 let pendingPair: {path: string; config: StorageAgentLocalConfig} | undefined;
-async function logout() {const previous = account; account = undefined; candidates = []; selected = undefined;
+let accountEmail = '';
+let switching: {previous: StorageAgentLocalConfig; path: string; resume: boolean; revoked: boolean; targetPath: string} | undefined;
+function switchState() {send({event: 'switching', active: !!switching, revoked: switching?.revoked ?? false,
+  committeeName: switching?.previous.committeeName ?? switching?.previous.committeeId ?? '', serverUrl: switching?.previous.serverUrl ?? ''});}
+
+async function logout() {const previous = account; account = undefined; accountEmail = ''; candidates = []; selected = undefined;
   if (previous) try {await previous.logout();} catch (error) {
     if (safeError(error) !== 'AUTHENTICATION_REQUIRED') send({event: 'error', code: 'ACCOUNT_LOGOUT_FAILED', stage: 'login'});
   }}
 async function listCandidates() {
   if (!account) throw new Error('AUTHENTICATION_REQUIRED');
+  stage = 'committees';
   candidates = await account.call<AgentCommitteeCandidate[]>('/api/v1/storage-agent/committees');
-  send({event: 'candidates', candidates});
+  send({event: 'candidates', email: accountEmail, candidates: candidates.filter(item => !switching || account!.origin !== switching.previous.serverUrl || item.id !== switching.previous.committeeId)});
 }
 let setup: {value: AgentPairingConfig; rootPath: string; ordinal: number; allocated: boolean; chosenRoot?: string} | undefined;
 function publicConfig() {if (config) send({event: 'config', paired: true, committeeName: config.committeeName ?? config.committeeId, configPath, serverUrl: config.serverUrl,
@@ -149,14 +155,117 @@ async function start() {
   running.on('close', code => {if (child === running) child = undefined; send({event: 'state', state: 'EXITED'});
     if (code) send({event: 'error', code: 'AGENT_EXITED'});});
 }
+async function revoke(current: StorageAgentLocalConfig) {
+    const unlock = await lockAgentRoot(current.rootPath);
+    try {
+      const ca = current.caCertificatePath ? await readFile(current.caCertificatePath) : undefined;
+      const url = new URL('/api/v1/storage-agent/revoke', current.serverUrl);
+      if (url.protocol !== 'https:') throw new Error('HTTPS_REQUIRED');
+      await new Promise<void>((done, fail) => {
+        const request = httpsRequest(url, {method: 'POST', ca, rejectUnauthorized: true,
+          headers: {'content-type': 'application/json', authorization: `QuorumAgent ${current.credential}`,
+            'x-storage-lease-generation': String(current.leaseGeneration)}}, response => {
+          let body = '';
+          response.on('data', chunk => {
+            body += chunk;
+            if (body.length > 65536) response.destroy(new Error('REVOKE_FAILED'));
+          });
+          response.on('error', fail);
+          response.on('end', () => {
+            try {
+              const value = JSON.parse(body);
+              if (response.statusCode === 200 && value.data?.revoked === true) done();
+              else {const code = safeError({code:value.error?.code}); fail(new Error(code === 'OPERATION_FAILED' ? 'REVOKE_FAILED' : code));}
+            } catch {fail(new Error('REVOKE_FAILED'));}
+          });
+        });
+        request.setTimeout(15000, () => request.destroy(new Error('REVOKE_FAILED')));
+        request.on('error', fail); request.end('{}');
+      });
+    } finally {await unlock();}
+}
+async function prepareAccountPair(input: Record<string, unknown>) {
+  if (setup) return;
+  if (!account || !selected) throw new Error('AUTHENTICATION_REQUIRED');
+  if (switching && account.origin === switching.previous.serverUrl && selected.id === switching.previous.committeeId) throw new Error('INVALID_REFERENCE');
+  if (selected.currentHost && input.transferConfirmed !== true) throw new Error('CHAIR_HOST_ALREADY_PAIRED');
+  stage = 'pairing';
+  const result = await account.call<{configuration: AgentPairingConfig}>(
+    `/api/v1/committees/${selected.id}/storage-agent/pairing-codes`,
+    {baseRevision: selected.revision, purpose: selected.currentHost ? 'TRANSFER' : 'INITIAL'});
+  setup = {value: result.configuration, ...selectedDirectory!, allocated: false};
+  const path = join(desktopConfigDirectory(), 'configurations', `${randomUUID()}.json`);
+  if (switching) switching.targetPath = path; else configPath = path;
+}
+async function prepareSetupDirectory(input: Record<string, unknown>) {
+  if (!setup) throw new Error('PAIRING_CONFIG_INVALID');
+  stage = 'pairing-input';
+  if (!pendingPair && Date.parse(setup.value.expiresAt) <= Date.now()) throw new Error('LINK_EXPIRED');
+  stage = 'storage-directory';
+  const chosen = resolve(String(input.rootPath || setup.rootPath));
+  if (chosen === setup.rootPath && !setup.allocated) {
+    try {await allocateDirectory(setup.value, chosen, setup.ordinal); setup.allocated = true;}
+    catch (error) {if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new Error('DIRECTORY_EXISTS'); throw error;}
+  }
+  if (!pendingPair && chosen !== setup.chosenRoot) {
+    try {if ((await readdir(chosen)).length > 0) throw new Error('DIRECTORY_NOT_EMPTY');}
+    catch (error) {if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;}
+  }
+  setup.chosenRoot = chosen;
+  return chosen;
+}
 async function command(input: Record<string, unknown>) {
   const action = input.command;
   stage = 'settings';
-  if (pendingPair && !['pair', 'setup-pair', 'account-pair', 'stop'].includes(String(action))) {
+  if (pendingPair && !['pair', 'setup-pair', 'account-pair', 'switch-committee', 'stop'].includes(String(action))) {
     throw new Error('PAIRING_RECOVERY_REQUIRED');
   }
+  if (action === 'begin-switch') {
+    if (!config || switching) throw new Error('CONFIG_REQUIRED');
+    switching = {previous: config, path: configPath, resume: !!child, revoked: false, targetPath: ''};
+    await logout(); setup = undefined; switchState();
+    send({event: 'account', page: 'login', serverUrl: config.serverUrl}); return;
+  }
+  if (action === 'cancel-switch') {
+    if (!switching) return;
+    const previous = switching;
+    if (previous.revoked) await rememberConfiguration();
+    await logout(); setup = undefined; switching = undefined; switchState();
+    if (!previous.revoked) {
+      config = previous.previous; configPath = previous.path; publicConfig();
+      if (previous.resume) {if (child) send({event: 'state', state: 'RUNNING'}); else await start();}
+    } else {send({event: 'unpaired'});}
+    return;
+  }
+  if (action === 'switch-committee') {
+    if (!switching) throw new Error('CONFIG_REQUIRED');
+    await prepareAccountPair(input);
+    if (!switching.revoked) {
+      // Validate the chosen destination before interrupting the existing connection.
+      const next = await settings({...input, serverUrl: setup!.value.serverUrl});
+      const chosen = await prepareSetupDirectory(input);
+      await mkdir(chosen, {recursive: true, mode: 0o700});
+      const info = await lstat(chosen);
+      if (info.isSymbolicLink() || !info.isDirectory()) throw new Error('UNSAFE_PATH');
+      await access(chosen, constants.W_OK);
+      outside(await canonical(chosen), await canonical(switching.targetPath));
+      if (next.caCertificatePath) outside(await canonical(chosen), await canonical(next.caCertificatePath));
+      await fingerprint(next.serverUrl, next.caCertificatePath);
+      await stop(); stage = 'revoke'; await revoke(switching.previous);
+      switching.revoked = true; config = undefined; configPath = switching.targetPath;
+      switchState(); await rememberConfiguration();
+    }
+    configPath = switching.targetPath;
+    try {await command({...input, command: 'setup-pair'});}
+    finally {
+      if (config || pendingPair) await logout();
+      // Once the new identity is saved, a start failure belongs to that connection.
+      if (config) {switching = undefined; switchState();}
+    }
+    return;
+  }
   if (action === 'login') {
-    if (config || child) throw new Error('STOP_AND_UNPAIR_FIRST');
+    if ((config || child) && !switching) throw new Error('STOP_AND_UNPAIR_FIRST');
     await logout();
     stage = 'server-address';
     const site = normalizeDesktopSite(String(input.serverUrl ?? ''));
@@ -164,16 +273,17 @@ async function command(input: Record<string, unknown>) {
     await rememberSite(site);
     account = new DesktopAccount(site, String(input.caCertificatePath ?? ''));
     stage = 'login';
-    const result = await account.call<{user: {mustChangePassword: boolean}}>('/api/v1/auth/login',
+    const result = await account.call<{user: {mustChangePassword: boolean; email: string}}>('/api/v1/auth/login',
       {email: String(input.email ?? ''), password: String(input.password ?? '')});
-    send({event: 'account', page: result.user.mustChangePassword ? 'password' : 'committees', serverUrl: site});
+    accountEmail = result.user.email || String(input.email ?? '');
+    send({event: 'account', email: accountEmail, page: result.user.mustChangePassword ? 'password' : 'committees', serverUrl: site});
     if (!result.user.mustChangePassword) await listCandidates();
     return;
   }
   if (action === 'change-password') {
     if (!account) throw new Error('AUTHENTICATION_REQUIRED');
     stage = 'login'; await account.call('/api/v1/auth/change-password', {newPassword: String(input.password ?? '')});
-    send({event: 'account', page: 'committees', serverUrl: account.origin}); await listCandidates(); return;
+    send({event: 'account', page: 'committees', email: accountEmail, serverUrl: account.origin}); await listCandidates(); return;
   }
   if (action === 'list-committees') {await listCandidates(); return;}
   if (action === 'logout') {await logout(); setup = undefined; send({event: 'account', page: 'login', serverUrl: await desktopSite()}); return;}
@@ -189,17 +299,8 @@ async function command(input: Record<string, unknown>) {
     return;
   }
   if (action === 'account-pair') {
-    if (setup && (config || pendingPair)) {await command({...input, command: 'setup-pair'}); return;}
-    if (!account || !selected) throw new Error('AUTHENTICATION_REQUIRED');
-    if (selected.currentHost && input.transferConfirmed !== true) throw new Error('CHAIR_HOST_ALREADY_PAIRED');
-    stage = 'pairing';
-    if (!setup) {
-      const result = await account.call<{configuration: AgentPairingConfig}>(
-        `/api/v1/committees/${selected.id}/storage-agent/pairing-codes`,
-        {baseRevision: selected.revision, purpose: selected.currentHost ? 'TRANSFER' : 'INITIAL'});
-      setup = {value: result.configuration, ...selectedDirectory!, allocated: false};
-      configPath = join(desktopConfigDirectory(), 'configurations', `${randomUUID()}.json`);
-    }
+    if (switching) throw new Error('STOP_AND_UNPAIR_FIRST');
+    await prepareAccountPair(input);
     try {await command({...input, command: 'setup-pair'});}
     finally {if (config || pendingPair) await logout();}
     return;
@@ -244,17 +345,7 @@ async function command(input: Record<string, unknown>) {
   if (action === 'setup-pair') {
     if (!setup) throw new Error('PAIRING_CONFIG_INVALID');
     if (config) {await rememberConfiguration(configPath); setup = undefined; await start(); return;}
-    if (!pendingPair && Date.parse(setup.value.expiresAt) <= Date.now()) throw new Error('LINK_EXPIRED');
-    const chosen = resolve(String(input.rootPath || setup.rootPath));
-    if (chosen === setup.rootPath && !setup.allocated) {
-      try {await allocateDirectory(setup.value, chosen, setup.ordinal); setup.allocated = true;}
-      catch (error) {if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new Error('DIRECTORY_EXISTS'); throw error;}
-    }
-    if (chosen !== setup.rootPath && chosen !== setup.chosenRoot) {
-      try {if ((await readdir(chosen)).length > 0) throw new Error('DIRECTORY_NOT_EMPTY');}
-      catch (error) {if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;}
-    }
-    setup.chosenRoot = chosen;
+    const chosen = await prepareSetupDirectory(input);
     await command({...input, rootPath: chosen, command: 'pair', configPath, serverUrl: setup.value.serverUrl,
       pairingCode: setup.value.pairingCode, committeeName: setup.value.committeeName});
     setup = undefined;
@@ -300,37 +391,10 @@ async function command(input: Record<string, unknown>) {
   if (action === 'unpair') {
     if (!config) throw new Error('CONFIG_REQUIRED');
     stage = 'revoke';
-    const current = config;
-    const unlock = await lockAgentRoot(current.rootPath);
-    try {
-      const ca = current.caCertificatePath ? await readFile(current.caCertificatePath) : undefined;
-      const url = new URL('/api/v1/storage-agent/revoke', current.serverUrl);
-      if (url.protocol !== 'https:') throw new Error('HTTPS_REQUIRED');
-      await new Promise<void>((done, fail) => {
-        const request = httpsRequest(url, {method: 'POST', ca, rejectUnauthorized: true,
-          headers: {'content-type': 'application/json', authorization: `QuorumAgent ${current.credential}`,
-            'x-storage-lease-generation': String(current.leaseGeneration)}}, response => {
-          let body = '';
-          response.on('data', chunk => {
-            body += chunk;
-            if (body.length > 65536) response.destroy(new Error('REVOKE_FAILED'));
-          });
-          response.on('error', fail);
-          response.on('end', () => {
-            try {
-              const value = JSON.parse(body);
-              if (response.statusCode === 200 && value.data?.revoked === true) done();
-              else {const code = safeError({code:value.error?.code}); fail(new Error(code === 'OPERATION_FAILED' ? 'REVOKE_FAILED' : code));}
-            } catch {fail(new Error('REVOKE_FAILED'));}
-          });
-        });
-        request.setTimeout(15000, () => request.destroy(new Error('REVOKE_FAILED')));
-        request.on('error', fail); request.end('{}');
-      });
-      config = undefined; draft = undefined; draftSource = ''; configPath = '';
-      setup = undefined; await rememberConfiguration();
-      send({event: 'unpaired'});
-    } finally {await unlock();}
+    await revoke(config);
+    config = undefined; draft = undefined; draftSource = ''; configPath = '';
+    setup = undefined; await rememberConfiguration();
+    send({event: 'unpaired'});
     return;
   }
   if (action === 'save' || action === 'save-as') {
@@ -481,10 +545,10 @@ input.on('line', line => {
     let operation = 'unknown';
     try {
       const input = JSON.parse(line);
-      if (['login','logout','change-password','list-committees','select-committee','account-pair','open','restore','setup-pair','load','save','save-as','pair','unpair','unpair-local','start','stop','restart'].includes(input.command)) operation = input.command;
+      if (['begin-switch','cancel-switch','switch-committee','login','logout','change-password','list-committees','select-committee','account-pair','open','restore','setup-pair','load','save','save-as','pair','unpair','unpair-local','start','stop','restart'].includes(input.command)) operation = input.command;
       await command(input); send({event:'completed',operation});
     } catch (error) {
-      if (safeError(error) === 'AUTHENTICATION_REQUIRED' && operation !== 'login') {
+      if (safeError(error) === 'AUTHENTICATION_REQUIRED' && operation !== 'login' && operation !== 'unpair' && (operation !== 'switch-committee' || stage === 'pairing')) {
         account?.clear(); account = undefined; candidates = []; selected = undefined;
         send({event: 'account', page: 'login', serverUrl: await desktopSite()});
       }

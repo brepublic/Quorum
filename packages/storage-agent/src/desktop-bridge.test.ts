@@ -11,7 +11,7 @@ import {lockAgentRoot} from './runtime-lock';
 
 const cleanup: (()=>Promise<unknown>)[]=[];
 afterEach(async()=>{for(const fn of cleanup.splice(0).reverse()) await fn();});
-async function fixture(pairStatus = 200, revokeStatus = 200, mustChangePassword = false, failLocalSave = false) {
+async function fixture(pairStatus = 200, revokeStatus = 200, mustChangePassword = false, failLocalSave = false, pairingCodeStatus = 200) {
   const root=await mkdtemp(join(tmpdir(),'quorum-desktop-'));cleanup.push(()=>rm(root,{recursive:true,force:true}));
   const key=join(root,'key.pem'),crt=join(root,'ca.pem');
   execFileSync('openssl',['req','-x509','-newkey','rsa:2048','-nodes','-days','1','-keyout',key,'-out',crt,
@@ -31,6 +31,7 @@ async function fixture(pairStatus = 200, revokeStatus = 200, mustChangePassword 
         currentHost:null, storageProvider:'SERVER_VOLUME'}]})); return;
     }
     if (req.url?.endsWith('/pairing-codes')) {
+      if (pairingCodeStatus !== 200) {res.statusCode = pairingCodeStatus; res.end(JSON.stringify({error:{code:'AUTHENTICATION_REQUIRED'}})); return;}
       res.end(JSON.stringify({data: {configuration: {schemaVersion:1, kind:'quorum-agent-pairing',
         serverUrl:`https://127.0.0.1:${(server.address() as {port:number}).port}`, committeeId:'10000000-0000-4000-8000-000000000001',
         committeeName:'Paused Council', pairingCode:'QRM-test-secret', purpose:'INITIAL', expiresAt:'2099-01-01T00:00:00Z'}}})); return;
@@ -64,6 +65,80 @@ async function fixture(pairStatus = 200, revokeStatus = 200, mustChangePassword 
   return {root,process,events,wait,command,settings,requests};
 }
 describe('desktop bridge process lifecycle',()=>{
+  it('keeps the original Agent running through selection and cancellation, including invalid directories', async () => {
+    const old = await fixture(); const target = await fixture();
+    await old.command('pair', old.settings); await old.command('start');
+    await old.wait(e => e.event === 'snapshot' && e.connected === true);
+    expect(await old.command('begin-switch')).toContainEqual(expect.objectContaining({event:'switching',active:true,revoked:false}));
+    await old.command('login', {...target.settings,email:'chair@example.com',password:'password'});
+    const choice = await old.command('select-committee',{committeeId:'10000000-0000-4000-8000-000000000001'});
+    expect(choice).toContainEqual(expect.objectContaining({event:'setup'}));
+    expect(old.requests.some(r=>r.url.endsWith('/revoke'))).toBe(false);
+    const invalid = await old.command('switch-committee',{...target.settings,rootPath:old.settings.rootPath});
+    expect(invalid).toContainEqual(expect.objectContaining({event:'error',code:'DIRECTORY_NOT_EMPTY',stage:'storage-directory'}));
+    expect(invalid.some(e=>e.state==='STOPPING')).toBe(false);
+    expect(old.requests.some(r=>r.url.endsWith('/revoke'))).toBe(false);
+    const cancelled = await old.command('cancel-switch');
+    expect(cancelled).toContainEqual(expect.objectContaining({event:'config',configPath:old.settings.configPath}));
+    expect(cancelled).toContainEqual(expect.objectContaining({event:'state',state:'RUNNING'}));
+    expect(target.requests.some(r=>r.url.endsWith('/pair'))).toBe(false);
+    await old.command('stop');
+  }, 30000);
+
+  it.each([200,503])('commits a selected switch only after confirmation and handles revoke failure (%s)', async revokeStatus => {
+    const old = await fixture(200,revokeStatus); const target = await fixture();
+    await old.command('pair',old.settings); await old.command('start');
+    await old.wait(e=>e.event==='snapshot'&&e.connected===true);
+    await old.command('begin-switch');
+    const signedIn = await old.command('login',{...target.settings,email:'chair@example.com',password:'password'});
+    expect(signedIn).toContainEqual(expect.objectContaining({event:'candidates',email:'chair@example.com'}));
+    await old.command('select-committee',{committeeId:'10000000-0000-4000-8000-000000000001'});
+    const result = await old.command('switch-committee',target.settings);
+    expect(old.requests.filter(r=>r.url.endsWith('/revoke'))).toHaveLength(1);
+    if(revokeStatus===200) {
+      expect(result).toContainEqual(expect.objectContaining({event:'config',serverUrl:target.settings.serverUrl}));
+      expect(result).toContainEqual(expect.objectContaining({event:'switching',active:false}));
+      expect(target.requests.filter(r=>r.url.endsWith('/pair'))).toHaveLength(1);
+      expect(result.some(e=>e.state==='STARTING')).toBe(true);
+    } else {
+      expect(result).toContainEqual(expect.objectContaining({event:'error',operation:'switch-committee',stage:'revoke'}));
+      expect(target.requests.filter(r=>r.url.endsWith('/pair'))).toHaveLength(0);
+      const cancel = await old.command('cancel-switch');
+      expect(cancel).toContainEqual(expect.objectContaining({event:'config',configPath:old.settings.configPath}));
+      expect(cancel.some(e=>e.state==='STARTING')).toBe(true);
+    }
+    expect(JSON.stringify(result)).not.toContain('qsa1.');
+    await old.command('stop');
+  },30000);
+
+  it('returns an expired target account to sign in without revoking the current connection', async () => {
+    const old=await fixture();const target=await fixture(200,200,false,false,401);
+    await old.command('pair',old.settings);
+    await old.command('begin-switch');
+    await old.command('login',{...target.settings,email:'chair@example.com',password:'password'});
+    await old.command('select-committee',{committeeId:'10000000-0000-4000-8000-000000000001'});
+    const failed=await old.command('switch-committee',target.settings);
+    expect(failed).toContainEqual(expect.objectContaining({event:'account',page:'login'}));
+    expect(failed).toContainEqual(expect.objectContaining({event:'error',code:'AUTHENTICATION_REQUIRED',stage:'pairing'}));
+    expect(old.requests.some(r=>r.url.endsWith('/revoke'))).toBe(false);
+    expect(await old.command('cancel-switch')).toContainEqual(expect.objectContaining({event:'config',configPath:old.settings.configPath}));
+  },30000);
+
+  it('keeps a failed target available for retry without revoking the old device twice',async()=>{
+    const old=await fixture();const target=await fixture(410);
+    await old.command('pair',old.settings);
+    await old.command('begin-switch');
+    await old.command('login',{...target.settings,email:'chair@example.com',password:'password'});
+    await old.command('select-committee',{committeeId:'10000000-0000-4000-8000-000000000001'});
+    const first=await old.command('switch-committee',target.settings);
+    expect(first).toContainEqual(expect.objectContaining({event:'switching',revoked:true}));
+    expect(first).toContainEqual(expect.objectContaining({event:'error',code:'LINK_EXPIRED'}));
+    await old.command('switch-committee',target.settings);
+    expect(old.requests.filter(r=>r.url.endsWith('/revoke'))).toHaveLength(1);
+    expect(target.requests.filter(r=>r.url.endsWith('/pair'))).toHaveLength(2);
+    expect(await old.command('cancel-switch')).toContainEqual(expect.objectContaining({event:'unpaired'}));
+  },30000);
+
   it.each([200, 503])('stops before revoking a running connection (HTTP %s)', async status => {
     const f = await fixture(200, status);
     await f.command('pair', f.settings);

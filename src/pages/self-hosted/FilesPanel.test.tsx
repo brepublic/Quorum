@@ -58,7 +58,7 @@ function button(label: string): HTMLButtonElement | undefined {
   return Array.from(container?.querySelectorAll('button') ?? []).find(item => item.textContent?.includes(label));
 }
 afterEach(() => {if (root) act(() => root?.unmount()); container?.remove(); root = undefined; container = undefined;
-  vi.restoreAllMocks();});
+  vi.restoreAllMocks(); window.history.replaceState(null, '', window.location.pathname);});
 
 describe('self-hosted stage 6 file panel', () => {
   it.each([
@@ -234,7 +234,11 @@ describe('self-hosted stage 6 file panel', () => {
     expect(revokeStorageHost).toHaveBeenCalledWith(committeeId, 'host', 2);
   });
 
-  it('shows durable conflicts and sends the loaded conflict, lease, and file revisions', async () => {
+  it.each([false, true])('shows durable conflicts and follows the Agent conflict link only when requested (%s)', async followLink => {
+    window.history.replaceState(null, '', followLink ? '#sync-conflicts' : window.location.pathname);
+    const scroll = vi.fn();
+    const scrollDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollIntoView');
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {configurable: true, value: scroll});
     const host = {id: 'host', committeeId, deviceId: 'device', deviceLabel: '主席电脑', leaseGeneration: 7,
       status: 'ACTIVE' as const, revision: 1, lastSeenAt: '2026-08-13T00:00:00.000Z',
       pairedAt: '2026-08-13T00:00:00.000Z', revokedAt: null, agentProtocolVersion: 2,
@@ -251,6 +255,12 @@ describe('self-hosted stage 6 file panel', () => {
       listStorageHosts: vi.fn(async () => [host]), listStorageAgentConflicts: vi.fn(async () => [conflict]),
       resolveStorageAgentConflict}), 'chair');
     expect(view.textContent).toContain('文件已有新版本');
+    const list = view.querySelector('#sync-conflicts');
+    expect(list).not.toBeNull();
+    expect(document.activeElement === list).toBe(followLink);
+    expect(scroll.mock.calls.length).toBe(followLink ? 1 : 0);
+    if (scrollDescriptor) Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', scrollDescriptor);
+    else Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView');
     await act(async () => {button('采用本地版本')?.click(); await new Promise(resolve => setTimeout(resolve, 0));});
     expect(resolveStorageAgentConflict).toHaveBeenCalledWith(committeeId, 'conflict', {
       baseRevision: 1, leaseGeneration: 7, fileRevision: 3, action: 'ACCEPT_LOCAL'

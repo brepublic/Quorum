@@ -3,7 +3,7 @@ export { Palette }
 
 export struct CommitteeRow { id: string, name: string, detail: string, paused: bool, host: string, provider: string }
 
-export struct FileRow { name: string, size: string, local: string, cache: string, transfer: string, fraction: float, progressing: bool }
+export struct FileRow { id: string, name: string, size: string, local: string, cache: string, local-code: string, cache-code: string, transfer: string, fraction: float, progressing: bool }
 
 component Caption inherits Text { color: Palette.foreground.with-alpha(0.68); font-size: 13px; overflow: elide; vertical-alignment: center; }
 component Rule inherits Rectangle { height: 1px; vertical-stretch: 0; background: Palette.foreground.with-alpha(0.12); }
@@ -63,6 +63,25 @@ export component MainWindow inherits Window {
     in-out property <string> page: "login";
     in-out property <string> email;
     in-out property <string> password;
+    in-out property <bool> show-password: false;
+    in-out property <string> account-email;
+    in-out property <bool> switching: false;
+    in-out property <bool> switch-revoked: false;
+    in-out property <string> previous-committee;
+    in-out property <string> previous-site;
+    in-out property <bool> status-delayed: false;
+    in-out property <bool> file-details: false;
+    in-out property <FileRow> selected-file;
+    in property <color> warning-color: Palette.color-scheme == ColorScheme.dark ? #edc36b : #825600;
+    in property <color> error-color: Palette.color-scheme == ColorScheme.dark ? #ffaaa5 : #a4262c;
+    out property <string> display-status: root.status != "RUNNING" ? root.status : root.status-delayed || root.last-connection-age != "" || root.observed-age != "" ? "STATUS_DELAYED" : root.committee-status == "PAUSED" ? "COMMITTEE_PAUSED_STATUS" : !root.files-loaded ? "STARTING" : "RUNNING";
+    out property <bool> field-error: (root.page == "login" || root.page == "password") && (root.error-code == "INCORRECT_CREDENTIALS" || root.error-code == "INVALID_EMAIL" || root.error-code == "PASSWORD_TOO_SHORT" || root.error-code == "PASSWORD_TOO_LONG");
+    callback show-file(string);
+    private property <int> password-focus-request;
+    public function focus-password() {root.password-focus-request += 1;}
+    private property <int> email-focus-request;
+    public function focus-email() {root.email-focus-request += 1;}
+
     in-out property <string> committee-id;
     in-out property <string> committee-status;
     in-out property <string> storage-provider;
@@ -77,7 +96,7 @@ export component MainWindow inherits Window {
     in-out property <bool> language-menu: false;
     in-out property <bool> login-options: false;
     in-out property <bool> login-network: false;
-    out property <bool> controls-enabled: !root.confirm-unpair && root.confirm-discard == "" && !root.language-menu && !root.closing;
+    out property <bool> controls-enabled: !root.confirm-unpair && root.confirm-discard == "" && !root.language-menu && !root.file-details && !root.closing;
     out property <bool> certificate-error: root.error-stage == "tls" || root.error-code == "UNABLE_TO_GET_ISSUER_CERT_LOCALLY" || root.error-code == "DEPTH_ZERO_SELF_SIGNED_CERT" || root.error-code == "SELF_SIGNED_CERT_IN_CHAIN";
     in-out property <bool> files-loaded: false;
     in-out property <bool> setup-mode: false;
@@ -107,7 +126,7 @@ export component MainWindow inherits Window {
     in-out property <string> error-code;
     in-out property <string> error-stage;
     out property <string> error-text: root.error-code == "" ? "" :
-        (root.error-stage == "" ? "" : root.translate(root.error-stage, root.language) + ": ") + root.translate(root.error-code, root.language);
+        (root.error-stage == "" ? "" : root.translate(root.error-stage, root.language) + ": ") + root.translate(root.error-code == "LINK_EXPIRED" && root.account-setup ? "Pairing selection expired" : root.error-code, root.language);
     in-out property <string> config-path;
     in-out property <string> server-url: "https://quorum.sramun.org";
     in-out property <string> root-path;
@@ -149,6 +168,11 @@ export component MainWindow inherits Window {
                         QuietButton { text: "‹  " + root.translate(root.loaded ? "Back to sync" : root.setup-mode && root.account-setup ? "Choose committee" : "Back to sign in", root.language); enabled: root.controls-enabled && !root.busy && root.error-stage != "paired-local-recovery"; clicked => {root.action(root.loaded ? "navigate-home" : root.setup-mode ? "back-setup" : "back-manual");} }
                         Rectangle { horizontal-stretch: 1; }
                     }
+                    if root.switching: HorizontalLayout {
+                        QuietButton { text: root.translate(root.switch-revoked ? "Leave switch setup" : "Cancel switch", root.language); enabled: root.controls-enabled && !root.busy && root.error-stage != "paired-local-recovery"; clicked => {root.action("cancel-switch");} }
+                        Rectangle { horizontal-stretch: 1; }
+                    }
+                    if root.switch-revoked: Notice { text: root.translate("Previous connection removed", root.language); }
                     VerticalLayout { spacing: 8px;
                         HorizontalLayout { spacing: 16px;
                             Text { text: root.page == "login" ? root.translate("Sign in", root.language) : root.page == "password" ? root.translate("Change initial password", root.language) : root.page == "committees" ? root.translate("Choose committee", root.language) : root.page == "manual" ? root.translate("Use pairing code", root.language) : root.show-logs ? root.translate("Diagnostics", root.language) : root.show-settings ? root.translate(root.setup-mode ? "Choose file storage" : "Configuration", root.language) : root.committee-name;
@@ -162,15 +186,20 @@ export component MainWindow inherits Window {
                         }
                         if root.page == "login": Caption { text: root.translate("Sign in to connect a committee", root.language); }
                         if root.page == "password" || root.page == "committees": Caption { text: root.server-url; }
+                        if root.page == "committees": HorizontalLayout { spacing: 12px;
+                            PathText { text: root.account-email; horizontal-stretch: 1; }
+                            QuietButton { text: root.translate("Switch account", root.language); enabled: root.controls-enabled && !root.busy; clicked => {root.action("logout");} }
+                        }
                         if root.page == "home" && !root.show-settings && !root.show-logs: HorizontalLayout { spacing: 8px;
-                            Rectangle { width: 7px; height: 18px; Rectangle { width: 7px; height: 7px; y: (parent.height - self.height) / 2; border-radius: 4px; background: root.status == "RUNNING" ? #429c66 : root.status == "DISCONNECTED" ? #cc942c : Palette.foreground.with-alpha(0.4); } }
-                            Caption { text: root.translate(root.status, root.language); horizontal-stretch: 1; }
+                            Rectangle { width: 7px; height: 18px; Rectangle { width: 7px; height: 7px; y: (parent.height - self.height) / 2; border-radius: 4px; background: root.display-status == "RUNNING" ? #429c66 : root.display-status == "DISCONNECTED" || root.display-status == "STATUS_DELAYED" || root.display-status == "COMMITTEE_PAUSED_STATUS" ? root.warning-color : Palette.foreground.with-alpha(0.4); } }
+                            Caption { text: root.translate(root.display-status, root.language); horizontal-stretch: 1; }
+                            if root.display-status == "COMMITTEE_PAUSED_STATUS": Caption { text: root.translate("Connected", root.language); }
                             if root.last-connection-age != "": Caption { max-width: 290px; text: root.translate("Last connected", root.language) + " " + root.last-connection-age; }
                         }
                         if root.editing && root.dirty: Caption { text: root.translate("Unsaved changes", root.language); }
                     }
 
-                    if root.error-text != "" && !root.confirm-unpair: Notice { text: root.error-text; error: true; dismiss-label: root.translate("Close", root.language);
+                    if root.error-text != "" && !root.confirm-unpair && !root.field-error: Notice { text: root.error-text; error: true; dismiss-label: root.translate("Close", root.language);
                         dismissed => {root.error-code = ""; root.error-stage = "";}
                     }
                     if root.feedback != "": Notice {
@@ -184,7 +213,7 @@ export component MainWindow inherits Window {
                         if root.page == "login": VerticalLayout { spacing: 7px;
                             HorizontalLayout {
                                 Caption { text: root.translate("Quorum website", root.language); horizontal-stretch: 1; }
-                                QuietButton { text: root.translate("Connection settings", root.language) + (root.login-network ? "  ▴" : "  ▾"); enabled: root.controls-enabled && !root.busy; clicked => {root.login-network = !root.login-network;} }
+                                QuietButton { text: root.translate("Certificate settings", root.language) + (root.login-network ? "  ▴" : "  ▾"); enabled: root.controls-enabled && !root.busy; clicked => {root.login-network = !root.login-network;} }
                             }
                             LineEdit { text <=> root.server-url; accessible-label: root.translate("Quorum website", root.language); enabled: root.controls-enabled && !root.busy; }
                             if root.login-network || root.certificate-error: VerticalLayout { spacing: 8px;
@@ -198,12 +227,18 @@ export component MainWindow inherits Window {
                         }
                         if root.page == "login": VerticalLayout { spacing: 7px;
                             Caption { text: root.translate("Email", root.language); }
-                            LineEdit { text <=> root.email; enabled: root.controls-enabled && !root.busy; accessible-label: root.translate("Email", root.language); accepted => {password-field.focus();} }
+                            LineEdit { private property <int> focus-request: root.email-focus-request; changed focus-request => {self.focus();} text <=> root.email; enabled: root.controls-enabled && !root.busy; accessible-label: root.translate("Email", root.language); accepted => {password-field.focus();} }
+                            if root.error-code == "INVALID_EMAIL": Text { text: "! " + root.translate(root.error-code, root.language); color: root.error-color; wrap: word-wrap; }
                         }
                         VerticalLayout { spacing: 7px;
                             Caption { text: root.translate(root.page == "password" ? "New password" : "Password", root.language); }
-                            password-field := LineEdit { text <=> root.password; input-type: InputType.password; enabled: root.controls-enabled && !root.busy; accessible-label: root.translate(root.page == "password" ? "New password" : "Password", root.language); accepted => {if root.controls-enabled && !root.busy && root.password != "" && (root.page == "password" || (root.email != "" && root.server-url != "")) {root.action(root.page == "password" ? "change-password" : "login");}} }
+                            if root.page == "password": Caption { text: root.translate("Password length", root.language); }
+                            HorizontalLayout { spacing: 8px;
+                            password-field := LineEdit { private property <int> focus-request: root.password-focus-request; changed focus-request => {self.focus();} text <=> root.password; horizontal-stretch: 1; input-type: root.show-password ? InputType.text : InputType.password; enabled: root.controls-enabled && !root.busy; accessible-label: root.translate(root.page == "password" ? "New password" : "Password", root.language); accepted => {if root.controls-enabled && !root.busy && root.password != "" && (root.page == "password" || (root.email != "" && root.server-url != "")) {root.action(root.page == "password" ? "change-password" : "login");}} }
+                                QuietButton { text: root.translate(root.show-password ? "Hide password" : "Show password", root.language); enabled: root.controls-enabled && !root.busy; clicked => {root.show-password = !root.show-password;} }
+                            }
                         }
+                        if root.field-error && root.error-code != "INVALID_EMAIL": Text { text: "! " + root.translate(root.error-code, root.language); color: root.error-color; wrap: word-wrap; }
                         Button { text: root.translate(root.busy ? "Connecting" : root.page == "password" ? "Save and continue" : "Sign in", root.language); primary: true; horizontal-stretch: 1; min-height: 38px;
                             enabled: root.controls-enabled && !root.busy && root.password != "" && (root.page == "password" || (root.email != "" && root.server-url != ""));
                             clicked => {root.action(root.page == "password" ? "change-password" : "login");}
@@ -212,11 +247,11 @@ export component MainWindow inherits Window {
                         HorizontalLayout { spacing: 8px;
                             QuietButton { text: "Language / 语言"; enabled: root.controls-enabled; clicked => {root.language-menu = true;} }
                             Rectangle { horizontal-stretch: 1; }
-                            QuietButton { text: root.translate(root.page == "password" ? "Back to sign in" : "More connection options", root.language) + (root.page == "password" ? "" : root.login-options ? "  ▴" : "  ▾"); enabled: root.controls-enabled && !root.busy;
+                            if !root.switching || root.page == "password": QuietButton { text: root.translate(root.page == "password" ? "Back to sign in" : "More connection options", root.language) + (root.page == "password" ? "" : root.login-options ? "  ▴" : "  ▾"); enabled: root.controls-enabled && !root.busy;
                                 clicked => {if root.page == "password" {root.action("logout");} else {root.login-options = !root.login-options;}}
                             }
                         }
-                        if root.page == "login" && root.login-options: Rectangle { background: Palette.control-background; border-radius: 8px; border-width: 1px; border-color: Palette.foreground.with-alpha(0.1); height: connection-options.preferred-height;
+                        if root.page == "login" && root.login-options && !root.switching: Rectangle { background: Palette.control-background; border-radius: 8px; border-width: 1px; border-color: Palette.foreground.with-alpha(0.1); height: connection-options.preferred-height;
                             connection-options := VerticalLayout { padding: 14px; spacing: 6px;
                                 QuietButton { text: root.translate("Open connection file", root.language); enabled: root.controls-enabled && !root.busy; clicked => {root.action("import");} }
                                 QuietButton { text: root.translate("Use pairing code", root.language); enabled: root.controls-enabled && !root.busy; clicked => {root.action("enter-manual");} }
@@ -238,7 +273,7 @@ export component MainWindow inherits Window {
                             candidate-content := VerticalLayout { padding: 18px; spacing: 10px;
                                 HorizontalLayout { spacing: 12px;
                                     Text { text: committee.name; font-size: 18px; font-weight: 600; wrap: word-wrap; color: Palette.foreground; horizontal-stretch: 1; }
-                                    if committee.paused: Text { text: root.translate("Paused", root.language); color: #c9902d; font-weight: 600; }
+                                    if committee.paused: Text { text: root.translate("Paused", root.language); color: root.warning-color; font-weight: 600; }
                                     Button { text: root.translate(committee.host == "" ? "Continue" : "Replace chair computer", root.language); enabled: root.controls-enabled && !root.busy; clicked => {root.committee-id = committee.id; root.action("select-committee");} }
                                 }
                                 if committee.detail != "": Caption { text: committee.detail; wrap: word-wrap; }
@@ -250,10 +285,10 @@ export component MainWindow inherits Window {
                                 if committee.paused: Caption { text: root.translate("Committee paused reminder", root.language); wrap: word-wrap; }
                             }
                         }
-                        HorizontalLayout { QuietButton { text: root.translate("Back to sign in", root.language); enabled: root.controls-enabled && !root.busy; clicked => {root.action("logout");} } Rectangle { horizontal-stretch: 1; } QuietButton { text: "Language / 语言"; enabled: root.controls-enabled; clicked => {root.language-menu = true;} } }
+                        HorizontalLayout { Rectangle { horizontal-stretch: 1; } QuietButton { text: "Language / 语言"; enabled: root.controls-enabled; clicked => {root.language-menu = true;} } }
                     }
 
-                    if root.page == "home" && !root.show-logs && (!root.show-settings || root.setup-mode) && root.committee-status == "PAUSED": Notice { text: root.translate("Committee paused reminder", root.language); }
+                    if root.page == "home" && !root.show-logs && (!root.show-settings || root.setup-mode) && root.committee-status == "PAUSED": Notice { text: root.translate(root.setup-mode ? "Committee paused reminder" : "Paused changes reminder", root.language); }
                     if root.page == "home" && !root.show-logs && (!root.show-settings || root.setup-mode) && (root.storage-provider == "SERVER_VOLUME" || root.storage-provider == "S3_COMPATIBLE"): Notice { text: root.translate(root.storage-provider, root.language) + " · " + root.translate("Existing storage retained", root.language); }
 
                     if root.page == "manual" || (root.page == "home" && root.show-settings): VerticalLayout { spacing: 16px;
@@ -327,9 +362,9 @@ export component MainWindow inherits Window {
                             HorizontalLayout { spacing: 12px; alignment: end;
                                 Button { text: root.translate(root.resume-after-edit ? "Cancel and resume" : "Cancel", root.language); enabled: root.controls-enabled && !root.busy && root.error-stage != "paired-local-recovery";
                                     clicked => {root.action(root.setup-mode ? "back-setup" : root.page == "manual" ? "back-manual" : "cancel-settings");} }
-                                Button { text: root.translate(root.busy ? "Working" : root.setup-mode ? "Confirm directory and start" : root.page == "manual" ? "Pair this computer" : root.resume-after-edit ? "Save and resume" : "Save settings", root.language); primary: true;
+                                Button { text: root.translate(root.busy ? "Working" : root.setup-mode ? root.switching ? "Review switch" : "Confirm directory and start" : root.page == "manual" ? "Pair this computer" : root.resume-after-edit ? "Save and resume" : "Save settings", root.language); primary: true;
                                     enabled: root.controls-enabled && !root.busy && !root.running && root.root-path != "" && (root.page != "manual" || root.pairing-code != "") && (root.current-host == "" || !root.setup-mode || root.transfer-confirmed);
-                                    clicked => {root.action(root.setup-mode ? root.account-setup ? "account-pair" : "setup-pair" : root.page == "manual" ? "pair" : "save");}
+                                    clicked => {root.action(root.setup-mode ? root.switching ? "confirm-switch-target" : root.account-setup ? "account-pair" : "setup-pair" : root.page == "manual" ? "pair" : "save");}
                                 }
                             }
                         }
@@ -342,26 +377,29 @@ export component MainWindow inherits Window {
                         }
                         if root.files.length > 0: VerticalLayout { spacing: 0px;
                             Rectangle { height: 36px; background: Palette.alternate-background; border-radius: 6px;
-                                HorizontalLayout { padding-left: 12px; padding-right: 12px; spacing: 16px;
+                                HorizontalLayout { padding-left: 12px; padding-right: 12px; spacing: 12px;
                                     Caption { text: root.translate("Files", root.language); horizontal-stretch: 1; }
-                                    Caption { text: root.translate("Size", root.language); width: 65px; }
-                                    Caption { text: root.translate("Local status", root.language); width: 160px; }
-                                    Caption { text: root.translate("Server cache", root.language); width: 165px; }
+                                    Caption { text: root.translate("Local status", root.language); width: 150px; }
+                                    Caption { text: root.translate("Server cache", root.language); width: 140px; }
+                                    Rectangle { width: 56px; }
                                 }
                             }
-                            ListView { height: max(160px, root.height - 450px);
-                                for row in root.files: Rectangle { height: 84px; background: Palette.control-background;
-                                    HorizontalLayout { padding-left: 12px; padding-right: 12px; spacing: 16px;
-                                        Text { text: row.name; color: Palette.foreground; wrap: word-wrap; overflow: elide; vertical-alignment: center; horizontal-stretch: 1; }
-                                        Caption { text: row.size; width: 65px; }
-                                        VerticalLayout { width: 160px; spacing: 5px; alignment: center;
-                                            Caption { text: row.local; wrap: word-wrap; }
+                            ListView { height: max(180px, root.height - 405px);
+                                for row in root.files: Rectangle { height: row.progressing ? 80px : 64px; background: Palette.control-background;
+                                    HorizontalLayout { padding-left: 12px; padding-right: 12px; spacing: 12px;
+                                        VerticalLayout { alignment: center; spacing: 4px; horizontal-stretch: 1;
+                                            Text { text: row.name; color: Palette.foreground; overflow: elide; }
+                                            Caption { text: row.size; }
+                                        }
+                                        VerticalLayout { width: 150px; spacing: 5px; alignment: center;
+                                            Text { text: (row.local-code == "FAILED" || row.local-code == "CONFLICT" || row.local-code == "RETRYING" ? "! " : "") + row.local; color: row.local-code == "FAILED" || row.local-code == "CONFLICT" ? root.error-color : row.local-code == "RETRYING" ? root.warning-color : Palette.foreground; wrap: word-wrap; font-size: 13px; }
                                             if row.progressing: Caption { text: row.transfer; font-size: 12px; }
                                             if row.progressing: Rectangle { height: 4px; background: Palette.alternate-background; border-radius: 2px;
                                                 Rectangle { width: parent.width * row.fraction; height: parent.height; background: Palette.accent-background; border-radius: 2px; }
                                             }
                                         }
-                                        Caption { text: row.cache; width: 165px; wrap: word-wrap; }
+                                        Text { text: (row.cache-code == "REFILL_FAILED" ? "! " : "") + row.cache; color: row.cache-code == "REFILL_FAILED" ? root.error-color : Palette.foreground; width: 140px; wrap: word-wrap; font-size: 13px; vertical-alignment: center; }
+                                        QuietButton { text: root.translate("Details", root.language); accessible-name: root.translate("Details", root.language) + ": " + row.name; min-width: 56px; enabled: root.controls-enabled; clicked => {root.show-file(row.id);} }
                                     }
                                     Rectangle { y: parent.height - 1px; height: 1px; background: Palette.foreground.with-alpha(0.08); }
                                 }
@@ -386,11 +424,11 @@ export component MainWindow inherits Window {
                     if root.page == "home" && root.show-logs: VerticalLayout { spacing: 16px;
                         HorizontalLayout { spacing: 8px;
                             LineEdit { enabled: root.controls-enabled; placeholder-text: root.translate("Filter logs", root.language); accessible-label: root.translate("Filter logs", root.language); text <=> root.log-filter; edited => {root.filter-changed();} horizontal-stretch: 1; }
-                            Button { text: root.translate("Copy", root.language); clicked => {log-edit.select-all(); log-edit.copy();} }
+                            Button { text: root.translate("Copy", root.language); enabled: root.controls-enabled; clicked => {log-edit.select-all(); log-edit.copy();} }
                             Button { text: root.translate("Export", root.language); enabled: root.controls-enabled && !root.busy; clicked => {root.action("export-logs");} }
                         }
                         log-edit := TextEdit { enabled: root.controls-enabled; text: root.log-text; read-only: true; height: max(260px, root.height - 330px); }
-                        HorizontalLayout { Button { text: root.translate("Restart", root.language); enabled: root.controls-enabled && root.running && !root.busy; clicked => {root.action("restart");} } Rectangle { horizontal-stretch: 1; } }
+
                     }
                 }
                 Rectangle { horizontal-stretch: 1; }
@@ -403,6 +441,7 @@ export component MainWindow inherits Window {
             menu-content := VerticalLayout { padding: 8px; spacing: 2px;
                 QuietButton { text: root.translate("Configuration", root.language); clicked => {app-menu.close(); root.action("navigate-settings");} }
                 QuietButton { text: root.translate("Diagnostics", root.language); clicked => {app-menu.close(); root.action("navigate-logs");} }
+                QuietButton { visible: !root.show-settings && !root.show-logs; max-height: self.visible ? 32px : 0px; min-height: self.visible ? 32px : 0px; text: root.translate("Restart sync", root.language); enabled: root.running && !root.busy; clicked => {app-menu.close(); root.action("restart");} }
                 QuietButton { text: root.translate("Committee web page", root.language); clicked => {app-menu.close(); root.action("open-web");} }
                 Rule { }
                 QuietButton { text: root.translate("Change committee", root.language); clicked => {app-menu.close(); root.action("confirm-switch");} }
@@ -431,29 +470,69 @@ export component MainWindow inherits Window {
         background: #18273c80;
         TouchArea { }
         FocusScope {
-            init => { self.focus(); }
+            init => {cancel-unpair.focus();}
             key-pressed(event) => {
-                if event.text == Key.Escape && !root.busy { root.confirm-unpair = false; return accept; }
+                if event.text == Key.Escape && !root.busy {root.confirm-unpair = false; return accept;}
                 return reject;
             }
             Rectangle {
-                x: (parent.width - self.width) / 2;
-                y: (parent.height - self.height) / 2;
-                width: 580px;
-                height: dialog-content.preferred-height;
+                x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+                width: 580px; height: min(root.height - 48px, 148px + confirmation-body.preferred-height);
                 background: Palette.background; border-radius: 12px;
-                dialog-content := VerticalBox {
-                    padding: 24px; spacing: 16px;
+                VerticalLayout { padding: 24px; spacing: 16px;
                     Text { text: root.translate(root.switch-committee ? "Change committee?" : "Unpair this computer?", root.language); font-size: 20px; font-weight: 700; color: Palette.foreground; }
-                    Text { text: root.translate("Revoke this device's authorization? This device will no longer provide access to the committee's local files.", root.language); wrap: word-wrap; color: Palette.foreground; }
-                    if root.switch-committee: Text { text: root.translate("Sign in after disconnecting to choose another committee", root.language); wrap: word-wrap; color: Palette.foreground; }
-                    if root.unpair-failed: Notice { text: root.error-text; error: true; dismissible: false; }
-                    if root.unpair-failed: Text { text: root.translate("You can unpair locally. Server authorization has not been confirmed revoked; saved configurations may still connect.", root.language); wrap: word-wrap; color: Palette.foreground; }
-                    Text { text: root.translate("Configuration and local files will be kept. Use a new storage directory to pair again.", root.language); wrap: word-wrap; color: Palette.alternate-foreground; }
-                    HorizontalBox { padding: 0px; spacing: 8px;
-                        Button { text: root.translate("Cancel", root.language); enabled: !root.busy; clicked => {root.confirm-unpair = false;} }
-                        if root.unpair-failed: Button { text: root.translate("Unpair locally", root.language); enabled: !root.busy && !root.running; clicked => {root.action("unpair-local");} }
-                        Button { text: root.translate(root.busy ? root.status == "STOPPING" ? "STOPPING" : "Disconnecting" : root.running ? "Stop and disconnect" : root.switch-committee ? "Disconnect and continue" : "Revoke and unpair", root.language); enabled: !root.busy; clicked => {root.action("unpair");} }
+                    ScrollView { viewport-height: confirmation-body.preferred-height;
+                        confirmation-body := VerticalLayout { spacing: 12px;
+                            Text { text: root.switch-committee ? root.previous-committee : root.committee-name; color: Palette.foreground; font-weight: 600; wrap: word-wrap; }
+                            PathText { text: root.switch-committee ? root.previous-site : root.server-url; }
+                            if root.switch-committee: VerticalLayout { spacing: 6px;
+                                Caption { text: root.translate("Switch to", root.language); }
+                                Text { text: root.committee-name; color: Palette.foreground; font-weight: 600; wrap: word-wrap; }
+                                PathText { text: root.server-url; }
+                                PathText { text: root.root-path; }
+                            }
+                            if root.switch-revoked: Notice { text: root.translate("Previous connection removed", root.language); }
+                            if !root.switch-revoked: Text { text: root.translate("Revoke this device's authorization? This device will no longer provide access to the committee's local files.", root.language); wrap: word-wrap; color: Palette.foreground; }
+                            if root.unpair-failed: Notice { text: root.error-text; error: true; dismissible: false; }
+                            Text { text: root.translate("Configuration and local files will be kept. Use a new storage directory to pair again.", root.language); wrap: word-wrap; color: Palette.alternate-foreground; }
+                            if root.unpair-failed && !root.switch-committee: VerticalLayout { spacing: 8px;
+                                Rule { }
+                                Text { text: root.translate("You can unpair locally. Server authorization has not been confirmed revoked; saved configurations may still connect.", root.language); wrap: word-wrap; color: Palette.foreground; }
+                                QuietButton { text: root.translate("Unpair locally", root.language); enabled: !root.busy && !root.running; clicked => {root.action("unpair-local");} }
+                            }
+                        }
+                    }
+                    HorizontalLayout { spacing: 12px;
+                        cancel-unpair := Button { text: root.translate("Cancel", root.language); enabled: !root.busy; clicked => {root.confirm-unpair = false;} }
+                        Rectangle { horizontal-stretch: 1; }
+                        QuietButton { text: root.translate(root.busy ? root.status == "STOPPING" ? "STOPPING" : "Working" : root.switch-committee ? root.switch-revoked ? "Retry connection" : "Confirm switch" : root.running ? "Stop and disconnect" : "Revoke and unpair", root.language); danger: !root.switch-revoked || root.current-host != ""; min-height: 36px; enabled: !root.busy; clicked => {root.action(root.switch-committee ? "switch-committee" : "unpair");} }
+                    }
+                }
+            }
+        }
+    }
+
+    if root.file-details: Rectangle {
+        background: #00000060;
+        TouchArea { }
+        FocusScope { init => {self.focus();}
+            key-pressed(event) => {if event.text == Key.Escape {root.file-details = false; return accept;} return reject;}
+            Rectangle { x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2; width: min(620px, root.width - 48px); height: min(root.height - 80px, 180px + detail-content.preferred-height); background: Palette.background; border-radius: 12px;
+                VerticalLayout { padding: 24px; spacing: 16px;
+                    Text { text: root.translate("File details", root.language); color: Palette.foreground; font-size: 20px; font-weight: 600; }
+                    ScrollView { viewport-height: detail-content.preferred-height;
+                        detail-content := VerticalLayout { spacing: 12px;
+                            PathText { text: root.selected-file.name; }
+                            Caption { text: root.selected-file.size; }
+                            Text { text: root.translate("Local status", root.language) + ": " + root.selected-file.local; color: root.selected-file.local-code == "FAILED" || root.selected-file.local-code == "CONFLICT" ? root.error-color : Palette.foreground; wrap: word-wrap; }
+                            Text { text: root.translate("Server cache", root.language) + ": " + root.selected-file.cache; color: root.selected-file.cache-code == "REFILL_FAILED" ? root.error-color : Palette.foreground; wrap: word-wrap; }
+                        }
+                    }
+                    HorizontalLayout { spacing: 12px;
+                        if root.selected-file.local-code == "CONFLICT": Button { text: root.translate("Resolve on website", root.language); clicked => {root.action("open-conflicts");} }
+                        if root.selected-file.local-code == "FAILED" || root.selected-file.local-code == "RETRYING" || root.selected-file.cache-code == "REFILL_FAILED": Button { text: root.translate("View logs", root.language); clicked => {root.file-details = false; root.action("navigate-logs");} }
+                        Rectangle { horizontal-stretch: 1; }
+                        Button { text: root.translate("Close", root.language); clicked => {root.file-details = false;} }
                     }
                 }
             }
