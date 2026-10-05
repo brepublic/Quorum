@@ -47,16 +47,26 @@ component FileNameCell inherits Rectangle {
     in property <length> window-width;
     in property <length> window-height;
     in property <bool> selected;
+    changed selected => {if !self.selected {keyboard.clear-focus(); root.close-popup();}}
     callback selected-name();
+    callback deselected-name();
+    callback outside-clicked();
     callback open-file();
     callback copied(string);
     out property <bool> has-focus: keyboard.has-focus;
+    private property <bool> selection-active: keyboard.has-focus || (name-popup.is-open && root.popup-keyboard);
+    changed selection-active => {if !self.selection-active {root.deselected-name();}}
     private property <bool> valid: root.enabled && root.text != "" && root.text != "-";
     private property <bool> truncated: measure.preferred-width > root.width - 12px;
     private property <bool> dismissed;
     private property <bool> menu-mode;
     private property <bool> popup-hover;
     private property <bool> popup-keyboard;
+    private property <bool> popup-open: name-popup.is-open;
+    private property <bool> popup-close-handled;
+    changed popup-open => {if !self.popup-open && !root.popup-close-handled {root.outside-clicked(); keyboard.clear-focus();}}
+    function show-popup() {root.popup-close-handled = false; name-popup.show();}
+    function close-popup() {root.popup-close-handled = true; name-popup.close();}
     private property <length> name-y: (root.height - label.height) / 2;
     private property <color> link-color: Palette.color-scheme == ColorScheme.dark ? #80c7ff : #005aa3;
     min-width: 0px;
@@ -81,28 +91,28 @@ component FileNameCell inherits Rectangle {
         changed has-hover => {if !self.has-hover {root.dismissed = false;}}
     }
     link-touch := TouchArea { x: label.x; y: label.y; width: label.width; height: label.height; enabled: root.valid && root.can-open; mouse-cursor: pointer;
-        clicked => {root.focus(); root.dismissed = true; name-popup.close(); root.open-file();}
+        clicked => {root.focus(); root.dismissed = true; root.close-popup(); root.open-file();}
         pointer-event(event) => {if event.kind == PointerEventKind.up && event.button == PointerEventButton.right {root.show-menu();}}
     }
     keyboard := FocusScope { width: 0px; height: 0px; enabled: root.valid;
-        changed has-focus => {if self.has-focus {root.selected-name(); if root.truncated && !root.dismissed && !root.menu-mode {root.menu-mode = false; root.popup-keyboard = true; name-popup.show();}} else {root.dismissed = false;}}
+        changed has-focus => {if self.has-focus {root.selected-name(); if root.truncated && !root.dismissed && !root.menu-mode {root.menu-mode = false; root.popup-keyboard = true; root.show-popup();}} else {root.dismissed = false;}}
         key-pressed(event) => {
-            if event.text == Key.Escape {root.dismissed = true; name-popup.close(); return accept;}
+            if event.text == Key.Escape {root.dismissed = true; root.close-popup(); return accept;}
             if event.modifiers.control && (event.text == "c" || event.text == "C") {root.copy-name(); return accept;}
             if event.text == Key.Menu || (event.text == Key.F10 && event.modifiers.shift) {root.show-menu(); return accept;}
-            if event.text == "\n" && root.can-open {root.dismissed = true; name-popup.close(); root.open-file(); return accept;}
+            if event.text == "\n" && root.can-open {root.dismissed = true; root.close-popup(); root.open-file(); return accept;}
             return reject;
         }
     }
     // Use Slint's existing clipboard path; this input never takes focus.
     clipboard := TextInput { visible: false; text: root.text; read-only: true; }
-    function show-menu() {name-popup.close(); root.menu-mode = true; root.popup-keyboard = true; root.dismissed = true; keyboard.focus(); name-popup.show();}
-    function copy-name() {clipboard.select-all(); clipboard.copy(); root.copied(root.text); root.dismissed = true; name-popup.close();}
+    function show-menu() {root.close-popup(); root.menu-mode = true; root.popup-keyboard = true; root.dismissed = true; keyboard.focus(); root.show-popup();}
+    function copy-name() {clipboard.select-all(); clipboard.copy(); root.copied(root.text); root.dismissed = true; root.close-popup();}
     Timer { interval: 500ms; running: root.valid && root.truncated && (cell-touch.has-hover || link-touch.has-hover) && !root.dismissed && !name-popup.is-open;
-        triggered => {root.menu-mode = false; root.popup-keyboard = false; name-popup.show();}
+        triggered => {root.menu-mode = false; root.popup-keyboard = false; root.show-popup();}
     }
     Timer { interval: 100ms; running: name-popup.is-open && !root.menu-mode;
-        triggered => {if !cell-touch.has-hover && !link-touch.has-hover && !keyboard.has-focus && !root.popup-keyboard && !root.popup-hover {name-popup.close();}}
+        triggered => {if !cell-touch.has-hover && !link-touch.has-hover && !keyboard.has-focus && !root.popup-keyboard && !root.popup-hover {root.close-popup();}}
     }
     name-popup := PopupWindow {
         close-policy: close-on-click-outside;
@@ -114,12 +124,12 @@ component FileNameCell inherits Rectangle {
             TouchArea { changed has-hover => {root.popup-hover = self.has-hover;} }
             FocusScope { init => {if root.popup-keyboard {self.focus();}}
                 key-pressed(event) => {
-                    if event.text == Key.Escape {root.dismissed = true; name-popup.close(); if root.popup-keyboard {keyboard.focus();} return accept;}
+                    if event.text == Key.Escape {root.dismissed = true; root.close-popup(); if root.popup-keyboard {keyboard.focus();} return accept;}
                     if event.text == Key.Menu || (event.text == Key.F10 && event.modifiers.shift) {root.show-menu(); return accept;}
-                    if event.text == Key.Tab {root.dismissed = true; name-popup.close(); keyboard.focus(); return reject;}
+                    if event.text == Key.Tab {root.dismissed = true; root.close-popup(); keyboard.focus(); return reject;}
                     if root.menu-mode && (event.text == Key.UpArrow || event.text == Key.DownArrow) {copy-button.focus(); return accept;}
                     if event.modifiers.control && (event.text == "c" || event.text == "C") {root.copy-name(); keyboard.focus(); return accept;}
-                    if event.text == "\n" {if root.menu-mode {root.copy-name();} else {root.dismissed = true; name-popup.close(); if root.can-open {root.open-file();}} keyboard.focus(); return accept;}
+                    if event.text == "\n" {if root.menu-mode {root.copy-name();} else {root.dismissed = true; root.close-popup(); if root.can-open {root.open-file();}} keyboard.focus(); return accept;}
                     return reject;
                 }
                 VerticalLayout { padding: 12px; spacing: 8px;
@@ -173,8 +183,8 @@ export component MainWindow inherits Window {
     out property <string> display-status: root.status != "RUNNING" ? root.status : root.status-delayed || root.last-connection-age != "" || root.observed-age != "" ? "STATUS_DELAYED" : root.committee-status == "PAUSED" ? "COMMITTEE_PAUSED_STATUS" : !root.files-loaded ? "STARTING" : "RUNNING";
     out property <bool> field-error: (root.page == "login" || root.page == "password") && (root.error-code == "INCORRECT_CREDENTIALS" || root.error-code == "INVALID_EMAIL" || root.error-code == "PASSWORD_TOO_SHORT" || root.error-code == "PASSWORD_TOO_LONG");
     callback open-file(string);
-    // Shared column geometry: padding, four gaps, size/status columns and scrollbar.
-    private property <length> names-width: min(1400px, root.width - (root.width < 850px ? 48px : 64px)) - 458px;
+    // Share exact header/row geometry; reserve a larger gutter after numeric sizes.
+    private property <length> names-width: min(1400px, root.width - (root.width < 850px ? 48px : 64px)) - 474px;
     in-out property <string> selected-name-key;
     in-out property <string> focused-file-action;
     in-out property <length> file-scroll;
@@ -253,6 +263,8 @@ export component MainWindow inherits Window {
     callback filter-changed();
     callback committee-filter-changed();
 
+    // Unhandled background clicks dismiss name selection without consuming controls.
+    TouchArea { enabled: root.selected-name-key != ""; clicked => {root.selected-name-key = "";} }
     VerticalLayout {
         padding: 0px; spacing: 0px;
         Rectangle { height: 56px; vertical-stretch: 0; background: Palette.control-background;
@@ -488,6 +500,7 @@ export component MainWindow inherits Window {
                                     Rectangle { width: root.names-width * 0.45; Caption { x: 6px; width: parent.width - 6px; text: root.translate("Files", root.language); } }
                                     Rectangle { width: root.names-width * 0.55; Caption { x: 6px; width: parent.width - 6px; text: root.translate("Actual filename", root.language); } }
                                     Caption { text: root.translate("Size", root.language); width: 80px; horizontal-alignment: right; }
+                                    Rectangle { width: 4px; }
                                     Caption { text: root.translate("Local status", root.language); width: 150px; }
                                     Caption { text: root.translate("Server cache", root.language); horizontal-stretch: 1; }
                                 }
@@ -503,15 +516,20 @@ export component MainWindow inherits Window {
                                         logical-name := FileNameCell { width: root.names-width * 0.45; text: row.name; copy-label: root.translate("Copy file name", root.language); enabled: root.controls-enabled;
                                             window-width: root.width; window-height: root.height; selected: root.selected-name-key == row.id + ":name";
                                             selected-name => {root.focused-file-action = ""; root.selected-name-key = row.id + ":name";}
+                                            deselected-name => {if root.selected-name-key == row.id + ":name" {root.selected-name-key = "";}}
+                                            outside-clicked => {root.selected-name-key = "";}
                                             copied(value) => {root.name-copied(value); root.copied-notice = root.translate("Copied", root.language);}
                                         }
                                         actual-name := FileNameCell { accessible-role: button; width: root.names-width * 0.55; text: row.actual-name; stem: row.stem; extension: row.extension; can-open: row.can-open; copy-label: root.translate("Copy actual filename", root.language); enabled: root.controls-enabled;
                                             window-width: root.width; window-height: root.height; selected: root.selected-name-key == row.id + ":actual";
                                             selected-name => {root.focused-file-action = ""; root.selected-name-key = row.id + ":actual";}
+                                            deselected-name => {if root.selected-name-key == row.id + ":actual" {root.selected-name-key = "";}}
+                                            outside-clicked => {root.selected-name-key = "";}
                                             open-file => {root.open-file(row.id);}
                                             copied(value) => {root.name-copied(value); root.copied-notice = root.translate("Copied", root.language);}
                                         }
                                         Text { width: 80px; text: row.size; font-size: 13px; color: Palette.foreground; horizontal-alignment: right; vertical-alignment: center; wrap: no-wrap; }
+                                        Rectangle { width: 4px; }
                                         VerticalLayout { width: 150px; spacing: 4px; alignment: center; padding-top: 8px; padding-bottom: 8px;
                                             Text { text: (file-row.conflict || file-row.local-log ? "! " : "") + row.local; color: row.local-code == "FAILED" || file-row.conflict ? root.error-color : row.local-code == "RETRYING" ? root.warning-color : Palette.foreground; wrap: word-wrap; font-size: 13px; }
                                             if row.progressing: Caption { text: row.transfer; font-size: 13px; }

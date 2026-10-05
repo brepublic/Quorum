@@ -167,6 +167,19 @@ fn exercise_files(window: &MainWindow, redraw: impl Fn()) {
     key(Key::DownArrow.into()); key(Key::Return.into());
     assert_eq!(opened.borrow().len(), 2, "Context menu copies, never opens");
     TEST_CLIPBOARD.with(|c| assert_eq!(c.borrow().as_str(), "决议草案 - 中文显示测试.pdf"));
+    // Outside clicks must clear selection, including inert cells and page whitespace.
+    for (x, y) in [(550., 365.), (90., 610.), (90., 250.)] {
+        click(420., 390., PointerEventButton::Left);
+        assert_eq!(window.get_selected_name_key(), "file-1:actual");
+        click(x, y, PointerEventButton::Left);
+        assert!(window.get_selected_name_key().is_empty(), "Outside click at {x},{y} must deselect");
+        if y != 250. {
+            TEST_CLIPBOARD.with(|c| *c.borrow_mut() = "unchanged after deselection".into());
+            copy();
+            TEST_CLIPBOARD.with(|c| assert_eq!(c.borrow().as_str(), "unchanged after deselection", "Deselection must also remove copy focus"));
+        }
+    }
+    click(420., 390., PointerEventButton::Left);
     // Long names are copied in full, and snapshots retain the focused cell.
     use slint::Model;
     let files = window.get_files();
@@ -179,9 +192,13 @@ fn exercise_files(window: &MainWindow, redraw: impl Fn()) {
     assert_eq!(opened.borrow().len(), 2, "Long-name context menu must copy, not open");
     key(Key::Menu.into()); key(Key::Escape.into()); copy();
     TEST_CLIPBOARD.with(|c| assert_eq!(c.borrow().as_str(), long_name));
-    // Dash is not selectable; logical names copy but do not open.
+    // Dismiss a long-name menu by clicking outside; dash also deselects.
+    key(Key::Menu.into()); click(90., 610., PointerEventButton::Left);
+    assert!(window.get_selected_name_key().is_empty(), "Outside click dismisses menu selection");
+    click(420., 390., PointerEventButton::Left); key(Key::Escape.into());
     click(90., 430., PointerEventButton::Left);
-    assert_eq!(window.get_selected_name_key(), "file-1:actual");
+    assert!(window.get_selected_name_key().is_empty());
+    // Logical names copy but do not open.
     click(90., 351., PointerEventButton::Left); copy(); key(Key::Return.into());
     assert_eq!(opened.borrow().len(), 2);
     TEST_CLIPBOARD.with(|c| assert_eq!(c.borrow().as_str(), "决议草案 - 中文显示测试.pdf"));
@@ -189,6 +206,9 @@ fn exercise_files(window: &MainWindow, redraw: impl Fn()) {
     redraw(); std::thread::sleep(std::time::Duration::from_millis(550)); redraw(); copy();
     TEST_CLIPBOARD.with(|c| assert_eq!(c.borrow().as_str(), "决议草案 - 中文显示测试.pdf", "Hovering another name must not change the copy target"));
     key(Key::Escape.into());
+    click(90., 610., PointerEventButton::Left);
+    assert!(window.get_selected_name_key().is_empty(), "Outside a hovered name also clears the prior selection");
+    std::thread::sleep(std::time::Duration::from_millis(150)); redraw();
     let actions = Rc::new(RefCell::new(Vec::<String>::new())); let recorded = actions.clone();
     window.on_action(move |action| recorded.borrow_mut().push(action.to_string()));
     row.local_code = "CONFLICT".into(); row.local = translate("CONFLICT", window.get_language().as_str()).into(); row.progressing = false;
@@ -409,10 +429,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         FileRow {
             id: "file-1".into(), actual_name: "决议草案 - 中文显示测试.pdf".into(), stem: "决议草案 - 中文显示测试".into(), extension: ".pdf".into(), can_open: true, local_code: "DOWNLOADING".into(), cache_code: "CACHE_READY".into(),
             name: "决议草案 - 中文显示测试.pdf".into(),
-            size: "12.4 MiB".into(),
+            size: "1024.0 MiB".into(),
             local: translate("DOWNLOADING", language).into(),
             cache: translate("CACHE_READY", language).into(),
-            transfer: "6.2 / 12.4 MiB".into(),
+            transfer: "512 / 1024 MiB".into(),
             fraction: 0.5,
             progressing: true,
             ..Default::default()
@@ -420,7 +440,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         FileRow {
             id: "file-2".into(), actual_name: "工作文件.docx".into(), stem: "工作文件".into(), extension: ".docx".into(), can_open: true, local_code: "READY_REVIEW".into(), cache_code: "CACHE_READY".into(),
             name: "-".into(),
-            size: "542 KiB".into(),
+            size: "1023.9 KiB".into(),
             local: translate("READY_REVIEW", language).into(),
             cache: translate("CACHE_READY", language).into(),
             ..Default::default()
