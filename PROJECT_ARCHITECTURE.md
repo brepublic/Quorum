@@ -215,11 +215,13 @@ retention worker 使用 advisory lock，仅清理明确过期且不再承载业�
 
 Vite 开发服务器默认仅监听本机 IPv4 地址 `127.0.0.1`，通过 `http://localhost:5173` 或 `http://127.0.0.1:5173` 访问；默认不监听 IPv6 或局域网接口。
 
-所有项目命令前先运行：
+Linux/WSL 项目命令前先运行：
 
 ```sh
 source scripts/wsl-env.sh
 ```
+
+Windows 原生开发在 PowerShell 中先运行 `. .\scripts\windows-env.ps1`，使用本 checkout 的官方 Node、固定 pnpm 及 Windows MSVC Rust 工具链缓存。`scripts/check-windows-toolchain.ps1` 用最小程序验证 Windows 原生编译与运行；MSVC 和 Windows SDK 由微软系统安装器提供。准备步骤见 `docs/self-hosted/CHAIR_AGENT_WINDOWS_SETUP.md`。当前 GUI 和桌面启动／发行脚本仍为 Linux 实现，环境准备不代表 Windows 桌面迁移完成。
 
 常用命令：
 

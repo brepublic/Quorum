@@ -1,5 +1,10 @@
 # 更新日志
 
+## 2026-10-06：Windows 原生开发工具准备
+
+- 增加 PowerShell 环境入口，使用 checkout 内独立的官方 Node、固定 pnpm 和 Windows Rust 工具缓存，不改系统 PATH。
+- 增加最小 Rust 编译／运行检查及 Windows 准备说明，区分可自动下载的工具与微软 MSVC／SDK 系统安装器；contracts 与 Node Agent 已通过 Windows 构建，GUI 平台适配仍待实施。
+
 ## 2026-10-06：主席 Agent AppImage 打包与桌面集成
 
 - 新增 Ubuntu 22.04 隔离构建，固定 AppImage 工具／启动器及校验值，生成 AppImage、解压包、源码包和依赖记录；随包提供 Node、目录锁工具、客户端库及中文备用字体，并检查系统库版本基线。

@@ -16,6 +16,12 @@ boundary, or deployment model.
   reproducible per-checkout tool cache, not source code. If it is absent, use
   the documented system prerequisites or reinstall the local tools.
 
+## Local Windows Toolchain
+
+- In native Windows PowerShell, dot-source `scripts/windows-env.ps1` before project commands. Linux/WSL continues to use `scripts/wsl-env.sh`.
+- Windows tool caches are isolated under `.tools/node-windows` and `.tools/windows`; see `docs/self-hosted/CHAIR_AGENT_WINDOWS_SETUP.md` for official installation methods.
+- Validate MSVC/SDK with `scripts/check-windows-toolchain.ps1`. Version output alone does not prove native compilation. The desktop GUI still requires Windows platform adaptation.
+
 ## PostgreSQL Integration
 
 - Use `pnpm test:self-host:integration` for database integration tests. It creates isolated temporary databases through `TEST_DATABASE_ADMIN_URL` and must never target a production database.
