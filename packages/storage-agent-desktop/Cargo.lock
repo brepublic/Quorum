@@ -3536,6 +3536,7 @@ dependencies = [
  "serde_json",
  "slint",
  "slint-build",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

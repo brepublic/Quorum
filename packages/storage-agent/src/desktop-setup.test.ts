@@ -12,6 +12,7 @@ beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), 'quorum-setup-'));
   paths.documents = join(directory, '文档');
   vi.stubEnv('XDG_CONFIG_HOME', join(directory, 'config'));
+  vi.stubEnv('LOCALAPPDATA', join(directory, 'config'));
 });
 afterEach(async () => {vi.unstubAllEnvs(); await rm(directory, {recursive: true, force: true});});
 const council: AgentPairingConfig = {schemaVersion: 1, kind: 'quorum-agent-pairing', serverUrl: 'https://quorum.example.com',
@@ -43,7 +44,7 @@ describe('desktop storage defaults', () => {
     expect((await proposedDirectory(council)).ordinal).toBe(2);
     await expect(allocateDirectory(council, a.rootPath, a.ordinal)).rejects.toMatchObject({code: 'EEXIST'});
     expect(await readFile(join(a.rootPath, 'keep.txt'), 'utf8')).toBe('keep');
-    expect((await proposedDirectory({...council, committeeName: '../危险/目录'})).rootPath.startsWith(join(paths.documents, 'Quorum') + '/')).toBe(true);
+    expect((await proposedDirectory({...council, committeeName: '../危险/目录'})).rootPath.startsWith(join(paths.documents, 'Quorum') + (process.platform === 'win32' ? '\\' : '/'))).toBe(true);
   });
   it('restores an explicit private config and forgets it after unpair', async () => {
     expect(await lastConfiguration()).toBeUndefined();

@@ -167,6 +167,8 @@ export component MainWindow inherits Window {
     preferred-width: 960px; preferred-height: 720px; min-width: 760px; min-height: 600px;
     background: Palette.background;
     default-font-size: 14px;
+    in property <string> platform-font-family: "";
+    default-font-family: root.platform-font-family;
     in-out property <string> pending-navigation;
     in-out property <string> page: "login";
     in-out property <string> email;

@@ -1,5 +1,6 @@
 mod localization;
 mod desktop;
+#[cfg(windows)] mod windows;
 use slint::winit_030::WinitWindowAccessor;
 use localization::{translate, load_language, save_language, stale_time};
 use serde_json::{json, Value};
@@ -129,6 +130,7 @@ fn render_committees(ui: &MainWindow, values: &[Value]) {
 }
 // RFD conflates missing portal/backend with user cancellation. Detect the missing
 // interface first so desktop setup failures are visible without requiring Zenity.
+#[cfg(unix)]
 fn file_dialog_ready(weak: &slint::Weak<MainWindow>) -> bool {
     let ready = Command::new("gdbus").args(["call", "--session", "--timeout", "5", "--dest", "org.freedesktop.portal.Desktop",
         "--object-path", "/org/freedesktop/portal/desktop", "--method", "org.freedesktop.DBus.Properties.Get",
@@ -137,6 +139,8 @@ fn file_dialog_ready(weak: &slint::Weak<MainWindow>) -> bool {
     if !ready {let _ = weak.upgrade_in_event_loop(|ui| {ui.set_busy(false); ui.set_error_stage("".into()); ui.set_error_code("FILE_CHOOSER_UNAVAILABLE".into());});}
     ready
 }
+#[cfg(windows)]
+fn file_dialog_ready(_weak: &slint::Weak<MainWindow>) -> bool {true}
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     let target = match arguments.as_slice() {
@@ -150,13 +154,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if arguments.first().is_some_and(|arg| arg == "--unregister") {desktop::unregister()?; return Ok(());}
     let exe = std::env::current_exe()?;
     let node = std::env::var_os("QUORUM_AGENT_NODE").map(PathBuf::from)
-        .unwrap_or_else(|| exe.parent().unwrap().join("runtime/node"));
+        .unwrap_or_else(|| exe.parent().unwrap().join(if cfg!(windows) {"runtime/node.exe"} else {"runtime/node"}));
     let bridge = std::env::var_os("QUORUM_AGENT_BRIDGE").map(PathBuf::from)
         .unwrap_or_else(|| exe.parent().unwrap().join("app/desktop-bridge.js"));
     if arguments.first().is_some_and(|arg| arg == "--register") {
         desktop::register(&exe, &node, &bridge)?; return Ok(());
     }
     let Some(instance) = desktop::Instance::open(&target)? else {return Ok(());};
+    #[cfg(unix)]
     slint::BackendSelector::new().backend_name("winit".into())
         .with_winit_window_attributes_hook(|attributes| {
             let attributes = slint::winit_030::winit::platform::wayland::WindowAttributesExtWayland::with_name(
@@ -164,7 +169,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             slint::winit_030::winit::platform::x11::WindowAttributesExtX11::with_name(
                 attributes, desktop::APP_ID, desktop::APP_ID)
         }).select()?;
+    #[cfg(windows)]
+    slint::BackendSelector::new().backend_name("winit".into()).select()?;
     let ui = MainWindow::new()?;
+    #[cfg(windows)] ui.set_platform_font_family("Microsoft YaHei".into());
     ui.set_show_settings(true);
     ui.on_translate(|key, language| translate(key.as_str(), language.as_str()).into());
     ui.set_language(load_language().into());
@@ -212,8 +220,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let weak = ui.as_weak();
         thread::spawn(move || {
             let result = desktop::local_file_path(std::path::Path::new(&root), &relative)
-                .and_then(|path| desktop::host_command("xdg-open").arg(path).status())
-                .map(|status| status.success()).unwrap_or(false);
+                .and_then(|path| desktop::open_target(path.as_os_str())).is_ok();
             if !result {let _ = weak.upgrade_in_event_loop(|ui| {ui.set_error_stage("".into()); ui.set_error_code("Cannot open local file".into());});}
         });
     });
@@ -326,7 +333,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if !target.is_empty() {
                 let weak = ui.as_weak();
                 thread::spawn(move || {
-                    if !desktop::host_command("xdg-open").arg(target.as_str()).status().is_ok_and(|status| status.success()) {
+                    if desktop::open_target(std::ffi::OsStr::new(target.as_str())).is_err() {
                         let _ = weak.upgrade_in_event_loop(|ui| {ui.set_error_stage("".into()); ui.set_error_code("OPEN_EXTERNAL_FAILED".into());});
                     }
                 });

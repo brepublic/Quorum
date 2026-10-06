@@ -153,7 +153,7 @@ Chair Agent 网页上传使用 `submissions/<entry ID>/content` 独立路径，�
 
 CHAIR_AGENT 字节的权威持久副本仍在主席电脑。服务器使用同一持久卷中的独立 cache 命名空间保存非权威副本，并用 `REVIEW_PINNED` / `READY` / `MISSING` / `FETCHING` / `EVICTING` / `FAILED` 记录状态。管理员配置保存在 PostgreSQL，生效容量上限取数据库值与部署硬边界的较小值，最低剩余空间取较大值。待审核副本不参与 LRU，所有主席电脑上传（含主席上传）均受审核缓存额度约束；批准或驳回后解除固定保留。服务器卷与 S3 的权威副本不占用主席电脑审核缓存额度。
 
-### Linux 主席 Agent 桌面外壳
+### 主席 Agent 原生桌面外壳
 
 `GET /api/v1/storage-agent/committees` 使用账号 Session 返回可连接委员会，只包含所有者或有效主席有权管理的活动／暂停委员会，附当前设备、实际存储方式及版本；公开浏览和系统管理员身份本身不授予绑定权。该查询只提供选择快照，授权生成和最终配对仍走原有事务校验。
 
@@ -282,3 +282,9 @@ Rust/Slint 和既有 Node 核心，生成 AppImage、解压包、源码包及校
 AppRun 区分包内依赖环境与宿主外部程序环境。文件覆盖确认移到既有 Slint 窗口，
 文件选择前检查 portal 接口，缺失时给出错误。手动 GitHub 构建工作流仅上传产物，
 不自动发布。协议、配置 schema、目录锁和退出即停止同步的行为保持不变。
+
+### Windows 原生窗口适配（2026-10-06）
+
+Windows 继续使用同一 Rust/Slint 窗口及 Node 管道桥接。平台实现拆分为 desktop/linux.rs 与 desktop/windows.rs；Windows 使用内核文件锁限制单窗口，在受当前用户、SYSTEM 和 Administrators ACL 保护的 requests 目录中原子发布短期唤起请求，并由现有窗口确认消费，不开放本地网络端口。系统打开使用 ShellExecuteW，文件选择使用 rfd 的 Windows 原生后端；Wayland/X11 和 portal 检查仅保留在 Unix 路径。
+
+Windows Rust/Node 共用 LOCALAPPDATA/quorum-agent，系统语言从 Windows locale 获取，默认文档位置使用 Windows MyDocuments 已知目录；Windows 窗口显式使用 Microsoft YaHei，以避免软件渲染器的中文回退字形缺失。开发启动使用 pnpm start:storage-agent:desktop:windows。Windows 安装、协议注册和发行留在后续发行阶段。

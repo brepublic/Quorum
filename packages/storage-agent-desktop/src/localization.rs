@@ -1,3 +1,4 @@
+#[path = "preferences.rs"] pub(crate) mod preferences;
 use std::{path::PathBuf, time::SystemTime};
 
 /// Fresh observations need no timestamp; stale ones age even without another snapshot.
@@ -471,16 +472,14 @@ pub fn translate(key: &str, language: &str) -> &'static str {
 }
 
 fn preference_path() -> Option<PathBuf> {
-    std::env::var_os("XDG_CONFIG_HOME").filter(|value| !value.is_empty()).map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
-        .map(|base| base.join("quorum-agent/desktop-language"))
+    preferences::config_directory().ok().map(|base| base.join("desktop-language"))
 }
 
 pub fn load_language() -> &'static str {
     let saved = preference_path().and_then(|path| std::fs::read_to_string(path).ok());
     match saved.as_deref().map(str::trim) {
         Some("zh-CN") => "zh-CN", Some("en") => "en",
-        _ => if std::env::var("LANG").unwrap_or_default().starts_with("zh") { "zh-CN" } else { "en" },
+        _ => if preferences::system_language().starts_with("zh") { "zh-CN" } else { "en" },
     }
 }
 

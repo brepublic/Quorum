@@ -49,7 +49,7 @@ async function fixture(pairStatus = 200, revokeStatus = 200, mustChangePassword 
   });
   await new Promise<void>(done=>server.listen(0,'127.0.0.1',done));cleanup.push(async()=>{server.closeAllConnections();await new Promise<void>(done=>server.close(()=>done()));});
   const address=server.address();if(!address||typeof address==='string')throw Error('address');
-  const process=spawn(globalThis.process.execPath,[resolve('packages/storage-agent/dist/desktop-bridge.js')],{stdio:'pipe',env:{...globalThis.process.env, XDG_CONFIG_HOME:join(root,'config-home')}});
+  const process=spawn(globalThis.process.execPath,[resolve('packages/storage-agent/dist/desktop-bridge.js')],{stdio:'pipe',env:{...globalThis.process.env, XDG_CONFIG_HOME:join(root,'config-home'), LOCALAPPDATA:join(root,'config-home')}});
   cleanup.push(async()=>{if(process.exitCode===null){process.kill('SIGKILL');await new Promise(done=>process.once('close',done));}});
   const events:Record<string,any>[]=[];createInterface({input:process.stdout}).on('line',line=>events.push(JSON.parse(line)));
   async function wait(predicate:(e:Record<string,any>)=>boolean, from=0) {

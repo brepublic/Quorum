@@ -9,7 +9,10 @@ import {parseAgentPairingConfig, type AgentPairingConfig} from '@quorum/contract
 import {normalizeDesktopSite} from './desktop-auth.js';
 
 export function desktopConfigDirectory(): string {
-  return join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'quorum-agent');
+  const base = process.platform === 'win32'
+    ? process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local')
+    : process.env.XDG_CONFIG_HOME || join(homedir(), '.config');
+  return join(base, 'quorum-agent');
 }
 type Preferences = {lastConfig?: string; serverUrl?: string; ordinals: Record<string, number>};
 async function preferences(): Promise<Preferences> {
@@ -66,6 +69,12 @@ function directoryName(name: string) {
   return name.replace(/[\x00-\x1f\x7f/\\<>:"|?*]/g, '_').replace(/^\.+|[. ]+$/g, '').trim().slice(0, 80) || 'Committee';
 }
 function documentsDirectory(): string {
+  if (process.platform === 'win32') {
+    const powershell = join(process.env.SystemRoot || 'C:\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+    return execFileSync(powershell, ['-NoProfile', '-NonInteractive', '-Command',
+      '[Console]::OutputEncoding = [Text.Encoding]::UTF8; [Environment]::GetFolderPath("MyDocuments")'],
+      {encoding: 'utf8', timeout: 5000, windowsHide: true}).trim() || join(homedir(), 'Documents');
+  }
   try {
     const value = execFileSync('xdg-user-dir', ['DOCUMENTS'], {encoding: 'utf8', timeout: 3000}).trim();
     if (value.startsWith('/') && value !== homedir()) return value;
