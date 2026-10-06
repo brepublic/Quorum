@@ -3423,6 +3423,30 @@ describe('committee workspace routes and roles', () => {
     expect(ownerPage.querySelector('.storage-setup-reminder')).toBeNull();
   });
 
+  it('shows pending conflicts outside the files page and clears them after a resolution event', async () => {
+    let pending = true; let sequence = 1;
+    let handlers: Parameters<SelfHostedApi['openCommitteeEvents']>[2] | undefined;
+    const listStorageAgentConflicts = vi.fn(async () => pending ? [{id: 'conflict', status: 'PENDING', change: {kind: 'UPSERT', logicalName: 'draft.txt'}}] as never : []);
+    const page = await render('OWNER', '/committees/committee/info', user,
+      value => ({...value, sync: {committeeEventSequence: sequence}}), {listStorageAgentConflicts,
+        openCommitteeEvents: (_id, _after, next) => {handlers = next; next.onState('LIVE'); return () => undefined;}});
+    expect(page.querySelector('.committee-navigation-desktop .file-conflict-dot')).not.toBeNull();
+    await act(async () => page.querySelector<HTMLAnchorElement>('.committee-navigation-desktop a[href="/committees/committee/posts"]')!.click());
+    expect(page.querySelector('.file-conflict-notice a')?.getAttribute('href')).toBe('/committees/committee/posts/storage#sync-conflicts');
+    expect(page.querySelector('[aria-label="Resource sections"] .file-conflict-dot')).not.toBeNull();
+    pending = false; sequence++;
+    await act(async () => handlers!.onEvent({sequence, type: 'storage_agent.conflict_resolved'} as never));
+    expect(page.querySelector('.file-conflict-dot')).toBeNull();
+    expect(page.querySelector('.file-conflict-notice')).toBeNull();
+  });
+
+  it.each(['MEMBER', 'PUBLIC'] as const)('does not request private conflict details for %s', async audience => {
+    const listStorageAgentConflicts = vi.fn(async () => []);
+    const page = await render(audience, '/committees/committee/info', user, value => value, {listStorageAgentConflicts});
+    expect(listStorageAgentConflicts).not.toHaveBeenCalled();
+    expect(page.querySelector('.file-conflict-dot')).toBeNull();
+  });
+
   it('refreshes storage reminders when another Chair suppresses them or enables storage', async () => {
     let suppressed = false; let configured = false; let sequence = 1;
     let eventHandlers: Parameters<SelfHostedApi['openCommitteeEvents']>[2] | undefined;

@@ -1,6 +1,7 @@
 import {randomUUID} from 'node:crypto';
 import type {Pool, PoolClient, QueryResultRow} from 'pg';
 import type {FileEntry, FileEntryStatus, FileTombstone, StorageBinding} from '@quorum/contracts';
+import {ensureCurrentFileManifest} from '../storage-agent/file-manifest.js';
 import {AppError} from '../../http/errors.js';
 import type {AuthenticatedSession} from '../identity/store.js';
 import {
@@ -391,13 +392,43 @@ export class Stage6StorageService {
       throw new AppError({reason: 'STORAGE_BINDING_UNAVAILABLE', code: 'RESOURCE_CONFLICT', message: 'The storage binding is not active.'});
     }
 
+    let acceptedBy: string | undefined; let acceptedConflictId: string | undefined;
+    if (uploadId && fileEntryId && activeBinding.rows[0]?.provider_type === 'CHAIR_AGENT') {
+      const decision = (await client.query<{id: string; resolved_by_user_id: string}>(`SELECT conflict.id,conflict.resolved_by_user_id
+        FROM storage_agent_change_requests change
+        JOIN storage_agent_conflict_applications application ON application.request_id=change.request_id
+        JOIN storage_agent_conflicts conflict ON conflict.id=application.conflict_id
+        JOIN storage_agent_tasks task ON task.id=change.task_id
+        WHERE change.upload_id=$1 AND change.committee_id=$2 AND change.file_entry_id=$3
+          AND change.status='PENDING_CONTENT' AND change.kind='UPSERT'
+          AND conflict.status='RESOLVED' AND conflict.resolution_action='ACCEPT_LOCAL'
+          AND conflict.committee_id=change.committee_id AND conflict.host_id=change.host_id
+          AND conflict.file_entry_id=change.file_entry_id AND conflict.resolution_file_revision=$4
+          AND conflict.resolution_lease_generation=change.lease_generation
+          AND task.host_id=change.host_id AND task.lease_generation=change.lease_generation
+          AND task.source_upload_id=change.upload_id AND task.file_entry_id=change.file_entry_id
+          AND task.file_revision=$4+1 AND task.blob_id=$5
+          AND task.expected_sha256=decode($6,'hex') AND task.expected_size_bytes=$7
+          AND change.sha256=task.expected_sha256 AND change.size_bytes=task.expected_size_bytes
+          AND task.host_id=$8 AND task.lease_generation=$9`,
+      [uploadId, committee.id, fileEntryId, input.baseRevision, requestedBlobId, verifiedHash, verifiedSize,
+        activeBinding.rows[0].storage_host_id, committee.storage_lease_generation])).rows[0];
+      if (decision) {
+        const manager = await client.query("SELECT 1 FROM users WHERE id=$1 AND status='ACTIVE'", [decision.resolved_by_user_id]);
+        if (!manager.rowCount || committee.owner_user_id !== decision.resolved_by_user_id
+          && !await isChair(client, committee.id, decision.resolved_by_user_id)) {
+          throw new AppError({code: 'FORBIDDEN', reason: 'FILE_OWNER_OR_CHAIR_REQUIRED', message: 'The deciding Chair is no longer authorized.'});
+        }
+        acceptedBy = decision.resolved_by_user_id; acceptedConflictId = decision.id;
+      }
+    }
     let entry: FileEntryRow | undefined;
     if (fileEntryId) {
       entry = (await client.query<FileEntryRow>('SELECT * FROM file_entries WHERE id=$1 FOR UPDATE', [fileEntryId])).rows[0];
       if (!entry || entry.committee_id !== committee.id || entry.status === 'DELETED') {
         throw new AppError({code: 'NOT_FOUND', message: 'File not found.'});
       }
-      if (entry.formal_name || entry.merged_into_file_entry_id) throw new AppError({reason: 'FILE_UPDATE_REQUIRES_REVIEW', code: 'RESOURCE_CONFLICT',
+      if (entry.formal_name && !acceptedBy || entry.merged_into_file_entry_id) throw new AppError({reason: 'FILE_UPDATE_REQUIRES_REVIEW', code: 'RESOURCE_CONFLICT',
         message: 'Upload a new submission and approve it through review.', details: {reason: 'FILE_UPDATE_REQUIRES_REVIEW'}});
       requireFileRevision(entry, input.baseRevision);
       if (entry.created_by_user_id !== auth.user.id && committee.owner_user_id !== auth.user.id
@@ -419,7 +450,20 @@ export class Stage6StorageService {
       (id,committee_id,storage_binding_id,storage_key,size_bytes,sha256,durability_state)
       VALUES ($1,$2,$3,$4,$5,decode($6,'hex'),'COMMITTED')`,
     [blobId, committee.id, bindingId, storageKey, verifiedSize, verifiedHash]);
-    if (entry) {
+    const directReplacement = Boolean(entry?.formal_name && acceptedBy);
+    const insertVersion = async () => {
+      await client.query(`INSERT INTO file_versions
+        (id,committee_id,file_entry_id,version_number,blob_id,original_name,media_type,size_bytes,sha256,created_by_user_id,resolution_conflict_id)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,decode($9,'hex'),$10,$11)`,
+      [versionId, committee.id, id, versionNumber, blobId, originalName, mediaType, verifiedSize, verifiedHash,
+        directReplacement ? acceptedBy : auth.user.id, directReplacement ? acceptedConflictId : null]);
+    };
+    if (entry && directReplacement) {
+      await insertVersion();
+      entry = (await client.query<FileEntryRow>(`UPDATE file_entries SET media_type=$2,current_version_id=$3,
+        revision=revision+1,updated_at=now(),published_by_user_id=$4 WHERE id=$1 RETURNING *`,
+      [entry.id, mediaType, versionId, acceptedBy])).rows[0];
+    } else if (entry) {
       const updated = await client.query<FileEntryRow>(`UPDATE file_entries SET logical_name=$2,media_type=$3,
         status='PENDING_REVIEW',current_version_id=$4,submitted_at=now(),published_at=NULL,published_by_user_id=NULL,
         revision=revision+1,updated_at=now()
@@ -432,44 +476,45 @@ export class Stage6StorageService {
       [id, committee.id, logicalName, mediaType, versionId, auth.user.id]);
       entry = created.rows[0];
     }
-    await client.query(`INSERT INTO file_versions
-      (id,committee_id,file_entry_id,version_number,blob_id,original_name,media_type,size_bytes,sha256,created_by_user_id)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,decode($9,'hex'),$10)`,
-    [versionId, committee.id, id, versionNumber, blobId, originalName, mediaType, verifiedSize, verifiedHash, auth.user.id]);
+    if (!directReplacement) await insertVersion();
+    else await ensureCurrentFileManifest(client, committee, id);
     await appendEvent(client, committee, {type: versionNumber === 1 ? 'file.created' : 'file.sync_state_changed',
       resourceType: 'file_entry', resourceId: id, revision: entry?.revision ?? 1,
-      payload: {status: 'PENDING_REVIEW', versionNumber, sizeBytes: verifiedSize}});
+      payload: {status: entry!.status, versionNumber, sizeBytes: verifiedSize}});
     await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id,
       capabilities: await isChair(client, committee.id, auth.user.id) ? ['CHAIR'] : ['MEMBER'],
       action: 'storage.file_version_recorded', resourceType: 'file_entry', resourceId: id,
       before: versionNumber === 1 ? null : {revision: (entry?.revision ?? 2) - 1},
-      after: {status: 'PENDING_REVIEW', revision: entry?.revision ?? 1, versionNumber,
+      after: {status: entry!.status, revision: entry?.revision ?? 1, versionNumber,
+        ...(directReplacement ? {conflictResolvedByUserId: acceptedBy} : {}),
         sizeBytes: verifiedSize, sha256: verifiedHash}});
     // Every provider reaches this boundary only after durable, verified storage.
-    const submission = uploadId ? (await client.query<{seat_id: string; seat_display_name: string;
-      file_type: string; submitted_at: Date}>(`SELECT * FROM delegate_file_upload_contexts WHERE upload_id=$1`,
-    [uploadId])).rows[0] : undefined;
-    const chair = committee.owner_user_id === auth.user.id || await isChair(client, committee.id, auth.user.id);
-    const chairType = uploadId ? (await client.query('SELECT chair_file_type FROM file_uploads WHERE id=$1',[uploadId])).rows[0]?.chair_file_type : null;
-    if (chairType === 'CRISIS_NOTICE' && !await isChair(client,committee.id,auth.user.id)) throw new AppError({code: 'FORBIDDEN',reason: 'CHAIR_REQUIRED',message: 'Only chairs upload crisis notices.'});
-    const submittedAt = submission?.submitted_at ?? new Date();
-    const source = submission ? 'DELEGATE_PORTAL' : chair ? 'CHAIR' : 'ACCOUNT';
-    await client.query(`INSERT INTO delegate_file_metadata
-      (file_entry_id,submission_source,submitted_by_seat_id,submitter_display_name,file_type,submitted_at)
-      VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (file_entry_id) DO UPDATE SET
-        submission_source=EXCLUDED.submission_source,submitted_by_seat_id=EXCLUDED.submitted_by_seat_id,
-        submitter_display_name=EXCLUDED.submitter_display_name,file_type=EXCLUDED.file_type,
-        submitted_at=EXCLUDED.submitted_at,rejection_reason=NULL,rejected_at=NULL`,
-    [id, source, submission?.seat_id ?? null, submission?.seat_display_name ?? (chair ? null : auth.user.displayName),
-      submission?.file_type ?? chairType ?? (await client.query('SELECT file_type FROM delegate_file_metadata WHERE file_entry_id=$1',[id])).rows[0]?.file_type ?? null, submittedAt]);
-    entry = (await client.query<FileEntryRow>(`UPDATE file_entries SET submitted_at=$2,updated_at=now() WHERE id=$1 RETURNING *`, [id, submittedAt])).rows[0];
-    await appendEvent(client, committee, {type: 'file.review_requested', resourceType: 'file_entry',
-      resourceId: id, revision: entry!.revision, payload: {status: 'PENDING_REVIEW', submissionSource: source,
-        submitterDisplayName: submission?.seat_display_name ?? (chair ? null : auth.user.displayName)}});
-    await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id,
-      capabilities: chair ? ['CHAIR'] : ['MEMBER'], action: 'storage.file_review_requested',
-      resourceType: 'file_entry', resourceId: id, before: null,
-      after: {status: 'PENDING_REVIEW', revision: entry!.revision}});
+    if (!directReplacement) {
+      const submission = uploadId ? (await client.query<{seat_id: string; seat_display_name: string;
+        file_type: string; submitted_at: Date}>(`SELECT * FROM delegate_file_upload_contexts WHERE upload_id=$1`,
+      [uploadId])).rows[0] : undefined;
+      const chair = committee.owner_user_id === auth.user.id || await isChair(client, committee.id, auth.user.id);
+      const chairType = uploadId ? (await client.query('SELECT chair_file_type FROM file_uploads WHERE id=$1',[uploadId])).rows[0]?.chair_file_type : null;
+      if (chairType === 'CRISIS_NOTICE' && !await isChair(client,committee.id,auth.user.id)) throw new AppError({code: 'FORBIDDEN',reason: 'CHAIR_REQUIRED',message: 'Only chairs upload crisis notices.'});
+      const submittedAt = submission?.submitted_at ?? new Date();
+      const source = submission ? 'DELEGATE_PORTAL' : chair ? 'CHAIR' : 'ACCOUNT';
+      await client.query(`INSERT INTO delegate_file_metadata
+        (file_entry_id,submission_source,submitted_by_seat_id,submitter_display_name,file_type,submitted_at)
+        VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (file_entry_id) DO UPDATE SET
+          submission_source=EXCLUDED.submission_source,submitted_by_seat_id=EXCLUDED.submitted_by_seat_id,
+          submitter_display_name=EXCLUDED.submitter_display_name,file_type=EXCLUDED.file_type,
+          submitted_at=EXCLUDED.submitted_at,rejection_reason=NULL,rejected_at=NULL`,
+      [id, source, submission?.seat_id ?? null, submission?.seat_display_name ?? (chair ? null : auth.user.displayName),
+        submission?.file_type ?? chairType ?? (await client.query('SELECT file_type FROM delegate_file_metadata WHERE file_entry_id=$1',[id])).rows[0]?.file_type ?? null, submittedAt]);
+      entry = (await client.query<FileEntryRow>(`UPDATE file_entries SET submitted_at=$2,updated_at=now() WHERE id=$1 RETURNING *`, [id, submittedAt])).rows[0];
+      await appendEvent(client, committee, {type: 'file.review_requested', resourceType: 'file_entry',
+        resourceId: id, revision: entry!.revision, payload: {status: 'PENDING_REVIEW', submissionSource: source,
+          submitterDisplayName: submission?.seat_display_name ?? (chair ? null : auth.user.displayName)}});
+      await audit(client, context, {committeeId: committee.id, actorUserId: auth.user.id,
+        capabilities: chair ? ['CHAIR'] : ['MEMBER'], action: 'storage.file_review_requested',
+        resourceType: 'file_entry', resourceId: id, before: null,
+        after: {status: 'PENDING_REVIEW', revision: entry!.revision}});
+    }
     await client.query('UPDATE committees SET file_manifest_revision=file_manifest_revision+1 WHERE id=$1',
       [committee.id]);
     const migrations = await client.query<{id: string; revision: number}>(`UPDATE storage_migrations

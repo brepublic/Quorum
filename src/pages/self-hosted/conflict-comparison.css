@@ -1,30 +1,37 @@
-.self-hosted-storage-conflicts .conflict-versions {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1rem;
-  margin: 1rem 0;
-}
-.self-hosted-storage-conflicts .conflict-version {
-  min-width: 0;
-  padding: .75rem;
-  background: rgba(0, 0, 0, .025);
-  border-radius: .28571429rem;
-}
-.self-hosted-storage-conflicts .conflict-version h5 {margin: 0 0 .5rem;}
-.self-hosted-storage-conflicts .conflict-version dl {margin: 0;}
-.self-hosted-storage-conflicts .conflict-version dl > div {
-  display: flex;
-  justify-content: space-between;
-  gap: .75rem;
-  margin-top: .3rem;
-}
-.self-hosted-storage-conflicts .conflict-version dd {margin: 0; overflow-wrap: anywhere; text-align: right;}
-.self-hosted-storage-conflicts .conflict-fingerprints {margin: .75rem 0;}
-.self-hosted-storage-conflicts .conflict-fingerprints summary {cursor: pointer;}
-.self-hosted-storage-conflicts .conflict-fingerprints code {display: block; overflow-wrap: anywhere; font-size: .85em;}
-.self-hosted-storage-conflicts .conflict-recommendation {display: inline-block; margin-left: .4em; font-weight: normal;}
-.self-hosted-storage-conflicts .conflict-comparison-guidance {margin: .5rem 0;}
-@media (max-width: 600px) {
-  .self-hosted-storage-conflicts .conflict-versions {grid-template-columns: minmax(0, 1fr); gap: .5rem;}
-  .self-hosted-storage-conflicts .extra.content > .button {margin-bottom: .5rem;}
+.self-hosted-storage-conflicts {margin:1.5rem 0 2rem; scroll-margin-top:1rem;}
+.conflict-section-header {display:flex; align-items:center; justify-content:space-between; gap:1rem; margin-bottom:1rem;}
+.conflict-section-header .ui.header {margin:0;}
+.conflict-count {display:inline-flex; align-items:center; justify-content:center; min-width:1.6em; margin-left:.6rem; padding:.2rem .45rem; border-radius:1rem; background:#fbe9e7; color:#a32620; font-size:.85rem;}
+.self-hosted-storage-conflicts .ui.card.conflict-card {box-shadow:none; border:1px solid rgba(34,36,38,.15); border-radius:.6rem; margin:0 0 1rem;}
+.self-hosted-storage-conflicts .ui.card.conflict-card > .content {padding:1.5rem;}
+.conflict-card .header {overflow-wrap:anywhere;}
+.conflict-decision-summary {display:flex; flex-wrap:wrap; align-items:center; gap:.5rem 1rem; margin:.75rem 0 1.25rem; color:#555;}
+.conflict-recommendation {display:inline-block; padding:.35rem .65rem; border-radius:.3rem; background:#edf5fb; color:#175784; font-size:.9rem; font-weight:600;}
+.conflict-versions {display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:1rem;}
+.conflict-version {display:flex; flex-direction:column; min-width:0; padding:1.25rem; border:1px solid rgba(34,36,38,.12); border-radius:.45rem; background:rgba(127,127,127,.035);}
+.conflict-version h5 {margin:0 0 .5rem; font-size:1.05rem;}
+.conflict-source {overflow-wrap:anywhere; color:#666; margin-bottom:1rem;}
+.conflict-version dl {margin:0 0 1rem;}
+.conflict-version dl > div {display:flex; justify-content:space-between; gap:.75rem; margin:.5rem 0;}
+.conflict-version dt {color:#666; flex-shrink:0;}
+.conflict-version dd {margin:0; overflow-wrap:anywhere; text-align:right;}
+.conflict-version dd .ui.label {margin:0;}
+.conflict-version-actions {margin-top:auto; padding-top:1rem;}
+.conflict-version-actions .ui.button {margin:0; width:100%;}
+.conflict-download {display:inline-block; margin-bottom:.25rem; align-self:flex-start;}
+.conflict-download[aria-disabled="true"] {color:#666; cursor:progress;}
+.conflict-choice-help {font-size:.9rem; color:#666; margin:.75rem 0 0;}
+.conflict-secondary-actions {display:flex; align-items:flex-start; flex-wrap:wrap; gap:1rem 2rem; border-top:1px solid rgba(34,36,38,.1); margin-top:1.25rem; padding-top:1rem;}
+.conflict-secondary-actions details {min-width:0; max-width:100%;}
+.conflict-secondary-actions summary {cursor:pointer; color:#276b9a;}
+.conflict-secondary-actions details[open] {flex-basis:100%;}
+.conflict-secondary-actions details[open] summary {margin-bottom:1rem;}
+.conflict-fingerprints code {display:block; overflow-wrap:anywhere; font-size:.85em;}
+.conflict-save-both .field {margin:1rem 0;}
+.conflict-save-both label {display:block; margin-bottom:.5rem; font-weight:600;}
+@media (max-width:600px) {
+ .conflict-versions {grid-template-columns:minmax(0,1fr);}
+ .self-hosted-storage-conflicts .ui.card.conflict-card > .content {padding:1rem;}
+ .conflict-version {padding:1rem;}
+ .conflict-section-header {align-items:flex-start; flex-wrap:wrap;}
 }

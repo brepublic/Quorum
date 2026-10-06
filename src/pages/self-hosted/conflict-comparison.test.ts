@@ -30,15 +30,15 @@ describe('Chair Agent conflict comparison', () => {
   it('preserves both versions when revisions have advanced and the content differs', () => {
     expect(compareStorageConflict(conflict, undefined, 'host')).toMatchObject({relation: 'DIVERGED',
       recommended: 'SAVE_AS_NEW', fileRevision: 3});
-    expect(compareStorageConflict(conflict, undefined, 'host').summary).toContain('editing order is unknown');
+    expect(compareStorageConflict(conflict, undefined, 'host').summary).toBe('Both files have changed.');
   });
   it.each(['REVISION_CONFLICT', 'MANIFEST_STALE', 'NAME_CONFLICT'] as const)
     ('protects current formal files even if the original reason is %s', reasonCode => {
       const comparison = compareStorageConflict({...conflict, reasonCode,
         serverFile: {...serverFile, status: 'PUBLISHED', publishedAt: '2026-10-06T12:00:00Z'}}, undefined, 'host');
-      expect(comparison.allowed).toEqual(['KEEP_SERVER']);
+      expect(comparison.allowed).toEqual(['KEEP_SERVER', 'ACCEPT_LOCAL']);
       expect(comparison.recommended).toBe('KEEP_SERVER');
-      expect(comparison.guidance).toContain('uploaded and reviewed');
+      expect(comparison.guidance).toContain('replaces the published contents');
     });
   it('uses the original merged source snapshot rather than the downloadable formal target', () => {
     const comparison = compareStorageConflict({...conflict, serverFile: {...serverFile,
@@ -90,7 +90,7 @@ describe('Chair Agent conflict comparison', () => {
         serverFile: {...serverFile, status: 'PUBLISHED', publishedAt: '2026-10-06T12:00:00Z',
           mergedIntoFileEntryId: restriction === 'merged' ? 'formal-target' : null}}, undefined, 'host');
       expect(comparison.allowed).toEqual(['KEEP_SERVER']);
-      expect(comparison.guidance).toContain('review');
+      expect(comparison.allowed).not.toContain('ACCEPT_LOCAL');
     });
   it('uses current metadata for legacy lists and does not compare merged target bytes as source bytes', () => {
     expect(compareStorageConflict({...conflict, serverFile: undefined}, loadedFile, 'host').fileRevision).toBe(3);

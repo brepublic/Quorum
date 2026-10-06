@@ -156,7 +156,8 @@ export class Stage7LocalChangeService {
           }
           const deleted = !source || source.status === 'DELETED' || Boolean((await client.query(
             'SELECT 1 FROM file_tombstones WHERE file_entry_id=$1', [approved.file_entry_id])).rowCount);
-          if (!deleted && (source.merged_into_file_entry_id || source.formal_name && approved.kind !== 'DELETE')) {
+          if (!deleted && (source.merged_into_file_entry_id || source.formal_name && approved.kind !== 'DELETE'
+            && !(approved.resolution_action === 'ACCEPT_LOCAL' && approved.kind === 'UPSERT'))) {
             throw new AppError({reason: 'FILE_UPDATE_REQUIRES_REVIEW', code: 'RESOURCE_CONFLICT',
               message: 'Upload and review the file on the web.'});
           }
@@ -201,7 +202,8 @@ export class Stage7LocalChangeService {
           throw new AppError({code: 'REVISION_CONFLICT', message: 'File changed after the conflict was resolved.'});
         }
         if (acceptedResolution) local = {...local, baseRevision: entry.revision} as StorageAgentLocalChange;
-        if (entry.merged_into_file_entry_id || entry.formal_name && local.kind !== 'DELETE') {
+        if (entry.merged_into_file_entry_id || entry.formal_name && local.kind !== 'DELETE'
+          && !(acceptedResolution?.action === 'ACCEPT_LOCAL' && local.kind === 'UPSERT')) {
           return this.conflict(client, lease.hostId, committee, requestId, manifestSequence, local,
             'REVIEW_REQUIRED', entry.revision, context);
         }

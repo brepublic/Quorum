@@ -200,6 +200,71 @@ async function retainManifestThrough(committeeId: string, sequence: number) {
 }
 
 integration('PostgreSQL stage 7 storage Agent identity', () => {
+  it.each(['complete', 'newer-version', 'changed-local', 'removed-chair'] as const)
+    ('applies an explicit local published replacement with transactional fences: %s', async scenario => {
+    const value = await reviewedChairFixture(); const saved = await value.commit();
+    const published = await value.review.approve(value.owner, saved.file.id, {baseRevision: saved.file.revision,
+      logicalName: '公开文件.txt', fileType: 'WORKING_PAPER'}, context('direct-approve'));
+    const change = value.local(saved.file.id, published.revision);
+    const conflict = await value.submitConflict(change, 'REVIEW_REQUIRED');
+    const body = {baseRevision: conflict.revision, leaseGeneration: value.paired.host.leaseGeneration,
+      fileRevision: published.revision, action: 'ACCEPT_LOCAL'};
+    await expect(conflicts.resolve(value.member, value.committee.id, conflict.id, body, randomUUID(), context('direct-member')))
+      .rejects.toMatchObject({code: 'FORBIDDEN'});
+    await expect(conflicts.resolve(value.chair, value.committee.id, conflict.id, {...body, fileRevision: published.revision - 1},
+      randomUUID(), context('direct-stale'))).rejects.toMatchObject({code: 'REVISION_CONFLICT'});
+    await conflicts.resolve(value.chair, value.committee.id, conflict.id, body, randomUUID(), context('direct-decide'));
+    const requestId = randomUUID();
+    const request = {leaseGeneration: value.paired.host.leaseGeneration, requestId, manifestSequence: 99,
+      resolutionConflictId: conflict.id, change};
+    if (scenario === 'changed-local') {
+      await expect(localChanges.submit(value.paired.credential, {...request, change: {...change, sha256: 'a'.repeat(64)}}, context('direct-changed')))
+        .rejects.toMatchObject({code: 'IDEMPOTENCY_CONFLICT'});
+      expect((await value.reader.get(value.owner, saved.file.id)).currentVersion.sha256).toBe(saved.source.sha256);
+      return;
+    }
+    const pending = await localChanges.submit(value.paired.credential, request, context('direct-submit'));
+    expect(pending.status).toBe('PENDING_CONTENT'); if (pending.status !== 'PENDING_CONTENT') return;
+    await expect(localChanges.submit(value.paired.credential, request, context('direct-retry'))).resolves.toEqual(pending);
+    const claim = await tasks.claim(value.paired.credential, pending.task.id, {
+      leaseGeneration: value.paired.host.leaseGeneration, fileRevision: pending.task.fileRevision, requestId: randomUUID()});
+    const content = Buffer.from('local');
+    await tasks.receiveContent(value.paired.credential, {taskId: claim.id, leaseGeneration: claim.leaseGeneration,
+      fileRevision: claim.fileRevision, claimToken: claim.claimToken!, expectedSha256: change.sha256,
+      contentLength: content.length, source: (async function* () {yield content;})(), context: context('direct-content')});
+    const complete = () => tasks.complete(value.paired.credential, claim.id, {leaseGeneration: claim.leaseGeneration,
+      fileRevision: claim.fileRevision, claimToken: claim.claimToken, requestId: randomUUID()}, context('direct-complete'));
+    if (scenario === 'newer-version') {
+      const other = await value.commit('replacement.txt', Buffer.from('new server version'));
+      const input = {baseRevision: other.file.revision, logicalName: '公开文件.txt', fileType: 'WORKING_PAPER'};
+      const preview = await value.review.previewApproval(value.owner, other.file.id, input);
+      await value.review.approve(value.owner, other.file.id, {...input, confirmationToken: preview.confirmationToken}, context('direct-newer'));
+      await expect(complete()).rejects.toMatchObject({code: 'REVISION_CONFLICT'});
+      expect((await value.reader.get(value.owner, saved.file.id)).currentVersion.sha256).toBe(other.source.sha256);
+      return;
+    }
+    if (scenario === 'removed-chair') {
+      await stage3.setChair(value.owner, value.committee.id, value.chair.user.email, false,
+        await committeeRevision(value.committee.id), context('direct-remove-chair'));
+      await expect(complete()).rejects.toMatchObject({code: 'FORBIDDEN'});
+      expect((await value.reader.get(value.owner, saved.file.id)).currentVersion.sha256).toBe(saved.source.sha256);
+      return;
+    }
+    await complete();
+    const updated = await value.reader.get(value.owner, saved.file.id);
+    expect(updated).toMatchObject({id: saved.file.id, status: 'PUBLISHED', logicalName: '公开文件.txt',
+      revision: published.revision + 1, currentVersion: {sha256: change.sha256, sizeBytes: 5}});
+    expect(updated.publishedAt).toBe(published.publishedAt);
+    expect((await pool!.query('SELECT file_type FROM delegate_file_metadata WHERE file_entry_id=$1', [saved.file.id])).rows[0])
+      .toMatchObject({file_type: 'WORKING_PAPER'});
+    expect((await pool!.query('SELECT count(*)::int AS count FROM file_versions WHERE file_entry_id=$1', [saved.file.id])).rows[0]?.count).toBe(2);
+    const manifest = await tasks.manifest(value.paired.credential, value.paired.host.leaseGeneration);
+    expect(manifest.events.at(-1)).toMatchObject({fileEntryId: saved.file.id, fileRevision: updated.revision, sha256: change.sha256});
+    await expect(localChanges.submit(value.paired.credential, {...request, requestId: randomUUID()}, context('direct-reapply')))
+      .rejects.toMatchObject({code: 'REVISION_CONFLICT'});
+  }, 20_000);
+
+
   it('keeps the first approval manifest on the original Chair path with the current revision and verified content', async () => {
     const value = await reviewedChairFixture(); const saved = await value.commit();
     const before = await tasks.manifest(value.paired.credential, value.paired.host.leaseGeneration);
@@ -218,7 +283,7 @@ integration('PostgreSQL stage 7 storage Agent identity', () => {
       .toEqual(after.events);
     const conflict = await value.submitConflict(value.local(saved.file.id, saved.file.revision), 'REVIEW_REQUIRED');
     expect(conflict).toMatchObject({serverRevision: approved.revision, localBaseRevision: saved.file.revision});
-    for (const action of ['ACCEPT_LOCAL', 'SAVE_AS_NEW']) {
+    for (const action of ['SAVE_AS_NEW']) {
       await expect(conflicts.resolve(value.owner, value.committee.id, conflict.id, {baseRevision: conflict.revision,
         leaseGeneration: value.paired.host.leaseGeneration, fileRevision: approved.revision, action,
         ...(action === 'SAVE_AS_NEW' ? {logicalName: '绕过审核.txt'} : {})}, randomUUID(), context('edge-formal-action')))
@@ -280,7 +345,7 @@ integration('PostgreSQL stage 7 storage Agent identity', () => {
       await expect(conflicts.resolve(value.owner, value.committee.id, conflict.id, stale, randomUUID(), context('edge-stale-decision')))
         .rejects.toMatchObject({code: 'REVISION_CONFLICT'});
     }
-    for (const action of ['ACCEPT_LOCAL', 'SAVE_AS_NEW']) {
+    for (const action of ['SAVE_AS_NEW']) {
       await expect(conflicts.resolve(value.owner, value.committee.id, conflict.id, {...body, action,
         ...(action === 'SAVE_AS_NEW' ? {logicalName: '绕过审核.txt'} : {})}, randomUUID(), context('edge-old-protected')))
         .rejects.toMatchObject({code: 'RESOURCE_CONFLICT', details: {reason: 'FILE_UPDATE_REQUIRES_REVIEW'}});
@@ -345,7 +410,7 @@ integration('PostgreSQL stage 7 storage Agent identity', () => {
     const preview = await value.review.previewApproval(value.owner, next.file.id, input(next.file.revision));
     await value.review.approve(value.owner, next.file.id, {...input(next.file.revision), confirmationToken: preview.confirmationToken}, context('edge-merge-approve'));
     for (const [conflict, fileRevision] of [[formalConflict, first.file.revision + 2], [sourceConflict, next.file.revision + 1]] as const) {
-      for (const action of ['ACCEPT_LOCAL', 'SAVE_AS_NEW']) {
+      for (const action of conflict.id === sourceConflict.id ? ['ACCEPT_LOCAL', 'SAVE_AS_NEW'] : ['SAVE_AS_NEW']) {
         await expect(conflicts.resolve(value.owner, value.committee.id, conflict.id, {baseRevision: conflict.revision,
           leaseGeneration: value.paired.host.leaseGeneration, fileRevision, action,
           ...(action === 'SAVE_AS_NEW' ? {logicalName: '绕过审核.txt'} : {})}, randomUUID(), context('edge-predates-review')))

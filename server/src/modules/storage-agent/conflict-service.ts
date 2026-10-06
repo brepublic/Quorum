@@ -187,7 +187,8 @@ export class Stage7ConflictService {
         }
         const fileDeleted = Boolean(row.file_entry_id && (!entry || entry.status === 'DELETED' || entry.tombstoned));
         if (!fileDeleted && (row.reason_code === 'REVIEW_REQUIRED' || entry?.merged_into_file_entry_id
-          || entry?.formal_name && row.kind !== 'DELETE') && action !== 'KEEP_SERVER') throw new AppError({reason: 'FILE_UPDATE_REQUIRES_REVIEW', code: 'RESOURCE_CONFLICT',
+          || entry?.formal_name && row.kind !== 'DELETE') && action !== 'KEEP_SERVER'
+          && !(action === 'ACCEPT_LOCAL' && row.kind === 'UPSERT' && entry?.formal_name && !entry.merged_into_file_entry_id)) throw new AppError({reason: 'FILE_UPDATE_REQUIRES_REVIEW', code: 'RESOURCE_CONFLICT',
           message: 'Upload and review the file on the web.', details: {reason: 'FILE_UPDATE_REQUIRES_REVIEW'}});
         if ((row.reason_code === 'HOST_TRANSFERRED' || row.host_id !== currentHost.id) && action !== 'KEEP_SERVER') {
           throw new AppError({reason: 'REVOKED_HOST_CONTENT', code: 'RESOURCE_CONFLICT', message: 'Content on a revoked host cannot be accepted.'});

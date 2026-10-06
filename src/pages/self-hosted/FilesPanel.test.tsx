@@ -11,7 +11,7 @@ import {openChairAgent, downloadChairConfiguration} from '../../services/agent-p
 vi.mock('../../services/agent-pairing', () => ({openChairAgent: vi.fn(), downloadChairConfiguration: vi.fn()}));
 import FilesPanel, {storageErrorText} from './FilesPanel';
 
-beforeEach(() => setLanguage('zh-CN'));
+beforeEach(() => {setLanguage('zh-CN'); vi.spyOn(window, 'confirm').mockReturnValue(true);});
 
 (globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT: boolean}).IS_REACT_ACT_ENVIRONMENT = true;
 const committeeId = '20000000-0000-4000-8000-000000000001';
@@ -254,14 +254,14 @@ describe('self-hosted stage 6 file panel', () => {
     const view = await render('CHAIR', api({listFiles: vi.fn(async () => [{...file, revision: 3}]),
       listStorageHosts: vi.fn(async () => [host]), listStorageAgentConflicts: vi.fn(async () => [conflict]),
       resolveStorageAgentConflict}), 'chair');
-    expect(view.textContent).toContain('服务器与本地版本不一致');
+    expect(view.textContent).toContain('两边都有改动');
     const list = view.querySelector('#sync-conflicts');
     expect(list).not.toBeNull();
     expect(document.activeElement === list).toBe(followLink);
     expect(scroll.mock.calls.length).toBe(followLink ? 1 : 0);
     if (scrollDescriptor) Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', scrollDescriptor);
     else Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView');
-    await act(async () => {button('采用本地版本')?.click(); await new Promise(resolve => setTimeout(resolve, 0));});
+    await act(async () => {button('保留本地版本')?.click(); await new Promise(resolve => setTimeout(resolve, 0));});
     expect(resolveStorageAgentConflict).toHaveBeenCalledWith(committeeId, 'conflict', {
       baseRevision: 1, leaseGeneration: 7, fileRevision: 3, action: 'ACCEPT_LOCAL'
     }, expect.any(String));
@@ -286,7 +286,7 @@ describe('self-hosted stage 6 file panel', () => {
     const name = view.querySelector('input[aria-label="新文件名称"]') as HTMLInputElement;
     await act(async () => {Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
       ?.call(name, '改名文件.txt'); name.dispatchEvent(new Event('input', {bubbles: true}));});
-    await act(async () => {button('采用本地版本')?.click(); await new Promise(resolve => setTimeout(resolve, 0));});
+    await act(async () => {button('采用本地名称')?.click(); await new Promise(resolve => setTimeout(resolve, 0));});
     expect(resolveStorageAgentConflict).toHaveBeenCalledWith(committeeId, 'name-conflict', {
       baseRevision: 1, leaseGeneration: 7, fileRevision: 3, action: 'ACCEPT_LOCAL', logicalName: '改名文件.txt'
     }, expect.any(String));
@@ -314,14 +314,30 @@ describe('self-hosted stage 6 file panel', () => {
       listStorageAgentConflicts: vi.fn(async () => [conflict]), resolveStorageAgentConflict}), 'chair');
     const card = view.querySelector('[data-conflict-id="comparison"]')!;
     expect(card.querySelector('.content > .header')?.textContent).toBe(file.logicalName);
-    expect(card.textContent).toContain('基于修订v2'); expect(card.textContent).toContain('当前修订v4');
-    expect(card.textContent).toContain('无法确定修改先后');
+    expect(card.querySelector('.conflict-fingerprints')?.textContent).toContain('基于修订: 2');
+    expect(card.querySelector('.conflict-decision-summary')?.textContent).toContain('两边都有改动');
+    expect(card.querySelector('.conflict-versions')?.textContent).not.toMatch(/修订|无法确定/);
     expect(card.querySelector('.conflict-fingerprints')?.hasAttribute('open')).toBe(false);
-    expect(button('另存为新文件')?.textContent).toContain('建议');
+    expect(view.querySelector('.conflict-recommendation')?.textContent).toContain('保留两份');
     expect(resolveStorageAgentConflict).not.toHaveBeenCalled();
     await act(async () => {button('保留服务器版本')!.click(); await new Promise(resolve => setTimeout(resolve, 0));});
     expect(resolveStorageAgentConflict).toHaveBeenCalledWith(committeeId, conflict.id,
       expect.objectContaining({fileRevision: 4, leaseGeneration: 7, baseRevision: 1, action: 'KEEP_SERVER'}), expect.any(String));
+  });
+
+  it('lets the Chair cancel or explicitly keep either side of a published conflict', async () => {
+    const {host, conflict} = comparisonFixture();
+    conflict.serverFile = {...conflict.serverFile!, status: 'PUBLISHED', publishedAt: '2026-10-06T12:00:00Z'};
+    const resolveStorageAgentConflict = vi.fn(async () => ({...conflict, status: 'RESOLVED' as const}));
+    await render('CHAIR', api({listStorageHosts: vi.fn(async () => [host]),
+      listStorageAgentConflicts: vi.fn(async () => [conflict]), resolveStorageAgentConflict}), 'chair');
+    vi.mocked(window.confirm).mockReturnValueOnce(false);
+    await act(async () => button('保留本地版本')!.click());
+    expect(resolveStorageAgentConflict).not.toHaveBeenCalled();
+    await act(async () => button('保留本地版本')!.click());
+    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining('用本地版本替换服务器内容'));
+    expect(resolveStorageAgentConflict).toHaveBeenCalledWith(committeeId, conflict.id,
+      expect.objectContaining({action: 'ACCEPT_LOCAL', fileRevision: 4}), expect.any(String));
   });
 
   it('uses the local name for an unsubmitted new file conflict', async () => {
@@ -337,9 +353,10 @@ describe('self-hosted stage 6 file panel', () => {
       publishedAt: '2026-10-06T12:00:00Z'};
     const view = await render('CHAIR', api({listStorageHosts: vi.fn(async () => [host]),
       listStorageAgentConflicts: vi.fn(async () => [conflict])}), 'chair');
-    expect(view.textContent).toContain('正式文件的修改须在网页上传后审核');
-    expect(button('采用本地版本')).toBeUndefined(); expect(button('另存为新文件')).toBeUndefined();
-    expect(button('保留服务器版本')?.textContent).toContain('建议');
+    expect(view.textContent).toContain('公开文件的内容会随之替换');
+    expect(button('保留本地版本')?.disabled).toBe(false); expect(button('保留服务器版本')?.disabled).toBe(false);
+    expect(button('另存为新文件')).toBeUndefined();
+    expect(view.querySelector('.conflict-recommendation')?.textContent).toContain('保留服务器版本');
   });
 
   it('allows a local deletion of an ordinary formal file and fences the decision with the current source revision', async () => {
@@ -353,10 +370,10 @@ describe('self-hosted stage 6 file panel', () => {
     expect(card.querySelector('.content > .header')?.textContent).toBe(file.logicalName);
     expect(card.textContent).toContain('本地文件已删除');
     expect(card.textContent).not.toContain('正式文件的修改须在网页上传后审核');
-    expect(button('采用本地版本')?.textContent).toContain('建议');
+    expect(view.querySelector('.conflict-recommendation')?.textContent).toContain('删除服务器文件');
     expect(button('另存为新文件')).toBeUndefined();
     expect(resolveStorageAgentConflict).not.toHaveBeenCalled();
-    await act(async () => {button('采用本地版本')!.click(); await new Promise(resolve => setTimeout(resolve, 0));});
+    await act(async () => {button('删除服务器文件')!.click(); await new Promise(resolve => setTimeout(resolve, 0));});
     expect(resolveStorageAgentConflict).toHaveBeenCalledWith(committeeId, conflict.id,
       {baseRevision: 1, leaseGeneration: 7, fileRevision: 4, action: 'ACCEPT_LOCAL'}, expect.any(String));
   });
@@ -397,7 +414,7 @@ describe('self-hosted stage 6 file panel', () => {
     await act(async () => {button('保留服务器版本')!.click(); await new Promise(resolve => setTimeout(resolve, 0));});
     expect(resolveStorageAgentConflict).toHaveBeenCalledWith(committeeId, conflict.id,
       expect.objectContaining({fileRevision: 4}), expect.any(String));
-    expect(button('采用本地版本')).toBeUndefined();
+    expect(button('保留本地版本')?.disabled).toBe(true);
   });
 
   it('keeps unavailable metadata conservative, offers manual download and refreshes the comparison', async () => {
@@ -408,12 +425,12 @@ describe('self-hosted stage 6 file panel', () => {
     });
     const view = await render('CHAIR', api({listFiles: vi.fn(async () => []), listStorageHosts: vi.fn(async () => [host]),
       listStorageAgentConflicts: vi.fn(async () => [conflict]), getFile}), 'chair');
-    expect(view.textContent).toContain('当前服务器详情不可用');
-    expect(button('采用本地版本')).toBeUndefined(); expect(button('另存为新文件')).toBeUndefined();
+    expect(view.textContent).toContain('可下载服务器文件');
+    expect(button('保留本地版本')?.disabled).toBe(true); expect(button('另存为新文件')).toBeUndefined();
     expect(view.querySelector('a[download]')?.textContent).toContain('下载服务器版本');
     available = true;
     await act(async () => {button('刷新比较')!.click(); await new Promise(resolve => setTimeout(resolve, 0));});
-    expect(view.textContent).toContain('当前修订v5'); expect(button('另存为新文件')?.textContent).toContain('建议');
+    expect(view.querySelector('.conflict-fingerprints')?.textContent).toContain('当前修订: 5'); expect(view.querySelector('.conflict-recommendation')?.textContent).toContain('保留两份');
     expect(view.querySelector('[data-conflict-id="comparison"] > .content > .header')?.textContent).toBe(file.logicalName);
   });
 
@@ -422,7 +439,7 @@ describe('self-hosted stage 6 file panel', () => {
     const view = await render('CHAIR', api({listFiles: vi.fn(async () => []), listStorageHosts: vi.fn(async () => [host]),
       listStorageAgentConflicts: vi.fn(async () => [conflict])}), 'chair');
     expect(view.textContent).toContain('服务器文件已删除'); expect(view.querySelector('a[download]')).toBeNull();
-    expect(button('采用本地版本')).toBeUndefined(); expect(button('另存为新文件')?.textContent).toContain('建议');
+    expect(button('保留本地版本')?.disabled).toBe(true); expect(view.querySelector('.conflict-recommendation')?.textContent).toContain('保留两份');
   });
 
   it('cancels an in-flight upload through AbortSignal without clearing the selected file', async () => {

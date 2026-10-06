@@ -31,6 +31,8 @@ export function compareStorageConflict(conflict: StorageAgentConflict, loadedFil
     if (!deleted) allowed.push('ACCEPT_LOCAL');
     if (conflict.change.kind === 'UPSERT') allowed.push('SAVE_AS_NEW');
   }
+  if (activeHostId && !revoked && !deleted && !merged && known && reviewRequired
+    && conflict.change.kind === 'UPSERT' && (serverFile?.publishedAt || serverFile?.status === 'PUBLISHED')) allowed.push('ACCEPT_LOCAL');
   const base = {
     serverFile, merged, allowed,
     fileRevision: serverFile === undefined ? conflict.serverRevision : serverFile?.revision ?? null,
@@ -44,31 +46,31 @@ export function compareStorageConflict(conflict: StorageAgentConflict, loadedFil
   if (deleted) return decision('DELETED', 'The server file has been deleted.',
     conflict.change.kind === 'UPSERT' ? 'SAVE_AS_NEW' : 'KEEP_SERVER',
     conflict.change.kind === 'UPSERT' ? 'Save a new file to retain the local content.' : undefined);
-  const guidance = reviewRequired ? merged ? 'This submission was merged into a formal file. Upload changes for review.'
-    : 'Changes to formal files must be uploaded and reviewed on the web.' : undefined;
-  if (merged) return decision('UNKNOWN', 'The original submission cannot be compared with its formal replacement.', 'KEEP_SERVER', guidance);
+  const guidance = reviewRequired ? merged ? 'Open the published file to update it.'
+    : 'Keeping the local version replaces the published contents.' : undefined;
+  if (merged) return decision('UNKNOWN', 'This submission has been replaced by the published file.', 'KEEP_SERVER', guidance);
   if (!conflict.fileEntryId) return decision('NEW_FILE', 'This is an unsubmitted local file.', 'SAVE_AS_NEW');
-  if (!serverFile) return decision('UNKNOWN', 'Current server details are unavailable. Compare the files before deciding.',
+  if (!serverFile) return decision('UNKNOWN', 'Download the server file to compare its contents.',
     reviewRequired ? 'KEEP_SERVER' : undefined, guidance);
   const localBase = conflict.localBaseRevision;
   if (conflict.change.kind === 'DELETE') return decision('LOCAL_DELETE',
-    localBase === serverFile.revision ? 'The local file was deleted; the server still has the base revision.'
-      : 'The server revision advanced; the local change deletes the file.',
+    localBase === serverFile.revision ? 'The local file was deleted. The server copy has not changed.'
+      : 'The local file was deleted, but the server copy has changed.',
     localBase === serverFile.revision ? 'ACCEPT_LOCAL' : 'KEEP_SERVER', guidance);
   if (conflict.change.kind === 'RENAME') return decision('RENAME',
-    localBase === serverFile.revision ? 'The server still has the base revision; the local change renames the file.'
-      : 'The server revision advanced; the local change renames the file.', reviewRequired ? 'KEEP_SERVER'
+    localBase === serverFile.revision ? 'The local file was renamed. The server copy has not changed.'
+      : 'The local file was renamed and the server copy has changed.', reviewRequired ? 'KEEP_SERVER'
       : localBase === serverFile.revision ? 'ACCEPT_LOCAL' : undefined, guidance);
   const version = serverFile.currentVersion;
-  if (!version) return decision('UNKNOWN', 'Current server details are unavailable. Compare the files before deciding.',
+  if (!version) return decision('UNKNOWN', 'Download the server file to compare its contents.',
     reviewRequired ? 'KEEP_SERVER' : undefined, guidance);
   if (/^[0-9a-f]{64}$/i.test(conflict.change.sha256) && conflict.change.sha256.toLowerCase() === version.sha256.toLowerCase()
-    && conflict.change.sizeBytes === version.sizeBytes) return decision('IDENTICAL', 'Both versions contain identical bytes.', 'KEEP_SERVER', guidance);
+    && conflict.change.sizeBytes === version.sizeBytes) return decision('IDENTICAL', 'Both files have the same contents.', 'KEEP_SERVER', guidance);
   if (localBase === serverFile.revision) return decision('LOCAL_CHANGED',
-    'The server still has the base revision; the local content differs.', reviewRequired ? 'KEEP_SERVER' : 'ACCEPT_LOCAL', guidance);
+    'Only the local file has changed.', 'ACCEPT_LOCAL', guidance);
   if (localBase !== null && serverFile.revision > localBase) return decision('DIVERGED',
-    'The server revision advanced and the local content differs. Their editing order is unknown.',
+    'Both files have changed.',
     reviewRequired ? 'KEEP_SERVER' : 'SAVE_AS_NEW', reviewRequired ? guidance : 'Save a new file to retain both versions.');
-  return decision('UNKNOWN', 'The version relationship is unknown. Compare the files before deciding.',
+  return decision('UNKNOWN', 'Download the server file to compare its contents.',
     reviewRequired ? 'KEEP_SERVER' : undefined, guidance);
 }
