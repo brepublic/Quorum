@@ -12,6 +12,7 @@
 
 - 拆分 Linux/Windows 桌面实现，接入 Windows 单实例请求转交、原生文件选择器与默认程序打开；新增 PowerShell 开发启动入口。
 - Rust 与 Node 共用 Windows 用户配置目录，适配系统语言、文档位置及 node.exe 路径；修正 Windows 中文字体选择和跨平台配置测试。
+- 用户人工验收确认中文输入法正常，Windows 125% 缩放下未见异常。
 
 
 ## 2026-10-06：Windows Agent 复用 WSL 开发服务器
