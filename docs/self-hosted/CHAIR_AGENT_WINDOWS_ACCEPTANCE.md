@@ -75,3 +75,12 @@
 - 在 WSL 隔离副本完成 Linux contracts／Agent 构建，Node 136 项通过、6 项 Windows 专用测试跳过；完整 Slint 1.17.1／rfd 0.15.4 GUI 与 helper 两个 ELF 构建通过，Rust 10 项通过。登录、连接、文件及覆盖确认四项生产 Slint offscreen fixture 通过。
 - Linux 的中文字体只解包到任务目录；文件 fixture 原先点击第二行，现用第一行模型 ID 和生产点击命中结果寻找内点，保留所有交互断言。未修改产品布局或系统字体。本次 Linux 证据是完整 dev 构建与 offscreen 组件回归，不能替代 compositor／portal 原生交互或完整 AppImage 实机验收。
 - Windows 10 实机验收按用户确认保留；当前无对应环境。签名与公开发布不在本轮要求内；网页配对／协议实际唤起继续由用户手工验收。
+
+## 2026-10-06：真实冲突比较与服务器版本下载
+
+- 本地正式文件基于 revision 3 修改为 57 B，服务器仍为基准版本时快照核对为本地单独变化。保持待裁决冲突并在网页批准 65 B 同名替换后，原冲突的当前服务器快照推进到 revision 4，原检测时 revision 保留。
+- 现有 HTTPS app/Caddy 更新完成；实际浏览器显示本地 v3、服务器 v4、两边大小及 SHA-256，说明服务器修订推进、内容不同且无法确定编辑先后。正式文件建议 KEEP_SERVER 并保留网页审核限制。
+- 实际点击“下载服务器版本”得到 65 B 副本，SHA-256 为 4c707c643d9da9ebe0878016977318cb819776d662e9d9109c91bdd478127c38；原 57 B 本地冲突内容保持 SHA-256 4e9d385323d60e9f0eb80d843b09d229b3e83b3990d1d85edfc8e6e2b7281feb，下载没有自动裁决。
+- 默认浏览器 1166 px 为并列两栏，无横向溢出；390 px 为单栏，document scrollWidth 375 px，展开 SHA-256 后仍无横向溢出。保存默认和窄屏实际页面截图。已恢复默认 viewport。
+- 前端比较与 FilesPanel 共 48 项通过，正式前端构建／TypeScript 通过；服务端快照真实 PostgreSQL 39 项通过。普通正式文件 DELETE 保留服务器允许的 ACCEPT_LOCAL，merged 和原 REVIEW_REQUIRED 继续保护；已知文件卡片使用原始业务名称而不是 content。
+- 专用 B 委员会保留一项演示冲突，方便用户直接检查页面；本地／服务器测试副本与结构化证据已导出，没有改动正式会议文件。

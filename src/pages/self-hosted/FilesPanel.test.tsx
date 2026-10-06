@@ -282,6 +282,7 @@ describe('self-hosted stage 6 file panel', () => {
     const view = await render('CHAIR', api({listFiles: vi.fn(async () => [{...file, revision: 3}]),
       listStorageHosts: vi.fn(async () => [host]), listStorageAgentConflicts: vi.fn(async () => [conflict]),
       resolveStorageAgentConflict}), 'chair');
+    expect(view.querySelector('[data-conflict-id="name-conflict"] > .content > .header')?.textContent).toBe('重名文件.txt');
     const name = view.querySelector('input[aria-label="新文件名称"]') as HTMLInputElement;
     await act(async () => {Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
       ?.call(name, '改名文件.txt'); name.dispatchEvent(new Event('input', {bubbles: true}));});
@@ -307,10 +308,12 @@ describe('self-hosted stage 6 file panel', () => {
 
   it('compares both sources, marks a recommendation and resolves against the current source revision', async () => {
     const {host, conflict} = comparisonFixture();
+    if (conflict.change.kind === 'UPSERT') conflict.change.logicalName = 'content';
     const resolveStorageAgentConflict = vi.fn(async () => ({...conflict, status: 'RESOLVED' as const}));
     const view = await render('CHAIR', api({listStorageHosts: vi.fn(async () => [host]),
       listStorageAgentConflicts: vi.fn(async () => [conflict]), resolveStorageAgentConflict}), 'chair');
     const card = view.querySelector('[data-conflict-id="comparison"]')!;
+    expect(card.querySelector('.content > .header')?.textContent).toBe(file.logicalName);
     expect(card.textContent).toContain('基于修订v2'); expect(card.textContent).toContain('当前修订v4');
     expect(card.textContent).toContain('无法确定修改先后');
     expect(card.querySelector('.conflict-fingerprints')?.hasAttribute('open')).toBe(false);
@@ -319,6 +322,14 @@ describe('self-hosted stage 6 file panel', () => {
     await act(async () => {button('保留服务器版本')!.click(); await new Promise(resolve => setTimeout(resolve, 0));});
     expect(resolveStorageAgentConflict).toHaveBeenCalledWith(committeeId, conflict.id,
       expect.objectContaining({fileRevision: 4, leaseGeneration: 7, baseRevision: 1, action: 'KEEP_SERVER'}), expect.any(String));
+  });
+
+  it('uses the local name for an unsubmitted new file conflict', async () => {
+    const {host, conflict} = comparisonFixture({fileEntryId: null, serverFile: undefined, serverRevision: null});
+    if (conflict.change.kind === 'UPSERT') conflict.change.fileEntryId = undefined;
+    const view = await render('CHAIR', api({listStorageHosts: vi.fn(async () => [host]),
+      listStorageAgentConflicts: vi.fn(async () => [conflict])}), 'chair');
+    expect(view.querySelector('[data-conflict-id="comparison"] > .content > .header')?.textContent).toBe('本地草案.txt');
   });
 
   it('protects currently formal files even when their conflict still has an ordinary revision reason', async () => {
@@ -339,6 +350,7 @@ describe('self-hosted stage 6 file panel', () => {
     const view = await render('CHAIR', api({listStorageHosts: vi.fn(async () => [host]),
       listStorageAgentConflicts: vi.fn(async () => [conflict]), resolveStorageAgentConflict}), 'chair');
     const card = view.querySelector('[data-conflict-id="comparison"]')!;
+    expect(card.querySelector('.content > .header')?.textContent).toBe(file.logicalName);
     expect(card.textContent).toContain('本地文件已删除');
     expect(card.textContent).not.toContain('正式文件的修改须在网页上传后审核');
     expect(button('采用本地版本')?.textContent).toContain('建议');
@@ -369,7 +381,8 @@ describe('self-hosted stage 6 file panel', () => {
 
   it('downloads a merged formal target but keeps the original source revision for the decision', async () => {
     const {host, conflict} = comparisonFixture();
-    conflict.serverFile = {...conflict.serverFile!, mergedIntoFileEntryId: 'formal-target'};
+    conflict.serverFile = {...conflict.serverFile!, logicalName: '原始提交', mergedIntoFileEntryId: 'formal-target'};
+    if (conflict.change.kind === 'UPSERT') conflict.change.logicalName = 'content';
     const getFile = vi.fn(async () => ({...file, id: 'formal-target', logicalName: '正式目标', revision: 99}));
     const prepareFileDownload = vi.fn(async () => ({status: 'READY' as const}));
     const resolveStorageAgentConflict = vi.fn(async () => ({...conflict, status: 'RESOLVED' as const}));
@@ -377,6 +390,7 @@ describe('self-hosted stage 6 file panel', () => {
       listStorageAgentConflicts: vi.fn(async () => [conflict]), getFile, prepareFileDownload, resolveStorageAgentConflict,
       fileDownloadUrl: vi.fn(id => `#download-${id}`)}), 'chair');
     expect(getFile).toHaveBeenCalledWith(file.id);
+    expect(view.querySelector('[data-conflict-id="comparison"] > .content > .header')?.textContent).toBe('原始提交');
     const link = [...view.querySelectorAll<HTMLAnchorElement>('a[download]')].find(item => item.textContent?.includes('下载服务器正式版本'))!;
     await act(async () => {link.click(); await new Promise(resolve => setTimeout(resolve, 0));});
     expect(prepareFileDownload).toHaveBeenCalledWith('formal-target');
@@ -400,6 +414,7 @@ describe('self-hosted stage 6 file panel', () => {
     available = true;
     await act(async () => {button('刷新比较')!.click(); await new Promise(resolve => setTimeout(resolve, 0));});
     expect(view.textContent).toContain('当前修订v5'); expect(button('另存为新文件')?.textContent).toContain('建议');
+    expect(view.querySelector('[data-conflict-id="comparison"] > .content > .header')?.textContent).toBe(file.logicalName);
   });
 
   it('omits server download for a deleted source and offers save-as-new instead of acceptance', async () => {

@@ -406,10 +406,14 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
             ?? (item.fileEntryId ? conflictFiles[item.fileEntryId] : undefined);
           const comparison = compareStorageConflict(item, loadedFile, activeHost?.id);
           const serverFile = comparison.serverFile;
+          const originalName = serverFile?.logicalName
+            ?? (loadedFile?.id === item.fileEntryId ? loadedFile?.logicalName : undefined);
+          const title = item.change.kind === 'RENAME' ? item.change.logicalName
+            : originalName ?? (item.change.kind === 'DELETE' ? t("Local deletion") : item.change.logicalName);
           const recommended = (action: StorageAgentConflictResolution) => comparison.recommended === action
             ? <span className="conflict-recommendation">{t("Recommended")}</span> : null;
           return <Card key={item.id} fluid data-conflict-id={item.id}>
-          <Card.Content><Card.Header>{item.change.kind === 'DELETE' ? t("Local deletion") : item.change.logicalName}</Card.Header>
+          <Card.Content><Card.Header>{title}</Card.Header>
             <Card.Meta>{t(CONFLICT_REASON[item.reasonCode])}</Card.Meta>
             <div className="conflict-versions" aria-label={t("Version comparison")}>
               <div className="conflict-version"><h5>{t("Local version")}</h5><dl>
