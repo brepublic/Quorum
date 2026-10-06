@@ -92,3 +92,12 @@
 - 修正源码 ZIP 27930 条目、109265443 B；独立目录解压、空 CARGO_HOME、offline metadata 通过。按随包原生 Windows／static CRT 参数执行 cargo check --locked --offline --bins，GUI 与 helper 编译检查通过（1 分 38 秒），没有用原 registry 缓存补依赖。
 - Source ZIP 未包含 .git／.tools／release／node_modules／.env 条目；随包说明提供无需 .git 的 Contracts、Node Agent 和 Rust 组件重建命令。最终产物将从本批提交后干净工作区重新组装，另记哈希与 Sandbox 最终复验。
 - 默认设备名的 Linux 前缀改为通用 Chair computer；既有设备名称属于已注册标签，不自动改写。
+
+## 2026-10-06：最终发行候选与 Sandbox 关闭阻塞
+
+- 从干净提交 0e9d43345b0f4307864b3628feebb226736b296a 离线构建最终候选；release-manifest 的 sourceDirty 为 false。ZIP 45186993 B、Setup 29851167 B、对应源码 109267196 B，三产物哈希核对一致。
+- 最终 Host 隔离 PATH smoke 5 项通过。最终 Windows 11 Enterprise 10.0.26100 x64 Sandbox 的 PATH 无 node／pnpm／cargo／rustc／cl。
+- 最终 Sandbox 前 8 项通过：三产物哈希、包内 Node、bridge EOF、helper 并发锁／释放、ZIP GUI 正常打开／关闭、用户安装及重复更新、安装后二进制与快捷方式一致、运行中静默升级拒绝且 GUI 存活。
+- 安装后 GUI 接收一次正常关闭请求后 15 秒内未退出，测试脚本兜底结束了该测试进程。最终 result.passed=false；卸载、数据保留、已有扩展默认值及重新接管关联的新场景尚未执行。本轮不能作为完整阶段 4 通过证据，前期候选通过不替代这次最终产物验收。
+- 只读代码显示 busy 状态会保留窗口，未保存配置也可能要求确认；目前尚未确认哪一分支导致本次超时。按用户要求遇到问题先中断，已提出继续定位／修复／复验的确认，未通过修改测试等待、重发关闭或产品逻辑绕过此失败。
+- 专用 Sandbox 保留，现有开发 GUI、宿主注册表和开发服务未因该失败修改。
