@@ -37,3 +37,12 @@
 - Windows 相关回归三个文件、38 项全部通过：desktop-auth、desktop-setup、desktop-bridge。模拟 HTTPS 与真实子进程证据和本段正式 GUI／真实 WSL 服务证据分开记录。
 - 浏览器自动化工具在网页配对按钮处拒绝操作，并禁止间接绕过。用户确认继续原生账号配对及文件验收，将网页专用链接唤起与下载入口实际操作留给人工验收；这些项目未标记通过，后续安装关联验收仍须取证。
 - 后续发行目标已确认：Windows 10 22H2 x64 与 Windows 11 x64，自包含 ZIP 和用户级 EXE 安装器。本轮不要求签名或公开发布；Windows Sandbox 用于干净环境验收，无 Windows 10 环境，用户接受 Windows 10 实机验收保留为待完成项。
+
+## 2026-10-06：阶段 3B 真实文件业务与缓存回传
+
+- 通过现有 WSL HTTPS 业务 API 在专用委员会 B 提交三个测试文件：中文 UTF-8 内容 45 B、全字节模式二进制 262144 B、空文件 0 B。各上传的 HOST_COMMITTED 回执、待审核 file entry 和 Windows metadata 均核对成功，本地大小和 SHA-256 等于提交内容。
+- 三个文件均通过真实批准预览／批准接口进入 PUBLISHED；下载大小与 SHA-256 和 Windows 本地内容一致。正式 GUI 显示公开可见及服务器缓存可用，空文件显示 0 B。
+- 在 Windows 同步目录新增中文命名文件，真实 watcher／扫描触发上传，服务器创建 PENDING_REVIEW 文件；版本大小 42 B 和 SHA-256 与本地一致。正式 GUI 显示待审核。
+- 第四个网页来源测试提交通过真实驳回接口进入 REJECTED，33 B 内容仍保留于本地；正式 GUI 显示已驳回。验收脚本曾误写预期 32 B，已改为完整内容哈希核对并复查通过，不属于产品错误。
+- 对专用委员会已发布的 262144 B 文件执行受控缓存移除：复用服务端安全删除原语，保留 MISSING 缓存追踪，不删除 Windows 权威副本、不修改全局额度。真实下载准备返回 PREPARING，Windows Agent 完成回填；数据库确认缓存 READY、恰好一个 FETCH_BLOB_TO_CACHE 任务、COMPLETED、attempts 1。下载 SHA-256 与原提交一致。
+- 本段业务操作来自真实 HTTPS API，与正式 Windows GUI 状态及 NTFS 落盘共同核对；尚未将网页上传控件本身或 LRU 容量策略检查记为通过。网页配对／协议唤起仍按 3A 约定由人工验收。
