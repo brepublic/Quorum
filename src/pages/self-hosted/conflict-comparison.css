@@ -1,0 +1,30 @@
+.self-hosted-storage-conflicts .conflict-versions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  margin: 1rem 0;
+}
+.self-hosted-storage-conflicts .conflict-version {
+  min-width: 0;
+  padding: .75rem;
+  background: rgba(0, 0, 0, .025);
+  border-radius: .28571429rem;
+}
+.self-hosted-storage-conflicts .conflict-version h5 {margin: 0 0 .5rem;}
+.self-hosted-storage-conflicts .conflict-version dl {margin: 0;}
+.self-hosted-storage-conflicts .conflict-version dl > div {
+  display: flex;
+  justify-content: space-between;
+  gap: .75rem;
+  margin-top: .3rem;
+}
+.self-hosted-storage-conflicts .conflict-version dd {margin: 0; overflow-wrap: anywhere; text-align: right;}
+.self-hosted-storage-conflicts .conflict-fingerprints {margin: .75rem 0;}
+.self-hosted-storage-conflicts .conflict-fingerprints summary {cursor: pointer;}
+.self-hosted-storage-conflicts .conflict-fingerprints code {display: block; overflow-wrap: anywhere; font-size: .85em;}
+.self-hosted-storage-conflicts .conflict-recommendation {display: inline-block; margin-left: .4em; font-weight: normal;}
+.self-hosted-storage-conflicts .conflict-comparison-guidance {margin: .5rem 0;}
+@media (max-width: 600px) {
+  .self-hosted-storage-conflicts .conflict-versions {grid-template-columns: minmax(0, 1fr); gap: .5rem;}
+  .self-hosted-storage-conflicts .extra.content > .button {margin-bottom: .5rem;}
+}

@@ -199,6 +199,14 @@ KEEP_SERVER 以锁定的当前 entry／version／已提交 blob 创建恢复任�
 
 发行记录包含 Git commit、源码是否脏、固定工具版本、对应源码哈希、全部产物 SHA-256 和 PE 系统依赖；源码包只收录受版本管理的源文件／锁文件与确切 Rust 依赖源，不扫描本机凭据。Windows smoke 在隔离 PATH 下验证捆绑运行时、目录锁和窗口生命周期，可在 Sandbox 内验证 EXE 安装、注册、更新与卸载。Windows CI 生成产物，Linux CI 保持完整 GUI/AppImage 构建回归；不自动公开发行。
 
+### 冲突比较（2026-10-06）
+
+浏览器管理接口在原始 conflict/file ID 上 LEFT JOIN 当前 entry/version，返回最小可比较快照（revision、状态、名称、合并目标、SHA-256、大小）；检测时 serverRevision 仍保留，Agent 接口不扩展。合并来源快照保持原始 ID，正式目标通过既有 GET file 重定向结果用于下载，不把两个文件的 revision 当作同一基准。
+
+比较以本地变更的 baseRevision 和服务器当前 revision 为版本证据，以内容哈希和大小为字节证据。相同字节建议保留服务器；基准仍相同时说明本地变化；基准之后服务器推进且字节不同说明双方变化，普通文件建议另存两份，正式文件继续审核保护。删除、改名、失去主机资格、无法取回快照分别给出有限结论。时间戳不用于断言内容编辑先后。
+
+服务器版本下载沿用现有 readiness/preparation/cache refill；下载只产生供人工比较的副本，不自动裁决或覆盖本地文件。裁决带当前原始 entry 的 revision，由服务器事务再次验证。UI 隐藏当前状态下禁止的动作，不能替代服务端权限、generation、revision 和正式审核检查。
+
 ## 6. 归档、删除与运维
 
 Owner 可把活动委员会归档。归档后全部业务写命令在服务端拒绝，既有角色仍按授权读取和下载。Owner 导出在 `REPEATABLE READ READ ONLY` 快照中流式输出 JSON Lines，包含议事、审计与文件 manifest，不含凭据、provider key、源 IP 摘要或文件正文。

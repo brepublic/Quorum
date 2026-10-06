@@ -17,6 +17,7 @@ interface ConflictRow extends QueryResultRow {
   resolution_action: StorageAgentConflictResolution | null; resolution_logical_name: string | null;
   resolution_lease_generation: string | number | null; resolution_file_revision: number | null;
   created_at: Date; resolved_at: Date | null; kind: StorageAgentLocalChange['kind'];
+  server_file?: StorageAgentConflict['serverFile'];
   change_file_entry_id: string | null; base_revision: number | null; logical_name: string | null;
   original_name: string | null; media_type: string | null; size_bytes: string | number | null; sha256_hex: string | null;
 }
@@ -26,6 +27,20 @@ const SELECT_CONFLICT = `SELECT conflict.*,change.kind,change.file_entry_id AS c
   CASE WHEN change.sha256 IS NULL THEN NULL ELSE encode(change.sha256,'hex') END AS sha256_hex
   FROM storage_agent_conflicts conflict
   JOIN storage_agent_change_requests change ON change.id=conflict.change_request_id`;
+
+const SELECT_BROWSER_CONFLICT = SELECT_CONFLICT.replace('SELECT conflict.*', `SELECT
+  CASE WHEN current_file.id IS NULL THEN NULL ELSE jsonb_build_object(
+    'id',current_file.id,'revision',current_file.revision,'status',current_file.status,
+    'logicalName',current_file.logical_name,'mergedIntoFileEntryId',current_file.merged_into_file_entry_id,
+    'publishedAt',current_file.published_at,'updatedAt',current_file.updated_at,
+    'currentVersion',CASE WHEN current_version.id IS NULL THEN NULL ELSE jsonb_build_object(
+      'id',current_version.id,'sha256',encode(current_version.sha256,'hex'),
+      'sizeBytes',current_version.size_bytes,'createdAt',current_version.created_at) END) END AS server_file,
+  conflict.*`) + `
+  LEFT JOIN file_entries current_file ON current_file.id=conflict.file_entry_id
+    AND current_file.committee_id=conflict.committee_id
+  LEFT JOIN file_versions current_version ON current_version.id=current_file.current_version_id
+    AND current_version.file_entry_id=current_file.id AND current_version.committee_id=current_file.committee_id`;
 
 function uuid(value: unknown, name: string): string {
   if (typeof value !== 'string'
@@ -93,7 +108,7 @@ function conflict(row: ConflictRow): StorageAgentConflict {
 }
 
 function browserConflict(row: ConflictRow): StorageAgentConflict {
-  const value = conflict(row);
+  const value = {...conflict(row), ...(row.server_file !== undefined ? {serverFile: row.server_file} : {})};
   if (value.change.kind === 'DELETE') return value;
   return {...value, change: {...value.change, logicalName: posix.basename(value.change.logicalName)}};
 }
@@ -114,7 +129,7 @@ export class Stage7ConflictService {
         [uuid(committeeId, 'Committee ID')])).rows[0];
       if (!committee || committee.status === 'DELETING') throw new AppError({code: 'NOT_FOUND', message: 'Committee not found.'});
       await requireManager(client, committee, auth.user.id);
-      const rows = await client.query<ConflictRow>(`${SELECT_CONFLICT} WHERE conflict.committee_id=$1
+      const rows = await client.query<ConflictRow>(`${SELECT_BROWSER_CONFLICT} WHERE conflict.committee_id=$1
         ORDER BY CASE conflict.status WHEN 'PENDING' THEN 0 ELSE 1 END,conflict.created_at DESC,conflict.id`,
       [committee.id]);
       return rows.rows.map(browserConflict);

@@ -352,6 +352,16 @@ integration('PostgreSQL stage 7 storage Agent identity', () => {
           .rejects.toMatchObject({code: 'RESOURCE_CONFLICT', details: {reason: 'FILE_UPDATE_REQUIRES_REVIEW'}});
       }
     }
+    const browserConflicts = await conflicts.list(value.owner, value.committee.id);
+    expect(browserConflicts.find(item => item.id === formalConflict.id)).toMatchObject({
+      serverRevision: null, serverFile: {id: first.file.id, revision: first.file.revision + 2,
+        status: 'PUBLISHED', mergedIntoFileEntryId: null,
+        currentVersion: {sha256: next.source.sha256, sizeBytes: next.source.content.length}}});
+    expect(browserConflicts.find(item => item.id === sourceConflict.id)).toMatchObject({
+      serverRevision: next.file.revision, serverFile: {id: next.file.id, revision: next.file.revision + 1,
+        status: 'PUBLISHED', mergedIntoFileEntryId: first.file.id,
+        currentVersion: {sha256: next.source.sha256, sizeBytes: next.source.content.length}}});
+    expect(JSON.stringify(browserConflicts)).not.toMatch(/credential|storage_key|agent_relative_path/);
     const targetTask = (await tasks.tasks(value.paired.credential, value.paired.host.leaseGeneration)).tasks
       .find(task => task.type === 'STORE_BLOB' && task.fileEntryId === first.file.id && task.fileRevision === first.file.revision + 2)!;
     expect(targetTask).toMatchObject({blobId: next.file.currentVersion.blobId,
@@ -383,6 +393,8 @@ integration('PostgreSQL stage 7 storage Agent identity', () => {
       .toEqual([expect.objectContaining({type: 'STORE_BLOB', fileEntryId: next.file.id,
         fileRevision: next.file.revision + 1, blobId: next.file.currentVersion.blobId,
         expectedSizeBytes: next.source.content.length, expectedSha256: next.source.sha256})]);
+    expect((await conflicts.listForAgent(value.paired.credential, value.paired.host.leaseGeneration))
+      .find(item => item.id === sourceConflict.id)).not.toHaveProperty('serverFile');
     expect((await value.reader.get(value.owner, first.file.id)).currentVersion.blobId).toBe(next.file.currentVersion.blobId);
   }, 20_000);
 
