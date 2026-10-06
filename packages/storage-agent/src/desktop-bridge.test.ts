@@ -3,11 +3,14 @@
 import {spawn, execFileSync, type ChildProcessWithoutNullStreams} from 'node:child_process';
 import {createServer, type Server} from 'node:https';
 import {createInterface} from 'node:readline';
-import {mkdtemp, readFile, rm, mkdir, writeFile, stat, symlink} from 'node:fs/promises';
+import {link, mkdtemp, readFile, rm, mkdir, writeFile, stat, symlink} from 'node:fs/promises';
 import {join, resolve} from 'node:path';
 import {tmpdir} from 'node:os';
 import {afterEach, describe, expect, it} from 'vitest';
 import {lockAgentRoot} from './runtime-lock';
+import {checkPrivatePath, protectPrivatePath} from './windows-platform';
+import {writePrivateAgentFile} from './config';
+async function expectPrivate(path: string) {if (process.platform === 'win32') await checkPrivatePath(path); else expect((await stat(path)).mode & 0o777).toBe(0o600);}
 
 const cleanup: (()=>Promise<unknown>)[]=[];
 afterEach(async()=>{for(const fn of cleanup.splice(0).reverse()) await fn();});
@@ -231,7 +234,7 @@ describe('desktop bridge process lifecycle',()=>{
     await f.wait(e => e.event === 'snapshot' && e.connected === true);
     const privateConfig = JSON.parse(await readFile(preview.configPath, 'utf8'));
     expect(privateConfig.committeeName).toBe('安理会');
-    expect((await stat(preview.configPath)).mode & 0o777).toBe(0o600);
+    await expectPrivate(preview.configPath);
     expect(await readFile(downloaded, 'utf8')).toBe(JSON.stringify(setup));
     await f.command('stop');
     await f.command('restore');
@@ -272,7 +275,7 @@ describe('desktop bridge process lifecycle',()=>{
   it('reports malformed and missing configs without exposing file contents', async () => {
     const f = await fixture();
     expect(await f.command('load',f.settings)).toContainEqual(expect.objectContaining({code:'ENOENT',stage:'config-read'}));
-    await writeFile(f.settings.configPath,'not-json-secret',{mode:0o600});
+    await writePrivateAgentFile(f.settings.configPath,'not-json-secret');
     expect(await f.command('load',f.settings)).toContainEqual(expect.objectContaining({code:'CONFIG_INVALID',stage:'config-read'}));
     expect(JSON.stringify(f.events)).not.toContain('not-json-secret');
   },30000);
@@ -284,7 +287,7 @@ describe('desktop bridge process lifecycle',()=>{
     expect(JSON.parse(saved)).toMatchObject({kind:'unpaired',deviceLabel:'会议电脑',rootPath:fields.rootPath});
     expect(saved).not.toContain(fields.pairingCode);
     expect(saved).not.toContain('credential');
-    expect((await stat(fields.configPath)).mode & 0o777).toBe(0o600);
+    await expectPrivate(fields.configPath);
     expect(f.requests).toHaveLength(0);
     expect(await f.command('start')).toContainEqual(expect.objectContaining({event:'error',code:'CONFIG_REQUIRED'}));
     await f.command('save',{...fields,scanSeconds:7});
@@ -341,7 +344,7 @@ describe('desktop bridge process lifecycle',()=>{
     const savePath = join(f.root, 'copy.json');
     expect(await f.command('save-as', {...f.settings, savePath})).toContainEqual(expect.objectContaining({event:'config', configPath:savePath}));
     expect(await readFile(savePath,'utf8')).toBe(original);
-    expect((await stat(savePath)).mode & 0o777).toBe(0o600);
+    await expectPrivate(savePath);
     expect(await f.command('save-as', {...f.settings, savePath})).toContainEqual(expect.objectContaining({event:'error',code:'EEXIST'}));
     expect(await f.command('unpair', {serverUrl:'https://wrong.invalid'})).toContainEqual({event:'unpaired'});
     expect(f.requests.find(r=>r.url.endsWith('/revoke'))?.authorization).toMatch(/^QuorumAgent /);
@@ -400,7 +403,7 @@ describe('desktop bridge process lifecycle',()=>{
     expect(await readFile(copy,'utf8')).toBe('keep until confirmed');
     expect(await f.command('save-as',{...f.settings,savePath:copy,overwrite:true})).toContainEqual(expect.objectContaining({paired:true,configPath:copy}));
     expect(JSON.parse(await readFile(copy,'utf8')).credential).toMatch(/^qsa1/);
-    expect((await stat(copy)).mode & 0o777).toBe(0o600);
+    await expectPrivate(copy);
   },30000);
   it.each([200,400])('preserves the old config until confirmed pairing succeeds (%s)', async status => {
     const f = await fixture(status);
@@ -420,7 +423,7 @@ describe('desktop bridge process lifecycle',()=>{
     const f = await fixture();
     const target = join(f.root,'target.json');
     await writeFile(target,'keep',{mode:0o600});
-    await symlink(target,f.settings.configPath);
+    await (process.platform === 'win32' ? link : symlink)(target,f.settings.configPath);
     expect(await f.command('save',{...f.settings,overwrite:true})).toContainEqual(expect.objectContaining({code:'UNSAFE_PATH'}));
     expect(await f.command('pair',{...f.settings,overwrite:true})).toContainEqual(expect.objectContaining({code:'UNSAFE_PATH'}));
     expect(await readFile(target,'utf8')).toBe('keep');
@@ -438,7 +441,7 @@ describe('desktop bridge process lifecycle',()=>{
     expect(await f.command('load',{configPath:''}))
       .toContainEqual(expect.objectContaining({event:'error',code:'CONFIG_PATH_REQUIRED'}));
     const wrongRoot=join(f.root,'other-files');await mkdir(wrongRoot);
-    await writeFile(join(wrongRoot,'.quorum-storage.json'),JSON.stringify({committeeId:'other',deviceId:'other'}),{mode:0o600});
+    await writePrivateAgentFile(join(wrongRoot,'.quorum-storage.json'),JSON.stringify({committeeId:'other',deviceId:'other'}));
     expect(await f.command('save',{...f.settings,rootPath:wrongRoot})).toContainEqual(expect.objectContaining({event:'error',code:'ROOT_IDENTITY_MISMATCH'}));
     const result=await f.command('save',{...f.settings,scanSeconds:0});
     expect(result).toContainEqual(expect.objectContaining({event:'error',code:'INVALID_SCAN_INTERVAL'}));

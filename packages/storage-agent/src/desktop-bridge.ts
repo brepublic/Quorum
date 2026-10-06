@@ -8,7 +8,7 @@ import {constants} from 'node:fs';
 import {X509Certificate, randomUUID} from 'node:crypto';
 import {connect} from 'node:tls';
 import {request as httpsRequest} from 'node:https';
-import {readAgentConfig, readPrivateAgentFile, writeAgentConfig, type StorageAgentLocalConfig} from './config.js';
+import {readAgentConfig, readPrivateAgentFile, writePrivateAgentFile, writeAgentConfig, type StorageAgentLocalConfig} from './config.js';
 import {agentErrorCode} from './errors.js';
 import {AGENT_METADATA_FILE, AgentStateStore} from './state.js';
 import {AgentFileStore} from './files.js';
@@ -74,11 +74,11 @@ async function checkOverwriteTarget(path: string) {
   } catch (error) {if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;}
 }
 async function writeDesktopConfig(path: string, source: string, overwrite: boolean) {
-  if (!overwrite) {await writeFile(path, source, {flag:'wx',mode:0o600}); return;}
+  if (!overwrite) {await writePrivateAgentFile(path, source); return;}
   await checkOverwriteTarget(path);
   const temporary = path + '.' + randomUUID() + '.tmp';
   try {
-    await writeFile(temporary, source, {flag:'wx',mode:0o600});
+    await writePrivateAgentFile(temporary, source);
     await rename(temporary, path);
   } finally {await rm(temporary,{force:true});}
 }
@@ -104,7 +104,7 @@ async function fingerprint(address: string, caPath: string): Promise<string> {
   });
 }
 function outside(root: string, path: string) {
-  const rel = relative(root, path); if (!rel || (rel !== '..' && !rel.startsWith('../') && !isAbsolute(rel))) throw new Error('CONFIG_OUTSIDE_ROOT');
+  const rel = relative(root, path); if (!rel || (rel !== '..' && !rel.startsWith('..' + (process.platform === 'win32' ? '\\' : '/')) && !isAbsolute(rel))) throw new Error('CONFIG_OUTSIDE_ROOT');
 }
 async function settings(input: Record<string, unknown>) {
   const serverUrl = String(input.serverUrl ?? ''); const rootPath = resolve(String(input.rootPath ?? ''));
@@ -126,10 +126,12 @@ async function stop() {
   if (!child) return;
   send({event: 'state', state: 'STOPPING'});
   const running = child;
+  if (running.exitCode !== null || running.signalCode !== null) return;
   await new Promise<void>(done => {
     const timeout = setTimeout(() => running.kill('SIGKILL'), 15000);
     running.once('close', () => {clearTimeout(timeout); done();});
-    running.stdin.end(); running.kill('SIGTERM');
+    running.stdin.end();
+    if (process.platform !== 'win32') running.kill('SIGTERM');
   });
 }
 async function start() {
@@ -141,7 +143,7 @@ async function start() {
   if (metadata.committeeId !== config.committeeId || metadata.deviceId !== config.deviceId) throw new Error('ROOT_IDENTITY_MISMATCH');
   send({event: 'state', state: 'STARTING'});
   const running = spawn(process.execPath, [cli, 'start', '--config', configPath, '--desktop', 'true'], {
-    env: {...process.env, NODE_EXTRA_CA_CERTS: config.caCertificatePath || process.env.NODE_EXTRA_CA_CERTS || ''}, stdio: 'pipe'});
+    env: {...process.env, NODE_EXTRA_CA_CERTS: config.caCertificatePath || process.env.NODE_EXTRA_CA_CERTS || ''}, stdio: 'pipe', windowsHide: true});
   child = running;
   createInterface({input: running.stdout}).on('line', line => {
     try {const event = JSON.parse(line); if (event.event === 'snapshot') send(event);} catch { /* no raw output */ }
@@ -404,7 +406,7 @@ async function command(input: Record<string, unknown>) {
       const destination = resolve(String(pathInput));
       if (action === 'save' && draft && destination !== configPath) throw new Error('CONFIG_PATH_CHANGED');
       const next: DraftConfig = {schemaVersion: 1, kind: 'unpaired', ...await settings(input),
-        deviceLabel: String(input.deviceLabel || 'Linux Chair computer')};
+        deviceLabel: String(input.deviceLabel || 'Chair computer')};
       await checkDraftDestination(destination, next);
       const source = JSON.stringify(next, null, 2) + '\n';
       stage = 'config-write';
@@ -412,7 +414,7 @@ async function command(input: Record<string, unknown>) {
       if (action === 'save' && draft && input.overwrite !== true) {
         await unchangedDraft(destination);
         const temporary = destination + '.' + randomUUID() + '.tmp';
-        try {await writeFile(temporary, source, {flag:'wx',mode:0o600}); await rename(temporary,destination);}
+        try {await writePrivateAgentFile(temporary, source); await rename(temporary,destination);}
         finally {await rm(temporary,{force:true});}
       } else await writeDesktopConfig(destination, source, input.overwrite === true);
       draft = next; draftSource = source; configPath = destination; publicDraft(); await rememberConfiguration(destination); return;
@@ -496,13 +498,13 @@ async function command(input: Record<string, unknown>) {
     const unlock = await lockAgentRoot(root);
     try {
       stage = 'config-write';
-      await writeFile(codePath, String(input.pairingCode ?? ''), {flag: 'wx', mode: 0o600});
+      await writePrivateAgentFile(codePath, String(input.pairingCode ?? ''));
       stage = 'server-pairing';
       await new Promise<void>((res, rej) => {
         let failure = 'PAIRING_FAILED';
         const pairing = spawn(process.execPath, [cli, 'pair', '--server', next.serverUrl, '--root', root,
-          '--config', pairedPath, '--pairing-code-file', codePath, '--device-label', String(input.deviceLabel || 'Linux Chair')],
-          {env: {...process.env, NODE_EXTRA_CA_CERTS: next.caCertificatePath}, stdio: ['ignore','ignore','pipe','ipc']});
+          '--config', pairedPath, '--pairing-code-file', codePath, '--device-label', String(input.deviceLabel || 'Chair computer')],
+          {env: {...process.env, NODE_EXTRA_CA_CERTS: next.caCertificatePath}, stdio: ['ignore','ignore','pipe','ipc'], windowsHide: true});
         pairing.on('message', message => {
           const value = message as {event?: string; config?: StorageAgentLocalConfig};
           if (value.event === 'paired-config' && value.config) pendingPair = {path, config: {...value.config, ...next,

@@ -81,7 +81,17 @@ cargo fetch --locked --target x86_64-pc-windows-msvc --manifest-path packages/st
 
 安装保留现有 pnpm-lock.yaml、Cargo.lock 和 Slint 版本。pnpm 只运行 workspace 中批准的依赖构建脚本。
 
-当前 `pnpm start:storage-agent:desktop` 仍调用 Linux Bash 脚本；正式 Rust GUI 中仍有 Unix API 和 Wayland/X11 扩展。MSVC 完成后下一阶段是适配这些代码及 Windows 原生启动入口。
+Windows 原生开发启动：`pnpm start:storage-agent:desktop:windows`。该入口构建 contracts、Node Agent、Rust GUI 与原生 `quorum-agent-platform.exe`。Linux 继续使用 `pnpm start:storage-agent:desktop`。
+
+直接使用 Windows CLI 前也必须构建辅助程序：
+
+```powershell
+cargo build --locked --manifest-path packages/storage-agent-desktop/Cargo.toml --bins
+```
+
+开发 CLI 自动查找上述 debug 构建目录；其他布局用 `QUORUM_AGENT_PLATFORM` 指定辅助程序的绝对路径。该程序提供 Windows ACL 和目录锁，缺失时 Agent 拒绝启动。用户配置与语言偏好存于 `%LOCALAPPDATA%\quorum-agent`。
+
+实际验收结果及尚待人工确认的项目见 `CHAIR_AGENT_WINDOWS_ACCEPTANCE.md`。前述安装命令仅安装依赖，不能替代正式窗口和进程行为验收。
 
 ## 重新准备工具
 
@@ -112,7 +122,7 @@ $env:RUSTUP_HOME = Join-Path $PWD '.tools/windows/rustup'
 
 先下载 Rust 工具链可以完成缓存准备；编译 Windows 程序仍须安装 MSVC 和 Windows SDK。
 
-## 本次环境验证（2026-10-06）
+## 最初环境准备检查（2026-10-06，MSVC 安装前）
 
 - Node 22.23.2、pnpm 10.33.4、rustc/Cargo 1.98.1 版本检查通过。
 - pnpm 锁文件安装完成，contracts 与 Node Agent 构建通过。

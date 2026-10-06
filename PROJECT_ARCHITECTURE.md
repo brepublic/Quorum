@@ -221,7 +221,7 @@ Linux/WSL 项目命令前先运行：
 source scripts/wsl-env.sh
 ```
 
-Windows 原生开发在 PowerShell 中先运行 `. .\scripts\windows-env.ps1`，使用本 checkout 的官方 Node、固定 pnpm 及 Windows MSVC Rust 工具链缓存。`scripts/check-windows-toolchain.ps1` 用最小程序验证 Windows 原生编译与运行；MSVC 和 Windows SDK 由微软系统安装器提供。准备步骤见 `docs/self-hosted/CHAIR_AGENT_WINDOWS_SETUP.md`。当前 GUI 和桌面启动／发行脚本仍为 Linux 实现，环境准备不代表 Windows 桌面迁移完成。
+Windows 原生开发在 PowerShell 中先运行 `. .\scripts\windows-env.ps1`，使用本 checkout 的官方 Node、固定 pnpm 及 Windows MSVC Rust 工具链缓存。`scripts/check-windows-toolchain.ps1` 用最小程序验证 Windows 原生编译与运行；MSVC 和 Windows SDK 由微软系统安装器提供。准备步骤见 `docs/self-hosted/CHAIR_AGENT_WINDOWS_SETUP.md`。原生 GUI 开发启动使用 `pnpm start:storage-agent:desktop:windows`；自包含发行与安装集成仍待后续阶段。
 
 Windows Chair Agent 迁移与功能验收复用 WSL 中现有开发服务器，不在 Windows 重建 Docker 或开发服务。用户提供入口为 `localhost:80`（需要 CA 证书）或 `http://localhost:5173`；实际 TLS／重定向、CA 路径及 Agent API 连接入口在验收时核对，保留既有 HTTPS 校验。
 
@@ -288,3 +288,11 @@ AppRun 区分包内依赖环境与宿主外部程序环境。文件覆盖确认�
 Windows 继续使用同一 Rust/Slint 窗口及 Node 管道桥接。平台实现拆分为 desktop/linux.rs 与 desktop/windows.rs；Windows 使用内核文件锁限制单窗口，在受当前用户、SYSTEM 和 Administrators ACL 保护的 requests 目录中原子发布短期唤起请求，并由现有窗口确认消费，不开放本地网络端口。系统打开使用 ShellExecuteW，文件选择使用 rfd 的 Windows 原生后端；Wayland/X11 和 portal 检查仅保留在 Unix 路径。
 
 Windows Rust/Node 共用 LOCALAPPDATA/quorum-agent，系统语言从 Windows locale 获取，默认文档位置使用 Windows MyDocuments 已知目录；Windows 窗口显式使用 Microsoft YaHei，以避免软件渲染器的中文回退字形缺失。开发启动使用 pnpm start:storage-agent:desktop:windows。Windows 安装、协议注册和发行留在后续发行阶段。
+
+### Windows 安全与进程边界（2026-10-06）
+
+Windows Node Agent 的 GUI 和 CLI 共用原生 `quorum-agent-platform.exe` 辅助程序：以内核文件锁持有同步根目录的 `.quorum-storage.lock`，持锁期间禁止删除锁文件；在读取状态之前取得锁。辅助程序随父 Node 管道 EOF 释放锁，意外丢失锁时 Node 同步进程立即退出。锁路径、私有配置及本地打开目标拒绝 junction/reparse point 和文件硬链接；大小写别名不能绕过锁，文件大小写变更不再误删刚替换的目标。
+
+长期凭据及私有状态先创建空文件、设置当前用户／SYSTEM／Administrators 的受保护 ACL，再写入内容并原子替换；读取凭据同时检查所有者和允许访问的 SID。辅助程序缺失时拒绝运行，不能回退到不加锁或仅设置 POSIX mode。开发脚本同时构建两个 Rust 可执行文件；CLI 可通过 `QUORUM_AGENT_PLATFORM` 指定辅助程序，否则查找 Node 相邻位置或开发构建目录。
+
+Windows 正常停止先关闭 Node CLI 的输入管道并等待清理，15 秒超时后强制结束。GUI 将桥接及其后代加入 kill-on-close Windows Job Object，窗口异常退出仍清理进程树。原生测试覆盖实际子进程与孙进程清理，隔离 HTTPS 测试覆盖启动、停止和恢复；正式窗口及现有 WSL 服务器的实际验收边界记录于 `docs/self-hosted/CHAIR_AGENT_WINDOWS_ACCEPTANCE.md`。

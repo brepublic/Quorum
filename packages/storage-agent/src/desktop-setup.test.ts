@@ -5,7 +5,7 @@ import {tmpdir} from 'node:os';
 import {beforeEach, afterEach, describe, it, expect, vi} from 'vitest';
 import type {AgentPairingConfig} from '@quorum/contracts';
 const paths = vi.hoisted(() => ({documents: ''}));
-vi.mock('node:child_process', () => ({execFileSync: () => paths.documents}));
+vi.mock('node:child_process', async importOriginal => ({...await importOriginal<typeof import('node:child_process')>(), execFileSync: () => paths.documents}));
 import {proposedDirectory, allocateDirectory, rememberConfiguration, lastConfiguration, desktopSite, rememberSite} from './desktop-setup';
 let directory: string;
 beforeEach(async () => {

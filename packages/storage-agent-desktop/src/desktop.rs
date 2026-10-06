@@ -1,7 +1,7 @@
 use std::{io, path::{Path, PathBuf}};
-#[cfg(unix)] mod linux;
+#[cfg(unix)] #[path = "desktop/linux.rs"] mod linux;
 #[cfg(unix)] pub use linux::*;
-#[cfg(windows)] mod windows;
+#[cfg(windows)] #[path = "desktop/windows.rs"] mod windows;
 #[cfg(windows)] pub use windows::*;
 
 pub use crate::localization::preferences::config_directory;
@@ -19,12 +19,16 @@ pub fn local_file_path(root: &Path, relative: &str) -> io::Result<PathBuf> {
     let mut path = root.clone();
     for part in Path::new(relative).components() {
         let std::path::Component::Normal(name) = part else {return Err(io::ErrorKind::InvalidInput.into());};
-        if name.to_string_lossy().starts_with(".quorum-") {return Err(io::ErrorKind::PermissionDenied.into());}
+        if name.to_string_lossy().to_ascii_lowercase().starts_with(".quorum-") {return Err(io::ErrorKind::PermissionDenied.into());}
         path.push(name);
         if path.symlink_metadata()?.file_type().is_symlink() {return Err(io::ErrorKind::PermissionDenied.into());}
     }
     let path = path.canonicalize()?;
     if !path.starts_with(root) || !path.is_file() {return Err(io::ErrorKind::PermissionDenied.into());}
+    #[cfg(windows)] {
+        crate::windows::safe_path(&path)?;
+        crate::windows::single_file(&std::fs::File::open(&path)?)?;
+    }
     Ok(path)
 }
 

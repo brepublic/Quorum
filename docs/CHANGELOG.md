@@ -1,5 +1,12 @@
 # 更新日志
 
+## 2026-10-06：Windows Chair Agent 安全与进程行为
+
+- GUI 与 CLI 共用 Windows 原生同步目录锁，覆盖路径大小写别名、进程异常退出后的锁恢复；拒绝 junction 和不安全的锁文件。
+- 长期凭据、私有状态与本地通信使用 Windows ACL；先限制权限再写入凭据，读取时检查所有者和访问范围。
+- Windows 正常停止等待同步清理，窗口异常退出通过 Job Object 结束桥接及后代；修正大小写改名误删目标、路径校验和 Windows 文件占用下的原子替换行为。
+- 增加 Windows 原生安全及进程回归测试，更新 Windows 开发启动、架构与分层验收记录。
+
 ## 2026-10-06：Windows Chair Agent 原生窗口
 
 - 拆分 Linux/Windows 桌面实现，接入 Windows 单实例请求转交、原生文件选择器与默认程序打开；新增 PowerShell 开发启动入口。

@@ -3,15 +3,22 @@ use std::{fs::{self, File, OpenOptions}, io::{self, Read, Write}, path::{Path, P
 
 // Private filesystem IPC avoids network listeners. Publish requests atomically;
 // the kernel lock decides which process is allowed to consume them.
-pub struct Instance {_lock: File, alive: Arc<AtomicBool>, pub requests: Receiver<String>}
-impl Drop for Instance {fn drop(&mut self) {self.alive.store(false, Ordering::Release);}}
+pub struct Instance {_lock: File, alive: Arc<AtomicBool>, worker: Option<thread::JoinHandle<()>>, pub requests: Receiver<String>}
+impl Drop for Instance {fn drop(&mut self) {
+    self.alive.store(false, Ordering::Release);
+    if let Some(worker) = self.worker.take() {let _ = worker.join();}
+}}
 impl Instance {
     pub fn open(target: &str) -> io::Result<Option<Self>> {Self::open_in(super::config_directory()?, target)}
     fn open_in(directory: PathBuf, target: &str) -> io::Result<Option<Self>> {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::*;
         fs::create_dir_all(&directory)?;
         if fs::symlink_metadata(&directory)?.file_type().is_symlink() {return Err(io::ErrorKind::PermissionDenied.into());}
         crate::windows::protect(&directory)?;
-        let lock = OpenOptions::new().create(true).truncate(false).read(true).write(true).open(directory.join("desktop.lock"))?;
+        let lock = OpenOptions::new().create(true).truncate(false).read(true).write(true)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE).custom_flags(FILE_FLAG_OPEN_REPARSE_POINT).open(directory.join("desktop.lock"))?;
+        crate::windows::single_file(&lock)?;
         let queue = directory.join("requests");
         match lock.try_lock() {
             Ok(()) => (),
@@ -40,7 +47,7 @@ impl Instance {
         fs::create_dir_all(&queue)?; crate::windows::protect(&queue)?;
         let alive = Arc::new(AtomicBool::new(true)); let active = alive.clone();
         let (tx, requests) = mpsc::channel();
-        thread::spawn(move || {
+        let worker = thread::spawn(move || {
             while active.load(Ordering::Acquire) {
                 if let Ok(entries) = fs::read_dir(&queue) {
                     for entry in entries.flatten() {
@@ -49,6 +56,7 @@ impl Instance {
                         if let Ok(info) = fs::symlink_metadata(&path) {
                             if !info.is_file() || info.file_type().is_symlink() || info.len() > 65536 {continue;}
                             if let Ok(file) = File::open(&path) {
+                                if crate::windows::single_file(&file).is_err() {continue;}
                                 let mut source = String::new();
                                 if file.take(65536).read_to_string(&mut source).is_ok() {
                                     if let Ok(target) = serde_json::from_str::<String>(&source) {let _ = tx.send(target);}
@@ -61,7 +69,7 @@ impl Instance {
                 thread::sleep(Duration::from_millis(50));
             }
         });
-        Ok(Some(Self {_lock: lock, alive, requests}))
+        Ok(Some(Self {_lock: lock, alive, worker: Some(worker), requests}))
     }
 }
 pub fn register(_exe: &Path, _node: &Path, _bridge: &Path) -> io::Result<()> {

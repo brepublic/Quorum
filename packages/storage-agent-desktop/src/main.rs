@@ -177,12 +177,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ui.on_translate(|key, language| translate(key.as_str(), language.as_str()).into());
     ui.set_language(load_language().into());
     let saved_form = Rc::new(RefCell::new(form_state(&ui)));
-    let mut process = Command::new(&node)
-        .arg(&bridge)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()?;
+    let mut bridge_command = Command::new(&node);
+    bridge_command.arg(&bridge).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
+    #[cfg(windows)] {
+        use std::os::windows::process::CommandExt;
+        bridge_command.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
+        bridge_command.env("QUORUM_AGENT_PLATFORM", exe.parent().unwrap().join("quorum-agent-platform.exe"));
+    }
+    #[cfg(windows)] let job = windows::ProcessJob::new()?;
+    let mut process = bridge_command.spawn()?;
+    #[cfg(windows)] if let Err(error) = job.attach(&process) {let _ = process.kill(); let _ = process.wait(); return Err(error.into());}
     let input = Arc::new(Mutex::new(process.stdin.take()));
     let output = process.stdout.take().unwrap();
     let (tx, rx) = mpsc::channel::<Value>();

@@ -232,6 +232,7 @@ pub fn translate(key: &str, language: &str) -> &'static str {
         " · Unsaved" => (" · Unsaved", " · 未保存"),
         "A component of the path is not a directory." => ("A component of the path is not a directory.", "路径中有一项不是目录。"),
         "AGENT_ALREADY_RUNNING" => ("An Agent is already running in this directory. Stop it first.", "此目录已有 Agent 运行，请先停止原进程。"),
+        "WINDOWS_PLATFORM_UNAVAILABLE" => ("Windows platform helper is missing. Rebuild the Windows Agent.", "缺少 Windows 平台组件，请重新构建 Windows Agent。"),
         "AGENT_EXITED" => ("The Agent exited unexpectedly. Check the logs.", "Agent 异常退出，请查看日志。"),
         "AUTHENTICATION_REQUIRED" => ("Device authorization is unavailable. Check pairing on the committee page.", "设备授权不可用，请在委员会网页核对配对状态。"),
         "An Agent is already running in this directory. Stop it first." => ("An Agent is already running in this directory. Stop it first.", "此目录已有 Agent 运行，请先停止原进程。"),

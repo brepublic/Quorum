@@ -7,6 +7,8 @@ import {fileURLToPath} from 'node:url';
 import {randomUUID} from 'node:crypto';
 import {parseAgentPairingConfig, type AgentPairingConfig} from '@quorum/contracts';
 import {normalizeDesktopSite} from './desktop-auth.js';
+import {writePrivateAgentFile} from './config.js';
+import {protectPrivatePath} from './windows-platform.js';
 
 export function desktopConfigDirectory(): string {
   const base = process.platform === 'win32'
@@ -30,8 +32,9 @@ async function preferences(): Promise<Preferences> {
 async function savePreferences(value: Preferences) {
   const directory = desktopConfigDirectory();
   await mkdir(directory, {recursive: true, mode: 0o700});
+  await protectPrivatePath(directory);
   const temporary = join(directory, `.${randomUUID()}.tmp`);
-  await writeFile(temporary, JSON.stringify(value), {mode: 0o600, flag: 'wx'});
+  await writePrivateAgentFile(temporary, JSON.stringify(value));
   await rename(temporary, join(directory, 'desktop-state.json'));
 }
 export async function rememberConfiguration(path?: string) {

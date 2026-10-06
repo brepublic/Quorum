@@ -8,5 +8,7 @@ pnpm --filter @quorum/storage-agent build
 if ($LASTEXITCODE -ne 0) {throw 'Agent build failed'}
 $env:QUORUM_AGENT_NODE = (Get-Command node.exe).Source
 $env:QUORUM_AGENT_BRIDGE = Join-Path $PWD 'packages/storage-agent/dist/desktop-bridge.js'
-cargo run --locked --manifest-path packages/storage-agent-desktop/Cargo.toml -- @AgentArguments
+cargo build --locked --manifest-path packages/storage-agent-desktop/Cargo.toml --bins
+if ($LASTEXITCODE -ne 0) {throw 'Windows GUI/platform build failed'}
+cargo run --locked --bin quorum-storage-agent-desktop --manifest-path packages/storage-agent-desktop/Cargo.toml -- @AgentArguments
 exit $LASTEXITCODE
