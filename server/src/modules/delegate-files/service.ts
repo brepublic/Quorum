@@ -28,6 +28,7 @@ import type {Stage6FileService} from '../storage/file-service.js';
 import type {Stage6StorageService} from '../storage/service.js';
 import type {StorageCacheService} from '../storage/cache-service.js';
 import {indexedSearchTerms, manualCountryTerms, namesForSeat, termsFor} from '../search/index-service.js';
+import {ensureCurrentFileManifest} from '../storage-agent/file-manifest.js';
 
 const FILE_TYPES = new Set<string>(DELEGATE_FILE_TYPES);
 const FILE_CATEGORIES = new Set<string>([...DELEGATE_FILE_TYPES, 'OTHER']);
@@ -397,20 +398,9 @@ export class DelegateFileService {
         await client.query(`UPDATE file_entries SET current_version_id=$2,media_type=$3,published_at=$4,
           published_by_user_id=$5,submitted_at=$6,revision=revision+1,updated_at=$4 WHERE id=$1`,
         [target.id, versionId, version.media_type, now, auth.user.id, existing?.submitted_at ?? entry.submitted_at ?? entry.created_at]);
-        const sequence = (await client.query(`UPDATE committees SET next_storage_manifest_sequence=next_storage_manifest_sequence+1,
-          file_manifest_revision=file_manifest_revision+1 WHERE id=$1 RETURNING next_storage_manifest_sequence-1 AS sequence`, [committee.id])).rows[0].sequence;
-        await client.query(`INSERT INTO storage_manifest_events
-          (committee_id,sequence,kind,file_entry_id,file_revision,version_id,blob_id,logical_name,original_name,media_type,size_bytes,sha256)
-          VALUES ($1,$2,'UPSERT',$3,$4,$5,$6,coalesce((SELECT logical_name FROM storage_manifest_events WHERE file_entry_id=$3 ORDER BY sequence DESC LIMIT 1),file_agent_path($3,$7)),$8,$9,$10,$11)`,
-        [committee.id, sequence, target.id, target.revision + 1, versionId, version.blob_id, logicalName,
-          version.original_name, version.media_type, version.size_bytes, version.sha256]);
-        const migrations = await client.query(`UPDATE storage_migrations SET status='FAILED',ready_at=NULL,revision=revision+1,
-          failure_code='MANIFEST_CHANGED',failure_reason='The file manifest changed during review.',updated_at=now()
-          WHERE committee_id=$1 AND status IN ('COPYING','READY_TO_CONFIRM') RETURNING id,revision`, [committee.id]);
-        for (const migration of migrations.rows) await appendEvent(client, committee, {type: 'storage.migration_failed',
-          resourceType: 'storage_migration',resourceId: migration.id,revision: migration.revision,audience: 'CHAIR',
-          payload: {status: 'FAILED',failureCode: 'MANIFEST_CHANGED'}});
+        await ensureCurrentFileManifest(client, committee, target.id, {restoreContent: true});
       }
+      await ensureCurrentFileManifest(client, committee, fileId);
       await client.query(`UPDATE storage_cache_entries SET state='READY',state_changed_at=now(),updated_at=now()
         WHERE file_entry_id=$1 AND state='REVIEW_PINNED'`, [fileId]);
       await appendEvent(client, committee, {type: 'file.published', resourceType: 'file_entry', resourceId: resultId,

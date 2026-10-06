@@ -46,3 +46,15 @@
 - 第四个网页来源测试提交通过真实驳回接口进入 REJECTED，33 B 内容仍保留于本地；正式 GUI 显示已驳回。验收脚本曾误写预期 32 B，已改为完整内容哈希核对并复查通过，不属于产品错误。
 - 对专用委员会已发布的 262144 B 文件执行受控缓存移除：复用服务端安全删除原语，保留 MISSING 缓存追踪，不删除 Windows 权威副本、不修改全局额度。真实下载准备返回 PREPARING，Windows Agent 完成回填；数据库确认缓存 READY、恰好一个 FETCH_BLOB_TO_CACHE 任务、COMPLETED、attempts 1。下载 SHA-256 与原提交一致。
 - 本段业务操作来自真实 HTTPS API，与正式 Windows GUI 状态及 NTFS 落盘共同核对；尚未将网页上传控件本身或 LRU 容量策略检查记为通过。网页配对／协议唤起仍按 3A 约定由人工验收。
+
+## 2026-10-06：阶段 3C 批准、冲突恢复与删除
+
+- 真实验收发现首次批准使服务器 revision 变为 2，而本地仍为 1、manifest 为 0，正式文件编辑误走 REVISION_CONFLICT。用户授权修复服务端同步及恢复逻辑；修复包含同名替换的正式目标落盘和历史本地改名路径恢复。
+- 冻结修复源码的真实 PostgreSQL 39 项全部通过：首次批准、缺失／过时 manifest、嵌套与改名路径、合并来源、已删除文件、旧 revision／generation、幂等重放、审计失败／不可用内容事务回滚、旧主机和裁决后源文件变化。测试在现有容器网络内各自创建并清理随机数据库，未把未配置数据库时的 skip 算为通过。
+- Windows 文件、扫描和恢复测试三个文件 67 项通过；Node Agent 构建通过。
+- 经只读 git apply --check 核对后，将服务端修复同步到现有 WSL checkout，重建并更新同一 app 服务。WSL 默认 Docker CLI 配置的 Windows 挂载读取失败，改用任务内独立 CLI 配置连接同一 daemon 完成构建，未更改用户默认配置。
+- 重开正式 Windows GUI 加载新核心后，原 REVISION_CONFLICT 禁止 ACCEPT_LOCAL／SAVE_AS_NEW 绕过正式审核；KEEP_SERVER 及同键重放恢复原 262144 B 文件，SHA-256 为 2312394bd99545d9de131c24efb781e765ac1aec243f2ed9347597a793a415e9，本地跟踪 revision 2。
+- 新提交的 33 B 文件首次批准后，本地同原 submissions 路径推进到 revision 2；实际本地编辑触发 REVIEW_REQUIRED，KEEP_SERVER 恢复批准字节。
+- 再提交不同的 42 B 替换内容，通过同名批准预览及确认后，正式目标推进到 revision 3 并落盘新字节；原 source 路径副本仍在，服务器下载、目标与 source 的 SHA-256 均为 d157d01621695348fbfd03729c05a02407e6e9c3fe85ca1815314ccaf67e8b6b。
+- 本地删除既有待审核文件后，服务器记录和本地跟踪一致删除；服务器删除空发布文件后，Windows 字节与跟踪移除，复查未重新创建。
+- 断连和活动传输中异常退出的真实文件恢复继续单独验收；本段不能替代这些证据。
