@@ -1,0 +1,27 @@
+1 ICON "assets/quorum-agent.ico"
+1 VERSIONINFO
+FILEVERSION 0,1,0,0
+PRODUCTVERSION 0,1,0,0
+FILEFLAGSMASK 0x3fL
+FILEFLAGS 0
+FILEOS 0x40004L
+FILETYPE 0x1L
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904B0"
+    BEGIN
+      VALUE "FileDescription", "Quorum Chair Agent\0"
+      VALUE "FileVersion", "0.1.0\0"
+      VALUE "InternalName", "quorum-storage-agent-desktop\0"
+      VALUE "LegalCopyright", "Quorum contributors, GPL-3.0-only\0"
+      VALUE "OriginalFilename", "quorum-storage-agent-desktop.exe\0"
+      VALUE "ProductName", "Quorum Chair Agent\0"
+      VALUE "ProductVersion", "0.1.0\0"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1200
+  END
+END

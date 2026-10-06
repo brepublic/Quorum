@@ -1,3 +1,4 @@
+#![cfg_attr(windows, windows_subsystem = "windows")]
 mod localization;
 mod desktop;
 #[cfg(windows)] mod windows;

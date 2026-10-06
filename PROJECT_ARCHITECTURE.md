@@ -191,6 +191,14 @@ GUI 状态显示合并原连接状态、委员会暂停及既定 30 秒的新鲜
 
 KEEP_SERVER 以锁定的当前 entry／version／已提交 blob 创建恢复任务；缺失或陈旧 manifest 在同事务修复，原路径依次从 manifest、已完成改名／上传历史及既有路径函数取得。已删除文件同步真实 file ID 的墓碑；缺少可用当前版本时整个裁决事务回滚。当前正式／合并状态和裁决后的源文件 revision 同时参与审核保护，旧冲突原因和另存为裁决不能绕过限制。相关回归使用真实 PostgreSQL 随机临时数据库，未增加 schema、服务或依赖。
 
+### Windows 发行（2026-10-06）
+
+`pnpm release:storage-agent:windows` 构建 Windows x64 GUI 和目录锁／ACL helper，使用固定 Node 与 Inno Setup 构成 ZIP、对应源码 ZIP 和用户级 EXE。Rust MSVC 使用静态 CRT；构建阶段验证 PE 依赖及图标资源，运行阶段从应用目录寻找 Node／桥接／helper。Windows ZIP 将 PE 和脚本当作普通文件，Unix 权限位由目标平台与文件用途决定，不依赖打包主机 chmod 行为。
+
+安装器最低版本为 Windows 10 22H2 build 19045，目标为当前用户 LOCALAPPDATA/Programs。HKCU 注册 `quorum-agent:` 和 `.quorum-agent`；保留用户已有默认关联，卸载仅清理仍归本程序所有的注册。安装、更新和卸载先检查 GUI 单实例锁；私有配置和会议内容位于程序目录外，卸载保留。无托盘、开机自启或自动更新。
+
+发行记录包含 Git commit、源码是否脏、固定工具版本、对应源码哈希、全部产物 SHA-256 和 PE 系统依赖；源码包只收录受版本管理的源文件／锁文件与确切 Rust 依赖源，不扫描本机凭据。Windows smoke 在隔离 PATH 下验证捆绑运行时、目录锁和窗口生命周期，可在 Sandbox 内验证 EXE 安装、注册、更新与卸载。Windows CI 生成产物，Linux CI 保持完整 GUI/AppImage 构建回归；不自动公开发行。
+
 ## 6. 归档、删除与运维
 
 Owner 可把活动委员会归档。归档后全部业务写命令在服务端拒绝，既有角色仍按授权读取和下载。Owner 导出在 `REPEATABLE READ READ ONLY` 快照中流式输出 JSON Lines，包含议事、审计与文件 manifest，不含凭据、provider key、源 IP 摘要或文件正文。

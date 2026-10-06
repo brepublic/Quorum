@@ -67,7 +67,8 @@ describe('Storage Agent release archives', () => {
       }
       const lockPath = join(temporary, 'lock.json');
       await writeFile(lockPath, JSON.stringify({schemaVersion: 1, nodeVersion: '99.0.0', baseUrl: 'https://invalid.example', targets}));
-      const common = ['--lock', lockPath, '--runtime-cache', cache, '--dist', dist, '--offline'];
+      const helperPath = join(temporary, 'quorum-agent-platform.exe'); await writeFile(helperPath, 'fixture-windows-helper');
+      const common = ['--lock', lockPath, '--runtime-cache', cache, '--dist', dist, '--windows-platform-helper', helperPath, '--offline'];
       await run(process.execPath, [join(repository, 'scripts/build-storage-agent-release.mjs'), ...common, '--output', first], {
         env: {...process.env, QUORUM_AGENT_RELEASE_FORBIDDEN_VALUE: 'secret-test-value'}
       });

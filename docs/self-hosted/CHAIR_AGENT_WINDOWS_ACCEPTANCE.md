@@ -66,3 +66,12 @@
 - 重开 GUI 后，待上传状态被完成并清理；服务器只有一份 17825792 B 文件，原文件、本地跟踪及服务器下载 SHA-256 均为 0b2d78b54342e937dcfc7a832714d24fe7728c861ce66fa5991c698667933da6。重复检查没有重复条目。
 - 延迟触发器与函数已移除；没有把故障注入逻辑写入产品源码。测试使用既有 TLS CA，不关闭证书验证，不创建新开发服务。
 - 登录、主机切换、解绑、上传下载、审核发布、缓存回传、冲突、双向删除、断连及活动上传恢复均已有 Windows 实际证据。网页配对入口与协议/关联唤起仍按用户接受的手工验收范围保留；Windows 10 22H2 实机验收待有环境后完成。
+
+## 2026-10-06：阶段 4 发行实现与跨平台回归
+
+- 目标 Windows 10 22H2 x64／Windows 11 x64；用户级 EXE 和 ZIP 均已构建。工具固定 Node 22.23.2、pnpm 10.33.4、Rust 1.98.1、Inno Setup 6.7.3，下载哈希／官方签名已核对。GUI 和 helper 采用静态 CRT，PE 依赖检查没有 VC Runtime/MSVCP 外部依赖，GUI 使用 Windows subsystem 并内嵌图标。
+- 首轮候选 Host 隔离 PATH 5 项、Windows Sandbox 7 项真实 smoke 通过。Sandbox 为 Windows 11 Enterprise 10.0.26100 x64，node/pnpm/cargo/rustc/cl 均不可用；ZIP 窗口打开／关闭、用户级安装、重复安装更新、HKCU 命令及卸载保留数据均已执行。最终加固 smoke 还将检查安装后二进制、快捷方式、运行中升级拒绝，待最终重打包复验后记录。
+- 发行测试两个文件 8 项通过。PowerShell 5.1 语法、Inno 编译与差异检查通过。新增 GitHub Windows 构建和 Linux AppImage 回归，未推送或触发远程运行。
+- 在 WSL 隔离副本完成 Linux contracts／Agent 构建，Node 136 项通过、6 项 Windows 专用测试跳过；完整 Slint 1.17.1／rfd 0.15.4 GUI 与 helper 两个 ELF 构建通过，Rust 10 项通过。登录、连接、文件及覆盖确认四项生产 Slint offscreen fixture 通过。
+- Linux 的中文字体只解包到任务目录；文件 fixture 原先点击第二行，现用第一行模型 ID 和生产点击命中结果寻找内点，保留所有交互断言。未修改产品布局或系统字体。本次 Linux 证据是完整 dev 构建与 offscreen 组件回归，不能替代 compositor／portal 原生交互或完整 AppImage 实机验收。
+- Windows 10 实机验收按用户确认保留；当前无对应环境。签名与公开发布不在本轮要求内；网页配对／协议实际唤起继续由用户手工验收。

@@ -1,0 +1,146 @@
+param(
+    [Parameter(Mandatory = $true)][string]$Artifacts,
+    [switch]$IncludeInstaller,
+    [string]$Report
+)
+$ErrorActionPreference = 'Stop'
+Import-Module "$PSHOME/Modules/Microsoft.PowerShell.Utility/Microsoft.PowerShell.Utility.psd1" -Force
+Import-Module "$PSHOME/Modules/Microsoft.PowerShell.Archive/Microsoft.PowerShell.Archive.psd1" -Force
+$quorumArtifacts = (Resolve-Path -LiteralPath $Artifacts).Path
+if (-not $Report) { $Report = Join-Path $quorumArtifacts 'smoke-results.json' }
+$quorumTemporary = Join-Path ([IO.Path]::GetTempPath()) ('Quorum Windows 验收 ' + [Guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $quorumTemporary | Out-Null
+$quorumResults = [Collections.Generic.List[object]]::new()
+function Record-Check([string]$Name, [object]$Details) {
+    $quorumResults.Add(@{ check = $Name; passed = $true; details = $Details })
+    [IO.File]::WriteAllText($Report, ($quorumResults | ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false))
+}
+function Wait-ProcessExit([Diagnostics.Process]$Process, [int]$Timeout = 15000) {
+    if (-not $Process.WaitForExit($Timeout)) { $Process.Kill(); throw 'Packaged process did not stop within the timeout' }
+    if ($Process.ExitCode -ne 0) { throw "Packaged process failed with exit $($Process.ExitCode)" }
+}
+function Start-Redirected([string]$File, [string]$Arguments) {
+    $quorumInfo = [Diagnostics.ProcessStartInfo]::new($File, $Arguments)
+    $quorumInfo.UseShellExecute = $false; $quorumInfo.CreateNoWindow = $true
+    $quorumInfo.RedirectStandardInput = $true; $quorumInfo.RedirectStandardOutput = $true; $quorumInfo.RedirectStandardError = $true
+    return [Diagnostics.Process]::Start($quorumInfo)
+}
+function Read-ProcessLine([Diagnostics.Process]$Process) {
+    $quorumRead = $Process.StandardOutput.ReadLineAsync()
+    if (-not $quorumRead.Wait(10000)) { throw 'Packaged process did not respond within the timeout' }
+    return $quorumRead.Result
+}
+$quorumOldPath = $env:PATH
+$quorumOldLocal = $env:LOCALAPPDATA
+$quorumOldNode = $env:QUORUM_AGENT_NODE
+$quorumOldBridge = $env:QUORUM_AGENT_BRIDGE
+$quorumOldPlatform = $env:QUORUM_AGENT_PLATFORM
+$quorumBridgeProcess = $null; $quorumLockProcess = $null; $quorumGuiProcess = $null
+try {
+    $quorumManifest = Get-Content -LiteralPath (Join-Path $quorumArtifacts 'release-manifest.json') -Raw | ConvertFrom-Json
+    foreach ($quorumArtifact in $quorumManifest.artifacts) {
+        $quorumFile = Join-Path $quorumArtifacts $quorumArtifact.file
+        if ((Get-FileHash -LiteralPath $quorumFile -Algorithm SHA256).Hash.ToLowerInvariant() -ne $quorumArtifact.sha256) { throw 'Release artifact checksum mismatch' }
+    }
+    Record-Check 'release artifact checksums' $quorumManifest.artifacts.file
+    $quorumZip = Get-ChildItem -LiteralPath $quorumArtifacts -Filter '*-win-x64.zip'
+    if (@($quorumZip).Count -ne 1) { throw 'Expected exactly one Windows binary ZIP' }
+    Expand-Archive -LiteralPath $quorumZip.FullName -DestinationPath $quorumTemporary
+    $quorumBundle = Join-Path $quorumTemporary $quorumZip.BaseName
+    $env:PATH = Join-Path $env:SystemRoot 'System32'
+    $env:LOCALAPPDATA = Join-Path $quorumTemporary 'Private preferences'
+    New-Item -ItemType Directory -Path $env:LOCALAPPDATA | Out-Null
+    Remove-Item Env:QUORUM_AGENT_NODE, Env:QUORUM_AGENT_BRIDGE, Env:QUORUM_AGENT_PLATFORM -ErrorAction SilentlyContinue
+    $quorumNode = Join-Path $quorumBundle 'runtime/node.exe'
+    $quorumRelease = Get-Content -LiteralPath (Join-Path $quorumBundle 'RELEASE.json') -Raw | ConvertFrom-Json
+    if ((& $quorumNode --version) -ne "v$($quorumRelease.nodeVersion)") { throw 'Packaged Node version mismatch' }
+    Record-Check 'bundled Node with isolated PATH' $quorumRelease.nodeVersion
+    $quorumBridgeProcess = Start-Redirected $quorumNode ('"' + (Join-Path $quorumBundle 'app/desktop-bridge.js') + '"')
+    $quorumBridgeRead = $quorumBridgeProcess.StandardOutput.ReadLineAsync()
+    if (-not $quorumBridgeRead.Wait(10000)) { throw 'Packaged bridge did not respond' }
+    if (-not $quorumBridgeRead.Result.StartsWith('{')) { throw 'Invalid packaged bridge response' }
+    $quorumBridgeProcess.StandardInput.Close(); Wait-ProcessExit $quorumBridgeProcess
+    Record-Check 'bundled bridge starts and exits on EOF' $true
+    $quorumRoot = Join-Path $quorumTemporary 'Meeting 文件'
+    New-Item -ItemType Directory -Path $quorumRoot | Out-Null
+    $quorumHelper = Join-Path $quorumBundle 'quorum-agent-platform.exe'
+    $quorumLockProcess = Start-Redirected $quorumHelper ('--lock-root "' + $quorumRoot + '"')
+    if ((Read-ProcessLine $quorumLockProcess) -ne 'LOCKED') { throw 'Bundled helper failed to lock the folder' }
+    $quorumOtherLock = Start-Redirected $quorumHelper ('--lock-root "' + $quorumRoot + '"')
+    if ((Read-ProcessLine $quorumOtherLock) -ne 'AGENT_ALREADY_RUNNING') { throw 'Bundled helper allowed a second folder owner' }
+    $quorumOtherLock.StandardInput.Close(); Wait-ProcessExit $quorumOtherLock
+    $quorumLockProcess.StandardInput.Close(); Wait-ProcessExit $quorumLockProcess
+    Record-Check 'bundled directory lock rejects concurrent owner and releases on EOF' $true
+    $quorumGuiProcess = Start-Process -FilePath (Join-Path $quorumBundle 'quorum-storage-agent-desktop.exe') -WorkingDirectory $quorumBundle -WindowStyle Hidden -PassThru
+    $quorumDeadline = [DateTime]::UtcNow.AddSeconds(20)
+    do {
+        Start-Sleep -Milliseconds 200; $quorumGuiProcess.Refresh()
+        if ($quorumGuiProcess.HasExited) { throw 'Packaged GUI exited before opening a window' }
+    } while ($quorumGuiProcess.MainWindowHandle -eq 0 -and [DateTime]::UtcNow -lt $quorumDeadline)
+    if ($quorumGuiProcess.MainWindowHandle -eq 0) { throw 'Packaged GUI did not open a native window' }
+    if (-not $quorumGuiProcess.CloseMainWindow()) { throw 'Cannot request normal packaged GUI closure' }
+    Wait-ProcessExit $quorumGuiProcess
+    Record-Check 'ZIP GUI opens native window and closes normally' $true
+    if ($IncludeInstaller) {
+        $env:LOCALAPPDATA = $quorumOldLocal
+        $quorumSetup = Get-ChildItem -LiteralPath $quorumArtifacts -Filter '*-Setup.exe'
+        if (@($quorumSetup).Count -ne 1) { throw 'Expected exactly one setup executable' }
+        $quorumInstall = Join-Path $quorumTemporary 'Installed program'
+        $quorumConfig = Join-Path $env:LOCALAPPDATA 'quorum-agent'
+        New-Item -ItemType Directory -Path $quorumConfig -Force | Out-Null
+        $quorumSentinel = Join-Path $quorumConfig ('installer-preservation-' + [Guid]::NewGuid().ToString('N') + '.txt')
+        [IO.File]::WriteAllText($quorumSentinel, 'preserve this private state')
+        $quorumMeetingSentinel = Join-Path $quorumRoot 'preserve meeting.txt'
+        [IO.File]::WriteAllText($quorumMeetingSentinel, 'preserve this meeting content')
+        try {
+            foreach ($quorumAttempt in 1..2) {
+                $quorumInstallProcess = Start-Process -FilePath $quorumSetup.FullName -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/TASKS=desktopicon',('/DIR="' + $quorumInstall + '"')) -WindowStyle Hidden -PassThru
+                Wait-ProcessExit $quorumInstallProcess 60000
+            }
+            $quorumExpected = '"' + (Join-Path $quorumInstall 'quorum-storage-agent-desktop.exe') + '" --open "%1"'
+            foreach ($quorumKey in @('Registry::HKEY_CURRENT_USER\Software\Classes\quorum-agent\shell\open\command', 'Registry::HKEY_CURRENT_USER\Software\Classes\org.quorum.ChairAgent.Pairing\shell\open\command')) {
+                if ((Get-Item -LiteralPath $quorumKey).GetValue('') -ne $quorumExpected) { throw 'Installer association command mismatch' }
+            }
+            Record-Check 'per-user install and repeated upgrade register bundled command' $true
+            foreach ($quorumBinary in @('quorum-storage-agent-desktop.exe','quorum-agent-platform.exe','runtime/node.exe')) {
+                if ((Get-FileHash -LiteralPath (Join-Path $quorumInstall $quorumBinary) -Algorithm SHA256).Hash -ne
+                    (Get-FileHash -LiteralPath (Join-Path $quorumBundle $quorumBinary) -Algorithm SHA256).Hash) { throw 'Installed binary differs from the verified ZIP' }
+            }
+            $quorumStartMenuLink = Join-Path ([Environment]::GetFolderPath('StartMenu')) 'Programs\Quorum Chair Agent\Quorum Chair Agent.lnk'
+            $quorumDesktopLink = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Quorum Chair Agent.lnk'
+            $quorumShell = New-Object -ComObject WScript.Shell
+            foreach ($quorumLink in @($quorumStartMenuLink, $quorumDesktopLink)) {
+                if (-not (Test-Path -LiteralPath $quorumLink) -or $quorumShell.CreateShortcut($quorumLink).TargetPath -ne (Join-Path $quorumInstall 'quorum-storage-agent-desktop.exe')) { throw 'Installed shortcut does not target the bundled GUI' }
+            }
+            Record-Check 'installer binary integrity and Start Menu/desktop shortcuts' $true
+            $quorumGuiProcess = Start-Process -FilePath (Join-Path $quorumInstall 'quorum-storage-agent-desktop.exe') -WorkingDirectory $quorumInstall -WindowStyle Hidden -PassThru
+            $quorumDeadline = [DateTime]::UtcNow.AddSeconds(20)
+            do {
+                Start-Sleep -Milliseconds 200; $quorumGuiProcess.Refresh()
+                if ($quorumGuiProcess.HasExited) { throw 'Installed GUI exited before opening a window' }
+            } while ($quorumGuiProcess.MainWindowHandle -eq 0 -and [DateTime]::UtcNow -lt $quorumDeadline)
+            if ($quorumGuiProcess.MainWindowHandle -eq 0) { throw 'Installed GUI did not open a native window' }
+            $quorumRunningUpdate = Start-Process -FilePath $quorumSetup.FullName -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',('/DIR="' + $quorumInstall + '"')) -WindowStyle Hidden -PassThru
+            if (-not $quorumRunningUpdate.WaitForExit(15000)) { $quorumRunningUpdate.Kill(); throw 'Silent update while running failed to return' }
+            if ($quorumRunningUpdate.ExitCode -eq 0 -or $quorumGuiProcess.HasExited) { throw 'Installer did not reject an update while the Agent was running' }
+            Record-Check 'running Agent blocks silent update without terminating it' $true
+            if (-not $quorumGuiProcess.CloseMainWindow()) { throw 'Cannot request normal installed GUI closure' }
+            Wait-ProcessExit $quorumGuiProcess
+            Record-Check 'installed GUI opens and closes normally with isolated PATH' $true
+            $quorumUninstall = Start-Process -FilePath (Join-Path $quorumInstall 'unins000.exe') -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART') -WindowStyle Hidden -PassThru
+            Wait-ProcessExit $quorumUninstall 60000
+            if (Test-Path -LiteralPath (Join-Path $quorumInstall 'quorum-storage-agent-desktop.exe')) { throw 'Uninstall retained the program binary' }
+            if (-not (Test-Path -LiteralPath $quorumSentinel) -or -not (Test-Path -LiteralPath $quorumMeetingSentinel)) { throw 'Uninstall removed private or meeting data' }
+            if (Test-Path -LiteralPath 'Registry::HKEY_CURRENT_USER\Software\Classes\quorum-agent\shell\open\command') { throw 'Uninstall retained the owned protocol' }
+            if ((Test-Path -LiteralPath $quorumStartMenuLink) -or (Test-Path -LiteralPath $quorumDesktopLink)) { throw 'Uninstall retained an owned shortcut' }
+            Record-Check 'uninstall removes owned integration and preserves private and meeting data' $true
+        } finally { if (Test-Path -LiteralPath $quorumSentinel) {Remove-Item -LiteralPath $quorumSentinel} }
+    }
+} finally {
+    foreach ($quorumProcess in @($quorumBridgeProcess, $quorumLockProcess, $quorumGuiProcess)) { if ($null -ne $quorumProcess -and -not $quorumProcess.HasExited) { $quorumProcess.Kill() } }
+    $env:PATH = $quorumOldPath; $env:LOCALAPPDATA = $quorumOldLocal
+    $env:QUORUM_AGENT_NODE = $quorumOldNode; $env:QUORUM_AGENT_BRIDGE = $quorumOldBridge; $env:QUORUM_AGENT_PLATFORM = $quorumOldPlatform
+    if (([IO.Path]::GetFullPath($quorumTemporary)).StartsWith([IO.Path]::GetFullPath([IO.Path]::GetTempPath()), [StringComparison]::OrdinalIgnoreCase)) {
+        Remove-Item -LiteralPath $quorumTemporary -Recurse -Force
+    }
+}

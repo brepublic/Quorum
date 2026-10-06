@@ -1,5 +1,12 @@
 # 更新日志
 
+## 2026-10-06：Windows Chair Agent 发行
+
+- 增加 Windows 10 22H2／11 x64 自包含 ZIP、对应源码包及用户级 EXE 安装程序，捆绑固定 Node、目录锁／ACL helper，加入图标、快捷方式、协议和连接文件关联。
+- 安装／更新／卸载保护正在运行的窗口，卸载保留私有状态与会议文件；使用静态 CRT，并修复跨平台 ZIP 可执行权限判断。
+- 增加 Windows 自动构建、产物校验和安装生命周期 smoke，以及 Linux 完整 GUI／helper 回归。Linux 136 项 Node、10 项 Rust 和四项生产 Slint offscreen 交互通过。
+- Windows 11 Sandbox 在没有 Node／Rust／MSVC 的环境完成首轮 ZIP 运行、用户级安装、更新与卸载；最终产物校验另记验收记录。Windows 10 实机及远程 CI 运行待后续环境与推送。
+
 ## 2026-10-06：文件批准同步与冲突恢复
 
 - 首次批准和同名替换在业务事务内同步当前文件 manifest，保留提交路径；同一主席电脑上的替换也更新正式目标路径的内容。
