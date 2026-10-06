@@ -10,6 +10,9 @@
 
 - 增加 Windows 10 22H2／11 x64 自包含 ZIP、对应源码包及用户级 EXE 安装程序，捆绑固定 Node、目录锁／ACL helper，加入图标、快捷方式、协议和连接文件关联。
 - 安装／更新／卸载保护正在运行的窗口，卸载保留私有状态与会议文件；使用静态 CRT，并修复跨平台 ZIP 可执行权限判断。
+- 卸载按协议与文件关联各自的命令所有权清理，保留已被其他程序接管的默认值／OpenWith／capabilities；CI 逐条传播失败并覆盖 Linux 打包脚本改动。
+- 对应源码使用 Cargo vendor 收录全部 575 项锁定依赖及校验元数据，随包说明提供不依赖 .git 的组件重建命令；独立解压与空 Cargo 缓存下的离线解析和 GUI／helper 编译检查通过。
+- 新连接的默认设备名改为通用 Chair computer，避免 Windows 注册为 Linux 主席电脑。
 - 增加 Windows 自动构建、产物校验和安装生命周期 smoke，以及 Linux 完整 GUI／helper 回归。Linux 136 项 Node、10 项 Rust 和四项生产 Slint offscreen 交互通过。
 - Windows 11 Sandbox 在没有 Node／Rust／MSVC 的环境完成首轮 ZIP 运行、用户级安装、更新与卸载；最终产物校验另记验收记录。Windows 10 实机及远程 CI 运行待后续环境与推送。
 

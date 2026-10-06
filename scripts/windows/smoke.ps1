@@ -132,8 +132,41 @@ try {
             if (Test-Path -LiteralPath (Join-Path $quorumInstall 'quorum-storage-agent-desktop.exe')) { throw 'Uninstall retained the program binary' }
             if (-not (Test-Path -LiteralPath $quorumSentinel) -or -not (Test-Path -LiteralPath $quorumMeetingSentinel)) { throw 'Uninstall removed private or meeting data' }
             if (Test-Path -LiteralPath 'Registry::HKEY_CURRENT_USER\Software\Classes\quorum-agent\shell\open\command') { throw 'Uninstall retained the owned protocol' }
+            if (Test-Path -LiteralPath 'Registry::HKEY_CURRENT_USER\Software\Classes\org.quorum.ChairAgent.Pairing\shell\open\command') { throw 'Uninstall retained the owned pairing file command' }
+            if ((Get-Item -LiteralPath 'Registry::HKEY_CURRENT_USER\Software\RegisteredApplications').GetValue('Quorum Chair Agent')) { throw 'Uninstall retained owned application capabilities' }
             if ((Test-Path -LiteralPath $quorumStartMenuLink) -or (Test-Path -LiteralPath $quorumDesktopLink)) { throw 'Uninstall retained an owned shortcut' }
             Record-Check 'uninstall removes owned integration and preserves private and meeting data' $true
+
+            # This branch runs only with -IncludeInstaller in an isolated user/Sandbox.
+            $quorumExtensionKey = 'Registry::HKEY_CURRENT_USER\Software\Classes\.quorum-agent'
+            New-Item -Path $quorumExtensionKey -Force | Out-Null
+            Set-Item -LiteralPath $quorumExtensionKey -Value 'Quorum.Acceptance.Other'
+            $quorumOtherOpenWith = Join-Path $quorumExtensionKey 'OpenWithProgids'
+            New-Item -Path $quorumOtherOpenWith -Force | Out-Null
+            New-ItemProperty -LiteralPath $quorumOtherOpenWith -Name 'Quorum.Acceptance.Other' -Value '' -PropertyType String -Force | Out-Null
+            $quorumInstallProcess = Start-Process -FilePath $quorumSetup.FullName -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',('/DIR="' + $quorumInstall + '"')) -WindowStyle Hidden -PassThru
+            Wait-ProcessExit $quorumInstallProcess 60000
+            if ((Get-Item -LiteralPath $quorumExtensionKey).GetValue('') -ne 'Quorum.Acceptance.Other') { throw 'Installer replaced the existing file association choice' }
+            if ((Get-Item -LiteralPath $quorumOtherOpenWith).GetValueNames() -notcontains 'Quorum.Acceptance.Other') { throw 'Installer removed the existing OpenWith provider' }
+            Record-Check 'installer preserves an existing extension default and OpenWith provider' $true
+            $quorumReassignedCommand = '"' + (Join-Path $env:SystemRoot 'System32\notepad.exe') + '" "%1"'
+            foreach ($quorumKey in @('Registry::HKEY_CURRENT_USER\Software\Classes\quorum-agent\shell\open\command', 'Registry::HKEY_CURRENT_USER\Software\Classes\org.quorum.ChairAgent.Pairing\shell\open\command')) {
+                Set-Item -LiteralPath $quorumKey -Value $quorumReassignedCommand
+            }
+            Set-Item -LiteralPath $quorumExtensionKey -Value 'org.quorum.ChairAgent.Pairing'
+            $quorumUninstall = Start-Process -FilePath (Join-Path $quorumInstall 'unins000.exe') -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART') -WindowStyle Hidden -PassThru
+            Wait-ProcessExit $quorumUninstall 60000
+            foreach ($quorumKey in @('Registry::HKEY_CURRENT_USER\Software\Classes\quorum-agent\shell\open\command', 'Registry::HKEY_CURRENT_USER\Software\Classes\org.quorum.ChairAgent.Pairing\shell\open\command')) {
+                if ((Get-Item -LiteralPath $quorumKey).GetValue('') -ne $quorumReassignedCommand) { throw 'Uninstall removed a reassigned handler command' }
+            }
+            if ((Get-Item -LiteralPath $quorumExtensionKey).GetValue('') -ne 'org.quorum.ChairAgent.Pairing') { throw 'Uninstall removed the reassigned pairing default' }
+            if ((Get-Item -LiteralPath $quorumOtherOpenWith).GetValueNames() -notcontains 'org.quorum.ChairAgent.Pairing') { throw 'Uninstall removed the reassigned pairing OpenWith entry' }
+            if ((Get-Item -LiteralPath $quorumOtherOpenWith).GetValueNames() -notcontains 'Quorum.Acceptance.Other') { throw 'Uninstall removed an unrelated OpenWith provider' }
+            if ((Get-Item -LiteralPath 'Registry::HKEY_CURRENT_USER\Software\RegisteredApplications').GetValue('Quorum Chair Agent') -ne 'Software\Quorum\ChairAgent\Capabilities') { throw 'Uninstall removed the reassigned registered application' }
+            if ((Get-Item -LiteralPath 'Registry::HKEY_CURRENT_USER\Software\Quorum\ChairAgent\Capabilities\FileAssociations').GetValue('.quorum-agent') -ne 'org.quorum.ChairAgent.Pairing') { throw 'Uninstall removed the reassigned file capability' }
+            if ((Get-Item -LiteralPath 'Registry::HKEY_CURRENT_USER\Software\Quorum\ChairAgent\Capabilities\URLAssociations').GetValue('quorum-agent') -ne 'quorum-agent') { throw 'Uninstall removed the reassigned protocol capability' }
+            if (Test-Path -LiteralPath (Join-Path $quorumInstall 'quorum-storage-agent-desktop.exe')) { throw 'Reassigned associations prevented removal of owned program files' }
+            Record-Check 'uninstall preserves reassigned commands/default/OpenWith/registered capabilities' $true
         } finally { if (Test-Path -LiteralPath $quorumSentinel) {Remove-Item -LiteralPath $quorumSentinel} }
     }
 } finally {

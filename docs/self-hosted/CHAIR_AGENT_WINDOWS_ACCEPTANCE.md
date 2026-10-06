@@ -84,3 +84,11 @@
 - 默认浏览器 1166 px 为并列两栏，无横向溢出；390 px 为单栏，document scrollWidth 375 px，展开 SHA-256 后仍无横向溢出。保存默认和窄屏实际页面截图。已恢复默认 viewport。
 - 前端比较与 FilesPanel 共 48 项通过，正式前端构建／TypeScript 通过；服务端快照真实 PostgreSQL 39 项通过。普通正式文件 DELETE 保留服务器允许的 ACCEPT_LOCAL，merged 和原 REVIEW_REQUIRED 继续保护；已知文件卡片使用原始业务名称而不是 content。
 - 专用 B 委员会保留一项演示冲突，方便用户直接检查页面；本地／服务器测试副本与结构化证据已导出，没有改动正式会议文件。
+
+## 2026-10-06：最终发行加固与对应源码检查
+
+- 独立复核修复 CI 原生命令失败传播、Linux 打包脚本触发范围，以及卸载时协议与文件关联分别按实际打开命令判断所有权；新增 Sandbox 既有默认值和已被接管关联保留断言。
+- 首轮源码包直接复制 registry crate 缺少 directory source 校验文件，不能离线重建。现用完整 Cargo vendor 收录 575 个锁定依赖，575 个 checksum 元数据齐全，完整解析含根项目共 576 包。
+- 修正源码 ZIP 27930 条目、109265443 B；独立目录解压、空 CARGO_HOME、offline metadata 通过。按随包原生 Windows／static CRT 参数执行 cargo check --locked --offline --bins，GUI 与 helper 编译检查通过（1 分 38 秒），没有用原 registry 缓存补依赖。
+- Source ZIP 未包含 .git／.tools／release／node_modules／.env 条目；随包说明提供无需 .git 的 Contracts、Node Agent 和 Rust 组件重建命令。最终产物将从本批提交后干净工作区重新组装，另记哈希与 Sandbox 最终复验。
+- 默认设备名的 Linux 前缀改为通用 Chair computer；既有设备名称属于已注册标签，不自动改写。

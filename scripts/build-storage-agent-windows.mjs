@@ -29,6 +29,7 @@ function git(args_) {return execFileSync('git', args_, {cwd: repository, encodin
 const commit = git(['rev-parse', 'HEAD']);
 const sourceDirty = git(['status', '--porcelain']).length > 0;
 const cargo = JSON.parse((await readFile(resolve(option('--cargo-metadata') ?? join(repository, '.tools/windows/cargo-metadata-release.json')), 'utf8')).replace(/^\uFEFF/, ''));
+const vendorDirectory = resolve(option('--cargo-vendor') ?? join(repository, '.tools/windows/cargo-vendor-release'));
 
 // The source archive contains tracked application/build source and exact Cargo
 // dependency source. It never scans the checkout for local configurations.
@@ -53,7 +54,11 @@ async function buildSourceArchive() {
     entries.push({path: `source/${path}`, data: await readFile(absolute), mode: executable ? 0o100755 : 0o100644});
   }
   for (const item of cargo.packages.filter(item => item.source)) {
-    const root = dirname(item.manifest_path);
+    const root = join(vendorDirectory, `${item.name}-${item.version}`);
+    const checksum = JSON.parse(await readFile(join(root, '.cargo-checksum.json'), 'utf8').catch(error => {
+      throw new Error(`Cargo source for ${item.name}-${item.version} is not vendored. Run the Windows release script to collect complete locked sources.`, {cause: error});
+    }));
+    if (!checksum.files || !checksum.package) throw new Error(`Invalid Cargo checksum metadata for ${item.name}-${item.version}`);
     for (const entry of await collectStageEntries(root)) {
       entries.push({...entry, path: `source/vendor/${item.name}-${item.version}/${entry.path}`, mode: 0o100644});
     }
@@ -64,14 +69,29 @@ async function buildSourceArchive() {
     `# Windows corresponding source\n\nApplication commit: ${commit}\nWorking-tree modifications included: ${sourceDirty}\n` +
     `Rust ${toolLock.rustVersion}; Node ${runtimeLock.nodeVersion}; pnpm ${JSON.parse(await readFile(join(repository, 'package.json'), 'utf8')).packageManager}.\n\n` +
     'Install the Windows MSVC Build Tools/SDK and official tools described in docs/self-hosted/CHAIR_AGENT_WINDOWS_SETUP.md.\n' +
-    'Run pnpm install --frozen-lockfile, then pnpm release:storage-agent:windows. Vendored Rust sources and lockfiles are included.\n' +
-    'The build uses a static CRT. Inno Setup is needed only for the installer, not to run the binary.\n')});
+    'Use PowerShell in this extracted source directory with the pinned Node, pnpm and Rust tools on PATH.\n' +
+    'The complete locked Cargo dependency source includes its directory-source checksum metadata.\n' +
+    'Rebuild the application components without a Git checkout:\n\n```powershell\n' +
+    '$ErrorActionPreference = \'Stop\'\n' +
+    'pnpm install --frozen-lockfile\nif ($LASTEXITCODE -ne 0) { throw \'Dependency installation failed\' }\n' +
+    'pnpm --filter @quorum/contracts build\nif ($LASTEXITCODE -ne 0) { throw \'Contracts build failed\' }\n' +
+    'pnpm --filter @quorum/storage-agent build\nif ($LASTEXITCODE -ne 0) { throw \'Agent build failed\' }\n' +
+    '$quorumPreviousRustFlags = $env:RUSTFLAGS\ntry {\n  $env:RUSTFLAGS = \'-C target-feature=+crt-static\'\n' +
+    '  cargo build --release --locked --offline --manifest-path packages/storage-agent-desktop/Cargo.toml --bins\n' +
+    '  if ($LASTEXITCODE -ne 0) { throw \'Native Windows build failed\' }\n' +
+    '} finally { $env:RUSTFLAGS = $quorumPreviousRustFlags }\n```\n\n' +
+    'Native executables are in packages/storage-agent-desktop/target/release; Node components are in packages/storage-agent/dist.\n' +
+    'To run the rebuilt GUI from this source tree, set QUORUM_AGENT_NODE to the full node.exe path and QUORUM_AGENT_BRIDGE to the full packages/storage-agent/dist/desktop-bridge.js path.\n' +
+    'The GUI supplies its neighboring quorum-agent-platform.exe to the bridge.\n\n' +
+    'ZIP and installer packaging records Git provenance, so run pnpm release:storage-agent:windows from a Git checkout at the commit above, including any recorded working-tree changes.\n' +
+    'Inno Setup is needed for installer packaging. The application itself uses a static CRT.\n')});
   const archive = createDeterministicZip(entries);
   await writeFile(join(output, sourceName), archive);
   return {file: sourceName, sha256: sha256(archive), size: archive.length, commit, sourceDirty};
 }
 
 const source = await buildSourceArchive();
+if (has('--source-only')) {console.log(`${source.sha256}  ${source.file}`); process.exit(0);}
 const pinned = runtimeLock.targets['win-x64'];
 const cache = resolve(option('--runtime-cache') ?? join(repository, '.tools/downloads'));
 const runtimePath = await downloadPinnedArchive({url: `${runtimeLock.baseUrl}/${pinned.archive}`, destination: join(cache, pinned.archive),

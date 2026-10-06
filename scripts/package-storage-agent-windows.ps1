@@ -37,12 +37,21 @@ if ($LASTEXITCODE -ne 0) { throw 'Agent build failed' }
 $quorumPreviousRustFlags = $env:RUSTFLAGS
 try {
     $env:RUSTFLAGS = '-C target-feature=+crt-static'
-    cargo build --release --locked --manifest-path packages/storage-agent-desktop/Cargo.toml --bins
+    $quorumBuildArguments = @('build', '--release', '--locked', '--manifest-path', 'packages/storage-agent-desktop/Cargo.toml', '--bins')
+    if ($Offline) { $quorumBuildArguments += '--offline' }
+    cargo @quorumBuildArguments
     if ($LASTEXITCODE -ne 0) { throw 'Native Windows release build failed' }
 } finally { $env:RUSTFLAGS = $quorumPreviousRustFlags }
 New-Item -ItemType Directory -Path '.tools/windows' -Force | Out-Null
-cargo metadata --locked --format-version 1 --filter-platform x86_64-pc-windows-msvc --manifest-path packages/storage-agent-desktop/Cargo.toml | Set-Content -LiteralPath '.tools/windows/cargo-metadata-release.json' -Encoding utf8
+$quorumMetadataArguments = @('metadata', '--locked', '--format-version', '1', '--manifest-path', 'packages/storage-agent-desktop/Cargo.toml')
+if ($Offline) { $quorumMetadataArguments += '--offline' }
+cargo @quorumMetadataArguments | Set-Content -LiteralPath '.tools/windows/cargo-metadata-release.json' -Encoding utf8
 if ($LASTEXITCODE -ne 0) { throw 'Cargo dependency metadata failed' }
+# Directory sources require cargo vendor's checksum metadata and every locked target dependency.
+$quorumVendorArguments = @('vendor', '--locked', '--versioned-dirs', '.tools/windows/cargo-vendor-release', '--manifest-path', 'packages/storage-agent-desktop/Cargo.toml')
+if ($Offline) { $quorumVendorArguments += '--offline' }
+cargo @quorumVendorArguments | Out-Null
+if ($LASTEXITCODE -ne 0) { throw 'Cargo corresponding source collection failed' }
 $quorumArguments = @('scripts/build-storage-agent-windows.mjs', '--output', $Output, '--runtime-cache', $RuntimeCache, '--inno-dir', $InnoDirectory)
 if ($Offline) { $quorumArguments += '--offline' }
 node @quorumArguments

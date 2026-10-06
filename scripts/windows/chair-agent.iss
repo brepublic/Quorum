@@ -134,30 +134,53 @@ begin
   end;
 end;
 
-procedure RemoveOwnedRegistration(Key: String);
+function OwnsRegistration(Key: String): Boolean;
 var Current, Expected: String;
 begin
   Expected := '"' + ExpandConstant('{app}\quorum-storage-agent-desktop.exe') + '" --open "%1"';
-  if RegQueryStringValue(HKCU, Key + '\shell\open\command', '', Current) and (CompareText(Current, Expected) = 0) then
-    RegDeleteKeyIncludingSubkeys(HKCU, Key);
+  Result := RegQueryStringValue(HKCU, Key + '\shell\open\command', '', Current) and (CompareText(Current, Expected) = 0);
+end;
+
+procedure DeleteOwnedValue(Key, Name, Expected: String);
+var Current: String;
+begin
+  if RegQueryStringValue(HKCU, Key, Name, Current) and (CompareText(Current, Expected) = 0) then
+    RegDeleteValue(HKCU, Key, Name);
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
-var Current: String;
+var Current: String; OwnsProtocol, OwnsPairing: Boolean;
 begin
   if CurUninstallStep = usUninstall then begin
-    RemoveOwnedRegistration('Software\Classes\quorum-agent');
-    RemoveOwnedRegistration('Software\Classes\org.quorum.ChairAgent.Pairing');
-    if RegQueryStringValue(HKCU, 'Software\Classes\.quorum-agent', '', Current) and (Current = 'org.quorum.ChairAgent.Pairing') then
-      RegDeleteValue(HKCU, 'Software\Classes\.quorum-agent', '');
-    RegDeleteValue(HKCU, 'Software\Classes\.quorum-agent\OpenWithProgids', 'org.quorum.ChairAgent.Pairing');
-    RegDeleteKeyIfEmpty(HKCU, 'Software\Classes\.quorum-agent\OpenWithProgids');
-    RegDeleteKeyIfEmpty(HKCU, 'Software\Classes\.quorum-agent');
+    { Capture both ownership decisions before removing any registrations. }
+    OwnsProtocol := OwnsRegistration('Software\Classes\quorum-agent');
+    OwnsPairing := OwnsRegistration('Software\Classes\org.quorum.ChairAgent.Pairing');
+    if OwnsProtocol then
+      RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Classes\quorum-agent');
+    if OwnsPairing then begin
+      RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Classes\org.quorum.ChairAgent.Pairing');
+      DeleteOwnedValue('Software\Classes\.quorum-agent', '', 'org.quorum.ChairAgent.Pairing');
+      DeleteOwnedValue('Software\Classes\.quorum-agent\OpenWithProgids', 'org.quorum.ChairAgent.Pairing', '');
+      RegDeleteKeyIfEmpty(HKCU, 'Software\Classes\.quorum-agent\OpenWithProgids');
+      RegDeleteKeyIfEmpty(HKCU, 'Software\Classes\.quorum-agent');
+    end;
     if RegQueryStringValue(HKCU, 'Software\RegisteredApplications', 'Quorum Chair Agent', Current) and (Current = 'Software\Quorum\ChairAgent\Capabilities') then begin
-      RegDeleteValue(HKCU, 'Software\RegisteredApplications', 'Quorum Chair Agent');
-      RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Quorum\ChairAgent\Capabilities');
-      RegDeleteKeyIfEmpty(HKCU, 'Software\Quorum\ChairAgent');
-      RegDeleteKeyIfEmpty(HKCU, 'Software\Quorum');
+      if OwnsPairing then begin
+        DeleteOwnedValue('Software\Quorum\ChairAgent\Capabilities\FileAssociations', '.quorum-agent', 'org.quorum.ChairAgent.Pairing');
+        RegDeleteKeyIfEmpty(HKCU, 'Software\Quorum\ChairAgent\Capabilities\FileAssociations');
+      end;
+      if OwnsProtocol then begin
+        DeleteOwnedValue('Software\Quorum\ChairAgent\Capabilities\URLAssociations', 'quorum-agent', 'quorum-agent');
+        RegDeleteKeyIfEmpty(HKCU, 'Software\Quorum\ChairAgent\Capabilities\URLAssociations');
+      end;
+      { A reassigned command still uses these capabilities and application entry. }
+      if OwnsPairing and OwnsProtocol then begin
+        RegDeleteValue(HKCU, 'Software\RegisteredApplications', 'Quorum Chair Agent');
+        DeleteOwnedValue('Software\Quorum\ChairAgent\Capabilities', 'ApplicationName', 'Quorum Chair Agent');
+        RegDeleteKeyIfEmpty(HKCU, 'Software\Quorum\ChairAgent\Capabilities');
+        RegDeleteKeyIfEmpty(HKCU, 'Software\Quorum\ChairAgent');
+        RegDeleteKeyIfEmpty(HKCU, 'Software\Quorum');
+      end;
     end;
   end;
 end;

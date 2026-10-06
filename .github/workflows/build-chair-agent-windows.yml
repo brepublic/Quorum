@@ -9,6 +9,8 @@ on:
       - 'packages/contracts/**'
       - 'scripts/*storage-agent*'
       - 'scripts/windows/**'
+      - 'scripts/appimage/**'
+      - 'scripts/wsl-env.sh'
       - '.github/workflows/build-chair-agent*.yml'
       - 'pnpm-lock.yaml'
       - 'package.json'
@@ -20,6 +22,8 @@ on:
       - 'packages/contracts/**'
       - 'scripts/*storage-agent*'
       - 'scripts/windows/**'
+      - 'scripts/appimage/**'
+      - 'scripts/wsl-env.sh'
       - '.github/workflows/build-chair-agent*.yml'
       - 'pnpm-lock.yaml'
       - 'package.json'
@@ -42,17 +46,25 @@ jobs:
         shell: pwsh
         run: |
           npm install --global pnpm@10.33.4
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           rustup toolchain install 1.98.1 --profile minimal
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           rustup default 1.98.1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pnpm install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify Agent and release behavior
         shell: pwsh
         run: |
           $env:PATH = 'C:\Program Files\Git\usr\bin;' + $env:PATH
           pnpm --filter @quorum/contracts build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pnpm --filter @quorum/storage-agent build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pnpm exec vitest run scripts/storage-agent-release.test.ts scripts/storage-agent-windows-release.test.ts packages/storage-agent/src
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked --manifest-path packages/storage-agent-desktop/Cargo.toml --bins
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build ZIP, corresponding source and user installer
         shell: pwsh
         run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-storage-agent-windows.ps1 -UseSystemTools
