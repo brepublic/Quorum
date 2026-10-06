@@ -11,7 +11,7 @@ source scripts/wsl-env.sh
 pnpm start:storage-agent:desktop
 ```
 
-需要 Node 22、pnpm、Rust 1.89 或更新的工具链、Linux `flock`（util-linux）、桌面文件选择 portal、`zenity`（覆盖确认弹窗）和 `xdg-open`。当前 checkout 的 Rust 安装于忽略的 `.tools/cargo`、`.tools/rustup`，脚本自动使用；其他 checkout 可使用系统 Rust。首次 Cargo 构建需要联网，之后使用 Cargo.lock 重现依赖。
+需要 Node 22、pnpm、Rust 1.92 或更新的工具链、Linux `flock`（util-linux）、桌面文件选择 portal、`gdbus`（文件选择服务检查）和 `xdg-open`。当前 checkout 的 Rust 安装于忽略的 `.tools/cargo`、`.tools/rustup`，脚本自动使用；其他 checkout 可使用系统 Rust。首次 Cargo 构建需要联网，之后使用 Cargo.lock 重现依赖。
 
 启动脚本构建 contracts、Agent 和原生窗口。首次启动先确认 Quorum 网址（默认 `https://quorum.sramun.org`）、邮箱及密码；临时密码账号在原生页面修改初始密码，再选择有主席／所有者权限的委员会。暂停委员会可以连接；本地文件变更在委员会恢复后同步。有现有电脑时，须明确确认撤销旧电脑授权。服务器 CA 证书收在网址旁的“证书设置”中；证书不受信任时自动展开。
 
@@ -93,15 +93,15 @@ cargo run --locked --manifest-path packages/storage-agent-desktop/Cargo.toml --e
 
 ## 打包
 
-运行 `pnpm release:storage-agent:desktop -- --offline` 可使用现有 Node 运行时缓存组装 `release/storage-agent-desktop/`；缺少缓存时去掉 `--offline`。Cargo 首次仍需下载依赖。程序位于该目录的 `quorum-storage-agent-desktop`，无需另装 Node，但仍使用当前系统的桌面库和 portal。
+开发目录包：运行 `pnpm release:storage-agent:desktop -- --offline` 可使用现有 Node 运行时缓存组装 `release/storage-agent-desktop/`；缺少缓存时去掉 `--offline`。Cargo 首次仍需下载依赖。程序位于该目录的 `quorum-storage-agent-desktop`，无需另装 Node，但仍使用当前系统的桌面库和 portal。
 
 也可将 release 编译的 `quorum-storage-agent-desktop` 放到现有 Linux Agent 自包含发布包根目录（与 `runtime/node`、`app/desktop-bridge.js` 相邻）。开发时脚本用 `QUORUM_AGENT_NODE`、`QUORUM_AGENT_BRIDGE` 指定当前构建。第一版仅验收当前 Linux 环境；未声称 Windows/macOS 可直接发行。
 
 ### Linux 桌面注册
 
-将发布目录放在稳定位置后运行 `./register-desktop.sh`（或程序的 `--register`）。程序正常启动也会更新当前用户的注册。注册使用 `xdg-mime`、`update-mime-database` 和 `update-desktop-database`，不需要 root。
+将发布目录放在稳定位置后运行 `./register-desktop.sh`（或程序的 `--register`）。程序正常启动不修改桌面注册。注册使用 `xdg-mime`、`update-mime-database` 和 `update-desktop-database`，不需要 root。
 
-统一应用标识为 `org.quorum.ChairAgent`：Wayland app_id、X11 WM_CLASS、`org.quorum.ChairAgent.desktop` 的 StartupWMClass 及图标名一致。图标作为 SVG 内嵌窗口并安装到用户的 hicolor 图标目录；桌面入口的 `Icon` 直接引用所安装文件的绝对路径，避免运行中的桌面仍通过旧图标主题缓存查找。注册 `quorum-agent:` 协议及 `.quorum-agent` 文件关联，桌面入口固定 Node/bridge 路径，因此开发启动也能正确接收浏览器链接。移动发布目录后重新注册。
+统一应用标识为 `org.quorum.ChairAgent`：Wayland app_id、X11 WM_CLASS、`org.quorum.ChairAgent.desktop` 的 StartupWMClass 及图标名一致。图标作为 SVG 内嵌窗口并安装到用户的 hicolor 图标目录；桌面入口的 `Icon` 直接引用所安装文件的绝对路径，避免运行中的桌面仍通过旧图标主题缓存查找。注册 `quorum-agent:` 协议及 `.quorum-agent` 文件关联，开发目录包的入口固定 Node/bridge 路径；AppImage 的入口指向安装后的稳定启动器。移动开发发布目录后重新注册。
 
 项目沿用 GPLv3，Slint 按其 GPLv3 选项使用；Cargo.lock 固定依赖。二进制发行须附源码与相应第三方许可。
 
@@ -154,3 +154,36 @@ QUORUM_UI_CAPTURE=/tmp/quorum-settings.ppm packages/storage-agent-desktop/target
 `--name-popup`、`--name-menu` 检查超长名称的完整展示及复制菜单，可与窗口尺寸、语言、主题参数组合。文件快照按稳定 ID 更新已有行，避免进度刷新重建整张表导致焦点丢失。
 
 `--short-size` 在原生预览中复现短文件名、`36 B` 与选中边框，用于检查按内容计算的大小列与名称列之间的间距。
+
+
+## Linux AppImage 发行
+
+运行 `pnpm release:storage-agent:appimage`，使用固定 Ubuntu 22.04 镜像和 Rust 1.98.1，
+在隔离容器内构建 x86_64 程序；输出位于 `release/appimage/`。仅复制仓库源码，
+不携带本机配置、CA、Node 依赖目录或本机编译产物。容器内需要网络下载锁定依赖。
+AppImage 工具 1.9.1 与 20251108 启动器固定 SHA-256；启动器静态包含 FUSE 库，
+系统仍须支持挂载，否则使用同版本解压包。
+
+随包携带 Node、flock、gdbus、桌面数据库工具、必要客户端库和 Noto CJK 字体。
+启动时在用户缓存目录生成绝对字体路径配置，避免旧版字体库错误解析临时挂载路径；不修改工作目录或系统字体。
+所有打包 ELF 检查 GLIBC 要求不超过 2.35，glibc 与加载器使用宿主配套版本。
+桌面会话、文件选择 portal 及对应后端、xdg-utils 和文件默认打开程序由宿主提供。
+软件渲染保持不变；文件选择服务缺失显示错误，覆盖确认使用 Slint 模态层，不再依赖 Zenity。
+
+普通启动不写桌面入口或文件关联。`AppRun --install`／`<file>.AppImage --install`
+在关闭 Agent 后安装到用户数据目录下的 `quorum-agent/program`，再显式注册菜单、
+图标和配对关联；安装时检查现有单实例锁。菜单指向稳定安装文件，绝不记录临时挂载路径。
+`--unregister` 移除本应用管理的桌面入口及关联，保留其他程序关联、私有配置和会议文件。
+开发目录包仍可通过 `register-desktop.sh` 显式注册。
+
+AppRun 固定包内 Node／桥接路径，保存宿主环境；打开宿主浏览器、目录和文件时恢复
+原 PATH、库路径、字体配置和数据搜索目录，避免宿主程序加载包内库。
+安装与升级说明见 [发行说明](../../scripts/appimage/INSTALL.md)。GitHub 的
+`Build Linux Chair Agent` 工作流可手动构建并下载产物，不自动公开发布。
+
+自动验证包含 Rust 测试、覆盖确认键盘事件、隔离用户目录的桌面注册／移除、安装锁、
+启动参数和路径，以及 Agent 发布包／桥接／目录锁测试。
+2026-10-06 验证：10 项 Rust 测试、35 项 Agent／发布测试和覆盖确认交互通过；
+干净 Ubuntu 22.04（无系统 Node、Zenity、CJK 字体）下的真实 AppImage 窗口、Node 桥接、
+随包中文字体、安装与 MIME 关联／移除通过；本机原生 FUSE 挂载下的安装／移除也通过。
+真实 GNOME／KDE 的 Wayland、输入法、任务栏分组、浏览器唤起仍需逐项人工验收。

@@ -171,7 +171,7 @@ GUI 停止后支持“另存为”，以 0600 权限新建配置文件并保留�
 
 GUI 状态显示合并原连接状态、委员会暂停及既定 30 秒的新鲜度阈值；快照停滞或连接／缓存观察过旧显示状态更新延迟，不更改核心同步与网络判断。文件列表按快照的稳定文件 ID 更新已有行，保留选择和键盘焦点。名称单元格空白区域用于选择和复制，仅实际文件名文字区域打开本地文件；完整名称通过原生浮层及复制菜单访问。冲突操作在状态下方，打开 `/committees/:id/posts/storage#sync-conflicts`；网页在冲突列表加载后滚动并聚焦该区域，普通访问不主动抢焦点。
 
-开发使用 `pnpm start:storage-agent:desktop`，需要 Rust、Slint 构建依赖、Linux 桌面 portal 及 Zenity（现有 rfd 的覆盖确认弹窗后端）；新增 Rust 锁文件不改变现有 Web/服务器构建命令。详情与验收边界见 `packages/storage-agent-desktop/README.md`，产品取舍见 `.agents/CHAIR_AGENT_GUI.md`。
+开发使用 `pnpm start:storage-agent:desktop`，需要 Rust、Slint 构建依赖、Linux 桌面 portal 及 gdbus（文件选择服务检查）；新增 Rust 锁文件不改变现有 Web/服务器构建命令。详情与验收边界见 `packages/storage-agent-desktop/README.md`，产品取舍见 `.agents/CHAIR_AGENT_GUI.md`。
 
 桌面文件快照附带本地记录的相对路径和实际文件名；审核中及已驳回记录的逻辑名称显示为 `-`。原生端按行 ID 查找当前快照，用已保存的存储根目录解析路径，拒绝路径越界、符号链接及非普通文件，再使用现有系统 `xdg-open` 打开，失败返回界面错误提示。
 
@@ -262,3 +262,19 @@ Web 的共享错误格式化读取 reason/code 和受约束参数；身份、业
 - 模板测试采用与应用一致的旧版 React 挂载方式，覆盖异步保存后的草稿基线更新。
 
 - migration 68 对齐主席模式问题的可选原因约束；代表模式仍由服务层要求非空原因。
+
+
+### Linux AppImage 发行（2026-10-06）
+
+`pnpm release:storage-agent:appimage` 在固定 Ubuntu 22.04／Rust 1.98.1 容器构建
+Rust/Slint 和既有 Node 核心，生成 AppImage、解压包、源码包及校验值。固定 AppImage
+工具与启动器版本及哈希，检查随包 ELF 的 GLIBC 要求不超过 2.35，不携带 glibc／加载器。
+随包补齐 Node、flock、gdbus、桌面数据库工具、图形客户端依赖及中文备用字体；
+宿主继续提供桌面会话、portal 后端、xdg-utils、浏览器与文档程序。
+
+普通启动不再自动注册桌面入口；显式 `--install` 在用户数据目录安装并注册，
+安装检查当前单实例锁，菜单指向持久文件而非 AppImage 临时挂载路径。
+`--unregister` 清除本应用管理的入口与关联，保留配置和会议文件。
+AppRun 区分包内依赖环境与宿主外部程序环境。文件覆盖确认移到既有 Slint 窗口，
+文件选择前检查 portal 接口，缺失时给出错误。手动 GitHub 构建工作流仅上传产物，
+不自动发布。协议、配置 schema、目录锁和退出即停止同步的行为保持不变。

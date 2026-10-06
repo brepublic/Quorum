@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>org.quorum.ChairAgent</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-only</project_license>
+  <name>Quorum Chair Agent</name>
+  <name xml:lang="zh-CN">Quorum 主席 Agent</name>
+  <summary>Store and synchronize Quorum committee files</summary>
+  <summary xml:lang="zh-CN">保存并同步 Quorum 委员会文件</summary>
+  <description><p>A native desktop application for connecting a chair's computer to a Quorum committee and synchronizing its local file storage.</p></description>
+  <launchable type="desktop-id">org.quorum.ChairAgent.desktop</launchable>
+  <url type="homepage">https://github.com/brepublic/Quorum</url>
+  <provides><mediatype>application/x-quorum-agent-pairing</mediatype></provides>
+</component>

@@ -22,6 +22,26 @@ impl slint::platform::Platform for PreviewPlatform {
     }
 }
 // Exercise actual Slint hit targets and keyboard focus; callbacks are recorded, never sent to a server.
+fn exercise_overwrite(window: &MainWindow, redraw: impl Fn()) {
+    use slint::platform::{Key, WindowEvent};
+    let decisions = Rc::new(RefCell::new(Vec::new()));
+    let recorded = decisions.clone();
+    window.on_overwrite_decision(move |confirmed| recorded.borrow_mut().push(confirmed));
+    window.set_overwrite_path("/home/主席/会议配置/agent-config.json".into());
+    window.set_busy(true);
+    redraw();
+    assert!(!window.get_controls_enabled());
+    for text in [Key::Return.into(), Key::Escape.into()] {
+        window.window().dispatch_event(WindowEvent::KeyPressed {text});
+    }
+    assert_eq!(*decisions.borrow(), vec![false, false], "default Enter and Escape must cancel");
+    let size = window.window().size();
+    let position = slint::LogicalPosition::new(size.width as f32 / 2. + 210., size.height as f32 / 2. + 44.);
+    window.window().dispatch_event(WindowEvent::PointerPressed {position, button: slint::platform::PointerEventButton::Left});
+    window.window().dispatch_event(WindowEvent::PointerReleased {position, button: slint::platform::PointerEventButton::Left});
+    assert_eq!(*decisions.borrow(), vec![false, false, true], "Overwrite requires explicit activation");
+    // The overlay remains for screenshot inspection; the callback only records decisions.
+}
 fn exercise_login(window: &MainWindow, redraw: impl Fn()) {
     use slint::platform::{Key, PointerEventButton, WindowEvent};
     let actions = Rc::new(RefCell::new(Vec::<String>::new()));
@@ -559,8 +579,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             slint::platform::update_timers_and_animations(); window.window().request_redraw();
             adapter.draw_if_needed(|renderer| {renderer.render(pixels.make_mut_slice(), width as usize);});
         }
-        if std::env::args().any(|arg| matches!(arg.as_str(), "--exercise-login" | "--exercise-connection" | "--exercise-files")) {
-            let exercise = if std::env::args().any(|arg| arg == "--exercise-files") {exercise_files} else if std::env::args().any(|arg| arg == "--exercise-connection") {exercise_connection} else {exercise_login};
+        if std::env::args().any(|arg| matches!(arg.as_str(), "--exercise-login" | "--exercise-connection" | "--exercise-files" | "--exercise-overwrite")) {
+            let exercise = if std::env::args().any(|arg| arg == "--exercise-overwrite") {exercise_overwrite} else if std::env::args().any(|arg| arg == "--exercise-files") {exercise_files} else if std::env::args().any(|arg| arg == "--exercise-connection") {exercise_connection} else {exercise_login};
             exercise(&window, || {
                 slint::platform::update_timers_and_animations();
                 let mut frame = slint::SharedPixelBuffer::<slint::Rgb8Pixel>::new(width, height);

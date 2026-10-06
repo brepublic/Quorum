@@ -1,0 +1,23 @@
+name: Build Linux Chair Agent
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  appimage:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build and verify Ubuntu 22.04 AppImage and archive
+        run: bash scripts/package-storage-agent-appimage.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: quorum-chair-agent-linux-x86_64
+          path: release/appimage/
+          if-no-files-found: error

@@ -216,7 +216,7 @@ export component MainWindow inherits Window {
     in-out property <bool> language-menu: false;
     in-out property <bool> login-options: false;
     in-out property <bool> login-network: false;
-    out property <bool> controls-enabled: !root.confirm-unpair && root.confirm-discard == "" && !root.language-menu && !root.closing;
+    out property <bool> controls-enabled: root.overwrite-path == "" && !root.confirm-unpair && root.confirm-discard == "" && !root.language-menu && !root.closing;
     out property <bool> certificate-error: root.error-stage == "tls" || root.error-code == "UNABLE_TO_GET_ISSUER_CERT_LOCALLY" || root.error-code == "DEPTH_ZERO_SELF_SIGNED_CERT" || root.error-code == "SELF_SIGNED_CERT_IN_CHAIN";
     in-out property <bool> files-loaded: false;
     in-out property <bool> setup-mode: false;
@@ -227,6 +227,8 @@ export component MainWindow inherits Window {
     in-out property <string> language: "";
     pure callback translate(string, string) -> string;
     callback language-changed();
+    callback overwrite-decision(bool);
+    in-out property <string> overwrite-path;
     in-out property <string> status: "STOPPED";
     in-out property <bool> running: false;
     in-out property <bool> busy: false;
@@ -684,6 +686,34 @@ export component MainWindow inherits Window {
                     HorizontalBox {
                         Button { text: root.translate("Cancel", root.language); clicked => {root.confirm-discard = "";} }
                         Button { text: root.translate("Discard and continue", root.language); clicked => {root.action("discard-" + root.confirm-discard);} }
+                    }
+                }
+            }
+        }
+    }
+
+    if root.overwrite-path != "": Rectangle {
+        background: #18273c80;
+        TouchArea { }
+        FocusScope {
+            init => {cancel-overwrite.focus();}
+            key-pressed(event) => {
+                if event.text == Key.Escape {root.overwrite-decision(false); return accept;}
+                return reject;
+            }
+            Rectangle {
+                x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+                width: min(560px, root.width - 48px); height: min(root.height - 48px, overwrite-body.preferred-height + 48px);
+                background: Palette.background; border-radius: 12px;
+                ScrollView { x: 24px; y: 24px; width: parent.width - 48px; height: parent.height - 48px;
+                    overwrite-body := VerticalLayout { spacing: 20px;
+                        Text { text: root.translate("Overwrite configuration?", root.language); color: Palette.foreground; font-size: 20px; wrap: word-wrap; }
+                        PathText { text: root.overwrite-path; }
+                        HorizontalLayout { spacing: 12px;
+                            cancel-overwrite := Button { text: root.translate("Cancel", root.language); clicked => {root.overwrite-decision(false);} }
+                            Rectangle { horizontal-stretch: 1; }
+                            QuietButton { text: root.translate("Overwrite", root.language); danger: true; clicked => {root.overwrite-decision(true);} }
+                        }
                     }
                 }
             }

@@ -147,6 +147,8 @@ pub fn translate(key: &str, language: &str) -> &'static str {
         "STOP_AND_UNPAIR_FIRST" => ("Stop and unpair the current Agent before importing another committee.", "请先停止当前 Agent 并解除本机绑定，再导入其他委员会的配置。"),
         "DIRECTORY_NOT_EMPTY" => ("Choose an empty directory for this committee.", "请选择一个空目录存储本委员会文件。"),
         "DIRECTORY_EXISTS" => ("This directory already exists. Choose a new storage directory.", "目录已存在，请选择一个新的存储目录。"),
+        "OPEN_EXTERNAL_FAILED" => ("Cannot open the link or folder. Check the default browser or file manager.", "无法打开链接或目录，请检查默认浏览器或文件管理器。"),
+        "FILE_CHOOSER_UNAVAILABLE" => ("System file chooser unavailable. Install and enable xdg-desktop-portal and the backend for your desktop.", "系统文件选择器不可用，请安装并启用 xdg-desktop-portal 及当前桌面对应的后端。"),
         "DESKTOP_REGISTRATION_FAILED" => ("Desktop registration failed. Check user directory permissions and xdg tools.", "桌面注册失败，请检查用户目录权限和 xdg 工具。"),
         "AGENT_CONTENT_ALREADY_VERIFIED" => ("The sync file is already verified. Refresh task status.", "同步文件已校验完成，请刷新任务状态。"),
         "AGENT_CONTENT_NOT_STAGED" => ("The sync file has not been staged. Sync it again.", "同步文件尚未保存到暂存区，请重新同步。"),

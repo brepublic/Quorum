@@ -71,7 +71,8 @@
     "release:storage-agent:verify": "node scripts/verify-storage-agent-release.mjs",
     "verify:no-legacy-runtime": "node scripts/verify-no-legacy-runtime.mjs",
     "start:storage-agent:desktop": "bash scripts/storage-agent-desktop.sh",
-    "release:storage-agent:desktop": "bash scripts/package-storage-agent-desktop.sh"
+    "release:storage-agent:desktop": "bash scripts/package-storage-agent-desktop.sh",
+    "release:storage-agent:appimage": "bash scripts/package-storage-agent-appimage.sh"
   },
   "eslintConfig": {
     "extends": "react-app"

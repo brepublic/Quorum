@@ -127,16 +127,27 @@ fn render_committees(ui: &MainWindow, values: &[Value]) {
     }).collect();
     ui.set_committees(ModelRc::new(VecModel::from(entries)));
 }
+// RFD conflates missing portal/backend with user cancellation. Detect the missing
+// interface first so desktop setup failures are visible without requiring Zenity.
+fn file_dialog_ready(weak: &slint::Weak<MainWindow>) -> bool {
+    let ready = Command::new("gdbus").args(["call", "--session", "--timeout", "5", "--dest", "org.freedesktop.portal.Desktop",
+        "--object-path", "/org/freedesktop/portal/desktop", "--method", "org.freedesktop.DBus.Properties.Get",
+        "org.freedesktop.portal.FileChooser", "version"]).stdout(Stdio::null()).stderr(Stdio::null())
+        .status().is_ok_and(|status| status.success());
+    if !ready {let _ = weak.upgrade_in_event_loop(|ui| {ui.set_busy(false); ui.set_error_stage("".into()); ui.set_error_code("FILE_CHOOSER_UNAVAILABLE".into());});}
+    ready
+}
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     let target = match arguments.as_slice() {
         [] => String::new(),
         [flag] if flag == "--open" => String::new(),
         [flag, target] if flag == "--open" => target.clone(),
-        [target] if target != "--register" => target.clone(),
-        [flag] if flag == "--register" => String::new(),
+        [target] if target != "--register" && target != "--unregister" => target.clone(),
+        [flag] if flag == "--register" || flag == "--unregister" => String::new(),
         _ => return Err("Use --open <configuration or pairing URL>".into()),
     };
+    if arguments.first().is_some_and(|arg| arg == "--unregister") {desktop::unregister()?; return Ok(());}
     let exe = std::env::current_exe()?;
     let node = std::env::var_os("QUORUM_AGENT_NODE").map(PathBuf::from)
         .unwrap_or_else(|| exe.parent().unwrap().join("runtime/node"));
@@ -171,7 +182,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if target.is_empty() {
         if let Some(stdin) = input.lock().unwrap().as_mut() {writeln!(stdin, "{}", json!({"command":"restore"}))?;}
     } else {tx.send(json!({"event":"open-request", "target":target}))?;}
-    if desktop::register(&exe, &node, &bridge).is_err() {ui.set_error_code("DESKTOP_REGISTRATION_FAILED".into());}
     thread::spawn(move || {
         for line in BufReader::new(output).lines().map_while(Result::ok) {
             if let Ok(v) = serde_json::from_str::<Value>(&line) {
@@ -202,10 +212,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let weak = ui.as_weak();
         thread::spawn(move || {
             let result = desktop::local_file_path(std::path::Path::new(&root), &relative)
-                .and_then(|path| Command::new("xdg-open").arg(path).status())
+                .and_then(|path| desktop::host_command("xdg-open").arg(path).status())
                 .map(|status| status.success()).unwrap_or(false);
             if !result {let _ = weak.upgrade_in_event_loop(|ui| {ui.set_error_stage("".into()); ui.set_error_code("Cannot open local file".into());});}
         });
+    });
+    let pending_overwrite = Arc::new(Mutex::new(None::<Value>));
+    let overwrite_input = input.clone();
+    let overwrite_pending = pending_overwrite.clone();
+    let overwrite_ui = ui.as_weak();
+    ui.on_overwrite_decision(move |confirmed| {
+        let Some(ui) = overwrite_ui.upgrade() else {return;};
+        ui.set_overwrite_path("".into());
+        let Some(mut value) = overwrite_pending.lock().unwrap().take() else {return;};
+        if !confirmed {ui.set_busy(false); return;}
+        value["overwrite"] = json!(true);
+        if !overwrite_input.lock().unwrap().as_mut().is_some_and(|stdin| writeln!(stdin, "{value}").is_ok()) {
+            ui.set_busy(false); ui.set_error_code("BRIDGE_EXITED".into());
+        }
     });
     ui.on_action(move |action| {
         let Some(ui) = weak.upgrade() else {return};
@@ -254,17 +278,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if ui.get_resume_after_edit() {ui.set_resume_after_edit(false); action = "start";} else {return; }
         }
         if action == "import" {
+            ui.set_busy(true);
+            let dialog = ui.window().with_winit_window(|window| rfd::FileDialog::new().set_parent(window)).unwrap_or_default();
             let weak = ui.as_weak();
             let language = ui.get_language().to_string();
             thread::spawn(move || {
-                if let Some(path) = rfd::FileDialog::new()
+                if !file_dialog_ready(&weak) {return;}
+                if let Some(path) = dialog
                     .add_filter(translate("Quorum configuration files", &language), &["quorum-agent", "json"])
                     .add_filter(translate("All files", &language), &["*"])
                     .pick_file() {
                     let _ = weak.upgrade_in_event_loop(move |ui| {
-                        ui.set_pending_target(path.to_string_lossy().into_owned().into()); ui.invoke_action("open".into());
+                        ui.set_busy(false); ui.set_pending_target(path.to_string_lossy().into_owned().into()); ui.invoke_action("open".into());
                     });
-                }
+                } else {let _ = weak.upgrade_in_event_loop(|ui| ui.set_busy(false));}
             }); return;
         }
         if action == "open" && (dirty || !ui.get_pairing_code().is_empty() || ui.get_setup_mode()) {
@@ -296,19 +323,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if action == "unpair" {ui.set_resume_after_edit(false);}
         if matches!(action, "open-root" | "open-web" | "open-conflicts") {
             let target = if action == "open-root" {ui.get_root_path()} else if action == "open-conflicts" {format!("{}/posts/storage#sync-conflicts", ui.get_committee_url().trim_end_matches("/files")).into()} else {ui.get_committee_url()};
-            if !target.is_empty() {let _ = Command::new("xdg-open").arg(target.as_str()).spawn();} return;
+            if !target.is_empty() {
+                let weak = ui.as_weak();
+                thread::spawn(move || {
+                    if !desktop::host_command("xdg-open").arg(target.as_str()).status().is_ok_and(|status| status.success()) {
+                        let _ = weak.upgrade_in_event_loop(|ui| {ui.set_error_stage("".into()); ui.set_error_code("OPEN_EXTERNAL_FAILED".into());});
+                    }
+                });
+            } return;
         }
         if action == "export-logs" {
+            ui.set_busy(true);
+            let dialog = ui.window().with_winit_window(|window| rfd::FileDialog::new().set_parent(window)).unwrap_or_default();
             let content = logs_action.borrow().join("\n");
             let weak = ui.as_weak();
             thread::spawn(move || {
-                if let Some(path) = rfd::FileDialog::new().set_file_name("quorum-agent.log").save_file() {
+                if !file_dialog_ready(&weak) {return;}
+                if let Some(path) = dialog.set_file_name("quorum-agent.log").save_file() {
                     let success = std::fs::write(path, content).is_ok();
                     let _ = weak.upgrade_in_event_loop(move |ui| {
+                        ui.set_busy(false);
                         if success {ui.set_feedback("Logs exported".into());}
                         else {ui.set_error_code("Cannot export logs. Check directory permissions and free space.".into());}
                     });
-                }
+                } else {let _ = weak.upgrade_in_event_loop(|ui| ui.set_busy(false));}
             }); return;
         }
         let mut value = json!({"command":action,"target":ui.get_pending_target().as_str(),"configPath":ui.get_config_path().as_str(),"serverUrl":ui.get_server_url().as_str(),
@@ -319,28 +357,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if matches!(action, "save" | "save-as" | "pair") {
             let choose_path = action == "save-as" || (action == "save" && ui.get_config_path().trim().is_empty());
             if choose_path { value["command"] = json!("save-as"); }
-            let language = ui.get_language().to_string();
+            let dialog = ui.window().with_winit_window(|window| rfd::FileDialog::new().set_parent(window)).unwrap_or_default();
+            let pending = pending_overwrite.clone();
             let input = input_action.clone();
             let weak = ui.as_weak();
             thread::spawn(move || {
                 let path = if choose_path {
-                    rfd::FileDialog::new().set_file_name("agent-config.json").save_file()
+                    if !file_dialog_ready(&weak) {return;}
+                    dialog.set_file_name("agent-config.json").save_file()
                 } else { Some(PathBuf::from(text(&value, "configPath"))) };
                 if let Some(path) = path {
                     if choose_path { value["savePath"] = json!(path.to_string_lossy()); }
                     if path.symlink_metadata().is_ok() {
-                        let replace = translate("Overwrite", &language);
-                        let result = rfd::MessageDialog::new()
-                            .set_title(translate("Overwrite configuration?", &language))
-                            .set_description(format!("{}\n\n{}", translate("This file already exists. Replace its contents?", &language), path.display()))
-                            .set_level(rfd::MessageLevel::Warning)
-                            .set_buttons(rfd::MessageButtons::OkCancelCustom(replace.into(), translate("Cancel", &language).into()))
-                            .show();
-                        if result != rfd::MessageDialogResult::Custom(replace.into()) && result != rfd::MessageDialogResult::Ok {
-                            let _ = weak.upgrade_in_event_loop(|ui| ui.set_busy(false));
-                            return;
-                        }
-                        value["overwrite"] = json!(true);
+                        *pending.lock().unwrap() = Some(value);
+                        let _ = weak.upgrade_in_event_loop(move |ui| ui.set_overwrite_path(path.to_string_lossy().into_owned().into()));
+                        return;
                     }
                     let sent = input.lock().unwrap().as_mut()
                         .is_some_and(|stdin| writeln!(stdin, "{value}").is_ok());
@@ -357,26 +388,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ui.on_choose(move |kind| {
         let weak = weak.clone();
         let kind = kind.to_string();
-        let (initial, language) = weak.upgrade().map(|ui| (ui.get_root_path().to_string(), ui.get_language().to_string())).unwrap_or_default();
+        let Some(ui) = weak.upgrade() else {return;};
+        if ui.get_busy() || ui.get_closing() {return;}
+        ui.set_busy(true);
+        let dialog = ui.window().with_winit_window(|window| rfd::FileDialog::new().set_parent(window)).unwrap_or_default();
+        let (initial, language) = (ui.get_root_path().to_string(), ui.get_language().to_string());
         thread::spawn(move || {
+            if !file_dialog_ready(&weak) {return;}
             let path = if kind == "root" {
-                rfd::FileDialog::new().set_directory(&initial).pick_folder()
+                dialog.set_directory(&initial).pick_folder()
             } else if kind == "certificate" {
-                rfd::FileDialog::new()
+                dialog
                     .add_filter(translate("Certificate files", &language), &["crt", "pem", "cer"])
                     .add_filter(translate("All files", &language), &["*"])
                     .pick_file()
             } else {
-                rfd::FileDialog::new().pick_file()
+                dialog.pick_file()
             };
             if let Some(path) = path {
                 let value = path.to_string_lossy().into_owned();
-                let _ = weak.upgrade_in_event_loop(move |ui| match kind.as_str() {
-                    "root" => ui.set_root_path(value.into()),
-                    "certificate" => ui.set_certificate(value.into()),
-                    _ => ui.set_config_path(value.into()),
+                let _ = weak.upgrade_in_event_loop(move |ui| {
+                    ui.set_busy(false);
+                    match kind.as_str() {
+                        "root" => ui.set_root_path(value.into()),
+                        "certificate" => ui.set_certificate(value.into()),
+                        _ => ui.set_config_path(value.into()),
+                    }
                 });
-            }
+            } else {let _ = weak.upgrade_in_event_loop(|ui| ui.set_busy(false));}
         });
     });
     let weak = ui.as_weak();

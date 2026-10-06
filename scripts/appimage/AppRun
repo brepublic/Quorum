@@ -1,0 +1,26 @@
+#!/bin/sh
+set -eu
+quorum_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+# Save the host environment before adding package-only libraries and tools.
+for quorum_name in PATH LD_LIBRARY_PATH FONTCONFIG_FILE FONTCONFIG_PATH XDG_DATA_DIRS; do
+    eval 'quorum_set=${'"$quorum_name"'+yes}'
+    if [ "$quorum_set" = yes ]; then
+        eval 'quorum_value=${'"$quorum_name"'}'
+        export "QUORUM_HOST_$quorum_name=$quorum_value"
+    else
+        unset "QUORUM_HOST_$quorum_name"
+    fi
+done
+export QUORUM_APPIMAGE_ENV=1
+export QUORUM_AGENT_NODE="$quorum_dir/runtime/node"
+export QUORUM_AGENT_BRIDGE="$quorum_dir/app/desktop-bridge.js"
+export QUORUM_AGENT_LAUNCHER="${APPIMAGE:-$quorum_dir/AppRun}"
+if [ "${1:-}" = --install ]; then
+    exec "$quorum_dir/install.sh"
+fi
+export PATH="$quorum_dir/usr/bin:${PATH:-/usr/bin:/bin}"
+export LD_LIBRARY_PATH="$quorum_dir/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+# Include the host font configuration plus the bundled CJK fallback.
+export FONTCONFIG_FILE
+FONTCONFIG_FILE=$("$QUORUM_AGENT_NODE" "$quorum_dir/prepare-fonts.cjs" "$quorum_dir")
+exec "$quorum_dir/quorum-storage-agent-desktop" "$@"
