@@ -30,7 +30,7 @@ describe('Chair Agent conflict comparison', () => {
   it('preserves both versions when revisions have advanced and the content differs', () => {
     expect(compareStorageConflict(conflict, undefined, 'host')).toMatchObject({relation: 'DIVERGED',
       recommended: 'SAVE_AS_NEW', fileRevision: 3});
-    expect(compareStorageConflict(conflict, undefined, 'host').summary).toBe('Both files have changed.');
+    expect(compareStorageConflict(conflict, undefined, 'host').summary).toBe('The local and server files have different contents.');
   });
   it.each(['REVISION_CONFLICT', 'MANIFEST_STALE', 'NAME_CONFLICT'] as const)
     ('protects current formal files even if the original reason is %s', reasonCode => {

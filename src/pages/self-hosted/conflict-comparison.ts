@@ -69,7 +69,7 @@ export function compareStorageConflict(conflict: StorageAgentConflict, loadedFil
   if (localBase === serverFile.revision) return decision('LOCAL_CHANGED',
     'Only the local file has changed.', 'ACCEPT_LOCAL', guidance);
   if (localBase !== null && serverFile.revision > localBase) return decision('DIVERGED',
-    'Both files have changed.',
+    'The local and server files have different contents.',
     reviewRequired ? 'KEEP_SERVER' : 'SAVE_AS_NEW', reviewRequired ? guidance : 'Save a new file to retain both versions.');
   return decision('UNKNOWN', 'Download the server file to compare its contents.',
     reviewRequired ? 'KEEP_SERVER' : undefined, guidance);

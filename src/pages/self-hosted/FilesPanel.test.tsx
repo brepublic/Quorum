@@ -254,7 +254,7 @@ describe('self-hosted stage 6 file panel', () => {
     const view = await render('CHAIR', api({listFiles: vi.fn(async () => [{...file, revision: 3}]),
       listStorageHosts: vi.fn(async () => [host]), listStorageAgentConflicts: vi.fn(async () => [conflict]),
       resolveStorageAgentConflict}), 'chair');
-    expect(view.textContent).toContain('两边都有改动');
+    expect(view.textContent).toContain('本地文件与服务器文件内容不同');
     const list = view.querySelector('#sync-conflicts');
     expect(list).not.toBeNull();
     expect(document.activeElement === list).toBe(followLink);
@@ -315,7 +315,7 @@ describe('self-hosted stage 6 file panel', () => {
     const card = view.querySelector('[data-conflict-id="comparison"]')!;
     expect(card.querySelector('.content > .header')?.textContent).toBe(file.logicalName);
     expect(card.querySelector('.conflict-fingerprints')?.textContent).toContain('基于修订: 2');
-    expect(card.querySelector('.conflict-decision-summary')?.textContent).toContain('两边都有改动');
+    expect(card.querySelector('.conflict-decision-summary')?.textContent).toContain('本地文件与服务器文件内容不同');
     expect(card.querySelector('.conflict-versions')?.textContent).not.toMatch(/修订|无法确定/);
     expect(card.querySelector('.conflict-fingerprints')?.hasAttribute('open')).toBe(false);
     expect(view.querySelector('.conflict-recommendation')?.textContent).toContain('保留两份');
@@ -353,10 +353,10 @@ describe('self-hosted stage 6 file panel', () => {
       publishedAt: '2026-10-06T12:00:00Z'};
     const view = await render('CHAIR', api({listStorageHosts: vi.fn(async () => [host]),
       listStorageAgentConflicts: vi.fn(async () => [conflict])}), 'chair');
-    expect(view.textContent).toContain('公开文件的内容会随之替换');
+    expect(view.textContent).toContain('选择“保留本地版本”');
     expect(button('保留本地版本')?.disabled).toBe(false); expect(button('保留服务器版本')?.disabled).toBe(false);
     expect(button('另存为新文件')).toBeUndefined();
-    expect(view.querySelector('.conflict-recommendation')?.textContent).toContain('保留服务器版本');
+    expect(view.querySelector('.conflict-version-recommended')?.getAttribute('aria-label')).toBe('服务器版本');
   });
 
   it('allows a local deletion of an ordinary formal file and fences the decision with the current source revision', async () => {
@@ -370,7 +370,7 @@ describe('self-hosted stage 6 file panel', () => {
     expect(card.querySelector('.content > .header')?.textContent).toBe(file.logicalName);
     expect(card.textContent).toContain('本地文件已删除');
     expect(card.textContent).not.toContain('正式文件的修改须在网页上传后审核');
-    expect(view.querySelector('.conflict-recommendation')?.textContent).toContain('删除服务器文件');
+    expect(view.querySelector('.conflict-version-recommended')?.getAttribute('aria-label')).toBe('本地版本');
     expect(button('另存为新文件')).toBeUndefined();
     expect(resolveStorageAgentConflict).not.toHaveBeenCalled();
     await act(async () => {button('删除服务器文件')!.click(); await new Promise(resolve => setTimeout(resolve, 0));});
@@ -417,21 +417,48 @@ describe('self-hosted stage 6 file panel', () => {
     expect(button('保留本地版本')?.disabled).toBe(true);
   });
 
-  it('keeps unavailable metadata conservative, offers manual download and refreshes the comparison', async () => {
+  it('automatically refreshes unavailable comparison details on a new workspace snapshot', async () => {
     const {host, conflict} = comparisonFixture({serverFile: undefined});
     let available = false; const getFile = vi.fn(async () => {
       if (!available) throw new SelfHostedApiError(503, 'SERVICE_NOT_READY', 'unavailable');
       return {...file, revision: 5};
     });
-    const view = await render('CHAIR', api({listFiles: vi.fn(async () => []), listStorageHosts: vi.fn(async () => [host]),
-      listStorageAgentConflicts: vi.fn(async () => [conflict]), getFile}), 'chair');
+    const client = api({listFiles: vi.fn(async () => []), listStorageHosts: vi.fn(async () => [host]),
+      listStorageAgentConflicts: vi.fn(async () => [conflict]), getFile});
+    const view = await render('CHAIR', client, 'chair');
     expect(view.textContent).toContain('可下载服务器文件');
     expect(button('保留本地版本')?.disabled).toBe(true); expect(button('另存为新文件')).toBeUndefined();
     expect(view.querySelector('a[download]')?.textContent).toContain('下载服务器版本');
     available = true;
-    await act(async () => {button('刷新比较')!.click(); await new Promise(resolve => setTimeout(resolve, 0));});
+    expect(button('刷新比较')).toBeUndefined();
+    await act(async () => {root!.render(<MemoryRouter><FilesPanel snapshot={snapshot('CHAIR')} api={client} currentUserId="chair" /></MemoryRouter>);});
     expect(view.querySelector('.conflict-fingerprints')?.textContent).toContain('当前修订: 5'); expect(view.querySelector('.conflict-recommendation')?.textContent).toContain('保留两份');
     expect(view.querySelector('[data-conflict-id="comparison"] > .content > .header')?.textContent).toBe(file.logicalName);
+  });
+
+  it('recovers comparison details after a temporary failure without any user action or new event', async () => {
+    const {host, conflict} = comparisonFixture({serverFile: undefined});
+    const getFile = vi.fn().mockRejectedValueOnce(new SelfHostedApiError(503, 'SERVICE_NOT_READY', 'unavailable'))
+      .mockResolvedValue({...file, revision: 5});
+    const view = await render('CHAIR', api({listFiles: vi.fn(async () => []), listStorageHosts: vi.fn(async () => [host]),
+      listStorageAgentConflicts: vi.fn(async () => [conflict]), getFile}), 'chair');
+    expect(button('保留本地版本')?.disabled).toBe(true);
+    await act(async () => {await new Promise(resolve => setTimeout(resolve, 5200));});
+    expect(getFile).toHaveBeenCalledTimes(2);
+    expect(view.querySelector('.conflict-fingerprints')?.textContent).toContain('当前修订: 5');
+    expect(button('保留本地版本')?.disabled).toBe(false);
+  }, 10000);
+
+  it('ignores an older response that completes after a newer workspace snapshot', async () => {
+    let completeOld!: (files: FileEntry[]) => void;
+    const listFiles = vi.fn().mockImplementationOnce(() => new Promise<FileEntry[]>(resolve => {completeOld = resolve;}))
+      .mockResolvedValue([{...file, logicalName: '最新文件'}]);
+    const client = api({listFiles});
+    const view = await render('CHAIR', client, 'chair');
+    await act(async () => {root!.render(<MemoryRouter><FilesPanel snapshot={snapshot('CHAIR')} api={client} currentUserId="chair" /></MemoryRouter>);});
+    expect(view.textContent).toContain('最新文件');
+    await act(async () => {completeOld([{...file, logicalName: '过期文件'}]);});
+    expect(view.textContent).toContain('最新文件'); expect(view.textContent).not.toContain('过期文件');
   });
 
   it('omits server download for a deleted source and offers save-as-new instead of acceptance', async () => {

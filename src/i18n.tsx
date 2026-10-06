@@ -163,6 +163,14 @@ const en: Record<string, string> = {
 };
 
 const zhCN: Record<string, string> = {
+  "File conflicts": "文件冲突",
+  "{count} files to resolve": "{count} 个文件待处理",
+  "Recommended choice": "建议保留",
+  "Server file updated": "服务器文件更新时间",
+  "Waiting for the latest file information.": "正在获取最新文件信息。",
+  "The local and server files have different contents.": "本地文件与服务器文件内容不同。",
+  "If you choose the local version, it will replace the server file. Others will download the replacement.": "选择“保留本地版本”，将用主席电脑上的本地文件替换服务器上的文件，其他人下载时会获得替换后的版本。",
+
   "Files need a decision": "文件有冲突待处理",
   "{count} files need a decision": "{count} 个文件需要选择保留版本",
   "Compare versions": "比较版本",
