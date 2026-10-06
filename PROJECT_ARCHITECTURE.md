@@ -223,6 +223,8 @@ source scripts/wsl-env.sh
 
 Windows 原生开发在 PowerShell 中先运行 `. .\scripts\windows-env.ps1`，使用本 checkout 的官方 Node、固定 pnpm 及 Windows MSVC Rust 工具链缓存。`scripts/check-windows-toolchain.ps1` 用最小程序验证 Windows 原生编译与运行；MSVC 和 Windows SDK 由微软系统安装器提供。准备步骤见 `docs/self-hosted/CHAIR_AGENT_WINDOWS_SETUP.md`。当前 GUI 和桌面启动／发行脚本仍为 Linux 实现，环境准备不代表 Windows 桌面迁移完成。
 
+Windows Chair Agent 迁移与功能验收复用 WSL 中现有开发服务器，不在 Windows 重建 Docker 或开发服务。用户提供入口为 `localhost:80`（需要 CA 证书）或 `http://localhost:5173`；实际 TLS／重定向、CA 路径及 Agent API 连接入口在验收时核对，保留既有 HTTPS 校验。
+
 常用命令：
 
 ```sh

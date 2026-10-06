@@ -1,5 +1,9 @@
 # 更新日志
 
+## 2026-10-06：Windows Agent 复用 WSL 开发服务器
+
+- 记录 Windows 迁移与验收复用现有 WSL 开发服务器的约定及用户提供的连接入口；不在 Windows 重建 Docker 或开发服务，TLS／CA 与 Agent API 入口在连接验收时核对。
+
 ## 2026-10-06：Windows 原生开发工具准备
 
 - 增加 PowerShell 环境入口，使用 checkout 内独立的官方 Node、固定 pnpm 和 Windows Rust 工具缓存，不改系统 PATH。

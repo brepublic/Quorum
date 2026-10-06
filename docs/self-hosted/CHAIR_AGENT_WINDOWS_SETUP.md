@@ -13,7 +13,14 @@
 | Slint | 1.17.1 | Cargo cache | Cargo.lock 管理，无需单独安装 GUI SDK |
 | JavaScript 依赖 | pnpm-lock.yaml | workspace node_modules；store 在 `.tools/windows/pnpm-store` | `pnpm install --frozen-lockfile` |
 
-Git 与 PowerShell 已有可用安装。Git 自带的 OpenSSL 可用于现有 HTTPS 测试。Docker/PostgreSQL 用于后续完整服务器验收，GUI 编译准备不要求启动它们。
+Git 与 PowerShell 已有可用安装。Git 自带的 OpenSSL 可用于现有 HTTPS 测试。
+
+## 开发服务器约定（用户确认，2026-10-06）
+
+- 复用 WSL 中现有的 Quorum 开发服务器；不在 Windows 环境重新搭建 Docker 或开发服务器。
+- 用户提供的连接入口为 `localhost:80`（需要 CA 证书）或 `http://localhost:5173`。
+- 上述端口 80 的协议及重定向、CA 文件位置、Windows 到 WSL 的连通性和 Agent API 入口在连接验收时核对。本记录保留用户提供的地址，不假定已完成连通验证。
+- 5173 是现有 Vite 开发入口；当前 Agent 正常账号／配对流程要求 HTTPS origin。后续按实际 API 和 TLS 配置选择连接入口，保留证书校验。
 
 `.tools` 与构建产物均被 Git 忽略。工具只作用于载入环境脚本的 PowerShell 会话；新克隆需要重新安装。
 
