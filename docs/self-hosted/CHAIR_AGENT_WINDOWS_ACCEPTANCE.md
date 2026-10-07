@@ -111,3 +111,20 @@
 - GUI smoke 使用可见窗口，等待输入就绪并刷新句柄；不增加关闭重试，不延长原 15 秒退出超时。正式 Rust GUI 的新增忙碌桥接 fixture 通过，EOF 确认发生在受控操作完成后。
 - Windows Rust 8 项、发行 8 项通过；WSL 隔离副本完整 Linux GUI/helper 构建及 Rust 10 项通过。修复 GUI 在受控包副本完成关闭、卸载、数据保留、既有默认关联和接管关联保留；副本替换了 GUI 并添加诊断，不能替代最终三产物的完整校验。
 - 本阶段提交后从干净源码重新生成最终 ZIP、EXE、对应源码与校验值，正式 Sandbox 结果另记。
+
+## 2026-10-07：最终正式 Windows 发行验收通过
+
+- 最终产物来自干净提交 `f0e485c54f0a90fcce46dfb9614ff4dcfd07a2d8`，release-manifest 的 sourceDirty=false、signed=false。归档位置为 `release/windows-20261007/`；原解压目录被占用导致首轮组装 EBUSY，恢复旧源码包与原校验值一致后，改用新目录完成组装，没有结束用户打开的资源管理器。
+- 最终宿主隔离 PATH 6 项通过。全新 Windows 11 Enterprise 10.0.26100 x64 Sandbox 的 node/pnpm/cargo/rustc/cl 均不可用，原始 smoke 脚本与仓库文件 SHA-256 一致，13 项全部通过，result.passed=true；没有替换包内 GUI 或注入诊断代码。
+- 13 项覆盖：三产物哈希、捆绑 Node、桥接 EOF、目录锁并发拒绝与释放、ZIP 正常开关、忙碌期间单次关闭等待清理、用户级安装及重复更新、安装后二进制及菜单／桌面快捷方式、运行中升级拒绝且 GUI 存活、安装版正常关闭、卸载清理所属集成并保留私有状态／会议文件、保留既有扩展默认值与 OpenWith、保留被接管的命令／默认值／OpenWith／注册能力。
+- 最终源码 ZIP 为 27931 条目，含 575 份 Cargo checksum 元数据；归档 GUI 源码逐字等于验收源码，未包含 .git/.tools/release/node_modules/.env。此前空 CARGO_HOME 的完整离线解析／编译检查作为依赖源码验收证据；本次不把归档检查当作再次完成整套离线构建。
+- 最终 PE 依赖仅 Windows 系统库，没有外部 VC Runtime/MSVCP；Windows Rust 8 项、发行测试 8 项、Linux 完整 GUI/helper 构建与 Rust 10 项均通过。本轮未重新运行未改动的服务端业务测试，也未实际触发远程 CI。
+
+| 产物 | 大小（字节） | SHA-256 |
+| --- | ---: | --- |
+| Quorum-Chair-Agent-0.1.0-win-x64.zip | 45186854 | d36957dc2631a04765090fcf5d20f229ad2397144672ac0516c1613b0229d8da |
+| Quorum-Chair-Agent-0.1.0-win-x64-Setup.exe | 29848454 | 22e37f63d14fb1930cb15bd66a9ea9fb8019dc210fa272e793006ddfabd8e2ed |
+| Quorum-Chair-Agent-0.1.0-win-x64-source.zip | 109280871 | dab53fe1d2a2475cce6e58c4ff9190b91abfe0a8a57618deaffc7f79e7362423 |
+
+- 宿主与 Sandbox 的 JSON 结果、环境信息、最终 manifest／校验值可在发行目录核对；详细运行日志保存在 `.tools/windows/release-final-20261007/`。
+- 阶段 4 的本地发行与 Windows 11 干净环境自动验收完成。Windows 10 22H2 实机验收仍按用户确认保留；网页专用配对链接和网页下载关联的实际人工操作沿用 3A 约定，不把注册表命令核对当作网页实际唤起通过。签名、公开发布和推送不在本轮要求内。

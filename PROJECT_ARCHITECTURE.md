@@ -249,7 +249,7 @@ Linux/WSL 项目命令前先运行：
 source scripts/wsl-env.sh
 ```
 
-Windows 原生开发在 PowerShell 中先运行 `. .\scripts\windows-env.ps1`，使用本 checkout 的官方 Node、固定 pnpm 及 Windows MSVC Rust 工具链缓存。`scripts/check-windows-toolchain.ps1` 用最小程序验证 Windows 原生编译与运行；MSVC 和 Windows SDK 由微软系统安装器提供。准备步骤见 `docs/self-hosted/CHAIR_AGENT_WINDOWS_SETUP.md`。原生 GUI 开发启动使用 `pnpm start:storage-agent:desktop:windows`；自包含发行与安装集成仍待后续阶段。
+Windows 原生开发在 PowerShell 中先运行 `. .\scripts\windows-env.ps1`，使用本 checkout 的官方 Node、固定 pnpm 及 Windows MSVC Rust 工具链缓存。`scripts/check-windows-toolchain.ps1` 用最小程序验证 Windows 原生编译与运行；MSVC 和 Windows SDK 由微软系统安装器提供。准备步骤见 `docs/self-hosted/CHAIR_AGENT_WINDOWS_SETUP.md`。原生 GUI 开发启动使用 `pnpm start:storage-agent:desktop:windows`；自包含 ZIP、对应源码和用户级 EXE 使用 `pnpm release:storage-agent:windows` 构建。
 
 Windows Chair Agent 迁移与功能验收复用 WSL 中现有开发服务器，不在 Windows 重建 Docker 或开发服务。用户提供入口为 `localhost:80`（需要 CA 证书）或 `http://localhost:5173`；实际 TLS／重定向、CA 路径及 Agent API 连接入口在验收时核对，保留既有 HTTPS 校验。
 
@@ -315,7 +315,7 @@ AppRun 区分包内依赖环境与宿主外部程序环境。文件覆盖确认�
 
 Windows 继续使用同一 Rust/Slint 窗口及 Node 管道桥接。平台实现拆分为 desktop/linux.rs 与 desktop/windows.rs；Windows 使用内核文件锁限制单窗口，在受当前用户、SYSTEM 和 Administrators ACL 保护的 requests 目录中原子发布短期唤起请求，并由现有窗口确认消费，不开放本地网络端口。系统打开使用 ShellExecuteW，文件选择使用 rfd 的 Windows 原生后端；Wayland/X11 和 portal 检查仅保留在 Unix 路径。
 
-Windows Rust/Node 共用 LOCALAPPDATA/quorum-agent，系统语言从 Windows locale 获取，默认文档位置使用 Windows MyDocuments 已知目录；Windows 窗口显式使用 Microsoft YaHei，以避免软件渲染器的中文回退字形缺失。开发启动使用 pnpm start:storage-agent:desktop:windows。Windows 安装、协议注册和发行留在后续发行阶段。
+Windows Rust/Node 共用 LOCALAPPDATA/quorum-agent，系统语言从 Windows locale 获取，默认文档位置使用 Windows MyDocuments 已知目录；Windows 窗口显式使用 Microsoft YaHei，以避免软件渲染器的中文回退字形缺失。开发启动使用 pnpm start:storage-agent:desktop:windows。用户级 EXE 安装器管理快捷方式与协议／文件关联；ZIP 保持便携运行。
 
 ### Windows 安全与进程边界（2026-10-06）
 
