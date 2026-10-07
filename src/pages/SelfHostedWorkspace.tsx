@@ -338,8 +338,8 @@ function NotesPanel({snapshot, run, api}: {snapshot: CommitteeWorkspaceSnapshot;
 
 function LinkResources({snapshot, run, api}: {snapshot: CommitteeWorkspaceSnapshot; run: WorkspaceCommand; api: SelfHostedApi}) {
   useLanguage(); const [title, setTitle] = React.useState(''); const [url, setUrl] = React.useState(''); const canWrite = snapshot.viewer.audience !== 'PUBLIC' && snapshot.committee.status === 'ACTIVE'; const links = snapshot.textPosts.filter(post => post.content.startsWith('link:')).map(post => ({post, url: post.content.slice(5)})).filter(({url}) => {try {return ['http:', 'https:'].includes(new URL(url).protocol);} catch {return false;}}); const create = async () => {if (url.trim()) {await run(() => api.createTextPost(snapshot.committee.id, {title, content: `link:${url.trim()}`})); setTitle(''); setUrl('');}}; return <><Form onSubmit={create}>{canWrite && <><Form.Input label={t('Title')} value={title} onChange={event => setTitle(event.currentTarget.value)} /><Form.Input label={t('URL')} type="url" required value={url} onChange={event => setUrl(event.currentTarget.value)} /><Button primary disabled={!url.trim()}>{t('Publish link')}</Button></>}</Form><List divided relaxed>{links.map(({post, url}) => <List.Item key={post.id}>{canWrite && <List.Content floated="right"><Button size="mini" negative onClick={() => void run(() => api.deleteTextPost(post.id, post.revision))}>{t('Delete')}</Button></List.Content>}<List.Header>{post.title || t('Untitled')}</List.Header><List.Description><a href={url} target="_blank" rel="noreferrer">{url}</a></List.Description><List.Description>{t('Publisher')}: {post.authorDisplayName}</List.Description></List.Item>)}</List></>; }
-function PostsPanel({snapshot, api, userId, tab, hasStorageSetupHint, pendingConflictCount, suppressStorageHint}: {snapshot: CommitteeWorkspaceSnapshot;
-  api: SelfHostedApi; userId?: string; tab?: string; pendingConflictCount: number; hasStorageSetupHint: boolean; suppressStorageHint(): Promise<void>}) {
+function PostsPanel({snapshot, api, userId, tab, hasPendingFileReview, hasStorageSetupHint, pendingConflictCount, suppressStorageHint}: {snapshot: CommitteeWorkspaceSnapshot;
+  api: SelfHostedApi; userId?: string; tab?: string; hasPendingFileReview: boolean; pendingConflictCount: number; hasStorageSetupHint: boolean; suppressStorageHint(): Promise<void>}) {
   useLanguage();
   const canManageStorage = snapshot.viewer.audience === 'CHAIR' || snapshot.viewer.audience === 'OWNER';
   const canShare = canManageStorage && snapshot.committee.operationMode === 'CHAIR_OPERATED';
@@ -363,7 +363,7 @@ function PostsPanel({snapshot, api, userId, tab, hasStorageSetupHint, pendingCon
     || (tab === 'upload' && canUpload) ? tab : 'attachments';
   const needsStorage = (active === 'upload' || active === 'share') && canManageStorage && storageConfigured === false;
   return <Container className="committee-files-page"><Menu pointing secondary aria-label={t('Resource sections')}>
-    <Menu.Item as={Link} to={`${base}/attachments`} active={active === 'attachments'}>{t('File overview')}</Menu.Item>
+    <Menu.Item as={Link} to={`${base}/attachments`} active={active === 'attachments'}>{t('File overview')}{hasPendingFileReview && <span className="file-review-dot" aria-label={t('Pending review')} />}</Menu.Item>
     {canShare && <Menu.Item as={Link} to={`${base}/share`} active={active === 'share'}>{t('Share')}</Menu.Item>}
     {canUpload && <Menu.Item as={Link} to={`${base}/upload`} active={active === 'upload'}>{t('Upload files')}</Menu.Item>}
     {canManageStorage && <Menu.Item as={Link} to={`${base}/storage`} active={active === 'storage'}>{t('Storage settings')}{pendingConflictCount > 0 && <span className="file-conflict-dot" aria-label={t('Files need a decision')} />}{hasStorageSetupHint && <span className="storage-setup-dot" aria-label={t('Storage is not configured.')} />}</Menu.Item>}
@@ -1317,6 +1317,7 @@ function CommitteeWorkspaceContent({id, api: sourceApi, user, logout}: {
     });
     return () => {active = false;};
   }, [api, id, fileReviewScope, snapshotReceivedAt]);
+  const hasPendingFileReview = fileReviewScope !== undefined && fileReview?.scope === fileReviewScope && fileReview.pending;
   const pendingConflictCount = fileReviewScope && conflictNotice?.scope === fileReviewScope ? conflictNotice.count : 0;
   const [storageHint, setStorageHint] = React.useState<{scope: string; visible: boolean}>();
   React.useEffect(() => {
@@ -1371,7 +1372,7 @@ function CommitteeWorkspaceContent({id, api: sourceApi, user, logout}: {
   return <CommitteeNavigation snapshot={snapshot} user={user} logout={logout} realtimeStatus={realtimeStatus}
     lastSyncedAt={lastSyncedAt} syncFailed={syncFailed} networkOffline={networkOffline} onRetry={retry}
     hasStorageSetupHint={hasStorageSetupHint} pendingConflictCount={pendingConflictCount}
-    hasPendingFileReview={fileReviewScope !== undefined && fileReview?.scope === fileReviewScope && fileReview.pending}
+    hasPendingFileReview={hasPendingFileReview}
     onCreateCaucus={() => setCreateCaucusOpen(true)}>
     <Container fluid className="committee-workspace-page">{error && <Message error content={error} />}
       <fieldset className="committee-sync-fieldset" disabled={writesBlocked} aria-busy={writesBlocked}
@@ -1393,7 +1394,7 @@ function CommitteeWorkspaceContent({id, api: sourceApi, user, logout}: {
           <Route exact path={`${base}/points`}><PointsPanel snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} /></Route>
           <Route exact path={`${base}/notes`}><NotesPanel snapshot={interactionSnapshot} run={run} api={api} /></Route>
           <Route exact path={`${base}/posts/:tab?`} render={({match}) => <PostsPanel key={`${interactionSnapshot.committee.id}:${user?.id}:${interactionSnapshot.viewer.audience}:${interactionSnapshot.committee.operationMode}`} snapshot={interactionSnapshot} api={api}
-            userId={user?.id} tab={match.params.tab} pendingConflictCount={pendingConflictCount} hasStorageSetupHint={hasStorageSetupHint} suppressStorageHint={suppressStorageHint} />} />
+            userId={user?.id} tab={match.params.tab} hasPendingFileReview={hasPendingFileReview} pendingConflictCount={pendingConflictCount} hasStorageSetupHint={hasStorageSetupHint} suppressStorageHint={suppressStorageHint} />} />
           <Route exact path={`${base}/files`}><Redirect to={`${base}/posts/attachments`} /></Route>
           <Route exact path={`${base}/motions`}><ProceedingsPanel view="motions" snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} /></Route>
           <Route exact path={`${base}/unmod`}><ProceedingsPanel view="unmod" snapshot={interactionSnapshot} run={run} api={api} canChair={canChair} /></Route>
