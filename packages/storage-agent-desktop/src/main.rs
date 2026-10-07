@@ -142,6 +142,26 @@ fn file_dialog_ready(weak: &slint::Weak<MainWindow>) -> bool {
 }
 #[cfg(windows)]
 fn file_dialog_ready(_weak: &slint::Weak<MainWindow>) -> bool {true}
+
+fn begin_close(ui: &MainWindow, saved: &Value) -> bool {
+    if ui.get_error_stage() == "paired-local-recovery" || (matches!(ui.get_page().as_str(), "home" | "manual") && (form_state(ui) != *saved || !ui.get_pairing_code().is_empty())) {
+        ui.set_confirm_discard("close".into());
+        return false;
+    }
+    ui.set_closing(true);
+    ui.set_status("STOPPING".into());
+    true
+}
+
+fn finish_close(ui: &MainWindow) {
+    let _ = ui.hide();
+    // The bridge has exited and completed its cleanup. Windows can retain a
+    // native window loop after accepting Slint's quit event; ending this GUI
+    // process also releases its kernel locks and kill-on-close job handle.
+    #[cfg(windows)] std::process::exit(0);
+    #[cfg(not(windows))] { let _ = slint::quit_event_loop(); }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     let target = match arguments.as_slice() {
@@ -461,20 +481,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let weak = ui.as_weak();
     let close_input = input.clone();
     let saved_close = saved_form.clone();
+    let pending_close = Rc::new(Cell::new(false));
+    let close_pending = pending_close.clone();
     ui.window().on_close_requested(move || {
         if !close_alive.get() {
+            if let Some(ui) = weak.upgrade() { finish_close(&ui); }
             return slint::CloseRequestResponse::HideWindow;
         }
         if let Some(ui) = weak.upgrade() {
             if ui.get_busy() {
+                close_pending.set(true);
                 return slint::CloseRequestResponse::KeepWindowShown;
             }
-            if ui.get_error_stage() == "paired-local-recovery" || (matches!(ui.get_page().as_str(), "home" | "manual") && (form_state(&ui) != *saved_close.borrow() || !ui.get_pairing_code().is_empty())) {
-                ui.set_confirm_discard("close".into());
+            if !begin_close(&ui, &saved_close.borrow()) {
                 return slint::CloseRequestResponse::KeepWindowShown;
             }
-            ui.set_closing(true);
-            ui.set_status("STOPPING".into());
         }
         close_input.lock().unwrap().take();
         slint::CloseRequestResponse::KeepWindowShown
@@ -705,7 +726,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "bridge-exit" => {
                         bridge_alive.set(false);
                         if ui.get_closing() {
-                            let _ = slint::quit_event_loop();
+                            finish_close(&ui);
                         } else {
                             ui.set_running(false);
                             ui.set_busy(true);
@@ -714,6 +735,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                     _ => {}
+                }
+            }
+            if pending_close.get() && !ui.get_busy() {
+                pending_close.set(false);
+                if !ui.get_closing() && begin_close(&ui, &saved_form.borrow()) {
+                    timer_input.lock().unwrap().take();
                 }
             }
             let now = SystemTime::now();

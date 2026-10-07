@@ -197,6 +197,8 @@ KEEP_SERVER 以锁定的当前 entry／version／已提交 blob 创建恢复任�
 
 安装器最低版本为 Windows 10 22H2 build 19045，目标为当前用户 LOCALAPPDATA/Programs。HKCU 注册 `quorum-agent:` 和 `.quorum-agent`；保留用户已有默认关联，卸载仅清理仍归本程序所有的注册。安装、更新和卸载先检查 GUI 单实例锁；私有配置和会议内容位于程序目录外，卸载保留。无托盘、开机自启或自动更新。
 
+Windows GUI 记住忙碌期间的关闭请求，操作完成后重新检查未保存配置与配对恢复确认，再关闭桥接输入。桥接完成正常清理并退出后，GUI 显式结束自身进程，避免原生窗口循环接受 Slint 退出请求后仍驻留；Windows 内核随进程结束释放单实例文件锁与 kill-on-close Job handle。Linux 继续隐藏窗口并退出 Slint 循环。GUI smoke 等待窗口输入就绪、刷新句柄，只发送一次关闭请求，另用实际 Rust 窗口和受控忙碌桥接验证延后关闭。
+
 发行记录包含 Git commit、源码是否脏、固定工具版本、对应源码哈希、全部产物 SHA-256 和 PE 系统依赖；源码包只收录受版本管理的源文件／锁文件与确切 Rust 依赖源，不扫描本机凭据。 Rust 依赖通过完整锁定 metadata 与 cargo vendor 收集全部平台依赖及 .cargo-checksum.json；随包说明区分无 Git 源码的组件构建与需记录 Git 来源的发行组装。Offline 同时传入 build、metadata、vendor。Windows smoke 在隔离 PATH 下验证捆绑运行时、目录锁和窗口生命周期，可在 Sandbox 内验证 EXE 安装、注册、更新与卸载。Windows CI 生成产物，Linux CI 保持完整 GUI/AppImage 构建回归；不自动公开发行。
 
 ### 冲突比较（2026-10-06）

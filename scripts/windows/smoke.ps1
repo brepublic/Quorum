@@ -71,16 +71,53 @@ try {
     $quorumOtherLock.StandardInput.Close(); Wait-ProcessExit $quorumOtherLock
     $quorumLockProcess.StandardInput.Close(); Wait-ProcessExit $quorumLockProcess
     Record-Check 'bundled directory lock rejects concurrent owner and releases on EOF' $true
-    $quorumGuiProcess = Start-Process -FilePath (Join-Path $quorumBundle 'quorum-storage-agent-desktop.exe') -WorkingDirectory $quorumBundle -WindowStyle Hidden -PassThru
+    $quorumGuiProcess = Start-Process -FilePath (Join-Path $quorumBundle 'quorum-storage-agent-desktop.exe') -WorkingDirectory $quorumBundle -PassThru
     $quorumDeadline = [DateTime]::UtcNow.AddSeconds(20)
     do {
         Start-Sleep -Milliseconds 200; $quorumGuiProcess.Refresh()
         if ($quorumGuiProcess.HasExited) { throw 'Packaged GUI exited before opening a window' }
     } while ($quorumGuiProcess.MainWindowHandle -eq 0 -and [DateTime]::UtcNow -lt $quorumDeadline)
     if ($quorumGuiProcess.MainWindowHandle -eq 0) { throw 'Packaged GUI did not open a native window' }
+    if (-not $quorumGuiProcess.WaitForInputIdle(10000)) { throw 'Packaged GUI did not become ready for window input' }
+    $quorumGuiProcess.Refresh()
     if (-not $quorumGuiProcess.CloseMainWindow()) { throw 'Cannot request normal packaged GUI closure' }
     Wait-ProcessExit $quorumGuiProcess
     Record-Check 'ZIP GUI opens native window and closes normally' $true
+
+    # Exercise a close request while the real GUI is waiting for its bridge.
+    $quorumBusyBridge = Join-Path $quorumTemporary 'busy-bridge.cjs'
+    $quorumBusyReady = Join-Path $quorumTemporary 'busy-ready'
+    $quorumBusyResult = Join-Path $quorumTemporary 'busy-close-result'
+    $quorumBusyScript = @'
+const fs = require('node:fs');
+let busy = true;
+console.log(JSON.stringify({event:'busy',value:true}));
+fs.writeFileSync(process.env.QUORUM_SMOKE_BUSY_READY, 'ready');
+setTimeout(() => {busy=false; fs.writeFileSync(process.env.QUORUM_SMOKE_BUSY_READY, 'finished'); console.log(JSON.stringify({event:'busy',value:false}));}, 2000);
+process.stdin.resume();
+process.stdin.on('end', () => {fs.writeFileSync(process.env.QUORUM_SMOKE_BUSY_RESULT, busy ? 'early' : 'deferred'); process.exit(0);});
+'@
+    [IO.File]::WriteAllText($quorumBusyBridge, $quorumBusyScript, [Text.UTF8Encoding]::new($false))
+    $env:QUORUM_AGENT_BRIDGE = $quorumBusyBridge
+    $env:QUORUM_SMOKE_BUSY_READY = $quorumBusyReady
+    $env:QUORUM_SMOKE_BUSY_RESULT = $quorumBusyResult
+    try {
+        $quorumGuiProcess = Start-Process -FilePath (Join-Path $quorumBundle 'quorum-storage-agent-desktop.exe') -WorkingDirectory $quorumBundle -PassThru
+        $quorumDeadline = [DateTime]::UtcNow.AddSeconds(10)
+        do { Start-Sleep -Milliseconds 100; $quorumGuiProcess.Refresh() }
+        while ((-not (Test-Path -LiteralPath $quorumBusyReady) -or $quorumGuiProcess.MainWindowHandle -eq 0) -and [DateTime]::UtcNow -lt $quorumDeadline)
+        if (-not (Test-Path -LiteralPath $quorumBusyReady) -or -not $quorumGuiProcess.WaitForInputIdle(10000)) { throw 'Busy GUI fixture did not become ready' }
+        # Allow the 100 ms UI timer to consume busy=true, within the 2 s operation.
+        Start-Sleep -Milliseconds 200
+        $quorumGuiProcess.Refresh()
+        if ([IO.File]::ReadAllText($quorumBusyReady) -ne 'ready') { throw 'Busy GUI fixture finished before the close request' }
+        if (-not $quorumGuiProcess.CloseMainWindow()) { throw 'Cannot request busy GUI closure' }
+        Wait-ProcessExit $quorumGuiProcess
+        if ([IO.File]::ReadAllText($quorumBusyResult) -ne 'deferred') { throw 'GUI closed its bridge before the busy operation finished' }
+        Record-Check 'busy GUI remembers one close request and waits for bridge cleanup' $true
+    } finally {
+        Remove-Item Env:QUORUM_AGENT_BRIDGE, Env:QUORUM_SMOKE_BUSY_READY, Env:QUORUM_SMOKE_BUSY_RESULT -ErrorAction SilentlyContinue
+    }
     if ($IncludeInstaller) {
         $env:LOCALAPPDATA = $quorumOldLocal
         $quorumSetup = Get-ChildItem -LiteralPath $quorumArtifacts -Filter '*-Setup.exe'
@@ -113,17 +150,19 @@ try {
                 if (-not (Test-Path -LiteralPath $quorumLink) -or $quorumShell.CreateShortcut($quorumLink).TargetPath -ne (Join-Path $quorumInstall 'quorum-storage-agent-desktop.exe')) { throw 'Installed shortcut does not target the bundled GUI' }
             }
             Record-Check 'installer binary integrity and Start Menu/desktop shortcuts' $true
-            $quorumGuiProcess = Start-Process -FilePath (Join-Path $quorumInstall 'quorum-storage-agent-desktop.exe') -WorkingDirectory $quorumInstall -WindowStyle Hidden -PassThru
+            $quorumGuiProcess = Start-Process -FilePath (Join-Path $quorumInstall 'quorum-storage-agent-desktop.exe') -WorkingDirectory $quorumInstall -PassThru
             $quorumDeadline = [DateTime]::UtcNow.AddSeconds(20)
             do {
                 Start-Sleep -Milliseconds 200; $quorumGuiProcess.Refresh()
                 if ($quorumGuiProcess.HasExited) { throw 'Installed GUI exited before opening a window' }
             } while ($quorumGuiProcess.MainWindowHandle -eq 0 -and [DateTime]::UtcNow -lt $quorumDeadline)
             if ($quorumGuiProcess.MainWindowHandle -eq 0) { throw 'Installed GUI did not open a native window' }
+            if (-not $quorumGuiProcess.WaitForInputIdle(10000)) { throw 'Installed GUI did not become ready for window input' }
             $quorumRunningUpdate = Start-Process -FilePath $quorumSetup.FullName -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',('/DIR="' + $quorumInstall + '"')) -WindowStyle Hidden -PassThru
             if (-not $quorumRunningUpdate.WaitForExit(15000)) { $quorumRunningUpdate.Kill(); throw 'Silent update while running failed to return' }
             if ($quorumRunningUpdate.ExitCode -eq 0 -or $quorumGuiProcess.HasExited) { throw 'Installer did not reject an update while the Agent was running' }
             Record-Check 'running Agent blocks silent update without terminating it' $true
+            $quorumGuiProcess.Refresh()
             if (-not $quorumGuiProcess.CloseMainWindow()) { throw 'Cannot request normal installed GUI closure' }
             Wait-ProcessExit $quorumGuiProcess
             Record-Check 'installed GUI opens and closes normally with isolated PATH' $true
