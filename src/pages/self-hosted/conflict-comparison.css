@@ -30,7 +30,17 @@
 .conflict-secondary-actions summary {cursor:pointer; color:#276b9a;}
 .conflict-secondary-actions details[open] {flex-basis:100%;}
 .conflict-secondary-actions details[open] summary {margin-bottom:1rem;}
-.conflict-fingerprints code {display:block; overflow-wrap:anywhere; font-size:.85em;}
+.conflict-detail-group + .conflict-detail-group {margin-top:1.5rem;}
+.conflict-detail-group h5 {font-size:1rem; margin:0 0 .3rem; color:#333;}
+.conflict-detail-group .conflict-detail-hint {font-size:.9rem; line-height:1.5; color:#666; margin:0 0 .75rem;}
+.conflict-detail-list {margin:0;}
+.conflict-detail-list > div {display:grid; grid-template-columns:minmax(12rem, 34%) minmax(0,1fr); gap:1.25rem; padding:.7rem 0; border-bottom:1px solid #e8e8e8;}
+.conflict-detail-list dt {font-weight:600; color:#444;}
+.conflict-detail-list dd {margin:0; min-width:0; color:#222; font-variant-numeric:tabular-nums;}
+.conflict-fingerprints code {display:block; overflow-wrap:anywhere; font-size:.9rem; line-height:1.6; user-select:all;}
+@media (max-width:600px) {
+ .conflict-detail-list > div {grid-template-columns:minmax(0,1fr); gap:.35rem;}
+}
 .conflict-save-both .field {margin:1rem 0;}
 .conflict-save-both label {display:block; margin-bottom:.5rem; font-weight:600;}
 @media (max-width:600px) {

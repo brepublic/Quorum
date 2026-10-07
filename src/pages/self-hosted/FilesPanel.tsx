@@ -488,12 +488,23 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
                 <Button size="small" disabled={working || !conflictNames[item.id]?.trim()} onClick={() => choose('SAVE_AS_NEW')}>{t("Save as a new file")}</Button>
               </details>}
               <details className="conflict-fingerprints"><summary>{t("Technical details")}</summary>
-                <p>{t("Server record number when the local file last synced")}: {item.localBaseRevision ?? '—'}</p>
-                <p>{t("Current server record number")}: {serverFile?.revision ?? '—'}</p>
-                <p>{t("These numbers track server record changes. Content, name, or review status changes can increase them; they are not counts of file edits.")}</p>
-                {serverFile?.currentVersion && <p>{t("Server file updated")}: {new Date(serverFile.currentVersion.createdAt).toLocaleString(getLanguage())}</p>}
-                {item.change.kind === 'UPSERT' && <><p>{t("Local version")}<code>SHA-256: {item.change.sha256}</code></p>
-                  <p>{t("Server version")}<code>SHA-256: {serverFile?.currentVersion?.sha256 ?? '—'}</code></p></>}
+                <div className="conflict-detail-group">
+                  <h5>{t("Version records")}</h5>
+                  <p className="conflict-detail-hint">{t("Compare the server record used by the local file with the current server record.")}</p>
+                  <dl className="conflict-detail-list conflict-records">
+                    <div><dt>{t("Server record number when the local file last synced")}</dt><dd>{item.localBaseRevision ?? '—'}</dd></div>
+                    <div><dt>{t("Current server record number")}</dt><dd>{serverFile?.revision ?? '—'}</dd></div>
+                    {serverFile?.currentVersion && <div><dt>{t("Server version created at")}</dt><dd>{new Date(serverFile.currentVersion.createdAt).toLocaleString(getLanguage())}</dd></div>}
+                  </dl>
+                </div>
+                {item.change.kind === 'UPSERT' && <div className="conflict-detail-group">
+                  <h5>{t("Content checksums (SHA-256)")}</h5>
+                  <p className="conflict-detail-hint">{t("Matching checksums indicate identical file contents.")}</p>
+                  <dl className="conflict-detail-list">
+                    <div><dt>{t("Local version")}</dt><dd><code>{item.change.sha256}</code></dd></div>
+                    <div><dt>{t("Server version")}</dt><dd><code>{serverFile?.currentVersion?.sha256 ?? '—'}</code></dd></div>
+                  </dl>
+                </div>}
               </details>
             </div>
           </Card.Content></Card>;

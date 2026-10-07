@@ -166,6 +166,12 @@ const zhCN: Record<string, string> = {
   "File conflicts": "文件冲突",
   "{count} files to resolve": "{count} 个文件待处理",
   "Recommended choice": "建议保留",
+  "Version records": "版本记录",
+  "Compare the server record used by the local file with the current server record.": "用于核对本地文件所依据的服务器记录是否仍为当前记录",
+  "Server version created at": "服务器版本创建时间",
+  "Content checksums (SHA-256)": "内容校验（SHA-256）",
+  "Matching checksums indicate identical file contents.": "校验值相同，表示两份文件内容一致",
+
   "Server record number when the local file last synced": "本地文件上次同步时的服务器记录编号",
   "Current server record number": "服务器当前记录编号",
   "These numbers track server record changes. Content, name, or review status changes can increase them; they are not counts of file edits.": "这些编号用于检查服务器记录是否变化。内容、名称或审核状态变化都可能使编号增加，不代表文件修改次数。",
