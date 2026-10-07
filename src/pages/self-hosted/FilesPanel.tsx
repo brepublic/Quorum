@@ -11,7 +11,7 @@ import {delegateFileTypeName, ERROR_TEXT} from '@quorum/contracts';
 import {Link} from 'react-router-dom';
 import {FileStatusLabel} from '../../components/FileStatusLabel';
 import {sha256File} from '../../services/sha256';
-import {compareStorageConflict} from './conflict-comparison';
+import {compareStorageConflict, conflictRecommendationReason} from './conflict-comparison';
 import './conflict-comparison.css';
 
 const MIGRATION_STATUS: Record<StorageMigration['status'], string> = {
@@ -77,6 +77,8 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
   const [pairingFeedback, setPairingFeedback] = React.useState('');
   const [conflicts, setConflicts] = React.useState<StorageAgentConflict[]>([]);
   const [conflictFiles, setConflictFiles] = React.useState<Record<string, FileEntry>>({});
+  const [conflictDecision, setConflictDecision] = React.useState<{item: StorageAgentConflict;
+    action: StorageAgentConflictResolution; fileRevision: number | null; title: string; label: string; consequence: string} | null>(null);
   const conflictRefresh = React.useRef(0);
   const [comparisonRetryAt, setComparisonRetryAt] = React.useState(0);
   const conflictList = React.useRef<HTMLDivElement>(null);
@@ -287,6 +289,33 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
         : timestamp(reviewTimes.get(second.id) ?? second.publishedAt) - timestamp(reviewTimes.get(first.id) ?? first.publishedAt)));
 
   return <div className="self-hosted-files">
+    <Modal open={Boolean(conflictDecision)} size="small" closeOnDimmerClick={false}
+      onClose={() => {if (!working) setConflictDecision(null);}} aria-labelledby="conflict-decision-title">
+      <Modal.Header id="conflict-decision-title">{t('Confirm your file choice')}</Modal.Header>
+      <Modal.Content>
+        <p><strong>{conflictDecision?.title}</strong></p>
+        <p>{conflictDecision && t(conflictDecision.consequence)}</p>
+        {conflictDecision?.action !== 'SAVE_AS_NEW' && <Message warning>
+          <Message.Header>{t('This action cannot be undone in this interface.')}</Message.Header>
+          <p>{t('Before confirming, compare both files and back up any content you want to keep.')}</p>
+        </Message>}
+      </Modal.Content>
+      <Modal.Actions>
+        <Button disabled={working} onClick={() => setConflictDecision(null)}>{t('Go back to compare')}</Button>
+        <Button negative={conflictDecision?.action !== 'SAVE_AS_NEW'} primary={conflictDecision?.action === 'SAVE_AS_NEW'}
+          loading={working} disabled={working} onClick={() => {
+            const decision = conflictDecision;
+            if (!decision) return;
+            const current = conflicts.find(item => item.id === decision.item.id && item.status === 'PENDING');
+            const loaded = files.find(file => file.id === current?.fileEntryId) ?? (current?.fileEntryId ? conflictFiles[current.fileEntryId] : undefined);
+            if (!current || current.revision !== decision.item.revision
+              || compareStorageConflict(current, loaded, activeHost?.id).fileRevision !== decision.fileRevision) {
+              setConflictDecision(null); setError(new SelfHostedApiError(409, 'REVISION_CONFLICT', 'Conflict changed')); return;
+            }
+            void run(async () => {await resolveConflict(current, decision.action); setConflictDecision(null);});
+          }}>{t('Confirm choice: {choice}', {choice: conflictDecision ? t(conflictDecision.label) : ''})}</Button>
+      </Modal.Actions>
+    </Modal>
     {error && <Message error role="alert" content={error} />}
     {section !== 'storage' && <>
     {pendingHostCommits.map(item => <Message key={item.id} header={item.logicalName}
@@ -385,14 +414,19 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
             : comparison.recommended === 'ACCEPT_LOCAL' ? localLabel : "Keep both versions";
           const recommended = (action: StorageAgentConflictResolution) => comparison.recommended === action
             ? <span className="conflict-recommendation" aria-label={`${t("Recommended")}: ${t(recommendation)}`}>
-              <Icon name="check circle" />{t("Recommended choice")}</span> : null;
+              {t("Recommended choice")}</span> : null;
           const choose = (action: StorageAgentConflictResolution) => {
             const consequence = action === 'KEEP_SERVER' ? "Replace the local file with the server version?"
               : action === 'SAVE_AS_NEW' ? "Save the local file separately and keep the server version?"
               : item.change.kind === 'DELETE' ? "Delete the server file as well?"
               : item.change.kind === 'RENAME' ? "Apply the local name to the server file?"
               : "Replace the server contents with the local version?";
-            if (window.confirm(`${title}\n\n${t(consequence)}`)) void run(() => resolveConflict(item, action));
+            setConflictDecision({item, action, title, fileRevision: comparison.fileRevision, label: action === 'KEEP_SERVER' ? 'Keep server version'
+              : action === 'SAVE_AS_NEW' ? 'Keep both versions' : localLabel,
+              consequence: item.change.kind === 'UPSERT' && action !== 'SAVE_AS_NEW'
+                ? action === 'KEEP_SERVER' ? 'The file on the Chair computer will be replaced by the server file. Local changes will be discarded.'
+                  : 'The server file will be replaced by the file on the Chair computer. Others will download the replacement.'
+                : consequence});
           };
           return <Card key={item.id} fluid data-conflict-id={item.id} className="conflict-card">
           <Card.Content><Card.Header>{title}</Card.Header>
@@ -400,6 +434,9 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
               <span>{t(comparison.summary)}</span>
               {comparison.recommended === 'SAVE_AS_NEW' && <span className="conflict-recommendation">{t("Recommended")}: {t("Keep both versions")}</span>}
             </div>
+            {comparison.recommended && <p className="conflict-reason">{t(conflictRecommendationReason(comparison)!)}</p>}
+            {item.change.kind === 'UPSERT' && comparison.relation !== 'IDENTICAL' && <p className="conflict-compare-reminder">
+              {t('Before choosing, download the server file and compare it with the file on the Chair computer. Back up any content you want to keep.')}</p>}
             <div className="conflict-versions" aria-label={t("Version comparison")}>
               <section className={`conflict-version${comparison.recommended === 'ACCEPT_LOCAL' ? ' conflict-version-recommended' : ''}`} aria-label={t("Local version")}>
                 <div className="conflict-version-heading"><h5><Icon name="computer" />{t("Local version")}</h5>{recommended('ACCEPT_LOCAL')}</div>

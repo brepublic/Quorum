@@ -74,3 +74,13 @@ export function compareStorageConflict(conflict: StorageAgentConflict, loadedFil
   return decision('UNKNOWN', 'Download the server file to compare its contents.',
     reviewRequired ? 'KEEP_SERVER' : undefined, guidance);
 }
+
+export function conflictRecommendationReason(comparison: ConflictComparison): string | undefined {
+  if (!comparison.recommended) return undefined;
+  if (comparison.relation === 'IDENTICAL') return 'The contents are identical, so keeping the server file is sufficient.';
+  if (comparison.recommended === 'SAVE_AS_NEW') return 'Keeping both files avoids discarding either set of changes.';
+  if (comparison.relation === 'LOCAL_CHANGED') return 'The server file has not changed since the last sync; the local file contains changes.';
+  if (comparison.serverFile?.publishedAt || comparison.serverFile?.status === 'PUBLISHED')
+    return 'The server file is already published. This recommendation preserves the currently published content, not necessarily the most recently edited file.';
+  return comparison.summary;
+}

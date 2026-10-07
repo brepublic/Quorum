@@ -48,3 +48,6 @@
 
 /* The fragment target is a non-interactive region; buttons keep their focus indicators. */
 .self-hosted-storage-conflicts:focus {outline:none;}
+
+.self-hosted-storage-conflicts .ui.card.conflict-card > .content > .conflict-reason {margin:.5rem 0; color:#40566c;}
+.self-hosted-storage-conflicts .ui.card.conflict-card > .content > .conflict-compare-reminder {margin:.5rem 0 1.25rem; font-weight:600;}

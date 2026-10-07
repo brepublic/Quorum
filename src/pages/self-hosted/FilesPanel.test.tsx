@@ -57,6 +57,11 @@ async function render(audience: CommitteeWorkspaceSnapshot['viewer']['audience']
 function button(label: string): HTMLButtonElement | undefined {
   return Array.from(container?.querySelectorAll('button') ?? []).find(item => item.textContent?.includes(label));
 }
+async function confirmConflict() {
+  await act(async () => {document.querySelector<HTMLButtonElement>('.ui.modal .actions .negative.button, .ui.modal .actions .primary.button')!.click();
+    await new Promise(resolve => setTimeout(resolve, 0));});
+}
+
 afterEach(() => {if (root) act(() => root?.unmount()); container?.remove(); root = undefined; container = undefined;
   vi.restoreAllMocks(); window.history.replaceState(null, '', window.location.pathname);});
 
@@ -262,6 +267,7 @@ describe('self-hosted stage 6 file panel', () => {
     if (scrollDescriptor) Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', scrollDescriptor);
     else Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView');
     await act(async () => {button('保留本地版本')?.click(); await new Promise(resolve => setTimeout(resolve, 0));});
+    await confirmConflict();
     expect(resolveStorageAgentConflict).toHaveBeenCalledWith(committeeId, 'conflict', {
       baseRevision: 1, leaseGeneration: 7, fileRevision: 3, action: 'ACCEPT_LOCAL'
     }, expect.any(String));
@@ -287,6 +293,7 @@ describe('self-hosted stage 6 file panel', () => {
     await act(async () => {Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
       ?.call(name, '改名文件.txt'); name.dispatchEvent(new Event('input', {bubbles: true}));});
     await act(async () => {button('采用本地名称')?.click(); await new Promise(resolve => setTimeout(resolve, 0));});
+    await confirmConflict();
     expect(resolveStorageAgentConflict).toHaveBeenCalledWith(committeeId, 'name-conflict', {
       baseRevision: 1, leaseGeneration: 7, fileRevision: 3, action: 'ACCEPT_LOCAL', logicalName: '改名文件.txt'
     }, expect.any(String));
@@ -321,6 +328,7 @@ describe('self-hosted stage 6 file panel', () => {
     expect(view.querySelector('.conflict-recommendation')?.textContent).toContain('保留两份');
     expect(resolveStorageAgentConflict).not.toHaveBeenCalled();
     await act(async () => {button('保留服务器版本')!.click(); await new Promise(resolve => setTimeout(resolve, 0));});
+    await confirmConflict();
     expect(resolveStorageAgentConflict).toHaveBeenCalledWith(committeeId, conflict.id,
       expect.objectContaining({fileRevision: 4, leaseGeneration: 7, baseRevision: 1, action: 'KEEP_SERVER'}), expect.any(String));
   });
@@ -331,13 +339,30 @@ describe('self-hosted stage 6 file panel', () => {
     const resolveStorageAgentConflict = vi.fn(async () => ({...conflict, status: 'RESOLVED' as const}));
     await render('CHAIR', api({listStorageHosts: vi.fn(async () => [host]),
       listStorageAgentConflicts: vi.fn(async () => [conflict]), resolveStorageAgentConflict}), 'chair');
-    vi.mocked(window.confirm).mockReturnValueOnce(false);
     await act(async () => button('保留本地版本')!.click());
+    expect(document.querySelector('.ui.modal')?.textContent).toContain('此操作无法在界面中撤销');
+    expect(document.querySelector('.ui.modal')?.textContent).toContain('服务器上的这份文件将被替换');
     expect(resolveStorageAgentConflict).not.toHaveBeenCalled();
+    await act(async () => {document.querySelector<HTMLButtonElement>('.ui.modal .actions .button')!.click();});
     await act(async () => button('保留本地版本')!.click());
-    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining('用本地版本替换服务器内容'));
+    await confirmConflict();
     expect(resolveStorageAgentConflict).toHaveBeenCalledWith(committeeId, conflict.id,
       expect.objectContaining({action: 'ACCEPT_LOCAL', fileRevision: 4}), expect.any(String));
+  });
+
+  it('requires a fresh choice if the server version changes while confirmation is open', async () => {
+    const {host, conflict} = comparisonFixture();
+    let current = conflict;
+    const resolveStorageAgentConflict = vi.fn();
+    const client = api({listStorageHosts: vi.fn(async () => [host]),
+      listStorageAgentConflicts: vi.fn(async () => [current]), resolveStorageAgentConflict});
+    await render('CHAIR', client, 'chair');
+    await act(async () => button('保留本地版本')!.click());
+    current = {...conflict, serverFile: {...conflict.serverFile!, revision: 5}};
+    await act(async () => {root!.render(<MemoryRouter><FilesPanel snapshot={snapshot('CHAIR')} api={client} currentUserId="chair" /></MemoryRouter>);});
+    await confirmConflict();
+    expect(resolveStorageAgentConflict).not.toHaveBeenCalled();
+    expect(container?.textContent).toContain('状态已更新');
   });
 
   it('uses the local name for an unsubmitted new file conflict', async () => {
@@ -353,7 +378,9 @@ describe('self-hosted stage 6 file panel', () => {
       publishedAt: '2026-10-06T12:00:00Z'};
     const view = await render('CHAIR', api({listStorageHosts: vi.fn(async () => [host]),
       listStorageAgentConflicts: vi.fn(async () => [conflict])}), 'chair');
-    expect(view.textContent).toContain('选择“保留本地版本”');
+    expect(view.textContent).toContain('不代表它的修改时间更晚');
+    expect(view.textContent).toContain('选择前，请下载服务器文件');
+    expect(view.querySelector('.conflict-recommendation .icon')).toBeNull();
     expect(button('保留本地版本')?.disabled).toBe(false); expect(button('保留服务器版本')?.disabled).toBe(false);
     expect(button('另存为新文件')).toBeUndefined();
     expect(view.querySelector('.conflict-version-recommended')?.getAttribute('aria-label')).toBe('服务器版本');
@@ -374,6 +401,7 @@ describe('self-hosted stage 6 file panel', () => {
     expect(button('另存为新文件')).toBeUndefined();
     expect(resolveStorageAgentConflict).not.toHaveBeenCalled();
     await act(async () => {button('删除服务器文件')!.click(); await new Promise(resolve => setTimeout(resolve, 0));});
+    await confirmConflict();
     expect(resolveStorageAgentConflict).toHaveBeenCalledWith(committeeId, conflict.id,
       {baseRevision: 1, leaseGeneration: 7, fileRevision: 4, action: 'ACCEPT_LOCAL'}, expect.any(String));
   });
@@ -412,6 +440,7 @@ describe('self-hosted stage 6 file panel', () => {
     await act(async () => {link.click(); await new Promise(resolve => setTimeout(resolve, 0));});
     expect(prepareFileDownload).toHaveBeenCalledWith('formal-target');
     await act(async () => {button('保留服务器版本')!.click(); await new Promise(resolve => setTimeout(resolve, 0));});
+    await confirmConflict();
     expect(resolveStorageAgentConflict).toHaveBeenCalledWith(committeeId, conflict.id,
       expect.objectContaining({fileRevision: 4}), expect.any(String));
     expect(button('保留本地版本')?.disabled).toBe(true);
