@@ -321,7 +321,7 @@ describe('self-hosted stage 6 file panel', () => {
       listStorageAgentConflicts: vi.fn(async () => [conflict]), resolveStorageAgentConflict}), 'chair');
     const card = view.querySelector('[data-conflict-id="comparison"]')!;
     expect(card.querySelector('.content > .header')?.textContent).toBe(file.logicalName);
-    expect(card.querySelector('.conflict-fingerprints')?.textContent).toContain('基于修订: 2');
+    expect(card.querySelector('.conflict-fingerprints')?.textContent).toContain('本地文件上次同步时的服务器记录编号: 2');
     expect(card.querySelector('.conflict-decision-summary')?.textContent).toContain('本地文件与服务器文件内容不同');
     expect(card.querySelector('.conflict-versions')?.textContent).not.toMatch(/修订|无法确定/);
     expect(card.querySelector('.conflict-fingerprints')?.hasAttribute('open')).toBe(false);
@@ -378,7 +378,7 @@ describe('self-hosted stage 6 file panel', () => {
       publishedAt: '2026-10-06T12:00:00Z'};
     const view = await render('CHAIR', api({listStorageHosts: vi.fn(async () => [host]),
       listStorageAgentConflicts: vi.fn(async () => [conflict])}), 'chair');
-    expect(view.textContent).toContain('不代表它的修改时间更晚');
+    expect(view.textContent).toContain('建议先保留已发布的服务器文件');
     expect(view.textContent).toContain('选择前，请下载服务器文件');
     expect(view.querySelector('.conflict-recommendation .icon')).toBeNull();
     expect(button('保留本地版本')?.disabled).toBe(false); expect(button('保留服务器版本')?.disabled).toBe(false);
@@ -461,7 +461,7 @@ describe('self-hosted stage 6 file panel', () => {
     available = true;
     expect(button('刷新比较')).toBeUndefined();
     await act(async () => {root!.render(<MemoryRouter><FilesPanel snapshot={snapshot('CHAIR')} api={client} currentUserId="chair" /></MemoryRouter>);});
-    expect(view.querySelector('.conflict-fingerprints')?.textContent).toContain('当前修订: 5'); expect(view.querySelector('.conflict-recommendation')?.textContent).toContain('保留两份');
+    expect(view.querySelector('.conflict-fingerprints')?.textContent).toContain('服务器当前记录编号: 5'); expect(view.querySelector('.conflict-recommendation')?.textContent).toContain('保留两份');
     expect(view.querySelector('[data-conflict-id="comparison"] > .content > .header')?.textContent).toBe(file.logicalName);
   });
 
@@ -474,7 +474,7 @@ describe('self-hosted stage 6 file panel', () => {
     expect(button('保留本地版本')?.disabled).toBe(true);
     await act(async () => {await new Promise(resolve => setTimeout(resolve, 5200));});
     expect(getFile).toHaveBeenCalledTimes(2);
-    expect(view.querySelector('.conflict-fingerprints')?.textContent).toContain('当前修订: 5');
+    expect(view.querySelector('.conflict-fingerprints')?.textContent).toContain('服务器当前记录编号: 5');
     expect(button('保留本地版本')?.disabled).toBe(false);
   }, 10000);
 

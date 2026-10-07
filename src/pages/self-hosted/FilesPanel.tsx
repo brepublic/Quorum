@@ -431,11 +431,10 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
           return <Card key={item.id} fluid data-conflict-id={item.id} className="conflict-card">
           <Card.Content><Card.Header>{title}</Card.Header>
             <div className="conflict-decision-summary">
-              <span>{t(comparison.summary)}</span>
+              <span>{t(conflictRecommendationReason(comparison) ?? comparison.summary)}</span>
               {comparison.recommended === 'SAVE_AS_NEW' && <span className="conflict-recommendation">{t("Recommended")}: {t("Keep both versions")}</span>}
             </div>
-            {comparison.recommended && <p className="conflict-reason">{t(conflictRecommendationReason(comparison)!)}</p>}
-            {item.change.kind === 'UPSERT' && comparison.relation !== 'IDENTICAL' && <p className="conflict-compare-reminder">
+            {item.change.kind === 'UPSERT' && comparison.downloadFileId && comparison.relation !== 'IDENTICAL' && <p className="conflict-compare-reminder">
               {t('Before choosing, download the server file and compare it with the file on the Chair computer. Back up any content you want to keep.')}</p>}
             <div className="conflict-versions" aria-label={t("Version comparison")}>
               <section className={`conflict-version${comparison.recommended === 'ACCEPT_LOCAL' ? ' conflict-version-recommended' : ''}`} aria-label={t("Local version")}>
@@ -489,8 +488,10 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
                 <Button size="small" disabled={working || !conflictNames[item.id]?.trim()} onClick={() => choose('SAVE_AS_NEW')}>{t("Save as a new file")}</Button>
               </details>}
               <details className="conflict-fingerprints"><summary>{t("Technical details")}</summary>
+                <p>{t("Server record number when the local file last synced")}: {item.localBaseRevision ?? '—'}</p>
+                <p>{t("Current server record number")}: {serverFile?.revision ?? '—'}</p>
+                <p>{t("These numbers track server record changes. Content, name, or review status changes can increase them; they are not counts of file edits.")}</p>
                 {serverFile?.currentVersion && <p>{t("Server file updated")}: {new Date(serverFile.currentVersion.createdAt).toLocaleString(getLanguage())}</p>}
-                <p>{t("Based on revision")}: {item.localBaseRevision ?? '—'} · {t("Current revision")}: {serverFile?.revision ?? '—'}</p>
                 {item.change.kind === 'UPSERT' && <><p>{t("Local version")}<code>SHA-256: {item.change.sha256}</code></p>
                   <p>{t("Server version")}<code>SHA-256: {serverFile?.currentVersion?.sha256 ?? '—'}</code></p></>}
               </details>

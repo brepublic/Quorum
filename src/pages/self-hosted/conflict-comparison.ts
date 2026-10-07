@@ -77,10 +77,11 @@ export function compareStorageConflict(conflict: StorageAgentConflict, loadedFil
 
 export function conflictRecommendationReason(comparison: ConflictComparison): string | undefined {
   if (!comparison.recommended) return undefined;
+  if (!['IDENTICAL', 'LOCAL_CHANGED', 'DIVERGED'].includes(comparison.relation)) return comparison.summary;
   if (comparison.relation === 'IDENTICAL') return 'The contents are identical, so keeping the server file is sufficient.';
-  if (comparison.recommended === 'SAVE_AS_NEW') return 'Keeping both files avoids discarding either set of changes.';
-  if (comparison.relation === 'LOCAL_CHANGED') return 'The server file has not changed since the last sync; the local file contains changes.';
+  if (comparison.recommended === 'SAVE_AS_NEW') return 'The files differ. Keeping both avoids losing either set of changes.';
+  if (comparison.relation === 'LOCAL_CHANGED') return 'The local file has been edited; the server still has the contents from before those edits. We recommend keeping the local file.';
   if (comparison.serverFile?.publishedAt || comparison.serverFile?.status === 'PUBLISHED')
-    return 'The server file is already published. This recommendation preserves the currently published content, not necessarily the most recently edited file.';
+    return 'The files differ. We recommend keeping the currently published server file. Compare the files before deciding.';
   return comparison.summary;
 }

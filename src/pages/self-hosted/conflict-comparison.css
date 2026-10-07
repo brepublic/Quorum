@@ -5,7 +5,7 @@
 .self-hosted-storage-conflicts .ui.card.conflict-card {box-shadow:none; border:0; border-radius:0; margin:0 0 1rem;}
 .self-hosted-storage-conflicts .ui.card.conflict-card > .content {padding:0;}
 .conflict-card .header {overflow-wrap:anywhere;}
-.conflict-decision-summary {display:flex; flex-wrap:wrap; align-items:center; gap:.5rem 1rem; margin:.75rem 0 1.25rem; color:#555;}
+.conflict-decision-summary {display:flex; flex-wrap:wrap; align-items:center; gap:.5rem 1rem; margin:.65rem 0 .35rem; color:#555;}
 .conflict-recommendation {display:inline-flex; align-items:center; flex-shrink:0; gap:.3rem; padding:.4rem .65rem; border-radius:.3rem; background:#1768a6; color:#fff; font-size:.85rem; font-weight:600; line-height:1.2;}
 .conflict-recommendation .icon {margin:0;}
 .conflict-version-heading {display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:.5rem; margin-bottom:.75rem;}
@@ -49,5 +49,4 @@
 /* The fragment target is a non-interactive region; buttons keep their focus indicators. */
 .self-hosted-storage-conflicts:focus {outline:none;}
 
-.self-hosted-storage-conflicts .ui.card.conflict-card > .content > .conflict-reason {margin:.5rem 0; color:#40566c;}
-.self-hosted-storage-conflicts .ui.card.conflict-card > .content > .conflict-compare-reminder {margin:.5rem 0 1.25rem; font-weight:600;}
+.self-hosted-storage-conflicts .ui.card.conflict-card > .content > .conflict-compare-reminder {margin:0 0 1rem; color:#555;}
