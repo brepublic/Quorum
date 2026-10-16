@@ -35,12 +35,12 @@ describe('delegate file portal', () => {
       claimedSeat: null, eligibleSeats: [], mayUpload: false, storageAvailable: true,
       eventSequence: 0, maxUploadSizeBytes: 1024, files: [], categoryOpenedAt: {}})})} />));
     const card = host.querySelector('.delegate-file-claim-card')!;
-    expect(card.querySelector('.header')?.textContent).toBe('代表文件');
+    expect(card.querySelector('.header')?.textContent).toBe('代表文件系统');
     expect(card.querySelector('.delegate-file-claim-committee')?.textContent).toBe(committeeName);
     expect(card.querySelector('label')?.textContent).toBe('选择代表团');
     expect((card.querySelector('button') as HTMLButtonElement).disabled).toBe(true);
     await act(async () => setLanguage('en'));
-    expect(card.querySelector('.header')?.textContent).toBe('Delegate files');
+    expect(card.querySelector('.header')?.textContent).toBe('Delegate file system');
     expect(card.querySelector('.delegate-file-claim-committee')?.textContent).toBe(committeeName);
     expect(card.querySelector('label')?.textContent).toBe('Select a delegation');
   });

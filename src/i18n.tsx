@@ -1196,7 +1196,7 @@ const zhCN: Record<string, string> = {
   'Yield to questions': '让渡给问题',
   'Yield to comments': '让渡给评论',
   'Select a delegation': '选择代表团',
-  'Delegate files': '代表文件',
+  'Delegate file system': '代表文件系统',
   'Accept': '接受',
   'Reject': '拒绝',
   'Comment': '评论',

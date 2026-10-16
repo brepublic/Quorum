@@ -251,7 +251,7 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
     ? <Message error content={error} /> : <Message content={t("Loading…")} />}</Container>;
   if (!portal.claimedSeat) return <Container className="delegate-file-claim-page">
     {error && <Message error content={error} />}
-    <Card centered className="delegate-file-claim-card"><Card.Content><Card.Header>{t("Delegate files")}</Card.Header>
+    <Card centered className="delegate-file-claim-card"><Card.Content><Card.Header>{t("Delegate file system")}</Card.Header>
       <Card.Meta className="delegate-file-claim-committee">{portal.committeeName}</Card.Meta>
       <Form><ViewportFormSelect fluid selection label={t("Select a delegation")} search={(options, query) => {
         const matching = searchOptions(options.filter(option => !option.disabled), query);
