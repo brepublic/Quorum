@@ -115,7 +115,7 @@
 
 .committee-setup-page .members-table {
   max-width: 100%;
-  table-layout: auto;
+  table-layout: fixed;
   width: 100%;
 }
 
@@ -180,17 +180,20 @@
 }
 
 @media (min-width: 768px) {
-  /* Keep voting controls aligned while the editor fits the country names. */
-  .committee-setup-page .members-table tr > :nth-child(2) { min-width: 10.75rem; width: 10.75rem; }
-  .committee-setup-page .members-table tr > :nth-child(3) { min-width: 9.75rem; width: 9.75rem; }
-  .committee-setup-page .members-table tr > :nth-child(4) { min-width: 5.25rem; width: 5.25rem; }
-  .committee-setup-page .members-table tr > :nth-child(5) { min-width: 5.25rem; width: 5.25rem; }
-  .committee-setup-page .members-table tr > :nth-child(6) { min-width: 8rem; width: 8rem; }
-  .committee-setup-page .members-table tr > :nth-child(7) { min-width: 4.5rem; width: 4.5rem; }
+  .committee-setup-page .seat-name-column {
+    width: var(--seat-name-width, 14rem);
+  }
+  .committee-setup-page .seat-type-column { width: 10.75rem; }
+  .committee-setup-page .seat-action-column { width: 4.5rem; }
+  .committee-setup-page .members-table tr > :nth-child(n + 2):nth-child(-n + 6) { text-align: center; }
 
   .committee-setup-page .members-table tr > th,
   .committee-setup-page .members-table tr > td {
     white-space: nowrap;
+  }
+
+  .committee-setup-page .members-table thead > tr:first-child > th:nth-child(n + 3):nth-child(-n + 6) {
+    white-space: normal;
   }
 
   .committee-setup-page .members-table [data-label] {
@@ -198,10 +201,29 @@
   }
 
   .committee-setup-page .members-table .add-seat-row > th:first-child .ui.dropdown {
+    max-width: 100%;
     min-width: 0;
     width: 100%;
   }
 }
+
+.seat-name-measure-clip {
+  position: absolute;
+  visibility: hidden;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+
+.seat-name-measure {
+  display: flex;
+  flex-direction: column;
+  width: max-content;
+  white-space: nowrap;
+  font-weight: bold;
+}
+
+.seat-selected-name-measure { padding-right: 2rem; }
 
 .committee-setup-page .ui.table.seat-list-table {
   margin-top: 2rem;
@@ -261,7 +283,7 @@
   align-items: center;
   display: inline-flex;
   gap: 0.5rem;
-  max-width: 22rem;
+  max-width: 100%;
 }
 
 .committee-setup-page .committee-seat-name {
@@ -374,6 +396,7 @@
     width: auto !important;
   }
 
+  .committee-setup-page .ui.table.members-table colgroup,
   .committee-setup-page .ui.table.members-table thead > tr:first-child {
     display: none !important;
   }

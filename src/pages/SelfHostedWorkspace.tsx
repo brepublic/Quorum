@@ -457,6 +457,32 @@ function CommitteeInfoPanel({snapshot, run, api, canChair}: {snapshot: Committee
       ? current : String(countryOptions[0]?.value ?? ''));
   }, [countryOptions]);
   const selectedCountry = countryOptions.find(option => option.value === selectedCountryStableKey)?.country;
+  const seatEditorRef = React.useRef<HTMLElement>(null);
+  const seatNameMeasureRef = React.useRef<HTMLDivElement>(null);
+  React.useLayoutEffect(() => {
+    const measurement = seatNameMeasureRef.current;
+    const editor = seatEditorRef.current;
+    if (!measurement || !editor) return;
+    const updateWidth = () => {
+      const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 14;
+      const tableWidth = editor.querySelector('table')?.getBoundingClientRect().width ?? 0;
+      // Reserve readable controls, then use the longest name plus flag and cell padding.
+      const available = Math.max(0, tableWidth - (canChair && !readOnly ? 47.25 : 42.75) * rem);
+      const preferred = Math.max(14 * rem, Math.ceil(measurement.getBoundingClientRect().width) + 4.25 * rem);
+      editor.style.setProperty('--seat-name-width', `${Math.min(preferred, available)}px`);
+    };
+    updateWidth();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(measurement);
+    observer.observe(editor);
+    return () => observer.disconnect();
+  }, [snapshot.seats, selectedCountry, tab, canChair, readOnly]);
+  const seatColumns = <colgroup>
+    <col className="seat-name-column" /><col className="seat-type-column" />
+    <col /><col /><col /><col />
+    {canChair && !readOnly && <col className="seat-action-column" />}
+  </colgroup>;
   type VotingPatch = Partial<Pick<Stage4CommitteeSeat, 'canVote' | 'canProceduralVote' | 'hasVeto' | 'mustVote'>>;
   const [queuedVoting, setQueuedVoting] = React.useState<Record<string, VotingPatch>>();
   const displayedSeats = snapshot.seats.map(seat => {
@@ -545,9 +571,14 @@ function CommitteeInfoPanel({snapshot, run, api, canChair}: {snapshot: Committee
       </Menu.Item>)}
     </Menu>}
     <div className="committee-info-content">
-    <section className="committee-seat-editor ui segment" id={`${tabId}-seats-panel`} hidden={activeTab !== 'seats'}
+    <section ref={seatEditorRef} className="committee-seat-editor ui segment" id={`${tabId}-seats-panel`} hidden={activeTab !== 'seats'}
       role={hasSeatManagement ? 'tabpanel' : undefined} aria-labelledby={hasSeatManagement ? `${tabId}-seats-tab` : undefined}>
-    {canChair && !readOnly && countryOptions.length > 0 && <Table className="members-table seat-create-table" compact celled definition stackable><Table.Header fullWidth><Table.Row>
+    <div className="seat-name-measure-clip" aria-hidden="true"><div ref={seatNameMeasureRef} className="seat-name-measure">
+      {snapshot.seats.map(seat => <span key={seat.id}>{seat.displayName}</span>)}
+      {canChair && !readOnly && selectedCountry && <span className="seat-selected-name-measure">
+        {committeeContentName(selectedCountry.names, snapshot.committee.committeeLanguage)}</span>}
+    </div></div>
+    {canChair && !readOnly && countryOptions.length > 0 && <Table className="members-table seat-create-table" compact celled definition stackable>{seatColumns}<Table.Header fullWidth><Table.Row>
       <Table.HeaderCell>{t('Seat')}</Table.HeaderCell><Table.HeaderCell>{t('Rank')}</Table.HeaderCell>
       <Table.HeaderCell>{t('Procedural voting')}</Table.HeaderCell><Table.HeaderCell>{t('Voting rights')}</Table.HeaderCell><Table.HeaderCell>{t('Veto power')}</Table.HeaderCell><Table.HeaderCell>{t('No abstention')}</Table.HeaderCell>
       {canChair && !readOnly && <Table.HeaderCell />}</Table.Row>
@@ -577,7 +608,7 @@ function CommitteeInfoPanel({snapshot, run, api, canChair}: {snapshot: Committee
             setSeatRank('STANDARD'); setSeatCanVote(true); setSeatCanProceduralVote(true); setSeatHasVeto(false); setSeatMustVote(false);
           })()} /></Table.HeaderCell></Table.Row>}
       </Table.Header></Table>}
-      <Table className="members-table seat-list-table" compact celled definition stackable>
+      <Table className="members-table seat-list-table" compact celled definition stackable>{seatColumns}
       <Table.Header fullWidth><Table.Row><Table.HeaderCell>{t('Seat')}</Table.HeaderCell><Table.HeaderCell>{t('Rank')}</Table.HeaderCell>
         <Table.HeaderCell>{t('Procedural voting')}</Table.HeaderCell><Table.HeaderCell>{t('Voting rights')}</Table.HeaderCell><Table.HeaderCell>{t('Veto power')}</Table.HeaderCell><Table.HeaderCell>{t('No abstention')}</Table.HeaderCell>
         {canChair && !readOnly && <Table.HeaderCell />}</Table.Row></Table.Header>

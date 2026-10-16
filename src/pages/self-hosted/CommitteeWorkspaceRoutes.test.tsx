@@ -587,6 +587,40 @@ describe('committee workspace routes and roles', () => {
     }
   });
 
+  it('expands the shared name column for long names and caps it when the editor narrows, retaining toggles', async () => {
+    let nameWidth = 400;
+    let tableWidth = 1200;
+    let resized: (() => void) | undefined;
+    const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      const width = this.classList.contains('seat-name-measure') ? nameWidth : this.tagName === 'TABLE' ? tableWidth : 0;
+      return {width, height: 0, top: 0, left: 0, right: width, bottom: 0, x: 0, y: 0, toJSON() {return {};}};
+    });
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: () => void) {resized = callback;}
+      observe() {}
+      disconnect() {}
+    });
+    try {
+      const page = await render('OWNER', '/committees/committee/info');
+      const editor = page.querySelector<HTMLElement>('.committee-seat-editor')!;
+      const width = () => parseFloat(editor.style.getPropertyValue('--seat-name-width'));
+      const longWidth = width();
+      expect(longWidth).toBeGreaterThan(nameWidth);
+      nameWidth = 70;
+      resized?.();
+      expect(width()).toBeLessThan(longWidth);
+      nameWidth = 2000;
+      tableWidth = 1000;
+      resized?.();
+      expect(width()).toBeLessThan(tableWidth / 2);
+      expect(page.querySelector('.seat-create-table colgroup')?.innerHTML)
+        .toBe(page.querySelector('.seat-list-table colgroup')?.innerHTML);
+      const switches = [...page.querySelectorAll('.members-table input[type="checkbox"]')];
+      expect(switches.length).toBeGreaterThan(0);
+      expect(switches.every(input => input.closest('.ui.toggle.checkbox'))).toBe(true);
+    } finally {rect.mockRestore(); vi.unstubAllGlobals();}
+  });
+
   it('lets only Owners manage Chairs', async () => {
     const page = await render('OWNER', '/committees/committee/info');
     expect(page.textContent).toContain('Grant Chair');
