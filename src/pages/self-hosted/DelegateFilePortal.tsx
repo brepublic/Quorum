@@ -330,7 +330,7 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
         <Menu.Item active={publishedCategory === 'ALL'} onClick={() => void openCategory('ALL')}>{t('All files')}</Menu.Item>
         {FILE_TYPES.map(type => <Menu.Item key={type} active={publishedCategory === type} onClick={() => void openCategory(type)}>
           {delegateFileTypeName(type, portal.committeeLanguage)}{categoryHasNewFile(portal, type, localOpenedAt) &&
-            <span className="delegate-file-category-dot" role="img" aria-label={t('New files')} />}
+            <span className={`delegate-file-category-dot${type === 'CRISIS_NOTICE' ? ' delegate-file-category-dot-crisis' : ''}`} role="img" aria-label={t('New files')} />}
         </Menu.Item>)}
         <Menu.Item active={publishedCategory === 'OTHER'} onClick={() => void openCategory('OTHER')}>{t('Other')}
           {categoryHasNewFile(portal, 'OTHER', localOpenedAt) && <span className="delegate-file-category-dot" role="img" aria-label={t('New files')} />}

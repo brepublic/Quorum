@@ -123,13 +123,14 @@ describe('delegate file portal', () => {
   });
 
   it('marks only categories with approvals since their last opening and groups custom types under Other', async () => {
-    const makeFile = (id: string, fileType: 'NEWS' | 'DIRECTIVE_DRAFT' | `CUSTOM:${string}`, publishedAt: string) => ({
+    const makeFile = (id: string, fileType: 'NEWS' | 'DIRECTIVE_DRAFT' | 'CRISIS_NOTICE' | `CUSTOM:${string}`, publishedAt: string) => ({
       id, logicalName: id, fileType, publishedAt, submissionSource: 'CHAIR' as const,
       submitterDisplayName: null, submittedAt: null, revision: 1});
     const snapshot = {committeeId: 'committee', committeeLanguage: 'zh-CN' as const, committeeName: '委员会',
       shareId: 'share', claimedSeat: {id: 'seat', displayName: '中国', rank: 'STANDARD' as const}, eligibleSeats: [], mayUpload: true,
       storageAvailable: true, eventSequence: 0, maxUploadSizeBytes: 20 * 1024 * 1024,
       files: [makeFile('news', 'NEWS', '2026-09-29T01:00:00Z'),
+        makeFile('crisis', 'CRISIS_NOTICE', '2026-09-29T01:00:00Z'),
         makeFile('directive', 'DIRECTIVE_DRAFT', '2026-09-29T01:00:00Z'),
         makeFile('custom-a', 'CUSTOM:快讯', '2026-09-29T01:00:00Z'),
         makeFile('custom-b', 'CUSTOM:快訊', '2026-09-29T01:00:00Z')],
@@ -148,6 +149,9 @@ describe('delegate file portal', () => {
     expect(hasDot('新闻')).toBe(true);
     expect(hasDot('指令草案')).toBe(false);
     expect(hasDot('其他')).toBe(true);
+    expect(item('危机通告').querySelector('.delegate-file-category-dot-crisis')).not.toBeNull();
+    expect(item('新闻').querySelector('.delegate-file-category-dot-crisis')).toBeNull();
+    expect(item('其他').querySelector('.delegate-file-category-dot-crisis')).toBeNull();
     await act(async () => item('新闻').click());
     expect(opened).toHaveBeenCalledWith('NEWS', 'news', expect.any(AbortSignal));
     expect(hasDot('新闻')).toBe(false);

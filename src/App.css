@@ -1096,8 +1096,12 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   height: 0.5rem;
   margin-left: 0.45rem;
   border-radius: 50%;
-  background: #db2828;
+  background: #2185d0;
   vertical-align: middle;
+}
+
+.delegate-file-category-dot-crisis {
+  background: #db2828;
 }
 
 .delegate-file-review-divider + .delegate-file-card-list {
