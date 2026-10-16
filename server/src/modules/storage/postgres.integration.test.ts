@@ -247,6 +247,7 @@ integration('PostgreSQL stage 6 file metadata', () => {
     const created=await value.start();
     expect(created.status).toBe('COPYING');
     await storageMigrations.processNextCopyItem();
+    expect(await files.processNextDeleteJob()).toBeNull();
     const task=await value.claim('MIGRATE_BLOB');
     let content='';
     await value.taskService.streamBlob(value.paired.credential,{taskId:task.id,blobId:task.blobId!,leaseGeneration:task.leaseGeneration,
@@ -263,6 +264,7 @@ integration('PostgreSQL stage 6 file metadata', () => {
     expect((await files.download(value.fixture.member,value.file!.id)).file.id).toBe(value.file!.id);
     const confirming=await storageMigrations.confirm(value.fixture.chair,created.id,{baseRevision:ready.revision},randomUUID(),context('chair-confirm'));
     expect(confirming.progress?.phase).toBe('CONFIRMING');
+    expect(await files.processNextDeleteJob()).toBeNull();
     const verify=await value.claim('VERIFY_MIGRATION_BLOB');await value.finish(verify);
     await storageMigrations.processNextCopyItem();
     expect((await value.latest()).status).toBe('COMPLETED');
@@ -282,21 +284,41 @@ integration('PostgreSQL stage 6 file metadata', () => {
     const cleanup=await value.claim('DELETE_MIGRATION_BLOB');expect(cleanup.blobId).toBe(task.blobId);
     await value.finish(cleanup);
     expect((await value.latest()).status).toBe('CANCELLED');
+    expect(await files.processNextDeleteJob()).toBeNull();
     expect((await files.download(value.fixture.member,value.file!.id)).file.id).toBe(value.file!.id);
   });
 
-  it('migrates historical versions and downloads from Chair content after removing the source volume copies',async()=>{
+  it('automatically frees migrated source bytes, retries cleanup and preserves Chair downloads and approval',async()=>{
     const value=await chairMigration();const next='latest migration content';const nextId=randomUUID();
+    const otherCommittee=await stage4.createCommittee(value.fixture.owner,await testCommitteeInput(pool!,value.fixture.owner,
+      {name:'Unrelated Council',visibility:'PUBLIC',countryTemplateKey:'builtin:default'}),randomUUID(),context('unrelated-committee'));
+    const otherBinding=await storage.createServerVolumeBinding(value.fixture.owner,otherCommittee.id,
+      {baseRevision:otherCommittee.revision},randomUUID(),context('unrelated-binding'));
+    const other={...value.fixture,member:value.fixture.owner,committee:otherCommittee,binding:otherBinding};
+    const unrelated=await committedServerFile(other,'unrelated volume bytes','unrelated-cleanup');
     const key=`migration-history/${randomUUID()}`;
     await staging.write({key,source:(async function*(){yield next;})(),expectedSizeBytes:next.length,expectedSha256:digest(next)});
     const committed=await volume.commitFromStaging({blobId:nextId,staging,stagingKey:key,expectedSizeBytes:next.length,expectedSha256:digest(next)});
     const latestFile=await storage.recordProviderCommit(value.fixture.member,value.fixture.committee.id,{bindingId:value.fixture.binding.id,
       blobId:nextId,fileEntryId:value.file!.id,baseRevision:value.file!.revision,logicalName:value.file!.logicalName,
       originalName:'latest.pdf',mediaType:'application/pdf',sizeBytes:next.length,sha256:digest(next),storageKey:committed.storageKey},randomUUID(),context('history-version'));
+    await stage4.startMeetingSession(value.fixture.chair,value.fixture.committee.id,{},context('migration-session'),randomUUID());
+    const noticeBytes='Migrated crisis notice';
+    const noticeUpload=await uploads.createUpload(value.fixture.chair,value.fixture.committee.id,{logicalName:'Crisis Notice 1.1.1',
+      originalName:'notice.pdf',mediaType:'application/pdf',expectedSizeBytes:noticeBytes.length,sha256:digest(noticeBytes),fileType:'CRISIS_NOTICE'},randomUUID(),context('migration-notice'));
+    await uploads.receiveContent(value.fixture.chair,noticeUpload.id,(async function*(){yield noticeBytes;})(),randomUUID(),noticeBytes.length,context('migration-notice-bytes'));
+    const notice=await serverVolume.commitUpload(value.fixture.chair,noticeUpload.id,{},randomUUID(),context('migration-notice-commit'));
+    const review=new DelegateFileService(pool!,uploads,new Stage6ProviderCommitService(pool!,serverVolume,{} as never),files,storage);
+    const formal=await committedServerFile(value.fixture,'previous formal version','migration-formal');
+    await review.approve(value.fixture.chair,formal.id,{baseRevision:formal.revision,
+      logicalName:'Migrated working paper',fileType:'WORKING_PAPER'},context('migration-formal-approve'));
     const root=await AgentStateStore.initialize(join(stagingRoot,'chair'),{committeeId:value.fixture.committee.id,deviceId:value.paired.host.deviceId});
     const local=new AgentFileStore(root);await value.start();await storageMigrations.processNextCopyItem();
-    expect((await value.latest()).totalItems).toBe(2);
-    for(let index=0;index<2;index+=1){
+    expect((await value.latest()).totalItems).toBe(4);
+    const sources=await pool!.query('SELECT id,storage_key FROM file_blobs WHERE storage_binding_id=$1',[value.fixture.binding.id]);
+    const allocated=await Promise.all(sources.rows.map(source=>lstat(volume.pathForKey(source.storage_key))));
+    expect(allocated.reduce((sum,info)=>sum+info.blocks*512,0)).toBeGreaterThan(0);
+    for(let index=0;index<4;index+=1){
       const task=await value.claim('MIGRATE_BLOB');const chunks:Buffer[]=[];
       await value.taskService.streamBlob(value.paired.credential,{taskId:task.id,blobId:task.blobId!,leaseGeneration:task.leaseGeneration,
         fileRevision:task.fileRevision,claimToken:task.claimToken!},{start:()=>undefined,write:async chunk=>{chunks.push(chunk);}});
@@ -304,12 +326,26 @@ integration('PostgreSQL stage 6 file metadata', () => {
       await value.finish(task);
     }
     await storageMigrations.processNextCopyItem();const ready=await value.latest();
+    expect(await files.processNextDeleteJob()).toBeNull();
     await storageMigrations.confirm(value.fixture.chair,ready.id,{baseRevision:ready.revision},randomUUID(),context('history-confirm'));
-    for(let index=0;index<2;index+=1){const task=await value.claim('VERIFY_MIGRATION_BLOB');
+    for(let index=0;index<4;index+=1){const task=await value.claim('VERIFY_MIGRATION_BLOB');
       await local.verifyBlob(task.blobId!,task.expectedSizeBytes!,task.expectedSha256!);await value.finish(task);}
     await storageMigrations.processNextCopyItem();expect((await value.latest()).status).toBe('COMPLETED');
-    const sources=await pool!.query('SELECT storage_key FROM file_blobs WHERE storage_binding_id=$1',[value.fixture.binding.id]);
-    for(const source of sources.rows)await volume.delete(source.storage_key);
+    expect((await pool!.query('SELECT count(*)::int AS count FROM file_blob_delete_jobs WHERE blob_id=ANY($1::uuid[])',
+      [sources.rows.map(source=>source.id)])).rows[0].count).toBe(4);
+    const failedDelete=vi.spyOn(volume,'delete').mockRejectedValueOnce(new Error('temporary source cleanup failure'));
+    try {expect(await files.processNextDeleteJob()).toMatchObject({status:'RETRY'});}
+    finally {failedDelete.mockRestore();}
+    for(const source of sources.rows)expect((await lstat(volume.pathForKey(source.storage_key))).isFile()).toBe(true);
+    await pool!.query("UPDATE file_blob_delete_jobs SET next_attempt_at=now() WHERE status='RETRY'");
+    for(let index=0;index<4;index+=1)expect(await files.processNextDeleteJob()).toMatchObject({status:'COMPLETED'});
+    for(const source of sources.rows)await expect(lstat(volume.pathForKey(source.storage_key))).rejects.toMatchObject({code:'ENOENT'});
+    expect((await pool!.query("SELECT count(*)::int AS count FROM file_blobs WHERE storage_binding_id=$1 AND durability_state='DELETED'",
+      [value.fixture.binding.id])).rows[0].count).toBe(4);
+    await storageMigrations.processNextCopyItem();expect(await files.processNextDeleteJob()).toBeNull();
+    expect((await files.download(other.member,unrelated.id)).file.id).toBe(unrelated.id);
+    for(let index=0;index<3;index+=1){const task=await value.claim('STORE_BLOB');
+      await local.verifyBlob(task.localBlobId!,task.expectedSizeBytes!,task.expectedSha256!);await value.finish(task);}
     const config={publishedCacheMaxBytes:1048576,pendingReviewMaxBytes:1048576,pendingReviewCommitteeMaxBytes:1048576,
       storageMinFreeBytes:0,storageMinFreePercent:0};
     const cache=new StorageCacheService(pool!,staging,staging,{effective:async()=>({...config,revision:1,hardLimits:config})} as never);
@@ -327,12 +363,60 @@ integration('PostgreSQL stage 6 file metadata', () => {
       claimToken:task.claimToken,requestId:randomUUID()},context('history-refill-complete'));
     const download=await reader.download(value.fixture.member,latestFile.id);let actual='';
     for await(const chunk of download.content)actual+=chunk.toString();expect(actual).toBe(next);
-    await storage.deleteFile(value.fixture.chair,latestFile.id,{baseRevision:latestFile.revision},randomUUID(),context('delete-migrated-history'));
+    await expect(pool!.query(`INSERT INTO file_versions
+      (id,committee_id,file_entry_id,version_number,blob_id,original_name,media_type,size_bytes,sha256,created_by_user_id)
+      SELECT $1,committee_id,file_entry_id,version_number+1,blob_id,original_name,media_type,size_bytes+1,sha256,created_by_user_id
+      FROM file_versions WHERE id=$2`,[randomUUID(),latestFile.currentVersion.id])).rejects.toThrow('file version blob integrity mismatch');
+    const reviewing=new DelegateFileService(pool!,uploads,new Stage6ProviderCommitService(pool!,serverVolume,{} as never),reader,storage);
+    const approval={baseRevision:latestFile.revision,logicalName:'Migrated working paper',fileType:'WORKING_PAPER'};
+    const preview=await reviewing.previewApproval(value.fixture.chair,latestFile.id,approval);
+    expect(preview.target?.id).toBe(formal.id);
+    const approved=await reviewing.approve(value.fixture.chair,latestFile.id,{...approval,confirmationToken:preview.confirmationToken},context('approve-migrated-history'));
+    expect(approved.status).toBe('PUBLISHED');
+    expect(await new Stage5Service(pool!).previewCrisisNotice(value.fixture.chair,notice.id)).toMatchObject({sessionOrdinal:1,groupOrdinal:1,updateOrdinal:1});
+    await storage.deleteFile(value.fixture.chair,approved.id,{baseRevision:approved.revision},randomUUID(),context('delete-migrated-history'));
     await storageMigrations.processNextCopyItem();
-    for(let index=0;index<2;index+=1){const cleanup=await value.claim('DELETE_MIGRATION_BLOB');
+    for(let index=0;index<3;index+=1){const cleanup=await value.claim('DELETE_MIGRATION_BLOB');
       await local.deleteBlob(cleanup.blobId!);await value.finish(cleanup);}
     const removed=await pool!.query(`SELECT count(*)::int AS count FROM file_blobs WHERE storage_binding_id=$1 AND durability_state='DELETED'`,[ready.targetBindingId]);
-    expect(removed.rows[0].count).toBe(2);
+    expect(removed.rows[0].count).toBe(3);
+  });
+
+  it('backfills completed Chair source cleanup even with a revoked host and critical storage capacity',async()=>{
+    const value=await chairMigration();await value.start();await storageMigrations.processNextCopyItem();
+    await value.finish(await value.claim('MIGRATE_BLOB'));await storageMigrations.processNextCopyItem();
+    const ready=await value.latest();
+    await storageMigrations.confirm(value.fixture.chair,ready.id,{baseRevision:ready.revision},randomUUID(),context('backfill-confirm'));
+    await value.finish(await value.claim('VERIFY_MIGRATION_BLOB'));await storageMigrations.processNextCopyItem();
+    const source=(await pool!.query('SELECT id,storage_key FROM file_blobs WHERE storage_binding_id=$1',[value.fixture.binding.id])).rows[0]!;
+    await pool!.query('DELETE FROM file_blob_delete_jobs WHERE blob_id=$1',[source.id]);
+    await pool!.query("UPDATE file_blobs SET durability_state='COMMITTED' WHERE id=$1",[source.id]);
+    await value.agent.revokeHost(value.fixture.chair,value.fixture.committee.id,value.paired.host.id,{baseRevision:await value.revision()},context('backfill-revoke'));
+    const blocked=new Stage6MigrationService(pool!,staging,volume,fileS3Configs,()=>{throw new Error('Unused S3');},
+      {...availableCapacity,assertWriteAllowed:async()=>{throw new Error('Storage full');}});
+    await blocked.processNextCopyItem();await blocked.processNextCopyItem();
+    expect((await pool!.query('SELECT count(*)::int AS count FROM file_blob_delete_jobs WHERE blob_id=$1',[source.id])).rows[0].count).toBe(1);
+    expect(await files.processNextDeleteJob()).toMatchObject({status:'COMPLETED'});
+    await expect(lstat(volume.pathForKey(source.storage_key))).rejects.toMatchObject({code:'ENOENT'});
+  });
+
+  it('rolls back the Chair switch when its durable source cleanup cannot be scheduled',async()=>{
+    const value=await chairMigration();await value.start();await storageMigrations.processNextCopyItem();
+    await value.finish(await value.claim('MIGRATE_BLOB'));await storageMigrations.processNextCopyItem();
+    const ready=await value.latest();
+    await storageMigrations.confirm(value.fixture.chair,ready.id,{baseRevision:ready.revision},randomUUID(),context('cleanup-atomic-confirm'));
+    await value.finish(await value.claim('VERIFY_MIGRATION_BLOB'));
+    await pool!.query(`CREATE FUNCTION fail_source_cleanup() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+      RAISE EXCEPTION 'injected source cleanup failure'; END $$;
+      CREATE TRIGGER fail_source_cleanup BEFORE INSERT ON file_blob_delete_jobs FOR EACH ROW EXECUTE FUNCTION fail_source_cleanup()`);
+    await expect(storageMigrations.processNextCopyItem()).rejects.toThrow('injected source cleanup failure');
+    expect((await value.latest()).status).toBe('READY_TO_CONFIRM');
+    expect((await pool!.query('SELECT active_storage_binding_id FROM committees WHERE id=$1',[value.fixture.committee.id])).rows[0].active_storage_binding_id).toBe(value.fixture.binding.id);
+    expect(await files.processNextDeleteJob()).toBeNull();
+    expect((await files.download(value.fixture.member,value.file!.id)).file.id).toBe(value.file!.id);
+    await pool!.query('DROP TRIGGER fail_source_cleanup ON file_blob_delete_jobs');
+    await storageMigrations.processNextCopyItem();expect((await value.latest()).status).toBe('COMPLETED');
+    expect(await files.processNextDeleteJob()).toMatchObject({status:'COMPLETED'});
   });
 
   it('re-copies a missing final verification target before allowing another switch confirmation',async()=>{
@@ -341,6 +425,8 @@ integration('PostgreSQL stage 6 file metadata', () => {
     let ready=await value.latest();await storageMigrations.confirm(value.fixture.chair,ready.id,{baseRevision:ready.revision},randomUUID(),context('missing-confirm'));
     await value.finish(await value.claim('VERIFY_MIGRATION_BLOB'),'LOCAL_CONTENT_INVALID');
     let row=await value.latest();expect(row.status).toBe('FAILED');
+    expect(await files.processNextDeleteJob()).toBeNull();
+    expect((await files.download(value.fixture.member,value.file!.id)).file.id).toBe(value.file!.id);
     await storageMigrations.retry(value.fixture.chair,row.id,{baseRevision:row.revision},randomUUID(),context('repair-local-copy'));
     await storageMigrations.processNextCopyItem();const recovered=await value.claim('MIGRATE_BLOB');expect(recovered.blobId).toBe(copied.blobId);
     await value.finish(recovered);await storageMigrations.processNextCopyItem();ready=await value.latest();

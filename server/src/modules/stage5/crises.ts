@@ -98,8 +98,13 @@ export async function requireDirectiveCrisis(client: PoolClient, documentId: str
 
 export async function crisisNoticePreview(client: PoolClient, committeeId: string, fileId: string): Promise<CrisisNoticePreview> {
   const file = (await client.query(`SELECT e.*,m.file_type,m.submission_source,b.durability_state FROM file_entries e
+    JOIN committees committee ON committee.id=e.committee_id
     JOIN delegate_file_metadata m ON m.file_entry_id=e.id LEFT JOIN file_versions v ON v.id=e.current_version_id
-    LEFT JOIN file_blobs b ON b.id=v.blob_id WHERE e.id=$1 AND e.committee_id=$2`, [fileId,committeeId])).rows[0];
+    LEFT JOIN file_blobs content ON content.id=v.blob_id
+    LEFT JOIN file_blob_copies location ON location.content_blob_id=content.id
+      AND location.storage_binding_id=committee.active_storage_binding_id
+    LEFT JOIN file_blobs b ON b.id=CASE WHEN content.storage_binding_id=committee.active_storage_binding_id
+      THEN content.id ELSE location.copy_blob_id END WHERE e.id=$1 AND e.committee_id=$2`, [fileId,committeeId])).rows[0];
   if (!file || file.file_type !== 'CRISIS_NOTICE' || !['UPLOAD_COMPLETE','PENDING_REVIEW'].includes(file.status)
     || file.durability_state !== 'COMMITTED') throw new AppError({code: 'VALIDATION_FAILED',reason: 'CRISIS_NOTICE_REQUIRED',message: 'Saved crisis notice required.'});
   const number = parseCrisisNoticeName(file.logical_name);

@@ -338,7 +338,10 @@ export class DelegateFileService {
     if (!['UPLOAD_COMPLETE','PENDING_REVIEW'].includes(entry.status)) throw new AppError({reason: 'FILE_NOT_PENDING_REVIEW', code: 'RESOURCE_CONFLICT',
       message: 'File status does not allow approval.'});
     const version = (await client.query(`SELECT v.*,encode(v.sha256,'hex') AS hash FROM file_versions v
-      JOIN file_blobs b ON b.id=v.blob_id AND b.durability_state='COMMITTED' WHERE v.id=$1`, [entry.current_version_id])).rows[0];
+      JOIN file_blobs content ON content.id=v.blob_id
+      LEFT JOIN file_blob_copies location ON location.content_blob_id=content.id AND location.storage_binding_id=$2
+      JOIN file_blobs b ON b.id=CASE WHEN content.storage_binding_id=$2 THEN content.id ELSE location.copy_blob_id END
+        AND b.durability_state='COMMITTED' WHERE v.id=$1`, [entry.current_version_id,committee.active_storage_binding_id])).rows[0];
     if (!version) throw new AppError({reason: 'FILE_CONTENT_UNAVAILABLE', code: 'RESOURCE_CONFLICT', message: 'File content is unavailable.'});
     const target = (await client.query(`SELECT * FROM file_entries WHERE committee_id=$1 AND formal_name=$2 COLLATE "C"
       AND status<>'DELETED' AND id<>$3 FOR UPDATE`, [committee.id, logicalName, fileId])).rows[0];
