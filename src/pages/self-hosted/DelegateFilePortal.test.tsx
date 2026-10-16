@@ -29,6 +29,22 @@ afterEach(async () => {await act(async () => root.unmount()); host.remove(); vi.
 function client(overrides: Partial<SelfHostedApi>): SelfHostedApi {return overrides as SelfHostedApi;}
 
 describe('delegate file portal', () => {
+  it.each(['联合国安全理事会', '联合国大会裁军与国际安全委员会（第一委员会）'])('shows the current committee name before selecting a delegation: %s', async committeeName => {
+    await act(async () => root.render(<DelegateFilePortal api={client({bootstrapDelegatePortal: async () => ({
+      committeeId: 'committee', committeeLanguage: 'zh-CN', committeeName, shareId: 'share',
+      claimedSeat: null, eligibleSeats: [], mayUpload: false, storageAvailable: true,
+      eventSequence: 0, maxUploadSizeBytes: 1024, files: [], categoryOpenedAt: {}})})} />));
+    const card = host.querySelector('.delegate-file-claim-card')!;
+    expect(card.querySelector('.header')?.textContent).toBe('代表文件');
+    expect(card.querySelector('.delegate-file-claim-committee')?.textContent).toBe(committeeName);
+    expect(card.querySelector('label')?.textContent).toBe('选择代表团');
+    expect((card.querySelector('button') as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => setLanguage('en'));
+    expect(card.querySelector('.header')?.textContent).toBe('Delegate files');
+    expect(card.querySelector('.delegate-file-claim-committee')?.textContent).toBe(committeeName);
+    expect(card.querySelector('label')?.textContent).toBe('Select a delegation');
+  });
+
   it('groups eligible seats under disabled headers and retains their group when searching', async () => {
     await act(async () => root.render(<DelegateFilePortal api={client({bootstrapDelegatePortal: async () => ({
       committeeId: 'committee', committeeLanguage: 'zh-CN', committeeName: '委员会', shareId: 'share',

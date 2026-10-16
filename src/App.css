@@ -1076,6 +1076,12 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   margin-bottom: 0.75rem !important;
 }
 
+.delegate-file-claim-card .delegate-file-claim-committee {
+  margin-bottom: 1.5rem;
+  font-size: 1rem;
+  overflow-wrap: anywhere;
+}
+
 .delegate-file-card-list {
   padding: 1.5rem 0 0.5rem;
 }
