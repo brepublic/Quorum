@@ -20,8 +20,11 @@ export async function runDesktop(config: StorageAgentLocalConfig, state: AgentSt
   let verified = new Set<string>(); let fresh = false; let updatedAt = ''; let lastConnected = '';
   const activities = new Map<string, AgentActivity>();
   let committee: StorageAgentFileStatusPage['committee'];
+  let migration: StorageAgentFileStatusPage['migration'];
   const emit = () => process.stdout.write(JSON.stringify({event: 'snapshot', connected: fresh, updatedAt,
     lastConnected, committee: fresh ? committee : undefined,
+    migration:migration?{...migration,progress:migration.progress?{...migration.progress,
+      online:fresh&&migration.progress.online,remainingSeconds:fresh?migration.progress.remainingSeconds:null}:undefined}:null,
     files: desktopFiles(remote, state.snapshot(), tasks, verified, activities, fresh)}) + '\n');
   let lastEmit = 0; let pollAgain = false;
   const runtime = new StorageAgentRuntime(client, config.leaseGeneration, state, files,
@@ -29,6 +32,10 @@ export async function runDesktop(config: StorageAgentLocalConfig, state: AgentSt
       connected() {lastConnected = new Date().toISOString();},
       activity(value) {
         activities.set(value.fileEntryId, value);
+        if (value.type==='MIGRATE_BLOB'&&migration?.progress) {
+          migration={...migration,progress:{...migration.progress,currentName:value.name??null,
+            currentBytes:value.bytes,currentTotalBytes:value.total,phase:value.phase==='verify'?'VERIFYING':'TRANSFERRING'}};
+        }
         if (value.phase === 'complete' || value.phase === 'failed') pollAgain = true;
         if (Date.now() - lastEmit > 100 || value.phase !== 'transfer') {lastEmit = Date.now(); emit();}
       }
@@ -45,6 +52,7 @@ export async function runDesktop(config: StorageAgentLocalConfig, state: AgentSt
       const next: StorageAgentFileStatus[] = []; let after = ''; const seen = new Set<string>();
       do {const page = await statusClient.fileStatus(config.leaseGeneration, after);
         committee = page.committee;
+        migration=page.migration;
         next.push(...page.files); updatedAt = page.observedAt; after = page.nextId ?? '';
         if (after && seen.has(after)) throw new Error('Invalid file status cursor'); seen.add(after);
       } while (after && !signal.aborted);

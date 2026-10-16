@@ -1,8 +1,8 @@
 import {testCommitteeInput} from '../../test/committee-fixture';
 // @vitest-environment node
 
-import {createHash, randomUUID} from 'node:crypto';
-import {link, lstat, mkdir, mkdtemp, open, realpath, rm, unlink} from 'node:fs/promises';
+import {createHash, randomBytes,randomUUID} from 'node:crypto';
+import {link, lstat, mkdir, mkdtemp, open,readFile, realpath, rm, unlink} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
 import pg from 'pg';
@@ -29,6 +29,14 @@ import {Stage6MaintenanceService} from './maintenance-service';
 import {DelegateFileService} from '../delegate-files/service';
 import {Stage6ProviderCommitService} from './provider-commit-service';
 import {createLogger} from '../../logger';
+import {Stage7StorageAgentService} from '../storage-agent/service';
+import {Stage7StorageTaskService} from '../storage-agent/task-service';
+import type {StorageAgentTask} from '@quorum/contracts';
+import {AgentStateStore} from '../../../../packages/storage-agent/src/state';
+import {AgentFileStore} from '../../../../packages/storage-agent/src/files';
+import {StorageCacheService} from './cache-service';
+import {StorageCacheRefillService} from './cache-refill-service';
+import {Stage7ChairAgentProviderService} from '../storage-agent/chair-provider-service';
 
 const {Client, Pool} = pg;
 const adminUrl = process.env.TEST_DATABASE_ADMIN_URL;
@@ -208,6 +216,169 @@ async function committedServerFile(fixture: Awaited<ReturnType<typeof storageFix
 }
 
 integration('PostgreSQL stage 6 file metadata', () => {
+  async function chairMigration(withFile=true) {
+    const fixture=await storageFixture();
+    const file=withFile?await committedServerFile(fixture,'migration bytes','chair-target'):null;
+    const agent=new Stage7StorageAgentService(pool!);
+    const revision=async()=>Number((await pool!.query('SELECT revision FROM committees WHERE id=$1',[fixture.committee.id])).rows[0].revision);
+    const pairing=await agent.createPairing(fixture.chair,fixture.committee.id,{baseRevision:await revision(),purpose:'INITIAL'},context('chair-pair-code'));
+    const paired=await agent.pair({pairingCode:pairing.code,deviceLabel:'Migration Chair',devicePublicKey:randomBytes(32).toString('base64url')},context('chair-pair'));
+    const taskService=new Stage7StorageTaskService(agent,staging,files,undefined,undefined,storageMigrations);
+    const heartbeat=()=>agent.heartbeat(paired.credential,{leaseGeneration:paired.host.leaseGeneration,agentProtocolVersion:2,
+      capabilities:['SSE_WAKE','CACHE_REFILL','STORAGE_MIGRATION']});
+    await heartbeat();
+    const start=async()=>storageMigrations.create(fixture.chair,fixture.committee.id,{baseRevision:await revision(),targetProviderType:'CHAIR_AGENT'},randomUUID(),context('migration-create'));
+    const latest=async()=>(await storageMigrations.list(fixture.chair,fixture.committee.id))[0]!;
+    const claim=async(type:StorageAgentTask['type'])=>{
+      const page=await taskService.tasks(paired.credential,paired.host.leaseGeneration);
+      const task=page.tasks.find(item=>item.type===type&&item.status==='PENDING')!;
+      expect(task).toBeTruthy();
+      return taskService.claim(paired.credential,task.id,{leaseGeneration:task.leaseGeneration,fileRevision:task.fileRevision,requestId:randomUUID()});
+    };
+    const finish=(task:StorageAgentTask, failureCode?:string)=>taskService[failureCode?'fail':'complete'](paired.credential,task.id,
+      {leaseGeneration:task.leaseGeneration,fileRevision:task.fileRevision,claimToken:task.claimToken,requestId:randomUUID(),
+        ...(failureCode?{failureCode}:{})},context('migration-finish'));
+    return {fixture,file,agent,paired,taskService,revision,heartbeat,start,latest,claim,finish};
+  }
+
+  it('manually migrates server content to the paired Chair, reports progress, then rechecks before switching',async()=>{
+    const value=await chairMigration();
+    expect((await pool!.query('SELECT active_storage_binding_id FROM committees WHERE id=$1',[value.fixture.committee.id])).rows[0].active_storage_binding_id).toBe(value.fixture.binding.id);
+    const created=await value.start();
+    expect(created.status).toBe('COPYING');
+    await storageMigrations.processNextCopyItem();
+    const task=await value.claim('MIGRATE_BLOB');
+    let content='';
+    await value.taskService.streamBlob(value.paired.credential,{taskId:task.id,blobId:task.blobId!,leaseGeneration:task.leaseGeneration,
+      fileRevision:task.fileRevision,claimToken:task.claimToken!},{start:()=>undefined,write:async chunk=>{content+=chunk.toString();}});
+    expect(content).toBe('migration bytes');
+    await pool!.query("UPDATE storage_migration_items SET progress_updated_at=now()-interval '2 seconds' WHERE migration_id=$1",[created.id]);
+    await value.taskService.progress(value.paired.credential,task.id,{leaseGeneration:task.leaseGeneration,fileRevision:task.fileRevision,
+      claimToken:task.claimToken,bytes:5,phase:'TRANSFERRING'});
+    expect((await value.latest()).progress).toMatchObject({currentBytes:5,totalBytes:15,remainingSeconds:expect.any(Number)});
+    expect((await value.taskService.fileStatus(value.paired.credential,task.leaseGeneration)).migration?.id).toBe(created.id);
+    await value.finish(task);
+    await storageMigrations.processNextCopyItem();
+    const ready=await value.latest();expect(ready.status).toBe('READY_TO_CONFIRM');
+    expect((await files.download(value.fixture.member,value.file!.id)).file.id).toBe(value.file!.id);
+    const confirming=await storageMigrations.confirm(value.fixture.chair,created.id,{baseRevision:ready.revision},randomUUID(),context('chair-confirm'));
+    expect(confirming.progress?.phase).toBe('CONFIRMING');
+    const verify=await value.claim('VERIFY_MIGRATION_BLOB');await value.finish(verify);
+    await storageMigrations.processNextCopyItem();
+    expect((await value.latest()).status).toBe('COMPLETED');
+    expect((await pool!.query('SELECT active_storage_binding_id FROM committees WHERE id=$1',[value.fixture.committee.id])).rows[0].active_storage_binding_id).toBe(created.targetBindingId);
+    const ordinary=(await value.taskService.tasks(value.paired.credential,task.leaseGeneration)).tasks.filter(item=>item.type==='STORE_BLOB').at(-1)!;
+    expect(ordinary.localBlobId).toBe(task.blobId);
+  });
+
+  it('cancels an in-flight Chair migration, rejects late progress and schedules only its private copy for cleanup',async()=>{
+    const value=await chairMigration();await value.start();await storageMigrations.processNextCopyItem();
+    const task=await value.claim('MIGRATE_BLOB');const migration=await value.latest();
+    await storageMigrations.cancel(value.fixture.chair,migration.id,{baseRevision:migration.revision},randomUUID(),context('chair-cancel'));
+    await expect(value.taskService.progress(value.paired.credential,task.id,{leaseGeneration:task.leaseGeneration,fileRevision:task.fileRevision,
+      claimToken:task.claimToken,bytes:5,phase:'TRANSFERRING'})).rejects.toMatchObject({code:'RESOURCE_CONFLICT'});
+    await expect(value.finish(task)).rejects.toMatchObject({code:'IDEMPOTENCY_CONFLICT'});
+    await storageMigrations.processNextCopyItem();
+    const cleanup=await value.claim('DELETE_MIGRATION_BLOB');expect(cleanup.blobId).toBe(task.blobId);
+    await value.finish(cleanup);
+    expect((await value.latest()).status).toBe('CANCELLED');
+    expect((await files.download(value.fixture.member,value.file!.id)).file.id).toBe(value.file!.id);
+  });
+
+  it('migrates historical versions and downloads from Chair content after removing the source volume copies',async()=>{
+    const value=await chairMigration();const next='latest migration content';const nextId=randomUUID();
+    const key=`migration-history/${randomUUID()}`;
+    await staging.write({key,source:(async function*(){yield next;})(),expectedSizeBytes:next.length,expectedSha256:digest(next)});
+    const committed=await volume.commitFromStaging({blobId:nextId,staging,stagingKey:key,expectedSizeBytes:next.length,expectedSha256:digest(next)});
+    const latestFile=await storage.recordProviderCommit(value.fixture.member,value.fixture.committee.id,{bindingId:value.fixture.binding.id,
+      blobId:nextId,fileEntryId:value.file!.id,baseRevision:value.file!.revision,logicalName:value.file!.logicalName,
+      originalName:'latest.pdf',mediaType:'application/pdf',sizeBytes:next.length,sha256:digest(next),storageKey:committed.storageKey},randomUUID(),context('history-version'));
+    const root=await AgentStateStore.initialize(join(stagingRoot,'chair'),{committeeId:value.fixture.committee.id,deviceId:value.paired.host.deviceId});
+    const local=new AgentFileStore(root);await value.start();await storageMigrations.processNextCopyItem();
+    expect((await value.latest()).totalItems).toBe(2);
+    for(let index=0;index<2;index+=1){
+      const task=await value.claim('MIGRATE_BLOB');const chunks:Buffer[]=[];
+      await value.taskService.streamBlob(value.paired.credential,{taskId:task.id,blobId:task.blobId!,leaseGeneration:task.leaseGeneration,
+        fileRevision:task.fileRevision,claimToken:task.claimToken!},{start:()=>undefined,write:async chunk=>{chunks.push(chunk);}});
+      await local.storeBlob(task.blobId!,async()=>(async function*(){yield Buffer.concat(chunks);})(),task.expectedSizeBytes!,task.expectedSha256!);
+      await value.finish(task);
+    }
+    await storageMigrations.processNextCopyItem();const ready=await value.latest();
+    await storageMigrations.confirm(value.fixture.chair,ready.id,{baseRevision:ready.revision},randomUUID(),context('history-confirm'));
+    for(let index=0;index<2;index+=1){const task=await value.claim('VERIFY_MIGRATION_BLOB');
+      await local.verifyBlob(task.blobId!,task.expectedSizeBytes!,task.expectedSha256!);await value.finish(task);}
+    await storageMigrations.processNextCopyItem();expect((await value.latest()).status).toBe('COMPLETED');
+    const sources=await pool!.query('SELECT storage_key FROM file_blobs WHERE storage_binding_id=$1',[value.fixture.binding.id]);
+    for(const source of sources.rows)await volume.delete(source.storage_key);
+    const config={publishedCacheMaxBytes:1048576,pendingReviewMaxBytes:1048576,pendingReviewCommitteeMaxBytes:1048576,
+      storageMinFreeBytes:0,storageMinFreePercent:0};
+    const cache=new StorageCacheService(pool!,staging,staging,{effective:async()=>({...config,revision:1,hardLimits:config})} as never);
+    const refill=new StorageCacheRefillService(pool!,cache);
+    const reader=new Stage6FileService(pool!,volume,fileS3Configs,provider=>new S3CompatibleStore(provider,new IntegrationS3Transport(),1048576),staging,staging,refill);
+    expect((await reader.prepareDownload(value.fixture.member,latestFile.id)).status).toBe('PREPARING');
+    const service=new Stage7StorageTaskService(value.agent,staging,reader,undefined,new Stage7ChairAgentProviderService(pool!,storage,cache),storageMigrations);
+    const pending=(await service.tasks(value.paired.credential,value.paired.host.leaseGeneration)).tasks.find(task=>task.type==='FETCH_BLOB_TO_CACHE')!;
+    const task=await service.claim(value.paired.credential,pending.id,{leaseGeneration:pending.leaseGeneration,fileRevision:pending.fileRevision,requestId:randomUUID()});
+    const path=await local.verifyBlob(task.localBlobId!,task.expectedSizeBytes!,task.expectedSha256!);
+    await service.receiveContent(value.paired.credential,{taskId:task.id,leaseGeneration:task.leaseGeneration,fileRevision:task.fileRevision,
+      claimToken:task.claimToken!,expectedSha256:task.expectedSha256!,contentLength:task.expectedSizeBytes!,
+      source:(async function*(){yield await readFile(path);})(),context:context('history-refill')});
+    await service.complete(value.paired.credential,task.id,{leaseGeneration:task.leaseGeneration,fileRevision:task.fileRevision,
+      claimToken:task.claimToken,requestId:randomUUID()},context('history-refill-complete'));
+    const download=await reader.download(value.fixture.member,latestFile.id);let actual='';
+    for await(const chunk of download.content)actual+=chunk.toString();expect(actual).toBe(next);
+    await storage.deleteFile(value.fixture.chair,latestFile.id,{baseRevision:latestFile.revision},randomUUID(),context('delete-migrated-history'));
+    await storageMigrations.processNextCopyItem();
+    for(let index=0;index<2;index+=1){const cleanup=await value.claim('DELETE_MIGRATION_BLOB');
+      await local.deleteBlob(cleanup.blobId!);await value.finish(cleanup);}
+    const removed=await pool!.query(`SELECT count(*)::int AS count FROM file_blobs WHERE storage_binding_id=$1 AND durability_state='DELETED'`,[ready.targetBindingId]);
+    expect(removed.rows[0].count).toBe(2);
+  });
+
+  it('re-copies a missing final verification target before allowing another switch confirmation',async()=>{
+    const value=await chairMigration();await value.start();await storageMigrations.processNextCopyItem();
+    const copied=await value.claim('MIGRATE_BLOB');await value.finish(copied);await storageMigrations.processNextCopyItem();
+    let ready=await value.latest();await storageMigrations.confirm(value.fixture.chair,ready.id,{baseRevision:ready.revision},randomUUID(),context('missing-confirm'));
+    await value.finish(await value.claim('VERIFY_MIGRATION_BLOB'),'LOCAL_CONTENT_INVALID');
+    let row=await value.latest();expect(row.status).toBe('FAILED');
+    await storageMigrations.retry(value.fixture.chair,row.id,{baseRevision:row.revision},randomUUID(),context('repair-local-copy'));
+    await storageMigrations.processNextCopyItem();const recovered=await value.claim('MIGRATE_BLOB');expect(recovered.blobId).toBe(copied.blobId);
+    await value.finish(recovered);await storageMigrations.processNextCopyItem();ready=await value.latest();
+    await storageMigrations.confirm(value.fixture.chair,ready.id,{baseRevision:ready.revision},randomUUID(),context('repaired-confirm'));
+    await value.finish(await value.claim('VERIFY_MIGRATION_BLOB'));await storageMigrations.processNextCopyItem();
+    expect((await value.latest()).status).toBe('COMPLETED');
+  });
+
+  it('retries failed Chair copies and reuses committed content after a file list change',async()=>{
+    const value=await chairMigration();await value.start();await storageMigrations.processNextCopyItem();
+    await value.finish(await value.claim('MIGRATE_BLOB'),'ENOSPC');
+    let row=await value.latest();expect(row).toMatchObject({status:'FAILED',failureCode:'ENOSPC'});
+    await storageMigrations.retry(value.fixture.chair,row.id,{baseRevision:row.revision},randomUUID(),context('chair-retry'));
+    await storageMigrations.processNextCopyItem();await value.finish(await value.claim('MIGRATE_BLOB'));
+    await committedServerFile(value.fixture,'new file','changed-during-migration');
+    await storageMigrations.processNextCopyItem();row=await value.latest();expect(row.failureCode).toBe('MANIFEST_CHANGED');
+    await storageMigrations.retry(value.fixture.chair,row.id,{baseRevision:row.revision},randomUUID(),context('chair-reconcile'));
+    await storageMigrations.processNextCopyItem();await value.finish(await value.claim('MIGRATE_BLOB'));
+    await storageMigrations.processNextCopyItem();expect((await value.latest()).status).toBe('READY_TO_CONFIRM');
+  });
+
+  it('requires an online migration-capable Chair and keeps empty storage manual',async()=>{
+    const value=await chairMigration(false);
+    await value.agent.heartbeat(value.paired.credential,{leaseGeneration:value.paired.host.leaseGeneration,capabilities:['SSE_WAKE','CACHE_REFILL'],agentProtocolVersion:2});
+    await expect(value.start()).rejects.toMatchObject({reason:'AGENT_UPGRADE_REQUIRED'});
+    await value.heartbeat();
+    await pool!.query("UPDATE storage_hosts SET last_seen_at=now()-interval '1 minute' WHERE id=$1",[value.paired.host.id]);
+    await expect(value.start()).rejects.toMatchObject({reason:'STORAGE_AGENT_OFFLINE'});
+    await value.heartbeat();const row=await value.start();expect(row.status).toBe('READY_TO_CONFIRM');
+    await storageMigrations.confirm(value.fixture.chair,row.id,{baseRevision:row.revision},randomUUID(),context('empty-confirm'));
+    await storageMigrations.processNextCopyItem();expect((await value.latest()).status).toBe('COMPLETED');
+  });
+
+  it('invalidates a Chair migration when its target is revoked',async()=>{
+    const value=await chairMigration();await value.start();await storageMigrations.processNextCopyItem();
+    await value.agent.revokeHost(value.fixture.chair,value.fixture.committee.id,value.paired.host.id,{baseRevision:await value.revision()},context('revoke-migration-host'));
+    await storageMigrations.processNextCopyItem();expect((await value.latest()).failureCode).toBe('HOST_TRANSFERRED');
+  });
   it('persists chair crisis uploads and rejects delegate uploads and ordinary review bypasses',async()=> {
     const f=await storageFixture();
     const content='Crisis notice bytes';const body={logicalName:'Crisis Notice 1.1.1',originalName:'unrelated-9.9.9.txt',mediaType:'text/plain',expectedSizeBytes:content.length,sha256:digest(content),fileType:'CRISIS_NOTICE'};

@@ -7,6 +7,7 @@ import {AgentFileSystemError} from './errors.js';
 
 export const AGENT_METADATA_FILE = '.quorum-storage.json';
 export const AGENT_TEMP_DIRECTORY = '.quorum-tmp';
+export const AGENT_BLOB_DIRECTORY = '.quorum-blobs';
 
 export interface TrackedAgentFile {
   fileEntryId: string;

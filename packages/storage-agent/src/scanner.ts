@@ -5,7 +5,7 @@ import type {StorageAgentLocalChange, StorageAgentLocalChangeResult} from '@quor
 import {AgentFileSystemError} from './errors.js';
 import {AgentFileStore} from './files.js';
 import {normalizeAgentRelativePath} from './paths.js';
-import {AGENT_METADATA_FILE, AGENT_TEMP_DIRECTORY, type AgentDirectoryState,
+import {AGENT_METADATA_FILE, AGENT_TEMP_DIRECTORY,AGENT_BLOB_DIRECTORY, type AgentDirectoryState,
   type AgentStateStore, type TrackedAgentFile} from './state.js';
 
 export interface DetectedLocalChange {
@@ -29,7 +29,7 @@ async function scanDirectory(root: string, directory: string, files: AgentFileSt
   const entries = await readdir(directory, {withFileTypes: true});
   entries.sort((left, right) => left.name.localeCompare(right.name));
   for (const entry of entries) {
-    if (directory === root && [AGENT_METADATA_FILE, AGENT_TEMP_DIRECTORY, AGENT_LOCK_FILE].includes(entry.name)) continue;
+    if (directory === root && [AGENT_METADATA_FILE, AGENT_TEMP_DIRECTORY,AGENT_BLOB_DIRECTORY, AGENT_LOCK_FILE].includes(entry.name)) continue;
     const path = join(directory, entry.name); const relativePath = toRelative(root, path);
     const stats = await lstat(path);
     if (stats.isSymbolicLink() || (!stats.isDirectory() && !stats.isFile()) || (stats.isFile() && stats.nlink !== 1)) {

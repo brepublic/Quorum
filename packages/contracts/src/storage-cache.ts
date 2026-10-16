@@ -3,7 +3,7 @@ export const STORAGE_CACHE_STATES = [
 ] as const;
 export type StorageCacheState = typeof STORAGE_CACHE_STATES[number];
 
-export const STORAGE_AGENT_CAPABILITIES = ['SSE_WAKE', 'CACHE_REFILL'] as const;
+export const STORAGE_AGENT_CAPABILITIES = ['SSE_WAKE', 'CACHE_REFILL', 'STORAGE_MIGRATION'] as const;
 export type StorageAgentCapability = typeof STORAGE_AGENT_CAPABILITIES[number];
 
 export interface StorageCacheConfig {

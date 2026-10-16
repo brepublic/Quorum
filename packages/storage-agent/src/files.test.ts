@@ -8,7 +8,8 @@ import {afterEach, describe, expect, it} from 'vitest';
 import type {StorageManifestEvent} from '@quorum/contracts';
 import {AgentFileStore} from './files';
 import {normalizeAgentRelativePath, secureAgentTarget} from './paths';
-import {AGENT_METADATA_FILE, AGENT_TEMP_DIRECTORY, AgentStateStore} from './state';
+import {AGENT_METADATA_FILE, AGENT_TEMP_DIRECTORY,AGENT_BLOB_DIRECTORY, AgentStateStore} from './state';
+import {AgentDirectoryScanner} from './scanner';
 
 const roots: string[] = [];
 const committeeId = '10000000-0000-4000-8000-000000000001';
@@ -30,6 +31,30 @@ async function fixture() {
 }
 
 describe('Chair Agent storage root', () => {
+  it('stores historical migration content separately, recovers a receipt loss, repairs damage and excludes it from uploads',async()=>{
+    const value=await fixture();let downloads=0;
+    const source=async()=>{downloads+=1;return(async function*(){yield Buffer.from('old');})();};
+    await value.files.storeBlob(blobId,source,3,digest('old'));
+    const recovered=await AgentStateStore.initialize(value.root,{committeeId,deviceId});
+    const files=new AgentFileStore(recovered);
+    await files.storeBlob(blobId,source,3,digest('old'));expect(downloads).toBe(1);
+    expect(await new AgentDirectoryScanner(recovered,files).detectOne()).toBeNull();
+    expect(()=>normalizeAgentRelativePath(`${AGENT_BLOB_DIRECTORY}/${blobId}`)).toThrow();
+    await writeFile(join(value.root,AGENT_BLOB_DIRECTORY,blobId),'bad');
+    await files.storeBlob(blobId,source,3,digest('old'));expect(downloads).toBe(2);
+    await files.deleteBlob(blobId);await files.deleteBlob(blobId);
+    await expect(files.verifyBlob(blobId,3,digest('old'))).rejects.toMatchObject({code:'LOCAL_CONTENT_INVALID'});
+  });
+
+  it('rejects linked migration directories and never commits a corrupted download',async()=>{
+    const value=await fixture();
+    const source=async()=>(async function*(){yield Buffer.from('bad');})();
+    await expect(value.files.storeBlob(blobId,source,3,digest('old'))).rejects.toMatchObject({code:'LOCAL_CONTENT_INVALID'});
+    await expect(readFile(join(value.root,AGENT_BLOB_DIRECTORY,blobId))).rejects.toMatchObject({code:'ENOENT'});
+    await rm(join(value.root,AGENT_BLOB_DIRECTORY),{recursive:true});
+    await symlink(join(value.root,AGENT_TEMP_DIRECTORY),join(value.root,AGENT_BLOB_DIRECTORY));
+    await expect(value.files.storeBlob(blobId,source,3,digest('bad'))).rejects.toMatchObject({code:'UNSAFE_LOCAL_PATH'});
+  });
   it('stores only non-secret relative state in protected metadata', async () => {
     const value = await fixture();
     const metadata = JSON.parse(await readFile(join(value.root, AGENT_METADATA_FILE), 'utf8'));

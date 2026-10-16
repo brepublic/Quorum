@@ -533,6 +533,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert!(size_width > 0. && size_width < 80., "Size column must fit the actual samples without the old reserved width");
     if std::env::args().any(|arg| arg == "--short-size") {assert!(size_width < 40., "36 B must not retain a wide column");}
     window.show()?;
+    if std::env::args().any(|arg| arg == "--migration") {
+        window.set_migration_active(true);
+        window.set_migration_phase("MIGRATION_COPYING".into());
+        window.set_migration_count("4 / 12".into());
+        window.set_migration_bytes("96 MiB / 280 MiB".into());
+        window.set_migration_fraction(96.0 / 280.0);
+        window.set_migration_file("会议资料.pdf".into());
+        window.set_migration_file_bytes("18 MiB / 32 MiB".into());
+        window.set_migration_file_fraction(18.0 / 32.0);
+        window.set_migration_remaining(if language=="zh-CN" {"约 3 分 20 秒"} else {"About 3 min 20 sec"}.into());
+    }
     if let Some(adapter) = offscreen {
         let (width, height) = if std::env::args().any(|arg| arg == "--small") {
             (760, 600)
@@ -542,6 +553,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         adapter.set_size(slint::PhysicalSize::new(width, height));
         slint::platform::update_timers_and_animations();
         let mut pixels = slint::SharedPixelBuffer::<slint::Rgb8Pixel>::new(width, height);
+        if std::env::args().any(|arg| arg == "--migration") {
+            use slint::platform::{Key, WindowEvent};
+            assert!(!window.get_controls_enabled());
+            slint::platform::update_timers_and_animations();
+            let keys: [slint::SharedString;2] = [Key::Escape.into(), Key::Return.into()];
+            for text in keys {
+                window.window().dispatch_event(WindowEvent::KeyPressed {text:text.clone()});
+                window.window().dispatch_event(WindowEvent::KeyReleased {text});
+            }
+            assert!(window.get_migration_active(), "Migration progress must not be dismissible");
+        }
         adapter.draw_if_needed(|renderer| {
             renderer.render(pixels.make_mut_slice(), width as usize);
         });

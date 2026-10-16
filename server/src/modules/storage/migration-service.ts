@@ -16,7 +16,7 @@ import type {DurableStagingStore} from './staging.js';
 import {UploadStreamError} from './staging.js';
 import type {StorageCapacityGuard} from './capacity.js';
 
-type ProviderType = 'SERVER_VOLUME' | 'S3_COMPATIBLE';
+type ProviderType = 'SERVER_VOLUME' | 'S3_COMPATIBLE' | 'CHAIR_AGENT';
 type MigrationStatus = StorageMigration['status'];
 type ItemStatus = StorageMigrationItem['status'];
 type ProviderStore = Pick<ServerVolumeStore, 'verify' | 'read' | 'commitFromStaging' | 'delete'>;
@@ -27,6 +27,8 @@ interface MigrationRow extends QueryResultRow {
   id: string; committee_id: string; source_binding_id: string; target_binding_id: string;
   status: MigrationStatus; manifest_revision: number; revision: number; failure_code: string | null;
   created_at: Date; updated_at: Date; total_items: number; completed_items: number;
+  confirmation_user_id: string | null; confirmation_request_id: string | null;
+  confirmation_requested_at: Date | null;
 }
 
 interface ItemRow extends QueryResultRow {
@@ -36,6 +38,7 @@ interface ItemRow extends QueryResultRow {
   claim_token: string | null; failure_code: string | null;
   source_storage_key: string; source_provider_type: ProviderType; source_provider_config_id: string | null;
   target_provider_type: ProviderType; target_provider_config_id: string | null;
+  verified_at: Date | null;
 }
 
 interface ContentLocationRow extends QueryResultRow {
@@ -45,6 +48,7 @@ interface ContentLocationRow extends QueryResultRow {
 interface BindingRow extends QueryResultRow {
   id: string; committee_id: string; provider_type: ProviderType; provider_config_id: string | null;
   status: 'PENDING' | 'ACTIVE' | 'MIGRATING' | 'FAILED' | 'RETIRED'; revision: number;
+  storage_host_id: string | null;
 }
 
 interface TargetVerificationRow extends QueryResultRow {
@@ -115,7 +119,7 @@ export class Stage6MigrationService {
       await this.requireOwnerOrChair(client, committee, auth.user.id);
       const result = await client.query<MigrationRow>(`${MIGRATION_SELECT} WHERE m.committee_id=$1
         ORDER BY m.created_at DESC,m.id`, [committee.id]);
-      return result.rows.map(mapMigration);
+      return Promise.all(result.rows.map(row => this.withProgress(client, row)));
     });
   }
 
@@ -125,12 +129,12 @@ export class Stage6MigrationService {
     assertExactBody(body as Record<string, unknown>, ['baseRevision', 'targetProviderType', 'targetProviderConfigId']);
     const input = body as {baseRevision?: unknown; targetProviderType?: unknown; targetProviderConfigId?: unknown};
     const targetType = input.targetProviderType;
-    if (targetType !== 'SERVER_VOLUME' && targetType !== 'S3_COMPATIBLE') {
+    if (!['SERVER_VOLUME', 'S3_COMPATIBLE', 'CHAIR_AGENT'].includes(String(targetType))) {
       throw new AppError({reason: 'INVALID_STORAGE_PROVIDER', code: 'VALIDATION_FAILED', message: 'Target provider type is invalid.'});
     }
     const targetConfigId = targetType === 'S3_COMPATIBLE'
       ? uuid(input.targetProviderConfigId, 'Target provider config ID') : null;
-    if (targetType === 'SERVER_VOLUME' && input.targetProviderConfigId !== undefined) {
+    if (targetType !== 'S3_COMPATIBLE' && input.targetProviderConfigId !== undefined) {
       throw new AppError({reason: 'SERVER_STORAGE_CONFIG_UNEXPECTED', code: 'VALIDATION_FAILED', message: 'SERVER_VOLUME does not use a provider config.'});
     }
     const migrationId = randomUUID();
@@ -150,11 +154,12 @@ export class Stage6MigrationService {
         if (!source || source.status !== 'ACTIVE') {
           throw new AppError({reason: 'STORAGE_BINDING_UNAVAILABLE', expose: true, code: 'SERVICE_NOT_READY', message: 'The active storage binding is unavailable.'});
         }
-        await this.validateTarget(client, source, targetType, targetConfigId);
+        await this.validateTarget(client, source, targetType as ProviderType, targetConfigId);
+        const hostId = targetType === 'CHAIR_AGENT' ? await this.chairHost(client, committee.id) : null;
         await client.query(`INSERT INTO storage_bindings
-          (id,committee_id,provider_type,provider_config_id,status,created_by_user_id)
-          VALUES ($1,$2,$3,$4,'MIGRATING',$5)`,
-        [targetBindingId, committee.id, targetType, targetConfigId, auth.user.id]);
+          (id,committee_id,provider_type,provider_config_id,status,created_by_user_id,storage_host_id)
+          VALUES ($1,$2,$3,$4,'MIGRATING',$5,$6)`,
+        [targetBindingId, committee.id, targetType, targetConfigId, auth.user.id, hostId]);
         await client.query(`INSERT INTO storage_migrations
           (id,committee_id,source_binding_id,target_binding_id,manifest_revision,created_by_user_id)
           VALUES ($1,$2,$3,$4,$5,$6)`,
@@ -196,6 +201,7 @@ export class Stage6MigrationService {
       if (target.provider_type === 'S3_COMPATIBLE') {
         await this.activeS3Config(client, target.provider_config_id as string);
       }
+      if (target.provider_type === 'CHAIR_AGENT') await this.chairHost(client, committee.id, target.storage_host_id);
       const contents = await this.contentLocations(client, committee.id, row.source_binding_id);
       const contentIds = new Set(contents.map(item => item.content_blob_id));
       for (const content of contents) {
@@ -216,9 +222,13 @@ export class Stage6MigrationService {
         WHERE migration_id=$1 AND status IN ('PENDING','IN_PROGRESS','RETRY') LIMIT 1`, [row.id]);
       const next = outstanding.rowCount ? 'COPYING' : 'READY_TO_CONFIRM';
       await client.query(`UPDATE storage_migrations SET status=$2::storage_migration_status,manifest_revision=$3,revision=revision+1,
+        confirmation_requested_at=NULL,confirmation_user_id=NULL,confirmation_request_id=NULL,
         ready_at=CASE WHEN $2::storage_migration_status='READY_TO_CONFIRM'::storage_migration_status THEN now() ELSE NULL END,
         failure_code=NULL,failure_reason=NULL,updated_at=now() WHERE id=$1`,
       [row.id, next, committee.file_manifest_revision]);
+      await client.query(`UPDATE storage_migration_items SET received_bytes=0,progress_phase='WAITING',
+        progress_updated_at=NULL,transfer_started_at=NULL,bytes_per_second=NULL,verified_at=NULL
+        WHERE migration_id=$1 AND status<>'CANCELLED'`, [row.id]);
       await appendEvent(client, committee, {type: 'storage.migration_retried', resourceType: 'storage_migration',
         resourceId: row.id, revision: row.revision + 1, audience: 'CHAIR', payload: {status: next}});
       await this.commandAudit(client, context, auth, committee, row, 'storage.migration_retried', next);
@@ -232,10 +242,11 @@ export class Stage6MigrationService {
     const id = uuid(migrationId, 'Storage migration ID');
     const baseRevision = revision((body as {baseRevision?: unknown}).baseRevision);
     const targets = await transaction(this.pool, async client => {
+      const committeeId=await this.migrationCommitteeId(client,id);
+      const committee = await lockedCommittee(client, committeeId);
+      await this.requireOwnerOrChair(client, committee, auth.user.id);
       const row = await this.migrationForUpdate(client, id);
       if (row.status === 'COMPLETED') return [];
-      const committee = await lockedCommittee(client, row.committee_id);
-      await this.requireOwnerOrChair(client, committee, auth.user.id);
       if (row.status !== 'READY_TO_CONFIRM' || row.revision !== baseRevision) return [];
       const result = await client.query<TargetVerificationRow>(`SELECT b.storage_key,b.size_bytes,
         encode(b.sha256,'hex') AS sha256_hex,binding.provider_type,binding.provider_config_id
@@ -243,7 +254,7 @@ export class Stage6MigrationService {
           ON location.content_blob_id=i.content_blob_id AND location.copy_blob_id=i.target_blob_id
         JOIN file_blobs b ON b.id=location.copy_blob_id
         JOIN storage_bindings binding ON binding.id=location.storage_binding_id
-        WHERE i.migration_id=$1 AND i.status='COMPLETED' ORDER BY i.id`, [row.id]);
+        WHERE i.migration_id=$1 AND i.status='COMPLETED' AND binding.provider_type<>'CHAIR_AGENT' ORDER BY i.id`, [row.id]);
       return result.rows;
     });
     for (const target of targets) {
@@ -259,6 +270,11 @@ export class Stage6MigrationService {
       }
     }
     return this.command(auth, migrationId, body, idempotencyKey, 'confirm', context, async (client, committee, row) => {
+      const chairTarget=await this.bindingForUpdate(client,row.target_binding_id);
+      if (chairTarget?.provider_type==='CHAIR_AGENT'&&row.status==='READY_TO_CONFIRM'
+        &&row.manifest_revision!==committee.file_manifest_revision) {
+        await this.failChairMigration(client,committee,row,'MANIFEST_CHANGED');return;
+      }
       if (row.status !== 'READY_TO_CONFIRM' || row.manifest_revision !== committee.file_manifest_revision) {
         throw new AppError({code: 'REVISION_CONFLICT', message: 'The file manifest changed during storage migration.',
           details: {currentRevision: committee.file_manifest_revision}});
@@ -282,6 +298,22 @@ export class Stage6MigrationService {
         WHERE i.id IS NULL OR c.copy_blob_id IS NULL LIMIT 1`, [committee.id, row.id, target.id]);
       if (missing.rowCount) {
         throw new AppError({reason: 'MIGRATION_NOT_VERIFIED', code: 'RESOURCE_CONFLICT', message: 'Target storage is not fully verified.'});
+      }
+      if (target.provider_type === 'CHAIR_AGENT') {
+        await this.chairHost(client, committee.id, target.storage_host_id);
+        if (!row.confirmation_requested_at) {
+          await client.query(`UPDATE storage_migrations SET confirmation_requested_at=now(),confirmation_user_id=$2,
+            confirmation_request_id=$3,revision=revision+1,updated_at=now() WHERE id=$1`,
+          [row.id, auth.user.id, context.requestId]);
+          await client.query('UPDATE storage_migration_items SET verified_at=NULL WHERE migration_id=$1', [row.id]);
+          const items = await client.query<ItemRow>(`SELECT *,encode(sha256,'hex') AS sha256_hex
+            FROM storage_migration_items WHERE migration_id=$1 AND status='COMPLETED'`, [row.id]);
+          for (const item of items.rows) await this.queueChairTask(client, committee, target, item, 'VERIFY_MIGRATION_BLOB');
+          await appendEvent(client, committee, {type:'storage.migration_ready',resourceType:'storage_migration',
+            resourceId:row.id,revision:row.revision+1,audience:'CHAIR',payload:{verifying:true}});
+          await this.commandAudit(client, context, auth, committee, row, 'storage.migration_confirm_requested', row.status);
+        }
+        return;
       }
       await client.query("UPDATE storage_bindings SET status='RETIRED',revision=revision+1,updated_at=now() WHERE id=$1",
         [source.id]);
@@ -324,6 +356,7 @@ export class Stage6MigrationService {
     } catch {
       return null;
     }
+    await this.reconcileChairMigrations();
     const claimed = await transaction(this.pool, async client => {
       const result = await client.query<ItemRow>(`SELECT i.*,encode(i.sha256,'hex') AS sha256_hex,
         source.storage_key AS source_storage_key,source_binding.provider_type AS source_provider_type,
@@ -333,7 +366,8 @@ export class Stage6MigrationService {
         JOIN file_blobs source ON source.id=i.source_blob_id
         JOIN storage_bindings source_binding ON source_binding.id=source.storage_binding_id
         JOIN storage_bindings target_binding ON target_binding.id=m.target_binding_id
-        WHERE m.status='COPYING' AND ((i.status IN ('PENDING','RETRY') AND i.next_attempt_at<=now())
+        WHERE m.status='COPYING' AND target_binding.provider_type<>'CHAIR_AGENT'
+          AND ((i.status IN ('PENDING','RETRY') AND i.next_attempt_at<=now())
           OR (i.status='IN_PROGRESS' AND (i.claimed_at IS NULL OR i.claimed_at<=now()-interval '5 minutes')))
         ORDER BY CASE WHEN i.status='IN_PROGRESS' THEN i.claimed_at ELSE i.next_attempt_at END,i.created_at,i.id
         FOR UPDATE OF i SKIP LOCKED LIMIT 1`);
@@ -433,8 +467,8 @@ export class Stage6MigrationService {
     const id = uuid(migrationId, 'Storage migration ID');
     return idempotentTransaction({pool: this.pool, auth, route: `/api/v1/storage-migrations/${id}/${command}`,
       key, request: body, status: 200, work: async client => {
+        const committee = await lockedCommittee(client,await this.migrationCommitteeId(client,id));
         const row = await this.migrationForUpdate(client, id);
-        const committee = await lockedCommittee(client, row.committee_id);
         requireProceedingsActive(committee);
         await this.requireOwnerOrChair(client, committee, auth.user.id);
         if (row.revision !== baseRevision) {
@@ -509,6 +543,9 @@ export class Stage6MigrationService {
 
   private async cancelItemAndCopy(client: PoolClient, migration: MigrationRow, itemId: string,
     contentBlobId: string): Promise<void> {
+    await client.query(`UPDATE storage_agent_tasks SET status='CANCELLED',cancelled_at=now(),
+      claimed_at=NULL,claim_request_id=NULL,claim_token=NULL,revision=revision+1,updated_at=now()
+      WHERE migration_item_id=$1 AND status IN ('PENDING','IN_PROGRESS','RETRY')`, [itemId]);
     const copy = await client.query<{copy_blob_id: string}>(`DELETE FROM file_blob_copies
       WHERE content_blob_id=$1 AND storage_binding_id=$2 RETURNING copy_blob_id`,
     [contentBlobId, migration.target_binding_id]);
@@ -533,6 +570,9 @@ export class Stage6MigrationService {
 
   private async validateTarget(client: PoolClient, source: BindingRow, targetType: ProviderType,
     targetConfigId: string | null): Promise<void> {
+    if (targetType === 'CHAIR_AGENT' && source.provider_type !== 'SERVER_VOLUME') {
+      throw new AppError({reason:'INVALID_STORAGE_PROVIDER',code:'VALIDATION_FAILED',message:'Chair migration requires server storage.'});
+    }
     if (targetType === 'S3_COMPATIBLE') await this.activeS3Config(client, targetConfigId as string);
     if (source.provider_type === targetType && source.provider_config_id === targetConfigId) {
       throw new AppError({reason: 'STORAGE_ALREADY_ACTIVE', code: 'RESOURCE_CONFLICT', message: 'The target provider is already active.'});
@@ -552,6 +592,246 @@ export class Stage6MigrationService {
     const config = target ? await this.s3Configs.providerForMigrationTarget(configId)
       : await this.s3Configs.providerForStoredBlob(configId);
     return this.s3Factory(config);
+  }
+
+  private async chairHost(client: PoolClient, committeeId: string, expectedId?: string | null): Promise<string> {
+    const result = await client.query(`SELECT h.id,h.capabilities,h.last_seen_at FROM storage_hosts h
+      JOIN committees c ON c.id=h.committee_id AND c.storage_lease_generation=h.lease_generation
+      WHERE h.committee_id=$1 AND h.status IN ('ACTIVE','DEGRADED') FOR SHARE OF h`, [committeeId]);
+    const host = result.rows[0];
+    if (!host || (expectedId && host.id !== expectedId)) {
+      throw new AppError({reason:'CHAIR_STORAGE_UNAVAILABLE',code:'RESOURCE_CONFLICT',message:'The target Chair computer changed.'});
+    }
+    if (!host.capabilities.includes('STORAGE_MIGRATION')) {
+      throw new AppError({reason:'AGENT_UPGRADE_REQUIRED',code:'SERVICE_NOT_READY',expose:true,message:'Upgrade the Chair Agent.'});
+    }
+    if (!host.last_seen_at || Date.now()-host.last_seen_at.getTime()>45_000) {
+      throw new AppError({reason:'STORAGE_AGENT_OFFLINE',code:'SERVICE_NOT_READY',expose:true,message:'The Chair computer is offline.'});
+    }
+    return host.id;
+  }
+
+  private async withProgress(client: PoolClient, row: MigrationRow): Promise<StorageMigration> {
+    const migration = mapMigration(row);
+    const target = await client.query(`SELECT b.provider_type,h.device_label,h.last_seen_at,h.status,
+      h.lease_generation,c.storage_lease_generation FROM storage_bindings b
+      JOIN committees c ON c.id=b.committee_id LEFT JOIN storage_hosts h ON h.id=b.storage_host_id WHERE b.id=$1`,
+    [row.target_binding_id]);
+    const host = target.rows[0];
+    if (host?.provider_type !== 'CHAIR_AGENT') return migration;
+    const items = await client.query(`SELECT i.*,e.logical_name FROM storage_migration_items i
+      LEFT JOIN LATERAL (SELECT entry.logical_name FROM file_versions v JOIN file_entries entry ON entry.id=v.file_entry_id
+        WHERE v.blob_id=i.content_blob_id ORDER BY v.created_at,v.id LIMIT 1) e ON true
+      WHERE i.migration_id=$1 AND i.status<>'CANCELLED' ORDER BY i.progress_updated_at DESC NULLS LAST,i.id`, [row.id]);
+    const online = ['ACTIVE','DEGRADED'].includes(host.status) && host.last_seen_at
+      && Date.now()-host.last_seen_at.getTime()<=45_000 && Number(host.lease_generation)===Number(host.storage_lease_generation);
+    const current = items.rows.find(item => item.status==='IN_PROGRESS');
+    const totalBytes = items.rows.reduce((total,item)=>total+Number(item.size_bytes),0);
+    const completedBytes = items.rows.reduce((total,item)=>total+(item.status==='COMPLETED'?Number(item.size_bytes):0),0);
+    const fresh = current?.progress_updated_at && Date.now()-current.progress_updated_at.getTime()<15_000;
+    const phase = row.confirmation_requested_at && row.status==='READY_TO_CONFIRM' ? 'CONFIRMING'
+      : row.status!=='COPYING' ? 'IDLE' : !online || !fresh ? 'WAITING' : current.progress_phase;
+    const transferred = Number(current?.received_bytes??0);
+    const rate = Number(current?.bytes_per_second??0);
+    const remainingSeconds = online && fresh && rate>0 && ['TRANSFERRING','VERIFYING'].includes(phase)
+      ? Math.max(1,Math.ceil((totalBytes-completedBytes-transferred)/rate)) : null;
+    migration.progress = {targetProviderType:'CHAIR_AGENT',targetDeviceLabel:host.device_label??null,online:Boolean(online),
+      phase,totalBytes,completedBytes,currentName:current?.logical_name??null,currentBytes:transferred,
+      currentTotalBytes:Number(current?.size_bytes??0),remainingSeconds};
+    migration.totalItems=items.rows.length;
+    migration.completedItems=items.rows.filter(item=>item.status==='COMPLETED').length;
+    return migration;
+  }
+
+  async listForAgent(client: PoolClient, committeeId: string, hostId: string): Promise<StorageMigration | null> {
+    const result = await client.query<MigrationRow>(`${MIGRATION_SELECT} JOIN storage_bindings binding ON binding.id=m.target_binding_id
+      WHERE m.committee_id=$1 AND binding.storage_host_id=$2 AND m.status IN ('COPYING','READY_TO_CONFIRM','FAILED')
+      ORDER BY m.created_at DESC LIMIT 1`, [committeeId,hostId]);
+    return result.rows[0] ? this.withProgress(client,result.rows[0]) : null;
+  }
+
+  private async queueChairTask(client: PoolClient, committee: Stage4CommitteeRow, binding: BindingRow,
+    item: ItemRow, type: 'MIGRATE_BLOB' | 'VERIFY_MIGRATION_BLOB' | 'DELETE_MIGRATION_BLOB'): Promise<void> {
+    const entry = (await client.query<{id:string;revision:number}>(`SELECT e.id,e.revision FROM file_versions v
+      JOIN file_entries e ON e.id=v.file_entry_id WHERE v.blob_id=$1 ORDER BY v.created_at,v.id LIMIT 1`,
+    [item.content_blob_id])).rows[0];
+    if (!entry) throw new AppError({reason:'FILE_CONTENT_UNAVAILABLE',code:'RESOURCE_CONFLICT',message:'Migration content has no file.'});
+    const sequence = await client.query(`UPDATE committees SET next_storage_agent_task_sequence=next_storage_agent_task_sequence+1
+      WHERE id=$1 RETURNING next_storage_agent_task_sequence-1 AS sequence`, [committee.id]);
+    await client.query(`INSERT INTO storage_agent_tasks
+      (id,committee_id,host_id,lease_generation,sequence,task_type,file_entry_id,file_revision,blob_id,
+        expected_size_bytes,expected_sha256,migration_item_id)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,decode($11,'hex'),$12)`,
+    [randomUUID(),committee.id,binding.storage_host_id,committee.storage_lease_generation,sequence.rows[0].sequence,
+      type,entry.id,entry.revision,item.target_blob_id,item.size_bytes,item.sha256_hex,item.id]);
+  }
+
+  async startChairTask(client: PoolClient, itemId: string, claimToken: string, type: string): Promise<void> {
+    if (type!=='MIGRATE_BLOB') return;
+    await client.query(`UPDATE storage_migration_items SET status='IN_PROGRESS',claimed_at=now(),claim_token=$2,
+      attempts=attempts+1,received_bytes=0,progress_phase='TRANSFERRING',progress_updated_at=now(),
+      transfer_started_at=now(),bytes_per_second=NULL WHERE id=$1 AND status IN ('PENDING','IN_PROGRESS','RETRY')`,
+    [itemId,claimToken]);
+  }
+
+  async chairTaskSource(client: PoolClient, itemId: string, hostId: string): Promise<string> {
+    const result = await client.query(`SELECT i.source_blob_id,m.status,b.storage_host_id
+      FROM storage_migration_items i JOIN storage_migrations m ON m.id=i.migration_id
+      JOIN storage_bindings b ON b.id=m.target_binding_id WHERE i.id=$1`,[itemId]);
+    const item = result.rows[0];
+    if (!item || item.status!=='COPYING' || item.storage_host_id!==hostId) {
+      throw new AppError({reason:'MIGRATION_STORAGE_CHANGED',code:'RESOURCE_CONFLICT',message:'Migration is no longer active.'});
+    }
+    return item.source_blob_id;
+  }
+
+  async chairProgress(client: PoolClient, itemId: string, bytes: number, phase: string): Promise<void> {
+    await client.query(`UPDATE storage_migration_items SET received_bytes=CASE WHEN $2=0 THEN 0 ELSE greatest(received_bytes,$2) END,progress_phase=$3,
+      transfer_started_at=CASE WHEN $2=0 THEN now() ELSE transfer_started_at END,
+      bytes_per_second=CASE WHEN $2=0 THEN NULL WHEN $2>received_bytes AND progress_updated_at<now()-interval '0.1 seconds'
+        THEN CASE WHEN bytes_per_second IS NULL THEN ($2-received_bytes)/extract(epoch FROM now()-progress_updated_at)
+          ELSE 0.75*bytes_per_second+0.25*($2-received_bytes)/extract(epoch FROM now()-progress_updated_at) END
+        ELSE bytes_per_second END,progress_updated_at=now() WHERE id=$1 AND status='IN_PROGRESS'`, [itemId,bytes,phase]);
+  }
+
+  async finishChairTask(client: PoolClient, task: {migration_item_id:string;task_type:string;host_id:string;
+    failure_code?:string|null}, committee: Stage4CommitteeRow, failure: string | null): Promise<void> {
+    const item = await this.itemForUpdate(client,task.migration_item_id);
+    const migration = await this.migrationForUpdate(client,item.migration_id);
+    const binding = await this.bindingForUpdate(client,migration.target_binding_id);
+    if (!binding || binding.storage_host_id!==task.host_id) {
+      throw new AppError({code:'STALE_STORAGE_LEASE',message:'Migration target changed.'});
+    }
+    if (task.task_type==='DELETE_MIGRATION_BLOB') {
+      if (!failure) {
+        await client.query(`UPDATE file_blobs SET durability_state='DELETED',updated_at=now()
+          WHERE id=$1 AND durability_state='DELETE_PENDING'`,[item.target_blob_id]);
+        await client.query(`UPDATE file_blob_delete_jobs SET status='COMPLETED',completed_at=now(),claimed_at=NULL,
+          claim_token=NULL,updated_at=now() WHERE blob_id=$1 AND status<>'COMPLETED'`,[item.target_blob_id]);
+      }
+      return;
+    }
+    if (!['COPYING','READY_TO_CONFIRM'].includes(migration.status)) {
+      throw new AppError({reason:'MIGRATION_STORAGE_CHANGED',code:'RESOURCE_CONFLICT',message:'Migration is no longer active.'});
+    }
+    if (failure) {
+      await client.query(`UPDATE storage_migration_items SET status='RETRY',completed_at=NULL,
+        claimed_at=NULL,claim_token=NULL,failure_code=$2,progress_phase='IDLE' WHERE id=$1`,[item.id,failure]);
+      await this.failChairMigration(client,committee,migration,failure,task.migration_item_id);
+      return;
+    }
+    if (task.task_type==='VERIFY_MIGRATION_BLOB') {
+      await client.query('UPDATE storage_migration_items SET verified_at=now() WHERE id=$1',[item.id]);
+    } else {
+      await this.insertTargetCopy(client,migration,item,`agent-blobs/${item.target_blob_id.replaceAll('-','')}`);
+      await client.query(`UPDATE storage_migration_items SET status='COMPLETED',completed_at=now(),
+        claimed_at=NULL,claim_token=NULL,failure_code=NULL,failure_reason=NULL,received_bytes=size_bytes,
+        progress_phase='IDLE',progress_updated_at=now(),verified_at=now() WHERE id=$1`,[item.id]);
+    }
+  }
+
+  private async failChairMigration(client: PoolClient, committee: Stage4CommitteeRow, row: MigrationRow,
+    code: string,excludeItemId?:string): Promise<void> {
+    await client.query(`UPDATE storage_migrations SET status='FAILED',ready_at=NULL,confirmation_requested_at=NULL,
+      confirmation_user_id=NULL,confirmation_request_id=NULL,failure_code=$2,revision=revision+1,updated_at=now()
+      WHERE id=$1`,[row.id,code]);
+    await client.query(`UPDATE storage_agent_tasks SET status='CANCELLED',cancelled_at=now(),claimed_at=NULL,
+      claim_request_id=NULL,claim_token=NULL,revision=revision+1,updated_at=now() WHERE migration_item_id IN
+      (SELECT id FROM storage_migration_items WHERE migration_id=$1)
+      AND status IN ('PENDING','IN_PROGRESS','RETRY') AND ($2::uuid IS NULL OR migration_item_id<>$2)`,[row.id,excludeItemId??null]);
+    await client.query(`UPDATE storage_migration_items SET status='RETRY',claimed_at=NULL,claim_token=NULL,
+      progress_phase='WAITING' WHERE migration_id=$1 AND status='IN_PROGRESS'`,[row.id]);
+    await appendEvent(client,committee,{type:'storage.migration_failed',resourceType:'storage_migration',resourceId:row.id,
+      revision:row.revision+1,audience:'CHAIR',payload:{failureCode:code}});
+  }
+
+  private async reconcileChairMigrations(): Promise<void> {
+    await transaction(this.pool,async client=>{
+      const ids=await client.query<{id:string}>(`SELECT DISTINCT m.committee_id AS id FROM storage_migrations m
+        JOIN storage_bindings b ON b.id=m.target_binding_id WHERE b.provider_type='CHAIR_AGENT'`);
+      for (const {id} of ids.rows) {
+        const committee=await lockedCommittee(client,id);
+        const rows=await client.query<MigrationRow>(`${MIGRATION_SELECT} JOIN storage_bindings b ON b.id=m.target_binding_id
+          WHERE m.committee_id=$1 AND b.provider_type='CHAIR_AGENT' ORDER BY m.created_at`,[id]);
+        for (const row of rows.rows) {
+          const binding=await this.bindingForUpdate(client,row.target_binding_id);
+          if (!binding) continue;
+          const host=await client.query(`SELECT 1 FROM storage_hosts WHERE id=$1 AND status IN ('ACTIVE','DEGRADED')
+            AND lease_generation=$2`,[binding.storage_host_id,committee.storage_lease_generation]);
+          if (!host.rowCount) {
+            if (['COPYING','READY_TO_CONFIRM'].includes(row.status)) await this.failChairMigration(client,committee,row,'HOST_TRANSFERRED');
+            continue;
+          }
+          const items=await client.query<ItemRow>(`SELECT *,encode(sha256,'hex') AS sha256_hex
+            FROM storage_migration_items WHERE migration_id=$1 ORDER BY id`,[row.id]);
+          if (row.status==='COPYING') {
+            for (const item of items.rows.filter(item=>['PENDING','IN_PROGRESS','RETRY'].includes(item.status))) {
+              const pending=await client.query(`SELECT 1 FROM storage_agent_tasks WHERE migration_item_id=$1
+                AND task_type::text='MIGRATE_BLOB' AND status IN ('PENDING','IN_PROGRESS','RETRY')`,[item.id]);
+              if (!pending.rowCount) await this.queueChairTask(client,committee,binding,item,'MIGRATE_BLOB');
+            }
+            if (items.rows.every(item=>['COMPLETED','CANCELLED'].includes(item.status))) {
+              if (row.manifest_revision!==committee.file_manifest_revision) await this.failChairMigration(client,committee,row,'MANIFEST_CHANGED');
+              else {
+                await client.query(`UPDATE storage_migrations SET status='READY_TO_CONFIRM',ready_at=now(),
+                  revision=revision+1,updated_at=now() WHERE id=$1`,[row.id]);
+                await appendEvent(client,committee,{type:'storage.migration_ready',resourceType:'storage_migration',
+                  resourceId:row.id,revision:row.revision+1,audience:'CHAIR',payload:{status:'READY_TO_CONFIRM'}});
+              }
+            }
+          }
+          if (row.status==='READY_TO_CONFIRM' && row.confirmation_requested_at
+            && items.rows.every(item=>item.status==='CANCELLED'||Boolean(item.verified_at))) {
+            if (row.manifest_revision!==committee.file_manifest_revision || committee.active_storage_binding_id!==row.source_binding_id
+              || !['ACTIVE','PAUSED'].includes(committee.status)) {
+              await this.failChairMigration(client,committee,row,'MANIFEST_CHANGED');continue;
+            }
+            try {
+              await this.requireOwnerOrChair(client,committee,row.confirmation_user_id as string);
+              await this.chairHost(client,id,binding.storage_host_id);
+            } catch(error) {
+              if (error instanceof AppError&&error.reason==='STORAGE_AGENT_OFFLINE') continue;
+              if (error instanceof AppError) {await this.failChairMigration(client,committee,row,error.reason??error.code);continue;}
+              throw error;
+            }
+            await client.query(`UPDATE storage_bindings SET status='RETIRED',revision=revision+1,updated_at=now() WHERE id=$1`,[row.source_binding_id]);
+            await client.query(`UPDATE storage_bindings SET status='ACTIVE',revision=revision+1,updated_at=now() WHERE id=$1`,[binding.id]);
+            await client.query(`UPDATE committees SET active_storage_binding_id=$2,revision=revision+1,updated_at=now() WHERE id=$1`,[id,binding.id]);
+            committee.revision+=1;
+            await client.query(`UPDATE storage_migrations SET status='COMPLETED',completed_at=now(),revision=revision+1,
+              updated_at=now() WHERE id=$1`,[row.id]);
+            await appendEvent(client,committee,{type:'storage.migration_completed',resourceType:'storage_migration',resourceId:row.id,
+              revision:row.revision+1,audience:'CHAIR',payload:{targetBindingId:binding.id}});
+            await audit(client,{requestId:row.confirmation_request_id as string},{committeeId:id,actorUserId:row.confirmation_user_id as string,
+              capabilities:[committee.owner_user_id===row.confirmation_user_id?'OWNER':'CHAIR'],action:'storage.migration_completed',
+              resourceType:'storage_migration',resourceId:row.id,after:{targetBindingId:binding.id}});
+            const current=await client.query(`SELECT e.id,e.revision,v.blob_id,v.size_bytes,v.sha256 FROM file_entries e
+              JOIN file_versions v ON v.id=e.current_version_id WHERE e.committee_id=$1 AND e.status<>'DELETED'`,[id]);
+            for (const file of current.rows) {
+              await client.query(`UPDATE storage_agent_tasks SET status='CANCELLED',cancelled_at=now(),
+                claimed_at=NULL,claim_request_id=NULL,claim_token=NULL,revision=revision+1,updated_at=now()
+                WHERE host_id=$1 AND lease_generation=$2 AND blob_id=$3 AND task_type='STORE_BLOB'
+                  AND status IN ('PENDING','IN_PROGRESS','RETRY')`,[binding.storage_host_id,committee.storage_lease_generation,file.blob_id]);
+              const sequence=await client.query(`UPDATE committees SET next_storage_agent_task_sequence=next_storage_agent_task_sequence+1
+                WHERE id=$1 RETURNING next_storage_agent_task_sequence-1 AS sequence`,[id]);
+              await client.query(`INSERT INTO storage_agent_tasks(id,committee_id,host_id,lease_generation,sequence,
+                task_type,file_entry_id,file_revision,blob_id,expected_size_bytes,expected_sha256)
+                VALUES($1,$2,$3,$4,$5,'STORE_BLOB',$6,$7,$8,$9,$10)`,[randomUUID(),id,binding.storage_host_id,
+                committee.storage_lease_generation,sequence.rows[0].sequence,file.id,file.revision,file.blob_id,file.size_bytes,file.sha256]);
+            }
+          }
+          for (const item of items.rows) {
+            const deleting=await client.query(`SELECT 1 FROM file_blob_delete_jobs WHERE blob_id=$1 AND status<>'COMPLETED'`,[item.target_blob_id]);
+            if (item.status!=='CANCELLED'&&!deleting.rowCount) continue;
+            const cleanup=await client.query(`SELECT status,updated_at FROM storage_agent_tasks WHERE migration_item_id=$1
+              AND task_type::text='DELETE_MIGRATION_BLOB' ORDER BY sequence DESC LIMIT 1`,[item.id]);
+            if (!cleanup.rows[0]||(cleanup.rows[0].status==='FAILED'&&Date.now()-cleanup.rows[0].updated_at.getTime()>30_000)) {
+              await this.queueChairTask(client,committee,binding,item,'DELETE_MIGRATION_BLOB');
+            }
+          }
+        }
+      }
+    });
   }
 
   private async requireOwnerOrChair(client: PoolClient, committee: Stage4CommitteeRow, userId: string): Promise<void> {
@@ -577,7 +857,7 @@ export class Stage6MigrationService {
   private async migration(client: PoolClient, id: string): Promise<StorageMigration> {
     const row = (await client.query<MigrationRow>(`${MIGRATION_SELECT} WHERE m.id=$1`, [id])).rows[0];
     if (!row) throw new AppError({code: 'NOT_FOUND', message: 'Storage migration not found.'});
-    return mapMigration(row);
+    return this.withProgress(client, row);
   }
 
   private async migrationForUpdate(client: PoolClient, id: string): Promise<MigrationRow> {
@@ -585,6 +865,12 @@ export class Stage6MigrationService {
       FROM storage_migrations WHERE id=$1 FOR UPDATE`, [id])).rows[0];
     if (!row) throw new AppError({code: 'NOT_FOUND', message: 'Storage migration not found.'});
     return row;
+  }
+
+  private async migrationCommitteeId(client:PoolClient,id:string):Promise<string> {
+    const result=await client.query<{committee_id:string}>('SELECT committee_id FROM storage_migrations WHERE id=$1',[id]);
+    if (!result.rows[0]) throw new AppError({code:'NOT_FOUND',message:'Storage migration not found.'});
+    return result.rows[0].committee_id;
   }
 
   private async itemForUpdate(client: PoolClient, id: string): Promise<ItemRow> {

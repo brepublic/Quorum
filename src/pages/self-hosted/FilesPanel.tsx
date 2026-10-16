@@ -22,6 +22,10 @@ const CONFLICT_REASON: Record<StorageAgentConflict['reasonCode'], string> = {
 };
 
 function migrationFailureText(code: string): string {
+  if (code === 'ENOSPC') return t("The Chair computer is out of space. Free space and retry.");
+  if (code === 'HOST_TRANSFERRED') return t("The target computer changed. Cancel this migration and select a new target.");
+  if (code === 'LOCAL_CONTENT_INVALID' || code === 'ENOENT') return t("The local migration copy is missing or damaged. Retry the migration.");
+  if (code === 'LOCAL_WRITE_FAILED') return t("Cannot save on the Chair computer. Check the folder and retry.");
   if (Object.hasOwn(ERROR_TEXT, code)) return apiErrorText({code});
   if (code === 'MANIFEST_CHANGED') return t("The file list changed. Retry the migration.");
   return t("Copy failed. Check the storage service and retry.");
@@ -48,6 +52,12 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
+}
+
+function remainingTime(seconds:number|null):string {
+  if (seconds===null) return t("Estimating…");
+  const rounded=Math.max(10,Math.ceil(seconds/10)*10);
+  return t("About {minutes} min {seconds} sec",{minutes:Math.floor(rounded/60),seconds:rounded%60});
 }
 
 type UploadProgress = {phase: 'HASHING' | 'UPLOADING' | 'COMMITTING'; processed: number; total: number};
@@ -132,7 +142,9 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
         const availableS3 = nextConfigs.filter(config => config.status === 'ACTIVE'
           && config.id !== active?.providerConfigId);
         if (active?.providerType === 'SERVER_VOLUME') {
-          setTargetType('S3_COMPATIBLE');
+          const chairAvailable=nextHosts.some(host=>host.status==='ACTIVE'||host.status==='DEGRADED');
+          setTargetType(current=>current==='CHAIR_AGENT'&&chairAvailable||current==='S3_COMPATIBLE'&&availableS3.length>0
+            ?current:chairAvailable?'CHAIR_AGENT':'S3_COMPATIBLE');
           setTargetConfigId(current => availableS3.some(config => config.id === current)
             ? current : availableS3[0]?.id || '');
         } else if (active?.providerType === 'S3_COMPATIBLE') {
@@ -202,6 +214,21 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
     targetType, targetType === 'S3_COMPATIBLE' ? targetConfigId : undefined));
   const activeBinding = bindings.find(binding => binding.status === 'ACTIVE');
   const activeHost = hosts.find(host => host.status === 'ACTIVE' || host.status === 'DEGRADED');
+  const openMigration=migrations.find(item=>!['COMPLETED','CANCELLED'].includes(item.status));
+  const hostOnline=Boolean(activeHost?.lastSeenAt&&Date.now()-Date.parse(activeHost.lastSeenAt)<=45_000);
+  const chairTargetBlocked=targetType==='CHAIR_AGENT'&&Boolean(activeBinding)&&(!hostOnline||!activeHost?.capabilities.includes('STORAGE_MIGRATION'));
+  React.useEffect(()=>{
+    if (!canManage||!openMigration||!['storage','all'].includes(section)) return;
+    let cancelled=false;let timer:ReturnType<typeof setTimeout>;
+    const poll=async()=>{
+      try {const [nextMigrations,nextHosts]=await Promise.all([api.listStorageMigrations(committeeId),api.listStorageHosts(committeeId)]);
+        if (!cancelled) {setMigrations(nextMigrations);setHosts(nextHosts);}
+      } catch (caught) {if (!cancelled) setError(caught);}
+      if (!cancelled) timer=setTimeout(poll,2000);
+    };
+    timer=setTimeout(poll,2000);
+    return()=>{cancelled=true;clearTimeout(timer);};
+  },[api,committeeId,canManage,section,openMigration?.id]);
   const createPairing = async (purpose: 'INITIAL' | 'TRANSFER') => {
     setWorking(true); setError(undefined);
     try {
@@ -239,7 +266,7 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
   const targetOptions = [
     ...(!activeBinding || (activeBinding.providerType !== 'SERVER_VOLUME' && activeBinding.providerType !== 'CHAIR_AGENT')
       ? [{key: 'volume', value: 'SERVER_VOLUME', text: t("Server volume")}] : []),
-    ...(!activeBinding && hosts.some(host => host.status === 'ACTIVE' || host.status === 'DEGRADED')
+    ...((!activeBinding||activeBinding.providerType==='SERVER_VOLUME') && hosts.some(host => host.status === 'ACTIVE' || host.status === 'DEGRADED')
       ? [{key: 'chair-agent', value: 'CHAIR_AGENT', text: t("Chair computer")}] : []),
     ...(activeBinding?.providerType === 'CHAIR_AGENT' ? [] : configs.filter(config => config.status === 'ACTIVE'
       && config.id !== activeBinding?.providerConfigId)).map(config => ({key: config.id,
@@ -350,10 +377,10 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
             : <span>{t("Not paired")}</span>}
         </div>
         <div className="self-hosted-storage-host-actions">
-          {!pairing && <Button type="button" primary size="small" disabled={working}
+          {!pairing && <Button type="button" primary size="small" disabled={working||Boolean(openMigration)}
             onClick={() => void createPairing(activeHost ? 'TRANSFER' : 'INITIAL')}>
             {activeHost ? t("Transfer to another computer") : t("Pair chair computer")}</Button>}
-          {activeHost && <Button type="button" basic negative size="small" disabled={working} onClick={() => {
+          {activeHost && <Button type="button" basic negative size="small" disabled={working||Boolean(openMigration)} onClick={() => {
             if (window.confirm(t('Revoke “{name}”?', {name: activeHost.deviceLabel}))) {
               void run(() => api.revokeStorageHost(committeeId, activeHost.id, snapshot.committee.revision));
             }
@@ -410,29 +437,49 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
       {activeBinding && <p>{t("Current:")}{activeBinding.providerType === 'SERVER_VOLUME' ? t("Server volume")
         : activeBinding.providerType === 'CHAIR_AGENT' ? t("Chair computer")
           : `S3 · ${configs.find(config => config.id === activeBinding.providerConfigId)?.displayName ?? t("Configured storage")}`}</p>}
-      {targetOptions.length > 0 ? <Form onSubmit={activeBinding ? createMigration : initializeStorage}>
+      {!openMigration && (targetOptions.length > 0 ? <Form onSubmit={activeBinding ? createMigration : initializeStorage}>
         <div className="storage-settings-row storage-target-row">
           <ViewportFormSelect label={activeBinding ? t("Migrate to") : t("Initial storage")} options={targetOptions}
             value={targetType === 'S3_COMPATIBLE' ? `S3:${targetConfigId}` : targetType}
             onChange={(_, data) => setTarget(String(data.value))} />
-          <Button primary disabled={working || (targetType === 'S3_COMPATIBLE' && !targetConfigId)}>
+          <Button primary disabled={working || chairTargetBlocked || (targetType === 'S3_COMPATIBLE' && !targetConfigId)}>
             {activeBinding ? t("Start migration") : t("Enable storage")}</Button>
         </div>
-      </Form> : <p className="storage-empty-target">{t("No available storage migration targets")}</p>}
+        {chairTargetBlocked&&<p>{t(!hostOnline?"The Chair computer is offline.":"Update the Chair Agent to migrate storage.")}</p>}
+      </Form> : <p className="storage-empty-target">{t("No available storage migration targets")}</p>)}
       {migrations.length > 0 && <Card.Group stackable className="self-hosted-migrations">{migrations.map(migration =>
-        <Card key={migration.id}><Card.Content><Card.Header>{t(MIGRATION_STATUS[migration.status])}</Card.Header>
-          <Card.Meta>{migration.completedItems}/{migration.totalItems}</Card.Meta>
+        <Card fluid key={migration.id}><Card.Content><Card.Header>{t(MIGRATION_STATUS[migration.status])}</Card.Header>
+          {!migration.progress&&<Card.Meta>{migration.completedItems}/{migration.totalItems}</Card.Meta>}
+          {migration.progress&&<Card.Description>
+            <p>{t("Server volume")} → {t("Chair computer")} · {migration.progress.targetDeviceLabel}</p>
+            {migration.status==='COPYING'&&<p>{t(!migration.progress.online?"Connection interrupted":
+              ({WAITING:"Waiting for Chair computer",TRANSFERRING:"Transferring files",VERIFYING:"Verifying files",
+                CONFIRMING:"Verifying before switch",IDLE:"Waiting for Chair computer"} as const)[migration.progress.phase])}</p>}
+            {migration.progress.phase==='CONFIRMING'&&<p>{t("Verifying before switch")}</p>}
+            <Progress color="blue" size="small" percent={migration.progress.totalBytes>0
+              ?100*migration.progress.completedBytes/migration.progress.totalBytes:migration.status==='COPYING'?0:100}
+              aria-label={t("Verified migration progress")} />
+            <p>{t("Verified content")} {migration.completedItems}/{migration.totalItems} · {formatBytes(migration.progress.completedBytes)} / {formatBytes(migration.progress.totalBytes)}</p>
+            {migration.status==='COPYING'&&migration.progress.currentName&&<>
+              <p>{migration.progress.currentName} · {formatBytes(migration.progress.currentBytes)} / {formatBytes(migration.progress.currentTotalBytes)}</p>
+              <Progress color="blue" size="tiny" percent={migration.progress.currentTotalBytes>0
+                ?100*migration.progress.currentBytes/migration.progress.currentTotalBytes:0} aria-label={t("Current file progress")} />
+            </>}
+            {migration.status==='COPYING'&&<p>{t("Estimated time remaining")}: {migration.progress.online
+              ?remainingTime(migration.progress.remainingSeconds):t("Re-estimate after reconnecting")}</p>}
+          </Card.Description>}
           {migration.failureCode && <Card.Description>{migrationFailureText(migration.failureCode)}</Card.Description>}
-        </Card.Content><Card.Content extra>
+        </Card.Content>{!['COMPLETED','CANCELLED'].includes(migration.status)&&<Card.Content extra>
           {migration.status === 'FAILED' && <Button size="small"
             onClick={() => void run(() => api.retryStorageMigration(migration.id, migration.revision))}>{t("Retry migration")}</Button>}
-          {migration.status === 'READY_TO_CONFIRM' && <Button primary size="small"
+          {migration.status === 'READY_TO_CONFIRM' && migration.progress?.phase!=='CONFIRMING' && <Button primary size="small"
+            disabled={working||Boolean(migration.progress&&!migration.progress.online)}
             onClick={() => void run(() => api.confirmStorageMigration(migration.id, migration.revision))}>{t("Confirm switch")}</Button>}
           {!['COMPLETED', 'CANCELLED'].includes(migration.status) && <Button size="small"
             onClick={() => { if (window.confirm(t("Cancel this storage migration?"))) {
               void run(() => api.cancelStorageMigration(migration.id, migration.revision));
             } }}>{t("Cancel migration")}</Button>}
-        </Card.Content></Card>)}</Card.Group>}
+        </Card.Content>}</Card>)}</Card.Group>}
     </Segment>}
   </div>;
 }

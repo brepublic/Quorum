@@ -15,6 +15,7 @@ import type {StorageCapacityGuard} from '../storage/capacity.js';
 import type {Stage6FileService} from '../storage/file-service.js';
 import {DurableStagingStore, UploadStreamError} from '../storage/staging.js';
 import type {CurrentStorageAgentLease, Stage7StorageAgentService} from './service.js';
+import type {Stage6MigrationService} from '../storage/migration-service.js';
 
 interface ManifestRow extends QueryResultRow {
   sequence: string | number;
@@ -63,6 +64,8 @@ interface TaskRow extends QueryResultRow {
   resolution_conflict_id: string | null;
   created_at: Date;
   updated_at: Date;
+  migration_item_id: string | null;
+  local_blob_id: string | null;
 }
 
 export interface AgentBlobDestination {
@@ -81,8 +84,13 @@ export interface StorageAgentTaskCompletionFinalizer {
 
 const TASK_SELECT = `SELECT task.*,encode(task.expected_sha256,'hex') AS expected_sha256_hex,
   encode(task.actual_sha256,'hex') AS actual_sha256_hex,
-  coalesce(upload.agent_relative_path,upload.logical_name) AS source_upload_logical_name
-  FROM storage_agent_tasks task LEFT JOIN file_uploads upload ON upload.id=task.source_upload_id`;
+  coalesce(upload.agent_relative_path,upload.logical_name,migration_file.logical_name) AS source_upload_logical_name,
+  replica.copy_blob_id AS local_blob_id
+  FROM storage_agent_tasks task LEFT JOIN file_uploads upload ON upload.id=task.source_upload_id
+  JOIN committees task_committee ON task_committee.id=task.committee_id
+  LEFT JOIN file_blob_copies replica ON replica.content_blob_id=task.blob_id
+    AND replica.storage_binding_id=task_committee.active_storage_binding_id
+  LEFT JOIN file_entries migration_file ON migration_file.id=task.file_entry_id AND task.migration_item_id IS NOT NULL`;
 
 function positiveInteger(value: unknown, name: string): number {
   if (!Number.isSafeInteger(value) || Number(value) < 1) {
@@ -152,7 +160,8 @@ function task(row: TaskRow): StorageAgentTask {
     resolutionConflictId: row.resolution_conflict_id,
     nextAttemptAt: row.next_attempt_at.toISOString(),
     createdAt: row.created_at.toISOString(),
-    updatedAt: row.updated_at.toISOString()
+    updatedAt: row.updated_at.toISOString(),
+    localBlobId: row.local_blob_id??null
   };
 }
 
@@ -200,7 +209,8 @@ export class Stage7StorageTaskService {
     private readonly staging: DurableStagingStore,
     private readonly files: Stage6FileService,
     private readonly capacity?: StorageCapacityGuard,
-    private readonly finalizer?: StorageAgentTaskCompletionFinalizer
+    private readonly finalizer?: StorageAgentTaskCompletionFinalizer,
+    private readonly migrations?: Stage6MigrationService
   ) {}
 
   async fileStatus(credential: string, leaseGeneration: number, after = ''): Promise<StorageAgentFileStatusPage> {
@@ -218,7 +228,8 @@ export class Stage7StorageTaskService {
         WHERE e.committee_id=$1 AND e.merged_into_file_entry_id IS NULL AND ($2::uuid IS NULL OR e.id>$2::uuid)
         ORDER BY e.id LIMIT 201`, [lease.committeeId, after || null]);
       const rows = result.rows.slice(0, 200);
-      return {committee: {name: committee.name, status: committee.status, storageProvider: binding.rows[0]?.provider_type ?? null},
+      return {migration:this.migrations?await this.migrations.listForAgent(client,lease.committeeId,lease.hostId):undefined,
+        committee: {name: committee.name, status: committee.status, storageProvider: binding.rows[0]?.provider_type ?? null},
         files: rows.map(row => ({fileEntryId: row.id, logicalName: row.logical_name,
         fileRevision: row.revision, blobId: row.blob_id ?? null, sizeBytes: Number(row.size_bytes ?? 0),
         status: row.status, cacheState: row.status === 'DELETED' ? null : row.cache_state ?? null,
@@ -282,7 +293,9 @@ export class Stage7StorageTaskService {
           (SELECT coalesce(agent_relative_path,logical_name) FROM file_uploads upload
             WHERE upload.id=storage_agent_tasks.source_upload_id) AS source_upload_logical_name`,
         [row.id, requestId, randomUUID()]);
-      return task(updated.rows[0] as TaskRow);
+      const current=updated.rows[0] as TaskRow;
+      if (row.migration_item_id) await this.migrations?.startChairTask(client,row.migration_item_id,current.claim_token as string,row.task_type);
+      return task({...current,local_blob_id:row.local_blob_id,source_upload_logical_name:row.source_upload_logical_name});
     });
   }
 
@@ -369,7 +382,7 @@ export class Stage7StorageTaskService {
     const authorized = await this.agent.withCurrentLease(credential, generation, async (client, lease) => {
       const row = requireOwnedTask((await client.query<TaskRow>(`${TASK_SELECT} WHERE task.id=$1 FOR UPDATE OF task`, [taskId])).rows[0], lease);
       requireClaim(row, claimToken);
-      if (!['STORE_BLOB', 'HOST_COMMIT_BLOB'].includes(row.task_type) || row.blob_id !== blobId
+      if (!['STORE_BLOB', 'HOST_COMMIT_BLOB','MIGRATE_BLOB'].includes(row.task_type) || row.blob_id !== blobId
         || row.file_revision !== fileRevision) {
         throw new AppError({reason: 'AGENT_TASK_CONTENT_MISMATCH', code: 'RESOURCE_CONFLICT', message: 'Blob does not match its storage Agent task.'});
       }
@@ -382,8 +395,10 @@ export class Stage7StorageTaskService {
         }
         stagingKey = upload.rows[0].staging_key;
       }
+      const sourceBlobId=row.migration_item_id&&this.migrations
+        ? await this.migrations.chairTaskSource(client,row.migration_item_id,lease.hostId):blobId;
       return {committeeId: lease.committeeId, sizeBytes: Number(row.expected_size_bytes),
-        sha256: row.expected_sha256_hex as string, stagingKey};
+        sha256: row.expected_sha256_hex as string, stagingKey,sourceBlobId};
     });
     if (authorized.stagingKey) {
       await this.staging.verify(authorized.stagingKey, authorized.sizeBytes, authorized.sha256);
@@ -393,7 +408,7 @@ export class Stage7StorageTaskService {
       }
       return;
     }
-    const stored = await this.files.readStoredBlob(authorized.committeeId, blobId);
+    const stored = await this.files.readStoredBlob(authorized.committeeId, authorized.sourceBlobId);
     if (stored.sizeBytes !== authorized.sizeBytes || stored.sha256 !== authorized.sha256) {
       throw new AppError({reason: 'FILE_INTEGRITY_FAILED', expose: true, code: 'SERVICE_NOT_READY', message: 'Stored blob integrity does not match its task.'});
     }
@@ -407,6 +422,29 @@ export class Stage7StorageTaskService {
 
   async fail(credential: string, taskId: string, body: unknown, context: Stage4Context): Promise<StorageAgentTask> {
     return this.finish(credential, taskId, body, 'FAILED', context);
+  }
+
+  async progress(credential:string,taskId:string,body:unknown):Promise<{accepted:true}> {
+    assertExactBody(body as Record<string,unknown>,['leaseGeneration','fileRevision','claimToken','bytes','phase']);
+    const input=body as Record<string,unknown>;
+    const generation=positiveInteger(input.leaseGeneration,'Lease generation');
+    const fileRevision=positiveInteger(input.fileRevision,'File revision');
+    const token=uuid(input.claimToken,'Claim token');
+    const bytes=cursor(input.bytes);
+    if (!['TRANSFERRING','VERIFYING'].includes(String(input.phase))) {
+      throw new AppError({reason:'CLIENT_REQUEST_INVALID',code:'VALIDATION_FAILED',message:'Progress phase is invalid.'});
+    }
+    await this.agent.withCurrentLease(credential,generation,async(client,lease)=>{
+      const row=requireOwnedTask((await client.query<TaskRow>(`${TASK_SELECT} WHERE task.id=$1 FOR UPDATE OF task`,
+        [uuid(taskId,'Task ID')])).rows[0],lease);
+      requireClaim(row,token);
+      if (row.file_revision!==fileRevision || row.task_type!=='MIGRATE_BLOB' || !row.migration_item_id
+        || bytes>Number(row.expected_size_bytes)) {
+        throw new AppError({reason:'AGENT_TASK_CONTENT_MISMATCH',code:'RESOURCE_CONFLICT',message:'Progress does not match its task.'});
+      }
+      await this.migrations?.chairProgress(client,row.migration_item_id,bytes,String(input.phase));
+    });
+    return {accepted:true};
   }
 
   private async finish(credential: string, taskId: string, body: unknown,
@@ -444,7 +482,10 @@ export class Stage7StorageTaskService {
         await client.query(`UPDATE storage_cache_entries SET state='FAILED',storage_key=NULL,cached_at=NULL,
           failure_code=$2,state_changed_at=now(),updated_at=now() WHERE blob_id=$1`, [row.blob_id, code]);
       }
-      if (outcome === 'COMPLETED' && this.finalizer) {
+      if (row.migration_item_id && this.migrations) {
+        await this.migrations.finishChairTask(client,{migration_item_id:row.migration_item_id,task_type:row.task_type,
+          host_id:row.host_id},committee,code);
+      } else if (outcome === 'COMPLETED' && this.finalizer) {
         await this.finalizer.finalize(client, {id: row.id, committeeId: row.committee_id, hostId: row.host_id,
           leaseGeneration: Number(row.lease_generation), type: row.task_type, fileEntryId: row.file_entry_id,
           fileRevision: row.file_revision, blobId: row.blob_id,

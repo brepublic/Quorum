@@ -71,7 +71,7 @@ export class StorageAgentHttpClient {
 
   heartbeat(leaseGeneration: number): Promise<unknown> {
     return this.json('/api/v1/storage-agent/heartbeat', {method: 'POST', body: {
-      leaseGeneration, agentProtocolVersion: 2, capabilities: ['SSE_WAKE', 'CACHE_REFILL']
+      leaseGeneration, agentProtocolVersion: 2, capabilities: ['SSE_WAKE', 'CACHE_REFILL','STORAGE_MIGRATION']
     }});
   }
 
@@ -133,6 +133,11 @@ export class StorageAgentHttpClient {
   complete(task: StorageAgentTask, claimToken: string, requestId: string): Promise<StorageAgentTask> {
     return this.json(`/api/v1/storage-agent/tasks/${task.id}/complete`, {method: 'POST', body: {
       leaseGeneration: task.leaseGeneration, fileRevision: task.fileRevision, claimToken, requestId}});
+  }
+
+  progress(task:StorageAgentTask,claimToken:string,bytes:number,phase:'TRANSFERRING'|'VERIFYING'):Promise<void> {
+    return this.json(`/api/v1/storage-agent/tasks/${task.id}/progress`,{method:'POST',body:{
+      leaseGeneration:task.leaseGeneration,fileRevision:task.fileRevision,claimToken,bytes,phase}});
   }
 
   fail(task: StorageAgentTask, claimToken: string, requestId: string, failureCode: string,

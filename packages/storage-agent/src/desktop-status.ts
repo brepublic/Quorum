@@ -33,6 +33,7 @@ export function desktopFiles(remote: StorageAgentFileStatus[], state: AgentDirec
   for (const task of [...tasks].filter(task => !tasks.some(other => other.fileEntryId === task.fileEntryId
     && other.type === task.type && other.blobId === task.blobId && other.sequence > task.sequence))
     .sort((a, b) => a.sequence - b.sequence)) {
+    if (['MIGRATE_BLOB','VERIFY_MIGRATION_BLOB','DELETE_MIGRATION_BLOB'].includes(task.type)) continue;
     if (task.status === 'COMPLETED' || task.status === 'CANCELLED') continue;
     let row = rows.get(task.fileEntryId);
     if (!row) {row = {id: task.fileEntryId, name: task.logicalName ?? task.fileEntryId,
@@ -46,6 +47,7 @@ export function desktopFiles(remote: StorageAgentFileStatus[], state: AgentDirec
       : task.type === 'UPLOAD_BLOB' ? 'PENDING_UPLOAD' : 'PENDING_DOWNLOAD';
   }
   for (const activity of activities.values()) {
+    if (['MIGRATE_BLOB','VERIFY_MIGRATION_BLOB','DELETE_MIGRATION_BLOB'].includes(activity.type)) continue;
     let row = rows.get(activity.fileEntryId);
     if (!row) {row = {id: activity.fileEntryId, name: activity.name ?? activity.fileEntryId, size: activity.total,
       local: 'UNCONFIRMED', cache: 'UNKNOWN', bytes: 0, total: 0, progress: false, deleted: false}; rows.set(row.id, row);}

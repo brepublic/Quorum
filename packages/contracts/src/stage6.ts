@@ -97,6 +97,20 @@ export interface StorageMigration {
   failureCode: string | null;
   createdAt: string;
   updatedAt: string;
+  progress?: StorageMigrationProgress;
+}
+
+export interface StorageMigrationProgress {
+  targetProviderType: StorageProviderType;
+  targetDeviceLabel: string | null;
+  online: boolean;
+  phase: 'WAITING' | 'TRANSFERRING' | 'VERIFYING' | 'CONFIRMING' | 'IDLE';
+  totalBytes: number;
+  completedBytes: number;
+  currentName: string | null;
+  currentBytes: number;
+  currentTotalBytes: number;
+  remainingSeconds: number | null;
 }
 
 export interface StorageMigrationItem {

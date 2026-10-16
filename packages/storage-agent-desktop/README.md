@@ -69,6 +69,14 @@ GUI 状态查询约每 3 秒一次，10 秒查询超时；断网标记缓存未�
 
 控制协议：Rust → `desktop-bridge.js` 标准输入逐行 JSON（login/logout/change-password/list-committees/select-committee/begin-switch/cancel-switch/switch-committee/open/restore/setup-pair/load/pair/save/save-as/unpair/unpair-local/start/stop/restart）；桥接器 → Rust 标准输出 JSON（account/candidates/switching/setup/defaults/config/unpaired/completed/busy/state/snapshot/log/error）。同步进程标准输出仅发送展示快照；内部日志走标准错误并被桥接器过滤。进度最多约 10 次/秒。展示快照不含凭据、私钥、claim token、哈希或正文。日志保留最近 1000 行；复制/导出不含文件名、用户路径或秘密。
 
+## 迁移至主席电脑
+
+- 配对不改变已有服务器卷。网页“文件 → 存储设置”选择主席电脑并开始迁移，要求当前 Agent 在线且支持迁移。
+- 两端显示已校验内容量、当前文件进度和预计剩余时间。刚开始或断线时不显示未经测量的时间；重新连接后重传未完成项。
+- 应用以不可关闭的进度弹窗遮盖文件列表。复制完成后在网页确认切换；最终本地复核完成才启用主席电脑。失败时在网页重试或取消，完成／取消后弹窗自动收起。
+- `.quorum-blobs` 保存迁移的历史版本，不是临时缓存，不可自行删除；正常文件列表仍只显示当前文件。取消和文件删除通过设备任务清理对应副本。
+- 先部署支持 schema 87 的服务端，再更新 Agent，无须重新配对。
+
 ## 验证
 
 ```sh

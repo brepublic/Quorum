@@ -42,7 +42,8 @@ export interface StorageAgentIdentity {
 }
 
 export const STORAGE_AGENT_TASK_TYPES = [
-  'STORE_BLOB', 'HOST_COMMIT_BLOB', 'UPLOAD_BLOB', 'DELETE_FILE', 'FETCH_BLOB_TO_CACHE'
+  'STORE_BLOB', 'HOST_COMMIT_BLOB', 'UPLOAD_BLOB', 'DELETE_FILE', 'FETCH_BLOB_TO_CACHE',
+  'MIGRATE_BLOB', 'VERIFY_MIGRATION_BLOB', 'DELETE_MIGRATION_BLOB'
 ] as const;
 export type StorageAgentTaskType = typeof STORAGE_AGENT_TASK_TYPES[number];
 
@@ -75,6 +76,7 @@ export interface StorageAgentTask {
   nextAttemptAt: string;
   createdAt: string;
   updatedAt: string;
+  localBlobId?: string | null;
 }
 
 export const STORAGE_AGENT_CONFLICT_REASONS = [
@@ -185,6 +187,7 @@ export interface StorageAgentFileStatus {
   updatedAt: string;
 }
 export interface StorageAgentFileStatusPage {
+  migration?: import('./stage6.js').StorageMigration | null;
   committee?: {name: string; status: 'ACTIVE' | 'PAUSED' | 'ARCHIVED' | 'DELETING';
     storageProvider: 'SERVER_VOLUME' | 'S3_COMPATIBLE' | 'CHAIR_AGENT' | null};
   files: StorageAgentFileStatus[];

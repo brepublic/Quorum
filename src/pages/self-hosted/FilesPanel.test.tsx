@@ -3,7 +3,7 @@ import * as React from 'react';
 import {act} from 'react';
 import {createRoot, type Root} from 'react-dom/client';
 import {beforeEach, afterEach, describe, expect, it, vi} from 'vitest';
-import type {CommitteeWorkspaceSnapshot, FileEntry, StorageHost, StorageMigration} from '@quorum/contracts';
+import type {CommitteeWorkspaceSnapshot, FileEntry, StorageHost, StorageMigration,StorageBinding} from '@quorum/contracts';
 import type {SelfHostedApi} from '../../services/self-hosted-api';
 import {SelfHostedApiError} from '../../services/self-hosted-api';
 import {MemoryRouter} from 'react-router-dom';
@@ -61,6 +61,42 @@ afterEach(() => {if (root) act(() => root?.unmount()); container?.remove(); root
   vi.restoreAllMocks(); window.history.replaceState(null, '', window.location.pathname);});
 
 describe('self-hosted stage 6 file panel', () => {
+  it('keeps server storage after pairing and only starts Chair migration on explicit submission',async()=>{
+    const client=api({
+      listStorageBindings:vi.fn(async():Promise<StorageBinding[]>=>[{id:'volume',committeeId,providerType:'SERVER_VOLUME',providerConfigId:null,storageHostId:null,status:'ACTIVE',revision:1,createdAt:new Date().toISOString()}]),
+      listStorageHosts:vi.fn(async():Promise<StorageHost[]>=>[{id:'host',committeeId,deviceId:'device',deviceLabel:'Test Chair',status:'ACTIVE',leaseGeneration:1,revision:1,
+        lastSeenAt:new Date().toISOString(),pairedAt:new Date().toISOString(),revokedAt:null,agentProtocolVersion:2,capabilities:['STORAGE_MIGRATION']}]),
+      createStorageMigration:vi.fn(async()=>({} as StorageMigration))
+    });
+    const view=await render('CHAIR',client);
+    expect(view.textContent).toContain('当前：服务器卷');
+    expect(client.createStorageMigration).not.toHaveBeenCalled();
+    expect(button('开始迁移')?.disabled).toBe(false);
+    await act(async()=>{view.querySelector('.self-hosted-storage-panel form')?.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));});
+    expect(client.createStorageMigration).toHaveBeenCalledWith(committeeId,2,'CHAIR_AGENT',undefined);
+  });
+
+  it('shows real migration bytes, time estimate and blocks confirmation during the final device check',async()=>{
+    const row:StorageMigration={id:'migration',committeeId,sourceBindingId:'volume',targetBindingId:'chair',status:'COPYING',
+      manifestRevision:1,revision:1,totalItems:12,completedItems:4,failureCode:null,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),
+      progress:{targetProviderType:'CHAIR_AGENT',targetDeviceLabel:'Test Chair',online:true,phase:'TRANSFERRING',totalBytes:280000000,
+        completedBytes:96000000,currentName:'会议资料.pdf',currentBytes:18000000,currentTotalBytes:32000000,remainingSeconds:198}};
+    const client=api({listStorageMigrations:vi.fn(async()=>[row])});
+    let view=await render('CHAIR',client);expect(view.textContent).toContain('预计剩余时间');
+    expect(view.textContent).toContain('约 3 分 20 秒');expect(view.textContent).toContain('会议资料.pdf');
+    expect(button('开始迁移')).toBeUndefined();
+    act(()=>root?.unmount());view.remove();root=undefined;container=undefined;
+    row.status='READY_TO_CONFIRM';row.progress!.phase='CONFIRMING';
+    view=await render('CHAIR',client);expect(view.textContent).toContain('正在复核并切换');expect(button('确认切换')).toBeUndefined();
+  });
+
+  it.each([false,true])('requires both a recent heartbeat and migration capability before starting (offline: %s)',async(offline)=>{
+    const client=api({listStorageBindings:vi.fn(async():Promise<StorageBinding[]>=>[{id:'volume',committeeId,providerType:'SERVER_VOLUME',providerConfigId:null,storageHostId:null,status:'ACTIVE',revision:1,createdAt:new Date().toISOString()}]),
+      listStorageHosts:vi.fn(async():Promise<StorageHost[]>=>[{id:'host',committeeId,deviceId:'device',deviceLabel:'Test Chair',status:'ACTIVE',leaseGeneration:1,revision:1,
+        lastSeenAt:new Date(Date.now()-(offline?60000:0)).toISOString(),pairedAt:new Date().toISOString(),revokedAt:null,agentProtocolVersion:2,
+        capabilities:offline?['STORAGE_MIGRATION']:[]}])});
+    await render('CHAIR',client);expect(button('开始迁移')?.disabled).toBe(true);
+  });
   it.each([
     ['SERVICE_NOT_READY', '存储暂不可用'], ['REVISION_CONFLICT', '状态已更新'],
     ['IDEMPOTENCY_CONFLICT', '请求内容已变更'], ['FORBIDDEN', '没有权限'],

@@ -1,13 +1,13 @@
 import {randomUUID} from 'node:crypto';
-import {watch, type FSWatcher} from 'node:fs';
+import {createReadStream,watch, type FSWatcher} from 'node:fs';
 import {sep} from 'node:path';
 import type {StorageAgentConflict, StorageAgentTask, StorageManifestEvent} from '@quorum/contracts';
 import {StorageAgentHttpClient} from './client.js';
-import {AgentApiError, AgentFileSystemError} from './errors.js';
+import {AgentApiError, AgentFileSystemError,agentErrorCode} from './errors.js';
 import {AgentFileStore} from './files.js';
 import {secureAgentTarget} from './paths.js';
 import {AgentDirectoryScanner, type DetectedLocalChange} from './scanner.js';
-import {AGENT_METADATA_FILE, AGENT_TEMP_DIRECTORY, type AgentStateStore} from './state.js';
+import {AGENT_METADATA_FILE, AGENT_TEMP_DIRECTORY,AGENT_BLOB_DIRECTORY, type AgentStateStore} from './state.js';
 import {AGENT_LOCK_FILE} from './runtime-lock.js';
 
 function latest(events: StorageManifestEvent[]): Map<string, StorageManifestEvent> {
@@ -25,7 +25,8 @@ function due(task: StorageAgentTask, now = Date.now()): boolean {
 }
 
 function safeReason(error: unknown): string {
-  if (error instanceof AgentFileSystemError || error instanceof AgentApiError) return error.code;
+  if (error instanceof AgentFileSystemError) return agentErrorCode(error);
+  if (error instanceof AgentApiError) return error.code;
   return 'AGENT_OPERATION_FAILED';
 }
 
@@ -83,7 +84,8 @@ export class StorageAgentRuntime {
     await this.applyConflictResolutions(await this.client.conflicts(this.leaseGeneration));
     const tasks = await this.loadTasks();
     tasks.sort((left, right) => {
-      const order = {DELETE_FILE: 0, STORE_BLOB: 1, HOST_COMMIT_BLOB: 2, UPLOAD_BLOB: 3, FETCH_BLOB_TO_CACHE: 4};
+      const order = {DELETE_MIGRATION_BLOB:0,VERIFY_MIGRATION_BLOB:1,MIGRATE_BLOB:2,
+        DELETE_FILE: 3, STORE_BLOB: 4, HOST_COMMIT_BLOB: 5, UPLOAD_BLOB: 6, FETCH_BLOB_TO_CACHE: 7};
       return order[left.type] - order[right.type] || left.sequence - right.sequence;
     });
     for (const task of tasks.filter(item => due(item))) await this.processTask(task);
@@ -173,7 +175,8 @@ export class StorageAgentRuntime {
     const tasks: StorageAgentTask[] = []; let after = 0;
     while (true) {
       const page = await this.client.tasks(this.leaseGeneration, after, 100);
-      if (page.tasks.some(task => !['STORE_BLOB', 'HOST_COMMIT_BLOB', 'UPLOAD_BLOB', 'DELETE_FILE', 'FETCH_BLOB_TO_CACHE'].includes(task.type)
+      if (page.tasks.some(task => !['STORE_BLOB', 'HOST_COMMIT_BLOB', 'UPLOAD_BLOB', 'DELETE_FILE', 'FETCH_BLOB_TO_CACHE',
+        'MIGRATE_BLOB','VERIFY_MIGRATION_BLOB','DELETE_MIGRATION_BLOB'].includes(task.type)
         || !['PENDING', 'IN_PROGRESS', 'RETRY', 'COMPLETED', 'FAILED', 'CANCELLED'].includes(task.status))
         || (page.hasMore && page.nextSequence <= after)) {
         throw new AgentApiError(502, 'UNKNOWN_PROTOCOL_STATE', 'Storage task response is invalid.');
@@ -198,16 +201,30 @@ export class StorageAgentRuntime {
       name: claimed.logicalName ?? (manifestFile?.kind === 'UPSERT' ? manifestFile.logicalName : claimed.fileEntryId),
       bytes, total: claimed.expectedSizeBytes ?? 0, code});
     const client = this.client;
+    let lastProgress=Date.now();
     const download = async function* () {
       let bytes = 0;
       for await (const chunk of await client.download(claimed, token)) {
-        bytes += chunk.byteLength; activity('transfer', bytes); yield chunk;
+        bytes += chunk.byteLength; activity('transfer', bytes);
+        if (claimed.type==='MIGRATE_BLOB'&&Date.now()-lastProgress>=1000) {
+          await client.progress(claimed,token,bytes,'TRANSFERRING');lastProgress=Date.now();
+        }
+        yield chunk;
       }
       activity('verify', bytes);
+      if (claimed.type==='MIGRATE_BLOB') await client.progress(claimed,token,bytes,'VERIFYING');
     };
     activity('transfer');
     try {
-      if (claimed.type === 'DELETE_FILE') {
+      if (claimed.type==='MIGRATE_BLOB') {
+        await client.progress(claimed,token,0,'TRANSFERRING');
+        await this.files.storeBlob(claimed.blobId as string,async()=>download(),claimed.expectedSizeBytes as number,claimed.expectedSha256 as string);
+      } else if (claimed.type==='VERIFY_MIGRATION_BLOB') {
+        activity('verify',claimed.expectedSizeBytes??0);
+        await this.files.verifyBlob(claimed.blobId as string,claimed.expectedSizeBytes as number,claimed.expectedSha256 as string);
+      } else if (claimed.type==='DELETE_MIGRATION_BLOB') {
+        await this.files.deleteBlob(claimed.blobId as string);
+      } else if (claimed.type === 'DELETE_FILE') {
         const event = this.manifest.get(claimed.fileEntryId);
         if ((!event || event.kind !== 'DELETE' || event.fileRevision !== claimed.fileRevision)
           && !claimed.resolutionConflictId) {
@@ -229,7 +246,8 @@ export class StorageAgentRuntime {
         const pending = claimed.resolutionConflictId ? snapshot.conflicts[claimed.resolutionConflictId] : undefined;
         const expected = claimed.resolutionConflictId
           ? conflictExpected(snapshot, claimed.resolutionConflictId) : undefined;
-        await this.files.applyUpsert(event, download(),
+        const local=claimed.localBlobId?await this.files.verifyBlob(claimed.localBlobId,event.sizeBytes,event.sha256):null;
+        await this.files.applyUpsert(event, local?createReadStream(local):download(),
           {force: Boolean(pending), conflictPath: pending?.relativePath, conflictExpected: expected});
         if (pending && pending.relativePath !== event.logicalName) {
           await this.files.discardConflict(pending.relativePath, expected);
@@ -262,8 +280,9 @@ export class StorageAgentRuntime {
           || event.sha256 !== claimed.expectedSha256) {
           throw new AgentFileSystemError('LOCAL_CONTENT_INVALID', 'Cache refill does not match the local manifest.');
         }
-        const target = await secureAgentTarget(this.state.rootPath, event.logicalName);
-        const inspected = await this.files.inspect(event.logicalName);
+        const local=claimed.localBlobId?await this.files.verifyBlob(claimed.localBlobId,event.sizeBytes,event.sha256):null;
+        const target = local?{absolutePath:local}:await secureAgentTarget(this.state.rootPath, event.logicalName);
+        const inspected = local?{sizeBytes:event.sizeBytes,sha256:event.sha256}:await this.files.inspect(event.logicalName);
         if (inspected.sizeBytes !== event.sizeBytes || inspected.sha256 !== event.sha256) {
           throw new AgentFileSystemError('LOCAL_CONTENT_INVALID', 'Local cache refill source changed.');
         }
@@ -277,6 +296,8 @@ export class StorageAgentRuntime {
     } catch (error) {
       const code = safeReason(error);
       activity('failed', 0, code);
+      if (claimed.type==='MIGRATE_BLOB'&&(!(error instanceof AgentFileSystemError)
+        ||['NETWORK_ERROR','ECONNRESET','ETIMEDOUT','EHOSTUNREACH','ENETUNREACH','EAI_AGAIN','UND_ERR_SOCKET'].includes(code))) throw error;
       if (claimed.resolutionConflictId) {
         if (error instanceof AgentFileSystemError && error.code === 'LOCAL_CONTENT_CONFLICT') {
           await this.client.fail(claimed, token, randomUUID(), code).catch(() => undefined);
@@ -342,7 +363,7 @@ export class StorageAgentRuntime {
   private startWatcher(): void {
     const changed = (_event: string, filename: string | Buffer | null) => {
       const rootEntry = filename?.toString().split(sep)[0];
-      if (rootEntry && [AGENT_METADATA_FILE, AGENT_TEMP_DIRECTORY, AGENT_LOCK_FILE].includes(rootEntry)) return;
+      if (rootEntry && [AGENT_METADATA_FILE, AGENT_TEMP_DIRECTORY,AGENT_BLOB_DIRECTORY, AGENT_LOCK_FILE].includes(rootEntry)) return;
       this.logger.info('storage_agent.filesystem_changed');
       this.signalWake();
     };

@@ -105,7 +105,7 @@ async function main(): Promise<void> {
       capacity);
     const storageMaintenance = new Stage6MaintenanceService(pool, staging, files, capacity, logger);
     const storageAgent = new Stage7StorageAgentService(pool);
-    const storageTasks = new Stage7StorageTaskService(storageAgent, staging, files, capacity, chairAgentProvider);
+    const storageTasks = new Stage7StorageTaskService(storageAgent, staging, files, capacity, chairAgentProvider, storageMigrations);
     const storageLocalChanges = new Stage7LocalChangeService(storageAgent);
     const storageConflicts = new Stage7ConflictService(pool, storageAgent);
     const archives = new Stage8ArchiveService(pool);

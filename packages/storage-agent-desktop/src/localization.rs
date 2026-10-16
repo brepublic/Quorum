@@ -28,6 +28,23 @@ pub fn stale_time(timestamp: &str, now: SystemTime, language: &str) -> String {
 
 pub fn translate(key: &str, language: &str) -> &'static str {
     let (en, zh) = match key {
+        "File migration" => ("File migration", "文件迁移"),
+        "Server storage" => ("Server storage", "服务器卷"),
+        "Chair computer" => ("Chair computer", "主席电脑"),
+        "Verified" => ("Verified", "已校验"),
+        "Estimated time remaining" => ("Estimated time remaining", "预计剩余时间"),
+        "Estimating" => ("Estimating…", "正在估算…"),
+        "Re-estimate after reconnecting" => ("Re-estimate after reconnecting", "连接后重新估算"),
+        "Open storage settings" => ("Open storage settings ↗", "打开网页存储设置 ↗"),
+        "MIGRATION_WAITING" => ("Waiting for migration", "等待迁移"),
+        "MIGRATION_COPYING" => ("Transferring files", "正在传输"),
+        "MIGRATION_VERIFYING" => ("Verifying files", "正在校验"),
+        "MIGRATION_CONFIRMING" => ("Verifying before switch", "正在复核并切换"),
+        "MIGRATION_READY" => ("Confirm the switch in web storage settings.", "请在网页存储设置中确认切换。"),
+        "MIGRATION_FAILED" => ("Retry or cancel the migration in web storage settings.", "请在网页存储设置中重试或取消迁移。"),
+        "MIGRATION_DISCONNECTED" => ("Connection interrupted", "连接中断"),
+        "MANIFEST_CHANGED" => ("The file list changed. Retry the migration.", "文件清单已变化，请重试迁移。"),
+        "HOST_TRANSFERRED" => ("The target computer changed. Cancel this migration.", "目标电脑已更换或撤销，请取消迁移。"),
         "settings" => ("Connection settings", "连接设置"),
         "committees" => ("Load committees", "加载委员会列表"),
         "pairing" => ("Authorize connection", "获取连接授权"),

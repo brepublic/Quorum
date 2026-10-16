@@ -1,11 +1,11 @@
 import {createHash, randomUUID} from 'node:crypto';
 import {constants as fsConstants} from 'node:fs';
-import {lstat, open, readdir, rename, rm, unlink} from 'node:fs/promises';
+import {lstat, mkdir,open, readdir, rename, rm, unlink} from 'node:fs/promises';
 import {join} from 'node:path';
 import type {StorageManifestEvent} from '@quorum/contracts';
 import {AgentFileSystemError} from './errors.js';
 import {secureAgentTarget} from './paths.js';
-import {AGENT_TEMP_DIRECTORY, type AgentStateStore, type TrackedAgentFile} from './state.js';
+import {AGENT_TEMP_DIRECTORY,AGENT_BLOB_DIRECTORY, type AgentStateStore, type TrackedAgentFile} from './state.js';
 
 async function hashRegularFile(path: string): Promise<{sizeBytes: number; sha256: string; modifiedTimeMs: number}> {
   const before = await lstat(path);
@@ -93,6 +93,58 @@ export class AgentFileStore {
   constructor(private readonly state: AgentStateStore) {}
 
   get rootPath(): string { return this.state.rootPath; }
+
+  private async blobTarget(blobId:string):Promise<string> {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(blobId)) {
+      throw new AgentFileSystemError('UNSAFE_LOCAL_PATH','Local blob identity is invalid.');
+    }
+    const directory=join(this.rootPath,AGENT_BLOB_DIRECTORY);
+    await mkdir(directory,{recursive:true,mode:0o700});
+    const stats=await lstat(directory);
+    if (!stats.isDirectory()||stats.isSymbolicLink()) throw new AgentFileSystemError('UNSAFE_LOCAL_PATH','Local blob directory is unsafe.');
+    return join(directory,blobId.toLowerCase());
+  }
+
+  async verifyBlob(blobId:string,sizeBytes:number,sha256:string):Promise<string> {
+    const target=await this.blobTarget(blobId);
+    let actual;
+    try {actual=await hashRegularFile(target);}
+    catch(error) {
+      if (error instanceof AgentFileSystemError) throw error;
+      throw new AgentFileSystemError('LOCAL_CONTENT_INVALID','Migration content is unavailable.',error);
+    }
+    if (actual.sizeBytes!==sizeBytes||actual.sha256!==sha256) {
+      throw new AgentFileSystemError('LOCAL_CONTENT_INVALID','Stored migration content failed verification.');
+    }
+    return target;
+  }
+
+  async storeBlob(blobId:string,source:()=>Promise<AsyncIterable<Uint8Array>>,sizeBytes:number,sha256:string):Promise<void> {
+    const target=await this.blobTarget(blobId);
+    if (!await missing(target)) {
+      try {await this.verifyBlob(blobId,sizeBytes,sha256);return;}
+      catch(error) {
+        if (!(error instanceof AgentFileSystemError)||error.code!=='LOCAL_CONTENT_INVALID') throw error;
+        await unlink(target);
+      }
+    }
+    const temporary=join(this.rootPath,AGENT_TEMP_DIRECTORY,`migration-${randomUUID()}.partial`);
+    try {
+      await writeVerified(temporary,await source(),sizeBytes,sha256);
+      if (!await missing(target)) {await this.verifyBlob(blobId,sizeBytes,sha256);return;}
+      await this.blobTarget(blobId);
+      await rename(temporary,target);
+      const directory=await open(join(this.rootPath,AGENT_BLOB_DIRECTORY),fsConstants.O_RDONLY|fsConstants.O_NOFOLLOW);
+      try {await directory.sync();} finally {await directory.close();}
+    } finally {await rm(temporary,{force:true});}
+  }
+
+  async deleteBlob(blobId:string):Promise<void> {
+    const target=await this.blobTarget(blobId);
+    if (await missing(target)) return;
+    await hashRegularFile(target);
+    await unlink(target);
+  }
 
   async cleanupTemporaryFiles(): Promise<void> {
     const directory = join(this.rootPath, AGENT_TEMP_DIRECTORY);

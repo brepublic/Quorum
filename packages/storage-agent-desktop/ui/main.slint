@@ -205,6 +205,16 @@ export component MainWindow inherits Window {
     in-out property <string> committee-id;
     in-out property <string> committee-status;
     in-out property <string> storage-provider;
+    in-out property <bool> migration-active: false;
+    in-out property <string> migration-phase;
+    in-out property <string> migration-count;
+    in-out property <string> migration-bytes;
+    in-out property <string> migration-file;
+    in-out property <string> migration-file-bytes;
+    in-out property <float> migration-fraction;
+    in-out property <float> migration-file-fraction;
+    in-out property <string> migration-remaining;
+    in-out property <string> migration-error;
     in-out property <string> current-host;
     in-out property <bool> account-setup: false;
     in-out property <bool> transfer-confirmed: false;
@@ -216,7 +226,7 @@ export component MainWindow inherits Window {
     in-out property <bool> language-menu: false;
     in-out property <bool> login-options: false;
     in-out property <bool> login-network: false;
-    out property <bool> controls-enabled: root.overwrite-path == "" && !root.confirm-unpair && root.confirm-discard == "" && !root.language-menu && !root.closing;
+    out property <bool> controls-enabled: root.overwrite-path == "" && !root.confirm-unpair && root.confirm-discard == "" && !root.language-menu && !root.closing && !root.migration-active;
     out property <bool> certificate-error: root.error-stage == "tls" || root.error-code == "UNABLE_TO_GET_ISSUER_CERT_LOCALLY" || root.error-code == "DEPTH_ZERO_SELF_SIGNED_CERT" || root.error-code == "SELF_SIGNED_CERT_IN_CHAIN";
     in-out property <bool> files-loaded: false;
     in-out property <bool> setup-mode: false;
@@ -671,6 +681,49 @@ export component MainWindow inherits Window {
 
     if root.copied-notice != "": Rectangle { x: (root.width - self.width) / 2; y: root.height - self.height - 20px; width: toast.preferred-width + 32px; height: 40px; background: Palette.foreground; border-radius: 6px;
         toast := Text { text: root.copied-notice; color: Palette.background; horizontal-alignment: center; vertical-alignment: center; }
+    }
+
+    if root.migration-active: Rectangle {
+        background: #18273c99;
+        TouchArea { }
+        FocusScope {
+            init => {self.focus();}
+            key-pressed(event) => {if event.text == Key.Escape {return accept;} return reject;}
+            Rectangle {
+                x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+                width: min(620px, root.width - 48px); height: migration-body.preferred-height;
+                background: Palette.background; border-radius: 12px;
+                migration-body := VerticalLayout { padding: 28px; spacing: 18px;
+                    Text { text: root.translate("File migration", root.language); font-size: 22px; color: Palette.foreground; }
+                    Caption { text: root.translate("Server storage", root.language) + " → " + root.translate("Chair computer", root.language); }
+                    Text { text: root.translate(root.migration-phase, root.language); color: Palette.foreground; wrap: word-wrap; }
+                    HorizontalLayout {
+                        Caption { text: root.translate("Verified", root.language) + " " + root.migration-count; }
+                        Rectangle { horizontal-stretch: 1; }
+                        Caption { text: root.migration-bytes; }
+                    }
+                    Rectangle { height: 7px; border-radius: 4px; background: Palette.alternate-background;
+                        Rectangle { x: 0px; y: 0px; height: parent.height; width: parent.width * root.migration-fraction; border-radius: 4px; background: Palette.accent-background; }
+                    }
+                    if root.migration-file != "": VerticalLayout { spacing: 8px;
+                        Text { text: root.migration-file; color: Palette.foreground; wrap: word-wrap; }
+                        Caption { text: root.migration-file-bytes; }
+                        Rectangle { height: 4px; background: Palette.alternate-background;
+                            Rectangle { x: 0px; y: 0px; height: parent.height; width: parent.width * root.migration-file-fraction; background: Palette.accent-background; }
+                        }
+                    }
+                    if root.migration-remaining != "": HorizontalLayout {
+                        Caption { text: root.translate("Estimated time remaining", root.language); }
+                        Rectangle { horizontal-stretch: 1; }
+                        Text { text: root.migration-remaining; color: Palette.foreground; }
+                    }
+                    if root.migration-error != "": Notice { text: root.translate(root.migration-error, root.language); error: true; dismissible: false; }
+                    if root.migration-phase == "MIGRATION_READY" || root.migration-phase == "MIGRATION_FAILED": QuietButton {
+                        text: root.translate("Open storage settings", root.language); clicked => {root.action("open-migration");}
+                    }
+                }
+            }
+        }
     }
 
     if root.confirm-discard != "": Rectangle {

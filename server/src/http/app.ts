@@ -299,11 +299,12 @@ async function handleStage7AgentRequest(options: {
       positiveHeader(request, 'x-storage-lease-generation'), after, limit), requestId));
     return true;
   }
-  const agentTask = /^\/api\/v1\/storage-agent\/tasks\/([0-9a-f-]{36})\/(claim|complete|fail)$/.exec(pathname);
+  const agentTask = /^\/api\/v1\/storage-agent\/tasks\/([0-9a-f-]{36})\/(claim|complete|fail|progress)$/.exec(pathname);
   if (storageTasks && method === 'POST' && agentTask) {
     const body = await readJson(request); const credential = storageAgentCredential(request);
     const id = agentTask[1] as string;
-    const result = agentTask[2] === 'claim' ? await storageTasks.claim(credential, id, body)
+    const result = agentTask[2] === 'progress' ? await storageTasks.progress(credential,id,body)
+      : agentTask[2] === 'claim' ? await storageTasks.claim(credential, id, body)
       : agentTask[2] === 'complete' ? await storageTasks.complete(credential, id, body, context)
         : await storageTasks.fail(credential, id, body, context);
     sendJson(response, 200, success(result, requestId)); return true;

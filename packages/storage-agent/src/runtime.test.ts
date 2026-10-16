@@ -42,7 +42,7 @@ async function fixture(clientOverrides: Record<string, unknown> = {}) {
     hasMore: false})), tasks: vi.fn(async () => ({tasks: [], nextSequence: 0, hasMore: false})),
     claim: vi.fn(async (value: StorageAgentTask) => ({...value, status: 'IN_PROGRESS',
       claimToken: '50000000-0000-4000-8000-000000000001'})), complete: vi.fn(async (value: StorageAgentTask) => value),
-    fail: vi.fn(async (value: StorageAgentTask) => value), download: vi.fn(), upload: vi.fn(), localChange: vi.fn(),
+    fail: vi.fn(async (value: StorageAgentTask) => value),progress:vi.fn(async()=>undefined), download: vi.fn(), upload: vi.fn(), localChange: vi.fn(),
     conflicts: vi.fn(async () => []), events: vi.fn(async (_generation: number, signal: AbortSignal) => {
       if (signal.aborted) return;
       await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), {once: true}));
@@ -53,6 +53,27 @@ async function fixture(clientOverrides: Record<string, unknown> = {}) {
 }
 
 describe('Chair Agent recovery loop', () => {
+  it('migrates historical content without a current manifest and verifies it in a separate task',async()=>{
+    const value=await fixture();
+    const migration=task('MIGRATE_BLOB',{logicalName:'old version'});
+    vi.mocked(value.client.tasks).mockResolvedValue({tasks:[migration],nextSequence:1,hasMore:false});
+    vi.mocked(value.client.download).mockResolvedValue((async function*(){yield Buffer.from('new');})());
+    await value.runtime.synchronizeOnce();expect(value.client.complete).toHaveBeenCalledOnce();
+    expect(value.client.progress).toHaveBeenLastCalledWith(expect.objectContaining({type:'MIGRATE_BLOB'}),expect.any(String),3,'VERIFYING');
+    expect(value.state.snapshot().files).toEqual({});expect(value.client.localChange).not.toHaveBeenCalled();
+    const verify=task('VERIFY_MIGRATION_BLOB');
+    vi.mocked(value.client.tasks).mockResolvedValue({tasks:[verify],nextSequence:2,hasMore:false});
+    await value.runtime.synchronizeOnce();expect(value.client.complete).toHaveBeenCalledTimes(2);
+    expect(value.client.download).toHaveBeenCalledOnce();
+  });
+
+  it('preserves migration claims for automatic retry after a network interruption',async()=>{
+    const value=await fixture();const migration=task('MIGRATE_BLOB');
+    vi.mocked(value.client.tasks).mockResolvedValue({tasks:[migration],nextSequence:1,hasMore:false});
+    vi.mocked(value.client.download).mockRejectedValue(Object.assign(new Error('network'),{code:'NETWORK_ERROR'}));
+    await expect(value.runtime.synchronizeOnce()).rejects.toMatchObject({cause:{code:'NETWORK_ERROR'}});
+    expect(value.client.fail).not.toHaveBeenCalled();expect(value.client.complete).not.toHaveBeenCalled();
+  });
   it('applies the latest tombstone before downloading any server UPSERT task', async () => {
     const value = await fixture();
     const old: Extract<StorageManifestEvent, {kind: 'UPSERT'}> = {sequence: 1, kind: 'UPSERT', fileEntryId,

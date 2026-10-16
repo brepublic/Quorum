@@ -554,7 +554,7 @@ export class Stage7StorageAgentService {
     const requestedGeneration = generation(heartbeat.leaseGeneration);
     const protocolVersion = heartbeat.agentProtocolVersion === undefined ? null : revision(heartbeat.agentProtocolVersion);
     if (heartbeat.capabilities !== undefined && (!Array.isArray(heartbeat.capabilities)
-      || heartbeat.capabilities.some(value => value !== 'SSE_WAKE' && value !== 'CACHE_REFILL')
+      || heartbeat.capabilities.some(value => value !== 'SSE_WAKE' && value !== 'CACHE_REFILL' && value !== 'STORAGE_MIGRATION')
       || new Set(heartbeat.capabilities).size !== heartbeat.capabilities.length)) {
       throw new AppError({reason: 'AGENT_UPGRADE_REQUIRED', code: 'VALIDATION_FAILED', message: 'Agent capabilities are invalid.'});
     }

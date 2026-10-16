@@ -28,6 +28,38 @@ fn bytes(n: f64) -> String {
         format!("{} B", n as u64)
     }
 }
+
+fn migration_view(ui: &MainWindow, value: &Value) {
+    let active = matches!(text(value, "status"), "COPYING" | "READY_TO_CONFIRM" | "FAILED");
+    ui.set_migration_active(active);
+    if !active {return;}
+    let progress = &value["progress"];
+    let online = progress["online"] == true;
+    let phase = if text(value,"status")=="FAILED" {"MIGRATION_FAILED"} else if !online {"MIGRATION_DISCONNECTED"}
+        else if text(progress,"phase")=="CONFIRMING" {"MIGRATION_CONFIRMING"}
+        else if text(value,"status")=="READY_TO_CONFIRM" {"MIGRATION_READY"}
+        else {match text(progress,"phase") {"TRANSFERRING"=>"MIGRATION_COPYING","VERIFYING"=>"MIGRATION_VERIFYING",_=>"MIGRATION_WAITING"}};
+    ui.set_migration_phase(phase.into());
+    let total = progress["totalBytes"].as_f64().unwrap_or(0.0);
+    let completed = progress["completedBytes"].as_f64().unwrap_or(0.0);
+    let current = progress["currentBytes"].as_f64().unwrap_or(0.0);
+    let current_total = progress["currentTotalBytes"].as_f64().unwrap_or(0.0);
+    ui.set_migration_count(format!("{} / {}",value["completedItems"].as_u64().unwrap_or(0),value["totalItems"].as_u64().unwrap_or(0)).into());
+    ui.set_migration_bytes(format!("{} / {}",bytes(completed),bytes(total)).into());
+    ui.set_migration_fraction(if total>0.0 {(completed/total).clamp(0.0,1.0) as f32} else if text(value,"status")=="READY_TO_CONFIRM" {1.0} else {0.0});
+    ui.set_migration_file(if text(value,"status")=="COPYING" {text(progress,"currentName")} else {""}.into());
+    ui.set_migration_file_bytes(format!("{} / {}",bytes(current),bytes(current_total)).into());
+    ui.set_migration_file_fraction(if current_total>0.0 {(current/current_total).clamp(0.0,1.0) as f32} else {0.0});
+    let language=ui.get_language();
+    let remaining = if text(value,"status")!="COPYING" {String::new()}
+        else if !online {translate("Re-estimate after reconnecting",language.as_str()).to_owned()}
+        else if let Some(seconds)=progress["remainingSeconds"].as_u64() {
+            let rounded=seconds.div_ceil(10).max(1)*10;
+            if language=="zh-CN" {format!("约 {} 分 {} 秒",rounded/60,rounded%60)} else {format!("About {} min {} sec",rounded/60,rounded%60)}
+        } else {translate("Estimating",language.as_str()).to_owned()};
+    ui.set_migration_remaining(remaining.into());
+    ui.set_migration_error(if text(value,"status")=="FAILED" {text(value,"failureCode")} else {""}.into());
+}
 fn form_state(ui: &MainWindow) -> Value {
     json!([
         ui.get_config_path().as_str(),
@@ -234,6 +266,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ui.on_action(move |action| {
         let Some(ui) = weak.upgrade() else {return};
         if ui.get_busy() || ui.get_closing() {return;}
+        if ui.get_migration_active() && action != "open-migration" {return;}
         let mut action = action.as_str();
         if !ui.get_confirm_discard().is_empty() && !action.starts_with("discard-") {return;}
         let dirty = matches!(ui.get_page().as_str(), "home" | "manual") && form_state(&ui) != *saved_action.borrow();
@@ -321,8 +354,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ui.set_unpair_failed(false); ui.set_confirm_unpair(true); return;
         }
         if action == "unpair" {ui.set_resume_after_edit(false);}
-        if matches!(action, "open-root" | "open-web" | "open-conflicts") {
-            let target = if action == "open-root" {ui.get_root_path()} else if action == "open-conflicts" {format!("{}/posts/storage#sync-conflicts", ui.get_committee_url().trim_end_matches("/files")).into()} else {ui.get_committee_url()};
+        if matches!(action, "open-root" | "open-web" | "open-conflicts" | "open-migration") {
+            let target = if action == "open-root" {ui.get_root_path()} else if action == "open-migration" {format!("{}/posts/storage",ui.get_committee_url().trim_end_matches("/files")).into()} else if action == "open-conflicts" {format!("{}/posts/storage#sync-conflicts", ui.get_committee_url().trim_end_matches("/files")).into()} else {ui.get_committee_url()};
             if !target.is_empty() {
                 let weak = ui.as_weak();
                 thread::spawn(move || {
@@ -454,7 +487,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return slint::CloseRequestResponse::HideWindow;
         }
         if let Some(ui) = weak.upgrade() {
-            if ui.get_busy() {
+            if ui.get_busy() || ui.get_migration_active() {
                 return slint::CloseRequestResponse::KeepWindowShown;
             }
             if ui.get_error_stage() == "paired-local-recovery" || (matches!(ui.get_page().as_str(), "home" | "manual") && (form_state(&ui) != *saved_close.borrow() || !ui.get_pairing_code().is_empty())) {
@@ -594,6 +627,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         if state == "STARTING" {ui.set_show_settings(false);}
                         ui.set_running(matches!(state, "STARTING" | "RUNNING" | "STOPPING"));
                         if state == "EXITED" {
+                            ui.set_migration_active(false);
                             ui.set_committee_status("".into());
                             if ui.get_resume_after_edit() {ui.set_editing(true);}
                             for row in rows.borrow_mut().iter_mut() {
@@ -621,6 +655,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     },
                     "snapshot" => {
                         if ui.get_switching() {continue;}
+                        migration_view(&ui, &value["migration"]);
                         last_snapshot.set(Some(Instant::now()));
                         ui.set_status_delayed(false);
                         ui.set_committee_status(text(&value["committee"], "status").into());
