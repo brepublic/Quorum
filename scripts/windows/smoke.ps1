@@ -216,6 +216,10 @@ process.stdin.on('end', () => {fs.writeFileSync(process.env.QUORUM_SMOKE_BUSY_RE
     }
 } catch {
     Write-Host $_.ScriptStackTrace
+    foreach ($quorumLog in Get-ChildItem -LiteralPath $quorumArtifacts -Filter '*.log') {
+        Write-Host "Installer log: $($quorumLog.Name)"
+        Get-Content -LiteralPath $quorumLog.FullName -Tail 80 | ForEach-Object { Write-Host $_ }
+    }
     $quorumResults.Add(@{check = 'smoke failure'; passed = $false; details = $_.Exception.Message})
     [IO.File]::WriteAllText($Report, ($quorumResults | ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false))
     throw
