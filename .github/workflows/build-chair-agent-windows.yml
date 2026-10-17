@@ -61,6 +61,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pnpm --filter @quorum/storage-agent build
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo build --locked --manifest-path packages/storage-agent-desktop/Cargo.toml --bins
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:QUORUM_AGENT_PLATFORM = (Resolve-Path 'packages/storage-agent-desktop/target/debug/quorum-agent-platform.exe').Path
+          $env:QUORUM_AGENT_NODE = (Get-Command node.exe).Source
           pnpm exec vitest run scripts/storage-agent-release.test.ts scripts/storage-agent-windows-release.test.ts packages/storage-agent/src
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked --manifest-path packages/storage-agent-desktop/Cargo.toml --bins

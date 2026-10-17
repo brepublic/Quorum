@@ -1,5 +1,10 @@
 # 更新日志
 
+## 2026-10-17：Windows Agent CI 原生测试依赖修复
+
+- 在 Vitest 前构建 Windows GUI 与平台辅助程序，避免全新 runner 因缺少 `quorum-agent-platform.exe` 报 `WINDOWS_PLATFORM_UNAVAILABLE`；原生构建失败立即终止测试步骤。
+- 显式设置测试使用的 `QUORUM_AGENT_PLATFORM` 和 `QUORUM_AGENT_NODE`，补齐 ACL、目录锁及 Rust 子进程清理测试的运行前提；后续发行仍单独构建 release 产物。
+
 ## 2026-10-07：Windows GUI 关闭与发行验收修复
 
 - 忙碌期间的关闭请求保留到操作完成，再检查配置和配对恢复确认；Windows 桥接正常退出后明确结束 GUI，释放窗口、内核锁和 Job handle。
