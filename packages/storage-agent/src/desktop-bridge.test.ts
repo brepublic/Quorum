@@ -4,12 +4,12 @@ import {spawn, execFileSync, type ChildProcessWithoutNullStreams} from 'node:chi
 import {createServer, type Server} from 'node:https';
 import {createInterface} from 'node:readline';
 import {link, mkdtemp, readFile, rm, mkdir, writeFile, stat, symlink} from 'node:fs/promises';
-import {join, resolve} from 'node:path';
+import {basename, join, resolve, sep} from 'node:path';
 import {tmpdir} from 'node:os';
 import {afterEach, describe, expect, it} from 'vitest';
 import {lockAgentRoot} from './runtime-lock';
 import {checkPrivatePath, protectPrivatePath} from './windows-platform';
-import {writePrivateAgentFile} from './config';
+import {writeAgentConfig, writePrivateAgentFile} from './config';
 async function expectPrivate(path: string) {if (process.platform === 'win32') await checkPrivatePath(path); else expect((await stat(path)).mode & 0o777).toBe(0o600);}
 
 const cleanup: (()=>Promise<unknown>)[]=[];
@@ -351,6 +351,19 @@ describe('desktop bridge process lifecycle',()=>{
     expect(await readFile(f.settings.configPath,'utf8')).toBe(original);
     expect(await f.command('start')).toContainEqual(expect.objectContaining({event:'error',code:'CONFIG_REQUIRED'}));
     expect(JSON.stringify(f.events)).not.toContain('qsa1.');
+  },30000);
+  it('saves a loaded config whose root is another path spelling of the same directory', async () => {
+    const f = await fixture(); await f.command('pair', f.settings);
+    const saved = JSON.parse(await readFile(f.settings.configPath, 'utf8'));
+    saved.rootPath = f.settings.rootPath + sep + '..' + sep + basename(f.settings.rootPath);
+    await writeAgentConfig(f.settings.configPath, saved);
+    expect(await f.command('load', f.settings)).toContainEqual(expect.objectContaining({event:'config', rootPath:saved.rootPath}));
+    const savePath = join(f.root, 'canonical-copy.json');
+    expect(await f.command('save-as', {...f.settings, savePath}))
+      .toContainEqual(expect.objectContaining({event:'config', configPath:savePath, paired:true}));
+    expect(JSON.parse(await readFile(savePath, 'utf8')).rootPath).toBe(f.settings.rootPath);
+    await expectPrivate(savePath);
+    await (await lockAgentRoot(f.settings.rootPath))();
   },30000);
   it('keeps the loaded config when the original server cannot be reached for revocation', async () => {
     const f = await fixture(); await f.command('pair', f.settings);

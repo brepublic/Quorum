@@ -427,9 +427,12 @@ async function command(input: Record<string, unknown>) {
     if (meta.committeeId !== config.committeeId || meta.deviceId !== config.deviceId) throw new Error('ROOT_IDENTITY_MISMATCH');
     const root = await realpath(next.rootPath); outside(root, await realpath(configPath));
     if (next.caCertificatePath) outside(root, await realpath(next.caCertificatePath));
+    // Compare canonical paths on both sides: Windows temp paths can use an 8.3
+    // alias for the same directory, which must not be locked twice as a move.
+    const movedRoot = root !== await canonical(config.rootPath);
     // A moved directory must include every tracked and pending file. A partial
     // copy would otherwise be interpreted as deliberate shared-file deletion.
-    if (root !== config.rootPath) {
+    if (movedRoot) {
       const movedState = await AgentStateStore.initialize(root, {committeeId: config.committeeId, deviceId: config.deviceId});
       const store = new AgentFileStore(movedState);
       for (const entry of [...Object.values(movedState.snapshot().files), ...Object.values(movedState.snapshot().pendingUploads)]) {
@@ -441,7 +444,7 @@ async function command(input: Record<string, unknown>) {
       }
     }
     let oldUnlock: (() => Promise<void>) | undefined;
-    if (root !== config.rootPath) {
+    if (movedRoot) {
       try {await lstat(config.rootPath); oldUnlock = await lockAgentRoot(config.rootPath);}
       catch(error) {if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;}
     }
