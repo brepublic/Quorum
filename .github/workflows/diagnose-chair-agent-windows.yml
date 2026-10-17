@@ -3,7 +3,7 @@ name: Diagnose packaged Windows Chair Agent
 on:
   push:
     branches: [windows-agent]
-    paths: ['.github/workflows/diagnose-chair-agent-windows.yml']
+    paths: ['.github/workflows/diagnose-chair-agent-windows.yml', 'scripts/windows/smoke.ps1']
 
 permissions:
   contents: read

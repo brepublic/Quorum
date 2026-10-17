@@ -20,6 +20,24 @@ function Wait-ProcessExit([Diagnostics.Process]$Process, [int]$Timeout = 15000) 
     if (-not $Process.WaitForExit($Timeout)) { $Process.Kill(); throw 'Packaged process did not stop within the timeout' }
     if ($Process.ExitCode -ne 0) { throw "Packaged process failed with exit $($Process.ExitCode) at smoke line $($MyInvocation.ScriptLineNumber) (PID $($Process.Id))" }
 }
+function Wait-UninstallExit([Diagnostics.Process]$Process, [int]$Timeout = 60000) {
+    $quorumWait = [Diagnostics.Stopwatch]::StartNew()
+    Wait-ProcessExit $Process $Timeout
+    # Inno's launcher can exit while its real uninstaller still owns this lock.
+    # DeinitializeUninstall releases it after the owned integration is removed.
+    $quorumDesktopLock = Join-Path $env:LOCALAPPDATA 'quorum-agent/desktop.lock'
+    while ($quorumWait.ElapsedMilliseconds -lt $Timeout) {
+        try {
+            $quorumHandle = [IO.File]::Open($quorumDesktopLock, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+            $quorumHandle.Dispose()
+            return
+        } catch [IO.IOException] {
+            if (($_.Exception.GetBaseException().HResult -band 0xFFFF) -notin @(32, 33)) { throw }
+        }
+        Start-Sleep -Milliseconds 50
+    }
+    throw 'Uninstaller did not release the desktop lock within the timeout'
+}
 function Start-Redirected([string]$File, [string]$Arguments) {
     $quorumInfo = [Diagnostics.ProcessStartInfo]::new($File, $Arguments)
     $quorumInfo.UseShellExecute = $false; $quorumInfo.CreateNoWindow = $true
@@ -171,7 +189,7 @@ process.stdin.on('end', () => {fs.writeFileSync(process.env.QUORUM_SMOKE_BUSY_RE
             Record-Check 'installed GUI opens and closes normally with isolated PATH' $true
             $quorumUninstallLog = Join-Path $quorumArtifacts 'uninstall.log'
             $quorumUninstall = Start-Process -FilePath (Join-Path $quorumInstall 'unins000.exe') -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',('/LOG="' + $quorumUninstallLog + '"')) -WindowStyle Hidden -PassThru
-            Wait-ProcessExit $quorumUninstall 60000
+            Wait-UninstallExit $quorumUninstall
             if (Test-Path -LiteralPath (Join-Path $quorumInstall 'quorum-storage-agent-desktop.exe')) { throw 'Uninstall retained the program binary' }
             if (-not (Test-Path -LiteralPath $quorumSentinel) -or -not (Test-Path -LiteralPath $quorumMeetingSentinel)) { throw 'Uninstall removed private or meeting data' }
             if (Test-Path -LiteralPath 'Registry::HKEY_CURRENT_USER\Software\Classes\quorum-agent\shell\open\command') { throw 'Uninstall retained the owned protocol' }
@@ -200,7 +218,7 @@ process.stdin.on('end', () => {fs.writeFileSync(process.env.QUORUM_SMOKE_BUSY_RE
             Set-Item -LiteralPath $quorumExtensionKey -Value 'org.quorum.ChairAgent.Pairing'
             $quorumReassignedLog = Join-Path $quorumArtifacts 'uninstall-reassigned-associations.log'
             $quorumUninstall = Start-Process -FilePath (Join-Path $quorumInstall 'unins000.exe') -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',('/LOG="' + $quorumReassignedLog + '"')) -WindowStyle Hidden -PassThru
-            Wait-ProcessExit $quorumUninstall 60000
+            Wait-UninstallExit $quorumUninstall
             foreach ($quorumKey in @('Registry::HKEY_CURRENT_USER\Software\Classes\quorum-agent\shell\open\command', 'Registry::HKEY_CURRENT_USER\Software\Classes\org.quorum.ChairAgent.Pairing\shell\open\command')) {
                 if ((Get-Item -LiteralPath $quorumKey).GetValue('') -ne $quorumReassignedCommand) { throw 'Uninstall removed a reassigned handler command' }
             }
