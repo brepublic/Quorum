@@ -14,10 +14,11 @@ $quorumResults = [Collections.Generic.List[object]]::new()
 function Record-Check([string]$Name, [object]$Details) {
     $quorumResults.Add(@{ check = $Name; passed = $true; details = $Details })
     [IO.File]::WriteAllText($Report, ($quorumResults | ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false))
+    Write-Host "PASS: $Name"
 }
 function Wait-ProcessExit([Diagnostics.Process]$Process, [int]$Timeout = 15000) {
     if (-not $Process.WaitForExit($Timeout)) { $Process.Kill(); throw 'Packaged process did not stop within the timeout' }
-    if ($Process.ExitCode -ne 0) { throw "Packaged process failed with exit $($Process.ExitCode)" }
+    if ($Process.ExitCode -ne 0) { throw "Packaged process failed with exit $($Process.ExitCode) at smoke line $($MyInvocation.ScriptLineNumber) (PID $($Process.Id))" }
 }
 function Start-Redirected([string]$File, [string]$Arguments) {
     $quorumInfo = [Diagnostics.ProcessStartInfo]::new($File, $Arguments)
@@ -131,7 +132,8 @@ process.stdin.on('end', () => {fs.writeFileSync(process.env.QUORUM_SMOKE_BUSY_RE
         [IO.File]::WriteAllText($quorumMeetingSentinel, 'preserve this meeting content')
         try {
             foreach ($quorumAttempt in 1..2) {
-                $quorumInstallProcess = Start-Process -FilePath $quorumSetup.FullName -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/TASKS=desktopicon',('/DIR="' + $quorumInstall + '"')) -WindowStyle Hidden -PassThru
+                $quorumInstallerLog = Join-Path $quorumArtifacts "installer-$quorumAttempt.log"
+                $quorumInstallProcess = Start-Process -FilePath $quorumSetup.FullName -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/TASKS=desktopicon',('/DIR="' + $quorumInstall + '"'),('/LOG="' + $quorumInstallerLog + '"')) -WindowStyle Hidden -PassThru
                 Wait-ProcessExit $quorumInstallProcess 60000
             }
             $quorumExpected = '"' + (Join-Path $quorumInstall 'quorum-storage-agent-desktop.exe') + '" --open "%1"'
@@ -158,7 +160,8 @@ process.stdin.on('end', () => {fs.writeFileSync(process.env.QUORUM_SMOKE_BUSY_RE
             } while ($quorumGuiProcess.MainWindowHandle -eq 0 -and [DateTime]::UtcNow -lt $quorumDeadline)
             if ($quorumGuiProcess.MainWindowHandle -eq 0) { throw 'Installed GUI did not open a native window' }
             if (-not $quorumGuiProcess.WaitForInputIdle(10000)) { throw 'Installed GUI did not become ready for window input' }
-            $quorumRunningUpdate = Start-Process -FilePath $quorumSetup.FullName -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',('/DIR="' + $quorumInstall + '"')) -WindowStyle Hidden -PassThru
+            $quorumRunningUpdateLog = Join-Path $quorumArtifacts 'installer-running-update.log'
+            $quorumRunningUpdate = Start-Process -FilePath $quorumSetup.FullName -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',('/DIR="' + $quorumInstall + '"'),('/LOG="' + $quorumRunningUpdateLog + '"')) -WindowStyle Hidden -PassThru
             if (-not $quorumRunningUpdate.WaitForExit(15000)) { $quorumRunningUpdate.Kill(); throw 'Silent update while running failed to return' }
             if ($quorumRunningUpdate.ExitCode -eq 0 -or $quorumGuiProcess.HasExited) { throw 'Installer did not reject an update while the Agent was running' }
             Record-Check 'running Agent blocks silent update without terminating it' $true
@@ -166,7 +169,8 @@ process.stdin.on('end', () => {fs.writeFileSync(process.env.QUORUM_SMOKE_BUSY_RE
             if (-not $quorumGuiProcess.CloseMainWindow()) { throw 'Cannot request normal installed GUI closure' }
             Wait-ProcessExit $quorumGuiProcess
             Record-Check 'installed GUI opens and closes normally with isolated PATH' $true
-            $quorumUninstall = Start-Process -FilePath (Join-Path $quorumInstall 'unins000.exe') -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART') -WindowStyle Hidden -PassThru
+            $quorumUninstallLog = Join-Path $quorumArtifacts 'uninstall.log'
+            $quorumUninstall = Start-Process -FilePath (Join-Path $quorumInstall 'unins000.exe') -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',('/LOG="' + $quorumUninstallLog + '"')) -WindowStyle Hidden -PassThru
             Wait-ProcessExit $quorumUninstall 60000
             if (Test-Path -LiteralPath (Join-Path $quorumInstall 'quorum-storage-agent-desktop.exe')) { throw 'Uninstall retained the program binary' }
             if (-not (Test-Path -LiteralPath $quorumSentinel) -or -not (Test-Path -LiteralPath $quorumMeetingSentinel)) { throw 'Uninstall removed private or meeting data' }
@@ -183,7 +187,8 @@ process.stdin.on('end', () => {fs.writeFileSync(process.env.QUORUM_SMOKE_BUSY_RE
             $quorumOtherOpenWith = Join-Path $quorumExtensionKey 'OpenWithProgids'
             New-Item -Path $quorumOtherOpenWith -Force | Out-Null
             New-ItemProperty -LiteralPath $quorumOtherOpenWith -Name 'Quorum.Acceptance.Other' -Value '' -PropertyType String -Force | Out-Null
-            $quorumInstallProcess = Start-Process -FilePath $quorumSetup.FullName -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',('/DIR="' + $quorumInstall + '"')) -WindowStyle Hidden -PassThru
+            $quorumAssociationLog = Join-Path $quorumArtifacts 'installer-existing-associations.log'
+            $quorumInstallProcess = Start-Process -FilePath $quorumSetup.FullName -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',('/DIR="' + $quorumInstall + '"'),('/LOG="' + $quorumAssociationLog + '"')) -WindowStyle Hidden -PassThru
             Wait-ProcessExit $quorumInstallProcess 60000
             if ((Get-Item -LiteralPath $quorumExtensionKey).GetValue('') -ne 'Quorum.Acceptance.Other') { throw 'Installer replaced the existing file association choice' }
             if ((Get-Item -LiteralPath $quorumOtherOpenWith).GetValueNames() -notcontains 'Quorum.Acceptance.Other') { throw 'Installer removed the existing OpenWith provider' }
@@ -193,7 +198,8 @@ process.stdin.on('end', () => {fs.writeFileSync(process.env.QUORUM_SMOKE_BUSY_RE
                 Set-Item -LiteralPath $quorumKey -Value $quorumReassignedCommand
             }
             Set-Item -LiteralPath $quorumExtensionKey -Value 'org.quorum.ChairAgent.Pairing'
-            $quorumUninstall = Start-Process -FilePath (Join-Path $quorumInstall 'unins000.exe') -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART') -WindowStyle Hidden -PassThru
+            $quorumReassignedLog = Join-Path $quorumArtifacts 'uninstall-reassigned-associations.log'
+            $quorumUninstall = Start-Process -FilePath (Join-Path $quorumInstall 'unins000.exe') -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',('/LOG="' + $quorumReassignedLog + '"')) -WindowStyle Hidden -PassThru
             Wait-ProcessExit $quorumUninstall 60000
             foreach ($quorumKey in @('Registry::HKEY_CURRENT_USER\Software\Classes\quorum-agent\shell\open\command', 'Registry::HKEY_CURRENT_USER\Software\Classes\org.quorum.ChairAgent.Pairing\shell\open\command')) {
                 if ((Get-Item -LiteralPath $quorumKey).GetValue('') -ne $quorumReassignedCommand) { throw 'Uninstall removed a reassigned handler command' }
@@ -208,6 +214,11 @@ process.stdin.on('end', () => {fs.writeFileSync(process.env.QUORUM_SMOKE_BUSY_RE
             Record-Check 'uninstall preserves reassigned commands/default/OpenWith/registered capabilities' $true
         } finally { if (Test-Path -LiteralPath $quorumSentinel) {Remove-Item -LiteralPath $quorumSentinel} }
     }
+} catch {
+    Write-Host $_.ScriptStackTrace
+    $quorumResults.Add(@{check = 'smoke failure'; passed = $false; details = $_.Exception.Message})
+    [IO.File]::WriteAllText($Report, ($quorumResults | ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false))
+    throw
 } finally {
     foreach ($quorumProcess in @($quorumBridgeProcess, $quorumLockProcess, $quorumGuiProcess)) { if ($null -ne $quorumProcess -and -not $quorumProcess.HasExited) { $quorumProcess.Kill() } }
     $env:PATH = $quorumOldPath; $env:LOCALAPPDATA = $quorumOldLocal
