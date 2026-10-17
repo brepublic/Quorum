@@ -205,6 +205,8 @@ Windows CI 在 Vitest 前使用 `cargo build --locked --bins` 构建桌面 GUI �
 
 Windows smoke 逐项输出检查结果，失败报告保留调用位置和退出码，安装／卸载分别保存 Inno 日志；失败时同时将各日志末尾输出到 Actions 日志。发行产物已生成时，CI 即使后续 smoke 失败也上传产物、报告及日志，供复核失败阶段。
 
+安装失败诊断期间，独立 `diagnose-chair-agent-windows.yml` 在 Windows runner 重放已完成构建的固定产物；smoke 继续核对 manifest 的全部哈希并执行原有安装／卸载断言。
+
 发行记录包含 Git commit、源码是否脏、固定工具版本、对应源码哈希、全部产物 SHA-256 和 PE 系统依赖；源码包只收录受版本管理的源文件／锁文件与确切 Rust 依赖源，不扫描本机凭据。 Rust 依赖通过完整锁定 metadata 与 cargo vendor 收集全部平台依赖及 .cargo-checksum.json；随包说明区分无 Git 源码的组件构建与需记录 Git 来源的发行组装。Offline 同时传入 build、metadata、vendor。Windows smoke 在隔离 PATH 下验证捆绑运行时、目录锁和窗口生命周期，可在 Sandbox 内验证 EXE 安装、注册、更新与卸载。Windows CI 生成产物，Linux CI 保持完整 GUI/AppImage 构建回归；不自动公开发行。
 
 ### 冲突比较（2026-10-06）
