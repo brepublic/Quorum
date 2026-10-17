@@ -1,5 +1,10 @@
 # 更新日志
 
+## 2026-10-17：Windows 私有文件所有者修复
+
+- Windows 原生保护同时设置当前用户所有者和受保护 ACL，修复提权 runner 默认以 Administrators 组创建文件后，配置读取被自身所有者检查拒绝的问题。
+- 增加文件和目录所有者回归：提权时显式构造 Administrators 所有权，确认保护前拒绝、保护后归当前用户且通过私有路径检查；保留既有 Everyone 访问拒绝测试。
+
 ## 2026-10-17：Windows Agent CI 原生测试依赖修复
 
 - 在 Vitest 前构建 Windows GUI 与平台辅助程序，避免全新 runner 因缺少 `quorum-agent-platform.exe` 报 `WINDOWS_PLATFORM_UNAVAILABLE`；原生构建失败立即终止测试步骤。

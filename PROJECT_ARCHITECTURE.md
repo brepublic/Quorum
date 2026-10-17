@@ -323,6 +323,6 @@ Windows Rust/Node 共用 LOCALAPPDATA/quorum-agent，系统语言从 Windows loc
 
 Windows Node Agent 的 GUI 和 CLI 共用原生 `quorum-agent-platform.exe` 辅助程序：以内核文件锁持有同步根目录的 `.quorum-storage.lock`，持锁期间禁止删除锁文件；在读取状态之前取得锁。辅助程序随父 Node 管道 EOF 释放锁，意外丢失锁时 Node 同步进程立即退出。锁路径、私有配置及本地打开目标拒绝 junction/reparse point 和文件硬链接；大小写别名不能绕过锁，文件大小写变更不再误删刚替换的目标。
 
-长期凭据及私有状态先创建空文件、设置当前用户／SYSTEM／Administrators 的受保护 ACL，再写入内容并原子替换；读取凭据同时检查所有者和允许访问的 SID。辅助程序缺失时拒绝运行，不能回退到不加锁或仅设置 POSIX mode。开发脚本同时构建两个 Rust 可执行文件；CLI 可通过 `QUORUM_AGENT_PLATFORM` 指定辅助程序，否则查找 Node 相邻位置或开发构建目录。
+长期凭据及私有状态先创建空文件、将所有者设为当前用户并设置当前用户／SYSTEM／Administrators 的受保护 ACL，再写入内容并原子替换；读取凭据同时检查所有者和允许访问的 SID。Windows 提权令牌默认以 Administrators 组持有新文件，原生回归覆盖组所有者在保护前被拒绝、保护后归当前用户的文件和目录。辅助程序缺失时拒绝运行，不能回退到不加锁或仅设置 POSIX mode。开发脚本同时构建两个 Rust 可执行文件；CLI 可通过 `QUORUM_AGENT_PLATFORM` 指定辅助程序，否则查找 Node 相邻位置或开发构建目录。
 
 Windows 正常停止先关闭 Node CLI 的输入管道并等待清理，15 秒超时后强制结束。GUI 将桥接及其后代加入 kill-on-close Windows Job Object，窗口异常退出仍清理进程树。原生测试覆盖实际子进程与孙进程清理，隔离 HTTPS 测试覆盖启动、停止和恢复；正式窗口及现有 WSL 服务器的实际验收边界记录于 `docs/self-hosted/CHAIR_AGENT_WINDOWS_ACCEPTANCE.md`。

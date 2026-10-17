@@ -34,17 +34,21 @@ pub fn protect(path: &Path) -> io::Result<()> {
     unsafe {
         let sid = current_sid()?;
         let inheritance = if path.is_dir() {"OICI"} else {""};
-        let sddl = wide(OsStr::new(&format!("D:P(A;{inheritance};FA;;;{sid})(A;{inheritance};FA;;;SY)(A;{inheritance};FA;;;BA)")));
+        // Elevated tokens can create paths owned by Administrators. Normalize
+        // ownership as well as the DACL so our own private-path check accepts them.
+        let sddl = wide(OsStr::new(&format!("O:{sid}D:P(A;{inheritance};FA;;;{sid})(A;{inheritance};FA;;;SY)(A;{inheritance};FA;;;BA)")));
         let mut descriptor = ptr::null_mut();
         if ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.as_ptr(), 1, &mut descriptor, ptr::null_mut()) == 0 {
             return Err(io::Error::last_os_error());
         }
-        let mut dacl = ptr::null_mut(); let mut present = 0; let mut defaulted = 0;
-        let result = if GetSecurityDescriptorDacl(descriptor, &mut present, &mut dacl, &mut defaulted) == 0 {
+        let mut dacl = ptr::null_mut(); let mut owner = ptr::null_mut(); let mut present = 0; let mut defaulted = 0;
+        let result = if GetSecurityDescriptorOwner(descriptor, &mut owner, &mut defaulted) == 0
+            || GetSecurityDescriptorDacl(descriptor, &mut present, &mut dacl, &mut defaulted) == 0 {
             Err(io::Error::last_os_error())
         } else {
             let code = SetNamedSecurityInfoW(wide(path.as_os_str()).as_ptr(), SE_FILE_OBJECT,
-                DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION, ptr::null_mut(), ptr::null_mut(), dacl, ptr::null());
+                OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                owner, ptr::null_mut(), dacl, ptr::null());
             if code == 0 {Ok(())} else {Err(io::Error::from_raw_os_error(code as i32))}
         };
         LocalFree(descriptor);
@@ -130,6 +134,56 @@ impl Drop for ProcessJob {fn drop(&mut self) {unsafe {CloseHandle(self.0);}}}
 #[cfg(test)] mod tests {
     use super::*;
     use std::{process::{Command, Stdio}, io::{BufRead, BufReader}, time::Duration};
+    fn owner(path: &Path) -> io::Result<String> {
+        unsafe {
+            let mut descriptor = ptr::null_mut(); let mut sid = ptr::null_mut();
+            let code = GetNamedSecurityInfoW(wide(path.as_os_str()).as_ptr(), SE_FILE_OBJECT,
+                OWNER_SECURITY_INFORMATION, &mut sid, ptr::null_mut(), ptr::null_mut(), ptr::null_mut(), &mut descriptor);
+            if code != 0 {return Err(io::Error::from_raw_os_error(code as i32));}
+            let result = sid_text(sid); LocalFree(descriptor); result
+        }
+    }
+    fn set_administrators_owner_if_elevated(path: &Path) -> io::Result<bool> {
+        unsafe {
+            let mut token = ptr::null_mut();
+            if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {return Err(io::Error::last_os_error());}
+            let mut elevation = TOKEN_ELEVATION::default(); let mut bytes = 0;
+            let ok = GetTokenInformation(token, TokenElevation, ptr::addr_of_mut!(elevation).cast(),
+                size_of::<TOKEN_ELEVATION>() as u32, &mut bytes);
+            let result = if ok == 0 {Err(io::Error::last_os_error())} else {Ok(elevation.TokenIsElevated != 0)};
+            CloseHandle(token);
+            if !result? {return Ok(false);}
+            let mut descriptor = ptr::null_mut();
+            if ConvertStringSecurityDescriptorToSecurityDescriptorW(wide(OsStr::new("O:BA")).as_ptr(), 1,
+                &mut descriptor, ptr::null_mut()) == 0 {return Err(io::Error::last_os_error());}
+            let mut sid = ptr::null_mut(); let mut defaulted = 0;
+            let result = if GetSecurityDescriptorOwner(descriptor, &mut sid, &mut defaulted) == 0 {
+                Err(io::Error::last_os_error())
+            } else {
+                let code = SetNamedSecurityInfoW(wide(path.as_os_str()).as_ptr(), SE_FILE_OBJECT,
+                    OWNER_SECURITY_INFORMATION, sid, ptr::null_mut(), ptr::null_mut(), ptr::null());
+                if code == 0 {Ok(true)} else {Err(io::Error::from_raw_os_error(code as i32))}
+            };
+            LocalFree(descriptor); result
+        }
+    }
+    #[test] fn normalizes_file_and_directory_ownership_before_private_checks() {
+        let root = std::env::temp_dir().join(format!("quorum-private-owner-{}-{}", std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        std::fs::create_dir(&root).unwrap();
+        let file = root.join("private.json"); std::fs::write(&file, "").unwrap();
+        let user = current_sid().unwrap();
+        for path in [&file, &root] {
+            if set_administrators_owner_if_elevated(path).unwrap() {
+                assert_eq!(owner(path).unwrap(), "S-1-5-32-544");
+                assert!(check_private(path).is_err(), "Administrators ownership must fail the strict read check");
+            }
+            protect(path).unwrap();
+            assert_eq!(owner(path).unwrap(), user);
+            check_private(path).unwrap();
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
     #[test] fn closing_job_terminates_a_real_child_and_its_descendant() {
         let node = std::env::var_os("QUORUM_AGENT_NODE").expect("Set QUORUM_AGENT_NODE for Windows process tests");
         let job = ProcessJob::new().unwrap();
