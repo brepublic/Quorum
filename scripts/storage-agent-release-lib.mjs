@@ -180,20 +180,21 @@ export async function downloadPinnedArchive({url, destination, expectedSha256, o
   return destination;
 }
 
-export async function collectStageEntries(stageDirectory) {
+export async function collectStageEntries(stageDirectory, {executablePaths = []} = {}) {
   const root = resolve(stageDirectory); const entries = [];
   async function visit(directory) {
     for (const item of (await readdir(directory, {withFileTypes: true})).sort((a, b) => comparePath(a.name, b.name))) {
       const absolute = join(directory, item.name); const info = await stat(absolute);
       if (item.isSymbolicLink() || !item.isFile() && !item.isDirectory()) throw new Error(`Release stage contains an unsafe file: ${absolute}`);
       if (item.isDirectory()) await visit(absolute);
-      else entries.push({path: absolute.slice(root.length + 1).split(sep).join('/'), data: await readFile(absolute), mode: info.mode & 0o111 ? FIXED_MODE_EXECUTABLE : FIXED_MODE_FILE});
+      else { const path = absolute.slice(root.length + 1).split(sep).join('/'); entries.push({path, data: await readFile(absolute), mode: executablePaths.includes(path) ? FIXED_MODE_EXECUTABLE : FIXED_MODE_FILE}); }
     }
   }
   await visit(root); return entries;
 }
 
-export async function materializeReleaseStage({rootDirectory, distDirectory, pairingModulePath, releaseReadmePath, target, agentVersion, nodeVersion, runtime, license}) {
+export async function materializeReleaseStage({rootDirectory, distDirectory, pairingModulePath, releaseReadmePath, target, agentVersion, nodeVersion, runtime, license, platformHelper}) {
+  if (target.startsWith('win-') && !platformHelper?.length) throw new Error('Windows release requires the native platform helper. Build it on Windows or pass --windows-platform-helper.');
   await rm(rootDirectory, {recursive: true, force: true}); await mkdir(join(rootDirectory, 'app'), {recursive: true});
   const jsFiles = (await readdir(distDirectory)).filter(name => name.endsWith('.js')).sort();
   if (!jsFiles.includes('cli.js')) throw new Error('Storage Agent dist/cli.js is missing.');
@@ -215,19 +216,22 @@ export async function materializeReleaseStage({rootDirectory, distDirectory, pai
   await writeFile(join(rootDirectory, 'THIRD_PARTY_NOTICES', 'Node.js-LICENSE.txt'), license, {mode: 0o644});
   await copyFile(releaseReadmePath, join(rootDirectory, 'INSTALL.md'));
   const command = target.startsWith('win-')
-    ? '@echo off\r\n"%~dp0runtime\\node.exe" "%~dp0app\\cli.js" %*\r\n'
+    ? '@echo off\r\nsetlocal\r\nset "QUORUM_AGENT_PLATFORM=%~dp0quorum-agent-platform.exe"\r\n"%~dp0runtime\\node.exe" "%~dp0app\\cli.js" %*\r\nexit /b %errorlevel%\r\n'
     : '#!/bin/sh\nexec "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/runtime/node" "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/app/cli.js" "$@"\n';
   const commandName = target.startsWith('win-') ? 'quorum-storage-agent.cmd' : 'quorum-storage-agent';
   await writeFile(join(rootDirectory, commandName), command, {mode: target.startsWith('win-') ? 0o644 : 0o755});
   if (!target.startsWith('win-')) await chmod(join(rootDirectory, commandName), 0o755);
+  if (target.startsWith('win-')) await writeFile(join(rootDirectory, 'quorum-agent-platform.exe'), platformHelper, {mode: 0o644});
   const metadata = {schemaVersion: 1, product: 'Quorum Chair Storage Agent', agentVersion, nodeVersion, target,
-    runtimeSha256: sha256(runtime), signed: false, notarized: false};
+    runtimeSha256: sha256(runtime), ...(platformHelper ? {platformHelperSha256: sha256(platformHelper)} : {}), signed: false, notarized: false};
   await writeFile(join(rootDirectory, 'RELEASE.json'), `${JSON.stringify(metadata, null, 2)}\n`, {mode: 0o644});
   return metadata;
 }
 
 export async function archiveReleaseStage({stageDirectory, outputPath}) {
-  const rootName = basename(stageDirectory); const entries = (await collectStageEntries(stageDirectory))
+  const metadata = JSON.parse(await readFile(join(stageDirectory, 'RELEASE.json'), 'utf8'));
+  const executablePaths = metadata.target.startsWith('win-') ? [] : ['runtime/node', 'quorum-storage-agent'];
+  const rootName = basename(stageDirectory); const entries = (await collectStageEntries(stageDirectory, {executablePaths}))
     .map(entry => ({...entry, path: `${rootName}/${entry.path}`}));
   const archive = outputPath.endsWith('.zip') ? createDeterministicZip(entries) : createDeterministicTarGz(entries);
   await mkdir(dirname(outputPath), {recursive: true}); await writeFile(outputPath, archive, {mode: 0o644});
@@ -249,6 +253,10 @@ export function verifyReleaseEntries({entries, target, agentVersion, nodeVersion
     if (!relative.includes(required)) throw new Error(`Release archive is missing ${required}.`);
   }
   const exact = new Set([runtimeName, commandName, 'app/package.json', 'INSTALL.md', 'RELEASE.json', 'THIRD_PARTY_NOTICES/Node.js-LICENSE.txt']);
+  if (target.startsWith('win-')) {
+    if (!relative.includes('quorum-agent-platform.exe')) throw new Error('Windows release is missing the native platform helper.');
+    exact.add('quorum-agent-platform.exe');
+  }
   if (relative.some(path => !exact.has(path) && !/^app\/[a-z0-9-]+\.js$/.test(path))) {
     throw new Error('Release archive contains a file outside the release allowlist.');
   }
@@ -259,6 +267,7 @@ export function verifyReleaseEntries({entries, target, agentVersion, nodeVersion
   }
   const runtime = entries[relative.indexOf(runtimeName)];
   if (sha256(runtime.data) !== metadata.runtimeSha256) throw new Error('Bundled runtime does not match release metadata.');
+  if (target.startsWith('win-') && sha256(entries[relative.indexOf('quorum-agent-platform.exe')].data) !== metadata.platformHelperSha256) throw new Error('Windows platform helper does not match release metadata.');
   const command = entries[relative.indexOf(commandName)];
   if (!target.startsWith('win-') && ((runtime.mode & 0o111) === 0 || (command.mode & 0o111) === 0)) {
     throw new Error('POSIX runtime or command is not executable.');

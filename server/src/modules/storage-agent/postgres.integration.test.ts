@@ -144,8 +144,8 @@ async function chairStorage(owner: AuthenticatedSession, committeeId: string) {
   return {paired: paired.paired, binding};
 }
 
-async function stagedUpload(owner: AuthenticatedSession, committeeId: string, name = '离线工作文件') {
-  const content = Buffer.from('chair agent browser upload');
+async function stagedUpload(owner: AuthenticatedSession, committeeId: string, name = '离线工作文件',
+  content = Buffer.from('chair agent browser upload')) {
   const sha256 = createHash('sha256').update(content).digest('hex');
   const created = await uploads.createUpload(owner, committeeId, {logicalName: name, originalName: 'draft.txt',
     mediaType: 'text/plain', expectedSizeBytes: content.length, sha256}, randomUUID(), context('upload-create'));
@@ -154,7 +154,452 @@ async function stagedUpload(owner: AuthenticatedSession, committeeId: string, na
   return {content, sha256, staged};
 }
 
+async function reviewedChairFixture() {
+  const value = await fixture();
+  const chair = await chairStorage(value.owner, value.committee.id);
+  const reader = new Stage6FileService(pool!, {} as never, {} as never,
+    () => {throw new Error('Unexpected S3');}, staging, staging);
+  tasks = new Stage7StorageTaskService(agent, staging, reader, undefined, chairProvider);
+  const review = new DelegateFileService(pool!, uploads, {} as never, reader, storage, cache);
+  const commit = async (name = '待审核.txt', content?: Buffer) => {
+    const source = await stagedUpload(value.owner, value.committee.id, name, content);
+    const pending = await chairProvider.queueUpload(value.owner, source.staged.id, {}, randomUUID(), context('edge-queue'));
+    const claimed = await tasks.claim(chair.paired.credential, pending.taskId, {
+      leaseGeneration: pending.leaseGeneration, fileRevision: 1, requestId: randomUUID()});
+    await tasks.complete(chair.paired.credential, pending.taskId, {leaseGeneration: pending.leaseGeneration,
+      fileRevision: 1, claimToken: claimed.claimToken, requestId: randomUUID()}, context('edge-commit'));
+    const {id} = (await pool!.query<{id: string}>(
+      'SELECT committed_file_entry_id AS id FROM file_uploads WHERE id=$1', [source.staged.id])).rows[0]!;
+    return {file: await reader.get(value.owner, id), source, path: claimed.logicalName!};
+  };
+  const local = (fileEntryId: string, baseRevision: number) => ({kind: 'UPSERT' as const, fileEntryId,
+    baseRevision, logicalName: '本地修改.txt', originalName: 'local.txt', mediaType: 'text/plain',
+    sizeBytes: 5, sha256: createHash('sha256').update('local').digest('hex')});
+  const submitConflict = async (change: ReturnType<typeof local>, reasonCode: string,
+    manifestSequence?: number) => {
+    const manifest = await tasks.manifest(chair.paired.credential, chair.paired.host.leaseGeneration);
+    await expect(localChanges.submit(chair.paired.credential, {leaseGeneration: chair.paired.host.leaseGeneration,
+      requestId: randomUUID(), manifestSequence: manifestSequence ?? manifest.nextSequence, change}, context('edge-conflict')))
+      .rejects.toMatchObject({code: 'CHAIR_DECISION_REQUIRED', details: {reasonCode}});
+    return (await conflicts.list(value.owner, value.committee.id)).find(item => item.fileEntryId === change.fileEntryId
+      && item.status === 'PENDING')!;
+  };
+  return {...value, ...chair, reader, review, commit, local, submitConflict};
+}
+
+// Simulate historical metadata without changing immutable production history.
+// This runs only in the isolated database created for this individual test.
+async function retainManifestThrough(committeeId: string, sequence: number) {
+  await pool!.query('ALTER TABLE storage_manifest_events DISABLE TRIGGER storage_manifest_events_append_only');
+  try {
+    await pool!.query('DELETE FROM storage_manifest_events WHERE committee_id=$1 AND sequence>$2', [committeeId, sequence]);
+    await pool!.query('UPDATE committees SET next_storage_manifest_sequence=$2 WHERE id=$1', [committeeId, sequence + 1]);
+  } finally {
+    await pool!.query('ALTER TABLE storage_manifest_events ENABLE TRIGGER storage_manifest_events_append_only');
+  }
+}
+
 integration('PostgreSQL stage 7 storage Agent identity', () => {
+  it.each(['complete', 'newer-version', 'changed-local', 'removed-chair'] as const)
+    ('applies an explicit local published replacement with transactional fences: %s', async scenario => {
+    const value = await reviewedChairFixture(); const saved = await value.commit();
+    const published = await value.review.approve(value.owner, saved.file.id, {baseRevision: saved.file.revision,
+      logicalName: '公开文件.txt', fileType: 'WORKING_PAPER'}, context('direct-approve'));
+    const change = value.local(saved.file.id, published.revision);
+    const conflict = await value.submitConflict(change, 'REVIEW_REQUIRED');
+    const body = {baseRevision: conflict.revision, leaseGeneration: value.paired.host.leaseGeneration,
+      fileRevision: published.revision, action: 'ACCEPT_LOCAL'};
+    await expect(conflicts.resolve(value.member, value.committee.id, conflict.id, body, randomUUID(), context('direct-member')))
+      .rejects.toMatchObject({code: 'FORBIDDEN'});
+    await expect(conflicts.resolve(value.chair, value.committee.id, conflict.id, {...body, fileRevision: published.revision - 1},
+      randomUUID(), context('direct-stale'))).rejects.toMatchObject({code: 'REVISION_CONFLICT'});
+    await conflicts.resolve(value.chair, value.committee.id, conflict.id, body, randomUUID(), context('direct-decide'));
+    const requestId = randomUUID();
+    const request = {leaseGeneration: value.paired.host.leaseGeneration, requestId, manifestSequence: 99,
+      resolutionConflictId: conflict.id, change};
+    if (scenario === 'changed-local') {
+      await expect(localChanges.submit(value.paired.credential, {...request, change: {...change, sha256: 'a'.repeat(64)}}, context('direct-changed')))
+        .rejects.toMatchObject({code: 'IDEMPOTENCY_CONFLICT'});
+      expect((await value.reader.get(value.owner, saved.file.id)).currentVersion.sha256).toBe(saved.source.sha256);
+      return;
+    }
+    const pending = await localChanges.submit(value.paired.credential, request, context('direct-submit'));
+    expect(pending.status).toBe('PENDING_CONTENT'); if (pending.status !== 'PENDING_CONTENT') return;
+    await expect(localChanges.submit(value.paired.credential, request, context('direct-retry'))).resolves.toEqual(pending);
+    const claim = await tasks.claim(value.paired.credential, pending.task.id, {
+      leaseGeneration: value.paired.host.leaseGeneration, fileRevision: pending.task.fileRevision, requestId: randomUUID()});
+    const content = Buffer.from('local');
+    await tasks.receiveContent(value.paired.credential, {taskId: claim.id, leaseGeneration: claim.leaseGeneration,
+      fileRevision: claim.fileRevision, claimToken: claim.claimToken!, expectedSha256: change.sha256,
+      contentLength: content.length, source: (async function* () {yield content;})(), context: context('direct-content')});
+    const complete = () => tasks.complete(value.paired.credential, claim.id, {leaseGeneration: claim.leaseGeneration,
+      fileRevision: claim.fileRevision, claimToken: claim.claimToken, requestId: randomUUID()}, context('direct-complete'));
+    if (scenario === 'newer-version') {
+      const other = await value.commit('replacement.txt', Buffer.from('new server version'));
+      const input = {baseRevision: other.file.revision, logicalName: '公开文件.txt', fileType: 'WORKING_PAPER'};
+      const preview = await value.review.previewApproval(value.owner, other.file.id, input);
+      await value.review.approve(value.owner, other.file.id, {...input, confirmationToken: preview.confirmationToken}, context('direct-newer'));
+      await expect(complete()).rejects.toMatchObject({code: 'REVISION_CONFLICT'});
+      expect((await value.reader.get(value.owner, saved.file.id)).currentVersion.sha256).toBe(other.source.sha256);
+      return;
+    }
+    if (scenario === 'removed-chair') {
+      await stage3.setChair(value.owner, value.committee.id, value.chair.user.email, false,
+        await committeeRevision(value.committee.id), context('direct-remove-chair'));
+      await expect(complete()).rejects.toMatchObject({code: 'FORBIDDEN'});
+      expect((await value.reader.get(value.owner, saved.file.id)).currentVersion.sha256).toBe(saved.source.sha256);
+      return;
+    }
+    await complete();
+    const updated = await value.reader.get(value.owner, saved.file.id);
+    expect(updated).toMatchObject({id: saved.file.id, status: 'PUBLISHED', logicalName: '公开文件.txt',
+      revision: published.revision + 1, currentVersion: {sha256: change.sha256, sizeBytes: 5}});
+    expect(updated.publishedAt).toBe(published.publishedAt);
+    expect((await pool!.query('SELECT file_type FROM delegate_file_metadata WHERE file_entry_id=$1', [saved.file.id])).rows[0])
+      .toMatchObject({file_type: 'WORKING_PAPER'});
+    expect((await pool!.query('SELECT count(*)::int AS count FROM file_versions WHERE file_entry_id=$1', [saved.file.id])).rows[0]?.count).toBe(2);
+    const manifest = await tasks.manifest(value.paired.credential, value.paired.host.leaseGeneration);
+    expect(manifest.events.at(-1)).toMatchObject({fileEntryId: saved.file.id, fileRevision: updated.revision, sha256: change.sha256});
+    await expect(localChanges.submit(value.paired.credential, {...request, requestId: randomUUID()}, context('direct-reapply')))
+      .rejects.toMatchObject({code: 'REVISION_CONFLICT'});
+  }, 20_000);
+
+
+  it('keeps the first approval manifest on the original Chair path with the current revision and verified content', async () => {
+    const value = await reviewedChairFixture(); const saved = await value.commit();
+    const before = await tasks.manifest(value.paired.credential, value.paired.host.leaseGeneration);
+    const approved = await value.review.approve(value.owner, saved.file.id, {baseRevision: saved.file.revision,
+      logicalName: '正式文件.txt', fileType: 'WORKING_PAPER'}, context('edge-first-approval'));
+    const after = await tasks.manifest(value.paired.credential, value.paired.host.leaseGeneration, before.nextSequence);
+    expect(after.events).toEqual([expect.objectContaining({kind: 'UPSERT', fileEntryId: saved.file.id,
+      fileRevision: saved.file.revision + 1, versionId: saved.file.currentVersion.id,
+      blobId: saved.file.currentVersion.blobId, logicalName: saved.path, originalName: 'draft.txt',
+      mediaType: 'text/plain', sizeBytes: saved.source.content.length, sha256: saved.source.sha256})]);
+    expect(approved.revision).toBe(saved.file.revision + 1);
+    await expect(value.review.approve(value.owner, saved.file.id, {baseRevision: saved.file.revision,
+      logicalName: '正式文件.txt', fileType: 'WORKING_PAPER'}, context('edge-first-approval-repeat')))
+      .rejects.toMatchObject({code: 'REVISION_CONFLICT'});
+    expect((await tasks.manifest(value.paired.credential, value.paired.host.leaseGeneration, before.nextSequence)).events)
+      .toEqual(after.events);
+    const conflict = await value.submitConflict(value.local(saved.file.id, saved.file.revision), 'REVIEW_REQUIRED');
+    expect(conflict).toMatchObject({serverRevision: approved.revision, localBaseRevision: saved.file.revision});
+    for (const action of ['SAVE_AS_NEW']) {
+      await expect(conflicts.resolve(value.owner, value.committee.id, conflict.id, {baseRevision: conflict.revision,
+        leaseGeneration: value.paired.host.leaseGeneration, fileRevision: approved.revision, action,
+        ...(action === 'SAVE_AS_NEW' ? {logicalName: '绕过审核.txt'} : {})}, randomUUID(), context('edge-formal-action')))
+        .rejects.toMatchObject({code: 'RESOURCE_CONFLICT', details: {reason: 'FILE_UPDATE_REQUIRES_REVIEW'}});
+    }
+    expect((await value.reader.get(value.owner, saved.file.id)).currentVersion).toEqual(saved.file.currentVersion);
+  }, 20_000);
+
+  it.each([false, true])('retains a local submission path through approval and legacy recovery (renamed: %s)', async renamed => {
+    const value = await reviewedChairFixture(); const name = '本地目录/待审核.txt';
+    const content = Buffer.from('locally submitted bytes'); const sha256 = createHash('sha256').update(content).digest('hex');
+    const pending = await localChanges.submit(value.paired.credential, {leaseGeneration: value.paired.host.leaseGeneration,
+      requestId: randomUUID(), manifestSequence: 0, change: {kind: 'UPSERT', logicalName: name,
+        originalName: 'local.txt', mediaType: 'text/plain', sizeBytes: content.length, sha256}}, context('edge-local-submit'));
+    if (pending.status !== 'PENDING_CONTENT') throw new Error('Expected local content task');
+    const claim = await tasks.claim(value.paired.credential, pending.task.id, {
+      leaseGeneration: value.paired.host.leaseGeneration, fileRevision: pending.task.fileRevision, requestId: randomUUID()});
+    await tasks.receiveContent(value.paired.credential, {taskId: claim.id, leaseGeneration: claim.leaseGeneration,
+      fileRevision: claim.fileRevision, claimToken: claim.claimToken!, expectedSha256: sha256,
+      contentLength: content.length, source: (async function* () {yield content;})(), context: context('edge-local-content')});
+    await tasks.complete(value.paired.credential, claim.id, {leaseGeneration: claim.leaseGeneration,
+      fileRevision: claim.fileRevision, claimToken: claim.claimToken, requestId: randomUUID()}, context('edge-local-complete'));
+    let file = (await value.reader.list(value.owner, value.committee.id))[0]!;
+    const retainedPath = renamed ? '已改名目录/待审核.txt' : name;
+    if (renamed) {
+      const manifest = await tasks.manifest(value.paired.credential, value.paired.host.leaseGeneration);
+      await localChanges.submit(value.paired.credential, {leaseGeneration: value.paired.host.leaseGeneration,
+        requestId: randomUUID(), manifestSequence: manifest.nextSequence, change: {kind: 'RENAME',
+          fileEntryId: file.id, baseRevision: file.revision, logicalName: retainedPath}}, context('edge-local-rename'));
+      file = await value.reader.get(value.owner, file.id);
+    }
+    const before = await tasks.manifest(value.paired.credential, value.paired.host.leaseGeneration);
+    await value.review.approve(value.owner, file.id, {baseRevision: file.revision,
+      logicalName: '正式本地文件.txt', fileType: 'WORKING_PAPER'}, context('edge-local-approve'));
+    expect((await tasks.manifest(value.paired.credential, value.paired.host.leaseGeneration, before.nextSequence)).events)
+      .toEqual([expect.objectContaining({kind: 'UPSERT', fileEntryId: file.id, fileRevision: file.revision + 1,
+        logicalName: retainedPath, blobId: file.currentVersion.blobId, sizeBytes: content.length, sha256})]);
+    const conflict = await value.submitConflict(value.local(file.id, file.revision + 1), 'REVIEW_REQUIRED');
+    await retainManifestThrough(value.committee.id, 0);
+    await conflicts.resolve(value.owner, value.committee.id, conflict.id, {baseRevision: conflict.revision,
+      leaseGeneration: value.paired.host.leaseGeneration, fileRevision: file.revision + 1,
+      action: 'KEEP_SERVER'}, randomUUID(), context('edge-local-legacy-restore'));
+    expect((await tasks.manifest(value.paired.credential, value.paired.host.leaseGeneration)).events)
+      .toEqual([expect.objectContaining({kind: 'UPSERT', fileEntryId: file.id, fileRevision: file.revision + 1,
+        logicalName: retainedPath, blobId: file.currentVersion.blobId, sizeBytes: content.length, sha256})]);
+  }, 20_000);
+
+  it('restores a historical formal conflict without a manifest and fences stale or repeated decisions', async () => {
+    const value = await reviewedChairFixture(); const saved = await value.commit();
+    const conflict = await value.submitConflict(value.local(saved.file.id, saved.file.revision + 1), 'REVISION_CONFLICT');
+    await value.review.approve(value.owner, saved.file.id, {baseRevision: saved.file.revision,
+      logicalName: '正式文件.txt', fileType: 'WORKING_PAPER'}, context('edge-old-conflict-approve'));
+    await retainManifestThrough(value.committee.id, 0);
+    const fileRevision = saved.file.revision + 1;
+    const body = {baseRevision: conflict.revision, leaseGeneration: value.paired.host.leaseGeneration,
+      fileRevision, action: 'KEEP_SERVER'};
+    for (const stale of [{...body, baseRevision: conflict.revision + 1},
+      {...body, leaseGeneration: body.leaseGeneration + 1}, {...body, fileRevision: saved.file.revision}]) {
+      await expect(conflicts.resolve(value.owner, value.committee.id, conflict.id, stale, randomUUID(), context('edge-stale-decision')))
+        .rejects.toMatchObject({code: 'REVISION_CONFLICT'});
+    }
+    for (const action of ['SAVE_AS_NEW']) {
+      await expect(conflicts.resolve(value.owner, value.committee.id, conflict.id, {...body, action,
+        ...(action === 'SAVE_AS_NEW' ? {logicalName: '绕过审核.txt'} : {})}, randomUUID(), context('edge-old-protected')))
+        .rejects.toMatchObject({code: 'RESOURCE_CONFLICT', details: {reason: 'FILE_UPDATE_REQUIRES_REVIEW'}});
+    }
+    expect((await tasks.manifest(value.paired.credential, body.leaseGeneration)).events).toEqual([]);
+    expect((await conflicts.list(value.owner, value.committee.id)).find(item => item.id === conflict.id)?.status).toBe('PENDING');
+    const key = randomUUID();
+    const resolved = await conflicts.resolve(value.owner, value.committee.id, conflict.id, body, key, context('edge-legacy-restore'));
+    await expect(conflicts.resolve(value.owner, value.committee.id, conflict.id, body, key, context('edge-restore-replay')))
+      .resolves.toEqual(resolved);
+    await expect(conflicts.resolve(value.owner, value.committee.id, conflict.id, body, randomUUID(), context('edge-restore-repeat')))
+      .rejects.toMatchObject({code: 'REVISION_CONFLICT'});
+    const manifest = await tasks.manifest(value.paired.credential, body.leaseGeneration);
+    expect(manifest.events).toEqual([expect.objectContaining({kind: 'UPSERT', fileEntryId: saved.file.id,
+      fileRevision, logicalName: saved.path, blobId: saved.file.currentVersion.blobId,
+      sizeBytes: saved.source.content.length, sha256: saved.source.sha256})]);
+    const queued = (await tasks.tasks(value.paired.credential, body.leaseGeneration)).tasks
+      .filter(task => task.resolutionConflictId === conflict.id);
+    expect(queued).toEqual([expect.objectContaining({type: 'STORE_BLOB', fileEntryId: saved.file.id,
+      fileRevision, blobId: saved.file.currentVersion.blobId, expectedSizeBytes: saved.source.content.length,
+      expectedSha256: saved.source.sha256})]);
+    const claim = await tasks.claim(value.paired.credential, queued[0]!.id, {leaseGeneration: body.leaseGeneration,
+      fileRevision, requestId: randomUUID()});
+    const chunks: Buffer[] = [];
+    await tasks.streamBlob(value.paired.credential, {taskId: claim.id, blobId: claim.blobId!,
+      leaseGeneration: claim.leaseGeneration, fileRevision: claim.fileRevision, claimToken: claim.claimToken!}, {
+      start: metadata => expect(metadata).toEqual({sizeBytes: saved.source.content.length, sha256: saved.source.sha256}),
+      write: async chunk => {chunks.push(Buffer.from(chunk));}
+    });
+    expect(Buffer.concat(chunks)).toEqual(saved.source.content);
+    await tasks.complete(value.paired.credential, claim.id, {leaseGeneration: claim.leaseGeneration,
+      fileRevision: claim.fileRevision, claimToken: claim.claimToken, requestId: randomUUID()}, context('edge-restore-complete'));
+    const durable = (await pool!.query(`SELECT
+      (SELECT count(*)::int FROM storage_agent_tasks WHERE resolution_conflict_id=$1) AS tasks,
+      (SELECT count(*)::int FROM committee_events WHERE resource_id=$1 AND event_type='storage_agent.conflict_resolved') AS events,
+      (SELECT count(*)::int FROM audit_log WHERE resource_id=$1 AND action='storage.agent_conflict_resolved') AS audits`, [conflict.id])).rows[0];
+    expect(durable).toEqual({tasks: 1, events: 1, audits: 1});
+  }, 20_000);
+
+  it('refreshes an outdated manifest before restoring the current server version', async () => {
+    const value = await reviewedChairFixture(); const saved = await value.commit();
+    const before = await tasks.manifest(value.paired.credential, value.paired.host.leaseGeneration);
+    const conflict = await value.submitConflict(value.local(saved.file.id, saved.file.revision + 1), 'REVISION_CONFLICT');
+    await value.review.approve(value.owner, saved.file.id, {baseRevision: saved.file.revision,
+      logicalName: '正式文件.txt', fileType: 'WORKING_PAPER'}, context('edge-outdated-approve'));
+    await retainManifestThrough(value.committee.id, before.nextSequence);
+    await conflicts.resolve(value.owner, value.committee.id, conflict.id, {baseRevision: conflict.revision,
+      leaseGeneration: value.paired.host.leaseGeneration, fileRevision: saved.file.revision + 1,
+      action: 'KEEP_SERVER'}, randomUUID(), context('edge-outdated-restore'));
+    expect((await tasks.manifest(value.paired.credential, value.paired.host.leaseGeneration, before.nextSequence)).events)
+      .toEqual([expect.objectContaining({kind: 'UPSERT', fileEntryId: saved.file.id,
+        fileRevision: saved.file.revision + 1, blobId: saved.file.currentVersion.blobId, logicalName: saved.path})]);
+  }, 20_000);
+
+  it('protects newly formal or merged entries when their pending conflict predates review', async () => {
+    const value = await reviewedChairFixture(); const first = await value.commit('first.txt');
+    const next = await value.commit('next.txt', Buffer.from('replacement bytes with a different hash'));
+    const formalConflict = await value.submitConflict(value.local(first.file.id, first.file.revision), 'MANIFEST_STALE', 99);
+    const sourceConflict = await value.submitConflict(value.local(next.file.id, next.file.revision + 1), 'REVISION_CONFLICT');
+    const input = (baseRevision: number) => ({baseRevision, logicalName: '同名正式文件.txt', fileType: 'WORKING_PAPER'});
+    await value.review.approve(value.owner, first.file.id, input(first.file.revision), context('edge-formal-approve'));
+    const preview = await value.review.previewApproval(value.owner, next.file.id, input(next.file.revision));
+    await value.review.approve(value.owner, next.file.id, {...input(next.file.revision), confirmationToken: preview.confirmationToken}, context('edge-merge-approve'));
+    for (const [conflict, fileRevision] of [[formalConflict, first.file.revision + 2], [sourceConflict, next.file.revision + 1]] as const) {
+      for (const action of conflict.id === sourceConflict.id ? ['ACCEPT_LOCAL', 'SAVE_AS_NEW'] : ['SAVE_AS_NEW']) {
+        await expect(conflicts.resolve(value.owner, value.committee.id, conflict.id, {baseRevision: conflict.revision,
+          leaseGeneration: value.paired.host.leaseGeneration, fileRevision, action,
+          ...(action === 'SAVE_AS_NEW' ? {logicalName: '绕过审核.txt'} : {})}, randomUUID(), context('edge-predates-review')))
+          .rejects.toMatchObject({code: 'RESOURCE_CONFLICT', details: {reason: 'FILE_UPDATE_REQUIRES_REVIEW'}});
+      }
+    }
+    const browserConflicts = await conflicts.list(value.owner, value.committee.id);
+    expect(browserConflicts.find(item => item.id === formalConflict.id)).toMatchObject({
+      serverRevision: null, serverFile: {id: first.file.id, revision: first.file.revision + 2,
+        status: 'PUBLISHED', mergedIntoFileEntryId: null,
+        currentVersion: {sha256: next.source.sha256, sizeBytes: next.source.content.length}}});
+    expect(browserConflicts.find(item => item.id === sourceConflict.id)).toMatchObject({
+      serverRevision: next.file.revision, serverFile: {id: next.file.id, revision: next.file.revision + 1,
+        status: 'PUBLISHED', mergedIntoFileEntryId: first.file.id,
+        currentVersion: {sha256: next.source.sha256, sizeBytes: next.source.content.length}}});
+    expect(JSON.stringify(browserConflicts)).not.toMatch(/credential|storage_key|agent_relative_path/);
+    const targetTask = (await tasks.tasks(value.paired.credential, value.paired.host.leaseGeneration)).tasks
+      .find(task => task.type === 'STORE_BLOB' && task.fileEntryId === first.file.id && task.fileRevision === first.file.revision + 2)!;
+    expect(targetTask).toMatchObject({blobId: next.file.currentVersion.blobId,
+      expectedSizeBytes: next.source.content.length, expectedSha256: next.source.sha256});
+    const targetManifest = (await tasks.manifest(value.paired.credential, value.paired.host.leaseGeneration)).events
+      .filter(event => event.fileEntryId === first.file.id).at(-1);
+    expect(targetManifest).toMatchObject({kind: 'UPSERT', fileRevision: targetTask.fileRevision,
+      logicalName: first.path, blobId: next.file.currentVersion.blobId, sha256: next.source.sha256});
+    const targetClaim = await tasks.claim(value.paired.credential, targetTask.id, {leaseGeneration: targetTask.leaseGeneration,
+      fileRevision: targetTask.fileRevision, requestId: randomUUID()});
+    const chunks: Buffer[] = [];
+    await tasks.streamBlob(value.paired.credential, {taskId: targetClaim.id, blobId: targetClaim.blobId!,
+      leaseGeneration: targetClaim.leaseGeneration, fileRevision: targetClaim.fileRevision, claimToken: targetClaim.claimToken!}, {
+      start: metadata => expect(metadata).toEqual({sizeBytes: next.source.content.length, sha256: next.source.sha256}),
+      write: async chunk => {chunks.push(Buffer.from(chunk));}
+    });
+    expect(Buffer.concat(chunks)).toEqual(next.source.content);
+    await tasks.complete(value.paired.credential, targetClaim.id, {leaseGeneration: targetClaim.leaseGeneration,
+      fileRevision: targetClaim.fileRevision, claimToken: targetClaim.claimToken, requestId: randomUUID()}, context('edge-target-replacement-complete'));
+
+    const manifest = await tasks.manifest(value.paired.credential, value.paired.host.leaseGeneration);
+    expect(manifest.events.filter(event => event.fileEntryId === next.file.id).at(-1))
+      .toMatchObject({kind: 'UPSERT', fileRevision: next.file.revision + 1, logicalName: next.path, blobId: next.file.currentVersion.blobId});
+    await conflicts.resolve(value.owner, value.committee.id, sourceConflict.id, {baseRevision: sourceConflict.revision,
+      leaseGeneration: value.paired.host.leaseGeneration, fileRevision: next.file.revision + 1,
+      action: 'KEEP_SERVER'}, randomUUID(), context('edge-merged-source-restore'));
+    expect((await tasks.tasks(value.paired.credential, value.paired.host.leaseGeneration)).tasks
+      .filter(task => task.resolutionConflictId === sourceConflict.id))
+      .toEqual([expect.objectContaining({type: 'STORE_BLOB', fileEntryId: next.file.id,
+        fileRevision: next.file.revision + 1, blobId: next.file.currentVersion.blobId,
+        expectedSizeBytes: next.source.content.length, expectedSha256: next.source.sha256})]);
+    expect((await conflicts.listForAgent(value.paired.credential, value.paired.host.leaseGeneration))
+      .find(item => item.id === sourceConflict.id)).not.toHaveProperty('serverFile');
+    expect((await value.reader.get(value.owner, first.file.id)).currentVersion.blobId).toBe(next.file.currentVersion.blobId);
+  }, 20_000);
+
+  it('uses the deleted file identity when keeping server state without historical manifest events', async () => {
+    const value = await reviewedChairFixture(); const saved = await value.commit();
+    await storage.deleteFile(value.owner, saved.file.id, {baseRevision: saved.file.revision}, randomUUID(), context('edge-server-delete'));
+    await retainManifestThrough(value.committee.id, 0);
+    const conflict = await value.submitConflict(value.local(saved.file.id, saved.file.revision), 'FILE_DELETED');
+    const fileRevision = saved.file.revision + 1;
+    await expect(conflicts.resolve(value.owner, value.committee.id, conflict.id, {baseRevision: conflict.revision,
+      leaseGeneration: value.paired.host.leaseGeneration, fileRevision, action: 'ACCEPT_LOCAL'}, randomUUID(), context('edge-deleted-accept')))
+      .rejects.toMatchObject({code: 'RESOURCE_CONFLICT', reason: 'DELETED_FILE_REQUIRES_NEW'});
+    await conflicts.resolve(value.owner, value.committee.id, conflict.id, {baseRevision: conflict.revision,
+      leaseGeneration: value.paired.host.leaseGeneration, fileRevision, action: 'KEEP_SERVER'}, randomUUID(), context('edge-deleted-keep'));
+    expect((await tasks.tasks(value.paired.credential, value.paired.host.leaseGeneration)).tasks
+      .filter(task => task.resolutionConflictId === conflict.id))
+      .toEqual([expect.objectContaining({type: 'DELETE_FILE', fileEntryId: saved.file.id, fileRevision,
+        blobId: null, expectedSizeBytes: null, expectedSha256: null})]);
+    expect((await pool!.query('SELECT status::text FROM file_entries WHERE id=$1', [saved.file.id])).rows)
+      .toEqual([{status: 'DELETED'}]);
+  }, 20_000);
+
+  it('rolls first approval metadata, manifest and Agent work back when publication audit fails', async () => {
+    const value = await reviewedChairFixture(); const saved = await value.commit();
+    const beforeManifest = await tasks.manifest(value.paired.credential, value.paired.host.leaseGeneration);
+    const beforeTasks = await tasks.tasks(value.paired.credential, value.paired.host.leaseGeneration);
+    await pool!.query(`CREATE FUNCTION fail_first_approval_audit() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN IF NEW.action='storage.file_published' THEN RAISE EXCEPTION 'injected approval audit failure'; END IF;
+      RETURN NEW; END; $$; CREATE TRIGGER fail_first_approval_audit BEFORE INSERT ON audit_log
+      FOR EACH ROW EXECUTE FUNCTION fail_first_approval_audit()`);
+    await expect(value.review.approve(value.owner, saved.file.id, {baseRevision: saved.file.revision,
+      logicalName: '正式文件.txt', fileType: 'WORKING_PAPER'}, context('edge-approval-rollback'))).rejects.toThrow();
+    expect(await value.reader.get(value.owner, saved.file.id)).toEqual(saved.file);
+    expect(await tasks.manifest(value.paired.credential, value.paired.host.leaseGeneration)).toEqual(beforeManifest);
+    expect(await tasks.tasks(value.paired.credential, value.paired.host.leaseGeneration)).toEqual(beforeTasks);
+    expect((await pool!.query(`SELECT
+      (SELECT count(*)::int FROM delegate_file_metadata WHERE file_entry_id=$1 AND approved_at IS NOT NULL) AS approvals,
+      (SELECT count(*)::int FROM committee_events WHERE resource_id=$1 AND event_type='file.published') AS events`, [saved.file.id])).rows)
+      .toEqual([{approvals: 0, events: 0}]);
+  }, 20_000);
+
+  it('allows a deleted former formal file to be saved as a new review submission even from an old review conflict', async () => {
+    const value = await reviewedChairFixture(); const saved = await value.commit();
+    await value.review.approve(value.owner, saved.file.id, {baseRevision: saved.file.revision,
+      logicalName: '正式文件.txt', fileType: 'WORKING_PAPER'}, context('edge-deleted-formal-approve'));
+    const change = value.local(saved.file.id, saved.file.revision + 1);
+    const conflict = await value.submitConflict(change, 'REVIEW_REQUIRED');
+    await storage.deleteFile(value.owner, saved.file.id, {baseRevision: saved.file.revision + 1}, randomUUID(), context('edge-formal-delete'));
+    const body = {baseRevision: conflict.revision, leaseGeneration: value.paired.host.leaseGeneration,
+      fileRevision: saved.file.revision + 2};
+    await expect(conflicts.resolve(value.owner, value.committee.id, conflict.id, {...body, action: 'ACCEPT_LOCAL'},
+      randomUUID(), context('edge-deleted-formal-accept')))
+      .rejects.toMatchObject({code: 'RESOURCE_CONFLICT', reason: 'DELETED_FILE_REQUIRES_NEW'});
+    await conflicts.resolve(value.owner, value.committee.id, conflict.id, {...body, action: 'SAVE_AS_NEW',
+      logicalName: '新的待审核文件.txt'}, randomUUID(), context('edge-deleted-formal-new'));
+    const pending = await localChanges.submit(value.paired.credential, {leaseGeneration: body.leaseGeneration,
+      requestId: randomUUID(), manifestSequence: 99, change, resolutionConflictId: conflict.id}, context('edge-deleted-new-apply'));
+    if (pending.status !== 'PENDING_CONTENT') throw new Error('Expected new review content task');
+    expect(pending.task.fileEntryId).not.toBe(saved.file.id);
+    const claim = await tasks.claim(value.paired.credential, pending.task.id, {leaseGeneration: body.leaseGeneration,
+      fileRevision: pending.task.fileRevision, requestId: randomUUID()});
+    await tasks.receiveContent(value.paired.credential, {taskId: claim.id, leaseGeneration: body.leaseGeneration,
+      fileRevision: claim.fileRevision, claimToken: claim.claimToken!, expectedSha256: change.sha256,
+      contentLength: 5, source: (async function* () {yield Buffer.from('local');})(), context: context('edge-deleted-new-content')});
+    await tasks.complete(value.paired.credential, claim.id, {leaseGeneration: body.leaseGeneration,
+      fileRevision: claim.fileRevision, claimToken: claim.claimToken, requestId: randomUUID()}, context('edge-deleted-new-complete'));
+    expect((await pool!.query('SELECT status::text FROM file_entries WHERE id=$1', [saved.file.id])).rows)
+      .toEqual([{status: 'DELETED'}]);
+    expect((await value.reader.list(value.owner, value.committee.id)).find(file => file.id === pending.task.fileEntryId))
+      .toMatchObject({status: 'PENDING_REVIEW', logicalName: '新的待审核文件.txt', currentVersion: {sha256: change.sha256}});
+  }, 20_000);
+
+  it('keeps legacy recovery pending and rolls manifest repair back on unavailable content or failed audit', async () => {
+    const value = await reviewedChairFixture(); const saved = await value.commit();
+    const conflict = await value.submitConflict(value.local(saved.file.id, saved.file.revision + 1), 'REVISION_CONFLICT');
+    await value.review.approve(value.owner, saved.file.id, {baseRevision: saved.file.revision,
+      logicalName: '正式文件.txt', fileType: 'WORKING_PAPER'}, context('edge-rollback-approve'));
+    await retainManifestThrough(value.committee.id, 0);
+    const body = {baseRevision: conflict.revision, leaseGeneration: value.paired.host.leaseGeneration,
+      fileRevision: saved.file.revision + 1, action: 'KEEP_SERVER'};
+    await pool!.query("UPDATE file_blobs SET durability_state='FAILED' WHERE id=$1", [saved.file.currentVersion.blobId]);
+    await expect(conflicts.resolve(value.owner, value.committee.id, conflict.id, body, randomUUID(), context('edge-content-unavailable')))
+      .rejects.toMatchObject({code: 'RESOURCE_CONFLICT', reason: 'FILE_CONTENT_UNAVAILABLE'});
+    await pool!.query("UPDATE file_blobs SET durability_state='COMMITTED' WHERE id=$1", [saved.file.currentVersion.blobId]);
+    await pool!.query(`CREATE FUNCTION fail_legacy_repair_audit() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN IF NEW.action='storage.agent_conflict_resolved' THEN RAISE EXCEPTION 'injected legacy recovery failure'; END IF;
+      RETURN NEW; END; $$; CREATE TRIGGER fail_legacy_repair_audit BEFORE INSERT ON audit_log
+      FOR EACH ROW EXECUTE FUNCTION fail_legacy_repair_audit()`);
+    await expect(conflicts.resolve(value.owner, value.committee.id, conflict.id, body, randomUUID(), context('edge-repair-audit-failure')))
+      .rejects.toThrow('injected legacy recovery failure');
+    expect((await pool!.query(`SELECT
+      (SELECT status::text FROM storage_agent_conflicts WHERE id=$1) AS status,
+      (SELECT count(*)::int FROM storage_agent_tasks WHERE resolution_conflict_id=$1) AS tasks,
+      (SELECT count(*)::int FROM storage_manifest_events WHERE committee_id=$2) AS manifest,
+      (SELECT next_storage_manifest_sequence::int FROM committees WHERE id=$2) AS next_sequence,
+      (SELECT count(*)::int FROM committee_events WHERE resource_id=$1 AND event_type='storage_agent.conflict_resolved') AS events`,
+    [conflict.id, value.committee.id])).rows)
+      .toEqual([{status: 'PENDING', tasks: 0, manifest: 0, next_sequence: 1, events: 0}]);
+  }, 20_000);
+
+  it('rejects content acceptance from a transferred host even when the old conflict has an ordinary revision reason', async () => {
+    const value = await reviewedChairFixture(); const saved = await value.commit();
+    const conflict = await value.submitConflict(value.local(saved.file.id, saved.file.revision + 1), 'REVISION_CONFLICT');
+    const pairing = await agent.createPairing(value.owner, value.committee.id,
+      {baseRevision: await committeeRevision(value.committee.id), purpose: 'TRANSFER'}, context('edge-transfer-code'));
+    const replacement = await agent.pair({pairingCode: pairing.code, deviceLabel: 'Replacement host',
+      devicePublicKey: publicKey()}, context('edge-transfer-pair'));
+    const body = {baseRevision: conflict.revision, leaseGeneration: replacement.host.leaseGeneration,
+      fileRevision: saved.file.revision};
+    for (const action of ['ACCEPT_LOCAL', 'SAVE_AS_NEW']) {
+      await expect(conflicts.resolve(value.owner, value.committee.id, conflict.id, {...body, action,
+        ...(action === 'SAVE_AS_NEW' ? {logicalName: '旧主机文件.txt'} : {})}, randomUUID(), context('edge-transferred-accept')))
+        .rejects.toMatchObject({code: 'RESOURCE_CONFLICT', reason: 'REVOKED_HOST_CONTENT'});
+    }
+    await conflicts.resolve(value.owner, value.committee.id, conflict.id, {...body, action: 'KEEP_SERVER'},
+      randomUUID(), context('edge-transferred-keep'));
+    expect((await pool!.query('SELECT count(*)::int AS tasks FROM storage_agent_tasks WHERE resolution_conflict_id=$1', [conflict.id])).rows)
+      .toEqual([{tasks: 0}]);
+    expect((await value.reader.get(value.owner, saved.file.id)).currentVersion).toEqual(saved.file.currentVersion);
+  }, 20_000);
+
+  it('does not consume a save-as-new decision if its source changed before the Agent applies it', async () => {
+    const value = await reviewedChairFixture(); const saved = await value.commit();
+    const change = value.local(saved.file.id, saved.file.revision + 1);
+    const conflict = await value.submitConflict(change, 'REVISION_CONFLICT');
+    await conflicts.resolve(value.owner, value.committee.id, conflict.id, {baseRevision: conflict.revision,
+      leaseGeneration: value.paired.host.leaseGeneration, fileRevision: saved.file.revision,
+      action: 'SAVE_AS_NEW', logicalName: '裁决副本.txt'}, randomUUID(), context('edge-apply-fence-decision'));
+    await value.review.approve(value.owner, saved.file.id, {baseRevision: saved.file.revision,
+      logicalName: '正式文件.txt', fileType: 'WORKING_PAPER'}, context('edge-approve-after-decision'));
+    await expect(localChanges.submit(value.paired.credential, {leaseGeneration: value.paired.host.leaseGeneration,
+      requestId: randomUUID(), manifestSequence: 99, change, resolutionConflictId: conflict.id}, context('edge-apply-fenced')))
+      .rejects.toMatchObject({code: 'REVISION_CONFLICT'});
+    expect((await pool!.query(`SELECT
+      (SELECT count(*)::int FROM storage_agent_conflict_applications WHERE conflict_id=$1) AS applications,
+      (SELECT count(*)::int FROM file_uploads WHERE logical_name='裁决副本.txt') AS uploads`, [conflict.id])).rows)
+      .toEqual([{applications: 0, uploads: 0}]);
+    expect((await value.reader.get(value.owner, saved.file.id)).currentVersion).toEqual(saved.file.currentVersion);
+  }, 20_000);
+
   it('lists only manageable active or paused candidates with current host and storage', async () => {
     const {owner, chair, member, committee} = await fixture();
     expect(await agent.listCandidates(member)).toEqual([]);
@@ -789,7 +1234,8 @@ integration('PostgreSQL stage 7 storage Agent identity', () => {
       fileRevision: 1, requestId: randomUUID()});
     await tasks.complete(chair.paired.credential, pending.taskId, {leaseGeneration: pending.leaseGeneration,
       fileRevision: 1, claimToken: claimed.claimToken, requestId: randomUUID()}, context('lru-complete'));
-    const fileService = new Stage6FileService(pool!, {} as never, {} as never);
+    const fileService = new Stage6FileService(pool!, {} as never, {} as never,
+      () => {throw new Error('Unexpected S3');});
     const [saved] = await fileService.list(value.owner, value.committee.id);
     await fileService.publish(value.owner, saved!.id, {baseRevision: saved!.revision}, randomUUID(), context('lru-publish'));
     const policy = {hardLimits: {publishedCacheMaxBytes: 0, pendingReviewMaxBytes: 1024,

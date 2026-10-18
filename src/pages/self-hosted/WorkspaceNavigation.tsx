@@ -90,8 +90,8 @@ function routeActive(pathname: string, destination: string, prefix = false) {
   return prefix ? pathname === destination || pathname.startsWith(`${destination}/`) : pathname === destination;
 }
 
-function PrimaryItems({snapshot, onNavigate, onCreateCaucus, level = 0, hasPendingFileReview = false, hasStorageSetupHint = false, measureLabels = false}: {
-  snapshot: CommitteeWorkspaceSnapshot; onNavigate?(): void; onCreateCaucus?(): void; level?: number; hasPendingFileReview?: boolean; hasStorageSetupHint?: boolean;
+function PrimaryItems({snapshot, onNavigate, onCreateCaucus, level = 0, hasPendingFileReview = false, hasStorageSetupHint = false, pendingConflictCount = 0, measureLabels = false}: {
+  snapshot: CommitteeWorkspaceSnapshot; onNavigate?(): void; onCreateCaucus?(): void; level?: number; hasPendingFileReview?: boolean; hasStorageSetupHint?: boolean; pendingConflictCount?: number;
   measureLabels?: boolean;
 }) {
   const language = useLanguage();
@@ -156,7 +156,7 @@ function PrimaryItems({snapshot, onNavigate, onCreateCaucus, level = 0, hasPendi
     }
   };
   const base = `/committees/${snapshot.committee.id}`;
-  const fileStatusDots = <>{hasPendingFileReview && <span className="file-review-dot" aria-label={t('Pending review')} />}{hasStorageSetupHint && <span className="storage-setup-dot" aria-label={t('Storage is not configured.')} />}</>;
+  const fileStatusDots = <>{pendingConflictCount > 0 && <span className="file-conflict-dot" aria-label={t('Files need a decision')} />}{hasPendingFileReview && <span className="file-review-dot" aria-label={t('Pending review')} />}{hasStorageSetupHint && <span className="storage-setup-dot" aria-label={t('Storage is not configured.')} />}</>;
   const item = (path: string, label: string) => <Menu.Item key={path} data-navigation-key={path} as={Link} to={`${base}${path}`}
     active={routeActive(location.pathname, `${base}${path}`, true)} onClick={onNavigate}
     {...(path === '/unmod' ? {title: t(label), 'aria-label': t(label)} : {})}>
@@ -241,7 +241,7 @@ function PrimaryItems({snapshot, onNavigate, onCreateCaucus, level = 0, hasPendi
           [['/settings', 4], ['/help', 4], ['/stats', 5], ['/posts', 6], ['/notes', 7], ['/strawpolls', 8], ['/votes', 9], ['/resolutions', 10], ['/directives', 11], ['/crises', 12], ['/caucuses', 13]]
             .some(([path, minimum]) => level >= Number(minimum) && routeActive(location.pathname, `${base}${path}`, true)) ? 'active' : ''
         ].join(' ')} open={moreOpen} onOpen={() => setMoreOpen(true)}
-        trigger={<><Icon name="ellipsis horizontal" />{level >= 6 && (hasPendingFileReview || hasStorageSetupHint) && <span className="committee-navigation-more-files">{fileStatusDots}</span>}
+        trigger={<><Icon name="ellipsis horizontal" />{level >= 6 && (hasPendingFileReview || hasStorageSetupHint || pendingConflictCount > 0) && <span className="committee-navigation-more-files">{fileStatusDots}</span>}
           {level>=12 && crisisDot && <span className={`crisis-time-dot ${crisisDot}`} aria-label={t(crisisDot==='red' ? 'Crisis time expired' : 'Crisis time below five minutes')} />}</>}
         onClose={() => {setMoreOpen(false); setPollOpen(null);}}>
         <Dropdown.Menu>
@@ -262,9 +262,9 @@ function PrimaryItems({snapshot, onNavigate, onCreateCaucus, level = 0, hasPendi
   </>;
 }
 
-export function CommitteeNavigation({snapshot, user, logout, realtimeStatus = 'CONNECTING', onCreateCaucus, hasPendingFileReview = false, hasStorageSetupHint = false, lastSyncedAt, syncFailed, networkOffline, onRetry, children}: {
+export function CommitteeNavigation({snapshot, user, logout, realtimeStatus = 'CONNECTING', onCreateCaucus, hasPendingFileReview = false, hasStorageSetupHint = false, pendingConflictCount = 0, lastSyncedAt, syncFailed, networkOffline, onRetry, children}: {
   snapshot: CommitteeWorkspaceSnapshot; user?: SelfHostedUser; logout(): void; realtimeStatus?: RealtimeStatus;
-  onCreateCaucus?(): void; hasPendingFileReview?: boolean; hasStorageSetupHint?: boolean; children?: React.ReactNode;
+  onCreateCaucus?(): void; hasPendingFileReview?: boolean; hasStorageSetupHint?: boolean; pendingConflictCount?: number; children?: React.ReactNode;
 } & RealtimeDetails) {
   const language = useLanguage();
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
@@ -320,13 +320,13 @@ export function CommitteeNavigation({snapshot, user, logout, realtimeStatus = 'C
     if (compactAccount) observer.observe(compactAccount);
     measure();
     return () => observer.disconnect();
-  }, [snapshot, user, realtimeStatus, language, hasPendingFileReview, hasStorageSetupHint]);
+  }, [snapshot, user, realtimeStatus, language, hasPendingFileReview, hasStorageSetupHint, pendingConflictCount]);
   React.useEffect(() => { setSidebarOpen(false); }, [level]);
   const mode = level === 14 ? 'sidebar' : 'desktop';
   return <>
     <nav data-navigation-mode={mode} data-collapse-level={level} className="committee-navigation-desktop" aria-label={t('Committee navigation')}>
       <Menu className="committee-primary-navigation" size="large" fluid data-crisis-reminder={crisisReminder}>
-        <PrimaryItems snapshot={snapshot} onCreateCaucus={onCreateCaucus} level={level} hasPendingFileReview={hasPendingFileReview} hasStorageSetupHint={hasStorageSetupHint} />
+        <PrimaryItems snapshot={snapshot} onCreateCaucus={onCreateCaucus} level={level} hasPendingFileReview={hasPendingFileReview} hasStorageSetupHint={hasStorageSetupHint} pendingConflictCount={pendingConflictCount} />
         <Menu.Menu position="right"><AttendanceThresholdItem snapshot={snapshot} /><RealtimeStatusItem status={realtimeStatus} compact={level >= 3} lastSyncedAt={lastSyncedAt}
           syncFailed={syncFailed} networkOffline={networkOffline} onRetry={onRetry} />
           {user && <AccountMenu user={user} logout={logout} compact={level >= 1} />}</Menu.Menu>
@@ -337,9 +337,9 @@ export function CommitteeNavigation({snapshot, user, logout, realtimeStatus = 'C
       element?.setAttribute('inert', '');
     }}>
       <Menu className="committee-primary-navigation" size="large" data-crisis-reminder={crisisReminder}>
-        <PrimaryItems snapshot={snapshot} hasPendingFileReview={hasPendingFileReview} hasStorageSetupHint={hasStorageSetupHint} measureLabels />
+        <PrimaryItems snapshot={snapshot} hasPendingFileReview={hasPendingFileReview} hasStorageSetupHint={hasStorageSetupHint} pendingConflictCount={pendingConflictCount} measureLabels />
         <Menu.Item className="committee-navigation-more"><Icon name="ellipsis horizontal" />
-          {(hasPendingFileReview || hasStorageSetupHint) && <span className="committee-navigation-more-files">{hasPendingFileReview && <span className="file-review-dot" />}{hasStorageSetupHint && <span className="storage-setup-dot" />}</span>}</Menu.Item>
+          {(hasPendingFileReview || hasStorageSetupHint || pendingConflictCount > 0) && <span className="committee-navigation-more-files">{pendingConflictCount > 0 && <span className="file-conflict-dot" />}{hasPendingFileReview && <span className="file-review-dot" />}{hasStorageSetupHint && <span className="storage-setup-dot" />}</span>}</Menu.Item>
         <Menu.Menu position="right"><AttendanceThresholdItem snapshot={snapshot} /><RealtimeStatusItem status={realtimeStatus} />
           {user && <AccountMenu user={user} logout={logout} />}</Menu.Menu>
       </Menu>
@@ -352,13 +352,13 @@ export function CommitteeNavigation({snapshot, user, logout, realtimeStatus = 'C
         data-crisis-reminder={crisisReminder}
         onHide={() => setSidebarOpen(false)}>
         <AttendanceThresholdItem snapshot={snapshot} />
-        <PrimaryItems snapshot={snapshot} onNavigate={() => setSidebarOpen(false)} onCreateCaucus={onCreateCaucus} hasPendingFileReview={hasPendingFileReview} hasStorageSetupHint={hasStorageSetupHint} />
+        <PrimaryItems snapshot={snapshot} onNavigate={() => setSidebarOpen(false)} onCreateCaucus={onCreateCaucus} hasPendingFileReview={hasPendingFileReview} hasStorageSetupHint={hasStorageSetupHint} pendingConflictCount={pendingConflictCount} />
       </Sidebar>
       <Sidebar.Pusher dimmed={sidebarOpen} onClick={() => sidebarOpen && setSidebarOpen(false)}>
         <nav aria-label={t('Committee navigation')}>
           <Menu className="committee-navigation-mobile" size="large">
             <Menu.Item as="button" type="button" aria-expanded={sidebarOpen} aria-label={t('Open committee navigation')} onClick={() => setSidebarOpen(open => !open)}>
-              <Icon name="sidebar" />
+              <Icon name="sidebar" />{pendingConflictCount > 0 && <span className="file-conflict-dot" aria-label={t('Files need a decision')} />}
             </Menu.Item>
             <Menu.Item header as={Link} to={'/committees/' + snapshot.committee.id + '/info'}>{snapshot.committee.name}</Menu.Item>
             <Menu.Menu position="right"><RealtimeStatusItem status={realtimeStatus} compact lastSyncedAt={lastSyncedAt}

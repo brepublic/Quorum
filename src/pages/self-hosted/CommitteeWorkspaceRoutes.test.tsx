@@ -95,19 +95,29 @@ describe('committee workspace routes and roles', () => {
     expect(page.querySelector('.resolution-page input')?.getAttribute('value')).toBe('Draft Resolution 1.1');
   });
 
-  it('updates pending-file dots through the existing SSE while viewing another page', async () => {
+  it.each(['unmod', 'posts/storage'])('updates pending-file dots through the existing SSE on %s', async route => {
     let sequence = 1;
     let status = 'UPLOAD_COMPLETE';
     let audience: CommitteeWorkspaceSnapshot['viewer']['audience'] = 'CHAIR';
     let callbacks!: Parameters<SelfHostedApi['openCommitteeEvents']>[2];
-    const listFiles = vi.fn(async () => [{status}] as Awaited<ReturnType<SelfHostedApi['listFiles']>>);
+    const listFiles = vi.fn(async () => [{id: 'file', committeeId: 'committee', logicalName: 'Review file',
+      status, syncState: 'SYNCED', createdByUserId: 'chair', revision: 1, mediaType: 'text/plain',
+      currentVersion: {id: 'version', versionNumber: 1, originalName: 'review.txt', mediaType: 'text/plain',
+        sizeBytes: 3, sha256: 'a'.repeat(64), blobId: 'blob', createdAt: '2026-10-07T00:00:00Z'},
+      submittedAt: null, publishedAt: null, createdAt: '2026-10-07T00:00:00Z', updatedAt: '2026-10-07T00:00:00Z'
+    }] as Awaited<ReturnType<SelfHostedApi['listFiles']>>);
     const openCommitteeEvents = vi.fn((id, after, handlers) => {callbacks = handlers; handlers.onState('LIVE'); return () => undefined;});
-    const page = await render('CHAIR', '/committees/committee/unmod', user, value => value, {
+    const page = await render('CHAIR', `/committees/committee/${route}`, user, value => value, {
       snapshot: vi.fn(async () => ({...snapshot(audience), sync: {committeeEventSequence: sequence}})),
       openCommitteeEvents, listFiles
     });
-    const dot = () => page.querySelector('.committee-navigation-desktop a[href="/committees/committee/posts"] .file-review-dot');
+    const dot = () => page.querySelector(route === 'unmod'
+      ? '.committee-navigation-desktop a[href="/committees/committee/posts"] .file-review-dot'
+      : '.committee-files-page a[href="/committees/committee/posts/attachments"] .file-review-dot');
     expect(dot()).not.toBeNull();
+    expect(dot()?.getAttribute('aria-label')).toBe('Pending review');
+    await act(async () => {setLanguage('zh-CN');});
+    expect(dot()?.getAttribute('aria-label')).toBe('待审核');
     expect(listFiles).toHaveBeenCalledWith('committee');
     expect(page.querySelector('.delegate-file-card-list')).toBeNull();
     const event = async (type: string) => {
@@ -133,7 +143,8 @@ describe('committee workspace routes and roles', () => {
     const calls = listFiles.mock.calls.length;
     await event('committee.updated');
     expect(dot()).toBeNull();
-    expect(listFiles).toHaveBeenCalledTimes(calls);
+    expect(page.querySelector('.file-review-dot')).toBeNull();
+    if (route === 'unmod') expect(listFiles).toHaveBeenCalledTimes(calls);
     expect(openCommitteeEvents).toHaveBeenCalledOnce();
   });
 
@@ -3421,6 +3432,30 @@ describe('committee workspace routes and roles', () => {
     const ownerPage = await render('OWNER', '/committees/committee/posts/storage', {...user, id: 'other'}, value => value, overrides);
     expect(ownerPage.querySelector('.storage-setup-dot')).toBeNull();
     expect(ownerPage.querySelector('.storage-setup-reminder')).toBeNull();
+  });
+
+  it('shows pending conflicts outside the files page and clears them after a resolution event', async () => {
+    let pending = true; let sequence = 1;
+    let handlers: Parameters<SelfHostedApi['openCommitteeEvents']>[2] | undefined;
+    const listStorageAgentConflicts = vi.fn(async () => pending ? [{id: 'conflict', status: 'PENDING', change: {kind: 'UPSERT', logicalName: 'draft.txt'}}] as never : []);
+    const page = await render('OWNER', '/committees/committee/info', user,
+      value => ({...value, sync: {committeeEventSequence: sequence}}), {listStorageAgentConflicts,
+        openCommitteeEvents: (_id, _after, next) => {handlers = next; next.onState('LIVE'); return () => undefined;}});
+    expect(page.querySelector('.committee-navigation-desktop .file-conflict-dot')).not.toBeNull();
+    await act(async () => page.querySelector<HTMLAnchorElement>('.committee-navigation-desktop a[href="/committees/committee/posts"]')!.click());
+    expect(page.querySelector('.file-conflict-notice a')?.getAttribute('href')).toBe('/committees/committee/posts/storage#sync-conflicts');
+    expect(page.querySelector('[aria-label="Resource sections"] .file-conflict-dot')).not.toBeNull();
+    pending = false; sequence++;
+    await act(async () => handlers!.onEvent({sequence, type: 'storage_agent.conflict_resolved'} as never));
+    expect(page.querySelector('.file-conflict-dot')).toBeNull();
+    expect(page.querySelector('.file-conflict-notice')).toBeNull();
+  });
+
+  it.each(['MEMBER', 'PUBLIC'] as const)('does not request private conflict details for %s', async audience => {
+    const listStorageAgentConflicts = vi.fn(async () => []);
+    const page = await render(audience, '/committees/committee/info', user, value => value, {listStorageAgentConflicts});
+    expect(listStorageAgentConflicts).not.toHaveBeenCalled();
+    expect(page.querySelector('.file-conflict-dot')).toBeNull();
   });
 
   it('refreshes storage reminders when another Chair suppresses them or enables storage', async () => {

@@ -32,6 +32,7 @@ async function packageTarget(target) {
   await materializeReleaseStage({rootDirectory: stage, distDirectory,
     pairingModulePath: join(repository, 'packages/contracts/dist/agent-pairing.js'),
     releaseReadmePath: join(repository, 'packages/storage-agent/RELEASE_README.md'),
+    platformHelper: target.startsWith('win-') ? await readFile(resolve(option('--windows-platform-helper') ?? join(repository, 'packages/storage-agent-desktop/target/release/quorum-agent-platform.exe'))) : undefined,
     target, agentVersion: agentPackage.version, nodeVersion: lock.nodeVersion, ...runtime});
   return archiveTarget(target);
 }

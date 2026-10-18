@@ -1,8 +1,17 @@
 import {constants as fsConstants} from 'node:fs';
-import {chmod, lstat, mkdir, open, rename} from 'node:fs/promises';
+import {chmod, lstat, mkdir, open, rename, rm} from 'node:fs/promises';
 import {dirname} from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {AgentFileSystemError} from './errors.js';
+import {checkPrivatePath, protectPrivatePath} from './windows-platform.js';
+
+// Create an empty exclusive file first; restrict its ACL before writing secrets.
+export async function writePrivateAgentFile(path: string, source: string): Promise<void> {
+  const handle = await open(path, fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_WRONLY, 0o600);
+  try {await protectPrivatePath(path); await handle.writeFile(source, 'utf8'); await handle.sync();}
+  catch (error) {await handle.close(); await rm(path, {force: true}); throw error;}
+  await handle.close();
+}
 
 export interface StorageAgentLocalConfig {
   schemaVersion: 1;
@@ -47,6 +56,7 @@ export async function readPrivateAgentFile(path: string): Promise<string> {
       throw new AgentFileSystemError('INVALID_STORAGE_ROOT', 'Agent config must be a private regular file.');
     }
     handle = await open(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+    await checkPrivatePath(path);
     const stats = await handle.stat();
     if (!stats.isFile() || stats.nlink !== 1 || before.dev !== stats.dev || before.ino !== stats.ino
       || (process.platform !== 'win32' && (stats.mode & 0o077) !== 0)) {
@@ -64,9 +74,9 @@ export async function readPrivateAgentFile(path: string): Promise<string> {
 export async function writeAgentConfig(path: string, config: StorageAgentLocalConfig): Promise<void> {
   valid(config); await mkdir(dirname(path), {recursive: true, mode: 0o700});
   const temporary = `${path}.${randomUUID()}.tmp`;
-  const handle = await open(temporary, fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_WRONLY, 0o600);
-  try { await handle.writeFile(`${JSON.stringify(config, null, 2)}\n`, 'utf8'); await handle.sync(); }
-  finally { await handle.close(); }
-  await rename(temporary, path);
-  if (process.platform !== 'win32') await chmod(path, 0o600);
+  try {
+    await writePrivateAgentFile(temporary, `${JSON.stringify(config, null, 2)}\n`);
+    await rename(temporary, path);
+    if (process.platform !== 'win32') await chmod(path, 0o600);
+  } finally {await rm(temporary, {force: true});}
 }

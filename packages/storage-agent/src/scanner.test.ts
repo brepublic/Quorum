@@ -1,7 +1,7 @@
 // @vitest-environment node
 
 import {createHash, randomUUID} from 'node:crypto';
-import {mkdir, mkdtemp, rename, rm, symlink, unlink, writeFile} from 'node:fs/promises';
+import {link, mkdir, mkdtemp, rename, rm, symlink, unlink, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {afterEach, describe, expect, it} from 'vitest';
@@ -94,7 +94,7 @@ describe('Chair Agent periodic full scan', () => {
   it('rejects symlinks discovered by a full scan instead of following them', async () => {
     const value = await fixture(); const outside = await mkdtemp(join(tmpdir(), 'quorum-agent-scan-outside-'));
     roots.push(outside); await writeFile(join(outside, 'secret'), 'not for upload');
-    await symlink(join(outside, 'secret'), join(value.root, 'linked'));
+    await (process.platform === 'win32' ? link : symlink)(join(outside, 'secret'), join(value.root, 'linked'));
     await expect(value.scanner.detectOne()).rejects.toMatchObject({code: 'UNSAFE_LOCAL_PATH'});
   });
 

@@ -60,9 +60,11 @@ async function pair(values: Map<string, string>): Promise<void> {
 
 async function start(values: Map<string, string>): Promise<void> {
   const config = await readAgentConfig(resolve(required(values, 'config')));
-  const state = await AgentStateStore.initialize(config.rootPath,
-    {committeeId: config.committeeId, deviceId: config.deviceId});
   const unlock = await lockAgentRoot(config.rootPath);
+  let state: AgentStateStore;
+  try {state = await AgentStateStore.initialize(config.rootPath,
+    {committeeId: config.committeeId, deviceId: config.deviceId});}
+  catch (error) {await unlock(); throw error;}
   const controller = new AbortController();
   process.once('SIGINT', () => controller.abort()); process.once('SIGTERM', () => controller.abort());
   const desktop = values.get('desktop') === 'true';

@@ -1,7 +1,7 @@
 import {createHash, randomUUID} from 'node:crypto';
 import {constants as fsConstants} from 'node:fs';
 import {lstat, open, readdir, rename, rm, unlink} from 'node:fs/promises';
-import {join} from 'node:path';
+import {join, win32} from 'node:path';
 import type {StorageManifestEvent} from '@quorum/contracts';
 import {AgentFileSystemError} from './errors.js';
 import {secureAgentTarget} from './paths.js';
@@ -132,7 +132,8 @@ export class AgentFileStore {
       await requireExpected(this.rootPath, options.conflictPath, options.conflictExpected);
     }
     const target = await secureAgentTarget(this.rootPath, event.logicalName, {createParents: true});
-    const sameTarget = tracked?.relativePath === target.relativePath;
+    const sameTarget = !!tracked && (tracked.relativePath === target.relativePath
+      || (process.platform === 'win32' && win32.relative(tracked.relativePath, target.relativePath) === ''));
     const resolvedTarget = options.force && options.conflictPath === target.relativePath;
     if (!sameTarget && !await missing(target.absolutePath) && !resolvedTarget) {
       throw new AgentFileSystemError('LOCAL_CONTENT_CONFLICT', 'Server content collides with an untracked local file.');
@@ -159,7 +160,7 @@ export class AgentFileStore {
       if (verified.sizeBytes !== event.sizeBytes || verified.sha256 !== event.sha256) {
         throw new AgentFileSystemError('LOCAL_CONTENT_INVALID', 'Published local content failed verification.');
       }
-      if (tracked && tracked.relativePath !== target.relativePath) {
+      if (tracked && !sameTarget) {
         const old = await secureAgentTarget(this.rootPath, tracked.relativePath);
         if (!await missing(old.absolutePath)) await unlink(old.absolutePath);
       }

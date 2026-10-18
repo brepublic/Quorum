@@ -238,7 +238,7 @@ export class Stage7ChairAgentProviderService implements StorageAgentTaskCompleti
     committee.next_event_sequence = Number(refreshed.rows[0]?.next_event_sequence ?? committee.next_event_sequence);
     if (this.cache) await this.cache.retain(client, {committeeId: committee.id, fileEntryId: file.id,
       fileVersionId: file.currentVersion.id, blobId: task.blobId, sourceKey: current.staging_key,
-      sizeBytes: task.expectedSizeBytes, sha256: task.expectedSha256, reviewPinned: true});
+      sizeBytes: task.expectedSizeBytes, sha256: task.expectedSha256, reviewPinned: file.status !== 'PUBLISHED'});
     const committed = await client.query<{revision: number}>(`UPDATE file_uploads SET status='COMMITTED',
       agent_commit_state='HOST_COMMITTED',committed_at=now(),committed_blob_id=$2,
       committed_file_entry_id=$3,committed_file_version_id=$4,revision=revision+1,updated_at=now()

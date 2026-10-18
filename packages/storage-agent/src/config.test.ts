@@ -1,10 +1,12 @@
 // @vitest-environment node
 
-import {chmod, lstat, mkdtemp, readFile, rm, symlink, writeFile} from 'node:fs/promises';
+import {link as hardlink, chmod, lstat, mkdtemp, readFile, rm, symlink, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {afterEach, describe, expect, it} from 'vitest';
 import {readAgentConfig, writeAgentConfig, type StorageAgentLocalConfig} from './config';
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
 
 const roots: string[] = [];
 const config: StorageAgentLocalConfig = {schemaVersion: 1, serverUrl: 'https://quorum.example.com',
@@ -25,16 +27,17 @@ describe('Chair Agent private local config', () => {
   });
 
   it('rejects a config readable by another local account', async () => {
-    if (process.platform === 'win32') return;
     const root = await mkdtemp(join(tmpdir(), 'quorum-agent-config-')); roots.push(root);
-    const path = join(root, 'config.json'); await writeFile(path, JSON.stringify(config)); await chmod(path, 0o644);
+    const path = join(root, 'config.json'); await writeAgentConfig(path, config);
+    if (process.platform === 'win32') await promisify(execFile)('icacls.exe', [path, '/grant', '*S-1-1-0:(R)'], {windowsHide:true});
+    else await chmod(path, 0o644);
     await expect(readAgentConfig(path)).rejects.toMatchObject({code: 'INVALID_STORAGE_ROOT'});
   });
 
-  it('rejects a symlink config even when its target is valid', async () => {
+  it('rejects a linked config even when its target is valid', async () => {
     const root = await mkdtemp(join(tmpdir(), 'quorum-agent-config-')); roots.push(root);
     const target = join(root, 'target.json'); const link = join(root, 'link.json');
-    await writeAgentConfig(target, config); await symlink(target, link);
+    await writeAgentConfig(target, config); if (process.platform === 'win32') await hardlink(target, link); else await symlink(target, link);
     await expect(readAgentConfig(link)).rejects.toMatchObject({code: 'INVALID_STORAGE_ROOT'});
   });
 });

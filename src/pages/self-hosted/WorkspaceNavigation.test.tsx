@@ -113,7 +113,7 @@ describe('self-hosted workspace navigation', () => {
     });
     const page = render(<CommitteeNavigation snapshot={{...snapshot, crises: [{id: 'pending', committeeId: 'committee',
       sessionOrdinal: 1, ordinal: 1, endedAt: null, timer: {remainingMs: 0, running: false}, updates: [{status: 'PENDING'}]}]
-    } as unknown as CommitteeWorkspaceSnapshot} user={user} logout={() => undefined} hasPendingFileReview hasStorageSetupHint realtimeStatus="LIVE">
+    } as unknown as CommitteeWorkspaceSnapshot} user={user} logout={() => undefined} hasPendingFileReview hasStorageSetupHint pendingConflictCount={2} realtimeStatus="LIVE">
       <input defaultValue="unsaved draft" />
     </CommitteeNavigation>, '/committees/committee/strawpolls/poll');
     const nav = page.querySelector('.committee-navigation-desktop')!;
@@ -138,6 +138,9 @@ describe('self-hosted workspace navigation', () => {
         .toBe(level >= 2 ? 'Caucus' : 'Moderated Caucuses');
       expect(nav.querySelector('a[href="/committees/committee/posts"] .file-review-dot')?.getAttribute('aria-label')).toBe('Pending review');
       expect(Boolean(nav.querySelector('.committee-navigation-more > .committee-navigation-more-files .file-review-dot'))).toBe(level >= 6);
+      expect(nav.querySelector('a[href="/committees/committee/posts"] .file-conflict-dot')?.getAttribute('aria-label')).toBe('Files need a decision');
+      expect(Boolean(nav.querySelector('.committee-navigation-more > .committee-navigation-more-files .file-conflict-dot'))).toBe(level >= 6);
+      expect(page.querySelector('.committee-navigation-mobile .file-conflict-dot')).not.toBeNull();
       expect(Boolean(nav.querySelector('.committee-navigation-more > .committee-navigation-more-files .storage-setup-dot'))).toBe(level >= 6);
       expect(nav.querySelector('a[href="/committees/committee/posts"] .storage-setup-dot')).not.toBeNull();
       expect(Boolean(nav.querySelector('.committee-navigation-more > .crisis-time-dot'))).toBe(level >= 12);

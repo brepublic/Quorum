@@ -3370,3 +3370,9 @@ html[lang='zh-CN'] .ui.grid > .column {
 .storage-pairing-manual code { overflow-wrap: anywhere; }
 .storage-empty-target { color: #666; }
 .self-hosted-storage-panel > .storage-settings-row { margin-bottom: 1.5rem; }
+
+.file-conflict-dot {display:inline-block; flex-shrink:0; width:.5rem; height:.5rem; margin-left:.45rem; border-radius:50%; background:#c62828; vertical-align:middle;}
+.ui.message.file-conflict-notice {display:flex; align-items:center; flex-wrap:wrap; gap:.75rem; box-shadow:none; border:1px solid #e5d6d6;}
+.file-conflict-notice a {margin-left:auto; font-weight:600;}
+
+.committee-navigation-mobile .file-conflict-dot {position:absolute; top:.55rem; right:.5rem; margin:0;}

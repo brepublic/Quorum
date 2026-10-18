@@ -4,6 +4,7 @@ import {lstat, mkdir, open, realpath, rename} from 'node:fs/promises';
 import {dirname, join} from 'node:path';
 import type {StorageAgentLocalChange} from '@quorum/contracts';
 import {AgentFileSystemError} from './errors.js';
+import {protectPrivatePath} from './windows-platform.js';
 
 export const AGENT_METADATA_FILE = '.quorum-storage.json';
 export const AGENT_TEMP_DIRECTORY = '.quorum-tmp';
@@ -151,6 +152,7 @@ export class AgentStateStore {
     const temporary = join(this.rootPath, AGENT_TEMP_DIRECTORY, `state-${randomUUID()}.tmp`);
     const handle = await open(temporary, fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_WRONLY, 0o600);
     try {
+      await protectPrivatePath(temporary);
       await handle.writeFile(`${JSON.stringify(next, null, 2)}\n`, 'utf8');
       await handle.sync();
     } finally {

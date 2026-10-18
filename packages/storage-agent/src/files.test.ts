@@ -55,7 +55,7 @@ describe('Chair Agent storage root', () => {
     const value = await fixture(); const outside = await mkdtemp(join(tmpdir(), 'quorum-agent-metadata-'));
     roots.push(outside); const external = join(outside, 'metadata.json');
     await writeFile(external, JSON.stringify(value.state.snapshot()));
-    await rm(join(value.root, AGENT_METADATA_FILE)); await symlink(external, join(value.root, AGENT_METADATA_FILE));
+    await rm(join(value.root, AGENT_METADATA_FILE)); await (process.platform === 'win32' ? link : symlink)(external, join(value.root, AGENT_METADATA_FILE));
     await expect(AgentStateStore.initialize(value.root, {committeeId, deviceId}))
       .rejects.toMatchObject({code: 'INVALID_STORAGE_ROOT'});
   });
@@ -69,7 +69,7 @@ describe('Chair Agent storage root', () => {
 
   it('rejects a symbolic-link parent that escapes the selected root', async () => {
     const value = await fixture(); const outside = await mkdtemp(join(tmpdir(), 'quorum-agent-outside-'));
-    roots.push(outside); await symlink(outside, join(value.root, 'linked'));
+    roots.push(outside); await symlink(outside, join(value.root, 'linked'), process.platform === 'win32' ? 'junction' : 'dir');
     await expect(secureAgentTarget(value.root, 'linked/file.txt', {createParents: true}))
       .rejects.toMatchObject({code: 'UNSAFE_LOCAL_PATH'});
   });
@@ -129,7 +129,7 @@ describe('Chair Agent verified atomic apply', () => {
     await writeFile(source, 'outside alias'); await link(source, join(value.root, 'safe', 'hard.txt'));
     await expect(value.files.applyUpsert(upsert('new', 'safe/hard.txt'), (async function* () {yield 'new';})()))
       .rejects.toMatchObject({code: 'LOCAL_CONTENT_CONFLICT'});
-    await symlink(source, join(value.root, 'safe', 'symbolic.txt'));
+    await (process.platform === 'win32' ? link : symlink)(source, join(value.root, 'safe', 'symbolic.txt'));
     await expect(value.files.applyUpsert(upsert('new', 'safe/symbolic.txt'), (async function* () {yield 'new';})()))
       .rejects.toMatchObject({code: 'LOCAL_CONTENT_CONFLICT'});
     expect(await readFile(source, 'utf8')).toBe('outside alias');

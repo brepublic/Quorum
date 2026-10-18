@@ -11,16 +11,13 @@ import {delegateFileTypeName, ERROR_TEXT} from '@quorum/contracts';
 import {Link} from 'react-router-dom';
 import {FileStatusLabel} from '../../components/FileStatusLabel';
 import {sha256File} from '../../services/sha256';
+import {compareStorageConflict, conflictRecommendationReason} from './conflict-comparison';
+import './conflict-comparison.css';
 
 const MIGRATION_STATUS: Record<StorageMigration['status'], string> = {
   COPYING: "Copying", READY_TO_CONFIRM: "Awaiting confirmation", FAILED: "Migration failed", COMPLETED: "Migration completed", CANCELLED: "Cancelled"
 };
 const HOST_STATUS = {ACTIVE: "Online", DEGRADED: "Offline", REVOKED: "Revoked"} as const;
-const CONFLICT_REASON: Record<StorageAgentConflict['reasonCode'], string> = {
-  MANIFEST_STALE: "Sync state changed", FILE_DELETED: "File deleted", REVISION_CONFLICT: "A newer file version exists",
-  NAME_CONFLICT: "File name conflict", HOST_TRANSFERRED: "Chair computer transferred", REVIEW_REQUIRED: "Upload and review this file on the web."
-};
-
 function migrationFailureText(code: string): string {
   if (Object.hasOwn(ERROR_TEXT, code)) return apiErrorText({code});
   if (code === 'MANIFEST_CHANGED') return t("The file list changed. Retry the migration.");
@@ -79,6 +76,11 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
   const [pairingWaiting, setPairingWaiting] = React.useState(false);
   const [pairingFeedback, setPairingFeedback] = React.useState('');
   const [conflicts, setConflicts] = React.useState<StorageAgentConflict[]>([]);
+  const [conflictFiles, setConflictFiles] = React.useState<Record<string, FileEntry>>({});
+  const [conflictDecision, setConflictDecision] = React.useState<{item: StorageAgentConflict;
+    action: StorageAgentConflictResolution; fileRevision: number | null; title: string; label: string; consequence: string} | null>(null);
+  const conflictRefresh = React.useRef(0);
+  const [comparisonRetryAt, setComparisonRetryAt] = React.useState(0);
   const conflictList = React.useRef<HTMLDivElement>(null);
   const hasPendingConflicts = conflicts.some(item => item.status === 'PENDING');
   React.useEffect(() => {
@@ -114,18 +116,28 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
   };
 
   const refresh = React.useCallback(async (clearError = true) => {
+    const refreshId = ++conflictRefresh.current;
     try {
       const [nextFiles, nextPendingHostCommits] = await Promise.all([
         api.listFiles(committeeId), canUpload ? api.listPendingHostCommits(committeeId) : Promise.resolve([])
       ]);
+      if (refreshId !== conflictRefresh.current) return;
       setFiles(nextFiles); setPendingHostCommits(nextPendingHostCommits);
       if (canManage) {
         const [nextBindings, nextConfigs, nextMigrations, nextHosts, nextConflicts] = await Promise.all([
           api.listStorageBindings(committeeId), api.listS3ProviderConfigs(), api.listStorageMigrations(committeeId),
           api.listStorageHosts(committeeId), api.listStorageAgentConflicts(committeeId)
         ]);
+        if (refreshId !== conflictRefresh.current) return;
         setBindings(nextBindings); setConfigs(nextConfigs); setMigrations(nextMigrations); setHosts(nextHosts);
         setConflicts(nextConflicts);
+        const missingIds = [...new Set(nextConflicts.filter(item => item.status === 'PENDING' && item.fileEntryId
+          && !nextFiles.some(file => file.id === item.fileEntryId)).map(item => item.fileEntryId!))];
+        const details = await Promise.allSettled(missingIds.map(id => Promise.resolve().then(() => api.getFile(id))));
+        if (refreshId !== conflictRefresh.current) return;
+        setComparisonRetryAt(details.some(result => result.status === 'rejected') ? Date.now() : 0);
+        setConflictFiles(Object.fromEntries(details.flatMap((result, index) => result.status === 'fulfilled'
+          && result.value?.committeeId === committeeId ? [[missingIds[index]!, result.value]] : [])));
         setConflictNames(current => Object.fromEntries(nextConflicts.flatMap(item => item.change.kind === 'DELETE'
           ? [] : [[item.id, current[item.id] ?? item.change.logicalName]])));
         const active = nextBindings.find(binding => binding.status === 'ACTIVE');
@@ -149,13 +161,24 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
             ? current : availableS3[0]?.id || '');
         }
       } else {
-        setBindings([]); setConfigs([]); setMigrations([]); setHosts([]); setConflicts([]);
+        setComparisonRetryAt(0);
+        setBindings([]); setConfigs([]); setMigrations([]); setHosts([]); setConflicts([]); setConflictFiles({});
       }
       if (clearError) setError(undefined);
-    } catch (caught) { setError(caught); }
+    } catch (caught) {
+      if (refreshId !== conflictRefresh.current) return;
+      setError(caught);
+      setComparisonRetryAt(caught instanceof SelfHostedApiError && [401, 403, 404].includes(caught.status) ? 0 : Date.now());
+    }
   }, [api, canManage, canUpload, committeeId]);
 
-  React.useEffect(() => { void refresh(); }, [refresh, snapshot.sync.committeeEventSequence, reviewFiles]);
+  React.useEffect(() => { void refresh(); }, [refresh, snapshot, reviewFiles]);
+  React.useEffect(() => {
+    if (!comparisonRetryAt) return;
+    const retry = window.setTimeout(() => void refresh(), 5000);
+    return () => window.clearTimeout(retry);
+  }, [comparisonRetryAt, refresh]);
+  React.useEffect(() => () => {conflictRefresh.current++;}, []);
   React.useEffect(() => () => uploadController.current?.abort(), []);
 
   const run = React.useCallback(async (operation: () => Promise<unknown>) => {
@@ -229,10 +252,14 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
   React.useEffect(() => {setPairing(undefined); setPairingFeedback('');}, [committeeId, canManage]);
   const resolveConflict = (item: StorageAgentConflict, action: StorageAgentConflictResolution) => {
     if (!activeHost) return Promise.reject(Object.assign(new Error(), {code: 'CHAIR_HOST_REQUIRED'}));
+    const loadedFile = files.find(file => file.id === item.fileEntryId)
+      ?? (item.fileEntryId ? conflictFiles[item.fileEntryId] : undefined);
+    const comparison = compareStorageConflict(item, loadedFile, activeHost.id);
+    if (!comparison.allowed.includes(action)) return Promise.reject(Object.assign(new Error(), {code: 'RESOURCE_CONFLICT'}));
     const resolvedName = item.change.kind === 'DELETE' ? ''
       : conflictNames[item.id] ?? item.change.logicalName;
     return api.resolveStorageAgentConflict(committeeId, item.id, {baseRevision: item.revision,
-      leaseGeneration: activeHost.leaseGeneration, fileRevision: item.serverRevision, action,
+      leaseGeneration: activeHost.leaseGeneration, fileRevision: comparison.fileRevision, action,
       ...((action === 'SAVE_AS_NEW' || (action === 'ACCEPT_LOCAL' && item.reasonCode === 'NAME_CONFLICT'))
         ? {logicalName: resolvedName} : {})}, newIdempotencyKey());
   };
@@ -262,6 +289,33 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
         : timestamp(reviewTimes.get(second.id) ?? second.publishedAt) - timestamp(reviewTimes.get(first.id) ?? first.publishedAt)));
 
   return <div className="self-hosted-files">
+    <Modal open={Boolean(conflictDecision)} size="small" closeOnDimmerClick={false}
+      onClose={() => {if (!working) setConflictDecision(null);}} aria-labelledby="conflict-decision-title">
+      <Modal.Header id="conflict-decision-title">{t('Confirm your file choice')}</Modal.Header>
+      <Modal.Content>
+        <p><strong>{conflictDecision?.title}</strong></p>
+        <p>{conflictDecision && t(conflictDecision.consequence)}</p>
+        {conflictDecision?.action !== 'SAVE_AS_NEW' && <Message warning>
+          <Message.Header>{t('This action cannot be undone in this interface.')}</Message.Header>
+          <p>{t('Before confirming, compare both files and back up any content you want to keep.')}</p>
+        </Message>}
+      </Modal.Content>
+      <Modal.Actions>
+        <Button disabled={working} onClick={() => setConflictDecision(null)}>{t('Go back to compare')}</Button>
+        <Button negative={conflictDecision?.action !== 'SAVE_AS_NEW'} primary={conflictDecision?.action === 'SAVE_AS_NEW'}
+          loading={working} disabled={working} onClick={() => {
+            const decision = conflictDecision;
+            if (!decision) return;
+            const current = conflicts.find(item => item.id === decision.item.id && item.status === 'PENDING');
+            const loaded = files.find(file => file.id === current?.fileEntryId) ?? (current?.fileEntryId ? conflictFiles[current.fileEntryId] : undefined);
+            if (!current || current.revision !== decision.item.revision
+              || compareStorageConflict(current, loaded, activeHost?.id).fileRevision !== decision.fileRevision) {
+              setConflictDecision(null); setError(new SelfHostedApiError(409, 'REVISION_CONFLICT', 'Conflict changed')); return;
+            }
+            void run(async () => {await resolveConflict(current, decision.action); setConflictDecision(null);});
+          }}>{t('Confirm choice: {choice}', {choice: conflictDecision ? t(conflictDecision.label) : ''})}</Button>
+      </Modal.Actions>
+    </Modal>
     {error && <Message error role="alert" content={error} />}
     {section !== 'storage' && <>
     {pendingHostCommits.map(item => <Message key={item.id} header={item.logicalName}
@@ -342,6 +396,122 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
     </Modal>
 
     {(section === 'storage' || section === 'all') && canManage && <Segment loading={working && !progress} className="self-hosted-storage-panel">
+      {conflicts.some(item => item.status === 'PENDING') && <div id="sync-conflicts" ref={conflictList} tabIndex={-1} aria-label={t("Sync conflicts")} className="self-hosted-storage-conflicts">
+        <div className="conflict-section-header"><Header as="h3">{t("File conflicts")}</Header>
+          <p aria-live="polite">{t("{count} files to resolve", {count: conflicts.filter(item => item.status === 'PENDING').length})}</p></div>
+        {conflicts.filter(item => item.status === 'PENDING').map(item => {
+          const loadedFile = files.find(file => file.id === item.fileEntryId)
+            ?? (item.fileEntryId ? conflictFiles[item.fileEntryId] : undefined);
+          const comparison = compareStorageConflict(item, loadedFile, activeHost?.id);
+          const serverFile = comparison.serverFile;
+          const originalName = serverFile?.logicalName
+            ?? (loadedFile?.id === item.fileEntryId ? loadedFile?.logicalName : undefined);
+          const title = item.change.kind === 'RENAME' ? item.change.logicalName
+            : originalName ?? (item.change.kind === 'DELETE' ? t("Local deletion") : item.change.logicalName);
+          const localLabel = item.change.kind === 'DELETE' ? "Delete server file"
+            : item.change.kind === 'RENAME' ? "Use local name" : "Keep local version";
+          const recommendation = comparison.recommended === 'KEEP_SERVER' ? "Keep server version"
+            : comparison.recommended === 'ACCEPT_LOCAL' ? localLabel : "Keep both versions";
+          const recommended = (action: StorageAgentConflictResolution) => comparison.recommended === action
+            ? <span className="conflict-recommendation" aria-label={`${t("Recommended")}: ${t(recommendation)}`}>
+              {t("Recommended choice")}</span> : null;
+          const choose = (action: StorageAgentConflictResolution) => {
+            const consequence = action === 'KEEP_SERVER' ? "Replace the local file with the server version?"
+              : action === 'SAVE_AS_NEW' ? "Save the local file separately and keep the server version?"
+              : item.change.kind === 'DELETE' ? "Delete the server file as well?"
+              : item.change.kind === 'RENAME' ? "Apply the local name to the server file?"
+              : "Replace the server contents with the local version?";
+            setConflictDecision({item, action, title, fileRevision: comparison.fileRevision, label: action === 'KEEP_SERVER' ? 'Keep server version'
+              : action === 'SAVE_AS_NEW' ? 'Keep both versions' : localLabel,
+              consequence: item.change.kind === 'UPSERT' && action !== 'SAVE_AS_NEW'
+                ? action === 'KEEP_SERVER' ? 'The file on the Chair computer will be replaced by the server file. Local changes will be discarded.'
+                  : 'The server file will be replaced by the file on the Chair computer. Others will download the replacement.'
+                : consequence});
+          };
+          return <Card key={item.id} fluid data-conflict-id={item.id} className="conflict-card">
+          <Card.Content><Card.Header>{title}</Card.Header>
+            <div className="conflict-decision-summary">
+              <span>{t(conflictRecommendationReason(comparison) ?? comparison.summary)}</span>
+              {comparison.recommended === 'SAVE_AS_NEW' && <span className="conflict-recommendation">{t("Recommended")}: {t("Keep both versions")}</span>}
+            </div>
+            {item.change.kind === 'UPSERT' && comparison.downloadFileId && comparison.relation !== 'IDENTICAL' && <p className="conflict-compare-reminder">
+              {t('Before choosing, download the server file and compare it with the file on the Chair computer. Back up any content you want to keep.')}</p>}
+            <div className="conflict-versions" aria-label={t("Version comparison")}>
+              <section className={`conflict-version${comparison.recommended === 'ACCEPT_LOCAL' ? ' conflict-version-recommended' : ''}`} aria-label={t("Local version")}>
+                <div className="conflict-version-heading"><h5><Icon name="computer" />{t("Local version")}</h5>{recommended('ACCEPT_LOCAL')}</div>
+                <p className="conflict-source">{hosts.find(host => host.id === item.hostId)?.deviceLabel ?? t("Chair computer")}</p>
+                <dl>
+                  {item.change.kind === 'UPSERT' ? <div><dt>{t("Size")}</dt><dd>{formatBytes(item.change.sizeBytes)}</dd></div>
+                    : <div><dt>{t("Local change")}</dt><dd>{t(item.change.kind === 'RENAME' ? "Rename" : "Local deletion")}</dd></div>}
+                  {item.change.kind === 'RENAME' && <div><dt>{t("New file name")}</dt><dd>{item.change.logicalName}</dd></div>}
+                </dl>
+                {item.reasonCode === 'NAME_CONFLICT' && comparison.allowed.includes('ACCEPT_LOCAL') && item.change.kind !== 'DELETE'
+                  && <Form.Input label={t("New file name")} aria-label={t("New file name")}
+                    value={conflictNames[item.id] ?? item.change.logicalName}
+                    onChange={event => {const value = event.currentTarget.value; setConflictNames(current => ({...current, [item.id]: value}));}} />}
+                <div className="conflict-version-actions"><Button basic color="blue" size="small"
+                  disabled={working || !comparison.allowed.includes('ACCEPT_LOCAL') || item.reasonCode === 'NAME_CONFLICT' && !conflictNames[item.id]?.trim()}
+                  onClick={() => choose('ACCEPT_LOCAL')}>{t(localLabel)}</Button></div>
+                {!comparison.allowed.includes('ACCEPT_LOCAL') && <p className="conflict-choice-help">{t(comparison.merged
+                  ? "Open the published file to update it." : comparison.relation === 'DELETED'
+                  ? "Save a new file to retain the local content." : item.hostId !== activeHost?.id
+                  ? "This change came from a replaced Chair computer." : "Waiting for the latest file information.")}</p>}
+              </section>
+              <section className={`conflict-version${comparison.recommended === 'KEEP_SERVER' ? ' conflict-version-recommended' : ''}`} aria-label={t("Server version")}>
+                <div className="conflict-version-heading"><h5><Icon name="cloud" />{t("Server version")}</h5>{recommended('KEEP_SERVER')}</div>
+                <p className="conflict-source">{serverFile?.logicalName ?? loadedFile?.logicalName ?? t("Server version")}</p>
+                <dl>
+                  <div><dt>{t("File status")}</dt><dd>{serverFile ? <FileStatusLabel status={serverFile.status} /> : t("Unknown")}</dd></div>
+                  {serverFile?.currentVersion && serverFile.status !== 'DELETED' && <>
+                    <div><dt>{t("Size")}</dt><dd>{formatBytes(serverFile.currentVersion.sizeBytes)}</dd></div>
+                  </>}
+                </dl>
+                {comparison.downloadFileId && <a className="conflict-download" href={api.fileDownloadUrl(comparison.downloadFileId)} download
+                  aria-disabled={preparingDownloads.has(comparison.downloadFileId)}
+                  onClick={(event: React.MouseEvent) => {event.preventDefault(); if (!preparingDownloads.has(comparison.downloadFileId!)) void downloadFile(comparison.downloadFileId!);}}>
+                  <Icon name="download" />{preparingDownloads.has(comparison.downloadFileId) ? t("Preparing server version")
+                    : t(comparison.merged ? "Download formal server version" : "Download server version")}
+                </a>}
+                <div className="conflict-version-actions"><Button basic color="blue" size="small"
+                  disabled={working || !comparison.allowed.includes('KEEP_SERVER')} onClick={() => choose('KEEP_SERVER')}>
+                  {t("Keep server version")}</Button></div>
+              </section>
+            </div>
+            {comparison.allowed.includes('ACCEPT_LOCAL') && serverFile?.publishedAt && item.change.kind === 'UPSERT'
+              && <p className="conflict-choice-help">{t("If you choose the local version, it will replace the server file. Others will download the replacement.")}</p>}
+            <div className="conflict-secondary-actions">
+              {comparison.allowed.includes('SAVE_AS_NEW') && item.change.kind === 'UPSERT' && <details className="conflict-save-both">
+                <summary>{t("Keep both versions")}</summary>
+                <Form.Input label={t("Save as name")} aria-label={t("Save as name")}
+                  value={conflictNames[item.id] ?? item.change.logicalName}
+                  onChange={event => {const value = event.currentTarget.value; setConflictNames(current => ({...current, [item.id]: value}));}} />
+                <Button size="small" disabled={working || !conflictNames[item.id]?.trim()} onClick={() => choose('SAVE_AS_NEW')}>{t("Save as a new file")}</Button>
+              </details>}
+              <details className="conflict-fingerprints"><summary>{t("Technical details")}</summary>
+                <div className="conflict-detail-group">
+                  <h5>{t("Version records")}</h5>
+                  <p className="conflict-detail-hint">{t("Compare the server record used by the local file with the current server record.")}</p>
+                  <dl className="conflict-detail-list conflict-records">
+                    <div><dt>{t("Server record number when the local file last synced")}</dt><dd>{item.localBaseRevision ?? '—'}</dd></div>
+                    <div><dt>{t("Current server record number")}</dt><dd>{serverFile?.revision ?? '—'}</dd></div>
+                    {serverFile?.currentVersion && <div><dt>{t("Server version created at")}</dt><dd>{new Date(serverFile.currentVersion.createdAt).toLocaleString(getLanguage())}</dd></div>}
+                  </dl>
+                </div>
+                {item.change.kind === 'UPSERT' && <div className="conflict-detail-group">
+                  <h5>{t("Content checksums (SHA-256)")}</h5>
+                  <p className="conflict-detail-hint">{t("Matching checksums indicate identical file contents.")}</p>
+                  <dl className="conflict-detail-list">
+                    <div><dt>{t("Local version")}</dt><dd><code>{item.change.sha256}</code></dd></div>
+                    <div><dt>{t("Server version")}</dt><dd><code>{serverFile?.currentVersion?.sha256 ?? '—'}</code></dd></div>
+                  </dl>
+                </div>}
+              </details>
+            </div>
+          </Card.Content></Card>;
+
+        })}
+
+      </div>}
       <Header as="h3">{t("File storage")}</Header>
       <div className="storage-settings-row">
         <div><Header as="h4">{t("Chair computer")}</Header>
@@ -383,30 +553,6 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
           }}><Icon name="copy" />{t("Copy pairing code")}</Button>
         </details>}
       </Message>}
-      {conflicts.some(item => item.status === 'PENDING') && <div id="sync-conflicts" ref={conflictList} tabIndex={-1} aria-label={t("Sync conflicts")} className="self-hosted-storage-conflicts">
-        <Header as="h4">{t("Sync conflicts")}</Header>
-        {conflicts.filter(item => item.status === 'PENDING').map(item => <Card key={item.id} fluid>
-          <Card.Content><Card.Header>{item.change.kind === 'DELETE' ? t("Local deletion") : item.change.logicalName}</Card.Header>
-            <Card.Meta>{t(CONFLICT_REASON[item.reasonCode])}</Card.Meta>
-            {(item.change.kind === 'UPSERT' || item.reasonCode === 'NAME_CONFLICT')
-              && item.change.kind !== 'DELETE' && <Form.Input label={item.reasonCode === 'NAME_CONFLICT'
-                ? t("New file name") : t("Save as name")} aria-label={item.reasonCode === 'NAME_CONFLICT' ? t("New file name") : t("Save as name")}
-              value={conflictNames[item.id] ?? item.change.logicalName}
-              onChange={event => { const value = event.currentTarget.value;
-                setConflictNames(current => ({...current, [item.id]: value})); }} />}
-          </Card.Content><Card.Content extra>
-            <Button size="small" onClick={() => void run(() => resolveConflict(item, 'KEEP_SERVER'))}>
-
-              {t("Keep server version")}
-            </Button>
-            {!['FILE_DELETED', 'HOST_TRANSFERRED', 'REVIEW_REQUIRED'].includes(item.reasonCode) && <Button primary size="small"
-              disabled={item.reasonCode === 'NAME_CONFLICT' && !conflictNames[item.id]?.trim()}
-              onClick={() => void run(() => resolveConflict(item, 'ACCEPT_LOCAL'))}>{t("Use local version")}</Button>}
-            {item.change.kind === 'UPSERT' && !['HOST_TRANSFERRED', 'REVIEW_REQUIRED'].includes(item.reasonCode) && <Button size="small"
-              disabled={!conflictNames[item.id]?.trim()}
-              onClick={() => void run(() => resolveConflict(item, 'SAVE_AS_NEW'))}>{t("Save as a new file")}</Button>}
-          </Card.Content></Card>)}
-      </div>}
       {activeBinding && <p>{t("Current:")}{activeBinding.providerType === 'SERVER_VOLUME' ? t("Server volume")
         : activeBinding.providerType === 'CHAIR_AGENT' ? t("Chair computer")
           : `S3 · ${configs.find(config => config.id === activeBinding.providerConfigId)?.displayName ?? t("Configured storage")}`}</p>}

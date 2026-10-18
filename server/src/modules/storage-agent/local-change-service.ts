@@ -144,6 +144,28 @@ export class Stage7LocalChangeService {
         if (JSON.stringify(original) !== JSON.stringify(local)) {
           throw new AppError({code: 'IDEMPOTENCY_CONFLICT', message: 'Local content no longer matches the resolution.'});
         }
+        // SAVE_AS_NEW removes the original file reference below. Fence that
+        // source before applying the decision so a later publication or merge
+        // cannot turn an old decision into an unchecked new upload.
+        if (approved.file_entry_id) {
+          const source = (await client.query<EntryRow>(
+            'SELECT * FROM file_entries WHERE id=$1 AND committee_id=$2 FOR UPDATE',
+          [approved.file_entry_id, committee.id])).rows[0];
+          if ((source?.revision ?? null) !== approved.resolution_file_revision) {
+            throw new AppError({code: 'REVISION_CONFLICT', message: 'File changed after the conflict was resolved.'});
+          }
+          const deleted = !source || source.status === 'DELETED' || Boolean((await client.query(
+            'SELECT 1 FROM file_tombstones WHERE file_entry_id=$1', [approved.file_entry_id])).rowCount);
+          if (!deleted && (source.merged_into_file_entry_id || source.formal_name && approved.kind !== 'DELETE'
+            && !(approved.resolution_action === 'ACCEPT_LOCAL' && approved.kind === 'UPSERT'))) {
+            throw new AppError({reason: 'FILE_UPDATE_REQUIRES_REVIEW', code: 'RESOURCE_CONFLICT',
+              message: 'Upload and review the file on the web.'});
+          }
+          if (deleted && approved.resolution_action === 'ACCEPT_LOCAL') {
+            throw new AppError({reason: 'DELETED_FILE_REQUIRES_NEW', code: 'RESOURCE_CONFLICT',
+              message: 'Deleted content must be saved as a new file.'});
+          }
+        }
         await client.query(`INSERT INTO storage_agent_conflict_applications (conflict_id,request_id)
           VALUES ($1,$2) ON CONFLICT (conflict_id) DO NOTHING`, [resolutionConflictId, requestId]);
         const application = await client.query<{request_id: string}>(
@@ -180,14 +202,15 @@ export class Stage7LocalChangeService {
           throw new AppError({code: 'REVISION_CONFLICT', message: 'File changed after the conflict was resolved.'});
         }
         if (acceptedResolution) local = {...local, baseRevision: entry.revision} as StorageAgentLocalChange;
+        if (entry.merged_into_file_entry_id || entry.formal_name && local.kind !== 'DELETE'
+          && !(acceptedResolution?.action === 'ACCEPT_LOCAL' && local.kind === 'UPSERT')) {
+          return this.conflict(client, lease.hostId, committee, requestId, manifestSequence, local,
+            'REVIEW_REQUIRED', entry.revision, context);
+        }
         if (entry.revision !== local.baseRevision) {
           return this.conflict(client, lease.hostId, committee, requestId, manifestSequence, local,
             'REVISION_CONFLICT', entry.revision, context);
         }
-      }
-      if (entry?.merged_into_file_entry_id || entry?.formal_name && local.kind !== 'DELETE') {
-        return this.conflict(client, lease.hostId, committee, requestId, manifestSequence, local,
-          'REVIEW_REQUIRED', entry.revision, context);
       }
       if (local.kind !== 'DELETE') {
         const named = await client.query(`SELECT 1 FROM file_entries WHERE committee_id=$1 AND status<>'DELETED'

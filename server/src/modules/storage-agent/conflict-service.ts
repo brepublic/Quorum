@@ -8,6 +8,7 @@ import {appendEvent, audit, idempotentTransaction, isChair, lockedCommittee, req
   requireProceedingsActive, transaction, type Stage4CommitteeRow, type Stage4Context} from '../stage4/database.js';
 import {assertExactBody} from '../stage4/validation.js';
 import type {Stage7StorageAgentService} from './service.js';
+import {ensureCurrentFileManifest, ensureDeletedFileManifest} from './file-manifest.js';
 
 interface ConflictRow extends QueryResultRow {
   id: string; committee_id: string; host_id: string; file_entry_id: string | null;
@@ -16,6 +17,7 @@ interface ConflictRow extends QueryResultRow {
   resolution_action: StorageAgentConflictResolution | null; resolution_logical_name: string | null;
   resolution_lease_generation: string | number | null; resolution_file_revision: number | null;
   created_at: Date; resolved_at: Date | null; kind: StorageAgentLocalChange['kind'];
+  server_file?: StorageAgentConflict['serverFile'];
   change_file_entry_id: string | null; base_revision: number | null; logical_name: string | null;
   original_name: string | null; media_type: string | null; size_bytes: string | number | null; sha256_hex: string | null;
 }
@@ -25,6 +27,20 @@ const SELECT_CONFLICT = `SELECT conflict.*,change.kind,change.file_entry_id AS c
   CASE WHEN change.sha256 IS NULL THEN NULL ELSE encode(change.sha256,'hex') END AS sha256_hex
   FROM storage_agent_conflicts conflict
   JOIN storage_agent_change_requests change ON change.id=conflict.change_request_id`;
+
+const SELECT_BROWSER_CONFLICT = SELECT_CONFLICT.replace('SELECT conflict.*', `SELECT
+  CASE WHEN current_file.id IS NULL THEN NULL ELSE jsonb_build_object(
+    'id',current_file.id,'revision',current_file.revision,'status',current_file.status,
+    'logicalName',current_file.logical_name,'mergedIntoFileEntryId',current_file.merged_into_file_entry_id,
+    'publishedAt',current_file.published_at,'updatedAt',current_file.updated_at,
+    'currentVersion',CASE WHEN current_version.id IS NULL THEN NULL ELSE jsonb_build_object(
+      'id',current_version.id,'sha256',encode(current_version.sha256,'hex'),
+      'sizeBytes',current_version.size_bytes,'createdAt',current_version.created_at) END) END AS server_file,
+  conflict.*`) + `
+  LEFT JOIN file_entries current_file ON current_file.id=conflict.file_entry_id
+    AND current_file.committee_id=conflict.committee_id
+  LEFT JOIN file_versions current_version ON current_version.id=current_file.current_version_id
+    AND current_version.file_entry_id=current_file.id AND current_version.committee_id=current_file.committee_id`;
 
 function uuid(value: unknown, name: string): string {
   if (typeof value !== 'string'
@@ -92,7 +108,7 @@ function conflict(row: ConflictRow): StorageAgentConflict {
 }
 
 function browserConflict(row: ConflictRow): StorageAgentConflict {
-  const value = conflict(row);
+  const value = {...conflict(row), ...(row.server_file !== undefined ? {serverFile: row.server_file} : {})};
   if (value.change.kind === 'DELETE') return value;
   return {...value, change: {...value.change, logicalName: posix.basename(value.change.logicalName)}};
 }
@@ -113,7 +129,7 @@ export class Stage7ConflictService {
         [uuid(committeeId, 'Committee ID')])).rows[0];
       if (!committee || committee.status === 'DELETING') throw new AppError({code: 'NOT_FOUND', message: 'Committee not found.'});
       await requireManager(client, committee, auth.user.id);
-      const rows = await client.query<ConflictRow>(`${SELECT_CONFLICT} WHERE conflict.committee_id=$1
+      const rows = await client.query<ConflictRow>(`${SELECT_BROWSER_CONFLICT} WHERE conflict.committee_id=$1
         ORDER BY CASE conflict.status WHEN 'PENDING' THEN 0 ELSE 1 END,conflict.created_at DESC,conflict.id`,
       [committee.id]);
       return rows.rows.map(browserConflict);
@@ -157,19 +173,28 @@ export class Stage7ConflictService {
         if (!currentHost || Number(currentHost.lease_generation) !== generation) {
           throw new AppError({code: 'REVISION_CONFLICT', message: 'Storage host changed since this conflict was loaded.'});
         }
-        const entry = row.file_entry_id ? (await client.query<{id: string; revision: number; status: string}>(
-          'SELECT id,revision,status FROM file_entries WHERE id=$1 AND committee_id=$2 FOR UPDATE',
+        const entry = row.file_entry_id ? (await client.query<{id: string; revision: number; status: string;
+          formal_name: string | null; merged_into_file_entry_id: string | null; tombstoned: boolean;
+          deleted_at: Date | null; tombstone_deleted_at: Date | null}>(
+          `SELECT e.id,e.revision,e.status,e.formal_name,e.merged_into_file_entry_id,e.deleted_at,
+            (SELECT deleted_at FROM file_tombstones WHERE file_entry_id=e.id) AS tombstone_deleted_at,
+            EXISTS(SELECT 1 FROM file_tombstones WHERE file_entry_id=e.id) AS tombstoned
+            FROM file_entries e WHERE e.id=$1 AND e.committee_id=$2 FOR UPDATE OF e`,
         [row.file_entry_id, committee.id])).rows[0] : undefined;
         const actualFileRevision = entry?.revision ?? null;
         if (actualFileRevision !== fileRevision) {
           throw new AppError({code: 'REVISION_CONFLICT', message: 'File changed since this conflict was loaded.'});
         }
-        if (row.reason_code === 'REVIEW_REQUIRED' && action !== 'KEEP_SERVER') throw new AppError({reason: 'FILE_UPDATE_REQUIRES_REVIEW', code: 'RESOURCE_CONFLICT',
+        const fileDeleted = Boolean(row.file_entry_id && (!entry || entry.status === 'DELETED' || entry.tombstoned));
+        if (!fileDeleted && (row.reason_code === 'REVIEW_REQUIRED' || entry?.merged_into_file_entry_id
+          || entry?.formal_name && row.kind !== 'DELETE') && action !== 'KEEP_SERVER'
+          && !(action === 'ACCEPT_LOCAL' && row.kind === 'UPSERT' && entry?.formal_name && !entry.merged_into_file_entry_id)) throw new AppError({reason: 'FILE_UPDATE_REQUIRES_REVIEW', code: 'RESOURCE_CONFLICT',
           message: 'Upload and review the file on the web.', details: {reason: 'FILE_UPDATE_REQUIRES_REVIEW'}});
-        if (row.reason_code === 'HOST_TRANSFERRED' && action !== 'KEEP_SERVER') {
+        if ((row.reason_code === 'HOST_TRANSFERRED' || row.host_id !== currentHost.id) && action !== 'KEEP_SERVER') {
           throw new AppError({reason: 'REVOKED_HOST_CONTENT', code: 'RESOURCE_CONFLICT', message: 'Content on a revoked host cannot be accepted.'});
         }
-        if ((row.reason_code === 'FILE_DELETED' || entry?.status === 'DELETED') && action === 'ACCEPT_LOCAL') {
+        if ((row.reason_code === 'FILE_DELETED' || !entry && row.file_entry_id
+          || entry?.status === 'DELETED' || entry?.tombstoned) && action === 'ACCEPT_LOCAL') {
           throw new AppError({reason: 'DELETED_FILE_REQUIRES_NEW', code: 'RESOURCE_CONFLICT', message: 'Deleted content must be saved as a new file.'});
         }
         if (action === 'SAVE_AS_NEW' && row.kind !== 'UPSERT') {
@@ -185,11 +210,13 @@ export class Stage7ConflictService {
             NULL::bigint AS size_bytes,NULL::text AS sha256_hex`,
         [id, action, requestedLogicalName, generation, actualFileRevision, auth.user.id]);
         if (action === 'KEEP_SERVER' && row.host_id === currentHost.id) {
-          const latest = row.file_entry_id ? (await client.query<{kind: 'UPSERT' | 'DELETE'; file_entry_id: string;
-            file_revision: number; blob_id: string | null; size_bytes: string | number | null; sha256: Buffer | null}>(
-            `SELECT kind,file_entry_id,file_revision,blob_id,size_bytes,sha256 FROM storage_manifest_events
-             WHERE committee_id=$1 AND file_entry_id=$2 ORDER BY sequence DESC LIMIT 1`,
-          [committee.id, row.file_entry_id])).rows[0] : undefined;
+          // Historical conflicts may predate a publication manifest. Restore the
+          // locked current version, including merged submission history, rather
+          // than guessing from the last event or treating the conflict ID as a file.
+          const current = entry && !fileDeleted
+            ? await ensureCurrentFileManifest(client, committee, entry.id) : undefined;
+          if (entry && fileDeleted) await ensureDeletedFileManifest(client, committee, entry.id, entry.revision,
+            entry.deleted_at ?? entry.tombstone_deleted_at ?? new Date());
           const allocated = await client.query<{sequence: string | number}>(`UPDATE committees
             SET next_storage_agent_task_sequence=next_storage_agent_task_sequence+1 WHERE id=$1
             RETURNING next_storage_agent_task_sequence-1 AS sequence`, [committee.id]);
@@ -198,9 +225,9 @@ export class Stage7ConflictService {
              expected_size_bytes,expected_sha256,resolution_conflict_id)
             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
           [randomUUID(), committee.id, currentHost.id, generation, allocated.rows[0]?.sequence,
-            latest?.kind === 'UPSERT' ? 'STORE_BLOB' : 'DELETE_FILE', latest?.file_entry_id ?? id,
-            latest?.file_revision ?? 1, latest?.blob_id ?? null, latest?.size_bytes ?? null,
-            latest?.sha256 ?? null, id]);
+            current ? 'STORE_BLOB' : 'DELETE_FILE', row.file_entry_id ?? id,
+            current?.file_revision ?? entry?.revision ?? row.local_base_revision ?? 1,
+            current?.blob_id ?? null, current?.size_bytes ?? null, current?.sha256 ?? null, id]);
         }
         await appendEvent(client, committee, {type: 'storage_agent.conflict_resolved',
           resourceType: 'storage_agent_conflict', resourceId: id, revision: expectedRevision + 1,

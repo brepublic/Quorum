@@ -135,7 +135,7 @@ SERVER_VOLUME 使用 0600 临时文件、fsync 和无覆盖原子发布。S3 end
 
 Chair Agent 使用独立 `QuorumAgent` authorization scheme。一次性配对码和设备凭据只保存哈希；一个委员会最多一个活动 host。单调 lease generation fence 使转移或撤销后的旧设备不能 heartbeat、claim、上传或完成任务。Agent 对本地路径做规范化并拒绝链接、硬链接、非普通文件和目录逃逸；服务端下发内容先完整校验再原子替换。本地并发编辑、墓碑冲突和主机转移不会静默覆盖，均形成 durable 冲突供 Chair 显式裁决。Agent 以独立 heartbeat 维持 lease，以不含任务内容的 SSE `wake` 近实时触发同一个单飞同步循环，并保留 30 秒 durable reconciliation；SSE 断线不改变 PostgreSQL task 的权威性。 本轮任务完成可能推进服务端文件清单；检测到新的本地变更后、提交前重新读取清单，避免使用本轮开始时的旧序号。已提交上传的恢复仍重放原请求，服务端版本及冲突校验保持不变。
 
-存储位置只决定文件字节保存在哪里，不决定菜单、审核或分享能力。SERVER_VOLUME、S3_COMPATIBLE、CHAIR_AGENT 都通过 `Stage6StorageService.recordProviderCommitInTransaction` 在持久保存与校验成功后原子创建待审核文件和提交来源；主席上传来源为 CHAIR，代表上传沿用分享发起主席作为技术保管人，另存代表团、类型和提交时间。上传及代表来源在同一幂等事务创建，文件类型改变后的重试返回冲突。保存失败或未完成的主机任务不创建可批准的文件；网页显示正在保存或保存故障。尚未正式发布的文件追加内容后重新待审核并清除旧审核结果；正式文件只能通过独立提交的批准替换，原发布版本在审核期间继续可用。缺失来源继续显示未知。
+存储位置只决定文件字节保存在哪里，不决定菜单、审核或分享能力。SERVER_VOLUME、S3_COMPATIBLE、CHAIR_AGENT 都通过 `Stage6StorageService.recordProviderCommitInTransaction` 在持久保存与校验成功后原子创建待审核文件和提交来源；主席上传来源为 CHAIR，代表上传沿用分享发起主席作为技术保管人，另存代表团、类型和提交时间。上传及代表来源在同一幂等事务创建，文件类型改变后的重试返回冲突。保存失败或未完成的主机任务不创建可批准的文件；网页显示正在保存或保存故障。尚未正式发布的文件追加内容后重新待审核并清除旧审核结果；正式文件通常通过独立提交的批准替换，原发布版本在审核期间继续可用；当前主席可针对具体的本地内容冲突明确选择保留本地版并直接替换公开内容，规则见下文。缺失来源继续显示未知。
 
 代表文件分享在主席代办、活动或暂停委员会、已配置活动存储且有开放会期时可启动。能力链接放在 URL fragment 中；代表选择当前开放会期中出席或暂离的席位后，取得 30 天 HttpOnly 浏览器凭据。结束分享、运作模式切换或归档/删除委员会会撤销凭据；schema 64 将存储切换、迁移或临时不可用与分享失效分开。凭据只允许本委员会已发布文件、本人代表团提交历史及上传，不获得普通成员权限。schema 65 保留服务器卷/S3 保存失败标记；验证过的暂存内容仍可重试，刷新代表页面后仍显示失败。服务器卷和 S3 不以主席电脑在线状态判断可用性；主席电脑离线时缓存命中的已发布文件仍可下载。schema 74 按委员会、代表团和已发布文件分类保存已读边界；点击分类时浏览器立即按当前最新文件的审核时间隐藏红点，并异步提交该文件 ID，服务器校验其分类后保存对应审核时间，同一代表团在不同浏览器共享已读状态。提交失败最多尝试 5 次，之后保留本页状态且不提示。“其他”合并全部自定义类型，“全部文件”不记录已读边界或显示红点。
 
@@ -147,13 +147,13 @@ schema 66 以 `formal_name` 保存正式名称：使用与 JavaScript `trim()` �
 
 批准预览返回绑定源提交 revision/版本/摘要、名称、类型、目标 ID/revision/版本的确认值。同名批准需要居中二次确认，服务端按委员会、源文件、目标文件顺序锁定并重验，在同一事务追加目标版本、发布、保留源提交审核结果、写事件及审计。目标 ID 不变，新版本复用源 blob，不复制字节；`source_file_entry_id` 与 `merged_into_file_entry_id` 保留来源关系。已合并提交不再作为候选或第二条正式文件出现；代表历史仍按原提交席位授权。Stage 4/5 快照及下载可解析既有源引用至正式目标。正式文件删除连同合并来源的全部字节按原清理流程处理，没有文书引用删除保护。
 
-Chair Agent 网页上传使用 `submissions/<entry ID>/content` 独立路径，原文件名仅作业务元数据，既有路径保留。替换发布沿用正式目标路径，缓存回填追踪源提交的持久副本。已发布文件的本地改名或内容更新生成 `REVIEW_REQUIRED` 冲突，只允许保留服务器版本，并引导网页上传审核；同步与删除能力保留。
+Chair Agent 网页上传使用 `submissions/<entry ID>/content` 独立路径，原文件名仅作业务元数据，既有路径保留。替换发布沿用正式目标路径，缓存回填追踪源提交的持久副本。已发布文件的本地改名或内容更新生成 `REVIEW_REQUIRED` 冲突；当前主席可明确裁决内容替换，改名仍受正式名称保护；同步与删除能力保留。
 
 委员会文件设置保存在委员会行的 `delegate_file_settings` 中，使用独立 revision 和审计保存。管理员在 `system_settings` 管理新委员会的默认驳回类型；两个委员会创建入口均在创建事务内复制默认值，既有委员会独立保存。主席资料页的“文件设置”管理驳回类型、固定代表提示或自行输入方式，以及六种预设文件类型和“其他”的后缀白名单。文件类型在数据库中保存为文本：预设类型使用固定代码，自定义类型使用 `CUSTOM:` 加原始名称，按完整字符串区分；代表页的已发布文件把全部自定义类型归入“其他”。代表 bootstrap 返回许可后缀和已绑定席位国旗；上传创建前服务端校验最后一个后缀（不区分大小写），不合规则不创建上传或审核记录。驳回命令按委员会当前选项解析消息并保存当时文本，历史记录不随选项修改。后缀限制不等同于文件内容检测。
 
 CHAIR_AGENT 字节的权威持久副本仍在主席电脑。服务器使用同一持久卷中的独立 cache 命名空间保存非权威副本，并用 `REVIEW_PINNED` / `READY` / `MISSING` / `FETCHING` / `EVICTING` / `FAILED` 记录状态。管理员配置保存在 PostgreSQL，生效容量上限取数据库值与部署硬边界的较小值，最低剩余空间取较大值。待审核副本不参与 LRU，所有主席电脑上传（含主席上传）均受审核缓存额度约束；批准或驳回后解除固定保留。服务器卷与 S3 的权威副本不占用主席电脑审核缓存额度。
 
-### Linux 主席 Agent 桌面外壳
+### 主席 Agent 原生桌面外壳
 
 `GET /api/v1/storage-agent/committees` 使用账号 Session 返回可连接委员会，只包含所有者或有效主席有权管理的活动／暂停委员会，附当前设备、实际存储方式及版本；公开浏览和系统管理员身份本身不授予绑定权。该查询只提供选择快照，授权生成和最终配对仍走原有事务校验。
 
@@ -185,6 +185,42 @@ GUI 状态显示合并原连接状态、委员会暂停及既定 30 秒的新鲜
 
 首次连接使用原生登录、临时密码修改、委员会选择及目录确认；账号客户端 `desktop-auth.ts` 将 Cookie 限定在桥接进程内的固定 HTTPS origin，携带 CSRF 与 Origin，不跟随重定向。配对后通过既有退出接口结束账号会话。设备配置禁止直接替换 origin；设置中的换站入口重新连接。同步主页、连接与存储、诊断日志分别显示，设置先查看，再停止并编辑；保存或取消按进入编辑前状态恢复同步。登录页将证书和其他连接方式折叠，手动配对码使用独立页面；表单动作跟随表单滚动，应用菜单与语言选择各有独立弹层。原生布局预览可用 Slint 自带软件渲染器检查精确窗口尺寸，并以鼠标／键盘事件验证登录控件，不新增依赖或配置。配对 CLI 另用私有 IPC 将已收到的设备配置交给父进程暂存，服务器成功后本机写入失败可在同一窗口重试本机保存，不重发配对。应用图标、Wayland app_id、X11 WM_CLASS 与桌面入口统一为 `org.quorum.ChairAgent`。 桌面入口的 Icon 使用安装后 SVG 文件的绝对路径，避免依赖运行中桌面的图标主题缓存。通过用户级桌面入口和 MIME 关联接收 `quorum-agent:` 与 `.quorum-agent`，注册工具来自 Linux 现有 xdg/shared-mime-info/desktop-file-utils；Rust 使用 1.89 起稳定的文件锁 API 和 Slint 已固定版本的 winit 扩展，不新增运行服务或第三方包。
 
+### 文件批准与历史冲突恢复（2026-10-06）
+
+文件首次批准和同名替换在现有委员会／文件锁与业务事务内追加当前 source／target manifest，业务名称不会改写 Agent 的提交路径。目标替换的新内容虽已由当前 Chair host 持有，仍须下发正式目标路径的 STORE_BLOB；原始提交副本继续保留。Agent 仅在 blob、哈希、大小与路径均等于已跟踪内容基准时推进 revision，不改动磁盘字节，不改写未完成上传的幂等恢复请求。
+
+KEEP_SERVER 以锁定的当前 entry／version／已提交 blob 创建恢复任务；缺失或陈旧 manifest 在同事务修复，原路径依次从 manifest、已完成改名／上传历史及既有路径函数取得。已删除文件同步真实 file ID 的墓碑；缺少可用当前版本时整个裁决事务回滚。当前正式／合并状态和裁决后的源文件 revision 同时参与审核保护，旧冲突原因和另存为裁决不能绕过限制。相关回归使用真实 PostgreSQL 随机临时数据库，未增加 schema、服务或依赖。
+
+### Windows 发行（2026-10-06）
+
+`pnpm release:storage-agent:windows` 构建 Windows x64 GUI 和目录锁／ACL helper，使用固定 Node 与 Inno Setup 构成 ZIP、对应源码 ZIP 和用户级 EXE。Rust MSVC 使用静态 CRT；构建阶段验证 PE 依赖及图标资源，运行阶段从应用目录寻找 Node／桥接／helper。Windows ZIP 将 PE 和脚本当作普通文件，Unix 权限位由目标平台与文件用途决定，不依赖打包主机 chmod 行为。
+
+安装器最低版本为 Windows 10 22H2 build 19045，目标为当前用户 LOCALAPPDATA/Programs。HKCU 注册 `quorum-agent:` 和 `.quorum-agent`；保留用户已有默认关联，卸载仅清理仍归本程序所有的注册。安装、更新和卸载先检查 GUI 单实例锁；私有配置和会议内容位于程序目录外，卸载保留。无托盘、开机自启或自动更新。
+
+Windows GUI 记住忙碌期间的关闭请求，操作完成后重新检查未保存配置与配对恢复确认，再关闭桥接输入。桥接完成正常清理并退出后，GUI 显式结束自身进程，避免原生窗口循环接受 Slint 退出请求后仍驻留；Windows 内核随进程结束释放单实例文件锁与 kill-on-close Job handle。Linux 继续隐藏窗口并退出 Slint 循环。GUI smoke 等待窗口输入就绪、刷新句柄，只发送一次关闭请求，另用实际 Rust 窗口和受控忙碌桥接验证延后关闭。
+
+Windows CI 在 Vitest 前使用 `cargo build --locked --bins` 构建桌面 GUI 与平台辅助程序，并在同一测试步骤中将 `QUORUM_AGENT_PLATFORM` 指向 debug helper、`QUORUM_AGENT_NODE` 指向当前 Node 可执行文件，供 Node ACL／目录锁测试及 Rust 进程测试使用；原生构建失败立即终止。后续发行步骤单独构建静态 CRT 的 release 产物。
+
+保存已配对配置时，新旧存储目录均先解析为规范路径再判断是否移动，避免 Windows 临时目录的 8.3 短路径与长路径别名使同一目录被重复加锁；真实移动仍校验完整状态并分别锁定新旧目录。
+
+Windows smoke 逐项输出检查结果，失败报告保留调用位置和退出码，安装／卸载分别保存 Inno 日志；失败时同时将各日志末尾输出到 Actions 日志。发行产物已生成时，CI 即使后续 smoke 失败也上传产物、报告及日志，供复核失败阶段。
+
+Inno 卸载启动进程可能先于实际卸载进程退出。smoke 在既有 60 秒总超时内，等待实际卸载进程释放 `desktop.lock` 后再检查删除／数据保留并进入重装；共享冲突之外的访问错误立即失败。
+
+发行记录包含 Git commit、源码是否脏、固定工具版本、对应源码哈希、全部产物 SHA-256 和 PE 系统依赖；源码包只收录受版本管理的源文件／锁文件与确切 Rust 依赖源，不扫描本机凭据。 Rust 依赖通过完整锁定 metadata 与 cargo vendor 收集全部平台依赖及 .cargo-checksum.json；随包说明区分无 Git 源码的组件构建与需记录 Git 来源的发行组装。Offline 同时传入 build、metadata、vendor。Windows smoke 在隔离 PATH 下验证捆绑运行时、目录锁和窗口生命周期，可在 Sandbox 内验证 EXE 安装、注册、更新与卸载。Windows CI 生成产物，Linux CI 保持完整 GUI/AppImage 构建回归；不自动公开发行。
+
+### 冲突比较（2026-10-06）
+
+浏览器管理接口在原始 conflict/file ID 上 LEFT JOIN 当前 entry/version，返回最小可比较快照（revision、状态、名称、合并目标、SHA-256、大小）；检测时 serverRevision 仍保留，Agent 接口不扩展。合并来源快照保持原始 ID，正式目标通过既有 GET file 重定向结果用于下载，不把两个文件的 revision 当作同一基准。
+
+比较以本地变更的 baseRevision 和服务器当前 revision 为版本证据，以内容哈希和大小为字节证据。相同字节建议保留服务器；基准仍相同时说明本地变化；服务器修订推进且字节不同时仅说明两份内容不同；审核和元数据也会推进修订，不能据此断言双方都编辑过内容，普通文件建议另存两份，已发布文件同时提供保留本地版与服务器版，建议不改变可选操作。删除、改名、失去主机资格、无法取回快照分别给出有限结论。时间戳不用于断言内容编辑先后。 本地变更协议未提供编辑时间，服务器版本创建时间不作为双边修改时间对比。推荐依据就近展示；选择前提醒下载、人工比较和备份。确认对话框强调无法在界面撤销，确认时校验打开弹窗时的文件 revision 和冲突 revision；已有历史版本保存规则不变。
+
+服务器版本下载沿用现有 readiness/preparation/cache refill；下载只产生供人工比较的副本，不自动裁决或覆盖本地文件。裁决带当前原始 entry 的 revision，由服务器事务再次验证。界面按文件排列两栏比较、下载和等权选择，修订／哈希收起到技术详情；替换需明确确认。旧主机、已删除或已合并来源不伪装成可直接覆盖的本地选项。委员会外层随快照刷新当前管理者的冲突数量，在文件导航、溢出菜单、移动导航和存储页签显示红点；文件页提供计数及直达比较入口，成员／公众不请求私有冲突。
+
+冲突比较沿用委员会 SSE 快照自动更新，同序号重连快照也触发校验；暂时读取失败每 5 秒自动重试，权限或资源不可用则停止重试。请求序号屏蔽旧响应，避免覆盖较新的比较状态。界面以完整句子显示待处理数量，建议标记归属于对应版本卡片，不要求手动刷新。
+
+Schema 87 为 file_versions 新增唯一 resolution_conflict_id；服务端只从已记录的 ACCEPT_LOCAL 裁决、单次 application、上传与 task 关联派生直接替换授权，不接受外部绕过审核开关。提交时重新检查当前文件 revision、host generation、字节摘要、裁决主席有效资格；数据库触发器也校验裁决与目标版本的关联。已发布内容追加独立版本，保持文件 ID、正式名称、发布状态、原发布时间及文件类型；保留旧版本、发布新清单并沿用缓存校验。普通上传继续待审核，合并来源与危机通告的独立发布约束不变。
+
 ## 6. 归档、删除与运维
 
 Owner 可把活动委员会归档。归档后全部业务写命令在服务端拒绝，既有角色仍按授权读取和下载。Owner 导出在 `REPEATABLE READ READ ONLY` 快照中流式输出 JSON Lines，包含议事、审计与文件 manifest，不含凭据、provider key、源 IP 摘要或文件正文。
@@ -215,11 +251,15 @@ retention worker 使用 advisory lock，仅清理明确过期且不再承载业�
 
 Vite 开发服务器默认仅监听本机 IPv4 地址 `127.0.0.1`，通过 `http://localhost:5173` 或 `http://127.0.0.1:5173` 访问；默认不监听 IPv6 或局域网接口。
 
-所有项目命令前先运行：
+Linux/WSL 项目命令前先运行：
 
 ```sh
 source scripts/wsl-env.sh
 ```
+
+Windows 原生开发在 PowerShell 中先运行 `. .\scripts\windows-env.ps1`，使用本 checkout 的官方 Node、固定 pnpm 及 Windows MSVC Rust 工具链缓存。`scripts/check-windows-toolchain.ps1` 用最小程序验证 Windows 原生编译与运行；MSVC 和 Windows SDK 由微软系统安装器提供。准备步骤见 `docs/self-hosted/CHAIR_AGENT_WINDOWS_SETUP.md`。原生 GUI 开发启动使用 `pnpm start:storage-agent:desktop:windows`；自包含 ZIP、对应源码和用户级 EXE 使用 `pnpm release:storage-agent:windows` 构建。
+
+Windows Chair Agent 迁移与功能验收复用 WSL 中现有开发服务器，不在 Windows 重建 Docker 或开发服务。用户提供入口为 `localhost:80`（需要 CA 证书）或 `http://localhost:5173`；实际 TLS／重定向、CA 路径及 Agent API 连接入口在验收时核对，保留既有 HTTPS 校验。
 
 常用命令：
 
@@ -278,3 +318,17 @@ Rust/Slint 和既有 Node 核心，生成 AppImage、解压包、源码包及校
 AppRun 区分包内依赖环境与宿主外部程序环境。文件覆盖确认移到既有 Slint 窗口，
 文件选择前检查 portal 接口，缺失时给出错误。手动 GitHub 构建工作流仅上传产物，
 不自动发布。协议、配置 schema、目录锁和退出即停止同步的行为保持不变。
+
+### Windows 原生窗口适配（2026-10-06）
+
+Windows 继续使用同一 Rust/Slint 窗口及 Node 管道桥接。平台实现拆分为 desktop/linux.rs 与 desktop/windows.rs；Windows 使用内核文件锁限制单窗口，在受当前用户、SYSTEM 和 Administrators ACL 保护的 requests 目录中原子发布短期唤起请求，并由现有窗口确认消费，不开放本地网络端口。系统打开使用 ShellExecuteW，文件选择使用 rfd 的 Windows 原生后端；Wayland/X11 和 portal 检查仅保留在 Unix 路径。
+
+Windows Rust/Node 共用 LOCALAPPDATA/quorum-agent，系统语言从 Windows locale 获取，默认文档位置使用 Windows MyDocuments 已知目录；Windows 窗口显式使用 Microsoft YaHei，以避免软件渲染器的中文回退字形缺失。开发启动使用 pnpm start:storage-agent:desktop:windows。用户级 EXE 安装器管理快捷方式与协议／文件关联；ZIP 保持便携运行。
+
+### Windows 安全与进程边界（2026-10-06）
+
+Windows Node Agent 的 GUI 和 CLI 共用原生 `quorum-agent-platform.exe` 辅助程序：以内核文件锁持有同步根目录的 `.quorum-storage.lock`，持锁期间禁止删除锁文件；在读取状态之前取得锁。辅助程序随父 Node 管道 EOF 释放锁，意外丢失锁时 Node 同步进程立即退出。锁路径、私有配置及本地打开目标拒绝 junction/reparse point 和文件硬链接；大小写别名不能绕过锁，文件大小写变更不再误删刚替换的目标。
+
+长期凭据及私有状态先创建空文件、将所有者设为当前用户并设置当前用户／SYSTEM／Administrators 的受保护 ACL，再写入内容并原子替换；读取凭据同时检查所有者和允许访问的 SID。Windows 提权令牌默认以 Administrators 组持有新文件，原生回归覆盖组所有者在保护前被拒绝、保护后归当前用户的文件和目录。辅助程序缺失时拒绝运行，不能回退到不加锁或仅设置 POSIX mode。开发脚本同时构建两个 Rust 可执行文件；CLI 可通过 `QUORUM_AGENT_PLATFORM` 指定辅助程序，否则查找 Node 相邻位置或开发构建目录。
+
+Windows 正常停止先关闭 Node CLI 的输入管道并等待清理，15 秒超时后强制结束。GUI 将桥接及其后代加入 kill-on-close Windows Job Object，窗口异常退出仍清理进程树。原生测试覆盖实际子进程与孙进程清理，隔离 HTTPS 测试覆盖启动、停止和恢复；正式窗口及现有 WSL 服务器的实际验收边界记录于 `docs/self-hosted/CHAIR_AGENT_WINDOWS_ACCEPTANCE.md`。
