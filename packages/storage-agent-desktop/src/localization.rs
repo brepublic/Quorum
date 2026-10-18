@@ -1,3 +1,4 @@
+#[path = "preferences.rs"] pub(crate) mod preferences;
 use std::{path::PathBuf, time::SystemTime};
 
 /// Fresh observations need no timestamp; stale ones age even without another snapshot.
@@ -248,6 +249,7 @@ pub fn translate(key: &str, language: &str) -> &'static str {
         " · Unsaved" => (" · Unsaved", " · 未保存"),
         "A component of the path is not a directory." => ("A component of the path is not a directory.", "路径中有一项不是目录。"),
         "AGENT_ALREADY_RUNNING" => ("An Agent is already running in this directory. Stop it first.", "此目录已有 Agent 运行，请先停止原进程。"),
+        "WINDOWS_PLATFORM_UNAVAILABLE" => ("Windows platform helper is missing. Rebuild the Windows Agent.", "缺少 Windows 平台组件，请重新构建 Windows Agent。"),
         "AGENT_EXITED" => ("The Agent exited unexpectedly. Check the logs.", "Agent 异常退出，请查看日志。"),
         "AUTHENTICATION_REQUIRED" => ("Device authorization is unavailable. Check pairing on the committee page.", "设备授权不可用，请在委员会网页核对配对状态。"),
         "An Agent is already running in this directory. Stop it first." => ("An Agent is already running in this directory. Stop it first.", "此目录已有 Agent 运行，请先停止原进程。"),
@@ -488,16 +490,14 @@ pub fn translate(key: &str, language: &str) -> &'static str {
 }
 
 fn preference_path() -> Option<PathBuf> {
-    std::env::var_os("XDG_CONFIG_HOME").filter(|value| !value.is_empty()).map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
-        .map(|base| base.join("quorum-agent/desktop-language"))
+    preferences::config_directory().ok().map(|base| base.join("desktop-language"))
 }
 
 pub fn load_language() -> &'static str {
     let saved = preference_path().and_then(|path| std::fs::read_to_string(path).ok());
     match saved.as_deref().map(str::trim) {
         Some("zh-CN") => "zh-CN", Some("en") => "en",
-        _ => if std::env::var("LANG").unwrap_or_default().starts_with("zh") { "zh-CN" } else { "en" },
+        _ => if preferences::system_language().starts_with("zh") { "zh-CN" } else { "en" },
     }
 }
 

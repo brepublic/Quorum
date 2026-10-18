@@ -1,10 +1,10 @@
 // @vitest-environment node
 
 import {createHash, randomUUID} from 'node:crypto';
-import {link, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile} from 'node:fs/promises';
+import {link, lstat, mkdir, mkdtemp, open, readFile, readdir, rm, symlink, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {afterEach, describe, expect, it} from 'vitest';
+import {afterEach, describe, expect, it, vi} from 'vitest';
 import type {StorageManifestEvent} from '@quorum/contracts';
 import {AgentFileStore} from './files';
 import {normalizeAgentRelativePath, secureAgentTarget} from './paths';
@@ -22,7 +22,7 @@ const upsert = (content: string, logicalName = '文件/工作文件.txt', sequen
   blobId, logicalName, originalName: 'draft.txt', mediaType: 'text/plain', sizeBytes: Buffer.byteLength(content),
   sha256: digest(content), createdAt: '2026-08-13T00:00:00.000Z'});
 
-afterEach(async () => Promise.all(roots.splice(0).map(path => rm(path, {recursive: true, force: true}))));
+afterEach(async () => {vi.restoreAllMocks(); await Promise.all(roots.splice(0).map(path => rm(path, {recursive: true, force: true})));});
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'quorum-agent-files-')); roots.push(root);
@@ -31,6 +31,18 @@ async function fixture() {
 }
 
 describe('Chair Agent storage root', () => {
+  it('does not publish migration content when syncing the file fails', async () => {
+    const value = await fixture();
+    const handle = await open(join(value.root, 'sync-probe'), 'w');
+    const handlePrototype = Object.getPrototypeOf(handle);
+    await handle.close();
+    vi.spyOn(handlePrototype, 'sync').mockRejectedValue(Object.assign(new Error('disk failure'), {code: 'EIO'}));
+    await expect(value.files.storeBlob(blobId, async () => (async function* () {yield Buffer.from('old');})(), 3, digest('old')))
+      .rejects.toMatchObject({code: 'LOCAL_WRITE_FAILED'});
+    await expect(readFile(join(value.root, AGENT_BLOB_DIRECTORY, blobId))).rejects.toMatchObject({code: 'ENOENT'});
+    expect(await readdir(join(value.root, AGENT_TEMP_DIRECTORY))).toEqual([]);
+  });
+
   it('stores historical migration content separately, recovers a receipt loss, repairs damage and excludes it from uploads',async()=>{
     const value=await fixture();let downloads=0;
     const source=async()=>{downloads+=1;return(async function*(){yield Buffer.from('old');})();};
@@ -80,7 +92,7 @@ describe('Chair Agent storage root', () => {
     const value = await fixture(); const outside = await mkdtemp(join(tmpdir(), 'quorum-agent-metadata-'));
     roots.push(outside); const external = join(outside, 'metadata.json');
     await writeFile(external, JSON.stringify(value.state.snapshot()));
-    await rm(join(value.root, AGENT_METADATA_FILE)); await symlink(external, join(value.root, AGENT_METADATA_FILE));
+    await rm(join(value.root, AGENT_METADATA_FILE)); await (process.platform === 'win32' ? link : symlink)(external, join(value.root, AGENT_METADATA_FILE));
     await expect(AgentStateStore.initialize(value.root, {committeeId, deviceId}))
       .rejects.toMatchObject({code: 'INVALID_STORAGE_ROOT'});
   });
@@ -94,7 +106,7 @@ describe('Chair Agent storage root', () => {
 
   it('rejects a symbolic-link parent that escapes the selected root', async () => {
     const value = await fixture(); const outside = await mkdtemp(join(tmpdir(), 'quorum-agent-outside-'));
-    roots.push(outside); await symlink(outside, join(value.root, 'linked'));
+    roots.push(outside); await symlink(outside, join(value.root, 'linked'), process.platform === 'win32' ? 'junction' : 'dir');
     await expect(secureAgentTarget(value.root, 'linked/file.txt', {createParents: true}))
       .rejects.toMatchObject({code: 'UNSAFE_LOCAL_PATH'});
   });
@@ -154,7 +166,7 @@ describe('Chair Agent verified atomic apply', () => {
     await writeFile(source, 'outside alias'); await link(source, join(value.root, 'safe', 'hard.txt'));
     await expect(value.files.applyUpsert(upsert('new', 'safe/hard.txt'), (async function* () {yield 'new';})()))
       .rejects.toMatchObject({code: 'LOCAL_CONTENT_CONFLICT'});
-    await symlink(source, join(value.root, 'safe', 'symbolic.txt'));
+    await (process.platform === 'win32' ? link : symlink)(source, join(value.root, 'safe', 'symbolic.txt'));
     await expect(value.files.applyUpsert(upsert('new', 'safe/symbolic.txt'), (async function* () {yield 'new';})()))
       .rejects.toMatchObject({code: 'LOCAL_CONTENT_CONFLICT'});
     expect(await readFile(source, 'utf8')).toBe('outside alias');

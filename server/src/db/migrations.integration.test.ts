@@ -57,6 +57,28 @@ afterEach(async () => {
 });
 
 integration('PostgreSQL migrations', () => {
+  it('upgrades the remote conflict schema through Chair migration and replica integrity without rewriting history', async () => {
+    const pool = new Pool({connectionString: databaseUrl});
+    const source = resolve('server/migrations');
+    const staged = await mkdtemp(join(tmpdir(), 'quorum-migrations-0087-')); temporaryDirectories.push(staged);
+    try {
+      for (const file of await readdir(source)) {
+        if (Number(file.slice(0, 4)) <= 87) await cp(join(source, file), join(staged, file));
+      }
+      await runMigrations(pool, staged);
+      const history = (await pool.query('SELECT * FROM quorum_meta.schema_migrations ORDER BY version')).rows;
+      expect(history.at(-1)).toMatchObject({version: 87, name: 'chair_conflict_replacements'});
+      expect(await runMigrations(pool, source)).toMatchObject({ready: true, latestAppliedVersion: 89});
+      expect((await pool.query('SELECT * FROM quorum_meta.schema_migrations WHERE version<=87 ORDER BY version')).rows).toEqual(history);
+      expect((await pool.query('SELECT schema_compatibility FROM quorum_meta.runtime_metadata')).rows[0].schema_compatibility).toBe(89);
+      expect((await pool.query(`SELECT column_name FROM information_schema.columns WHERE table_name='file_versions'
+        AND column_name='resolution_conflict_id'`)).rowCount).toBe(1);
+      expect((await pool.query(`SELECT column_name FROM information_schema.columns WHERE table_name='storage_agent_tasks'
+        AND column_name='migration_item_id'`)).rowCount).toBe(1);
+      expect(await runMigrations(pool, source)).toMatchObject({ready: true, pendingVersions: []});
+    } finally {await pool.end();}
+  });
+
   it('upgrades older Beijing committees and unfinished sessions while preserving users and frozen proceedings', async () => {
     const pool = new Pool({connectionString: databaseUrl});
     const source = resolve('server/migrations');

@@ -2,7 +2,7 @@ import {testCommitteeInput} from '../../test/committee-fixture';
 // @vitest-environment node
 
 import {createHash, randomBytes,randomUUID} from 'node:crypto';
-import {link, lstat, mkdir, mkdtemp, open,readFile, realpath, rm, unlink} from 'node:fs/promises';
+import {link, lstat, mkdir, mkdtemp, open,readFile, realpath, rm, unlink, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
 import pg from 'pg';
@@ -37,6 +37,8 @@ import {AgentFileStore} from '../../../../packages/storage-agent/src/files';
 import {StorageCacheService} from './cache-service';
 import {StorageCacheRefillService} from './cache-refill-service';
 import {Stage7ChairAgentProviderService} from '../storage-agent/chair-provider-service';
+import {Stage7ConflictService} from '../storage-agent/conflict-service';
+import {Stage7LocalChangeService} from '../storage-agent/local-change-service';
 
 const {Client, Pool} = pg;
 const adminUrl = process.env.TEST_DATABASE_ADMIN_URL;
@@ -240,6 +242,113 @@ integration('PostgreSQL stage 6 file metadata', () => {
         ...(failureCode?{failureCode}:{})},context('migration-finish'));
     return {fixture,file,agent,paired,taskService,revision,heartbeat,start,latest,claim,finish};
   }
+
+  async function migratedChairFile() {
+    const value = await chairMigration();
+    const state = await AgentStateStore.initialize(join(stagingRoot, 'chair-review'), {
+      committeeId: value.fixture.committee.id, deviceId: value.paired.host.deviceId});
+    const local = new AgentFileStore(state);
+    await value.start(); await storageMigrations.processNextCopyItem();
+    const copy = await value.claim('MIGRATE_BLOB'); const chunks: Buffer[] = [];
+    await value.taskService.streamBlob(value.paired.credential, {taskId: copy.id, blobId: copy.blobId!,
+      leaseGeneration: copy.leaseGeneration, fileRevision: copy.fileRevision, claimToken: copy.claimToken!},
+    {start: () => undefined, write: async chunk => {chunks.push(Buffer.from(chunk));}});
+    await local.storeBlob(copy.blobId!, async () => (async function* () {yield Buffer.concat(chunks);})(),
+      copy.expectedSizeBytes!, copy.expectedSha256!);
+    await value.finish(copy); await storageMigrations.processNextCopyItem();
+    const ready = await value.latest();
+    await storageMigrations.confirm(value.fixture.chair, ready.id, {baseRevision: ready.revision}, randomUUID(), context('review-migrate'));
+    const verify = await value.claim('VERIFY_MIGRATION_BLOB');
+    await local.verifyBlob(verify.blobId!, verify.expectedSizeBytes!, verify.expectedSha256!);
+    await value.finish(verify); await storageMigrations.processNextCopyItem();
+    expect((await value.latest()).status).toBe('COMPLETED');
+    expect(await files.processNextDeleteJob()).toMatchObject({status: 'COMPLETED'});
+    const original = (await pool!.query('SELECT storage_key,durability_state FROM file_blobs WHERE id=$1',
+      [value.file!.currentVersion.blobId])).rows[0];
+    expect(original.durability_state).toBe('DELETED');
+    await expect(lstat(volume.pathForKey(original.storage_key))).rejects.toMatchObject({code: 'ENOENT'});
+    const config = {publishedCacheMaxBytes: 1048576, pendingReviewMaxBytes: 1048576,
+      pendingReviewCommitteeMaxBytes: 1048576, storageMinFreeBytes: 0, storageMinFreePercent: 0};
+    const cache = new StorageCacheService(pool!, staging, staging,
+      {effective: async () => ({...config, revision: 1, hardLimits: config})} as never);
+    const provider = new Stage7ChairAgentProviderService(pool!, storage, cache);
+    const tasks = new Stage7StorageTaskService(value.agent, staging, files, undefined, provider, storageMigrations);
+    const reader = new Stage6FileService(pool!, volume, fileS3Configs,
+      config => new S3CompatibleStore(config, new IntegrationS3Transport(), 20 * 1024 * 1024), staging, staging);
+    const review = new DelegateFileService(pool!, uploads,
+      new Stage6ProviderCommitService(pool!, serverVolume, {} as never), files, storage, cache);
+    return {...value, state, local, copy, tasks, review, reader};
+  }
+
+  it.each(['KEEP_SERVER', 'ACCEPT_LOCAL'] as const)
+    ('approves migrated content and applies %s after source cleanup without changing content identity', async action => {
+    const value = await migratedChairFile(); const {fixture, paired} = value;
+    const published = await value.review.approve(fixture.chair, value.file!.id, {
+      baseRevision: value.file!.revision, logicalName: 'Migrated formal file', fileType: 'WORKING_PAPER'}, context('migrated-approve'));
+    const generation = paired.host.leaseGeneration;
+    const manifest = await value.tasks.manifest(paired.credential, generation);
+    const event = manifest.events.filter(item => item.fileEntryId === published.id).at(-1)!;
+    if (event.kind !== 'UPSERT') throw new Error('Expected current file content');
+    expect(event.blobId).toBe(value.file!.currentVersion.blobId);
+    const originalPath = await value.local.verifyBlob(value.copy.blobId!, event.sizeBytes, event.sha256);
+    await value.local.applyUpsert(event, (async function* () {yield await readFile(originalPath);})());
+    const content = Buffer.from('edited migrated content');
+    await writeFile(join(value.state.rootPath, event.logicalName), content);
+    const change = {kind: 'UPSERT' as const, fileEntryId: published.id, baseRevision: published.revision,
+      logicalName: event.logicalName, originalName: 'edited.pdf', mediaType: 'application/pdf',
+      sizeBytes: content.length, sha256: digest(content.toString())};
+    const changes = new Stage7LocalChangeService(value.agent);
+    const conflicts = new Stage7ConflictService(pool!, value.agent);
+    await expect(changes.submit(paired.credential, {leaseGeneration: generation, requestId: randomUUID(),
+      manifestSequence: manifest.nextSequence, change}, context('migrated-local')))
+      .rejects.toMatchObject({code: 'CHAIR_DECISION_REQUIRED'});
+    const conflict = (await conflicts.list(fixture.chair, fixture.committee.id))[0]!;
+    await conflicts.resolve(fixture.chair, fixture.committee.id, conflict.id, {baseRevision: conflict.revision,
+      leaseGeneration: generation, fileRevision: published.revision, action}, randomUUID(), context('migrated-decision'));
+    if (action === 'KEEP_SERVER') {
+      const task = (await value.tasks.tasks(paired.credential, generation)).tasks.find(item => item.resolutionConflictId === conflict.id)!;
+      expect(task).toMatchObject({blobId: event.blobId, localBlobId: value.copy.blobId, fileRevision: published.revision});
+      const path = await value.local.verifyBlob(task.localBlobId!, task.expectedSizeBytes!, task.expectedSha256!);
+      await value.local.applyUpsert(event, (async function* () {yield await readFile(path);})(), {force: true});
+      expect(await readFile(join(value.state.rootPath, event.logicalName), 'utf8')).toBe('migration bytes');
+      const claimed = await value.tasks.claim(paired.credential, task.id, {leaseGeneration: generation,
+        fileRevision: task.fileRevision, requestId: randomUUID()});
+      await value.finish(claimed);
+    } else {
+      const pending = await changes.submit(paired.credential, {leaseGeneration: generation, requestId: randomUUID(),
+        manifestSequence: manifest.nextSequence, resolutionConflictId: conflict.id, change}, context('migrated-replacement'));
+      if (pending.status !== 'PENDING_CONTENT') throw new Error('Expected replacement upload');
+      const claimed = await value.tasks.claim(paired.credential, pending.task.id, {leaseGeneration: generation,
+        fileRevision: pending.task.fileRevision, requestId: randomUUID()});
+      await value.tasks.receiveContent(paired.credential, {taskId: claimed.id, leaseGeneration: generation,
+        fileRevision: claimed.fileRevision, claimToken: claimed.claimToken!, expectedSha256: change.sha256,
+        contentLength: content.length, source: (async function* () {yield content;})(), context: context('migrated-upload')});
+      await value.tasks.complete(paired.credential, claimed.id, {leaseGeneration: generation, fileRevision: claimed.fileRevision,
+        claimToken: claimed.claimToken, requestId: randomUUID()}, context('migrated-upload-complete'));
+      const updated = await files.get(fixture.chair, published.id);
+      expect(updated).toMatchObject({id: published.id, logicalName: published.logicalName, status: 'PUBLISHED',
+        currentVersion: {sha256: change.sha256, sizeBytes: content.length}});
+      expect((await pool!.query('SELECT published_at FROM file_entries WHERE id=$1', [published.id])).rows[0].published_at.toISOString()).toBe(published.publishedAt);
+      expect((await pool!.query('SELECT count(*)::int AS count FROM file_versions WHERE file_entry_id=$1', [published.id])).rows[0].count).toBe(2);
+      expect((await pool!.query('SELECT file_type FROM delegate_file_metadata WHERE file_entry_id=$1', [published.id])).rows[0].file_type).toBe('WORKING_PAPER');
+      const downloaded = await value.reader.download(fixture.chair, published.id); const chunks: Buffer[] = [];
+      for await (const chunk of downloaded.content) chunks.push(Buffer.from(chunk));
+      expect(Buffer.concat(chunks)).toEqual(content);
+    }
+  });
+
+  it.each(['missing', 'deleting', 'wrong-size', 'wrong-hash'] as const)('rejects approval when the current migrated replica is %s', async scenario => {
+    const value = await migratedChairFile();
+    if (scenario === 'missing') await pool!.query('DELETE FROM file_blob_copies WHERE copy_blob_id=$1', [value.copy.blobId]);
+    else if (scenario === 'deleting') await pool!.query("UPDATE file_blobs SET durability_state='DELETE_PENDING' WHERE id=$1", [value.copy.blobId]);
+    else if (scenario === 'wrong-size') await pool!.query('UPDATE file_blobs SET size_bytes=size_bytes+1 WHERE id=$1', [value.copy.blobId]);
+    else await pool!.query('UPDATE file_blobs SET sha256=$2 WHERE id=$1', [value.copy.blobId, Buffer.alloc(32, 7)]);
+    await expect(value.review.approve(value.fixture.chair, value.file!.id, {baseRevision: value.file!.revision,
+      logicalName: 'Unavailable migrated file', fileType: 'WORKING_PAPER'}, context('missing-migrated-approve')))
+      .rejects.toMatchObject({reason: 'FILE_CONTENT_UNAVAILABLE'});
+    expect((await pool!.query('SELECT status,revision FROM file_entries WHERE id=$1', [value.file!.id])).rows[0])
+      .toEqual({status: 'PENDING_REVIEW', revision: value.file!.revision});
+  });
 
   it('manually migrates server content to the paired Chair, reports progress, then rechecks before switching',async()=>{
     const value=await chairMigration();

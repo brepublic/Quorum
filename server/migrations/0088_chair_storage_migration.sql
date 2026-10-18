@@ -54,5 +54,5 @@ ALTER TABLE storage_agent_tasks ADD CONSTRAINT storage_agent_tasks_migration_sha
     = (migration_item_id IS NOT NULL)
 );
 
-UPDATE quorum_meta.runtime_metadata SET schema_compatibility=87,updated_at=now() WHERE singleton=true;
-UPDATE system_settings SET schema_compatibility=87 WHERE singleton=true;
+UPDATE quorum_meta.runtime_metadata SET schema_compatibility=88,updated_at=now() WHERE singleton=true;
+UPDATE system_settings SET schema_compatibility=88 WHERE singleton=true;

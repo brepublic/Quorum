@@ -73,6 +73,7 @@ export class StorageAgentRuntime {
 
   private async synchronizeWorkOnce(): Promise<void> {
     const events = await this.loadManifest(); this.manifest = latest(events);
+    await this.reconcileTrackedRevisions();
     const tombstones = [...this.manifest.values()].filter((event): event is Extract<StorageManifestEvent,
       {kind: 'DELETE'}> => event.kind === 'DELETE').sort((left, right) => left.sequence - right.sequence);
     for (const tombstone of tombstones) {
@@ -171,6 +172,28 @@ export class StorageAgentRuntime {
     }
   }
 
+  private async reconcileTrackedRevisions(): Promise<void> {
+    const snapshot = this.state.snapshot();
+    const uploading = new Set(Object.values(snapshot.pendingUploads).map(upload => upload.fileEntryId));
+    const revisions = [...this.manifest.values()].filter(event => {
+      const tracked = snapshot.files[event.fileEntryId];
+      // Approval can advance metadata while the host already holds the same content.
+      // Compare the tracked baseline, preserving any later local edit for the scanner.
+      return event.kind === 'UPSERT' && tracked && !uploading.has(event.fileEntryId)
+        && event.fileRevision > tracked.revision && event.blobId === tracked.blobId
+        && event.logicalName === tracked.relativePath && event.sizeBytes === tracked.sizeBytes
+        && event.sha256 === tracked.sha256;
+    });
+    if (!revisions.length) return;
+    await this.state.update(state => {
+      for (const event of revisions) {
+        const tracked = state.files[event.fileEntryId];
+        if (tracked) tracked.revision = event.fileRevision;
+        state.manifestSequence = Math.max(state.manifestSequence, event.sequence);
+      }
+    });
+  }
+
   private async loadTasks(): Promise<StorageAgentTask[]> {
     const tasks: StorageAgentTask[] = []; let after = 0;
     while (true) {
@@ -232,8 +255,18 @@ export class StorageAgentRuntime {
         }
         if (claimed.resolutionConflictId && (!event || event.kind !== 'DELETE')) {
           const snapshot = this.state.snapshot(); const pending = snapshot.conflicts[claimed.resolutionConflictId];
-          if (pending) await this.files.discardConflict(pending.relativePath,
-            conflictExpected(snapshot, claimed.resolutionConflictId));
+          if (pending) {
+            await this.files.discardConflict(pending.relativePath,
+              conflictExpected(snapshot, claimed.resolutionConflictId));
+            if ('fileEntryId' in pending.change && pending.change.fileEntryId === claimed.fileEntryId) {
+              // A missing server entry has no tombstone to remove its local baseline.
+              // Clear that baseline after discarding the decided copy, while keeping
+              // any concurrent edit at a different tracked path protected.
+              await this.files.applyDelete({kind: 'DELETE', sequence: snapshot.manifestSequence,
+                fileEntryId: claimed.fileEntryId, fileRevision: claimed.fileRevision,
+                deletedAt: claimed.updatedAt, createdAt: claimed.updatedAt});
+            }
+          }
         } else await this.files.applyDelete(event as Extract<StorageManifestEvent, {kind: 'DELETE'}>,
           {force: Boolean(claimed.resolutionConflictId)});
       } else if (claimed.type === 'STORE_BLOB') {
@@ -350,10 +383,12 @@ export class StorageAgentRuntime {
   }
 
   private async reportOneLocalChange(): Promise<void> {
+    if (!await this.scanner.detectOne()) return;
+    // Completing tasks or a concurrent approval may have advanced the server manifest.
+    this.manifest = latest(await this.loadManifest());
+    await this.reconcileTrackedRevisions();
     const detected: DetectedLocalChange | null = await this.scanner.detectOne();
     if (!detected) return;
-    // Completing tasks in this cycle may have advanced the server manifest.
-    this.manifest = latest(await this.loadManifest());
     const requestId = randomUUID(); const manifestSequence = Math.max(0,
       ...[...this.manifest.values()].map(event => event.sequence));
     const result = await this.client.localChange(this.leaseGeneration, requestId, manifestSequence, detected.change);

@@ -23,7 +23,7 @@ export function normalizeAgentRelativePath(value: unknown, _platform: NodeJS.Pla
     throw new AgentFileSystemError('UNSAFE_LOCAL_PATH', 'Agent metadata paths are reserved.');
   }
   if (parts.some(part => WINDOWS_RESERVED.test(part)
-    || part.endsWith('.') || part.endsWith(' ') || part.includes(':'))) {
+    || part.endsWith('.') || part.endsWith(' ') || /[<>:"|?*]/.test(part))) {
     throw new AgentFileSystemError('UNSAFE_LOCAL_PATH', 'Local path is not portable across supported hosts.');
   }
   return parts.join('/');

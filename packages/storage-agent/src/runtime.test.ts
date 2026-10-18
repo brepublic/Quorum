@@ -11,8 +11,8 @@ import {AgentApiError} from './errors';
 import {AgentFileStore} from './files';
 import {StorageAgentRuntime} from './runtime';
 import {AgentDirectoryScanner} from './scanner';
-import {AGENT_TEMP_DIRECTORY, AgentStateStore} from './state';
 import {AGENT_LOCK_FILE} from './runtime-lock';
+import {AGENT_TEMP_DIRECTORY, AGENT_BLOB_DIRECTORY, AgentStateStore} from './state';
 
 const roots: string[] = [];
 const committeeId = '10000000-0000-4000-8000-000000000001';
@@ -53,6 +53,19 @@ async function fixture(clientOverrides: Record<string, unknown> = {}) {
 }
 
 describe('Chair Agent recovery loop', () => {
+  it.each(['missing', 'corrupted'] as const)('does not acknowledge a %s migration replica during verification', async scenario => {
+    const value = await fixture();
+    await value.files.storeBlob(blobId, async () => (async function* () {yield Buffer.from('new');})(), 3, digest('new'));
+    const path = join(value.root, AGENT_BLOB_DIRECTORY, blobId);
+    if (scenario === 'missing') await rm(path);
+    else await writeFile(path, 'bad');
+    vi.mocked(value.client.tasks).mockResolvedValue({tasks: [task('VERIFY_MIGRATION_BLOB')], nextSequence: 1, hasMore: false});
+    await expect(value.runtime.synchronizeOnce()).rejects.toMatchObject({code: 'LOCAL_CONTENT_INVALID'});
+    expect(value.client.complete).not.toHaveBeenCalled();
+    expect(value.client.fail).toHaveBeenCalled();
+    expect(value.client.download).not.toHaveBeenCalled();
+  });
+
   it('migrates historical content without a current manifest and verifies it in a separate task',async()=>{
     const value=await fixture();
     const migration=task('MIGRATE_BLOB',{logicalName:'old version'});
@@ -74,6 +87,94 @@ describe('Chair Agent recovery loop', () => {
     await expect(value.runtime.synchronizeOnce()).rejects.toMatchObject({cause:{code:'NETWORK_ERROR'}});
     expect(value.client.fail).not.toHaveBeenCalled();expect(value.client.complete).not.toHaveBeenCalled();
   });
+
+  function approvalEvent(overrides: Partial<Extract<StorageManifestEvent, {kind: 'UPSERT'}>> = {}):
+    Extract<StorageManifestEvent, {kind: 'UPSERT'}> {
+    return {sequence: 2, kind: 'UPSERT', fileEntryId, fileRevision: 2, versionId: randomUUID(), blobId,
+      logicalName: 'review.txt', originalName: 'review.txt', mediaType: 'text/plain', sizeBytes: 3,
+      sha256: digest('old'), createdAt: '2026-08-13T00:00:00.000Z', ...overrides};
+  }
+
+  it('reconciles an approval revision without downloading or changing local bytes', async () => {
+    const value = await fixture(); const approved = approvalEvent();
+    await value.files.applyUpsert({...approved, sequence: 0, fileRevision: 1},
+      (async function* () {yield 'old';})());
+    const original = value.state.snapshot().files[fileEntryId]!;
+    vi.mocked(value.client.manifest).mockResolvedValue({events: [approved], nextSequence: 2, hasMore: false});
+    await value.runtime.synchronizeOnce(); await value.runtime.synchronizeOnce();
+    expect(value.state.snapshot()).toMatchObject({manifestSequence: 2,
+      files: {[fileEntryId]: {...original, revision: 2}}});
+    expect(await readFile(join(value.root, 'review.txt'), 'utf8')).toBe('old');
+    expect(value.client.download).not.toHaveBeenCalled();
+    expect(value.client.localChange).not.toHaveBeenCalled();
+  });
+
+  it('preserves an edit made before approval reconciliation and submits the current revision', async () => {
+    const value = await fixture(); const approved = approvalEvent();
+    await value.files.applyUpsert({...approved, sequence: 0, fileRevision: 1},
+      (async function* () {yield 'old';})());
+    await writeFile(join(value.root, 'review.txt'), 'local edit');
+    vi.mocked(value.client.manifest).mockResolvedValue({events: [approved], nextSequence: 2, hasMore: false});
+    const conflictId = randomUUID();
+    vi.mocked(value.client.localChange).mockResolvedValue({status: 'CONFLICT', changeRequestId: randomUUID(),
+      conflictId, reasonCode: 'REVIEW_REQUIRED'});
+    await value.runtime.synchronizeOnce();
+    expect(value.client.localChange).toHaveBeenCalledWith(1, expect.any(String), 2,
+      expect.objectContaining({kind: 'UPSERT', fileEntryId, baseRevision: 2, sha256: digest('local edit')}));
+    expect(await readFile(join(value.root, 'review.txt'), 'utf8')).toBe('local edit');
+    expect(value.state.snapshot().files[fileEntryId]).toMatchObject({revision: 2, sha256: digest('old')});
+    expect(value.state.snapshot().conflicts[conflictId]).toBeTruthy();
+    expect(value.client.download).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['different blob', {blobId: '40000000-0000-4000-8000-000000000002'}],
+    ['different path', {logicalName: 'renamed.txt'}],
+    ['different hash', {sha256: digest('new')}],
+    ['different size', {sizeBytes: 4}],
+    ['older revision', {fileRevision: 1}],
+  ] as const)('does not reconcile an unrelated manifest update: %s', async (_label, overrides) => {
+    const value = await fixture(); const approved = approvalEvent();
+    await value.files.applyUpsert({...approved, sequence: 0, fileRevision: 1},
+      (async function* () {yield 'old';})());
+    const original = value.state.snapshot();
+    vi.mocked(value.client.manifest).mockResolvedValue({events: [approvalEvent(overrides)], nextSequence: 2, hasMore: false});
+    await value.runtime.synchronizeOnce();
+    expect(value.state.snapshot()).toEqual(original);
+    expect(value.client.download).not.toHaveBeenCalled();
+  });
+
+  it('keeps a pending upload baseline and its replay request unchanged during approval', async () => {
+    const value = await fixture(); const approved = approvalEvent();
+    await value.files.applyUpsert({...approved, sequence: 0, fileRevision: 1},
+      (async function* () {yield 'old';})());
+    await writeFile(join(value.root, 'review.txt'), 'local edit');
+    const detected = await value.scanner.detectOne(); if (!detected) throw new Error('Expected local edit.');
+    const upload = task('UPLOAD_BLOB', {expectedSizeBytes: 10, expectedSha256: digest('local edit')});
+    await value.scanner.recordResult(detected, randomUUID(), 0,
+      {status: 'PENDING_CONTENT', changeRequestId: randomUUID(), task: upload});
+    const original = value.state.snapshot();
+    vi.mocked(value.client.manifest).mockResolvedValue({events: [approved], nextSequence: 2, hasMore: false});
+    await value.runtime.synchronizeOnce();
+    expect(value.state.snapshot()).toEqual(original);
+    expect(value.client.localChange).not.toHaveBeenCalled();
+  });
+
+  it('refreshes a concurrent approval before choosing the local change base revision', async () => {
+    const value = await fixture(); const approved = approvalEvent();
+    const initial = {...approved, sequence: 0, fileRevision: 1};
+    await value.files.applyUpsert(initial, (async function* () {yield 'old';})());
+    await writeFile(join(value.root, 'review.txt'), 'local edit');
+    vi.mocked(value.client.manifest).mockResolvedValueOnce({events: [initial], nextSequence: 0, hasMore: false})
+      .mockResolvedValue({events: [approved], nextSequence: 2, hasMore: false});
+    vi.mocked(value.client.localChange).mockResolvedValue({status: 'CONFLICT', changeRequestId: randomUUID(),
+      conflictId: randomUUID(), reasonCode: 'REVIEW_REQUIRED'});
+    await value.runtime.synchronizeOnce();
+    expect(value.client.localChange).toHaveBeenCalledWith(1, expect.any(String), 2,
+      expect.objectContaining({baseRevision: 2, sha256: digest('local edit')}));
+    expect(await readFile(join(value.root, 'review.txt'), 'utf8')).toBe('local edit');
+  });
+
   it('applies the latest tombstone before downloading any server UPSERT task', async () => {
     const value = await fixture();
     const old: Extract<StorageManifestEvent, {kind: 'UPSERT'}> = {sequence: 1, kind: 'UPSERT', fileEntryId,
@@ -274,6 +375,41 @@ describe('Chair Agent recovery loop', () => {
     expect(await readFile(join(value.root, 'draft.txt'), 'utf8')).toBe('old');
     expect(value.state.snapshot().conflicts).toEqual({});
     expect(value.client.complete).toHaveBeenCalledOnce();
+  });
+
+  it('clears a missing server file baseline after a no-manifest keep-server deletion', async () => {
+    const value = await fixture(); const initial = approvalEvent({sequence: 0, fileRevision: 1});
+    await value.files.applyUpsert(initial, (async function* () {yield 'old';})());
+    await writeFile(join(value.root, 'review.txt'), 'local edit');
+    const conflictId = randomUUID();
+    await value.state.update(state => {state.conflicts[conflictId] = {conflictId, relativePath: 'review.txt',
+      change: {kind: 'UPSERT', fileEntryId, baseRevision: 1, logicalName: 'review.txt',
+        originalName: 'review.txt', mediaType: 'text/plain', sizeBytes: 10, sha256: digest('local edit')}};});
+    vi.mocked(value.client.tasks).mockResolvedValue({tasks: [task('DELETE_FILE', {resolutionConflictId: conflictId})],
+      nextSequence: 1, hasMore: false});
+    await value.runtime.synchronizeOnce();
+    expect(value.state.snapshot()).toMatchObject({files: {}, conflicts: {}});
+    expect(value.state.snapshot().files[fileEntryId]).toBeUndefined();
+    await expect(readFile(join(value.root, 'review.txt'))).rejects.toMatchObject({code: 'ENOENT'});
+    expect(value.client.localChange).not.toHaveBeenCalled();
+    expect(value.client.complete).toHaveBeenCalledOnce();
+  });
+
+  it('does not clear an unrelated tracked baseline when discarding a new local conflict', async () => {
+    const value = await fixture(); const initial = approvalEvent({sequence: 0, fileRevision: 1});
+    await value.files.applyUpsert(initial, (async function* () {yield 'old';})());
+    await writeFile(join(value.root, 'new.txt'), 'local');
+    const conflictId = randomUUID();
+    await value.state.update(state => {state.conflicts[conflictId] = {conflictId, relativePath: 'new.txt',
+      change: {kind: 'UPSERT', logicalName: 'new.txt', originalName: 'new.txt',
+        mediaType: 'text/plain', sizeBytes: 5, sha256: digest('local')}};});
+    vi.mocked(value.client.tasks).mockResolvedValue({tasks: [task('DELETE_FILE', {fileEntryId: conflictId,
+      resolutionConflictId: conflictId})], nextSequence: 1, hasMore: false});
+    await value.runtime.synchronizeOnce();
+    expect(value.state.snapshot().files[fileEntryId]).toMatchObject({revision: 1, sha256: digest('old')});
+    expect(await readFile(join(value.root, 'review.txt'), 'utf8')).toBe('old');
+    await expect(readFile(join(value.root, 'new.txt'))).rejects.toMatchObject({code: 'ENOENT'});
+    expect(value.client.localChange).not.toHaveBeenCalled();
   });
 
   it('leaves a failed conflict-resolution task claimed so the same task can retry', async () => {

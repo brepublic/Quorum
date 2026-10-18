@@ -1,7 +1,7 @@
 import {createHash, randomUUID} from 'node:crypto';
 import {constants as fsConstants} from 'node:fs';
-import {lstat, mkdir,open, readdir, rename, rm, unlink} from 'node:fs/promises';
-import {join} from 'node:path';
+import {lstat, mkdir, open, readdir, rename, rm, unlink} from 'node:fs/promises';
+import {join, win32} from 'node:path';
 import type {StorageManifestEvent} from '@quorum/contracts';
 import {AgentFileSystemError} from './errors.js';
 import {secureAgentTarget} from './paths.js';
@@ -134,8 +134,12 @@ export class AgentFileStore {
       if (!await missing(target)) {await this.verifyBlob(blobId,sizeBytes,sha256);return;}
       await this.blobTarget(blobId);
       await rename(temporary,target);
-      const directory=await open(join(this.rootPath,AGENT_BLOB_DIRECTORY),fsConstants.O_RDONLY|fsConstants.O_NOFOLLOW);
-      try {await directory.sync();} finally {await directory.close();}
+      // Windows cannot flush a read-only directory handle. The verified file
+      // itself is synced by writeVerified on every platform before publication.
+      if (process.platform !== 'win32') {
+        const directory=await open(join(this.rootPath,AGENT_BLOB_DIRECTORY),fsConstants.O_RDONLY|fsConstants.O_NOFOLLOW);
+        try {await directory.sync();} finally {await directory.close();}
+      }
     } finally {await rm(temporary,{force:true});}
   }
 
@@ -184,7 +188,8 @@ export class AgentFileStore {
       await requireExpected(this.rootPath, options.conflictPath, options.conflictExpected);
     }
     const target = await secureAgentTarget(this.rootPath, event.logicalName, {createParents: true});
-    const sameTarget = tracked?.relativePath === target.relativePath;
+    const sameTarget = !!tracked && (tracked.relativePath === target.relativePath
+      || (process.platform === 'win32' && win32.relative(tracked.relativePath, target.relativePath) === ''));
     const resolvedTarget = options.force && options.conflictPath === target.relativePath;
     if (!sameTarget && !await missing(target.absolutePath) && !resolvedTarget) {
       throw new AgentFileSystemError('LOCAL_CONTENT_CONFLICT', 'Server content collides with an untracked local file.');
@@ -211,7 +216,7 @@ export class AgentFileStore {
       if (verified.sizeBytes !== event.sizeBytes || verified.sha256 !== event.sha256) {
         throw new AgentFileSystemError('LOCAL_CONTENT_INVALID', 'Published local content failed verification.');
       }
-      if (tracked && tracked.relativePath !== target.relativePath) {
+      if (tracked && !sameTarget) {
         const old = await secureAgentTarget(this.rootPath, tracked.relativePath);
         if (!await missing(old.absolutePath)) await unlink(old.absolutePath);
       }

@@ -25,5 +25,13 @@ BEGIN
 END;
 $$;
 
-UPDATE quorum_meta.runtime_metadata SET schema_compatibility=88,updated_at=now() WHERE singleton=true;
-UPDATE system_settings SET schema_compatibility=88 WHERE singleton=true;
+-- STORE_BLOB targets a file path and revision, not just content. Approval and
+-- same-name replacement can require several paths/revisions of the same blob.
+-- Preserve the existing content-level exclusion for all other task types.
+DROP INDEX storage_agent_tasks_one_active_cache_fetch;
+CREATE UNIQUE INDEX storage_agent_tasks_one_active_cache_fetch
+  ON storage_agent_tasks (host_id,lease_generation,blob_id,task_type)
+  WHERE blob_id IS NOT NULL AND task_type <> 'STORE_BLOB' AND status IN ('PENDING','IN_PROGRESS','RETRY');
+
+UPDATE quorum_meta.runtime_metadata SET schema_compatibility=89,updated_at=now() WHERE singleton=true;
+UPDATE system_settings SET schema_compatibility=89 WHERE singleton=true;

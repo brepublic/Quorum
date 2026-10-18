@@ -86,7 +86,20 @@ export type StorageAgentConflictReason = typeof STORAGE_AGENT_CONFLICT_REASONS[n
 export const STORAGE_AGENT_CONFLICT_RESOLUTIONS = ['KEEP_SERVER', 'ACCEPT_LOCAL', 'SAVE_AS_NEW'] as const;
 export type StorageAgentConflictResolution = typeof STORAGE_AGENT_CONFLICT_RESOLUTIONS[number];
 
+export interface StorageAgentConflictServerFile {
+  id: string;
+  revision: number;
+  status: import('./stage6.js').FileEntryStatus;
+  logicalName: string;
+  mergedIntoFileEntryId: string | null;
+  publishedAt: string | null;
+  updatedAt: string;
+  currentVersion: {id: string; sha256: string; sizeBytes: number; createdAt: string} | null;
+}
+
 export interface StorageAgentConflict {
+  // Present on the authorized browser list; original detection revisions remain unchanged.
+  serverFile?: StorageAgentConflictServerFile | null;
   id: string;
   committeeId: string;
   hostId: string;

@@ -696,6 +696,9 @@ export const selfHostedApi = {
   listFiles(committeeId: string) {
     return request<FileEntry[]>(`/api/v1/committees/${committeeId}/files`);
   },
+  getFile(fileId: string) {
+    return request<FileEntry>(`/api/v1/files/${encodeURIComponent(fileId)}`);
+  },
   getFileUpload(uploadId: string) {
     return request<FileUpload>(`/api/v1/file-uploads/${uploadId}`);
   },

@@ -101,7 +101,7 @@ describe('self-hosted stage 4 workspace', () => {
     ['votes/missing', 'Draft not found.']
   ])('offers a way home for invalid committee detail addresses (%s)', async (path, text) => {
     const api = {snapshot: vi.fn(async () => snapshot), openCommitteeEvents: vi.fn((_id, _after, handlers: Parameters<SelfHostedApi['openCommitteeEvents']>[2]) => {handlers.onState('LIVE'); return () => undefined;}),
-      listFiles: vi.fn(async () => [])} as unknown as SelfHostedApi;
+      listFiles: vi.fn(async () => []), listStorageAgentConflicts: vi.fn(async () => [])} as unknown as SelfHostedApi;
     container = document.createElement('div'); document.body.append(container); root = createRoot(container);
     await act(async () => {root?.render(<MemoryRouter initialEntries={['/committees/committee/' + path]}>
       <SelfHostedWorkspace user={user} logout={vi.fn()} api={api} />
@@ -227,7 +227,7 @@ describe('self-hosted stage 4 workspace', () => {
       viewer: {audience: 'OWNER', seatId: null}, committee: {...snapshot.committee, ownerUserId: user.id}};
     const archiveCommittee = vi.fn(async () => ({...ownerSnapshot.committee, status: 'ARCHIVED' as const, revision: 2}));
     const activeApi = {snapshot: vi.fn(async () => ownerSnapshot), openCommitteeEvents: vi.fn((_id, _after, handlers: Parameters<SelfHostedApi['openCommitteeEvents']>[2]) => {handlers.onState('LIVE'); return () => undefined;}),
-      archiveCommittee, committeeExportUrl: vi.fn(() => '/api/v1/committees/committee/export'),
+      listStorageAgentConflicts: vi.fn(async () => []), archiveCommittee, committeeExportUrl: vi.fn(() => '/api/v1/committees/committee/export'),
       getCommitteeCreationDefaults: async () => ({defaultRulePackageVersionId: 'rules'}), listRulePackages: vi.fn(async () => [])} as unknown as SelfHostedApi;
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     container = document.createElement('div'); document.body.append(container); root = createRoot(container);
@@ -248,7 +248,7 @@ describe('self-hosted stage 4 workspace', () => {
       timers: [], speakerLists: [], motions: [], ballots: [], strawpolls: [], documents: []};
     const requestCommitteeDeletion = vi.fn(async () => { throw new Error('cleanup queued'); });
     const archivedApi = {snapshot: vi.fn(async () => archived), openCommitteeEvents: vi.fn((_id, _after, handlers: Parameters<SelfHostedApi['openCommitteeEvents']>[2]) => {handlers.onState('LIVE'); return () => undefined;}),
-      committeeExportUrl: vi.fn(() => '/api/v1/committees/committee/export'), requestCommitteeDeletion} as unknown as SelfHostedApi;
+      listStorageAgentConflicts: vi.fn(async () => []), committeeExportUrl: vi.fn(() => '/api/v1/committees/committee/export'), requestCommitteeDeletion} as unknown as SelfHostedApi;
     container = document.createElement('div'); document.body.append(container); root = createRoot(container);
     await act(async () => { root?.render(<MemoryRouter initialEntries={['/committees/committee/settings']}>
       <SelfHostedWorkspace user={user} logout={() => undefined} api={archivedApi} />

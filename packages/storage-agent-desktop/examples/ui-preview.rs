@@ -169,27 +169,42 @@ fn exercise_files(window: &MainWindow, redraw: impl Fn()) {
         key("c".into());
         window.window().dispatch_event(WindowEvent::KeyReleased {text:Key::Control.into()}); redraw();
     };
+    // Locate the first row through the production hit target and stable model ID.
+    // Its height depends on text and inline activity; old absolute Y positions
+    // can select the next row even when the rendered list is correct.
+    let first_key = format!("{}:actual", window.get_files().row_data(0).unwrap().id);
+    let mut first_row_hits = Vec::new();
+    for y in (300..=460).step_by(2) {
+        click(475., y as f32, PointerEventButton::Left);
+        if window.get_selected_name_key().as_str() == first_key { first_row_hits.push(y as f32); }
+    }
+    assert!(opened.borrow().is_empty(), "Blank-cell row lookup must never open a file");
+    let first_top = *first_row_hits.first().expect("First actual-name row must be selectable");
+    let first_bottom = *first_row_hits.last().unwrap();
+    let first_blank_y = first_bottom - 8.;
+    let first_text_y = (first_top + first_bottom) / 2.;
+    let first_action_y = first_bottom - 16.;
     // Size is an independent, inert column; blank name-cell space selects.
     click(550., 365., PointerEventButton::Left);
     assert!(opened.borrow().is_empty());
     assert!(window.get_selected_name_key().is_empty());
-    click(420., 398., PointerEventButton::Left);
+    click(420., first_blank_y, PointerEventButton::Left);
     assert!(opened.borrow().is_empty());
     assert_eq!(window.get_selected_name_key(), "file-1:actual");
     copy();
     TEST_CLIPBOARD.with(|c| assert_eq!(c.borrow().as_str(), "决议草案 - 中文显示测试.pdf"));
     assert_eq!(window.get_copied_notice(), translate("Copied", window.get_language().as_str()));
-    click(400., 348., PointerEventButton::Left);
+    click(400., first_text_y, PointerEventButton::Left);
     assert_eq!(&*opened.borrow(), &["file-1"]);
     key(Key::Return.into());
     assert_eq!(&*opened.borrow(), &["file-1", "file-1"]);
-    click(400., 348., PointerEventButton::Right);
+    click(400., first_text_y, PointerEventButton::Right);
     key(Key::DownArrow.into()); key(Key::Return.into());
     assert_eq!(opened.borrow().len(), 2, "Context menu copies, never opens");
     TEST_CLIPBOARD.with(|c| assert_eq!(c.borrow().as_str(), "决议草案 - 中文显示测试.pdf"));
     // Outside clicks must clear selection, including inert cells and page whitespace.
     for (x, y) in [(550., 365.), (90., 610.), (90., 250.)] {
-        click(420., 390., PointerEventButton::Left);
+        click(420., first_blank_y, PointerEventButton::Left);
         assert_eq!(window.get_selected_name_key(), "file-1:actual");
         click(x, y, PointerEventButton::Left);
         assert!(window.get_selected_name_key().is_empty(), "Outside click at {x},{y} must deselect");
@@ -199,7 +214,7 @@ fn exercise_files(window: &MainWindow, redraw: impl Fn()) {
             TEST_CLIPBOARD.with(|c| assert_eq!(c.borrow().as_str(), "unchanged after deselection", "Deselection must also remove copy focus"));
         }
     }
-    click(420., 390., PointerEventButton::Left);
+    click(420., first_blank_y, PointerEventButton::Left);
     // Long names are copied in full, and snapshots retain the focused cell.
     use slint::Model;
     let files = window.get_files();
@@ -208,21 +223,21 @@ fn exercise_files(window: &MainWindow, redraw: impl Fn()) {
     row.actual_name = long_name.into(); row.stem = long_name.trim_end_matches(".docx").into(); row.extension = ".docx".into();
     files.set_row_data(0, row.clone()); redraw();
     copy(); TEST_CLIPBOARD.with(|c| assert_eq!(c.borrow().as_str(), long_name));
-    click(400., 348., PointerEventButton::Right); key(Key::Return.into());
+    click(400., first_text_y, PointerEventButton::Right); key(Key::Return.into());
     assert_eq!(opened.borrow().len(), 2, "Long-name context menu must copy, not open");
     key(Key::Menu.into()); key(Key::Escape.into()); copy();
     TEST_CLIPBOARD.with(|c| assert_eq!(c.borrow().as_str(), long_name));
     // Dismiss a long-name menu by clicking outside; dash also deselects.
     key(Key::Menu.into()); click(90., 610., PointerEventButton::Left);
     assert!(window.get_selected_name_key().is_empty(), "Outside click dismisses menu selection");
-    click(420., 390., PointerEventButton::Left); key(Key::Escape.into());
+    click(420., first_blank_y, PointerEventButton::Left); key(Key::Escape.into());
     click(90., 430., PointerEventButton::Left);
     assert!(window.get_selected_name_key().is_empty());
     // Logical names copy but do not open.
-    click(90., 351., PointerEventButton::Left); copy(); key(Key::Return.into());
+    click(90., first_text_y, PointerEventButton::Left); copy(); key(Key::Return.into());
     assert_eq!(opened.borrow().len(), 2);
     TEST_CLIPBOARD.with(|c| assert_eq!(c.borrow().as_str(), "决议草案 - 中文显示测试.pdf"));
-    window.window().dispatch_event(WindowEvent::PointerMoved {position: slint::LogicalPosition::new(400., 348.)});
+    window.window().dispatch_event(WindowEvent::PointerMoved {position: slint::LogicalPosition::new(400., first_text_y)});
     redraw(); std::thread::sleep(std::time::Duration::from_millis(550)); redraw(); copy();
     TEST_CLIPBOARD.with(|c| assert_eq!(c.borrow().as_str(), "决议草案 - 中文显示测试.pdf", "Hovering another name must not change the copy target"));
     key(Key::Escape.into());
@@ -233,13 +248,13 @@ fn exercise_files(window: &MainWindow, redraw: impl Fn()) {
     window.on_action(move |action| recorded.borrow_mut().push(action.to_string()));
     row.local_code = "CONFLICT".into(); row.local = translate("CONFLICT", window.get_language().as_str()).into(); row.progressing = false;
     files.set_row_data(0, row.clone()); redraw();
-    click(659., 375., PointerEventButton::Left);
+    click(659., first_action_y, PointerEventButton::Left);
     assert_eq!(actions.borrow().last().unwrap(), "open-conflicts");
     row.local_code = "READY_PUBLISHED".into(); row.local = translate("READY_PUBLISHED", window.get_language().as_str()).into();
     files.set_row_data(0, row.clone()); redraw(); copy();
     TEST_CLIPBOARD.with(|c| assert_eq!(c.borrow().as_str(), long_name, "Disappearing action returns focus to actual name"));
     row.local_code = "FAILED".into(); row.cache_code = "REFILL_FAILED".into();
-    files.set_row_data(0, row); redraw(); click(653., 375., PointerEventButton::Left);
+    files.set_row_data(0, row); redraw(); click(653., first_action_y, PointerEventButton::Left);
     assert_eq!(actions.borrow().last().unwrap(), "navigate-logs");
     // Preserve list position when the diagnostics view temporarily replaces it.
     let sample = files.row_data(0).unwrap();
