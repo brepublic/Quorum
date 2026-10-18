@@ -1,5 +1,7 @@
 # Windows Chair Agent 验收记录
 
+执行步骤、自动测试命令及逐项通过条件见 [Windows 测试与验收流程](CHAIR_AGENT_WINDOWS_TEST_PLAN.md)。本文只记录实际执行结果。
+
 ## 2026-10-18：合并迁移功能后的验证边界
 
 - 本次运行环境为 Linux，未执行 Windows 实机验收。下方历史 Windows 记录对应当时源码，不能作为本次合并产物的验收结果。

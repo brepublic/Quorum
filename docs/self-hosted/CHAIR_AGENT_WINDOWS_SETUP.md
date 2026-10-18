@@ -1,6 +1,6 @@
 # Chair Agent Windows 开发环境准备
 
-目标为 Windows 11 x64 原生开发。GUI 的 Windows 平台适配仍待实施；以下步骤准备工具和依赖，不代表桌面功能已迁移。
+目标为 Windows 11 x64 原生开发。GUI 已包含 Windows 平台适配；以下步骤准备工具和依赖，正式验证按 [Windows 测试与验收流程](CHAIR_AGENT_WINDOWS_TEST_PLAN.md) 执行，实际结果单独记录。
 
 ## 工具与安装位置
 

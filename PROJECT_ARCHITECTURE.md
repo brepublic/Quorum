@@ -201,6 +201,8 @@ KEEP_SERVER 以锁定的当前 entry／version／已提交 blob 创建恢复任�
 
 ### Windows 发行（2026-10-06）
 
+合并后的 Windows 原生构建、迁移／批准／冲突恢复、窗口关闭及安装包验收按 `docs/self-hosted/CHAIR_AGENT_WINDOWS_TEST_PLAN.md` 执行；实际结果写入 `CHAIR_AGENT_WINDOWS_ACCEPTANCE.md`，区分真实迁移、受控桥接原生窗口和离屏组件证据。
+
 `pnpm release:storage-agent:windows` 构建 Windows x64 GUI 和目录锁／ACL helper，使用固定 Node 与 Inno Setup 构成 ZIP、对应源码 ZIP 和用户级 EXE。Rust MSVC 使用静态 CRT；构建阶段验证 PE 依赖及图标资源，运行阶段从应用目录寻找 Node／桥接／helper。Windows ZIP 将 PE 和脚本当作普通文件，Unix 权限位由目标平台与文件用途决定，不依赖打包主机 chmod 行为。
 
 安装器最低版本为 Windows 10 22H2 build 19045，目标为当前用户 LOCALAPPDATA/Programs。HKCU 注册 `quorum-agent:` 和 `.quorum-agent`；保留用户已有默认关联，卸载仅清理仍归本程序所有的注册。安装、更新和卸载先检查 GUI 单实例锁；私有配置和会议内容位于程序目录外，卸载保留。无托盘、开机自启或自动更新。
