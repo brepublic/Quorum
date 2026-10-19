@@ -7,14 +7,27 @@ import type {CommitteeWorkspaceSnapshot, FileEntry, StorageHost, StorageMigratio
 import type {SelfHostedApi} from '../../services/self-hosted-api';
 import {SelfHostedApiError} from '../../services/self-hosted-api';
 import {MemoryRouter} from 'react-router-dom';
+import type {ChairAgentRelease} from '../../components/ChairAgentDownload';
 import {openChairAgent, downloadChairConfiguration} from '../../services/agent-pairing';
 vi.mock('../../services/agent-pairing', () => ({openChairAgent: vi.fn(), downloadChairConfiguration: vi.fn()}));
+const agentDownloads = vi.hoisted(() => ({release: undefined as ChairAgentRelease | null | undefined}));
+vi.mock('../../components/ChairAgentDownload', async importOriginal => {
+  const actual = await importOriginal<typeof import('../../components/ChairAgentDownload')>();
+  // Render the real download menu with controlled release metadata in regression cases.
+  return {...actual, ChairAgentDownload: () => <actual.ChairAgentDownload release={agentDownloads.release} />};
+});
 import FilesPanel, {storageErrorText} from './FilesPanel';
 
-beforeEach(() => {setLanguage('zh-CN'); vi.spyOn(window, 'confirm').mockReturnValue(true);});
+beforeEach(() => {agentDownloads.release = undefined; setLanguage('zh-CN'); vi.spyOn(window, 'confirm').mockReturnValue(true);});
 
 (globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT: boolean}).IS_REACT_ACT_ENVIRONMENT = true;
 const committeeId = '20000000-0000-4000-8000-000000000001';
+const agentRelease: ChairAgentRelease = {schemaVersion: 1, serverVersion: 'v1.2.2-rc3', agentVersion: '0.1.0',
+  commit: 'a'.repeat(40), releaseUrl: 'https://github.com/brepublic/Quorum/releases/tag/v1.2.2-rc3',
+  platforms: {
+    windows: {file: 'Agent-Setup.exe', url: '/downloads/chair-agent/v1.2.2-rc3/Agent-Setup.exe', size: 42, sha256: 'b'.repeat(64)},
+    linux: {file: 'Agent.AppImage', url: '/downloads/chair-agent/v1.2.2-rc3/Agent.AppImage', size: 43, sha256: 'c'.repeat(64)}
+  }};
 const pairingConfiguration = {schemaVersion: 1 as const, kind: 'quorum-agent-pairing' as const,
   serverUrl: 'https://quorum.example.com', committeeId, committeeName: '安理会',
   pairingCode: 'QRM-ABCD-EFGH', purpose: 'INITIAL' as const, expiresAt: '2099-08-13T01:00:00.000Z'};
@@ -450,7 +463,7 @@ describe('self-hosted stage 6 file panel', () => {
     const fileDownloadUrl = vi.fn(id => id === file.id ? '#server-download-ready' : '#other');
     const view = await render('CHAIR', api({listStorageHosts: vi.fn(async () => [host]),
       listStorageAgentConflicts: vi.fn(async () => [conflict]), prepareFileDownload, fileDownloadReadiness, fileDownloadUrl}), 'chair');
-    const download = () => [...view.querySelectorAll<HTMLAnchorElement>('a[download]')]
+    const download = () => [...view.querySelectorAll<HTMLAnchorElement>('[data-conflict-id="comparison"] a[download]')]
       .find(item => item.textContent?.includes('下载服务器版本'))!;
     await act(async () => {download().click(); await new Promise(resolve => setTimeout(resolve, 15));});
     expect(prepareFileDownload).toHaveBeenCalledWith(file.id); expect(fileDownloadReadiness).toHaveBeenCalledWith(file.id);
@@ -472,7 +485,7 @@ describe('self-hosted stage 6 file panel', () => {
       fileDownloadUrl: vi.fn(id => `#download-${id}`)}), 'chair');
     expect(getFile).toHaveBeenCalledWith(file.id);
     expect(view.querySelector('[data-conflict-id="comparison"] > .content > .header')?.textContent).toBe('原始提交');
-    const link = [...view.querySelectorAll<HTMLAnchorElement>('a[download]')].find(item => item.textContent?.includes('下载服务器正式版本'))!;
+    const link = [...view.querySelectorAll<HTMLAnchorElement>('[data-conflict-id="comparison"] a[download]')].find(item => item.textContent?.includes('下载服务器正式版本'))!;
     await act(async () => {link.click(); await new Promise(resolve => setTimeout(resolve, 0));});
     expect(prepareFileDownload).toHaveBeenCalledWith('formal-target');
     await act(async () => {button('保留服务器版本')!.click(); await new Promise(resolve => setTimeout(resolve, 0));});
@@ -493,7 +506,7 @@ describe('self-hosted stage 6 file panel', () => {
     const view = await render('CHAIR', client, 'chair');
     expect(view.textContent).toContain('可下载服务器文件');
     expect(button('保留本地版本')?.disabled).toBe(true); expect(button('另存为新文件')).toBeUndefined();
-    expect(view.querySelector('a[download]')?.textContent).toContain('下载服务器版本');
+    expect(view.querySelector('[data-conflict-id="comparison"] a[download]')?.textContent).toContain('下载服务器版本');
     available = true;
     expect(button('刷新比较')).toBeUndefined();
     await act(async () => {root!.render(<MemoryRouter><FilesPanel snapshot={snapshot('CHAIR')} api={client} currentUserId="chair" /></MemoryRouter>);});
@@ -526,11 +539,21 @@ describe('self-hosted stage 6 file panel', () => {
     expect(view.textContent).toContain('最新文件'); expect(view.textContent).not.toContain('过期文件');
   });
 
-  it('omits server download for a deleted source and offers save-as-new instead of acceptance', async () => {
+  it.each([
+    {build: 'source', release: null},
+    {build: 'release', release: agentRelease}
+  ])('omits server download for a deleted source and offers save-as-new instead of acceptance ($build build)', async ({release}) => {
+    agentDownloads.release = release;
     const {host, conflict} = comparisonFixture(); conflict.serverFile = {...conflict.serverFile!, status: 'DELETED'};
     const view = await render('CHAIR', api({listFiles: vi.fn(async () => []), listStorageHosts: vi.fn(async () => [host]),
       listStorageAgentConflicts: vi.fn(async () => [conflict])}), 'chair');
-    expect(view.textContent).toContain('服务器文件已删除'); expect(view.querySelector('a[download]')).toBeNull();
+    const card = view.querySelector('[data-conflict-id="comparison"]');
+    expect(card).not.toBeNull();
+    expect(card!.textContent).toContain('服务器文件已删除');
+    expect(card!.querySelector('a[download]')).toBeNull();
+    const installers = [...view.querySelectorAll<HTMLAnchorElement>('.chair-agent-download a[download]')];
+    expect(installers.map(link => link.getAttribute('href'))).toEqual(release
+      ? [release.platforms.windows.url, release.platforms.linux.url] : []);
     expect(button('保留本地版本')?.disabled).toBe(true); expect(view.querySelector('.conflict-recommendation')?.textContent).toContain('保留两份');
   });
 
