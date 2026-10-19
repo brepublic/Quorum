@@ -4,9 +4,25 @@ set -Eeuo pipefail
 umask 077
 
 fail() { echo "升级停止：$*" >&2; return 1; }
-compose_file() { docker compose -p "$project" --env-file "$deploy/.env" -f "$1" "${@:2}"; }
+compose_file() {
+  local env_file="$deploy/.env"
+  # Saved JSON already contains escaped, resolved values. Recovery must work even
+  # if the live .env was removed or the invoking shell now exports different values.
+  if [[ -n ${state:-} && $1 == "$state/"* ]]; then env_file=/dev/null; fi
+  docker compose -p "$project" --env-file "$env_file" -f "$1" "${@:2}"
+}
 phase() { printf '%s\n' "$1" > "$state/phase.new"; sync -f "$state/phase.new"; mv "$state/phase.new" "$state/phase"; sync -f "$state"; }
 install_file() { cp -p "$1" "$2.new"; sync -f "$2.new"; mv "$2.new" "$2"; sync -f "$(dirname "$2")"; }
+# A partially deleted journal must never be mistaken for a transaction to recover.
+retire_state() {
+  mv "$state" "$state.done"; sync -f "$deploy"
+  rm -rf "$state.done"; sync -f "$deploy"
+}
+remove_isolated_network() {
+  local network
+  network=$(docker network ls -q --filter "name=^${project}_upgrade_isolated$")
+  if [[ -n $network ]]; then docker network rm "$network" >/dev/null; fi
+}
 fetch() { curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 120 --retry 2 "$@"; }
 version_number() { jq -en --arg v "$1" '$v | capture("^v(?<a>0|[1-9][0-9]*)\\.(?<b>0|[1-9][0-9]*)\\.(?<c>0|[1-9][0-9]*)$") | [.a,.b,.c] | map(tonumber)'; }
 
@@ -129,6 +145,8 @@ volume_io() {
   local key=$1 action=$2 volume helper
   volume=$(jq -r --arg k "$key" '.volumes[$k].name' "$state/old.json")
   helper=$(jq -r '.services.app.image' "$state/old.json")
+  # The helper may outlive a killed shell. Do not let its Docker client retain
+  # our lock; recovery first removes this named helper before touching any volume.
   docker run --name "$project-upgrade-io" --rm --network none --user 0 --entrypoint sh \
     --mount "type=volume,src=$volume,dst=/volume" --mount "type=bind,src=$state,dst=/backup" \
     "$helper" -eu -c '
@@ -136,8 +154,8 @@ volume_io() {
         size) du -sk --apparent-size /volume | cut -f1 ;;
         backup) tar -cpf "/backup/$2.tar" -C /volume .; tar -df "/backup/$2.tar" -C /volume ;;
         compare) tar -df "/backup/$2.tar" -C /volume ;;
-        restore) find /volume -mindepth 1 -delete; tar -xpf "/backup/$2.tar" -C /volume; tar -df "/backup/$2.tar" -C /volume ;;
-      esac' sh "$action" "$key"
+        restore) find /volume -mindepth 1 -delete; tar -xpf "/backup/$2.tar" -C /volume; sync -f /volume; tar -df "/backup/$2.tar" -C /volume ;;
+      esac' sh "$action" "$key" 9>&-
 }
 
 isolate_config() {
@@ -155,18 +173,34 @@ prepare_state() {
   cp -p "$deploy/.env" "$state.new/original.env"
   cp "$temporary/target.yaml" "$state.new/target.yaml"
   cp "$temporary/current.json" "$state.new/old.json"
+  cp "$temporary/current.json" "$state.new/original.json"
   cp "$temporary/target.json" "$state.new/target.json"
   cp "$temporary/release.json" "$state.new/release.json"
   cp "$temporary/manifest.json" "$state.new/manifest.json"
-  # Always restore the images actually running, even if someone edited the old YAML pins.
-  local service container image key volume ids expected_hash actual_hash
+  # Pin both activation paths, including rollback, to immutable images and resolved settings.
+  local service container image reference key volume ids expected_hash actual_hash
+  local allowed_containers=' '
   for service in app caddy postgres; do
     container=$(compose_file "$config" ps -q "$service")
     [[ -n $container ]] || fail "服务 $service 未运行。"
+    docker inspect "$container" > "$temporary/container-$service.json"
     expected_hash=$(compose_file "$config" config --hash "$service" | awk '{print $2}')
-    actual_hash=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.config-hash"}}' "$container")
+    actual_hash=$(jq -r '.[0].Config.Labels["com.docker.compose.config-hash"]' "$temporary/container-$service.json")
     [[ $actual_hash == "$expected_hash" ]] || fail "服务 $service 的配置与运行状态不同，请先核对本机配置。"
-    image=$(docker inspect --format '{{.Image}}' "$container")
+    # Compose's service hash omits top-level volume names. Compare actual mounts
+    # as well, or a renamed volume could make us back up an unrelated database.
+    jq -e --arg s "$service" --slurpfile actual "$temporary/container-$service.json" '
+      . as $config |
+      ([.services[$s].volumes[] | {type: .type, name: $config.volumes[.source].name,
+        target: .target, readonly: (.read_only // false)}] | sort_by(.target)) ==
+      ([$actual[0][0].Mounts[] | {type: .Type, name: .Name, target: .Destination,
+        readonly: (.RW | not)}] | sort_by(.target))
+    ' "$state.new/original.json" >/dev/null || fail "服务 $service 的实际数据卷与配置不同。"
+    image=$(jq -r '.[0].Image' "$temporary/container-$service.json")
+    reference=$(jq -r --arg s "$service" '.services[$s].image' "$state.new/original.json")
+    [[ $reference =~ ^([^[:space:]]+@)?sha256:[a-f0-9]{64}$ ]] || fail "服务 $service 必须使用镜像内容哈希，不能使用可变标签。"
+    [[ $(docker image inspect --format '{{.Id}}' "$reference") == "$image" ]] || fail "服务 $service 的镜像与运行版本不同。"
+    allowed_containers+="$container "
     jq --arg s "$service" --arg image "$image" '.services[$s].image = $image' "$state.new/old.json" > "$state.new/old.next"
     mv "$state.new/old.next" "$state.new/old.json"
   done
@@ -187,9 +221,9 @@ prepare_state() {
     volume=$(jq -r --arg k "$key" '.volumes[$k].name' "$state.new/old.json")
     [[ $volume =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]+$ ]] || fail '无效数据卷名称。'
     docker volume inspect "$volume" >/dev/null
-    ids=$(docker ps -aq --filter "volume=$volume")
+    ids=$(docker ps -aq --no-trunc --filter "volume=$volume")
     for container in $ids; do
-      [[ $(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$container") == "$project" ]] || fail "数据卷被其他部署使用：$volume"
+      [[ $allowed_containers == *" $container "* ]] || fail "数据卷被部署服务之外的容器使用：$volume"
     done
   done
   [[ $(docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$(jq -r '.services.postgres.image' "$state.new/old.json")") == *'PG_MAJOR=16'* ]] || fail '仅支持 PostgreSQL 16。'
@@ -276,9 +310,11 @@ restore_previous() {
   finish_rollback
 }
 finish_rollback() {
-  compose_file "$config" up -d --no-build --pull never --wait --wait-timeout 180
-  docker network rm "${project}_upgrade_isolated" >/dev/null
-  rm -rf "$state"; sync -f "$deploy"
+  install_file "$state/original.env" "$deploy/.env"
+  install_file "$state/original.yaml" "$config"
+  compose_file "$state/original.json" up -d --no-build --pull never --wait --wait-timeout 180
+  remove_isolated_network
+  retire_state
   echo '旧版本已恢复，部署配置、数据库和文件已回滚。'
 }
 
@@ -286,7 +322,7 @@ cleanup_success() {
   local service old current reference owned
   for service in app caddy postgres; do
     old=$(jq -r --arg s "$service" '.services[$s].image' "$state/old.json")
-    current=$(compose_file "$config" ps -q "$service" | xargs docker inspect --format '{{.Image}}')
+    current=$(compose_file "$state/target.json" ps -q "$service" | xargs docker inspect --format '{{.Image}}')
     [[ $old != "$current" ]] || continue
     docker image inspect "$old" > "$state/cleanup-image.json" 2>/dev/null || continue
     [[ -z $(docker ps -aq --filter "ancestor=$old") ]] || continue
@@ -303,14 +339,15 @@ cleanup_success() {
     done
     if docker image inspect "$old" >/dev/null 2>&1; then docker image rm "$old"; fi
   done
-  docker network rm "${project}_upgrade_isolated" >/dev/null
-  rm -rf "$state"; sync -f "$deploy"
+  remove_isolated_network
+  retire_state
   echo '升级完成；临时恢复点已清理。'
 }
 finish_upgrade() {
   # Committed is written BEFORE enabling any user/worker writes. Failures here resume activation, never restore old data.
   install_file "$state/target.yaml" "$config"
-  compose_file "$config" up -d --no-build --pull never --wait --wait-timeout 180
+  install_file "$state/original.env" "$deploy/.env"
+  compose_file "$state/target.json" up -d --no-build --pull never --wait --wait-timeout 180
   cleanup_success
 }
 
@@ -332,7 +369,7 @@ run_transaction() {
   compose_file "$state/old.json" stop -t 60 postgres
   phase backing-up
   for key in postgres_data quorum_files caddy_data caddy_config; do volume_io "$key" backup; done
-  (cd "$state"; sha256sum postgres_data.tar quorum_files.tar caddy_data.tar caddy_config.tar original.yaml original.env old.json restore-verify.json target.yaml target.json release.json manifest.json > SHA256SUMS.new)
+  (cd "$state"; sha256sum postgres_data.tar quorum_files.tar caddy_data.tar caddy_config.tar original.yaml original.env original.json old.json old-version verify.json restore-verify.json target.yaml target.json release.json manifest.json > SHA256SUMS.new)
   sync -f "$state"; mv "$state/SHA256SUMS.new" "$state/SHA256SUMS"; sync -f "$state"
   phase verifying
   compose_file "$state/verify.json" up -d --no-build --pull never --wait --wait-timeout 180
@@ -349,7 +386,7 @@ recover() {
   case "$stage" in
     committed) echo '上次升级已验收，继续开放服务及清理；不会恢复旧数据。'; finish_upgrade ;;
     rollback-verified) finish_rollback ;;
-    prepared) rm -rf "$state"; echo '已取消尚未开始的升级。' ;;
+    prepared) docker rm -f "$project-upgrade-io" >/dev/null 2>&1 || true; retire_state; echo '已取消尚未开始的升级。' ;;
     quiescing|backing-up|verifying|restoring|restored) restore_previous ;;
     *) fail "无法识别的升级阶段：$stage；保留恢复材料。" ;;
   esac
@@ -377,6 +414,12 @@ upgrade_main() {
   exec 9>"$deploy/.upgrade.lock"; flock -n 9 || fail '另一个升级正在运行。'
   temporary=$(mktemp -d)
   trap on_exit EXIT; trap 'exit 130' INT; trap 'exit 143' TERM
+  # The durable rename is the end of recovery. Only deletion may remain after a crash.
+  if [[ -d $state.done ]]; then
+    [[ ! -e $state ]] || fail '发现冲突的升级记录；保留恢复材料。'
+    rm -rf "$state.done"; sync -f "$deploy"
+    echo '上次升级事务的清理已完成。'; return
+  fi
   if [[ -d $state ]]; then
     project=$(jq -er .name "$state/old.json")
   else

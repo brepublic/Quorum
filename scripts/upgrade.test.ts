@@ -87,6 +87,50 @@ it('fails closed on an unknown recovery stage', async () => {
   await mkdir(join(directory, 'state')); await writeFile(join(directory, 'state/phase'), 'invalid');
   await expect(shell('state="$TEST_DIR/state"; recover')).rejects.toThrow();
 });
+it('uses saved resolved settings without reading the live env file during recovery', async () => {
+  const result = await shell(`state="$TEST_DIR/state"; deploy="$TEST_DIR"; project=test
+    docker() { printf '%s\\n' "$@"; }; compose_file "$state/old.json" stop app`);
+  expect(result.stdout.split('\n')).toContain('/dev/null');
+  expect(result.stdout).not.toContain(`${directory}/.env`);
+});
+it.each(['rollback','upgrade'])('activates %s from saved settings and restores raw deployment files', async direction => {
+  await mkdir(join(directory, 'state'));
+  await writeFile(join(directory, 'state/original.env'), 'DB_PASSWORD=original\n');
+  await writeFile(join(directory, `state/${direction === 'rollback' ? 'original' : 'target'}.yaml`), 'saved version\n');
+  await writeFile(join(directory, 'config.yaml'), 'edited version\n');
+  await writeFile(join(directory, '.env'), 'DB_PASSWORD=changed\n');
+  const result = await shell(`state="$TEST_DIR/state"; deploy="$TEST_DIR"; config="$TEST_DIR/config.yaml"
+    compose_file() { echo "$1"; }; remove_isolated_network() { :; }; retire_state() { :; }; cleanup_success() { :; }
+    finish_${direction}`);
+  expect(result.stdout).toContain(`${directory}/state/${direction === 'rollback' ? 'original' : 'target'}.json`);
+  expect(await readFile(join(directory, 'config.yaml'), 'utf8')).toBe('saved version\n');
+  expect(await readFile(join(directory, '.env'), 'utf8')).toBe('DB_PASSWORD=original\n');
+});
+it('treats an already removed isolated network as completed cleanup', async () => {
+  await shell(`project=test; docker() { [[ $1 == network && $2 == ls ]]; }; remove_isolated_network`);
+});
+it('keeps cleanup retryable when Docker cannot list networks', async () => {
+  await expect(shell(`project=test; docker() { return 1; }; remove_isolated_network
+    touch "$TEST_DIR/unsafe"`)).rejects.toThrow();
+  await expect(readFile(join(directory, 'unsafe'))).rejects.toThrow();
+});
+it('retires the entire journal before deleting any of its recovery records', async () => {
+  await mkdir(join(directory, 'state')); await writeFile(join(directory, 'state/phase'), 'committed');
+  await expect(shell(`state="$TEST_DIR/state"; deploy="$TEST_DIR"
+    rm() { command rm "$state.done/phase"; return 1; }; retire_state`)).rejects.toThrow();
+  await expect(readFile(join(directory, 'state/phase'))).rejects.toThrow();
+  // No active transaction remains, even when deletion was interrupted halfway.
+  await expect(mkdir(join(directory, 'state.done'))).rejects.toThrow();
+});
+it('finishes partial cleanup without reading configuration, querying releases or replaying backups', async () => {
+  const localScript = join(directory, 'upgrade.sh');
+  await writeFile(localScript, await readFile(script));
+  await mkdir(join(directory, '.upgrade.done'));
+  await writeFile(join(directory, '.upgrade.done/partial.tar'), 'partially deleted backup');
+  await shell(`docker() { touch "$TEST_DIR/unsafe"; return 1; }; upgrade_main`, {UPGRADE_SCRIPT: localScript});
+  await expect(readFile(join(directory, 'unsafe'))).rejects.toThrow();
+  await expect(readFile(join(directory, '.upgrade.done/partial.tar'))).rejects.toThrow();
+});
 it('refuses insufficient backup space before stopping any service', async () => {
   await mkdir(join(directory, 'state'));
   await expect(shell(`state="$TEST_DIR/state"; volume_io() { echo 1024; }
