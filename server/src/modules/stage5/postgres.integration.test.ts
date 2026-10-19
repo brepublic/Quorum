@@ -7,6 +7,29 @@ import {
 } from '../../../test/stage5-postgres-fixture';
 
 integration('PostgreSQL stage 5 proceedings', () => {
+  it.each(['GENERAL', 'MODERATED_CAUCUS'] as const)('lets Chairs queue and start non-procedural speakers in %s without enabling delegate self-queueing', async kind => {
+    const f = await meetingFixture();
+    const media = await stage4.createSeat(f.firstChair, f.committee.id,
+      {stableKey: 'other', rank: 'MEDIA'}, randomUUID(), context('search-only-seat'));
+    const delegate = await user('search-only');
+    await stage3.assignSeat(f.firstChair, f.committee.id,
+      {seatId: media.id, email: delegate.user.email}, context('search-only-assignment'));
+    let list = kind === 'GENERAL' ? f.generalList : await stage5.createSpeakerList(f.firstChair, f.committee.id,
+      {meetingSessionId: f.session.id, kind, customTitle: 'Search-only speakers', topic: 'Participation', defaultSpeechMs: 60_000,
+        totalDurationMs: 600_000}, randomUUID(), context('search-only-caucus'));
+    list = await stage5.updateSpeakerList(f.firstChair, list.id,
+      {baseRevision: list.revision, delegatesCanQueue: true}, context('search-only-delegates'));
+    await expect(stage5.joinSpeakerQueue(delegate, list.id, {}, randomUUID(), context('self-queue')))
+      .rejects.toMatchObject({reason: 'PRESENT_SEAT_REQUIRED'});
+    list = await stage5.joinSpeakerQueue(f.firstChair, list.id, {seatId: media.id}, randomUUID(), context('chair-queue'));
+    list = await stage5.advanceSpeakerQueue(f.firstChair, list.id, {baseRevision: list.revision}, context('chair-advance'));
+    expect(list.queue.find(entry => entry.seatId === media.id)?.status).toBe('CURRENT');
+    const speech = await stage5.commandSpeech(f.firstChair, list.id, 'start', {baseRevision: list.revision}, context('chair-start'));
+    expect(speech).toMatchObject({seatId: media.id, status: 'RUNNING'});
+    expect((await stage4.snapshot(f.committee.id, f.firstChair)).seats.find(seat => seat.id === media.id))
+      .toMatchObject({canProceduralVote: false, canVote: false});
+  });
+
   it.each(['suspend-meeting', 'adjourn-meeting'])('%s prepares the next session and preserves proceedings when it starts', async motionTypeId => {
     const fixture = await meetingEndFixture();
     await pool!.query("UPDATE committees SET operation_mode='CHAIR_OPERATED' WHERE id=$1", [fixture.committee.id]);

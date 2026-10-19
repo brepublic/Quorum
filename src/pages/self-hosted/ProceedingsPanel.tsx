@@ -37,7 +37,7 @@ const messageFadeDelayMs = 10_000;
 const messageFadeDurationMs = 180;
 
 type SpeakerSeatOption = {key: React.Key; value: string; text: string; content?: React.ReactNode; description?: React.ReactNode;
-  disabled?: boolean; searchTerms?: string[]};
+  disabled?: boolean; searchTerms?: string[]; searchOnly?: boolean};
 
 function SpeakerSeatDropdown({value, options, disabled = false, error = false, placeholder, onChange}: {
   value: string;
@@ -56,7 +56,7 @@ function SpeakerSeatDropdown({value, options, disabled = false, error = false, p
   const [activeIndex, setActiveIndex] = React.useState(0);
   const [menuStyle, setMenuStyle] = React.useState<React.CSSProperties>({});
   const selected = options.find(option => option.value === value);
-  const filtered = searchOptions(options, query);
+  const filtered = searchParticipationSeats(options, query);
   const firstEnabledIndex = () => filtered.findIndex(option => !option.disabled);
   const moveActiveIndex = (direction: 1 | -1) => setActiveIndex(current => {
     for (let index = current + direction; index >= 0 && index < filtered.length; index += direction) {
@@ -183,10 +183,16 @@ function seatOptionContent(seat: CommitteeWorkspaceSnapshot['seats'][number]) {
   return <span className="motion-seat-option">{flag}<span>{seat.displayName}</span></span>;
 }
 
-export function attendanceSeatOptions(snapshot: CommitteeWorkspaceSnapshot, presentSeatIds: Set<string>): SpeakerSeatOption[] {
-  return snapshot.seats.filter(seat => seat.canProceduralVote).map(seat => ({key: seat.id, value: seat.id, text: seat.displayName, content: seatOptionContent(seat),
+function searchParticipationSeats<T extends DropdownItemProps>(options: T[], query: string): T[] {
+  return searchOptions(options.filter(option => query.trim() || !option.searchOnly), query);
+}
+
+export function attendanceSeatOptions(snapshot: CommitteeWorkspaceSnapshot, presentSeatIds: Set<string>, includeSearchOnly = false): SpeakerSeatOption[] {
+  return snapshot.seats.filter(seat => seat.canProceduralVote || includeSearchOnly).map(seat => ({key: seat.id, value: seat.id, text: seat.displayName, content: seatOptionContent(seat),
     searchTerms: seat.searchTerms, disabled: !presentSeatIds.has(seat.id),
-    description: presentSeatIds.has(seat.id) ? undefined : t('Absent')}));
+    searchOnly: !seat.canProceduralVote,
+    description: [!seat.canProceduralVote ? t('No procedural voting rights') : '',
+      !presentSeatIds.has(seat.id) ? t('Absent') : ''].filter(Boolean).join(' · ') || undefined}));
 }
 
 function useTimerRemainingMs(timer: AuthoritativeTimer): number {
@@ -403,7 +409,7 @@ export function legacyInterlacedQueue(entries: SpeakerQueueEntry[], presentSeatI
 
 function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProps & {resourceId?: string}) {
   const list = (snapshot.speakerLists ?? []).find(item => item.id === resourceId);
-  const [seatId, setSeatId] = React.useState(snapshot.viewer.seatId ?? snapshot.seats[0]?.id ?? '');
+  const [seatId, setSeatId] = React.useState(snapshot.viewer.seatId ?? snapshot.seats.find(seat => seat.canProceduralVote)?.id ?? '');
   const [yieldType, setYieldType] = React.useState<YieldType>('CHAIR'); const [yieldSeat, setYieldSeat] = React.useState('');
   const [contribution, setContribution] = React.useState('');
   const [recordedContributionSpeechId, setRecordedContributionSpeechId] = React.useState<string>();
@@ -452,12 +458,12 @@ function SpeakerWorkspace({snapshot, run, api, canChair, resourceId}: CommonProp
   const totalTimer = (snapshot.timers ?? []).find(timer => timer.id === list.totalTimerId);
   const configuredYields = list.yieldTypes;
   const allowedYields = configuredYields ? mapRuleYieldTypes(configuredYields) : ['CHAIR', 'SEAT', 'QUESTIONS', 'COMMENTS'];
-  const presentSeatIds = new Set(snapshot.attendance.filter(item => item.state === 'PRESENT'
-    && snapshot.seats.some(seat => seat.id === item.seatId && seat.canProceduralVote)).map(item => item.seatId));
+  const presentSeatIds = new Set(snapshot.attendance.filter(item => item.state === 'PRESENT').map(item => item.seatId));
   const presentSeats = snapshot.seats.filter(seat => seat.canProceduralVote && presentSeatIds.has(seat.id));
   const currentAbsent = Boolean(current && !presentSeatIds.has(current.seatId));
   const nextAbsent = Boolean(next && !presentSeatIds.has(next.seatId));
-  const queueSeatOptions = attendanceSeatOptions(snapshot, presentSeatIds);
+  const queueSeatOptions = attendanceSeatOptions(snapshot, presentSeatIds,
+    list.kind === 'GENERAL' || list.kind === 'MODERATED_CAUCUS');
   const operationAllowsDelegates = snapshot.committee.operationMode === 'DELEGATE_OPERATED';
   const delegatesCanQueue = operationAllowsDelegates && list.delegatesCanQueue;
   const persistHeader = (change: {name?: string; topic?: string}) => {
@@ -1092,6 +1098,7 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
   }, [motionMenuOpen, motionSearch, snapshot]);
   const [proposal, setProposal] = React.useState('');
   const [proposerId, setProposerId] = React.useState(snapshot.viewer.seatId ?? '');
+  const [proposerSearch, setProposerSearch] = React.useState('');
   const [seconderId, setSeconderId] = React.useState('');
   const [caucusDuration, setCaucusDuration] = React.useState('600');
   const [caucusUnit, setCaucusUnit] = React.useState<MotionTimeUnit>('sec');
@@ -1111,10 +1118,11 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
       && snapshot.seats.some(seat => seat.id === snapshot.viewer.seatId && seat.canProceduralVote));
   if (!session) return <MeetingEmptyState snapshot={snapshot} className="motions-page" />;
 
-  const presentSeatIds = new Set(snapshot.attendance.filter(item => item.state === 'PRESENT'
-    && snapshot.seats.some(seat => seat.id === item.seatId && seat.canProceduralVote)).map(item => item.seatId));
+  const proposerPresentSeatIds = new Set(snapshot.attendance.filter(item => item.state === 'PRESENT').map(item => item.seatId));
+  const presentSeatIds = new Set(snapshot.seats.filter(seat => seat.canProceduralVote && proposerPresentSeatIds.has(seat.id)).map(seat => seat.id));
   const presentSeats = snapshot.seats.filter(seat => seat.canProceduralVote && presentSeatIds.has(seat.id));
   const seatOptions = attendanceSeatOptions(snapshot, presentSeatIds);
+  const proposerOptions = attendanceSeatOptions(snapshot, proposerPresentSeatIds, Boolean(proposerSearch.trim()));
   const openCaucuses = (snapshot.speakerLists ?? []).filter(list => list.kind === 'MODERATED_CAUCUS' && list.status === 'OPEN');
   const resolutions = (snapshot.documents ?? []).filter(document => document.kind === 'RESOLUTION'
     && document.meetingSessionId === session.id);
@@ -1177,7 +1185,7 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
   const divisible = !hasMotionSpeakers(motionType)
     || caucusDurationValue !== undefined && speakerDurationValue !== undefined
       && motionSeconds(caucusDurationValue, caucusUnit) % motionSeconds(speakerDurationValue, speakerUnit) === 0;
-  const formValid = Boolean(selectedType && motionOptions.some(option => option.value === motionChoice) && proposerId && presentSeatIds.has(proposerId)
+  const formValid = Boolean(selectedType && motionOptions.some(option => option.value === motionChoice) && proposerId && proposerPresentSeatIds.has(proposerId)
     && (chairAdvisoryMode || !needsSeconder || seconderId && presentSeatIds.has(seconderId)) && !identicalSeats
     && durationsValid && (chairAdvisoryMode || divisible)
     && (!hasMotionDetail(motionType) || proposal.trim())
@@ -1264,8 +1272,11 @@ function Motions({snapshot, run, api, canChair}: CommonProps) {
           className="motion-proposer-field"
           label={t('Proposer')}
           placeholder={t('Select a delegation')}
-          value={proposerId || false} error={Boolean(proposerId) && (!presentSeatIds.has(proposerId) || identicalSeats)}
-          options={seatOptions} disabled={!canChair}
+          value={proposerId || false} error={Boolean(proposerId) && (!proposerPresentSeatIds.has(proposerId) || identicalSeats)}
+          options={proposerOptions} disabled={!canChair}
+          text={snapshot.seats.find(seat => seat.id === proposerId)?.displayName}
+          onSearchChange={(_, data) => setProposerSearch(data.searchQuery)}
+          onClose={() => setProposerSearch('')}
           onChange={(_, data) => setProposerId(String(data.value))} />
         {needsSeconder && <ViewportFormSelect key="seconder" icon="search" search={searchOptions} selection fluid label={t('Seconder')}
           className="motion-seconder-field"

@@ -1215,6 +1215,7 @@ const zhCN: Record<string, string> = {
   'NGO': '非政府组织',
   'MEDIA': '媒体代表',
   'Procedural voting': '程序性投票',
+  'No procedural voting rights': '无程序性投票权',
   'Voting eligible': '有投票权',
   'Voting two-thirds majority': '表决三分之二多数',
   'Voting simple majority': '表决简单多数',

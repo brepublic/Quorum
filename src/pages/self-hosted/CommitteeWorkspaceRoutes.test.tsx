@@ -1461,6 +1461,37 @@ describe('committee workspace routes and roles', () => {
     expect(page.querySelector('.point-proposal-form')).toBeNull();
   });
 
+  it('searches non-procedural motion proposers without exposing them as seconders', async () => {
+    const proposeMotion = vi.fn(async () => ({} as ProceedingMotion));
+    const page = await render('CHAIR', '/committees/committee/motions', user, value => ({...value,
+      committee: {...value.committee, operationMode: 'CHAIR_OPERATED'},
+      seats: [...value.seats, {...value.seats[0], id: 'media', displayName: 'Media', canVote: false,
+        canProceduralVote: false, hasVeto: false, searchTerms: ['press']}],
+      meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: 'Session 1', phaseId: 'formal-debate',
+        activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1, createdAt: '', closedAt: null},
+      attendance: ['seat', 'media'].map(seatId => ({seatId, state: 'PRESENT', lastEventId: seatId, updatedAt: ''})),
+      activeRules: {...value.activeRules, motionTypes: [{id: 'open-debate', names: {en: 'Open debate'},
+        procedural: true, requiredSecondCount: 1}]}}), {proposeMotion});
+    const dropdown = page.querySelector<HTMLElement>('.motion-proposer-field .ui.dropdown')!;
+    await act(async () => {dropdown.click();});
+    expect(dropdown.querySelector('.menu')?.textContent).not.toContain('Media');
+    const input = dropdown.querySelector('input')!;
+    const search = async (value: string) => {await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value);
+      input.dispatchEvent(new Event('input', {bubbles: true}));
+    });};
+    await search('press');
+    expect(dropdown.querySelector('.menu')?.textContent).toContain('No procedural voting rights');
+    await search('');
+    expect(dropdown.querySelector('.menu')?.textContent).not.toContain('Media');
+    await search('Media');
+    await act(async () => {dropdown.querySelector<HTMLElement>('[role="option"]')!.click();});
+    expect(dropdown.textContent).toContain('Media');
+    expect(page.querySelector('.motion-seconder-field')?.textContent).not.toContain('Media');
+    await act(async () => {page.querySelector<HTMLButtonElement>('button[aria-label="Propose Motion"]')!.click();});
+    expect(proposeMotion).toHaveBeenCalledWith('committee', expect.objectContaining({onBehalfOfSeatId: 'media', motionTypeId: 'open-debate'}));
+  });
+
   it('uses rule-package motion choices and does not render the former combined workspace', async () => {
     const page = await render('MEMBER', '/committees/committee/motions', user, value => ({...value,
       motionSettings: {...value.motionSettings, delegateMotionProposalsEnabled: true},
@@ -2591,6 +2622,58 @@ describe('committee workspace routes and roles', () => {
     expect(page.textContent).not.toContain("For");
     expect(page.textContent).not.toContain("Neutral");
     expect(page.textContent).not.toContain("Against");
+  });
+
+  it.each(['GENERAL', 'MODERATED_CAUCUS'] as const)('finds and queues non-procedural seats only through search in %s', async kind => {
+    const withList = (value: CommitteeWorkspaceSnapshot, kind: 'GENERAL' | 'MODERATED_CAUCUS'): CommitteeWorkspaceSnapshot => ({...value,
+      seats: [...value.seats, {id: 'france', stableKey: 'france', displayName: 'France', rank: 'STANDARD', canVote: true, canProceduralVote: true,
+        hasVeto: false, mustVote: false, sortOrder: 1, active: true, revision: 1, flag: {type: 'STANDARD', value: 'fr'}}],
+      meetingSession: {id: 'meeting', committeeId: 'committee', ordinal: 1, name: '第1会期', phaseId: 'formal-debate',
+        activeRulePackageVersionId: 'rules', status: 'OPEN', revision: 1, createdAt: '2026-08-14T00:00:00.000Z', closedAt: null},
+      attendance: [{seatId: 'seat', state: 'PRESENT', lastEventId: 'present', updatedAt: '2026-08-14T00:00:00.000Z'},
+        {seatId: 'france', state: 'ABSENT', lastEventId: 'absent', updatedAt: '2026-08-14T00:00:00.000Z'}],
+      speakerLists: [{id: 'list', committeeId: 'committee', meetingSessionId: 'meeting', kind, customTitle: null, status: 'OPEN',
+        name: kind === 'GENERAL' ? "General Speakers' List" : 'Climate finance', topic: '', defaultSpeechMs: 60_000,
+        delegatesCanQueue: false, rulePackageVersionId: 'rules', currentEntryId: null, speechTimerId: 'speech-timer',
+        totalTimerId: kind === 'MODERATED_CAUCUS' ? 'total-timer' : null, linkedResolutionId: null, revision: 2,
+        queue: [{id: 'france-entry', seatId: 'france', seatDisplayName: 'France', position: 1, status: 'QUEUED' as const,
+          stance: 'NEUTRAL' as const, speechDurationMs: 60_000, createdAt: '2026-08-14T00:00:00.000Z'}], speeches: [],
+        createdAt: '2026-08-14T00:00:00.000Z', closedAt: null}],
+      timers: [{id: 'speech-timer', committeeId: 'committee', ownerType: 'SPEAKER_LIST', ownerId: 'list', running: false,
+        startedAt: null, remainingAtStartMs: 60_000, remainingMs: 60_000, revision: 1, expiredAt: null,
+        serverTime: '2026-08-14T00:00:00.000Z'}, ...(kind === 'MODERATED_CAUCUS' ? [{id: 'total-timer', committeeId: 'committee',
+        ownerType: 'CAUCUS' as const, ownerId: 'list', running: false, startedAt: null, remainingAtStartMs: 600_000,
+        remainingMs: 600_000, revision: 1, expiredAt: null, serverTime: '2026-08-14T00:00:00.000Z'}] : [])]
+    });
+    const joinSpeakerQueue = vi.fn(async () => ({} as SpeakerList));
+    const page = await render('CHAIR', '/committees/committee/caucuses/list', user, value => {
+      const current = withList(value, kind);
+      current.seats.push({...value.seats[0], id: 'media', displayName: 'Media', canVote: false,
+        canProceduralVote: false, hasVeto: false, searchTerms: ['press']});
+      current.attendance.push({seatId: 'media', state: 'PRESENT', lastEventId: 'media-present', updatedAt: ''});
+      current.speakerLists![0].queue = [];
+      return current;
+    }, {joinSpeakerQueue});
+    const dropdown = page.querySelector<HTMLElement>('.speaker-seat-dropdown .ui.dropdown')!;
+    await act(async () => {dropdown.click();});
+    const options = () => document.body.querySelector('.speaker-seat-dropdown-portal')!;
+    expect(options().textContent).not.toContain('Media');
+    const input = dropdown.querySelector('input')!;
+    const search = async (value: string) => {await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value);
+      input.dispatchEvent(new Event('input', {bubbles: true}));
+    });};
+    await search('press');
+    expect(options().textContent).toContain('Media');
+    expect(options().textContent).toContain('No procedural voting rights');
+    expect(options().querySelector('[role="option"]')?.getAttribute('aria-disabled')).not.toBe('true');
+    await search('');
+    expect(options().textContent).not.toContain('Media');
+    await search('Media');
+    await act(async () => {options().querySelector<HTMLElement>('[role="option"]')!.click();});
+    expect(dropdown.textContent).toContain('Media');
+    await act(async () => {[...page.querySelectorAll('button')].find(button => button.textContent?.includes('Join queue'))!.click();});
+    expect(joinSpeakerQueue).toHaveBeenCalledWith('list', 'media');
   });
 
   it('keeps absent countries visible but disabled in general and moderated speaker queues', async () => {

@@ -68,6 +68,9 @@ integration('PostgreSQL stage 5 voting', () => {
       parameters: {caucusDuration: 10, caucusUnit: 'min'}};
     await expect(stage5.proposeMotion(mediaDelegate, f.committee.id, input,
       randomUUID(), context('media-motion'))).rejects.toMatchObject({reason: 'PRESENT_SEAT_REQUIRED'});
+    const chairMotion = await stage5.proposeMotion(f.firstChair, f.committee.id,
+      {...input, onBehalfOfSeatId: media.id}, randomUUID(), context('chair-media-motion'));
+    expect(chairMotion.directVote?.eligibility.map(seat => seat.seatId)).toEqual([f.firstSeat.id, f.secondSeat.id]);
     const motion = await stage5.proposeMotion(f.firstDelegate, f.committee.id, input,
       randomUUID(), context('procedural-motion'));
     expect(motion.directVote?.eligibility.map(seat => seat.seatId)).toEqual([f.firstSeat.id, f.secondSeat.id]);

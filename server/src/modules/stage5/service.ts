@@ -1085,7 +1085,8 @@ export class Stage5Service {
         if (!seatId) throw new AppError({reason: 'ACTIVE_SEAT_REQUIRED', code: 'FORBIDDEN', message: 'An active seat assignment is required.'});
         const seat = await client.query<{display_name: string}>(`SELECT s.display_name FROM committee_seats s
           JOIN current_attendance a ON a.seat_id=s.id AND a.meeting_session_id=$3 AND a.state='PRESENT'
-          WHERE s.id=$1 AND s.committee_id=$2 AND s.active=true AND s.can_procedural_vote=true`, [seatId, committee.id, list.meeting_session_id]);
+          WHERE s.id=$1 AND s.committee_id=$2 AND s.active=true AND (s.can_procedural_vote OR $4)`,
+          [seatId, committee.id, list.meeting_session_id, chair && ['GENERAL', 'MODERATED_CAUCUS'].includes(list.kind)]);
         if (!seat.rows[0]) throw new AppError({reason: 'PRESENT_SEAT_REQUIRED', code: 'VALIDATION_FAILED', message: 'Only a present active seat may join the queue.'});
         const duplicate = await client.query(`SELECT 1 FROM speaker_queue_entries WHERE speaker_list_id=$1 AND seat_id=$2
           AND status IN ('QUEUED','CURRENT')`, [listId, seatId]);
@@ -1281,11 +1282,11 @@ export class Stage5Service {
       let nextId: string | null = null; let nextSpeechDurationMs = Number(list.default_speech_ms);
       if (!closeCaucus) {
         const waiting = await client.query<{id: string; state: string | null; speech_duration_ms: string | number}>(`SELECT
-          q.id,q.speech_duration_ms,CASE WHEN s.active AND s.can_procedural_vote THEN a.state END AS state FROM speaker_queue_entries q
+          q.id,q.speech_duration_ms,CASE WHEN s.active AND (s.can_procedural_vote OR $3) THEN a.state END AS state FROM speaker_queue_entries q
           JOIN committee_seats s ON s.id=q.seat_id
           LEFT JOIN current_attendance a ON a.seat_id=q.seat_id AND a.meeting_session_id=$2
           WHERE q.speaker_list_id=$1 AND q.status='QUEUED' ORDER BY q.position,q.created_at,q.id FOR UPDATE OF q`,
-        [listId, list.meeting_session_id]);
+        [listId, list.meeting_session_id, ['GENERAL', 'MODERATED_CAUCUS'].includes(list.kind)]);
         for (const entry of waiting.rows) {
           if (entry.state === 'PRESENT') {
             nextId = entry.id; nextSpeechDurationMs = Number(entry.speech_duration_ms); break;
@@ -1492,11 +1493,11 @@ export class Stage5Service {
         await client.query(`UPDATE speaker_queue_entries SET status='COMPLETED',completed_at=$2
           WHERE id=$1 AND status='CURRENT'`, [list.current_entry_id, now]);
         const waiting = await client.query<{id: string; state: string | null; speech_duration_ms: string | number}>(`SELECT
-          q.id,q.speech_duration_ms,CASE WHEN s.active AND s.can_procedural_vote THEN a.state END AS state FROM speaker_queue_entries q
+          q.id,q.speech_duration_ms,CASE WHEN s.active AND (s.can_procedural_vote OR $3) THEN a.state END AS state FROM speaker_queue_entries q
           JOIN committee_seats s ON s.id=q.seat_id
           LEFT JOIN current_attendance a ON a.seat_id=q.seat_id AND a.meeting_session_id=$2
           WHERE q.speaker_list_id=$1 AND q.status='QUEUED' ORDER BY q.position,q.created_at,q.id FOR UPDATE OF q`,
-        [list.id, list.meeting_session_id]);
+        [list.id, list.meeting_session_id, ['GENERAL', 'MODERATED_CAUCUS'].includes(list.kind)]);
         let nextId: string | null = null; let nextDuration = Number(list.default_speech_ms);
         for (const entry of waiting.rows) {
           if (entry.state === 'PRESENT') { nextId = entry.id; nextDuration = Number(entry.speech_duration_ms); break; }
@@ -1612,11 +1613,11 @@ export class Stage5Service {
         await client.query(`UPDATE speaker_queue_entries SET status='COMPLETED',completed_at=$2
           WHERE id=$1 AND status='CURRENT'`, [list.current_entry_id, now]);
         const waiting = await client.query<{id: string; state: string | null; speech_duration_ms: string | number}>(`SELECT
-          q.id,q.speech_duration_ms,CASE WHEN s.active AND s.can_procedural_vote THEN a.state END AS state FROM speaker_queue_entries q
+          q.id,q.speech_duration_ms,CASE WHEN s.active AND (s.can_procedural_vote OR $3) THEN a.state END AS state FROM speaker_queue_entries q
           JOIN committee_seats s ON s.id=q.seat_id
           LEFT JOIN current_attendance a ON a.seat_id=q.seat_id AND a.meeting_session_id=$2
           WHERE q.speaker_list_id=$1 AND q.status='QUEUED' ORDER BY q.position,q.created_at,q.id FOR UPDATE OF q`,
-        [list.id, list.meeting_session_id]);
+        [list.id, list.meeting_session_id, ['GENERAL', 'MODERATED_CAUCUS'].includes(list.kind)]);
         let nextId: string | null = null; let nextDuration = Number(list.default_speech_ms);
         for (const entry of waiting.rows) {
           if (entry.state === 'PRESENT') { nextId = entry.id; nextDuration = Number(entry.speech_duration_ms); break; }
@@ -1726,7 +1727,7 @@ export class Stage5Service {
         if (session.rows[0].status !== 'OPEN') throw new AppError({reason: 'MEETING_CLOSED', code: 'RESOURCE_CONFLICT', message: 'Meeting session is closed.'});
         const seat = await client.query<{display_name: string}>(`SELECT s.display_name FROM committee_seats s
           JOIN current_attendance a ON a.seat_id=s.id AND a.meeting_session_id=$3 AND a.state='PRESENT'
-          WHERE s.id=$1 AND s.committee_id=$2 AND s.active=true AND s.can_procedural_vote=true`, [seatId, committeeId, meetingSessionId]);
+          WHERE s.id=$1 AND s.committee_id=$2 AND s.active=true AND (s.can_procedural_vote OR $4)`, [seatId, committeeId, meetingSessionId, chair]);
         if (!seat.rows[0]) throw new AppError({reason: 'PRESENT_SEAT_REQUIRED', code: 'VALIDATION_FAILED', message: 'Only a present active seat may propose a motion.'});
         const version = await client.query<{definition: {motions?: unknown}}>(`SELECT definition FROM rule_version_snapshots
           WHERE id=$1 AND status='PUBLISHED'`, [session.rows[0].active_rule_package_version_id]);
