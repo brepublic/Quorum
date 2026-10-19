@@ -1,3 +1,4 @@
+import {existsSync, readFileSync} from 'node:fs'
 import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react-swc'
 
@@ -8,9 +9,16 @@ import react from '@vitejs/plugin-react-swc'
 // proxy rewrites Origin to the target origin.
 const devApiOrigin = process.env.QUORUM_DEV_API_ORIGIN ?? 'https://localhost'
 
+// Release artifacts are generated before building; local source builds have no installers.
+const agentManifestPath = new URL('./public/downloads/chair-agent/manifest.json', import.meta.url)
+const agentRelease = existsSync(agentManifestPath) ? JSON.parse(readFileSync(agentManifestPath, 'utf8')) : null
+if (process.env.RELEASE_TAG && (!agentRelease || agentRelease.serverVersion !== process.env.RELEASE_TAG
+  || agentRelease.commit !== process.env.GITHUB_SHA)) throw new Error('Chair Agent release does not match this build')
+
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
+  define: {__CHAIR_AGENT_RELEASE__: JSON.stringify(agentRelease)},
   build: {
     outDir: 'build',
   },

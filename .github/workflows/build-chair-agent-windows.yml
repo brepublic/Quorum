@@ -2,6 +2,7 @@ name: Build Windows Chair Agent
 
 on:
   workflow_dispatch:
+  workflow_call:
   pull_request:
     paths:
       - 'packages/storage-agent/**'

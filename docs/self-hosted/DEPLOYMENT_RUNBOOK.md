@@ -264,6 +264,12 @@ sudo docker compose -p quorum --env-file deploy/.env -f deploy/compose.productio
 - [ ] master key 和数据库密码已有 CVM 之外的安全副本。
 - [ ] `docker compose ... config --quiet` 退出码为 0。
 
+## 配套 Chair Agent 安装包与后续升级
+
+包含下载功能的新发行随网站镜像附带 Windows EXE 和 Linux AppImage；版本、源码提交和校验值由发布流程固定。发布成功并更新生产 Compose 的镜像哈希后，同时传送 `deploy/upgrade.sh`。在 `/opt/quorum` 执行 `sudo bash deploy/upgrade.sh`，完成拉取、版本和安装包检查、切换及成功后的旧镜像清理。详见 [部署说明](../../deploy/README.md#chair-agent-下载与常规升级)。
+
+为新旧镜像短暂共存预留磁盘空间。脚本只清理本次替换的 Quorum 应用／网站镜像及之前未完成的清理记录；不清理 PostgreSQL 镜像、数据卷或其他项目。验收失败保留旧镜像；清理被占用时报告失败并保留待清理记录，处理占用后可重跑。直接执行下方首次启动命令不包含旧镜像清理。
+
 ## 6. 首次拉取和启动
 
 先确认资源、端口和 DNS：

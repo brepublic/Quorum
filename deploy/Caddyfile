@@ -1,6 +1,17 @@
 {$QUORUM_SITE_ADDRESS} {
   encode zstd gzip
 
+  # Installers must return 404 when absent, never the SPA fallback.
+  handle /downloads/chair-agent/* {
+    root * /srv
+    header X-Content-Type-Options nosniff
+    header Cache-Control "no-cache"
+    @installer path *.exe *.AppImage
+    header @installer Content-Type application/octet-stream
+    header @installer Content-Disposition attachment
+    file_server
+  }
+
   handle /api/v1/* {
     reverse_proxy app:3000 {
       flush_interval -1

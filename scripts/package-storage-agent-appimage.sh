@@ -34,3 +34,5 @@ docker run --rm --platform linux/amd64 \
     -v "$PWD/scripts/appimage:/checks:ro" \
     quorum-agent-appimage-smoke sh -c \
     'set -- /artifacts/*.AppImage; test "$#" = 1; python3 /checks/smoke.py "$1"'
+
+node scripts/chair-agent-downloads.mjs record-linux release/appimage

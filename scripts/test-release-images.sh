@@ -21,9 +21,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
-docker build --platform linux/amd64 --target app-runtime \
+docker build --build-arg RELEASE_TAG="${RELEASE_TAG:-}" --build-arg RELEASE_COMMIT="${GITHUB_SHA:-}" --platform linux/amd64 --target app-runtime \
   -f deploy/Dockerfile -t "$QUORUM_SMOKE_APP_IMAGE" .
-docker build --platform linux/amd64 --target caddy-runtime \
+docker build --build-arg RELEASE_TAG="${RELEASE_TAG:-}" --build-arg RELEASE_COMMIT="${GITHUB_SHA:-}" --platform linux/amd64 --target caddy-runtime \
   -f deploy/Dockerfile -t "$QUORUM_SMOKE_CADDY_IMAGE" .
 "${compose[@]}" up -d --no-build --wait --wait-timeout 180
 
@@ -50,12 +50,26 @@ jq -e '.data.status == "ok" and .data.checks.database.status == "ok" and
   .data.checks.database.migrationVersion > 0 and .data.checks.storage.status != "error"' \
   "$temporary_directory/ready.json" >/dev/null
 curl --silent --show-error --fail --cacert "$certificate" "$base/api/v1/version" \
-  | jq -e '.data.version == "release-smoke" and .data.databaseMigrationVersion > 0' >/dev/null
+  | jq -e --arg version "${RELEASE_TAG:-release-smoke}" '.data.version == $version and .data.databaseMigrationVersion > 0' >/dev/null
 curl --silent --show-error --fail --cacert "$certificate" "$base/api/v1/bootstrap/status" \
   | jq -e '.data.initialized == false' >/dev/null
 curl --silent --show-error --fail --cacert "$certificate" "$base/" \
   | grep -q '<div id="root"></div>'
 curl --silent --show-error --fail --cacert "$certificate" "$base/committees/test-route" \
   | grep -q '<div id="root"></div>'
+
+if [[ -n ${RELEASE_TAG:-} ]]; then
+  curl --silent --show-error --fail --cacert "$certificate" "$base/downloads/chair-agent/manifest.json" > "$temporary_directory/manifest.json"
+  cmp public/downloads/chair-agent/manifest.json "$temporary_directory/manifest.json"
+  for platform in windows linux; do
+    url=$(jq -r --arg platform "$platform" '.platforms[$platform].url' "$temporary_directory/manifest.json")
+    expected=$(jq -r --arg platform "$platform" '.platforms[$platform].sha256' "$temporary_directory/manifest.json")
+    curl --silent --show-error --fail --cacert "$certificate" "$base$url" -o "$temporary_directory/installer"
+    actual=$(sha256sum "$temporary_directory/installer" | cut -d ' ' -f1)
+    test "$actual" = "$expected"
+  done
+fi
+missing_status=$(curl --silent --show-error --cacert "$certificate" -o /dev/null -w '%{http_code}' "$base/downloads/chair-agent/missing.exe")
+test "$missing_status" = 404
 
 echo 'Release image smoke check passed.'

@@ -12,3 +12,4 @@ server/.local
 **/dist
 packages/storage-agent-desktop/target
 release/storage-agent-desktop
+release

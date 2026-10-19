@@ -4,6 +4,10 @@ import {describe, expect, it} from 'vitest';
 import {loadConfig} from './config';
 
 describe('server configuration', () => {
+  it('uses the image build version ahead of an older deployment environment version', () => {
+    expect(loadConfig({DATABASE_URL: 'postgresql://localhost/quorum', QUORUM_BUILD_VERSION: 'v1.3.0',
+      QUORUM_VERSION: 'v1.2.0'}).version).toBe('v1.3.0');
+  });
   it('accepts a complete DATABASE_URL', () => {
     expect(loadConfig({DATABASE_URL: 'postgresql://localhost/quorum'}).databaseUrl)
       .toBe('postgresql://localhost/quorum');

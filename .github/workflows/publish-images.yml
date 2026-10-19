@@ -5,12 +5,18 @@ on:
     types: [published]
 
 jobs:
+  chair_agents:
+    uses: ./.github/workflows/build-chair-agent-windows.yml
+    permissions:
+      contents: read
+
   publish:
+    needs: [chair_agents]
     name: Test and publish linux/amd64 images
     runs-on: ubuntu-latest
     timeout-minutes: 90
     permissions:
-      contents: read
+      contents: write
       packages: write
     services:
       postgres:
@@ -58,6 +64,17 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: quorum-chair-agent-windows-x64
+          path: release/windows
+      - uses: actions/download-artifact@v4
+        with:
+          name: quorum-chair-agent-linux-regression
+          path: release/appimage
+      - name: Bind verified Agent packages to this release
+        run: node scripts/chair-agent-downloads.mjs prepare
+
       - name: Build production artifacts
         run: pnpm build:self-host
 
@@ -75,6 +92,12 @@ jobs:
 
       - name: Build and smoke-test release images
         run: bash scripts/test-release-images.sh
+
+      - name: Publish Agent installers and corresponding source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "$RELEASE_TAG" release/windows/*.zip release/windows/*-Setup.exe release/appimage/*.AppImage release/appimage/*.tar.gz public/downloads/chair-agent/manifest.json
 
       - name: Publish tested images to GHCR
         env:

@@ -217,7 +217,7 @@ Windows smoke 逐项输出检查结果，失败报告保留调用位置和退出
 
 Inno 卸载启动进程可能先于实际卸载进程退出。smoke 在既有 60 秒总超时内，等待实际卸载进程释放 `desktop.lock` 后再检查删除／数据保留并进入重装；共享冲突之外的访问错误立即失败。
 
-发行记录包含 Git commit、源码是否脏、固定工具版本、对应源码哈希、全部产物 SHA-256 和 PE 系统依赖；源码包只收录受版本管理的源文件／锁文件与确切 Rust 依赖源，不扫描本机凭据。 Rust 依赖通过完整锁定 metadata 与 cargo vendor 收集全部平台依赖及 .cargo-checksum.json；随包说明区分无 Git 源码的组件构建与需记录 Git 来源的发行组装。Offline 同时传入 build、metadata、vendor。Windows smoke 在隔离 PATH 下验证捆绑运行时、目录锁和窗口生命周期，可在 Sandbox 内验证 EXE 安装、注册、更新与卸载。Windows CI 生成产物，Linux CI 保持完整 GUI/AppImage 构建回归；不自动公开发行。
+发行记录包含 Git commit、源码是否脏、固定工具版本、对应源码哈希、全部产物 SHA-256 和 PE 系统依赖；源码包只收录受版本管理的源文件／锁文件与确切 Rust 依赖源，不扫描本机凭据。 Rust 依赖通过完整锁定 metadata 与 cargo vendor 收集全部平台依赖及 .cargo-checksum.json；随包说明区分无 Git 源码的组件构建与需记录 Git 来源的发行组装。Offline 同时传入 build、metadata、vendor。Windows smoke 在隔离 PATH 下验证捆绑运行时、目录锁和窗口生命周期，可在 Sandbox 内验证 EXE 安装、注册、更新与卸载。Windows CI 生成产物，Linux CI 保持完整 GUI/AppImage 构建回归；普通构建不公开发行，服务器正式 Release 调用同一构建工作流并发布配套安装包。
 
 ### 冲突比较（2026-10-06）
 
@@ -255,7 +255,15 @@ retention worker 使用 advisory lock，仅清理明确过期且不再承载业�
 | `deploy/` | Caddy、应用与 PostgreSQL Compose、Dockerfile 和环境模板 |
 | `docs/self-hosted/` | 目标规格、实施历史、恢复与人工验收 |
 
-`deploy/compose.yaml` 保留本地源码构建方式。`deploy/compose.production.yaml` 是可单独传给服务器的完整生产配置，以内容哈希固定应用、Caddy 和 PostgreSQL 16 镜像，并记录发布提交编号；它包含端口、健康检查和命名卷，不需要仓库源码，项目名为 `quorum`。生产环境模板单独保存在 `deploy/.env.production.example`，随生产 Compose 一起传送，避免后续开发改动影响已发布版本。Caddy 代理 `/api/v1/*`、`/health/*` 和 `/metrics`，其余路径回退 SPA。容量默认 80% warning、90% critical；critical 只拒绝新文件字节和 provider copy，下载、议事与清理继续可用。Compose 的 JSON 日志固定轮换为 10 MiB × 3。常规 CI 在前端、服务端和 PostgreSQL 测试通过后，核对生产 Compose 的发布标签和提交编号，再读取该提交中的开发 Compose，比较除镜像来源和版本标识外的运行设置；检查固定镜像与发布标签一致、可拉取且支持 `linux/amd64`，PostgreSQL 镜像为 16；再以 `linux/amd64` 构建应用和 Caddy 镜像，用独立的 `deploy/compose.release-smoke.yaml`、临时数据库与文件卷检查迁移、HTTPS、就绪状态、版本、匿名身份入口和 SPA 路由。此检查不发布镜像，也不要求生产 Compose 跟随未发布的开发提交。发布 GitHub Release 时，独立工作流对 master 历史中的发布提交重新运行测试与镜像检查，然后用该工作流的临时 GitHub 凭据将刚通过检查的两张 `linux/amd64` 镜像推送到 GHCR，并在运行摘要中记录两张镜像的内容哈希。拉取和部署仍由服务器单独执行。
+`deploy/compose.yaml` 保留本地源码构建方式。`deploy/compose.production.yaml` 是可单独传给服务器的完整生产配置，以内容哈希固定应用、Caddy 和 PostgreSQL 16 镜像，并记录发布提交编号；它包含端口、健康检查和命名卷，不需要仓库源码，项目名为 `quorum`。生产环境模板单独保存在 `deploy/.env.production.example`，随生产 Compose 一起传送，避免后续开发改动影响已发布版本。Caddy 代理 `/api/v1/*`、`/health/*` 和 `/metrics`，独立提供 `/downloads/chair-agent/*` 静态下载，其余路径回退 SPA。容量默认 80% warning、90% critical；critical 只拒绝新文件字节和 provider copy，下载、议事与清理继续可用。Compose 的 JSON 日志固定轮换为 10 MiB × 3。常规 CI 在前端、服务端和 PostgreSQL 测试通过后，核对生产 Compose 的发布标签和提交编号，再读取该提交中的开发 Compose，比较除镜像来源和版本标识外的运行设置；检查固定镜像与发布标签一致、可拉取且支持 `linux/amd64`，PostgreSQL 镜像为 16；再以 `linux/amd64` 构建应用和 Caddy 镜像，用独立的 `deploy/compose.release-smoke.yaml`、临时数据库与文件卷检查迁移、HTTPS、就绪状态、版本、匿名身份入口和 SPA 路由。此检查不发布镜像，也不要求生产 Compose 跟随未发布的开发提交。发布 GitHub Release 时，独立工作流对 master 历史中的发布提交重新运行测试与镜像检查，然后用该工作流的临时 GitHub 凭据将刚通过检查的两张 `linux/amd64` 镜像推送到 GHCR，并在运行摘要中记录两张镜像的内容哈希。拉取和部署仍由服务器单独执行。
+
+### 配套 Chair Agent 下载发行
+
+正式服务器 Release 调用现有 Windows／Linux 构建与平台 smoke，从同一提交生成安装器和对应源码。`scripts/chair-agent-downloads.mjs` 校验两平台提交、源码干净状态、Agent 版本、所有发行文件大小与 SHA-256 后，把两份安装包、清单和 SHA256SUMS 放入忽略的 `public/downloads/chair-agent/`；Vite 将清单编入下载组件并把安装包复制到网站构建输出。正式构建还校验清单与发行标签／提交相符；源码开发构建缺少清单时明确显示无可用安装包。安装包以具体发行标签隔离 URL，GitHub 链接指向同一标签的 Release；源码和其他归档只发布至 GitHub，不进入网站镜像。
+
+Caddy 的 `/downloads/chair-agent/*` 分支独立于 SPA fallback，公开提供不可执行的附件响应、nosniff 和重新验证缓存，保留范围请求，缺失文件返回 404。该路径不使用业务存储卷、数据库或主席文件缓存。菜单复用已有 Semantic UI 图标和 ViewportDropdown，没有新增依赖。
+
+应用和网站镜像以 OCI revision 和 `io.quorum.release` 标签记录同一源码提交及版本，应用的内置 `QUORUM_BUILD_VERSION` 优先于旧部署环境中的 `QUORUM_VERSION`。`deploy/upgrade.sh` 是无需仓库源码的升级入口：拉取并核对固定镜像和安装包后切换，HTTPS 就绪、运行版本、清单及流式下载哈希均通过才清理被替换的应用／网站镜像。以 flock 防止并行运行，待清理身份记录在私有的 `deploy/.upgrade-images`，失败后重跑可继续；不删被其他容器使用或带其他仓库引用的镜像，不做全局 prune 或数据卷清理。正式发行 smoke 增加两平台下载校验和缺失文件 404；脚本失败分支使用隔离命令模拟回归，不能代替真实服务器升级或原生安装验收。
 
 ## 8. 开发与验证
 
@@ -326,8 +334,7 @@ Rust/Slint 和既有 Node 核心，生成 AppImage、解压包、源码包及校
 安装检查当前单实例锁，菜单指向持久文件而非 AppImage 临时挂载路径。
 `--unregister` 清除本应用管理的入口与关联，保留配置和会议文件。
 AppRun 区分包内依赖环境与宿主外部程序环境。文件覆盖确认移到既有 Slint 窗口，
-文件选择前检查 portal 接口，缺失时给出错误。手动 GitHub 构建工作流仅上传产物，
-不自动发布。协议、配置 schema、目录锁和退出即停止同步的行为保持不变。
+文件选择前检查 portal 接口，缺失时给出错误。手动 GitHub 构建工作流仅上传产物；服务器正式发行工作流发布配套安装包。协议、配置 schema、目录锁和退出即停止同步的行为保持不变。
 
 ### Windows 原生窗口适配（2026-10-06）
 

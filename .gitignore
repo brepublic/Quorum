@@ -43,3 +43,9 @@ pnpm-debug.log*
 
 # Native Chair Agent desktop build
 /packages/storage-agent-desktop/target/
+
+# Generated, version-bound Chair Agent downloads (release workflow only)
+/public/downloads/chair-agent/
+/deploy/.upgrade.lock
+
+/deploy/.upgrade-images*

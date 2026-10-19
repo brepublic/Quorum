@@ -108,7 +108,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   return {
     host: env.HOST || '0.0.0.0',
     port: integer(env.PORT, 3000, 'PORT'),
-    version: env.QUORUM_VERSION || '0.1.0-self-hosted',
+    version: env.QUORUM_BUILD_VERSION || env.QUORUM_VERSION || '0.1.0-self-hosted',
     databaseUrl: databaseUrl(env),
     migrationsDirectory: resolve(env.QUORUM_MIGRATIONS_DIR || 'server/migrations'),
     storagePath: resolve(env.QUORUM_STORAGE_PATH || 'server/.local/storage'),

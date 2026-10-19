@@ -1,3 +1,4 @@
+import {ChairAgentDownload} from '../../components/ChairAgentDownload';
 import {openChairAgent, downloadChairConfiguration} from '../../services/agent-pairing';
 import {ViewportFormSelect} from '../../components/ViewportDropdown';
 import {apiErrorText} from '../../i18n';
@@ -547,6 +548,7 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
             : <span>{t("Not paired")}</span>}
         </div>
         <div className="self-hosted-storage-host-actions">
+          <ChairAgentDownload />
           {!pairing && <Button type="button" primary size="small" disabled={working||Boolean(openMigration)}
             onClick={() => void createPairing(activeHost ? 'TRANSFER' : 'INITIAL')}>
             {activeHost ? t("Transfer to another computer") : t("Pair chair computer")}</Button>}
