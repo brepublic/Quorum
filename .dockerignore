@@ -13,3 +13,6 @@ server/.local
 packages/storage-agent-desktop/target
 release/storage-agent-desktop
 release
+
+deploy/.upgrade*
+.cache

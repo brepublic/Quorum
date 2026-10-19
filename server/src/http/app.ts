@@ -53,6 +53,7 @@ export interface AppDependencies {
   logger: Logger;
   version: string;
   databaseMigrationVersion: number;
+  upgradeVerification?: boolean;
   now?: () => number;
   identity?: IdentityService;
   stage3?: Stage3Service;
@@ -1532,6 +1533,12 @@ export function createRequestHandler(dependencies: AppDependencies): RequestList
       try {
         const requestUrl = new URL(request.url || '/', 'http://quorum.local');
         pathname = requestUrl.pathname;
+        // Even authenticated clients and Agents must not write during upgrade verification.
+        if (dependencies.upgradeVerification && (request.method !== 'GET'
+          || !['/health/live', '/health/ready', '/api/v1/version'].includes(pathname))) {
+          sendText(response, 503, 'text/plain; charset=utf-8', 'Server maintenance');
+          return;
+        }
 
         if (dependencies.storageAgent && await handleStage7AgentRequest({request, response, pathname, requestId,
           storageAgent: dependencies.storageAgent, storageTasks: dependencies.storageTasks, identity: dependencies.identity,

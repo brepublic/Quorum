@@ -507,7 +507,7 @@ sudo docker compose -p quorum --env-file deploy/.env -f deploy/compose.productio
 curl -fsS https://quorum.example.com/health/ready | jq
 ```
 
-更新时先完成相应的发布验证，再更新并通过生产 Compose 对齐检查；传送并核对新版生产 Compose 文件、镜像哈希、发布提交编号和 `QUORUM_VERSION`，拉取镜像并观察 migration。不要执行 `docker compose down -v`、`docker volume prune` 或 `docker system prune --volumes`。
+常规升级运行 `sudo bash deploy/upgrade.sh`，从 GitHub 已完成发布的兼容稳定版本中选择；脚本自动更新本机固定镜像和提交编号，保留域名、密码及密钥。下载结束后会停机冷备份并隔离验证，失败自动恢复数据库、文件和原配置；重跑先恢复未完成升级。需提前留足新旧镜像和四个卷冷备份的空间。完整边界、手动指定版本、自建 CA 和故障恢复步骤见 [`deploy/README.md`](../../deploy/README.md)。新版验收并开放写入后不再自动恢复旧快照。不要删除 `deploy/.upgrade/` 来跳过恢复，不要执行 `docker compose down -v`、`docker volume prune` 或 `docker system prune --volumes`。
 
 ### 最终验收
 

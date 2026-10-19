@@ -241,7 +241,7 @@ Owner 可把活动委员会归档。归档后全部业务写命令在服务端�
 
 retention worker 使用 advisory lock，仅清理明确过期且不再承载业务真相的 Session、幂等结果、终态一次性秘密和已决定注册申请。事件、审计、Agent task、provider/delete job、deletion job 与墓碑不参与普通期限清理。系统管理员状态页可读取缓存文件名、委员会名、大小和 LRU 顺序，但不返回本地路径、storage key、哈希、正文、凭据或下载能力；读取该清单不写审计。
 
-`pnpm self-host:backup -- <new-directory>` 输出 PostgreSQL custom dump、文件 provider manifest 和 SHA-256 元数据。数据库与 provider 字节不是跨介质原子快照；恢复必须按 `docs/self-hosted/RECOVERY.md` 在隔离环境逐对象核对。首版不调度自动备份，也不提供自动破坏性 restore。
+`pnpm self-host:backup -- <new-directory>` 输出 PostgreSQL custom dump、文件 provider manifest 和 SHA-256 元数据。数据库与 provider 字节不是跨介质原子快照；恢复必须按 `docs/self-hosted/RECOVERY.md` 在隔离环境逐对象核对。日常灾难恢复不调度自动备份，也不提供通用自动 restore；升级脚本的本次事务冷备份与限定范围自动恢复见下节。
 
 ## 7. 部署与仓库结构
 
@@ -263,7 +263,17 @@ retention worker 使用 advisory lock，仅清理明确过期且不再承载业�
 
 Caddy 的 `/downloads/chair-agent/*` 分支独立于 SPA fallback，公开提供不可执行的附件响应、nosniff 和重新验证缓存，保留范围请求，缺失文件返回 404。该路径不使用业务存储卷、数据库或主席文件缓存。菜单复用已有 Semantic UI 图标和 ViewportDropdown，没有新增依赖。
 
-应用和网站镜像以 OCI revision 和 `io.quorum.release` 标签记录同一源码提交及版本，应用的内置 `QUORUM_BUILD_VERSION` 优先于旧部署环境中的 `QUORUM_VERSION`。`deploy/upgrade.sh` 是无需仓库源码的升级入口：拉取并核对固定镜像和安装包后切换，HTTPS 就绪、运行版本、清单及流式下载哈希均通过才清理被替换的应用／网站镜像。以 flock 防止并行运行，待清理身份记录在私有的 `deploy/.upgrade-images`，失败后重跑可继续；不删被其他容器使用或带其他仓库引用的镜像，不做全局 prune 或数据卷清理。正式发行 smoke 增加两平台下载校验和缺失文件 404；脚本失败分支使用隔离命令模拟回归，不能代替真实服务器升级或原生安装验收。
+应用和网站镜像以 OCI revision 和 `io.quorum.release` 标签记录同一源码提交及版本，应用内置 `QUORUM_BUILD_VERSION` 优先于部署环境中的 `QUORUM_VERSION`。支持隔离验收的应用另标记 `io.quorum.upgrade-protocol=1`。正式发布在两平台安装包、镜像 smoke 和真实升级故障演练通过、镜像推送成功后，最后上传 `scripts/server-release.mjs` 生成的 `quorum-server-release.json`，记录平台、三张镜像固定地址、数据库大版本、最低迁移版本和全部迁移校验值。Release 创建但尚未完成构建时不能作为升级目标。
+
+`deploy/upgrade.sh` 无需仓库源码或 Node。它用 GitHub Releases 列表提供兼容的较新稳定版本选择（也支持 `--release`），检查当前迁移校验值、镜像身份及下载包，保留原始 YAML 的变量和本机设置，仅替换镜像地址及提交编号。以 flock 防止并发，以 Compose 配置指纹拒绝运行与磁盘配置漂移；当前限定标准三服务、四命名卷、Linux amd64、PostgreSQL 16，不执行宿主机升级或任意部署模板迁移。
+
+切换前禁用容器自动重启、关闭公网入口、停止应用并确认没有执行中的文件／Agent 任务，然后停止 PostgreSQL，用旧应用镜像内已有的 GNU tar 保存四个完整冷卷（数据库、文件、Caddy 数据、Caddy 配置）及原始 Compose／`.env`。私有 `deploy/.upgrade/` 保存恢复材料、校验值和原子写入并同步到磁盘的阶段记录；备份失败不应用新版本，迁移后恢复必须先验证完整归档。额外共享挂载和外置数据库表空间不支持。归档包括文件暂存与缓存，保证数据库引用和本机文件处于同一停机点；外部 provider 不复制到服务器，已派发且未完成的任务阻止升级。
+
+验收 Compose 使用独立内部网络、无发布端口、`restart=no` 和 `QUORUM_UPGRADE_VERIFY_ONLY=1`。应用仍执行真实数据库迁移与初始化，但业务／Agent 请求返回 503，仅放行 GET health/version，后台迁移、清理、retention、Agent 监控、缓存和危机定时执行均暂停。宿主机通过内部容器地址连接 HTTPS，验证就绪、运行版本、页面、配套安装包清单及流式下载哈希，并比较文件卷归档内容。协议 1 不支持启动期间改变文件布局或文件字节。
+
+验收前失败或再次运行发现未完成事务时，停止目标容器，按相同冷备份重建所有卷内容、恢复原配置并验证旧服务；恢复再次中断仍从完整归档重做。恢复旧版确认成功、或新版验收成功均先持久记录，再开放网络和写入；此后的重跑只继续开放服务／清理，绝不重放旧快照覆盖新写入。清理仅涉及本次替换且无其他引用的应用／网站镜像及本次恢复材料，不删除数据卷或全局 prune。备份损坏或恢复失败时保留材料和维护状态。
+
+`scripts/upgrade.test.ts` 验证发布筛选、清单约束、迁移兼容及恢复失败停止；HTTP 测试验证维护限制。`scripts/test-upgrade.sh` 使用隔离真实 Docker/PostgreSQL/HTTPS 和文件卷，验证故障迁移、文件损坏、备份失败、SIGKILL 及恢复再次中断，核对原始配置、schema、账号、私有文件授权下载及字节。测试只替代 GitHub／registry 发现，不替代数据库、卷或容器执行；不代表远程正式升级或原生安装验收。
 
 ## 8. 开发与验证
 

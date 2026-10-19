@@ -48,6 +48,7 @@ const logger = createLogger();
 
 async function main(): Promise<void> {
   const config = loadConfig();
+  const upgradeVerification = process.env.QUORUM_UPGRADE_VERIFY_ONLY === '1';
   const pool = new Pool({
     connectionString: config.databaseUrl,
     max: 10,
@@ -126,6 +127,7 @@ async function main(): Promise<void> {
       process.stderr.write(`Quorum bootstrap secret (shown once): ${bootstrapSecret}\n`);
     }
     const server = createApp({
+      upgradeVerification,
       health,
       logger,
       version: config.version,
@@ -155,15 +157,15 @@ async function main(): Promise<void> {
       delegateFiles,
       allowedOrigins: config.allowedOrigins
     });
-    const stopStorageMigrationWorker = startStorageMigrationWorker(storageMigrations, logger);
-    const stopStorageMaintenanceWorker = startStorageMaintenanceWorker(storageMaintenance, logger);
-    const stopStorageHostMonitor = startStorageHostMonitor(storageAgent, logger);
-    const stopCommitteeDeletionWorker = startCommitteeDeletionWorker(committeeDeletions, logger);
-    const stopRetentionWorker = startRetentionWorker(retention, logger);
-    const stopStorageCacheWorker = startStorageCacheWorker(storageCacheOperations);
+    const stopStorageMigrationWorker = upgradeVerification ? () => {} : startStorageMigrationWorker(storageMigrations, logger);
+    const stopStorageMaintenanceWorker = upgradeVerification ? () => {} : startStorageMaintenanceWorker(storageMaintenance, logger);
+    const stopStorageHostMonitor = upgradeVerification ? () => {} : startStorageHostMonitor(storageAgent, logger);
+    const stopCommitteeDeletionWorker = upgradeVerification ? () => {} : startCommitteeDeletionWorker(committeeDeletions, logger);
+    const stopRetentionWorker = upgradeVerification ? () => {} : startRetentionWorker(retention, logger);
+    const stopStorageCacheWorker = upgradeVerification ? () => {} : startStorageCacheWorker(storageCacheOperations);
     let crisisWorkerRunning = false;
     const runCrisisAutoStarts = async () => {
-      if (crisisWorkerRunning) return;
+      if (upgradeVerification || crisisWorkerRunning) return;
       crisisWorkerRunning = true;
       try {await stage5.processCrisisAutoStarts();}
       catch (error) {logger.error('crisis.auto_start.failed',{error});}

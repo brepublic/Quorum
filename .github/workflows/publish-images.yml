@@ -93,6 +93,9 @@ jobs:
       - name: Build and smoke-test release images
         run: bash scripts/test-release-images.sh
 
+      - name: Exercise real upgrade and interrupted rollback
+        run: bash scripts/test-upgrade.sh
+
       - name: Publish Agent installers and corresponding source
         env:
           GH_TOKEN: ${{ github.token }}
@@ -109,6 +112,7 @@ jobs:
           printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
 
           owner="${GITHUB_REPOSITORY_OWNER,,}"
+          printf '{}\n' > "$RUNNER_TEMP/quorum-images.json"
           for component in app caddy; do
             local_image="quorum-release-smoke-$component:$GITHUB_SHA"
             platform="$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$local_image")"
@@ -120,4 +124,19 @@ jobs:
             digest="$(docker buildx imagetools inspect "$published_image" --format '{{json .Manifest}}' | jq -r '.digest')"
             [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
             printf '%s\n' "$published_image@$digest" >> "$GITHUB_STEP_SUMMARY"
+            jq --arg service "$component" --arg image "ghcr.io/$owner/quorum-$component@$digest" \
+              '.[$service] = $image' "$RUNNER_TEMP/quorum-images.json" > "$RUNNER_TEMP/quorum-images.next"
+            mv "$RUNNER_TEMP/quorum-images.next" "$RUNNER_TEMP/quorum-images.json"
           done
+
+      - name: Publish completed server release manifest
+        if: ${{ !github.event.release.prerelease }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Use the same PostgreSQL image tested by the release smoke and upgrade tests.
+          postgres=$(docker image inspect postgres:16-alpine --format '{{index .RepoDigests 0}}')
+          jq --arg image "$postgres" '.postgres = $image' "$RUNNER_TEMP/quorum-images.json" > "$RUNNER_TEMP/quorum-images.final.json"
+          node scripts/server-release.mjs "$RUNNER_TEMP/quorum-images.final.json" "$RUNNER_TEMP/quorum-server-release.json"
+          gh release upload "$RELEASE_TAG" "$RUNNER_TEMP/quorum-server-release.json"

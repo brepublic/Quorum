@@ -19,7 +19,7 @@ RUN RELEASE_TAG="$RELEASE_TAG" GITHUB_SHA="$RELEASE_COMMIT" pnpm build:self-host
 FROM node:22-bookworm-slim AS app-runtime
 ARG RELEASE_TAG=""
 ARG RELEASE_COMMIT=""
-LABEL org.opencontainers.image.revision=$RELEASE_COMMIT io.quorum.release=$RELEASE_TAG
+LABEL org.opencontainers.image.revision=$RELEASE_COMMIT io.quorum.release=$RELEASE_TAG io.quorum.upgrade-protocol="1"
 ENV QUORUM_BUILD_VERSION=$RELEASE_TAG
 ENV NODE_ENV=production
 WORKDIR /app

@@ -50,6 +50,7 @@ async function request(options: {
   requestId?: string;
   ready?: ReadyCheckResult;
   metrics?: string;
+  upgradeVerification?: boolean;
 }) {
   const logs: string[] = [];
   const handler = createRequestHandler({
@@ -57,6 +58,7 @@ async function request(options: {
     logger: createLogger(line => logs.push(line)),
     version: 'test-version',
     databaseMigrationVersion: 1,
+    upgradeVerification: options.upgradeVerification,
     storageMetrics: options.metrics === undefined ? undefined : {renderMetrics: async () => options.metrics as string},
     now: () => 10_000
   });
@@ -183,4 +185,13 @@ describe('HTTP infrastructure contract', () => {
     });
     expect(logs.some(line => line.includes('database password leaked'))).toBe(true);
   });
+});
+
+it.each(['/api/v1/bootstrap/status','/api/v1/committees','/api/v1/storage-agent/tasks','/metrics'])(
+  'blocks business and Agent access during upgrade verification: %s', async path => {
+    expect((await request({path, upgradeVerification: true})).status).toBe(503);
+  });
+it.each(['/health/live','/health/ready','/api/v1/version'])('allows only read-only verification: %s', async path => {
+  expect((await request({path, upgradeVerification: true})).status).toBe(200);
+  expect((await request({path, method: 'POST', upgradeVerification: true})).status).toBe(503);
 });

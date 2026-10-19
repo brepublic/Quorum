@@ -49,3 +49,6 @@ pnpm-debug.log*
 /deploy/.upgrade.lock
 
 /deploy/.upgrade-images*
+
+/deploy/.upgrade/
+/deploy/.upgrade.new/

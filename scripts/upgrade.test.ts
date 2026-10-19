@@ -1,91 +1,122 @@
 // @vitest-environment node
 import {execFile} from 'node:child_process';
-import {chmod, copyFile, mkdtemp, mkdir, readFile, rm, writeFile} from 'node:fs/promises';
+import {mkdtemp, mkdir, writeFile, readFile, rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
 import {promisify} from 'node:util';
-import {createHash} from 'node:crypto';
 const run = promisify(execFile);
+const script = resolve('deploy/upgrade.sh');
 let directory: string;
-const commit = 'a'.repeat(40); const tag = 'v1.3.0';
-const digest = createHash('sha256').update('installer').digest('hex');
-beforeEach(async () => {
-  directory = await mkdtemp(join(tmpdir(), 'quorum-upgrade-'));
-  await mkdir(join(directory, 'deploy')); await mkdir(join(directory, 'bin'));
-  await copyFile(resolve('deploy/upgrade.sh'), join(directory, 'deploy/upgrade.sh'));
-  await writeFile(join(directory, 'manifest.json'), JSON.stringify({schemaVersion: 1, serverVersion: tag, commit,
-    platforms: Object.fromEntries(['windows', 'linux'].map(platform => [platform,
-      {file: `${platform}.bin`, url: `/downloads/chair-agent/${tag}/${platform}.bin`, sha256: digest, size: 9}]))}));
-  const fake = `#!/usr/bin/env -S node --
-const fs=require('node:fs');const path=require('node:path');
-const args=process.argv.slice(2),tool=path.basename(process.argv[1]);
-const dir=process.env.UPGRADE_TEST_DIR,scenario=process.env.UPGRADE_SCENARIO;
-fs.appendFileSync(dir+'/calls',JSON.stringify([tool,...args])+'\\n');
-const manifest=fs.readFileSync(dir+'/manifest.json','utf8');
-const image=s=>'ghcr.io/brepublic/quorum-'+s+'@sha256:'+'b'.repeat(64);
-const service=s=>s.includes('caddy')||s==='sha256:'+'d'.repeat(64)?'caddy':'app';
-const oldId=s=>'sha256:'+(s==='caddy'?'d':'c').repeat(64);
-const removed=()=>fs.existsSync(dir+'/removed')?fs.readFileSync(dir+'/removed','utf8').split('\\n'):[];
-function out(value){process.stdout.write(typeof value==='string'?value:JSON.stringify(value));}
-if(tool==='curl'){
- const url=args[args.length-1];
- if(url.endsWith('/health/ready')){if(scenario==='health-fails')process.exit(22);out({data:{status:'ok'}});}
- else if(url.endsWith('/api/v1/version'))out({data:{version:scenario==='wrong-runtime'?'v0.0.1':'${tag}'}});
- else if(url.endsWith('/manifest.json'))out(manifest);
- else out(scenario==='corrupt-download'?'bad':'installer');
-}else if(args[0]==='compose'){
- if(args.includes('config'))out({'x-quorum-release-commit':'${commit}',services:{app:{image:image('app')},caddy:{image:scenario==='unpinned'?'latest':image('caddy'),environment:{QUORUM_SITE_ADDRESS:'quorum.example'}}}});
- else if(args.includes('pull')&&scenario==='pull-fails')process.exit(17);
- else if(args.includes('up')&&scenario==='start-fails')process.exit(18);
- else if(args.includes('ps')&&scenario!=='first-install')out('container-'+args[args.length-1]);
-}else if(args[0]==='inspect')out(oldId(service(args[args.length-1])));
-else if(args[0]==='run'){if(args.includes('cat'))out(manifest);else if(scenario==='corrupt-image')process.exit(1);}
-else if(args[0]==='ps'){if(scenario==='shared')out('another-container');}
-else if(args[0]==='image'&&args[1]==='inspect'){
- const ref=args[2],s=service(ref),old=ref.includes('old')||ref===oldId(s);
- if(removed().includes(s)&&old)process.exit(1);
- out([{Id:old?oldId(s):'sha256:'+(s==='app'?'e':'f').repeat(64),Config:{Labels:{'org.opencontainers.image.revision':scenario==='mixed-commit'&&s==='app'?'c'.repeat(40):'${commit}','io.quorum.release':'${tag}'}},
- RepoTags:old?[scenario==='foreign-tag'?'other/project:keep':'ghcr.io/brepublic/quorum-'+s+':old']:[],RepoDigests:[]}]);
-}else if(args[0]==='image'&&args[1]==='rm'){
- if(scenario==='remove-fails')process.exit(1);fs.appendFileSync(dir+'/removed',service(args[2])+'\\n');
-}else process.exit(3);
-`;
-  for (const tool of ['docker', 'curl']) {const file = join(directory, 'bin', tool); await writeFile(file, fake); await chmod(file, 0o755);}
-});
+const commit = 'a'.repeat(40);
+const digest = 'b'.repeat(64);
+const manifest = {schemaVersion: 1, upgradeProtocol: 1, deploymentSchema: 1, version: 'v1.2.0', commit,
+  platform: 'linux/amd64', postgresMajor: 16, minimumDatabaseMigration: 24, migrations: {'24': digest},
+  images: {app: `ghcr.io/brepublic/quorum-app@sha256:${digest}`, caddy: `ghcr.io/brepublic/quorum-caddy@sha256:${digest}`,
+    postgres: `postgres@sha256:${digest}`}};
+beforeEach(async () => {directory = await mkdtemp(join(tmpdir(), 'quorum-upgrade-unit-'));});
 afterEach(async () => {await rm(directory, {recursive: true, force: true});});
-async function execute(scenario = '') {
-  let failed = false; let output = '';
-  try {const result = await run('bash', [join(directory, 'deploy/upgrade.sh')], {env: {...process.env,
-    PATH: `${join(directory, 'bin')}:${process.env.PATH}`, UPGRADE_TEST_DIR: directory, UPGRADE_SCENARIO: scenario}}); output = result.stdout + result.stderr;}
-  catch (error) {failed = true; output = String(error);}
-  const calls = (await readFile(join(directory, 'calls'), 'utf8').catch(() => {throw new Error(output);})).trim().split('\n').map(line => JSON.parse(line) as string[]);
-  return {failed, output, calls};
+async function shell(code: string, env: Record<string,string> = {}) {
+  return run('bash', ['-c', 'source "$UPGRADE_SCRIPT"\n' + code], {env: {...process.env, UPGRADE_SCRIPT: script, TEST_DIR: directory, ...env}});
 }
-it('verifies the new release and downloads before removing only the replaced app and website images', async () => {
-  const {failed, calls} = await execute(); expect(failed).toBe(false);
-  const removals = calls.filter(call => call[0] === 'docker' && call[1] === 'image' && call[2] === 'rm');
-  expect(removals.map(call => call[3])).toEqual(['ghcr.io/brepublic/quorum-app:old', 'ghcr.io/brepublic/quorum-caddy:old']);
-  expect(calls.findIndex(call => call.includes('rm'))).toBeGreaterThan(calls.findLastIndex(call => call[0] === 'curl'));
-  expect(calls.flat()).not.toContain('prune'); expect(calls.flat()).not.toContain('--force');
+it('accepts only complete stable manifests with pinned images', async () => {
+  await writeFile(join(directory, 'release.json'), JSON.stringify(manifest));
+  await shell('repository=brepublic; validate_release v1.2.0 "$TEST_DIR/release.json"');
 });
-it.each(['pull-fails','mixed-commit','corrupt-image','start-fails','health-fails','wrong-runtime','corrupt-download','unpinned'])(
-  'preserves old images when %s', async scenario => {
-    const {failed, calls} = await execute(scenario); expect(failed).toBe(true);
-    expect(calls.some(call => call.includes('rm'))).toBe(false);
-    if (['pull-fails','mixed-commit','corrupt-image','unpinned'].includes(scenario)) expect(calls.some(call => call.includes('up'))).toBe(false);
-  });
-it.each(['shared','foreign-tag','remove-fails'])('reports incomplete cleanup for %s', async scenario => {
-  const {failed, calls} = await execute(scenario); expect(failed).toBe(true);
-  if (scenario !== 'remove-fails') expect(calls.some(call => call.includes('rm'))).toBe(false);
+it.each([
+  ['protocol', {upgradeProtocol: 2}], ['database major', {postgresMajor: 17}], ['platform', {platform: 'linux/arm64'}],
+  ['commit', {commit: 'HEAD'}], ['migration checksums', {migrations: {'24': 'bad'}}], ['version', {version: 'v1.2.1'}],
+  ['unpinned image', {images: {...manifest.images, app: 'ghcr.io/brepublic/quorum-app:latest'}}],
+  ['foreign repository', {images: {...manifest.images, caddy: `ghcr.io/other/quorum-caddy@sha256:${digest}`}}]
+])('rejects invalid %s', async (_label, patch) => {
+  await writeFile(join(directory, 'release.json'), JSON.stringify({...manifest, ...patch}));
+  await expect(shell('repository=brepublic; validate_release v1.2.0 "$TEST_DIR/release.json"')).rejects.toThrow();
 });
-it('supports first deployment without deleting any existing image', async () => {
-  const {failed, calls} = await execute('first-install'); expect(failed).toBe(false);
-  expect(calls.some(call => call.includes('rm'))).toBe(false);
+it.each(['v01.2.3', 'v1.2.3-rc.1', 'latest', 'v1.2', 'v1.2.3;exit'])('rejects non-stable version %s', async version => {
+  await expect(shell('version_number "$VERSION"', {VERSION: version})).rejects.toThrow();
 });
-
-it('retries pending cleanup after post-switch verification fails', async () => {
-  expect((await execute('corrupt-download')).failed).toBe(true);
-  expect(await readFile(join(directory, 'deploy/.upgrade-images'), 'utf8')).toContain('sha256:');
-  expect((await execute()).failed).toBe(false);
-  await expect(readFile(join(directory, 'deploy/.upgrade-images'))).rejects.toThrow();
+it('compares semantic version numbers numerically', async () => {
+  expect(JSON.parse((await shell('version_number v10.2.31')).stdout)).toEqual([10, 2, 31]);
+});
+it('refuses historical migration checksum differences', async () => {
+  await writeFile(join(directory, 'release.json'), JSON.stringify(manifest));
+  const code = 'config=unused; sql() { printf \'{"24":"wrong"}\'; }; compatible_database "$TEST_DIR/release.json"';
+  await expect(shell(code)).rejects.toThrow();
+});
+it('filters drafts, prereleases, unfinished and old releases, and sorts the compatible choices', async () => {
+  const releases = ['v1.1.0','v1.2.0','v1.10.0','v1.3.0','v2.0.0','v1.20.0'].map(tag => ({tag_name:tag,
+    draft: tag === 'v2.0.0', prerelease: tag === 'v1.20.0', assets:tag === 'v1.3.0' ? [] : [{name:'quorum-server-release.json',
+      browser_download_url:`https://github.com/brepublic/Quorum/releases/download/${tag}/quorum-server-release.json`}]}));
+  await writeFile(join(directory, 'fixture-releases.json'), JSON.stringify(releases));
+  for (const tag of ['v1.2.0','v1.10.0']) await writeFile(join(directory, `fixture-release-${tag}.json`), JSON.stringify({...manifest,version:tag}));
+  const result = await shell(`temporary="$TEST_DIR"; current_version=v1.1.0; repository=brepublic; github_repository=brepublic/Quorum; requested_version=v1.10.0
+    compatible_database() { return 0; }
+    fetch() { if [[ $1 == *api.github.com* ]]; then cat "$TEST_DIR/fixture-releases.json"; else local tag=\${1%/*}; tag=\${tag##*/}; cat "$TEST_DIR/fixture-release-$tag.json"; fi; }
+    select_release`);
+  expect(result.stdout.trim().split('\n')).toEqual(['1. v1.10.0','  2. v1.2.0']);
+  expect(JSON.parse(await readFile(join(directory, 'release.json'), 'utf8')).version).toBe('v1.10.0');
+});
+it('does not continue after a discovery network failure', async () => {
+  await expect(shell(`temporary="$TEST_DIR"; current_version=v1.1.0; github_repository=brepublic/Quorum
+    fetch() { return 22; }; select_release; touch "$TEST_DIR/unsafe"`)).rejects.toThrow();
+  await expect(readFile(join(directory, 'unsafe'))).rejects.toThrow();
+});
+it('does not continue restoration after checksum validation fails, including from the EXIT handler', async () => {
+  await mkdir(join(directory, 'state'));
+  await writeFile(join(directory, 'state/phase'), 'verifying');
+  await writeFile(join(directory, 'state/SHA256SUMS'), `${digest}  missing.tar\n`);
+  await expect(shell(`state="$TEST_DIR/state"; deploy="$TEST_DIR"; temporary="$TEST_DIR/temp"; project=test
+    mkdir "$temporary"
+    docker() { return 0; }; stop_services() { return 0; }; compose_file() { return 0; }
+    volume_io() { touch "$TEST_DIR/unsafe"; }; trap on_exit EXIT; false`)).rejects.toThrow();
+  await expect(readFile(join(directory, 'unsafe'))).rejects.toThrow();
+  expect(await readFile(join(directory, 'state/phase'), 'utf8')).toBe('verifying');
+});
+it.each(['committed','rollback-verified'])('never replays a snapshot after %s', async stage => {
+  await mkdir(join(directory, 'state'));
+  await writeFile(join(directory, 'state/phase'), stage);
+  await shell(`state="$TEST_DIR/state"; finish_upgrade() { echo new; }; finish_rollback() { echo old; }
+    restore_previous() { touch "$TEST_DIR/unsafe"; }; recover`);
+  await expect(readFile(join(directory, 'unsafe'))).rejects.toThrow();
+});
+it('rejects missing snapshots once verification has started', async () => {
+  await mkdir(join(directory, 'state')); await writeFile(join(directory, 'state/phase'), 'restoring');
+  await expect(shell(`state="$TEST_DIR/state"; project=test; docker() { return 0; }; stop_services() { return 0; }; compose_file() { return 0; }
+    restore_previous`)).rejects.toThrow();
+});
+it('fails closed on an unknown recovery stage', async () => {
+  await mkdir(join(directory, 'state')); await writeFile(join(directory, 'state/phase'), 'invalid');
+  await expect(shell('state="$TEST_DIR/state"; recover')).rejects.toThrow();
+});
+it('refuses insufficient backup space before stopping any service', async () => {
+  await mkdir(join(directory, 'state'));
+  await expect(shell(`state="$TEST_DIR/state"; volume_io() { echo 1024; }
+    df() { printf 'Filesystem 1024-blocks Used Available Capacity Mounted\\nfixture 1024 1023 1 99%% /\\n'; }
+    stop_services() { touch "$TEST_DIR/unsafe"; }; run_transaction`)).rejects.toThrow();
+  await expect(readFile(join(directory, 'unsafe'))).rejects.toThrow();
+});
+it('preserves original comments and environment substitutions while changing only release pins', async () => {
+  const yaml = '# local settings\nx-quorum-release-commit: old\nservices:\n  app:\n    image: old-app\n    environment:\n      PASSWORD: ${PASSWORD}\n  caddy:\n    image: old-caddy\n  postgres:\n    image: old-db\n';
+  await writeFile(join(directory, 'original.yaml'), yaml);
+  await writeFile(join(directory, 'release.json'), JSON.stringify(manifest));
+  await writeFile(join(directory, 'current.json'), JSON.stringify({services:{app:{image:'old'},caddy:{image:'old'},postgres:{image:'old'}}}));
+  await shell(`config="$TEST_DIR/original.yaml"; temporary="$TEST_DIR"; target_commit=${commit}
+    compose_file() { cat "$TEST_DIR/current.json"; }; write_target_config`);
+  const written = await readFile(join(directory, 'target.yaml'), 'utf8');
+  expect(written).toContain('# local settings'); expect(written).toContain('PASSWORD: ${PASSWORD}');
+  expect(written).toContain(manifest.images.app); expect(written).toContain(manifest.images.caddy);
+  expect(await readFile(join(directory, 'original.yaml'), 'utf8')).toBe(yaml);
+});
+it('publishes reproducible source migration checksums with a complete stable release', async () => {
+  await writeFile(join(directory, 'images.json'), JSON.stringify(manifest.images));
+  await run('node', [resolve('scripts/server-release.mjs'),join(directory,'images.json'),join(directory,'release.json')], {
+    env:{...process.env,RELEASE_TAG:'v1.2.0',GITHUB_SHA:commit,GITHUB_REPOSITORY_OWNER:'brepublic'}});
+  const result=JSON.parse(await readFile(join(directory,'release.json'),'utf8'));
+  expect(result.migrations['89']).toMatch(/^[a-f0-9]{64}$/);
+  await shell('repository=brepublic; validate_release v1.2.0 "$TEST_DIR/release.json"');
+});
+it('does not publish automatic upgrade metadata for a prerelease', async () => {
+  await writeFile(join(directory,'images.json'),JSON.stringify(manifest.images));
+  await expect(run('node',[resolve('scripts/server-release.mjs'),join(directory,'images.json'),join(directory,'release.json')],{
+    env:{...process.env,RELEASE_TAG:'v1.2.0-rc.1',GITHUB_SHA:commit,GITHUB_REPOSITORY_OWNER:'brepublic'}})).rejects.toThrow();
+  await expect(readFile(join(directory,'release.json'))).rejects.toThrow();
 });

@@ -8,9 +8,9 @@ Compose 同时启动 Caddy、Quorum TypeScript 后端和 PostgreSQL。PostgreSQL
 
 把已通过 `Integration Tests` 的提交合入 `master` 后，先把发布工作流所在提交推送到 GitHub，再为该提交创建形如 `v1.0.0` 的 GitHub Release。`Publish release images` 先从同一发布提交构建并验收 Windows EXE 与 Linux AppImage，再运行前端、服务端、PostgreSQL 和镜像启动检查，再将检查过的 `linux/amd64` 应用与 Caddy 镜像发布到 `ghcr.io/<仓库所有者>/quorum-app` 和 `ghcr.io/<仓库所有者>/quorum-caddy`。工作流只在发布步骤使用 GitHub 自动提供的短期令牌；不需要把个人令牌写进仓库、工作流或聊天。
 
-工作流成功后，从该次 GitHub Actions 运行摘要复制两条带 `@sha256:` 的完整镜像地址。当前 `v1.0.0` 的应用与 Caddy 镜像均为公开包，生产服务器可匿名拉取。`deploy/compose.production.yaml` 是独立的生产配置，固定这两张镜像和 PostgreSQL 16 镜像的内容哈希，并包含全部端口、健康检查和命名卷设置；服务器不需要仓库源码或 `deploy/compose.yaml`。Compose 项目标识为小写 `quorum`。
+工作流成功后，在运行摘要记录固定镜像地址，并最后上传 `quorum-server-release.json`；自动升级只接受带这份完整清单的正式版本。首次部署仍使用已核对的生产模板。当前 `v1.0.0` 的应用与 Caddy 镜像均为公开包，生产服务器可匿名拉取。`deploy/compose.production.yaml` 是独立的生产配置，固定这两张镜像和 PostgreSQL 16 镜像的内容哈希，并包含全部端口、健康检查和命名卷设置；服务器不需要仓库源码或 `deploy/compose.yaml`。Compose 项目标识为小写 `quorum`。
 
-发布镜像后，再更新生产 Compose 中的镜像哈希、版本、发布提交编号和 `deploy/.env.production.example`。`Integration Tests` 会核对发布标签仍指向该提交，把生产 Compose 的运行设置与该提交中的 `deploy/compose.yaml` 对比，并确认固定镜像可拉取、适用于 `linux/amd64`；当前开发版 Compose 后续变化不会要求立即改动生产文件。更新生产配置的提交须通过这项检查后再传送到服务器。
+维护仓库的首次部署模板时，更新生产 Compose 中的镜像哈希、版本、发布提交编号和 `deploy/.env.production.example`。已部署服务器使用下文的升级脚本自动选择版本、更新本机固定镜像，无须手工替换配置。`Integration Tests` 会核对发布标签仍指向该提交，把生产 Compose 的运行设置与该提交中的 `deploy/compose.yaml` 对比，并确认固定镜像可拉取、适用于 `linux/amd64`；当前开发版 Compose 后续变化不会要求立即改动生产文件。更新生产配置的提交须通过这项检查后再传送到服务器。
 
 在开发机把 `deploy/compose.production.yaml`、`deploy/.env.production.example` 和 `deploy/upgrade.sh` 复制到服务器的 `/opt/quorum/deploy/`。真正的 `deploy/.env` 只在服务器创建，不能提交到 Git、放进镜像或从开发机传输。保留所用配置文件的 SHA-256 校验值和三张镜像地址，供日后核对。首次启动前检查展开结果，不要打印含密码的完整配置：
 
@@ -44,18 +44,28 @@ docker compose -p quorum --env-file deploy/.env \
 
 发布工作流先校验两平台的提交、干净源码状态、Agent 版本和所有发行产物的大小／SHA-256。缺少平台、对应源码或校验失败即停止；不使用 `latest`，不从其他工作流的“最近一次成功”选取安装包。前端把同一清单编入页面，Caddy 提供带版本的路径，缺失文件直接返回 404。源码开发构建没有安装包时，菜单显示“此版本暂无安装包”。
 
-更新固定镜像的生产 Compose 后，保留原 `deploy/.env`，在服务器运行：
+在服务器直接运行，按提示从兼容的正式版本中选择：
 
 ```sh
 cd /opt/quorum
 sudo bash deploy/upgrade.sh
+# 非交互使用同一套版本、兼容性及完整性检查：
+# sudo bash deploy/upgrade.sh --release vX.Y.Z
 ```
 
-脚本需要 Bash、Docker Compose、jq、curl、sha256sum、flock。它拉取镜像，核对应用／网站的发布标签和源码提交，校验镜像中的安装包，再启动新容器。HTTPS 就绪、运行版本、下载清单和两份安装包的实际下载哈希全部通过后，才清理此次替换的旧应用／网站镜像；下载校验流式进行，不在服务器另存一份安装包。镜像内的 `QUORUM_BUILD_VERSION` 优先于旧 `.env` 中的显示版本，避免升级后仍报告旧版本。自建 CA 可通过 `CURL_CA_BUNDLE` 指定，使用 sudo 时显式传递该环境变量；不关闭 TLS 验证。
+需要 Linux、Bash、Docker Compose（支持 `config --hash`）、jq、curl 和 GNU coreutils。脚本从 GitHub Releases 分页读取已经完成发布的稳定版本，检查数据库已有迁移的校验值，下载固定镜像并核对发布标签、源码提交、平台、PostgreSQL 16 和安装包。只改原始 Compose 中的三张镜像及发布提交，不展开或重写 `.env` 中的密码和密钥，不覆盖本机其他设置。运行配置与磁盘配置不一致、额外挂载、外置数据库表空间及不支持的部署结构会停止升级。
 
-升级期间需暂存新旧两套镜像。拉取失败不会切换容器；切换后的验收失败会保留旧镜像并返回失败，不自动回滚数据库。清理记录位于 `deploy/.upgrade-images`，中断或清理失败后可重跑同一脚本继续验证和清理。其他容器仍使用的旧镜像、有其他仓库引用的镜像不删除，并明确报告清理未完成；不执行全局 prune、不删除数据卷。更早的历史镜像不在自动清理范围内。
+下载与预检查期间旧服务继续运行。切换前关闭公网入口，停止应用，拒绝仍有执行中文件／Agent 任务的情况；然后停止数据库，将 PostgreSQL、服务器文件（包括暂存、缓存、隐藏文件）、Caddy 数据及配置四个卷完整冷备份到私有的 `deploy/.upgrade/`，保存原始 Compose、`.env`、实际运行镜像和 SHA-256。需要暂存新旧镜像以及完整恢复点，空间不足就停止。此恢复点只用于本次升级，不能替代异地备份。
 
-直接执行 `docker compose up` 仍会切换网站内的安装包，但不会自动清理旧镜像；需要上述升级入口才完成清理。现有生产 Compose 仍固定已发布版本，本次源码改动不会虚构新镜像哈希；等新发行成功后按前文更新它。旧发行不含下载清单和版本标签，不能使用此脚本作为升级目标。
+新版本先在 Docker 内部网络运行，不发布端口、不开放业务 API，不启动后台清理、迁移或 Agent 任务。宿主机直接连接隔离容器的 HTTPS 地址，验证就绪、版本、页面、安装包下载哈希，以及原文件卷内容未被意外改动。自建 CA 使用 `CURL_CA_BUNDLE`，使用 sudo 时显式保留此变量；不关闭 TLS 校验。
+
+验收前失败会停止新服务，校验恢复材料，恢复全部数据卷及原始配置，再验证、启动旧版本。恢复会覆盖本次升级使用的四个卷，操作范围由升级前保存的部署信息限定；不会删除数据卷或操作其他项目。进程被杀、终端断开或主机重启后，重新运行同一脚本会先处理未完成事务。恢复中再次中断会从同一个完整恢复点重做，不使用半份备份。归档校验失败时保留维护状态和恢复材料，不能跳过校验强行启动。
+
+验收通过后先持久记录成功，再恢复正常网络、后台任务和用户访问。此后中断会继续启动／清理，**不会再恢复旧数据库**，避免覆盖新业务数据。成功后删除临时恢复点，只清理本次替换且不再被容器或其他仓库引用的应用／网站镜像；不做全局 prune，不清理 PostgreSQL 的共享镜像。实际清理失败保留事务，重跑继续清理。
+
+当前支持标准三服务、四命名卷的 Linux amd64 部署及 PostgreSQL 16；跨 PostgreSQL 大版本、需要改变部署结构或文件布局的版本不作为普通自动升级目标。不会升级宿主机操作系统／Docker，也不会替换主席电脑上已安装的 Agent。旧发行没有完整发布清单时不列为目标；当前仓库的首次部署模板继续固定已有发行，不虚构新镜像地址。
+
+开发验证运行 `bash scripts/test-upgrade.sh`。它创建独立项目、真实 PostgreSQL、文件卷和 HTTPS，构造旧／新应用及故障迁移，验证失败回滚、备份中断、迁移后中断、恢复再次中断和提交后恢复，并核对账号登录、私有文件授权下载、文件字节及原配置。仅 GitHub／镜像发现由受控发布数据代替，安装包使用传输测试字节，不代表原生安装验收。
 
 ## 现有实例的北京规则升级
 
