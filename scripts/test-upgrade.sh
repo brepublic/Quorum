@@ -33,7 +33,7 @@ trap cleanup EXIT
 if [[ -z ${QUORUM_UPGRADE_TEST_APP:-} ]]; then
   docker build --target app-runtime -f deploy/Dockerfile -t "$base_app" . > "$work/build.log" 2>&1
 fi
-mkdir -p "$work/deploy" "$work/assets/downloads/chair-agent/v1.1.0"
+mkdir -p "$work/deploy" "$work/assets/downloads/chair-agent/v1.1.0-rc.1"
 cp deploy/upgrade.sh "$work/deploy/upgrade.sh"
 cat > "$work/old.Dockerfile" <<EOF2
 FROM $base_app
@@ -61,8 +61,8 @@ SH
 cat > "$work/new.Dockerfile" <<EOF2
 FROM $base_app
 COPY 9000_upgrade_acceptance.sql /app/server/migrations/
-LABEL io.quorum.release="v1.1.0"
-ENV QUORUM_BUILD_VERSION=v1.1.0
+LABEL io.quorum.release="v1.1.0-rc.1"
+ENV QUORUM_BUILD_VERSION=v1.1.0-rc.1
 EOF2
 docker build -q -f "$work/new.Dockerfile" -t "$project-new:local" "$work" >/dev/null
 cat > "$work/corrupt.Dockerfile" <<EOF2
@@ -77,16 +77,16 @@ FROM $project-corrupt:local
 COPY 9001_broken.sql /app/server/migrations/
 EOF2
 docker build -q -f "$work/broken.Dockerfile" -t "$project-broken:local" "$work" >/dev/null
-printf 'transport fixture EXE\n' > "$work/assets/downloads/chair-agent/v1.1.0/windows.exe"
-printf 'transport fixture AppImage\n' > "$work/assets/downloads/chair-agent/v1.1.0/linux.AppImage"
+printf 'transport fixture EXE\n' > "$work/assets/downloads/chair-agent/v1.1.0-rc.1/windows.exe"
+printf 'transport fixture AppImage\n' > "$work/assets/downloads/chair-agent/v1.1.0-rc.1/linux.AppImage"
 node --input-type=module - "$work" <<'JS'
 import {readFileSync,writeFileSync} from 'node:fs'; import {createHash} from 'node:crypto';
 const work=process.argv[2], platforms={};
 for (const [platform,file] of [['windows','windows.exe'],['linux','linux.AppImage']]) {
-  const bytes=readFileSync(`${work}/assets/downloads/chair-agent/v1.1.0/${file}`);
-  platforms[platform]={file,url:`/downloads/chair-agent/v1.1.0/${file}`,sha256:createHash('sha256').update(bytes).digest('hex'),size:bytes.length};
+  const bytes=readFileSync(`${work}/assets/downloads/chair-agent/v1.1.0-rc.1/${file}`);
+  platforms[platform]={file,url:`/downloads/chair-agent/v1.1.0-rc.1/${file}`,sha256:createHash('sha256').update(bytes).digest('hex'),size:bytes.length};
 }
-writeFileSync(`${work}/assets/downloads/chair-agent/manifest.json`,JSON.stringify({schemaVersion:1,serverVersion:'v1.1.0',commit:'a'.repeat(40),platforms}));
+writeFileSync(`${work}/assets/downloads/chair-agent/manifest.json`,JSON.stringify({schemaVersion:1,serverVersion:'v1.1.0-rc.1',commit:'a'.repeat(40),platforms}));
 JS
 printf '<div id="root"></div><!-- new website -->\n' > "$work/assets/index.html"
 cp deploy/Caddyfile "$work/Caddyfile"
@@ -98,8 +98,8 @@ EOF2
 docker build -q -f "$work/caddy.Dockerfile" -t "$project-caddy:local" "$work" >/dev/null
 cp -r "$work/assets" "$work/old-assets"
 printf '<div id="root"></div><!-- old website -->\n' > "$work/old-assets/index.html"
-mv "$work/old-assets/downloads/chair-agent/v1.1.0" "$work/old-assets/downloads/chair-agent/v1.0.0"
-sed -i 's/v1.1.0/v1.0.0/g' "$work/old-assets/downloads/chair-agent/manifest.json"
+mv "$work/old-assets/downloads/chair-agent/v1.1.0-rc.1" "$work/old-assets/downloads/chair-agent/v1.0.0"
+sed -i 's/v1.1.0-rc.1/v1.0.0/g' "$work/old-assets/downloads/chair-agent/manifest.json"
 cat > "$work/caddy-old.Dockerfile" <<EOF2
 FROM $project-caddy:local
 RUN rm -rf /srv/downloads
@@ -188,10 +188,14 @@ source "$TEST_WORK/deploy/upgrade.sh"
 # Only GitHub/registry discovery is substituted. All switching, backup, restore,
 # migrations, data writes, TLS downloads and Docker restart policies are real.
 select_release() {
+  if [[ ${TEST_FAULT:-} == inspect-prerelease ]]; then
+    [[ $current_version == v1.1.0-rc.1 && $allow_prerelease == true ]]
+    echo "TEST reached inspect-prerelease"; return 2
+  fi
   jq -n --arg app "$(docker image inspect --format '{{.Id}}' "$TEST_PROJECT-${TEST_IMAGE:-new}:local")" \
     --arg caddy "$(docker image inspect --format '{{.Id}}' "$TEST_PROJECT-caddy:local")" \
     --arg postgres "$(docker image inspect --format '{{.Id}}' postgres:16-alpine)" \
-    '{version:"v1.1.0",commit:("a" * 40),images:{app:$app,caddy:$caddy,postgres:$postgres}}' > "$temporary/release.json"
+    '{version:"v1.1.0-rc.1",commit:("a" * 40),images:{app:$app,caddy:$caddy,postgres:$postgres}}' > "$temporary/release.json"
 }
 pull_release() { cp "$TEST_WORK/assets/downloads/chair-agent/manifest.json" "$temporary/manifest.json"; }
 # Pause the real restore container after erasing the file volume, before extraction.
@@ -270,7 +274,7 @@ rm() {
   fi
   command rm "$@"
 }
-upgrade_main
+upgrade_main --prerelease
 SH
 export TEST_WORK="$work" TEST_PROJECT="$project"
 run_driver() {
@@ -322,7 +326,7 @@ assert_restored() {
   test "$("${compose[@]}" ps -q postgres | xargs docker inspect --format '{{.Image}}')" = "$postgres_image"
   curl -fsS "https://localhost:$port/" | grep -q 'old website'
   curl -fsS "https://localhost:$port/downloads/chair-agent/manifest.json" | jq -e '.serverVersion == "v1.0.0"' >/dev/null
-  test "$(curl -sS -o /dev/null -w '%{http_code}' "https://localhost:$port/downloads/chair-agent/v1.1.0/windows.exe")" = 404
+  test "$(curl -sS -o /dev/null -w '%{http_code}' "https://localhost:$port/downloads/chair-agent/v1.1.0-rc.1/windows.exe")" = 404
 }
 # These checks must fail before any service is stopped or recovery point activated.
 reject_preflight() {
@@ -413,9 +417,12 @@ test ! -d "$work/deploy/.upgrade.done"
 test "$("${compose[@]}" ps -q app | xargs docker inspect --format '{{.Image}}')" = "$(docker image inspect --format '{{.Id}}' "$project-new:local")"
 test "$("${compose[@]}" ps -q caddy | xargs docker inspect --format '{{.Image}}')" = "$(docker image inspect --format '{{.Id}}' "$project-caddy:local")"
 port=$("${compose[@]}" port caddy 443); port=${port##*:}
-curl -fsS "https://localhost:$port/api/v1/version" | jq -e '.data.version == "v1.1.0"' >/dev/null
+curl -fsS "https://localhost:$port/api/v1/version" | jq -e '.data.version == "v1.1.0-rc.1"' >/dev/null
 curl -fsS "https://localhost:$port/" | grep -q 'new website'
-curl -fsS "https://localhost:$port/downloads/chair-agent/manifest.json" | jq -e '.serverVersion == "v1.1.0"' >/dev/null
+curl -fsS "https://localhost:$port/downloads/chair-agent/manifest.json" | jq -e '.serverVersion == "v1.1.0-rc.1"' >/dev/null
 cmp "$work/baseline.env" "$work/deploy/.env"
 echo 'PASS: interruptions after commit, public activation and partial cleanup retain the new version and all new writes'
+run_driver inspect-prerelease
+test ! -d "$work/deploy/.upgrade"
+echo 'PASS: the running prerelease is recognized on a later upgrade invocation'
 echo 'Real upgrade and rollback acceptance passed.'

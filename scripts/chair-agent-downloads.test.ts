@@ -25,13 +25,13 @@ async function fixture() {
   }
   return options;
 }
-it('ships only two installers and pins both URLs and release identity', async () => {
-  const options = await fixture(); const manifest = await prepareDownloads(options);
+it.each(['v1.3.0', 'v1.3.0-rc.1'])('ships only two installers and pins both URLs and release identity for %s', async tag => {
+  const options = {...await fixture(), tag}; const manifest = await prepareDownloads(options);
   expect(await readdir(join(options.output, options.tag))).toEqual(['Agent-Setup.exe', 'Agent.AppImage']);
-  expect(manifest.releaseUrl).toBe('https://github.com/brepublic/Quorum/releases/tag/v1.3.0');
-  expect(manifest.platforms.windows.url).toBe('/downloads/chair-agent/v1.3.0/Agent-Setup.exe');
+  expect(manifest.releaseUrl).toBe(`https://github.com/brepublic/Quorum/releases/tag/${tag}`);
+  expect(manifest.platforms.windows.url).toBe(`/downloads/chair-agent/${tag}/Agent-Setup.exe`);
   expect(await checksum(join(options.output, options.tag, 'Agent.AppImage'))).toBe(manifest.platforms.linux.sha256);
-  expect(await readFile(join(options.output, 'SHA256SUMS'), 'utf8')).toContain(`${manifest.platforms.windows.sha256}  v1.3.0/Agent-Setup.exe`);
+  expect(await readFile(join(options.output, 'SHA256SUMS'), 'utf8')).toContain(`${manifest.platforms.windows.sha256}  ${tag}/Agent-Setup.exe`);
 });
 it.each(['commit', 'sourceDirty', 'version'])('rejects mismatched %s before copying installers', async field => {
   const options = await fixture(); const path = join(options.linux, 'release-manifest.json');

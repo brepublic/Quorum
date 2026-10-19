@@ -130,7 +130,6 @@ jobs:
           done
 
       - name: Publish completed server release manifest
-        if: ${{ !github.event.release.prerelease }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

@@ -3,8 +3,9 @@ import {readFile, readdir, writeFile} from 'node:fs/promises';
 
 // Published only after the tested app, website and PostgreSQL pins are available.
 const {RELEASE_TAG: version, GITHUB_SHA: commit, GITHUB_REPOSITORY_OWNER: owner} = process.env;
-if (!/^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(version ?? '')) {
-  throw new Error('Automatic upgrades require a stable release tag.');
+const tag = /^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/.exec(version ?? '');
+if (!tag || tag[4]?.split('.').some(part => /^\d+$/.test(part) && !/^(0|[1-9][0-9]*)$/.test(part))) {
+  throw new Error('Automatic upgrades require a vX.Y.Z or vX.Y.Z-prerelease tag.');
 }
 if (!/^[a-f0-9]{40}$/.test(commit ?? '') || !/^[A-Za-z0-9-]+$/.test(owner ?? '')) throw new Error('Invalid release identity');
 const images = JSON.parse(await readFile(process.argv[2], 'utf8'));

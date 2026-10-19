@@ -24,9 +24,33 @@ remove_isolated_network() {
   if [[ -n $network ]]; then docker network rm "$network" >/dev/null; fi
 }
 fetch() { curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 120 --retry 2 "$@"; }
-version_number() { jq -en --arg v "$1" '$v | capture("^v(?<a>0|[1-9][0-9]*)\\.(?<b>0|[1-9][0-9]*)\\.(?<c>0|[1-9][0-9]*)$") | [.a,.b,.c] | map(tonumber)'; }
+# SemVer precedence: stable follows prereleases; numeric identifiers sort by
+# value, before text. Length/string pairs avoid rounding large version numbers.
+version_filter='
+  def number_key: [length, .];
+  def version_key:
+    capture("^v(?<a>0|[1-9][0-9]*)\\.(?<b>0|[1-9][0-9]*)\\.(?<c>0|[1-9][0-9]*)(?:-(?<pre>[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*))?$") |
+    select([(.pre // "" | split("."))[] | select(test("^[0-9]+$")) | test("^(0|[1-9][0-9]*)$")] | all) |
+    [(.a | number_key), (.b | number_key), (.c | number_key),
+     (if .pre == null then 1 else 0 end),
+     (if .pre == null then [] else .pre | split(".") |
+       map(if test("^[0-9]+$") then [0, number_key] else [1, .] end) end)];'
+version_number() { jq -en --arg v "$1" "$version_filter"' $v | version_key'; }
+
+select_channel() {
+  local answer
+  printf '  1. 正式版本（默认）\n  2. 包含预发布版本（测试）\n'
+  read -r -p '选择版本范围 [1]，或输入 q 退出：' answer
+  case "$answer" in
+    ''|1) allow_prerelease=false ;;
+    2) allow_prerelease=true ;;
+    q) return 2 ;;
+    *) fail '无效选择。' ;;
+  esac
+}
 
 validate_release() {
+  version_number "$1" >/dev/null || return 1
   jq -e --arg tag "$1" --arg repo "$repository" '
     .schemaVersion == 1 and .upgradeProtocol == 1 and .deploymentSchema == 1 and
     .version == $tag and (.commit | test("^[a-f0-9]{40}$")) and .platform == "linux/amd64" and
@@ -41,7 +65,8 @@ validate_release() {
 }
 
 select_release() {
-  local page count index=0 tag url asset chosen answer
+  local page count index=0 tag url release_root asset chosen answer prerelease
+  if [[ -z ${requested_version:-} && ${allow_prerelease:-false} == false ]]; then select_channel; fi
   local current_number; current_number=$(version_number "$current_version")
   : > "$temporary/candidates"
   # GitHub's latest endpoint alone can point at a release whose images are still building.
@@ -49,18 +74,21 @@ select_release() {
     fetch "https://api.github.com/repos/$github_repository/releases?per_page=100&page=$page" > "$temporary/releases.json"
     jq -e 'type == "array"' "$temporary/releases.json" >/dev/null
     count=$(jq length "$temporary/releases.json")
-    jq -r --argjson current "$current_number" '
-      .[] | select(.draft == false and .prerelease == false) |
-      select(.tag_name | test("^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$")) |
-      select((.tag_name[1:] | split(".") | map(tonumber)) > $current) |
-      . as $r | .assets[] | select(.name == "quorum-server-release.json") |
-      [$r.tag_name,.browser_download_url] | @tsv' "$temporary/releases.json" >> "$temporary/candidates"
+    jq -c --argjson current "$current_number" --argjson allow "${allow_prerelease:-false}" "$version_filter"'
+      .[] | select(.draft == false and (.prerelease == false or ($allow and .prerelease == true))) |
+      . as $r | (try ($r.tag_name | version_key) catch empty) as $key |
+      select($key > $current and ($allow or $key[3] == 1)) |
+      $r.assets[] | select(.name == "quorum-server-release.json") |
+      {tag: $r.tag_name, url: .browser_download_url, key: $key, prerelease: ($r.prerelease or $key[3] == 0)}
+    ' "$temporary/releases.json" >> "$temporary/candidates"
     ((count == 100)) || break
   done
-  sort -t $'\t' -k1,1Vr -u "$temporary/candidates" > "$temporary/sorted"
-  while IFS=$'\t' read -r tag url; do
+  jq -sr 'unique_by(.tag) | sort_by(.key) | reverse | .[] | [.tag,.url,.prerelease] | @tsv' "$temporary/candidates" > "$temporary/sorted"
+  : > "$temporary/choices"
+  while IFS=$'\t' read -r tag url prerelease; do
     [[ -n $tag ]] || continue
-    [[ ${url,,} == "https://github.com/${github_repository,,}/releases/download/$tag/quorum-server-release.json" ]] || continue
+    release_root=${url%"/releases/download/$tag/quorum-server-release.json"}
+    [[ $release_root != "$url" && ${release_root,,} == "https://github.com/${github_repository,,}" ]] || continue
     asset="$temporary/release-$tag.json"
     fetch "$url" > "$asset"
     if ! validate_release "$tag" "$asset" || ! compatible_database "$asset"; then
@@ -68,7 +96,8 @@ select_release() {
     fi
     index=$((index + 1))
     printf '%s\t%s\n' "$index" "$tag" >> "$temporary/choices"
-    printf '  %s. %s\n' "$index" "$tag"
+    if [[ $prerelease == true ]]; then printf '  %s. %s（预发布）\n' "$index" "$tag"
+    else printf '  %s. %s\n' "$index" "$tag"; fi
   done < "$temporary/sorted"
   ((index > 0)) || { echo '没有可用的兼容升级版本。'; return 2; }
   if [[ -n ${requested_version:-} ]]; then
@@ -408,7 +437,7 @@ on_exit() {
 }
 
 upgrade_main() {
-  for command in docker jq curl sha256sum flock sync awk sort; do command -v "$command" >/dev/null || fail "缺少命令：$command"; done
+  for command in docker jq curl sha256sum flock sync awk; do command -v "$command" >/dev/null || fail "缺少命令：$command"; done
   deploy=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
   config="$deploy/compose.production.yaml"; state="$deploy/.upgrade"
   exec 9>"$deploy/.upgrade.lock"; flock -n 9 || fail '另一个升级正在运行。'
@@ -429,8 +458,14 @@ upgrade_main() {
   repository=brepublic; github_repository=BREPUBLIC/Quorum
   if [[ -d $state ]]; then recover; return; fi
   rm -rf "$state.new"
-  requested_version=''
-  if (($# > 0)); then [[ $# == 2 && $1 == --release ]] || fail '用法：upgrade.sh [--release vX.Y.Z]'; requested_version=$2; fi
+  requested_version=''; allow_prerelease=false
+  while (($# > 0)); do
+    case "$1" in
+      --prerelease) allow_prerelease=true; shift ;;
+      --release) [[ $# -ge 2 && -z $requested_version ]] || fail '用法：upgrade.sh [--prerelease] [--release vX.Y.Z[-rc.N]]'; requested_version=$2; shift 2 ;;
+      *) fail '用法：upgrade.sh [--prerelease] [--release vX.Y.Z[-rc.N]]' ;;
+    esac
+  done
   compose_file "$config" config --format json > "$temporary/current.json"
   local container image
   container=$(compose_file "$config" ps -q app)

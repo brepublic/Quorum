@@ -8,7 +8,7 @@ Compose 同时启动 Caddy、Quorum TypeScript 后端和 PostgreSQL。PostgreSQL
 
 把已通过 `Integration Tests` 的提交合入 `master` 后，先把发布工作流所在提交推送到 GitHub，再为该提交创建形如 `v1.0.0` 的 GitHub Release。`Publish release images` 先从同一发布提交构建并验收 Windows EXE 与 Linux AppImage，再运行前端、服务端、PostgreSQL 和镜像启动检查，再将检查过的 `linux/amd64` 应用与 Caddy 镜像发布到 `ghcr.io/<仓库所有者>/quorum-app` 和 `ghcr.io/<仓库所有者>/quorum-caddy`。工作流只在发布步骤使用 GitHub 自动提供的短期令牌；不需要把个人令牌写进仓库、工作流或聊天。
 
-工作流成功后，在运行摘要记录固定镜像地址，并最后上传 `quorum-server-release.json`；自动升级只接受带这份完整清单的正式版本。首次部署仍使用已核对的生产模板。当前 `v1.0.0` 的应用与 Caddy 镜像均为公开包，生产服务器可匿名拉取。`deploy/compose.production.yaml` 是独立的生产配置，固定这两张镜像和 PostgreSQL 16 镜像的内容哈希，并包含全部端口、健康检查和命名卷设置；服务器不需要仓库源码或 `deploy/compose.yaml`。Compose 项目标识为小写 `quorum`。
+工作流成功后，在运行摘要记录固定镜像地址，并最后上传 `quorum-server-release.json`；正式版和预发布版都必须完成相同验收才会生成这份清单。自动升级默认只接受正式版本，预发布需要主动选择。首次部署仍使用已核对的生产模板。当前 `v1.0.0` 的应用与 Caddy 镜像均为公开包，生产服务器可匿名拉取。`deploy/compose.production.yaml` 是独立的生产配置，固定这两张镜像和 PostgreSQL 16 镜像的内容哈希，并包含全部端口、健康检查和命名卷设置；服务器不需要仓库源码或 `deploy/compose.yaml`。Compose 项目标识为小写 `quorum`。
 
 维护仓库的首次部署模板时，更新生产 Compose 中的镜像哈希、版本、发布提交编号和 `deploy/.env.production.example`。已部署服务器使用下文的升级脚本自动选择版本、更新本机固定镜像，无须手工替换配置。`Integration Tests` 会核对发布标签仍指向该提交，把生产 Compose 的运行设置与该提交中的 `deploy/compose.yaml` 对比，并确认固定镜像可拉取、适用于 `linux/amd64`；当前开发版 Compose 后续变化不会要求立即改动生产文件。更新生产配置的提交须通过这项检查后再传送到服务器。
 
@@ -44,16 +44,22 @@ docker compose -p quorum --env-file deploy/.env \
 
 发布工作流先校验两平台的提交、干净源码状态、Agent 版本和所有发行产物的大小／SHA-256。缺少平台、对应源码或校验失败即停止；不使用 `latest`，不从其他工作流的“最近一次成功”选取安装包。前端把同一清单编入页面，Caddy 提供带版本的路径，缺失文件直接返回 404。源码开发构建没有安装包时，菜单显示“此版本暂无安装包”。
 
-在服务器直接运行，按提示从兼容的正式版本中选择：
+在服务器直接运行，先选择版本范围，再选择兼容版本。回车默认“正式版本”；选择“包含预发布版本（测试）”后，列表也会显示标注为“预发布”的版本：
 
 ```sh
 cd /opt/quorum
 sudo bash deploy/upgrade.sh
 # 非交互使用同一套版本、兼容性及完整性检查：
 # sudo bash deploy/upgrade.sh --release vX.Y.Z
+# 包含预发布的版本列表：
+# sudo bash deploy/upgrade.sh --prerelease
+# 非交互选择预发布版本：
+# sudo bash deploy/upgrade.sh --prerelease --release vX.Y.Z-rc.1
 ```
 
-需要 Linux、Bash、Docker Compose（支持 `config --hash`）、jq、curl 和 GNU coreutils。脚本从 GitHub Releases 分页读取已经完成发布的稳定版本，检查数据库已有迁移的校验值，下载固定镜像并核对发布标签、源码提交、平台、PostgreSQL 16 和安装包。只改原始 Compose 中的三张镜像及发布提交，不展开或重写 `.env` 中的密码和密钥，不覆盖本机其他设置。当前三张镜像也必须使用内容哈希固定；可变标签、实际镜像或卷与配置不一致、其他容器占用备份卷（包括同项目容器）、额外挂载、外置数据库表空间及不支持的部署结构会停止升级。
+需要 Linux、Bash、Docker Compose（支持 `config --hash`）、jq、curl 和 GNU coreutils。脚本从 GitHub Releases 分页读取已完成发布清单的版本，按所选范围筛选，检查数据库已有迁移的校验值，下载固定镜像并核对发布标签、源码提交、平台、PostgreSQL 16 和安装包。只改原始 Compose 中的三张镜像及发布提交，不展开或重写 `.env` 中的密码和密钥，不覆盖本机其他设置。当前三张镜像也必须使用内容哈希固定；可变标签、实际镜像或卷与配置不一致、其他容器占用备份卷（包括同项目容器）、额外挂载、外置数据库表空间及不支持的部署结构会停止升级。
+
+预发布选择只对本次运行生效，支持 `vX.Y.Z-alpha.1`、`vX.Y.Z-beta.1`、`vX.Y.Z-rc.1` 等版本号。仍只提供比当前版本新的兼容版本，顺序为 `rc.2 < rc.10 < 同版本正式版`；运行预发布后也可以选择同版本正式发布。草稿、未完成发布和不兼容版本不显示，这个入口不提供降级。
 
 下载与预检查期间旧服务继续运行。切换前关闭公网入口，停止应用，拒绝仍有执行中文件／Agent 任务的情况；然后停止数据库，将 PostgreSQL、服务器文件（包括暂存、缓存、隐藏文件）、Caddy 数据及配置四个卷完整冷备份到私有的 `deploy/.upgrade/`，保存原始 Compose、`.env`、实际运行镜像和 SHA-256。需要暂存新旧镜像以及完整恢复点，空间不足就停止。此恢复点只用于本次升级，不能替代异地备份。
 

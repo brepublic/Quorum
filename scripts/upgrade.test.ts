@@ -31,11 +31,24 @@ it.each([
   await writeFile(join(directory, 'release.json'), JSON.stringify({...manifest, ...patch}));
   await expect(shell('repository=brepublic; validate_release v1.2.0 "$TEST_DIR/release.json"')).rejects.toThrow();
 });
-it.each(['v01.2.3', 'v1.2.3-rc.1', 'latest', 'v1.2', 'v1.2.3;exit'])('rejects non-stable version %s', async version => {
+it.each(['v01.2.3', 'v1.2.3-rc.01', 'v1.2.3-', 'v1.2.3-rc..1', 'v1.2.3+build', 'latest', 'v1.2', 'v1.2.3;exit'])('rejects invalid version %s', async version => {
   await expect(shell('version_number "$VERSION"', {VERSION: version})).rejects.toThrow();
 });
-it('compares semantic version numbers numerically', async () => {
-  expect(JSON.parse((await shell('version_number v10.2.31')).stdout)).toEqual([10, 2, 31]);
+it('orders numeric versions and prerelease identifiers before the corresponding stable release', async () => {
+  const expected = ['v1.2.0-1', 'v1.2.0-alpha', 'v1.2.0-alpha.1', 'v1.2.0-beta', 'v1.2.0-rc.2',
+    'v1.2.0-rc.10', 'v1.2.0', 'v1.10.0', 'v2.0.0', 'v10.2.31', 'v9007199254740992.0.0', 'v9007199254740993.0.0'];
+  await writeFile(join(directory, 'versions.json'), JSON.stringify([...expected].reverse()));
+  const result = await shell('jq -r "$version_filter"\' sort_by(version_key)[]\' "$TEST_DIR/versions.json"');
+  expect(result.stdout.trim().split('\n')).toEqual(expected);
+});
+it.each([['', 'false'], ['1', 'false'], ['2', 'true']])('selects the release scope with input %j', async (input, expected) => {
+  const result = await shell('select_channel <<< "$INPUT"; echo "allowed=$allow_prerelease"', {INPUT: input});
+  expect(result.stdout).toContain('2. 包含预发布版本（测试）');
+  expect(result.stdout).toContain(`allowed=${expected}`);
+});
+it.each(['q','bad'])('stops before discovery after scope selection %s', async input => {
+  await expect(shell('select_channel <<< "$INPUT"; touch "$TEST_DIR/unsafe"', {INPUT: input})).rejects.toThrow();
+  await expect(readFile(join(directory, 'unsafe'))).rejects.toThrow();
 });
 it('refuses historical migration checksum differences', async () => {
   await writeFile(join(directory, 'release.json'), JSON.stringify(manifest));
@@ -56,9 +69,64 @@ it('filters drafts, prereleases, unfinished and old releases, and sorts the comp
   expect(JSON.parse(await readFile(join(directory, 'release.json'), 'utf8')).version).toBe('v1.10.0');
 });
 it('does not continue after a discovery network failure', async () => {
-  await expect(shell(`temporary="$TEST_DIR"; current_version=v1.1.0; github_repository=brepublic/Quorum
+  await expect(shell(`temporary="$TEST_DIR"; current_version=v1.1.0; github_repository=brepublic/Quorum; requested_version=v1.2.0
     fetch() { return 22; }; select_release; touch "$TEST_DIR/unsafe"`)).rejects.toThrow();
   await expect(readFile(join(directory, 'unsafe'))).rejects.toThrow();
+});
+async function discoverPrereleases(current: string, requested: string, allow: boolean, input?: string) {
+  const tags = ['v1.1.0','v1.2.0-RC.1','v1.2.0-rc.1','v1.2.0-rc.2','v1.2.0-rc.10','v1.2.0','v1.3.0-beta.1','v1.4.0','v2.0.0-rc.1','v3.0.0-rc.1'];
+  await writeFile(join(directory, 'fixture-releases.json'), JSON.stringify(tags.map(tag => ({tag_name:tag,
+    draft: tag === 'v2.0.0-rc.1', prerelease: tag.includes('-rc.') || tag === 'v1.4.0',
+    assets:tag === 'v3.0.0-rc.1' ? [] : [{name:'quorum-server-release.json',
+      browser_download_url:`https://github.com/brepublic/Quorum/releases/download/${tag}/quorum-server-release.json`}]}))));
+  for (const tag of tags) await writeFile(join(directory, `fixture-release-${tag}.json`), JSON.stringify({...manifest,version:tag}));
+  return shell(`temporary="$TEST_DIR"; current_version="$CURRENT"; repository=brepublic; github_repository=brepublic/Quorum
+    requested_version="$REQUESTED"; allow_prerelease="$ALLOW"
+    compatible_database() { [[ $1 != *v1.2.0-rc.10.json ]]; }
+    fetch() { if [[ $1 == *api.github.com* ]]; then cat "$TEST_DIR/fixture-releases.json"; else local tag=\${1%/*}; tag=\${tag##*/}; cat "$TEST_DIR/fixture-release-$tag.json"; fi; }
+    select_release${input === undefined ? '' : ' <<< "$INPUT"'}`,
+  {CURRENT:current,REQUESTED:requested,ALLOW:String(allow),INPUT:input ?? ''});
+}
+it('includes compatible prereleases only after choosing the testing entry', async () => {
+  const result = await discoverPrereleases('v1.1.0', '', false, '2\n4');
+  expect(result.stdout).toContain('1. v1.4.0（预发布）');
+  expect(result.stdout).toContain('2. v1.3.0-beta.1（预发布）');
+  expect(result.stdout).toContain('3. v1.2.0\n');
+  expect(result.stdout).toContain('4. v1.2.0-rc.2（预发布）');
+  expect(result.stdout).not.toMatch(/v[23]\.0\.0/);
+  expect(result.stderr).toContain('跳过不兼容的版本：v1.2.0-rc.10');
+  expect(JSON.parse(await readFile(join(directory, 'release.json'), 'utf8')).version).toBe('v1.2.0-rc.2');
+});
+it('defaults to stable releases even when a prerelease tag lacks the GitHub prerelease flag', async () => {
+  const result = await discoverPrereleases('v1.1.0', '', false, '\n1');
+  expect(result.stdout).not.toContain('（预发布）');
+  expect(result.stdout).toContain('1. v1.2.0');
+  expect(JSON.parse(await readFile(join(directory, 'release.json'), 'utf8')).version).toBe('v1.2.0');
+});
+it('does not accept an explicitly requested prerelease without opting in', async () => {
+  await expect(discoverPrereleases('v1.1.0', 'v1.2.0-rc.2', false)).rejects.toThrow('指定版本不在可升级列表中');
+});
+it('preserves case-sensitive prerelease tags in GitHub asset URLs', async () => {
+  await discoverPrereleases('v1.1.0', 'v1.2.0-RC.1', true);
+  expect(JSON.parse(await readFile(join(directory, 'release.json'), 'utf8')).version).toBe('v1.2.0-RC.1');
+});
+it('does not accept a repository URL without the exact release asset path', async () => {
+  await writeFile(join(directory, 'fixture-releases.json'), JSON.stringify([{tag_name:'v1.2.0-rc.1',draft:false,prerelease:true,
+    assets:[{name:'quorum-server-release.json',browser_download_url:'https://github.com/brepublic/Quorum'}]}]));
+  await expect(shell(`temporary="$TEST_DIR"; current_version=v1.1.0; github_repository=brepublic/Quorum; allow_prerelease=true
+    fetch() { if [[ $1 == *api.github.com* ]]; then cat "$TEST_DIR/fixture-releases.json"; else touch "$TEST_DIR/unsafe"; return 22; fi; }
+    select_release`)).rejects.toMatchObject({code:2,stdout:expect.stringContaining('没有可用的兼容升级版本')});
+  await expect(readFile(join(directory, 'unsafe'))).rejects.toThrow();
+});
+it('allows a newer prerelease after opt-in and never offers older prereleases', async () => {
+  const result = await discoverPrereleases('v1.2.0-rc.1', 'v1.2.0-rc.2', true);
+  expect(result.stdout).toContain('v1.2.0-rc.2（预发布）');
+  expect(result.stdout).not.toContain('v1.2.0-rc.1');
+  await expect(discoverPrereleases('v1.2.0', 'v1.2.0-rc.2', true)).rejects.toThrow('指定版本不在可升级列表中');
+});
+it('can leave a prerelease for its stable release without opting into more prereleases', async () => {
+  const result = await discoverPrereleases('v1.2.0-rc.2', 'v1.2.0', false);
+  expect(result.stdout.trim()).toBe('1. v1.2.0');
 });
 it('does not continue restoration after checksum validation fails, including from the EXIT handler', async () => {
   await mkdir(join(directory, 'state'));
@@ -158,9 +226,18 @@ it('publishes reproducible source migration checksums with a complete stable rel
   expect(result.migrations['89']).toMatch(/^[a-f0-9]{64}$/);
   await shell('repository=brepublic; validate_release v1.2.0 "$TEST_DIR/release.json"');
 });
-it('does not publish automatic upgrade metadata for a prerelease', async () => {
+it('publishes the same complete upgrade metadata for a prerelease', async () => {
+  await writeFile(join(directory,'images.json'),JSON.stringify(manifest.images));
+  await run('node',[resolve('scripts/server-release.mjs'),join(directory,'images.json'),join(directory,'release.json')],{
+    env:{...process.env,RELEASE_TAG:'v1.2.0-rc.1',GITHUB_SHA:commit,GITHUB_REPOSITORY_OWNER:'brepublic'}});
+  const published=JSON.parse(await readFile(join(directory,'release.json'),'utf8'));
+  expect(published.version).toBe('v1.2.0-rc.1');
+  expect(published.migrations['89']).toMatch(/^[a-f0-9]{64}$/);
+  await shell('repository=brepublic; validate_release v1.2.0-rc.1 "$TEST_DIR/release.json"');
+});
+it.each(['v1.2.0-rc.01','v1.2.0-','v1.2.0-beta..1','v01.2.0','v1.2.0+build'])('rejects malformed release metadata tag %s', async tag => {
   await writeFile(join(directory,'images.json'),JSON.stringify(manifest.images));
   await expect(run('node',[resolve('scripts/server-release.mjs'),join(directory,'images.json'),join(directory,'release.json')],{
-    env:{...process.env,RELEASE_TAG:'v1.2.0-rc.1',GITHUB_SHA:commit,GITHUB_REPOSITORY_OWNER:'brepublic'}})).rejects.toThrow();
+    env:{...process.env,RELEASE_TAG:tag,GITHUB_SHA:commit,GITHUB_REPOSITORY_OWNER:'brepublic'}})).rejects.toThrow();
   await expect(readFile(join(directory,'release.json'))).rejects.toThrow();
 });
