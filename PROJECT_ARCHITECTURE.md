@@ -84,7 +84,7 @@ schema 86 将已发布规则的完整定义及原版本 ID 保存到不可变 `r
 
 ## 3. 服务端模块与数据边界
 
-`server/` 是单进程模块化单体。启动时使用 PostgreSQL advisory lock 执行带 SHA-256 校验和的顺序 migration；源码 schema compatibility 为 89。实例级 `system_settings` 保存新委员会的默认运作模式与创建者是否自动获得 Chair；它们只在创建事务中读取，不追溯既有委员会。系统管理员不能创建委员会。数据库版本、连接、存储目录可写性或容量采样不满足要求时 readiness 失败。
+`server/` 是单进程模块化单体。启动时使用 PostgreSQL advisory lock 执行带 SHA-256 校验和的顺序 migration；源码 schema compatibility 为 91。实例级 `system_settings` 保存新委员会的默认运作模式与创建者是否自动获得 Chair；它们只在创建事务中读取，不追溯既有委员会。系统管理员不能创建委员会。数据库版本、连接、存储目录可写性或容量采样不满足要求时 readiness 失败。
 
 | 模块 | 责任 |
 | --- | --- |
@@ -363,3 +363,17 @@ Windows Node Agent 的 GUI 和 CLI 共用原生 `quorum-agent-platform.exe` 辅�
 长期凭据及私有状态先创建空文件、将所有者设为当前用户并设置当前用户／SYSTEM／Administrators 的受保护 ACL，再写入内容并原子替换；读取凭据同时检查所有者和允许访问的 SID。Windows 提权令牌默认以 Administrators 组持有新文件，原生回归覆盖组所有者在保护前被拒绝、保护后归当前用户的文件和目录。辅助程序缺失时拒绝运行，不能回退到不加锁或仅设置 POSIX mode。开发脚本同时构建两个 Rust 可执行文件；CLI 可通过 `QUORUM_AGENT_PLATFORM` 指定辅助程序，否则查找 Node 相邻位置或开发构建目录。
 
 Windows 正常停止先关闭 Node CLI 的输入管道并等待清理，15 秒超时后强制结束。GUI 将桥接及其后代加入 kill-on-close Windows Job Object，窗口异常退出仍清理进程树。原生测试覆盖实际子进程与孙进程清理，隔离 HTTPS 测试覆盖启动、停止和恢复；正式窗口及现有 WSL 服务器的实际验收边界记录于 `docs/self-hosted/CHAIR_AGENT_WINDOWS_ACCEPTANCE.md`。
+
+### 服务器卷禁用策略（schema 90）
+
+`system_settings.server_volume_disabled` 由系统管理员通过带 revision、Origin 和 CSRF 的接口更新。服务器卷绑定、迁入、上传创建／接收／提交及新版本元数据写入统一校验策略。Agent、S3 和独立缓存不受影响。物理卷写入与策略变更通过 PostgreSQL advisory lock 协调；锁连接独立于业务连接池，防止等待者耗尽业务连接造成死锁。浏览器读取委员会策略并定时刷新，代表分享快照也包含提交限制。已有归档数据不会因开关自动清理。
+
+### 服务器卷盘点与管理员清理（schema 91）
+
+`ServerVolumeInventoryService` 将 `file_blobs`、版本引用、上传记录与 server-volume 目录中的普通文件对应，展示应用文件系统绝对路径；不遍历符号链接，不扫描独立缓存或 staging。客户端只能提交服务器生成的文件标识，不能指定删除路径。清理先持久化预览，确认时重新检查文件、引用和归档状态；管理员确认、策略切换与卷写入使用同一 advisory lock。确认会取消涉及目标副本的未完成迁移／上传，并标记内容清理状态；只删除指定服务器卷副本，保留业务文件和版本记录。`server_volume_cleanup_batches/items` 保存进度与重试，后台物理删除幂等，委员会永久删除级联移除相关条目。失败和完成记录可由管理员查看；独立缓存不受影响。
+
+服务器卷迁移至 S3 后与 Agent 一样安排 `file_blob_delete_jobs`，迁移 worker 补排已完成迁移的遗留源文件。迁移结果提供 sourceCleanup 计数；切换成功与物理源文件清理完成是两个状态。
+
+### 服务器卷浏览器回归
+
+新增开发依赖 `playwright-core` 和 `pnpm test:server-volume:e2e`。先在仓库根目录加载 `scripts/wsl-env.sh` 并执行 `pnpm build:self-host`，再设置 `TEST_DATABASE_ADMIN_URL` 运行测试；未设置数据库地址时明确 skip。Linux 默认使用 `/usr/bin/chromium`，其他位置通过 `CHROMIUM_EXECUTABLE` 指定。测试创建随机临时数据库和临时存储目录，启动真实后端及 Vite，使用独立管理员／主席浏览器会话验证策略、提交拦截、迁移入口、单文件／归档／全部清理的确认与实际文件释放，并检查桌面和手机宽度的列表与弹窗；结束后停止测试服务并移除临时数据库、目录。默认测试端口为 API 4319、Web 5178，可通过 `QUORUM_E2E_API_PORT`／`QUORUM_E2E_WEB_PORT` 改写。截图及结果保存在被 git 忽略的 `outputs/server-volume-e2e/`。

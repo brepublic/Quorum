@@ -50,7 +50,7 @@ async function render(audience: CommitteeWorkspaceSnapshot['viewer']['audience']
   currentUser: SelfHostedUser = user,
   customize: (value: CommitteeWorkspaceSnapshot) => CommitteeWorkspaceSnapshot = value => value,
   apiOverrides: Partial<SelfHostedApi> = {}) {
-  const api = {snapshot: vi.fn(async () => customize(snapshot(audience))), openCommitteeEvents: vi.fn((_id, _after, handlers: Parameters<SelfHostedApi['openCommitteeEvents']>[2]) => {handlers.onState('LIVE'); return () => undefined;}),
+  const api = {storagePolicy: async () => ({disabled: false, submissionBlocked: false, revision: 1}), serverVolumePolicy: async () => ({disabled: false, revision: 1}), snapshot: vi.fn(async () => customize(snapshot(audience))), openCommitteeEvents: vi.fn((_id, _after, handlers: Parameters<SelfHostedApi['openCommitteeEvents']>[2]) => {handlers.onState('LIVE'); return () => undefined;}),
     committeeExportUrl: vi.fn(() => '/api/v1/committees/committee/export'), listRulePackages: vi.fn(async () => []),
     fileDownloadUrl: vi.fn((fileId: string) => `/api/v1/files/${fileId}/download`),
     listStorageBindings: vi.fn(async () => []), listFiles: vi.fn(async () => []),

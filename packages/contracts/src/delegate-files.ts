@@ -43,6 +43,7 @@ export interface DelegateReviewFile extends DelegatePublishedFile {
 }
 
 export interface DelegatePortalBootstrap {
+  serverVolumeDisabled?: boolean;
   committeeLanguage: import('./localization.js').ContentLanguage;
   committeeId: string;
   committeeName: string;

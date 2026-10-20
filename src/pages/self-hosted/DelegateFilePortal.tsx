@@ -164,7 +164,7 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
     && portal.maxUploadSizeBytes > 0 && file.size > portal.maxUploadSizeBytes
     ? t('Choose a file no larger than {size} MiB.', {size: fileSizeMiB(portal.maxUploadSizeBytes)}) : undefined;
   const upload = async () => {
-    if (!file || uploadSizeError || working) return;
+    if (!file || uploadSizeError || working || portal?.serverVolumeDisabled) return;
     const type = fileType === 'OTHER' ? customDelegateFileType(customType) : fileType;
     if (fileType === 'OTHER' && (!customType.trim() || Array.from(customType).length > 100)) return;
     const extensions = portal?.allowedExtensions?.[fileType];
@@ -296,6 +296,7 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
     <Menu.Item active={active === 'upload'} onClick={() => {setActive('upload'); if (close) setSidebarOpen(false);}}>{t("Upload files")}</Menu.Item>
   </>;
   return <div className="delegate-file-portal">
+    {portal.serverVolumeDisabled && <Message warning role="status">{t('Server volume storage is disabled. Ask a chair to migrate storage before submitting files.')}</Message>}
     <nav className="delegate-file-navigation-desktop" data-navigation-mode={navigationLevel === 3 ? 'sidebar' : 'desktop'}>
       <Menu className="delegate-file-menu"><Menu.Item header className="delegate-file-committee-name">{portal.committeeName}</Menu.Item>
         {navigationItems()}<Menu.Menu position="right">{statusItem(navigationLevel >= 1)}{seatItem(navigationLevel >= 2 && Boolean(claimedSeat.flag))}</Menu.Menu>
@@ -353,12 +354,12 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
           {maxUploadSizeMiB === '—'
             ? null
             : <small className="ui tiny text delegate-file-upload-limit-note">{t('Maximum file size: {size} MiB', {size: maxUploadSizeMiB})}</small>}
-          <input type="file" disabled={working} accept={portal.allowedExtensions?.[fileType]?.map(ext => `.${ext}`).join(',')} onChange={(event: React.ChangeEvent<HTMLInputElement>) => {setFile(event.currentTarget.files?.[0]);
+          <input type="file" disabled={portal.serverVolumeDisabled || working} accept={portal.allowedExtensions?.[fileType]?.map(ext => `.${ext}`).join(',')} onChange={(event: React.ChangeEvent<HTMLInputElement>) => {setFile(event.currentTarget.files?.[0]);
             setSubmitted(false); setProgress(undefined);}} aria-label={t("Choose file")} />
         </Form.Field>
         {uploadSizeError && <Message negative role="alert" content={uploadSizeError} />}
         {portal.allowedExtensions && <p className="delegate-file-allowed-formats">{t("Allowed formats:")}{portal.allowedExtensions[fileType]?.join('、')}</p>}
-        {!submitted && progress === undefined && <Button primary fluid disabled={!file || working || !portal.mayUpload || Boolean(uploadSizeError) || (fileType === 'OTHER' && !customType.trim())}>
+        {!submitted && progress === undefined && <Button primary fluid disabled={portal.serverVolumeDisabled || !file || working || !portal.mayUpload || Boolean(uploadSizeError) || (fileType === 'OTHER' && !customType.trim())}>
 
           {t("Submit")} <Icon name="arrow up" /></Button>}
         {progress !== undefined && !submitted && <Progress percent={Math.round(progress)} progress color="blue">{progress >= 98 ? t("Saving files") : t("Uploading")}</Progress>}

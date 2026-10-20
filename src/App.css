@@ -1573,6 +1573,118 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
   margin: 0;
 }
 
+.server-volume-policy {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-bottom: 1.25rem;
+  border-bottom: 1px solid var(--q-theme-border, rgba(34, 36, 38, 0.15));
+}
+
+.server-volume-secondary {
+  color: var(--q-theme-text-muted, rgba(0, 0, 0, 0.6));
+  font-size: 0.92em;
+}
+
+.server-volume-heading {
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.ui.form.server-volume-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.ui.form.server-volume-toolbar .field,
+.ui.form.server-volume-toolbar .ui.button {
+  margin: 0;
+}
+
+.server-volume-toolbar .server-volume-search {
+  flex: 1 1 16rem;
+}
+
+.server-volume-root,
+.server-volume-preview-file code {
+  overflow-wrap: anywhere;
+}
+
+.server-volume-table-scroll {
+  overflow-x: auto;
+  margin-top: 1rem;
+}
+
+.ui.table.server-volume-table {
+  table-layout: fixed;
+  min-width: 860px;
+}
+
+.server-volume-table th:nth-child(1) { width: 15%; }
+.server-volume-table th:nth-child(2) { width: 16%; }
+.server-volume-table th:nth-child(3) { width: 33%; }
+.server-volume-table th:nth-child(4) { width: 8%; }
+.server-volume-table th:nth-child(5) { width: 20%; }
+.server-volume-table th:nth-child(6) { width: 8%; }
+
+.server-volume-table td {
+  overflow-wrap: anywhere;
+  vertical-align: top;
+}
+
+.server-volume-path {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.server-volume-path code {
+  min-width: 0;
+  flex: 1;
+  font-size: 0.85em;
+}
+
+.server-volume-path .ui.button {
+  flex-shrink: 0;
+  margin: 0;
+}
+
+.server-volume-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.server-volume-preview-file {
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--q-theme-border, rgba(34, 36, 38, 0.15));
+}
+
+.server-volume-confirm summary,
+.server-volume-table summary {
+  cursor: pointer;
+}
+
+@media (max-width: 600px) {
+  .server-volume-policy .admin-actions,
+  .server-volume-toolbar .field,
+  .server-volume-toolbar .ui.button {
+    width: 100%;
+  }
+
+  .server-volume-policy .admin-actions .ui.button {
+    width: 100%;
+    text-align: left;
+  }
+}
+
 .operations-metrics,
 .operations-cache-metrics {
   display: grid;

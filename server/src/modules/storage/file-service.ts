@@ -18,6 +18,7 @@ export class DownloadPreparingError extends Error {
 }
 
 interface FileRow extends QueryResultRow {
+  admin_cleared_at: Date | null;
   submission_source: FileEntry['submissionSource'];
   submitter_display_name: string | null;
   file_type: FileEntry['fileType'];
@@ -81,7 +82,7 @@ const FILE_SELECT = `SELECT e.id,e.committee_id,e.logical_name,e.media_type AS e
   v.id AS version_id,v.version_number,v.original_name,v.media_type AS version_media_type,
   v.size_bytes,encode(v.sha256,'hex') AS sha256_hex,v.blob_id,v.created_at AS version_created_at,
   metadata.submission_source,metadata.submitter_display_name,metadata.file_type,metadata.rejection_reason,
-  b.storage_key,sb.provider_type,sb.provider_config_id,agent_upload.staging_key AS agent_staging_key
+  b.admin_cleared_at,b.storage_key,sb.provider_type,sb.provider_config_id,agent_upload.staging_key AS agent_staging_key
   FROM file_entries e
   JOIN committees committee ON committee.id=e.committee_id
   JOIN file_versions v ON v.id=e.current_version_id
@@ -89,7 +90,7 @@ const FILE_SELECT = `SELECT e.id,e.committee_id,e.logical_name,e.media_type AS e
   JOIN file_blobs content ON content.id=v.blob_id
   LEFT JOIN file_blob_copies location ON location.content_blob_id=content.id
     AND location.storage_binding_id=committee.active_storage_binding_id
-  LEFT JOIN file_blobs replica ON replica.id=location.copy_blob_id AND replica.durability_state='COMMITTED'
+  LEFT JOIN file_blobs replica ON replica.id=location.copy_blob_id AND (replica.durability_state='COMMITTED' OR replica.admin_cleared_at IS NOT NULL)
   JOIN file_blobs b ON b.id=CASE WHEN content.storage_binding_id=committee.active_storage_binding_id
     THEN content.id ELSE replica.id END
   JOIN storage_bindings sb ON sb.id=b.storage_binding_id
@@ -97,7 +98,7 @@ const FILE_SELECT = `SELECT e.id,e.committee_id,e.logical_name,e.media_type AS e
     AND agent_upload.agent_commit_state='HOST_COMMITTED'`;
 
 function mapFile(row: FileRow): FileEntry {
-  return {id: row.id, committeeId: row.committee_id, logicalName: row.logical_name,
+  return {...(row.admin_cleared_at ? {contentCleared: true} : {}), id: row.id, committeeId: row.committee_id, logicalName: row.logical_name,
     mediaType: row.entry_media_type, status: row.status, syncState: row.sync_state,
     createdByUserId: row.created_by_user_id, submissionSource: row.submission_source ?? 'LEGACY',
     submitterDisplayName: row.submitter_display_name, fileType: row.file_type, rejectionReason: row.rejection_reason,
@@ -186,6 +187,7 @@ export class Stage6FileService {
     file: FileEntry; headers: Record<string, string>; content: AsyncIterable<Buffer>;
   }> {
     const row = await this.visibleRow(auth, uuid(fileId, 'File ID'));
+    if (row.admin_cleared_at) throw new AppError({code:'NOT_FOUND',reason:'SERVER_VOLUME_CLEARED',message:'File content was cleared by an administrator.'});
     const file = mapFile(row);
     if (row.provider_type === 'CHAIR_AGENT') {
       const cached = await this.pool.query<{storage_key: string; state: string}>(`SELECT storage_key,state
@@ -226,6 +228,7 @@ export class Stage6FileService {
   }
 
   private async prepareRow(row: FileRow): Promise<DownloadReadiness> {
+    if (row.admin_cleared_at) throw new AppError({code:'NOT_FOUND',reason:'SERVER_VOLUME_CLEARED',message:'File content was cleared by an administrator.'});
     if (!this.refill) return {status: 'UNAVAILABLE', code: 'STORAGE_AGENT_OFFLINE'};
     return this.refill.prepare({committeeId: row.committee_id, fileEntryId: row.id, fileRevision: row.revision,
       fileVersionId: row.version_id, blobId: row.blob_id, sizeBytes: Number(row.size_bytes),

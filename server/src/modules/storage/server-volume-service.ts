@@ -1,3 +1,4 @@
+import {assertVolumeEnabled, withVolumeIO} from './volume-policy.js';
 import {ERROR_TEXT} from '@quorum/contracts';
 import {randomUUID} from 'node:crypto';
 import type {Pool, PoolClient, QueryResultRow} from 'pg';
@@ -90,6 +91,11 @@ export class Stage6ServerVolumeService {
 
   async commitUpload(auth: AuthenticatedSession, uploadId: string, body: unknown,
     idempotencyKey: string, context: Stage4Context): Promise<FileEntry> {
+    return withVolumeIO(this.pool, () => this.commitUploadWithLock(auth, uploadId, body, idempotencyKey, context));
+  }
+
+  private async commitUploadWithLock(auth: AuthenticatedSession, uploadId: string, body: unknown,
+    idempotencyKey: string, context: Stage4Context): Promise<FileEntry> {
     requireBusinessIdentity(auth);
     assertExactBody(body as Record<string, unknown>, []);
     validateKey(idempotencyKey);
@@ -126,6 +132,7 @@ export class Stage6ServerVolumeService {
         const current = await uploadForUpdate(client, id);
         const committee = await lockedCommittee(client, current.committee_id);
         requireProceedingsActive(committee);
+      await assertVolumeEnabled(client);
         if (current.created_by_user_id !== auth.user.id) {
           throw new AppError({reason: 'UPLOAD_CREATOR_REQUIRED', code: 'FORBIDDEN', message: 'Only the upload creator may commit it.'});
         }
@@ -183,6 +190,7 @@ export class Stage6ServerVolumeService {
       let upload = await uploadForUpdate(client, uploadId);
       const committee = await lockedCommittee(client, upload.committee_id);
       requireProceedingsActive(committee);
+      await assertVolumeEnabled(client);
       if (upload.created_by_user_id !== auth.user.id) {
         throw new AppError({reason: 'UPLOAD_CREATOR_REQUIRED', code: 'FORBIDDEN', message: 'Only the upload creator may commit it.'});
       }

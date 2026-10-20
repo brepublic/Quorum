@@ -120,6 +120,9 @@ importers:
       jsdom:
         specifier: ^25.0.0
         version: 25.0.0
+      playwright-core:
+        specifier: 1.57.0
+        version: 1.57.0
       vitest:
         specifier: ^2.0.5
         version: 2.0.5(@types/node@20.14.2)(jsdom@25.0.0)
@@ -1463,6 +1466,11 @@ packages:
 
   pinyin-pro@3.29.4:
     resolution: {integrity: sha512-SPXpDT2cHEy+d26V1RXYMlVzXN42hotFAak1fzyWPi4o2dKXb61UqD4pzxDJHwk6gbv8vQ6EfErd+hYX0Qhzug==}
+
+  playwright-core@1.57.0:
+    resolution: {integrity: sha512-agTcKlMw/mjBWOnD6kFZttAAGHgi/Nw0CZ2o6JqWSbMlI219lAFLZZCyqByTsvVAJq5XA5H8cA6PrvBRpBWEuQ==}
+    engines: {node: '>=18'}
+    hasBin: true
 
   pngjs@5.0.0:
     resolution: {integrity: sha512-40QW5YalBNfQo5yRYmiw7Yz6TKKVr3h6970B2YE+3fQpsWcrbj1PzJgxeJ19DRQjhMbKPIuMY8rFaXc8moolVw==}
@@ -3212,6 +3220,8 @@ snapshots:
   picomatch@2.3.2: {}
 
   pinyin-pro@3.29.4: {}
+
+  playwright-core@1.57.0: {}
 
   pngjs@5.0.0: {}
 

@@ -21,6 +21,8 @@ import {startStorageCacheWorker, StorageCacheOperationsService,
   StorageCacheRuntimeStats} from './modules/operations/storage-cache-service.js';
 import {Stage6UploadService} from './modules/storage/upload-service.js';
 import {Stage6StorageService} from './modules/storage/service.js';
+import {ServerVolumeInventoryService, startServerVolumeCleanupWorker} from './modules/operations/volume-inventory.js';
+import {ServerVolumeOperationsService} from './modules/operations/volume-service.js';
 import {ServerVolumeStore} from './modules/storage/server-volume.js';
 import {Stage6ServerVolumeService} from './modules/storage/server-volume-service.js';
 import {StorageCredentialCipher} from './modules/storage/credential-crypto.js';
@@ -90,6 +92,7 @@ async function main(): Promise<void> {
     const metadata = new Stage6StorageService(pool);
     const serverVolumeStore = new ServerVolumeStore(join(config.storagePath, 'server-volume'), config.maxFileBytes);
     await serverVolumeStore.initialize();
+    const volumeInventory = new ServerVolumeInventoryService(pool, serverVolumeStore);
     const serverVolume = new Stage6ServerVolumeService(pool, metadata, staging, serverVolumeStore);
     const credentialCipher = new StorageCredentialCipher(config.storageMasterKey, config.storageMasterKeyVersion);
     const s3Configs = new Stage6S3ConfigService(pool, credentialCipher);
@@ -154,6 +157,8 @@ async function main(): Promise<void> {
       operationsStatus,
       searchIndex,
       storageCacheOperations,
+      volumeOperations: new ServerVolumeOperationsService(pool),
+      volumeInventory,
       delegateFiles,
       allowedOrigins: config.allowedOrigins
     });
@@ -162,6 +167,7 @@ async function main(): Promise<void> {
     const stopStorageHostMonitor = upgradeVerification ? () => {} : startStorageHostMonitor(storageAgent, logger);
     const stopCommitteeDeletionWorker = upgradeVerification ? () => {} : startCommitteeDeletionWorker(committeeDeletions, logger);
     const stopRetentionWorker = upgradeVerification ? () => {} : startRetentionWorker(retention, logger);
+    const stopVolumeCleanupWorker = upgradeVerification ? () => {} : startServerVolumeCleanupWorker(volumeInventory,logger);
     const stopStorageCacheWorker = upgradeVerification ? () => {} : startStorageCacheWorker(storageCacheOperations);
     let crisisWorkerRunning = false;
     const runCrisisAutoStarts = async () => {
@@ -195,6 +201,7 @@ async function main(): Promise<void> {
       stopCommitteeDeletionWorker();
       stopRetentionWorker();
       stopStorageCacheWorker();
+      stopVolumeCleanupWorker();
       clearInterval(crisisAutoStartTimer);
       logger.info('server.shutdown.started', {signal});
 

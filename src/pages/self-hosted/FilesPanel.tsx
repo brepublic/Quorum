@@ -1,3 +1,4 @@
+import {useVolumePolicy, VolumePolicyNotice} from './VolumePolicyNotice';
 import {ChairAgentDownload} from '../../components/ChairAgentDownload';
 import {openChairAgent, downloadChairConfiguration} from '../../services/agent-pairing';
 import {ViewportFormSelect} from '../../components/ViewportDropdown';
@@ -73,6 +74,7 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
   const readOnly = snapshot.committee.status === 'ARCHIVED' || snapshot.committee.status === 'DELETING';
   const canManage = !readOnly && (snapshot.viewer.audience === 'CHAIR' || snapshot.viewer.audience === 'OWNER');
   const canUpload = !readOnly && snapshot.viewer.audience !== 'PUBLIC';
+  const volumePolicy = useVolumePolicy(api, committeeId, canUpload);
   const [statusFilter, setStatusFilter] = React.useState('ACTIVE');
   const [deletingFile, setDeletingFile] = React.useState<FileEntry>();
   const [files, setFiles] = React.useState<FileEntry[]>([]);
@@ -203,7 +205,7 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
   }, [refresh]);
 
   const upload = async () => {
-    if (!selectedFile || !logicalName.trim()) return;
+    if (!selectedFile || !logicalName.trim() || volumePolicy.blocked || volumePolicy.error) return;
     const controller = new AbortController(); uploadController.current = controller;
     setWorking(true); setError(undefined);
     try {
@@ -292,7 +294,7 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
         ? {logicalName: resolvedName} : {})}, newIdempotencyKey());
   };
   const targetOptions = [
-    ...(!activeBinding || (activeBinding.providerType !== 'SERVER_VOLUME' && activeBinding.providerType !== 'CHAIR_AGENT')
+    ...(!volumePolicy.disabled && (!activeBinding || (activeBinding.providerType !== 'SERVER_VOLUME' && activeBinding.providerType !== 'CHAIR_AGENT'))
       ? [{key: 'volume', value: 'SERVER_VOLUME', text: t("Server volume")}] : []),
     ...((!activeBinding||activeBinding.providerType==='SERVER_VOLUME') && hosts.some(host => host.status === 'ACTIVE' || host.status === 'DEGRADED')
       ? [{key: 'chair-agent', value: 'CHAIR_AGENT', text: t("Chair computer")}] : []),
@@ -300,6 +302,14 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
       && config.id !== activeBinding?.providerConfigId)).map(config => ({key: config.id,
       value: `S3:${config.id}`, text: `S3 · ${config.displayName}`}))
   ];
+  const selectedTarget = targetType === 'S3_COMPATIBLE' ? `S3:${targetConfigId}` : targetType;
+  React.useEffect(() => {
+    if (targetOptions.length && !targetOptions.some(option => option.value === selectedTarget)) {
+      const value = targetOptions[0].value;
+      if (value === 'SERVER_VOLUME' || value === 'CHAIR_AGENT') {setTargetType(value); setTargetConfigId('');}
+      else {setTargetType('S3_COMPATIBLE'); setTargetConfigId(value.slice(3));}
+    }
+  }, [selectedTarget, JSON.stringify(targetOptions)]);
   const setTarget = (value: string) => {
     if (value === 'SERVER_VOLUME' || value === 'CHAIR_AGENT') { setTargetType(value); setTargetConfigId(''); }
     else { setTargetType('S3_COMPATIBLE'); setTargetConfigId(value.slice(3)); }
@@ -345,6 +355,8 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
       </Modal.Actions>
     </Modal>
     {error && <Message error role="alert" content={error} />}
+    {canUpload && !volumePolicy.loading && <VolumePolicyNotice blocked={volumePolicy.blocked} manager={canManage}
+      committeeId={committeeId} error={volumePolicy.error} showAction={section !== 'storage'} />}
     {section !== 'storage' && <>
     {pendingHostCommits.map(item => <Message key={item.id} header={item.logicalName}
       warning={Boolean(item.failureCode || item.agentCommitState === 'CONFLICT')}
@@ -353,14 +365,14 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
         : item.failureCode ? t('Save unavailable. Check storage and retry.') : t('Saving files')} />)}
     {canUpload && section !== 'overview' && <Segment loading={working && !progress}><Header as="h3">{t("Upload files")}</Header>
       <Form onSubmit={() => void upload()}><Form.Field>
-        <div className="localized-file-picker"><input id="committee-upload-file" type="file"
+        <div className="localized-file-picker"><input id="committee-upload-file" type="file" disabled={volumePolicy.blocked || Boolean(volumePolicy.error)}
           aria-label={t('Select a file to upload')} onChange={event => {const file = event.currentTarget.files?.[0];
             setSelectedFile(file); if (file) setLogicalName(file.name);}} />
           <label htmlFor="committee-upload-file" className="ui button">{t('Choose file')}</label>
           <span>{selectedFile?.name ?? t('No file chosen')}</span></div>
       </Form.Field>
       <Form.Input label={t("File name")} value={logicalName} onChange={event => setLogicalName(event.currentTarget.value)} />
-      <Button primary disabled={working || !selectedFile || !logicalName.trim()}>{t("Upload files")} <Icon name="arrow up" /></Button>
+      <Button primary disabled={volumePolicy.blocked || Boolean(volumePolicy.error) || working || !selectedFile || !logicalName.trim()}>{t("Upload files")} <Icon name="arrow up" /></Button>
       {progress && progress.phase !== 'COMMITTING'
         && <Button type="button" onClick={() => uploadController.current?.abort()}>{t("Cancel upload")}</Button>}
       </Form>
@@ -387,7 +399,8 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
           <div className="motion-heading self-hosted-file-heading"><Card.Header>{file.logicalName}</Card.Header>
             <FileStatusLabel status={file.status} />
           </div>
-          {file.syncState !== 'SYNCED' && <div className="self-hosted-file-sync"><Label color="orange" icon="sync"
+          {file.contentCleared && <Label color="orange">{t('File content cleared by administrator')}</Label>}
+          {file.syncState !== 'SYNCED'  && <div className="self-hosted-file-sync"><Label color="orange" icon="sync"
             content={file.syncState === 'PENDING_HOST_COMMIT' ? t("Waiting for the chair computer to save") : t("Waiting for chair computer sync")} /></div>}
           <Table compact celled unstackable className="motion-metadata-table self-hosted-file-metadata"><Table.Body>
             <Table.Row><Table.Cell className="motion-metadata-key">{t('File source')}</Table.Cell><Table.Cell>{file.submissionSource === 'CHAIR' ? t('Chair') : file.submitterDisplayName ?? '—'}</Table.Cell></Table.Row>
@@ -590,13 +603,19 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
           <ViewportFormSelect label={activeBinding ? t("Migrate to") : t("Initial storage")} options={targetOptions}
             value={targetType === 'S3_COMPATIBLE' ? `S3:${targetConfigId}` : targetType}
             onChange={(_, data) => setTarget(String(data.value))} />
-          <Button primary disabled={working || chairTargetBlocked || (targetType === 'S3_COMPATIBLE' && !targetConfigId)}>
+          <Button primary disabled={working || !targetOptions.some(option => option.value === selectedTarget) || chairTargetBlocked || (targetType === 'S3_COMPATIBLE' && !targetConfigId)}>
             {activeBinding ? t("Start migration") : t("Enable storage")}</Button>
         </div>
         {chairTargetBlocked&&<p>{t(!hostOnline?"The Chair computer is offline.":"Update the Chair Agent to migrate storage.")}</p>}
       </Form> : <p className="storage-empty-target">{t("No available storage migration targets")}</p>)}
       {migrations.length > 0 && <Card.Group stackable className="self-hosted-migrations">{migrations.map(migration =>
         <Card fluid key={migration.id}><Card.Content><Card.Header>{t(MIGRATION_STATUS[migration.status])}</Card.Header>
+          {migration.sourceCleanup && <Card.Meta>{t(migration.sourceCleanup.pending ? 'Storage switched; cleaning server volume' : 'Server volume cleanup completed')}
+            {migration.sourceCleanup.pending > 0 && ` · ${migration.sourceCleanup.total-migration.sourceCleanup.pending}/${migration.sourceCleanup.total}`}
+            {migration.sourceCleanup.failed > 0 && ` · ${t('Cleanup retrying')}: ${migration.sourceCleanup.failed}`}</Card.Meta>}
+          {volumePolicy.disabled && ['COPYING','READY_TO_CONFIRM','FAILED'].includes(migration.status)
+            && bindings.some(binding=>binding.id===migration.targetBindingId && binding.providerType==='SERVER_VOLUME')
+            && <Message warning>{t('The target server volume is disabled. Cancel this migration and select another storage location.')}</Message>}
           {!migration.progress&&<Card.Meta>{migration.completedItems}/{migration.totalItems}</Card.Meta>}
           {migration.progress&&<Card.Description>
             <p>{t("Server volume")} → {t("Chair computer")} · {migration.progress.targetDeviceLabel}</p>

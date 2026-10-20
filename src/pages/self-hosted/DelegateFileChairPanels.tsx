@@ -1,3 +1,4 @@
+import {useVolumePolicy, VolumePolicyNotice} from './VolumePolicyNotice';
 import {ViewportFormSelect} from '../../components/ViewportDropdown';
 import {t, useLanguage, getLanguage} from '../../i18n';
 import {customDelegateFileType, DELEGATE_FILE_TYPES, delegateFileTypeName, isCustomDelegateFileType, committeeContentName, formatCommitteeContent, suggestCrisisNoticeName} from '@quorum/contracts';
@@ -118,6 +119,7 @@ function DelegateFileSharePanel({snapshot, api, share, setShare, qr}: {
 
 export function DelegateFileUploadPanel({snapshot, api}: {snapshot: CommitteeWorkspaceSnapshot; api: SelfHostedApi}) {
   useLanguage();
+  const volumePolicy = useVolumePolicy(api, snapshot.committee.id);
   const [selected, setSelected] = React.useState<File>();
   const [uploadType,setUploadType]=React.useState<DelegateFileType>('WORKING_PAPER');
   const chair=snapshot.viewer.audience==='CHAIR' || snapshot.viewer.audience==='OWNER';
@@ -158,7 +160,7 @@ export function DelegateFileUploadPanel({snapshot, api}: {snapshot: CommitteeWor
   const error = failure ? storageErrorText(failure) : undefined;
   const upload = async () => {
     if (snapshot.committee.status !== 'ACTIVE') return;
-    if (!selected || working) return; setWorking(true); setSaved(undefined); setTrackedUpload(undefined); setProgress(0); setError(undefined);
+    if (!selected || working || volumePolicy.blocked || volumePolicy.error) return; setWorking(true); setSaved(undefined); setTrackedUpload(undefined); setProgress(0); setError(undefined);
     try {
       const sha256 = await sha256File(selected, {onProgress: (done, total) => setProgress(total ? done / total * 20 : 0)});
       const logicalName=uploadType==='CRISIS_NOTICE' ? suggestCrisisNoticeName(snapshot.crises ?? [],snapshot.meetingSession?.ordinal ?? 1,snapshot.nextCrisisGroupOrdinal ?? 1,snapshot.committee.committeeLanguage) : selected.name;
@@ -172,6 +174,9 @@ export function DelegateFileUploadPanel({snapshot, api}: {snapshot: CommitteeWor
     } catch (caught) {setProgress(undefined); setError(caught);} finally {setWorking(false);}
   };
   return <div className="delegate-file-upload-panel">
+    {!volumePolicy.loading && <VolumePolicyNotice blocked={volumePolicy.blocked}
+      manager={snapshot.viewer.audience === 'CHAIR' || snapshot.viewer.audience === 'OWNER'}
+      committeeId={snapshot.committee.id} error={volumePolicy.error} />}
     {pending.map(item => <Message key={item.id} warning={Boolean(item.failureCode || item.agentCommitState === 'CONFLICT')}
       info={!item.failureCode && item.agentCommitState !== 'CONFLICT'} header={item.logicalName}
       content={item.failureCode || item.agentCommitState === 'CONFLICT' ? t('Save unavailable. Check storage and retry.') : t('Saving files')} />)}
@@ -182,13 +187,13 @@ export function DelegateFileUploadPanel({snapshot, api}: {snapshot: CommitteeWor
     </Segment>}
     {error && <Message error content={error} />}
     <Card centered fluid className="delegate-file-chair-upload"><Card.Content><Form onSubmit={() => void upload()}>
-      <Form.Select fluid label={t('File type')} value={isCustomDelegateFileType(uploadType) ? 'OTHER' : uploadType} disabled={working || snapshot.committee.status!=='ACTIVE'}
+      <Form.Select fluid label={t('File type')} value={isCustomDelegateFileType(uploadType) ? 'OTHER' : uploadType} disabled={volumePolicy.blocked || Boolean(volumePolicy.error) || working || snapshot.committee.status!=='ACTIVE'}
         options={[...FILE_TYPES.filter(type => media ? type === 'NEWS' || type === 'INSTANT_MESSAGE' : chair || type !== 'CRISIS_NOTICE').map(type=>({key:type,value:type,text:delegateFileTypeName(type,snapshot.committee.committeeLanguage)})),...(media ? [] : [{key:'OTHER',value:'OTHER',text:t('Other')}])]}
         onChange={(_,data)=>setUploadType(data.value==='OTHER' ? customDelegateFileType('') : data.value as DelegateFileType)} />
-      {isCustomDelegateFileType(uploadType) && <Form.Input label={t('Custom file type')} required maxLength={100} disabled={working} value={uploadType.slice(7)} onChange={event=>setUploadType(customDelegateFileType(event.currentTarget.value))} />}
-      <Form.Input disabled={working || snapshot.committee.status !== 'ACTIVE'} type="file" label={t("Choose file")} input={{ref: fileInput, onChange: (event: React.ChangeEvent<HTMLInputElement>) =>
+      {isCustomDelegateFileType(uploadType) && <Form.Input label={t('Custom file type')} required maxLength={100} disabled={volumePolicy.blocked || Boolean(volumePolicy.error) || working} value={uploadType.slice(7)} onChange={event=>setUploadType(customDelegateFileType(event.currentTarget.value))} />}
+      <Form.Input disabled={volumePolicy.blocked || Boolean(volumePolicy.error) || working || snapshot.committee.status !== 'ACTIVE'} type="file" label={t("Choose file")} input={{ref: fileInput, onChange: (event: React.ChangeEvent<HTMLInputElement>) =>
         {setSelected(event.currentTarget.files?.[0]); setSaved(undefined);}, 'aria-label': t("Choose file")}} />
-      {progress === undefined ? <Button primary disabled={!selected || working || snapshot.committee.status !== 'ACTIVE'}>{t("Upload files")} <Icon name="arrow up" /></Button>
+      {progress === undefined ? <Button primary disabled={volumePolicy.blocked || Boolean(volumePolicy.error) || !selected || working || snapshot.committee.status !== 'ACTIVE'}>{t("Upload files")} <Icon name="arrow up" /></Button>
         : <Progress percent={Math.round(progress)} progress color="blue">{progress >= 98 ? t("Saving files") : t("Uploading")}</Progress>}
     </Form></Card.Content></Card>
   </div>;

@@ -24,7 +24,7 @@ const operations = {database: {schemaCompatibility: 52}, storage: {state: 'norma
   retention: {lastStatus: 'FAILED', lastCompletedAt: '2026-09-12T00:00:00Z'}};
 const user = {id: 'admin', displayName: 'Admin', isSystemAdmin: true} as SelfHostedUser;
 function clients() {
-  const api = {operationsStatus: vi.fn(async () => operations), storageCacheStatus: vi.fn(async () => ({config,
+  const api = {serverVolumeFiles: async()=>({files:[],total:0,page:1,totalBytes:0,rootPath:"/storage/server-volume"}), serverVolumeCleanups:async()=>[], storagePolicy: async () => ({disabled: false, submissionBlocked: false, revision: 1}), serverVolumePolicy: async () => ({disabled: false, revision: 1}), operationsStatus: vi.fn(async () => operations), storageCacheStatus: vi.fn(async () => ({config,
     capacity: {totalBytes: 4000, availableBytes: 2000, quorumBytes: 300, pendingReviewBytes: 100,
       publishedCacheBytes: 200, otherStagingBytes: 0},
     runtime: {hits: 1, misses: 0, fetching: 0, lastEvictedAt: null, lastEvictedBytes: 0}})),

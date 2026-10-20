@@ -29,7 +29,7 @@ describe('delegate file chair review', () => {
     const approveDelegateFile = vi.fn(async () => publishedFile);
     const previewFileApproval = vi.fn(async () => ({logicalName: publishedFile.logicalName,
       target: {id: publishedFile.id,revision: publishedFile.revision,logicalName:publishedFile.logicalName},confirmationToken:'bound-token'}));
-    const api = {getDelegateFileShare: async()=>null,listDelegateReviewFiles:async()=>[pending,publishedFile],
+    const api = {storagePolicy: async () => ({disabled: false, submissionBlocked: false, revision: 1}), serverVolumePolicy: async () => ({disabled: false, revision: 1}), getDelegateFileShare: async()=>null,listDelegateReviewFiles:async()=>[pending,publishedFile],
       approveDelegateFile,previewFileApproval} as unknown as SelfHostedApi;
     await act(async()=>root.render(<DelegateFilePanels tab="review" snapshot={snapshot} api={api}/>));
     const hint=language==='en'?'This name already exists. Approval will update the existing file.':'该名称已存在，批准后将更新已有文件。';
@@ -62,7 +62,7 @@ describe('delegate file chair review', () => {
   it.each([false, true])('shows a named upload receipt only after durable save (pending host commit: %s)', async pendingHostCommit => {
     const selected = new File(['abc'], 'review-upload.txt', {type: 'text/plain'});
     Object.defineProperty(selected, 'arrayBuffer', {value: async () => new TextEncoder().encode('abc').buffer});
-    const api = {listPendingHostCommits: async () => [], getFileUpload: async () => ({status: 'STAGED'}), createFileUpload: vi.fn(async () => ({id: 'upload'})),
+    const api = {storagePolicy: async () => ({disabled: false, submissionBlocked: false, revision: 1}), serverVolumePolicy: async () => ({disabled: false, revision: 1}), listPendingHostCommits: async () => [], getFileUpload: async () => ({status: 'STAGED'}), createFileUpload: vi.fn(async () => ({id: 'upload'})),
       uploadFileContent: vi.fn(async () => ({})), commitFileUpload: vi.fn(async () => pendingHostCommit
         ? {kind: 'PENDING_HOST_COMMIT'} : {id: 'saved-file'})} as unknown as SelfHostedApi;
     await act(async () => root.render(<MemoryRouter><DelegateFileUploadPanel snapshot={snapshot} api={api} /></MemoryRouter>));
@@ -88,7 +88,7 @@ describe('delegate file chair review', () => {
       let status = 'STAGED';
       const selected = new File(['abc'], 'async-review.txt', {type: 'text/plain'});
       Object.defineProperty(selected, 'arrayBuffer', {value: async () => new TextEncoder().encode('abc').buffer});
-      const api = {listPendingHostCommits: async () => [], createFileUpload: async () => ({id: 'async-upload'}),
+      const api = {storagePolicy: async () => ({disabled: false, submissionBlocked: false, revision: 1}), serverVolumePolicy: async () => ({disabled: false, revision: 1}), listPendingHostCommits: async () => [], createFileUpload: async () => ({id: 'async-upload'}),
         uploadFileContent: async () => ({}), commitFileUpload: async () => ({kind: 'PENDING_HOST_COMMIT'}),
         getFileUpload: vi.fn(async () => ({id: 'async-upload', status, committedFileEntryId: status === 'COMMITTED' ? 'file' : null}))} as unknown as SelfHostedApi;
       await act(async () => root.render(<MemoryRouter><DelegateFileUploadPanel snapshot={snapshot} api={api} /></MemoryRouter>));
@@ -106,7 +106,7 @@ describe('delegate file chair review', () => {
   });
 
   it('keeps the upload component separate from review cards', async () => {
-    const api = {listPendingHostCommits: async () => [], createFileUpload: vi.fn(), uploadFileContent: vi.fn(), commitFileUpload: vi.fn()} as unknown as SelfHostedApi;
+    const api = {storagePolicy: async () => ({disabled: false, submissionBlocked: false, revision: 1}), serverVolumePolicy: async () => ({disabled: false, revision: 1}), listPendingHostCommits: async () => [], createFileUpload: vi.fn(), uploadFileContent: vi.fn(), commitFileUpload: vi.fn()} as unknown as SelfHostedApi;
     await act(async () => root.render(<DelegateFileUploadPanel snapshot={snapshot} api={api} />));
     expect(host.querySelector('.delegate-file-chair-upload')).not.toBeNull();
     expect(host.querySelector('.delegate-file-card-list')).toBeNull();
@@ -116,7 +116,7 @@ describe('delegate file chair review', () => {
   it.each(['en', 'zh-CN'] as const)('keeps file content in %s while switching interface language', async committeeLanguage => {
     const pending = {...reviewFile, suggestedNames: {WORKING_PAPER: {sessionOrdinal: 2, ordinal: 3},
       DIRECTIVE_DRAFT: {sessionOrdinal: 2, ordinal: 1}, RESOLUTION_DRAFT: {sessionOrdinal: 2, ordinal: 1}}};
-    const api = {getDelegateFileShare: async () => null, listDelegateReviewFiles: async () => [pending]} as unknown as SelfHostedApi;
+    const api = {storagePolicy: async () => ({disabled: false, submissionBlocked: false, revision: 1}), serverVolumePolicy: async () => ({disabled: false, revision: 1}), getDelegateFileShare: async () => null, listDelegateReviewFiles: async () => [pending]} as unknown as SelfHostedApi;
     await act(async () => root.render(<DelegateFilePanels tab="review" api={api}
       snapshot={{...snapshot, committee: {...snapshot.committee, committeeLanguage}}} />));
     const input = host.querySelector('input') as HTMLInputElement;
@@ -133,7 +133,7 @@ describe('delegate file chair review', () => {
   it('suggests names and retains rejected files without a deletion prompt', async () => {
     const pending = {...reviewFile,suggestedNames:{WORKING_PAPER:{sessionOrdinal:1,ordinal:2},DIRECTIVE_DRAFT:{sessionOrdinal:1,ordinal:1},RESOLUTION_DRAFT:{sessionOrdinal:1,ordinal:1}}};
     const rejectDelegateFile = vi.fn(async () => ({})); const deleteFile = vi.fn();
-    const api = {getDelegateFileShare: async () => null, listDelegateReviewFiles:async () => [pending],rejectDelegateFile,deleteFile,
+    const api = {storagePolicy: async () => ({disabled: false, submissionBlocked: false, revision: 1}), serverVolumePolicy: async () => ({disabled: false, revision: 1}), getDelegateFileShare: async () => null, listDelegateReviewFiles:async () => [pending],rejectDelegateFile,deleteFile,
       getDelegateFileSettings:async () => ({rejectionTypes:[{id:'format',label:{'zh-CN':'内容格式不合要求'},message:{'zh-CN':'文件内容格式不合要求，请参阅《学术指引》修改后重新提交。'},custom:false}]})} as unknown as SelfHostedApi;
     await act(async () => root.render(<DelegateFilePanels tab="review" snapshot={snapshot} api={api} />));
     expect((host.querySelector('input[aria-label="文件名称"]') as HTMLInputElement).value).toBe('工作文件 1.2');
@@ -149,7 +149,7 @@ describe('delegate file chair review', () => {
   });
 
   it('keeps rendering after editing a review file name', async () => {
-    const api = {getDelegateFileShare: async () => null, listDelegateReviewFiles: async () => [reviewFile, publishedFile]} as unknown as SelfHostedApi;
+    const api = {storagePolicy: async () => ({disabled: false, submissionBlocked: false, revision: 1}), serverVolumePolicy: async () => ({disabled: false, revision: 1}), getDelegateFileShare: async () => null, listDelegateReviewFiles: async () => [reviewFile, publishedFile]} as unknown as SelfHostedApi;
     await act(async () => {root.render(<DelegateFilePanels tab="review" snapshot={snapshot} api={api} />);
       await new Promise(resolve => setTimeout(resolve, 0));});
     const input = host.querySelector('input[aria-label="文件名称"]') as HTMLInputElement;
@@ -173,7 +173,7 @@ describe('delegate file chair review', () => {
     const earliest = {...reviewFile, id: 'first', logicalName: '最早文件.md', submittedAt: '2026-09-01T00:00:00.000Z'};
     const middle = {...reviewFile, id: 'middle', logicalName: '中间文件.md', submittedAt: '2026-09-02T00:00:00.000Z', status: 'UPLOAD_COMPLETE' as const};
     const latest = {...reviewFile, id: 'last', logicalName: '最新文件.md', submittedAt: '2026-09-03T00:00:00.000Z'};
-    const api = {getDelegateFileShare: async () => null, listDelegateReviewFiles: async () => [middle, earliest, latest]} as unknown as SelfHostedApi;
+    const api = {storagePolicy: async () => ({disabled: false, submissionBlocked: false, revision: 1}), serverVolumePolicy: async () => ({disabled: false, revision: 1}), getDelegateFileShare: async () => null, listDelegateReviewFiles: async () => [middle, earliest, latest]} as unknown as SelfHostedApi;
     await act(async () => {root.render(<DelegateFilePanels tab="review" snapshot={snapshot} api={api} />);
       await new Promise(resolve => setTimeout(resolve, 0));});
     const pendingCards = host.querySelectorAll('.delegate-file-card-list')[0]?.querySelectorAll('.delegate-file-card') ?? [];
@@ -188,7 +188,7 @@ describe('delegate file chair review', () => {
     const latest = {...publishedFile, id: 'reviewed-latest', logicalName: '最新审核文件.pdf', submittedAt: '2026-09-03T00:00:00.000Z'};
     const middle = {...publishedFile, id: 'reviewed-middle', logicalName: '中间审核文件.pdf', submittedAt: '2026-09-02T00:00:00.000Z', status:'REJECTED' as const};
     const earliest = {...publishedFile, id: 'reviewed-earliest', logicalName: '最早审核文件.pdf', submittedAt: '2026-09-01T00:00:00.000Z'};
-    const api = {getDelegateFileShare: async () => null, listDelegateReviewFiles: async () => [middle, latest, earliest]} as unknown as SelfHostedApi;
+    const api = {storagePolicy: async () => ({disabled: false, submissionBlocked: false, revision: 1}), serverVolumePolicy: async () => ({disabled: false, revision: 1}), getDelegateFileShare: async () => null, listDelegateReviewFiles: async () => [middle, latest, earliest]} as unknown as SelfHostedApi;
     await act(async () => {root.render(<DelegateFilePanels tab="review" snapshot={snapshot} api={api} />);
       await new Promise(resolve => setTimeout(resolve, 0));});
     const reviewedCards = host.querySelectorAll('.delegate-file-card-list')[1]?.querySelectorAll('.delegate-file-card') ?? [];
@@ -214,7 +214,7 @@ describe('prefetched chair file data', () => {
     const nextShare = deferred<typeof activeShare>(); const nextFiles = deferred<DelegateReviewFile[]>();
     const getDelegateFileShare = vi.fn().mockResolvedValueOnce(activeShare).mockReturnValue(nextShare.promise);
     const listDelegateReviewFiles = vi.fn().mockResolvedValueOnce([{...reviewFile, originalName: reviewFile.logicalName}]).mockReturnValue(nextFiles.promise);
-    const api = {getDelegateFileShare, listDelegateReviewFiles} as unknown as SelfHostedApi;
+    const api = {storagePolicy: async () => ({disabled: false, submissionBlocked: false, revision: 1}), serverVolumePolicy: async () => ({disabled: false, revision: 1}), getDelegateFileShare, listDelegateReviewFiles} as unknown as SelfHostedApi;
     await act(async () => root.render(<DelegateFilePanels snapshot={snapshot} api={api} tab="upload" />));
     expect(getDelegateFileShare).toHaveBeenCalledTimes(1);
     expect(listDelegateReviewFiles).toHaveBeenCalledTimes(1);
@@ -234,7 +234,7 @@ describe('prefetched chair file data', () => {
 
   it.each(['share', 'review'])('does not render false empty state while %s is loading or failed', async tab => {
     const pending = deferred<never>();
-    const api = {getDelegateFileShare: () => pending.promise, listDelegateReviewFiles: () => pending.promise} as unknown as SelfHostedApi;
+    const api = {storagePolicy: async () => ({disabled: false, submissionBlocked: false, revision: 1}), serverVolumePolicy: async () => ({disabled: false, revision: 1}), getDelegateFileShare: () => pending.promise, listDelegateReviewFiles: () => pending.promise} as unknown as SelfHostedApi;
     await act(async () => root.render(<DelegateFilePanels snapshot={snapshot} api={api} tab={tab} />));
     expect(host.textContent).not.toMatch(/开始分享|暂无/);
     await act(async () => pending.reject(new Error('load failed')));
@@ -246,7 +246,7 @@ describe('prefetched chair file data', () => {
   it('retains loaded content on a refresh failure and retries', async () => {
     const listDelegateReviewFiles = vi.fn().mockResolvedValueOnce([{...reviewFile, originalName: reviewFile.logicalName}])
       .mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce([]);
-    const api = {getDelegateFileShare: async () => null, listDelegateReviewFiles} as unknown as SelfHostedApi;
+    const api = {storagePolicy: async () => ({disabled: false, submissionBlocked: false, revision: 1}), serverVolumePolicy: async () => ({disabled: false, revision: 1}), getDelegateFileShare: async () => null, listDelegateReviewFiles} as unknown as SelfHostedApi;
     await act(async () => root.render(<DelegateFilePanels snapshot={snapshot} api={api} tab="review" />));
     await act(async () => root.render(<DelegateFilePanels snapshot={{...snapshot, sync: {...snapshot.sync, committeeEventSequence: 2}}} api={api} tab="review" />));
     expect(host.textContent).toContain(reviewFile.logicalName);
@@ -259,7 +259,7 @@ describe('prefetched chair file data', () => {
   it('ignores an older response after a realtime refresh', async () => {
     const old = deferred<DelegateReviewFile[]>();
     const listDelegateReviewFiles = vi.fn().mockReturnValueOnce(old.promise).mockResolvedValueOnce([{...reviewFile, originalName: reviewFile.logicalName}]);
-    const api = {getDelegateFileShare: async () => null, listDelegateReviewFiles} as unknown as SelfHostedApi;
+    const api = {storagePolicy: async () => ({disabled: false, submissionBlocked: false, revision: 1}), serverVolumePolicy: async () => ({disabled: false, revision: 1}), getDelegateFileShare: async () => null, listDelegateReviewFiles} as unknown as SelfHostedApi;
     await act(async () => root.render(<DelegateFilePanels snapshot={snapshot} api={api} tab="review" />));
     await act(async () => root.render(<DelegateFilePanels snapshot={{...snapshot, sync: {...snapshot.sync, committeeEventSequence: 2}}} api={api} tab="review" />));
     await act(async () => old.resolve([]));
@@ -268,7 +268,7 @@ describe('prefetched chair file data', () => {
 
   it('does not restore a share from a pending read after ending it', async () => {
     const old = deferred<typeof activeShare>();
-    const api = {getDelegateFileShare: vi.fn().mockResolvedValueOnce(activeShare).mockReturnValueOnce(old.promise),
+    const api = {storagePolicy: async () => ({disabled: false, submissionBlocked: false, revision: 1}), serverVolumePolicy: async () => ({disabled: false, revision: 1}), getDelegateFileShare: vi.fn().mockResolvedValueOnce(activeShare).mockReturnValueOnce(old.promise),
       listDelegateReviewFiles: async () => [], endDelegateFileShare: vi.fn(async () => null)} as unknown as SelfHostedApi;
     await act(async () => root.render(<DelegateFilePanels snapshot={snapshot} api={api} tab="review" />));
     await act(async () => root.render(<DelegateFilePanels snapshot={snapshot} api={api} tab="share" />));
