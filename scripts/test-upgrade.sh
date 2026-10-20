@@ -6,21 +6,27 @@ cd "$(dirname "$0")/.."
 source scripts/wsl-env.sh
 root=$PWD
 work=$(mktemp -d)
+evidence="${QUORUM_UPGRADE_TEST_EVIDENCE_DIR:-$work/diagnostics}"
+stage=build-base
+trap 'printf "Upgrade acceptance failed: stage=%s line=%s status=%s\n" "$stage" "$LINENO" "$?" | tee -a "$work/failure.log" >&2' ERR
 project="quorum-upgrade-test-$$"
 base_app="${QUORUM_UPGRADE_TEST_APP:-quorum-upgrade-test-base:local}"
 interrupted_driver_group=''
 cleanup() {
-  result=$?
+  local result=$?
+  trap - ERR
+  set +e
   if [[ -n $interrupted_driver_group ]]; then
     kill -KILL -- "-$interrupted_driver_group" 2>/dev/null || true
     wait "$interrupted_driver_group" 2>/dev/null || true
   fi
   if ((result != 0)); then
-    echo "Upgrade acceptance failed; evidence in $work" >&2
+    echo "Upgrade acceptance failed; diagnostic logs in $evidence" >&2
     for service in app postgres caddy; do
       id=$(docker ps -aq --filter "label=com.docker.compose.project=$project" --filter "label=com.docker.compose.service=$service")
       if [[ -n $id ]]; then docker logs "$id" > "$work/failure-$service.log" 2>&1; fi
     done
+    node "$root/scripts/upgrade-acceptance.mjs" diagnostics "$work" "$evidence"
   fi
   docker rm -f "$project-upgrade-io" >/dev/null 2>&1 || true
   docker ps -aq --filter "label=com.docker.compose.project=$project" | xargs -r docker rm -f >/dev/null
@@ -28,22 +34,30 @@ cleanup() {
   docker network ls -q --filter "label=com.docker.compose.project=$project" | xargs -r docker network rm >/dev/null
   for name in old new corrupt broken caddy caddy-old; do docker image rm "$project-$name:local" >/dev/null 2>&1 || true; done
   if ((result == 0)); then rm -rf "$work"; fi
+  exit "$result"
 }
 trap cleanup EXIT
 if [[ -z ${QUORUM_UPGRADE_TEST_APP:-} ]]; then
   docker build --target app-runtime -f deploy/Dockerfile -t "$base_app" . > "$work/build.log" 2>&1
 fi
+stage=build-fixtures
+# Keep the entire schema supported by the current runtime. Synthetic migrations
+# 9000/9001 exercise success/failure without deleting real historical migrations.
+docker run --rm --entrypoint node "$base_app" --input-type=module -e '
+  import {loadMigrations} from "./server/dist/db/migrations.js";
+  console.log(JSON.stringify((await loadMigrations("/app/server/migrations"))
+    .map(({version,checksum}) => ({version,checksum}))));
+' > "$work/baseline-migrations.json" 2> "$work/baseline-image.log"
+node scripts/upgrade-acceptance.mjs migrations "$work/baseline-migrations.json" "$work/baseline-migrations.json" \
+  2> "$work/migration-check.log"
 mkdir -p "$work/deploy" "$work/assets/downloads/chair-agent/v1.1.0-rc.1"
 cp deploy/upgrade.sh "$work/deploy/upgrade.sh"
 cat > "$work/old.Dockerfile" <<EOF2
 FROM $base_app
-USER root
-RUN rm /app/server/migrations/0089_*.sql
 LABEL io.quorum.release="v1.0.0"
 ENV QUORUM_BUILD_VERSION=v1.0.0
-USER node
 EOF2
-docker build -q -f "$work/old.Dockerfile" -t "$project-old:local" "$work" >/dev/null
+docker build -q -f "$work/old.Dockerfile" -t "$project-old:local" "$work" > "$work/build-old.log" 2>&1
 cat > "$work/9000_upgrade_acceptance.sql" <<'SQL'
 CREATE TABLE upgrade_probe (id integer PRIMARY KEY, message text NOT NULL);
 INSERT INTO upgrade_probe VALUES (1, 'new schema');
@@ -60,23 +74,23 @@ exec node --enable-source-maps server/dist/index.js
 SH
 cat > "$work/new.Dockerfile" <<EOF2
 FROM $base_app
-COPY 9000_upgrade_acceptance.sql /app/server/migrations/
+COPY --chmod=0644 9000_upgrade_acceptance.sql /app/server/migrations/
 LABEL io.quorum.release="v1.1.0-rc.1"
 ENV QUORUM_BUILD_VERSION=v1.1.0-rc.1
 EOF2
-docker build -q -f "$work/new.Dockerfile" -t "$project-new:local" "$work" >/dev/null
+docker build -q -f "$work/new.Dockerfile" -t "$project-new:local" "$work" > "$work/build-new.log" 2>&1
 cat > "$work/corrupt.Dockerfile" <<EOF2
 FROM $project-new:local
-COPY start-new.sh /app/start-new.sh
+COPY --chmod=0644 start-new.sh /app/start-new.sh
 CMD ["sh", "/app/start-new.sh"]
 EOF2
-docker build -q -f "$work/corrupt.Dockerfile" -t "$project-corrupt:local" "$work" >/dev/null
+docker build -q -f "$work/corrupt.Dockerfile" -t "$project-corrupt:local" "$work" > "$work/build-corrupt.log" 2>&1
 printf 'SELECT 1/0;\n' > "$work/9001_broken.sql"
 cat > "$work/broken.Dockerfile" <<EOF2
 FROM $project-corrupt:local
-COPY 9001_broken.sql /app/server/migrations/
+COPY --chmod=0644 9001_broken.sql /app/server/migrations/
 EOF2
-docker build -q -f "$work/broken.Dockerfile" -t "$project-broken:local" "$work" >/dev/null
+docker build -q -f "$work/broken.Dockerfile" -t "$project-broken:local" "$work" > "$work/build-broken.log" 2>&1
 printf 'transport fixture EXE\n' > "$work/assets/downloads/chair-agent/v1.1.0-rc.1/windows.exe"
 printf 'transport fixture AppImage\n' > "$work/assets/downloads/chair-agent/v1.1.0-rc.1/linux.AppImage"
 node --input-type=module - "$work" <<'JS'
@@ -95,7 +109,7 @@ FROM caddy:2.8-alpine
 COPY Caddyfile /etc/caddy/Caddyfile
 COPY assets /srv
 EOF2
-docker build -q -f "$work/caddy.Dockerfile" -t "$project-caddy:local" "$work" >/dev/null
+docker build -q -f "$work/caddy.Dockerfile" -t "$project-caddy:local" "$work" > "$work/build-caddy.log" 2>&1
 cp -r "$work/assets" "$work/old-assets"
 printf '<div id="root"></div><!-- old website -->\n' > "$work/old-assets/index.html"
 mv "$work/old-assets/downloads/chair-agent/v1.1.0-rc.1" "$work/old-assets/downloads/chair-agent/v1.0.0"
@@ -105,7 +119,7 @@ FROM $project-caddy:local
 RUN rm -rf /srv/downloads
 COPY old-assets /srv
 EOF2
-docker build -q -f "$work/caddy-old.Dockerfile" -t "$project-caddy-old:local" "$work" >/dev/null
+docker build -q -f "$work/caddy-old.Dockerfile" -t "$project-caddy-old:local" "$work" > "$work/build-caddy-old.log" 2>&1
 old_image=$(docker image inspect --format '{{.Id}}' "$project-old:local")
 caddy_image=$(docker image inspect --format '{{.Id}}' "$project-caddy-old:local")
 postgres_image=$(docker image inspect --format '{{.Id}}' postgres:16-alpine)
@@ -124,7 +138,17 @@ Path(work+'/deploy/compose.production.yaml').write_text(s)
 Path(work+'/deploy/.env').write_text('POSTGRES_USER=upgrade_test\nPOSTGRES_PASSWORD=only-for-isolated-test\nPOSTGRES_DB=upgrade_test\nQUORUM_SITE_ADDRESS=localhost\nQUORUM_ALLOWED_ORIGINS=https://localhost\nQUORUM_STORAGE_HARD_MIN_FREE_BYTES=1\n')
 PY
 compose=(docker compose -p "$project" --env-file "$work/deploy/.env" -f "$work/deploy/compose.production.yaml")
+stage=start-baseline
 "${compose[@]}" up -d --wait --wait-timeout 180 > "$work/start.log" 2>&1
+assert_migrations() {
+  "${compose[@]}" exec -T postgres psql -X -v ON_ERROR_STOP=1 -U upgrade_test -d upgrade_test -Atc \
+    "SELECT json_agg(m ORDER BY version) FROM (SELECT version, checksum FROM quorum_meta.schema_migrations) m" \
+    > "$work/actual-migrations.json"
+  node scripts/upgrade-acceptance.mjs migrations "$work/baseline-migrations.json" "$work/actual-migrations.json" \
+    2> "$work/migration-check.log"
+}
+assert_migrations
+stage=seed-baseline
 "${compose[@]}" exec -T caddy cat /data/caddy/pki/authorities/local/root.crt > "$work/root.crt"
 export CURL_CA_BUNDLE="$work/root.crt"
 port=$("${compose[@]}" port caddy 443); port=${port##*:}
@@ -279,6 +303,8 @@ SH
 export TEST_WORK="$work" TEST_PROJECT="$project"
 run_driver() {
   local fault=$1 image=${2:-new} result=0 pid attempt
+  stage="scenario-$fault"
+  echo "Upgrade acceptance: $stage"
   if [[ $fault == kill-restore-during ]]; then
     TEST_FAULT="$fault" TEST_IMAGE="$image" setsid bash "$work/driver.sh" > "$work/run-$fault.log" 2>&1 &
     pid=$!
@@ -302,13 +328,14 @@ run_driver() {
   fi
 }
 assert_restored() {
+  stage="restore-after-${stage#restore-after-}"
   cmp "$work/baseline.yaml" "$work/deploy/compose.production.yaml"
   cmp "$work/baseline.env" "$work/deploy/.env"
   test ! -d "$work/deploy/.upgrade"
   local value
   value=$("${compose[@]}" exec -T postgres psql -X -U upgrade_test -d upgrade_test -Atc "SELECT display_name FROM users WHERE email='upgrade@example.test'")
   test "$value" = "${1:-Before upgrade}"
-  test "$("${compose[@]}" exec -T postgres psql -X -U upgrade_test -d upgrade_test -Atc 'SELECT max(version) FROM quorum_meta.schema_migrations')" = 88
+  assert_migrations
   test "$("${compose[@]}" exec -T postgres psql -X -U upgrade_test -d upgrade_test -Atc "SELECT to_regclass('upgrade_probe') IS NULL")" = t
   "${compose[@]}" exec -T app sh -ec 'test "$(cat /var/lib/quorum/files/sentinel)" = "original bytes"; test "$(cat /var/lib/quorum/files/nested/keep)" = "must survive"; test "$(cat /var/lib/quorum/files/.hidden)" = hidden; test ! -e /var/lib/quorum/files/new-file'
   port=$("${compose[@]}" port caddy 443); port=${port##*:}
@@ -331,6 +358,8 @@ assert_restored() {
 # These checks must fail before any service is stopped or recovery point activated.
 reject_preflight() {
   local fault=$1 message=$2 result=0 before after
+  stage="preflight-$fault"
+  echo "Upgrade acceptance: $stage"
   before=$("${compose[@]}" ps -q app)
   TEST_FAULT="$fault" bash "$work/driver.sh" > "$work/run-$fault.log" 2>&1 || result=$?
   ((result != 0)) && grep -q "$message" "$work/run-$fault.log" || { cat "$work/run-$fault.log"; return 1; }

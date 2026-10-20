@@ -94,7 +94,19 @@ jobs:
         run: bash scripts/test-release-images.sh
 
       - name: Exercise real upgrade and interrupted rollback
+        env:
+          QUORUM_UPGRADE_TEST_APP: quorum-release-smoke-app:${{ github.sha }}
+          QUORUM_UPGRADE_TEST_EVIDENCE_DIR: ${{ runner.temp }}/quorum-upgrade-diagnostics
         run: bash scripts/test-upgrade.sh
+
+      - name: Upload upgrade failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quorum-upgrade-diagnostics-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/quorum-upgrade-diagnostics/*.log
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Publish Agent installers and corresponding source
         env:
