@@ -84,7 +84,7 @@ schema 86 将已发布规则的完整定义及原版本 ID 保存到不可变 `r
 
 ## 3. 服务端模块与数据边界
 
-`server/` 是单进程模块化单体。启动时使用 PostgreSQL advisory lock 执行带 SHA-256 校验和的顺序 migration；源码 schema compatibility 为 89。实例级 `system_settings` 保存新委员会的默认运作模式与创建者是否自动获得 Chair；它们只在创建事务中读取，不追溯既有委员会。系统管理员不能创建委员会。数据库版本、连接、存储目录可写性或容量采样不满足要求时 readiness 失败。
+`server/` 是单进程模块化单体。启动时使用 PostgreSQL advisory lock 执行带 SHA-256 校验和的顺序 migration；源码 schema compatibility 为 91。实例级 `system_settings` 保存新委员会的默认运作模式与创建者是否自动获得 Chair；它们只在创建事务中读取，不追溯既有委员会。系统管理员不能创建委员会。数据库版本、连接、存储目录可写性或容量采样不满足要求时 readiness 失败。
 
 | 模块 | 责任 |
 | --- | --- |
@@ -373,3 +373,7 @@ Windows 正常停止先关闭 Node CLI 的输入管道并等待清理，15 秒�
 `ServerVolumeInventoryService` 将 `file_blobs`、版本引用、上传记录与 server-volume 目录中的普通文件对应，展示应用文件系统绝对路径；不遍历符号链接，不扫描独立缓存或 staging。客户端只能提交服务器生成的文件标识，不能指定删除路径。清理先持久化预览，确认时重新检查文件、引用和归档状态；管理员确认、策略切换与卷写入使用同一 advisory lock。确认会取消涉及目标副本的未完成迁移／上传，并标记内容清理状态；只删除指定服务器卷副本，保留业务文件和版本记录。`server_volume_cleanup_batches/items` 保存进度与重试，后台物理删除幂等，委员会永久删除级联移除相关条目。失败和完成记录可由管理员查看；独立缓存不受影响。
 
 服务器卷迁移至 S3 后与 Agent 一样安排 `file_blob_delete_jobs`，迁移 worker 补排已完成迁移的遗留源文件。迁移结果提供 sourceCleanup 计数；切换成功与物理源文件清理完成是两个状态。
+
+### 服务器卷浏览器回归
+
+新增开发依赖 `playwright-core` 和 `pnpm test:server-volume:e2e`。先在仓库根目录加载 `scripts/wsl-env.sh` 并执行 `pnpm build:self-host`，再设置 `TEST_DATABASE_ADMIN_URL` 运行测试；未设置数据库地址时明确 skip。Linux 默认使用 `/usr/bin/chromium`，其他位置通过 `CHROMIUM_EXECUTABLE` 指定。测试创建随机临时数据库和临时存储目录，启动真实后端及 Vite，使用独立管理员／主席浏览器会话验证策略、提交拦截、迁移入口、单文件／归档／全部清理的确认与实际文件释放，并检查桌面和手机宽度的列表与弹窗；结束后停止测试服务并移除临时数据库、目录。默认测试端口为 API 4319、Web 5178，可通过 `QUORUM_E2E_API_PORT`／`QUORUM_E2E_WEB_PORT` 改写。截图及结果保存在被 git 忽略的 `outputs/server-volume-e2e/`。

@@ -34,50 +34,55 @@ export default function ServerVolumeAdminPanel({api}: {api: SelfHostedApi}) {
   return <Segment loading={working} className="server-volume-admin">
     <Header as="h2">{t('Server volume')}</Header>
     {Boolean(error) && <Message error role="alert">{apiErrorText(error)}</Message>}
-    <div className="admin-actions">
+    <div className="server-volume-policy">
       <Checkbox toggle label={t('Disable server volume storage')} checked={policy?.disabled ?? false}
         disabled={!policy || working} onChange={(_, data) => void run(async()=>{
           if(policy)setPolicy(await api.updateServerVolumePolicy({revision:policy.revision,disabled:Boolean(data.checked)}));
         })} />
-      {policy?.disabled && <>
+      {policy?.disabled && <div className="admin-actions">
         <Button negative basic disabled={working} onClick={()=>void requestCleanup('ARCHIVED')}>{t('Clear archived committees’ server volume files')}</Button>
-        <Button negative disabled={working} onClick={()=>void requestCleanup('ALL')}>{t('Clear all server volume files')}</Button>
-      </>}
+        <Button negative basic disabled={working} onClick={()=>void requestCleanup('ALL')}>{t('Clear all server volume files')}</Button>
+      </div>}
     </div>
-    <Header as="h3">{t('Server volume files')}</Header>
-    <Form onSubmit={()=>void refresh()}><Form.Group>
-      <Form.Input aria-label={t('Search volume files')} placeholder={t('Search volume files')} value={search}
+    <div className="system-settings-section-heading server-volume-heading">
+      <Header as="h3">{t('Server volume files')}</Header>
+      {inventory && <span className="server-volume-secondary">{t('Volume file count: {count}; size: {size}',{count:inventory.total,size:bytes(inventory.totalBytes)})}</span>}
+    </div>
+    <Form className="server-volume-toolbar" onSubmit={()=>void refresh()}>
+      <Form.Input className="server-volume-search" icon="search" aria-label={t('Search volume files')} placeholder={t('Search volume files')} value={search}
         onChange={(_,data)=>{setSearch(data.value);setPage(1);}} />
       <Form.Select aria-label={t('Committee status')} value={status || 'ALL'} options={[
         {key:'all',value:'ALL',text:t('All committees')},{key:'active',value:'ACTIVE',text:t('Active')},
         {key:'paused',value:'PAUSED',text:t('Paused')},{key:'archived',value:'ARCHIVED',text:t('Archived')}
       ]} onChange={(_,data)=>{setStatus(data.value==='ALL'?'':String(data.value));setPage(1);}} />
-      <Button type="submit" disabled={working}>{t('Refresh')}</Button>
-    </Form.Group></Form>
+      <Button type="submit" icon="refresh" content={t('Refresh')} disabled={working} />
+    </Form>
     {inventory && <>
-      <p>{t('Application filesystem path')}: <code>{inventory.rootPath}</code></p>
-      <p>{t('Volume file count: {count}; size: {size}',{count:inventory.total,size:bytes(inventory.totalBytes)})}</p>
-      <div style={{overflowX:'auto'}}><Table compact unstackable>
+      <div className="server-volume-root server-volume-secondary">{t('Application filesystem path')}: <code>{inventory.rootPath}</code></div>
+      {inventory.files.length === 0 ? <Message>{t('No files')}</Message> : <div className="server-volume-table-scroll" role="region" aria-label={t('Server volume files')} tabIndex={0}><Table compact unstackable className="server-volume-table">
         <Table.Header><Table.Row><Table.HeaderCell>{t('Committee')}</Table.HeaderCell><Table.HeaderCell>{t('File')}</Table.HeaderCell>
           <Table.HeaderCell>{t('Application filesystem path')}</Table.HeaderCell><Table.HeaderCell>{t('Size')}</Table.HeaderCell>
           <Table.HeaderCell>{t('Status')}</Table.HeaderCell><Table.HeaderCell>{t('Actions')}</Table.HeaderCell></Table.Row></Table.Header>
         <Table.Body>{inventory.files.map(file=><Table.Row key={file.id}>
-          <Table.Cell>{file.committeeName ?? t('Untracked file')}<br />{file.committeeStatus && t(({ACTIVE:'Active',PAUSED:'Paused',ARCHIVED:'Archived',DELETING:'Deleting'} as Record<string,string>)[file.committeeStatus] ?? file.committeeStatus)}</Table.Cell>
-          <Table.Cell>{file.references.length ? <details><summary>{file.references[0].name} · v{file.references[0].version}</summary>
-            {file.references.map(ref=><div key={`${ref.fileId}/${ref.version}`}>{ref.name} · v{ref.version}</div>)}</details> : t('Untracked file')}</Table.Cell>
-          <Table.Cell><code style={{overflowWrap:'anywhere'}}>{file.path}</code><Button size="mini" icon="copy" aria-label={t('Copy path')}
-            onClick={()=>void navigator.clipboard.writeText(file.path).catch(setError)} /></Table.Cell>
+          <Table.Cell>{file.committeeName ?? t('Untracked file')}<div className="server-volume-secondary">{file.committeeStatus && t(({ACTIVE:'Active',PAUSED:'Paused',ARCHIVED:'Archived',DELETING:'Deleting'} as Record<string,string>)[file.committeeStatus] ?? file.committeeStatus)}</div></Table.Cell>
+          <Table.Cell>{file.references.length > 1 ? <details><summary>{file.references[0].name} · v{file.references[0].version}</summary>
+            {file.references.slice(1).map(ref=><div key={`${ref.fileId}/${ref.version}`}>{ref.name} · v{ref.version}</div>)}</details>
+            : file.references.length === 1 ? <>{file.references[0].name} · v{file.references[0].version}</> : t('Untracked file')}</Table.Cell>
+          <Table.Cell><div className="server-volume-path"><code>{file.path}</code><Button basic size="mini" icon="copy" aria-label={t('Copy path')} title={t('Copy path')}
+            onClick={()=>void navigator.clipboard.writeText(file.path).catch(setError)} /></div></Table.Cell>
           <Table.Cell>{bytes(file.sizeBytes)}</Table.Cell>
           <Table.Cell>{!file.present?t('Missing from disk'):file.state==='DELETE_PENDING'?t('Cleaning server volume')
             :file.bindingStatus==='RETIRED'?t('Retired storage copy'):file.state==='UNTRACKED'?t('Untracked file'):t('Stored')}
-            {!file.hasOtherCopy && <div>{t('No verified copy in current alternative storage')}</div>}</Table.Cell>
+            {!file.hasOtherCopy && <div className="server-volume-secondary">{t('No verified copy in current alternative storage')}</div>}</Table.Cell>
           <Table.Cell><Button negative basic size="small" disabled={working || file.state==='DELETE_PENDING'}
             onClick={()=>void requestCleanup('SELECTED',file.id)}>{t('Delete')}</Button></Table.Cell>
         </Table.Row>)}</Table.Body>
-      </Table></div>
-      <Button disabled={page<=1 || working} onClick={()=>setPage(value=>value-1)}>{t('Previous page')}</Button>
-      <span>{page} / {Math.max(1,Math.ceil(inventory.total/25))}</span>
-      <Button disabled={page*25>=inventory.total || working} onClick={()=>setPage(value=>value+1)}>{t('Next page')}</Button>
+      </Table></div>}
+      {(inventory.total > 25 || page > 1) && <div className="server-volume-pagination">
+        <Button size="small" disabled={page<=1 || working} onClick={()=>setPage(value=>value-1)}>{t('Previous page')}</Button>
+        <span>{page} / {Math.max(1,Math.ceil(inventory.total/25))}</span>
+        <Button size="small" disabled={page*25>=inventory.total || working} onClick={()=>setPage(value=>value+1)}>{t('Next page')}</Button>
+      </div>}
     </>}
     {jobs.length>0 && <><Header as="h3">{t('Server volume cleanup tasks')}</Header>{jobs.map(job=><Message key={job.id}
       warning={job.failed>0} positive={job.status==='COMPLETED'} role="status">
@@ -85,7 +90,7 @@ export default function ServerVolumeAdminPanel({api}: {api: SelfHostedApi}) {
       {' · '}{t(job.status==='COMPLETED'?'Server volume cleanup completed':'Cleaning server volume')} · {job.completed}/{job.total}
       {job.failed>0 && ` · ${t('Cleanup retrying')}: ${job.failed}`}
     </Message>)}</>}
-    <Modal open={Boolean(preview)} onClose={()=>{if(!working)setPreview(undefined);}} size="small" closeOnDimmerClick={!working} closeOnEscape={!working}>
+    <Modal className="server-volume-confirm" open={Boolean(preview)} onClose={()=>{if(!working)setPreview(undefined);}} size="small" closeOnDimmerClick={!working} closeOnEscape={!working}>
       <Modal.Header>{t('Confirm server volume cleanup')}</Modal.Header>
       <Modal.Content scrolling>
         {Boolean(error) && <Message error role="alert">{apiErrorText(error)}</Message>}
@@ -95,9 +100,9 @@ export default function ServerVolumeAdminPanel({api}: {api: SelfHostedApi}) {
             {files:preview.total,committees:preview.committeeCount,size:bytes(preview.sizeBytes)})}</p>
           {preview.withoutOtherCopy>0 && <Message negative>{t('{count} copies have no verified copy in current alternative storage. Clearing them can permanently prevent downloads and migration.',{count:preview.withoutOtherCopy})}</Message>}
           <details open={preview.scope==='SELECTED'}><summary>{t('Files to clear')}</summary>
-            {preview.files?.map(file=><div key={file.id}><strong>{file.committeeName ?? t('Untracked file')}</strong>
+            {preview.files?.map(file=><div className="server-volume-preview-file" key={file.id}><strong>{file.committeeName ?? t('Untracked file')}</strong>
               {file.references.map(ref=><div key={`${ref.fileId}/${ref.version}`}>{ref.name} · v{ref.version}</div>)}
-              <code style={{overflowWrap:'anywhere'}}>{file.path}</code> · {bytes(file.sizeBytes)}</div>)}
+              <div className="server-volume-secondary"><code>{file.path}</code> · {bytes(file.sizeBytes)}</div></div>)}
           </details>
         </>}
       </Modal.Content>

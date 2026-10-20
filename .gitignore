@@ -53,3 +53,6 @@ pnpm-debug.log*
 /deploy/.upgrade/
 /deploy/.upgrade.new/
 /deploy/.upgrade.done/
+
+# Local browser acceptance artifacts
+/outputs/server-volume-e2e/
