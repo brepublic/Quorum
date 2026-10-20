@@ -1,5 +1,5 @@
 // @vitest-environment node
-import {afterEach, beforeEach, expect, it} from 'vitest';
+import {afterEach, beforeEach, expect, it, vi} from 'vitest';
 import {mkdtemp, mkdir, readFile, writeFile, rm, symlink, copyFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
@@ -11,7 +11,10 @@ import {prepareDevelopmentDownload, readDevelopmentRelease, developmentDownloadP
 let directory: string;
 let output: string;
 beforeEach(async () => {directory = await mkdtemp(join(tmpdir(), 'quorum-dev-download-')); output = join(directory, 'downloads');});
-afterEach(async () => {await rm(directory, {recursive: true, force: true});});
+afterEach(async () => {
+  vi.unstubAllEnvs();
+  await rm(directory, {recursive: true, force: true});
+});
 async function fixture(platform = 'linux', content = 'first installer') {
   const from = join(directory, platform); await mkdir(from, {recursive: true});
   const file = platform === 'linux' ? 'Agent.AppImage' : 'Agent-Setup.exe';
@@ -82,6 +85,8 @@ it('serves exact attachment bytes over Vite and returns 404 outside the manifest
   } finally {await server.close();}
 });
 it('keeps development files out of actual Vite production builds and preview, retaining release identity checks', async () => {
+  vi.stubEnv('RELEASE_TAG', '');
+  vi.stubEnv('GITHUB_SHA', '');
   // Run the real repository config in an isolated miniature checkout.
   await mkdir(join(directory, 'scripts'));
   for (const file of ['vite.config.ts', 'scripts/dev-chair-agent-downloads.mjs', 'scripts/chair-agent-downloads.mjs']) {
@@ -114,10 +119,18 @@ it('keeps development files out of actual Vite production builds and preview, re
   await writeFile(join(formalDirectory, 'manifest.json'), JSON.stringify(formal));
   const production = await loadConfigFromFile({command: 'build', mode: 'production'}, configFile);
   expect(JSON.parse(production!.config.define!.__CHAIR_AGENT_RELEASE__)).toEqual(formal);
-  const saved = process.env.RELEASE_TAG;
-  process.env.RELEASE_TAG = 'v9.9.9';
-  try {await expect(loadConfigFromFile({command: 'build', mode: 'production'}, configFile)).rejects.toThrow('does not match');}
-  finally {if (saved === undefined) delete process.env.RELEASE_TAG; else process.env.RELEASE_TAG = saved;}
+  vi.stubEnv('RELEASE_TAG', formal.serverVersion);
+  vi.stubEnv('GITHUB_SHA', formal.commit);
+  const release = await loadConfigFromFile({command: 'build', mode: 'production'}, configFile);
+  expect(JSON.parse(release!.config.define!.__CHAIR_AGENT_RELEASE__)).toEqual(formal);
+  vi.stubEnv('RELEASE_TAG', 'v9.9.9');
+  await expect(loadConfigFromFile({command: 'build', mode: 'production'}, configFile)).rejects.toThrow('does not match');
+  vi.stubEnv('RELEASE_TAG', formal.serverVersion);
+  vi.stubEnv('GITHUB_SHA', 'c'.repeat(40));
+  await expect(loadConfigFromFile({command: 'build', mode: 'production'}, configFile)).rejects.toThrow('does not match');
+  vi.stubEnv('GITHUB_SHA', formal.commit);
+  await rm(join(formalDirectory, 'manifest.json'));
+  await expect(loadConfigFromFile({command: 'build', mode: 'production'}, configFile)).rejects.toThrow('does not match');
 });
 it('detects untracked packaging inputs without requiring a clean worktree', async () => {
   execFileSync('git', ['init', '-q', directory]);
