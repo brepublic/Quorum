@@ -13,7 +13,7 @@ beforeEach(() => setLanguage('zh-CN'));
 describe('self-hosted storage administrator panel', () => {
   it('shows verification state without returning or prefilling credentials', async () => {
     const secret = 'must-not-be-rendered';
-    const api = {storagePolicy: async () => ({disabled: false, submissionBlocked: false, revision: 1}), serverVolumePolicy: async () => ({disabled: false, revision: 1}), listS3ProviderConfigs: vi.fn(async () => [{id: 'config', displayName: '对象存储',
+    const api = {serverVolumeFiles: async()=>({files:[],total:0,page:1,totalBytes:0,rootPath:"/storage/server-volume"}), serverVolumeCleanups:async()=>[], storagePolicy: async () => ({disabled: false, submissionBlocked: false, revision: 1}), serverVolumePolicy: async () => ({disabled: false, revision: 1}), listS3ProviderConfigs: vi.fn(async () => [{id: 'config', displayName: '对象存储',
       endpoint: 'https://s3.example.com', region: 'test-1', bucket: 'quorum', prefix: 'files',
       forcePathStyle: true, allowPrivateNetwork: false, status: 'ACTIVE', credentialKeyVersion: 1,
       verifiedAt: null, revision: 1, createdAt: '2026-08-13T00:00:00.000Z',

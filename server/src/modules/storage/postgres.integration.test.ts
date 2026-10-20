@@ -1,9 +1,10 @@
+import {ServerVolumeInventoryService} from '../operations/volume-inventory';
 import {ServerVolumeOperationsService} from '../operations/volume-service';
 import {testCommitteeInput} from '../../test/committee-fixture';
 // @vitest-environment node
 
 import {createHash, randomBytes,randomUUID} from 'node:crypto';
-import {link, lstat, mkdir, mkdtemp, open,readFile, realpath, rm, unlink, writeFile} from 'node:fs/promises';
+import {link, symlink, lstat, mkdir, mkdtemp, open,readFile, realpath, rm, unlink, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
 import pg from 'pg';
@@ -398,6 +399,127 @@ integration('PostgreSQL stage 6 file metadata', () => {
     expect((await files.download(value.fixture.member,value.file!.id)).file.id).toBe(value.file!.id);
   });
 
+  it('waits for an in-flight volume write before disabling and rejects subsequent writes',async()=>{
+    const f=await storageFixture();const upload=await uploads.createUpload(f.chair,f.committee.id,{logicalName:'inflight',originalName:'inflight.txt',
+      mediaType:'text/plain',expectedSizeBytes:3,sha256:digest('abc')},randomUUID(),context('inflight-create'));
+    await uploads.receiveContent(f.chair,upload.id,(async function*(){yield 'abc';})(),randomUUID(),3,context('inflight-content'));
+    let release!:()=>void;let entered!:()=>void;
+    const gate=new Promise<void>(resolve=>{release=resolve;});const started=new Promise<void>(resolve=>{entered=resolve;});
+    const original=volume.commitFromStaging.bind(volume);
+    const spy=vi.spyOn(volume,'commitFromStaging').mockImplementation(async input=>{entered();await gate;return original(input);});
+    const committing=serverVolume.commitUpload(f.chair,upload.id,{},randomUUID(),context('inflight-commit'));
+    await started;
+    let disabled=false;
+    const updating=new ServerVolumeOperationsService(pool!).update(administrator,{disabled:true,revision:1},context('disable-inflight')).then(value=>{disabled=true;return value;});
+    try {await new Promise(resolve=>setTimeout(resolve,30));expect(disabled).toBe(false);}
+    finally {release();}
+    const file=await committing;await updating;spy.mockRestore();
+    expect((await files.download(f.chair,file.id)).file.id).toBe(file.id);
+    await expect(uploads.createUpload(f.chair,f.committee.id,{logicalName:'later',originalName:'later.txt',mediaType:'text/plain',
+      expectedSizeBytes:3,sha256:digest('abc')},randomUUID(),context('after-disable'))).rejects.toMatchObject({reason:'SERVER_VOLUME_DISABLED'});
+  });
+
+  it('disabling prevents S3 to volume migration and still permits S3 uploads',async()=>{
+    const f=await s3Fixture();await new ServerVolumeOperationsService(pool!).update(administrator,{disabled:true,revision:1},context('disable'));
+    await expect(storageMigrations.create(f.owner,f.committee.id,{baseRevision:f.committee.revision+1,targetProviderType:'SERVER_VOLUME'},randomUUID(),context('blocked-migration')))
+      .rejects.toMatchObject({reason:'SERVER_VOLUME_DISABLED'});
+    expect((await storage.volumePolicy(f.owner,f.committee.id)).submissionBlocked).toBe(false);
+    expect(await uploads.createUpload(f.member,f.committee.id,{logicalName:'s3 allowed',originalName:'allowed.txt',mediaType:'text/plain',
+      expectedSizeBytes:3,sha256:digest('abc')},randomUUID(),context('s3-allowed'))).toHaveProperty('id');
+  });
+
+  it('cleanup cancels migrations using deleted sources and never follows volume symlinks',async()=>{
+    const f=await storageFixture();const file=await committedServerFile(f,'source','cancel-migration-cleanup');
+    const config=await createMigrationS3Config('cleanup target');
+    const migration=await storageMigrations.create(f.chair,f.committee.id,{baseRevision:f.committee.revision+1,
+      targetProviderType:'S3_COMPATIBLE',targetProviderConfigId:config.id},randomUUID(),context('migration'));
+    const service=new ServerVolumeInventoryService(pool!,volume);
+    const listed=await service.list(administrator,new URLSearchParams());
+    const preview=await service.preview(administrator,{scope:'SELECTED',fileId:listed.files[0]!.id},context('preview'));
+    await service.confirm(administrator,preview.id,{confirmed:true},context('confirm'));
+    expect((await storageMigrations.list(f.chair,f.committee.id)).find(item=>item.id===migration.id)?.status).toBe('CANCELLED');
+    expect(await storageMigrations.processNextCopyItem()).toBeNull();
+    while(await service.processNext()){}
+    expect((await files.get(f.member,file.id)).contentCleared).toBe(true);
+    const outside=join(stagingRoot,'outside');await mkdir(outside);await writeFile(join(outside,'keep'),'keep');
+    await symlink(outside,join(volume.rootPath,'escape'));
+    expect((await service.list(administrator,new URLSearchParams())).total).toBe(0);
+    await expect(service.preview(administrator,{scope:'SELECTED',fileId:'../escape/keep'},context('invalid-path'))).rejects.toMatchObject({code:'VALIDATION_FAILED'});
+    expect(await readFile(join(outside,'keep'),'utf8')).toBe('keep');
+  });
+
+  it('previews and confirms a single volume deletion, retries physical failures and retains file metadata',async()=>{
+    const f=await storageFixture();const file=await committedServerFile(f,'clear me','single-cleanup');
+    const service=new ServerVolumeInventoryService(pool!,volume);
+    await expect(service.list(f.chair,new URLSearchParams())).rejects.toMatchObject({code:'FORBIDDEN'});
+    const listing=await service.list(administrator,new URLSearchParams());
+    expect(listing.total).toBe(1);expect(listing.files[0]).toMatchObject({committeeId:f.committee.id,present:true,
+      references:[{fileId:file.id,name:file.logicalName,version:1}],hasOtherCopy:false});
+    expect(listing.files[0]!.path.startsWith(volume.rootPath)).toBe(true);
+    const preview=await service.preview(administrator,{scope:'SELECTED',fileId:listing.files[0]!.id},context('preview'));
+    expect(preview).toMatchObject({total:1,withoutOtherCopy:1,status:'PREVIEW'});
+    expect(await service.processNext()).toBe(false);
+    expect((await files.download(f.member,file.id)).file.id).toBe(file.id);
+    await expect(service.confirm(administrator,preview.id,{confirmed:false},context('not-confirmed'))).rejects.toMatchObject({code:'VALIDATION_FAILED'});
+    const confirmed=await service.confirm(administrator,preview.id,{confirmed:true},context('confirmed'));
+    expect(confirmed.status).toBe('RUNNING');
+    expect(await service.confirm(administrator,preview.id,{confirmed:true},context('replay'))).toMatchObject({total:1});
+    expect((await files.get(f.member,file.id)).contentCleared).toBe(true);
+    await expect(files.download(f.member,file.id)).rejects.toMatchObject({reason:'SERVER_VOLUME_CLEARED'});
+    const failure=vi.spyOn(volume,'delete').mockRejectedValueOnce(new Error('temporarily unavailable'));
+    expect(await service.processNext()).toBe(true);failure.mockRestore();
+    expect((await service.batches(administrator))[0]).toMatchObject({failed:1,completed:0});
+    await pool!.query("UPDATE server_volume_cleanup_items SET next_attempt_at=now()");
+    const restarted=new ServerVolumeInventoryService(pool!,volume);
+    expect(await restarted.processNext()).toBe(true);expect(await restarted.processNext()).toBe(false);
+    expect((await restarted.batches(administrator))[0]).toMatchObject({status:'COMPLETED',completed:1,failed:0});
+    await expect(lstat(listing.files[0]!.path)).rejects.toMatchObject({code:'ENOENT'});
+    expect((await files.list(f.member,f.committee.id))[0]).toMatchObject({id:file.id,contentCleared:true});
+    expect((await restarted.list(administrator,new URLSearchParams())).total).toBe(0);
+  });
+
+  it('limits archive cleanup to archived volume files and all cleanup to the volume, including untracked files',async()=>{
+    const f=await storageFixture();const active=await committedServerFile(f,'active','active-cleanup');
+    const archived=await stage4.createCommittee(f.owner,await testCommitteeInput(pool!,f.owner,
+      {name:'Archived storage',visibility:'PUBLIC',countryTemplateKey:'builtin:default'}),randomUUID(),context('archive-committee'));
+    const binding=await storage.createServerVolumeBinding(f.owner,archived.id,{baseRevision:archived.revision},randomUUID(),context('archive-binding'));
+    await committedServerFile({...f,committee:archived,binding,member:f.owner},'archived','archived-cleanup');
+    await pool!.query("UPDATE committees SET status='ARCHIVED',archived_at=now() WHERE id=$1",[archived.id]);
+    await mkdir(join(volume.rootPath,'parts'),{recursive:true});await writeFile(join(volume.rootPath,'parts','orphan'),'orphan');
+    await staging.write({key:'cache/keep',source:(async function*(){yield 'cache';})(),expectedSizeBytes:5,expectedSha256:digest('cache')});
+    const service=new ServerVolumeInventoryService(pool!,volume);const policy=new ServerVolumeOperationsService(pool!);
+    await expect(service.preview(administrator,{scope:'ALL'},context('need-disable'))).rejects.toMatchObject({reason:'SERVER_VOLUME_DISABLE_FIRST'});
+    await policy.update(administrator,{disabled:true,revision:1},context('disabled'));
+    const archivedPreview=await service.preview(administrator,{scope:'ARCHIVED'},context('archived-preview'));
+    expect(archivedPreview).toMatchObject({total:1,committeeCount:1});
+    await service.confirm(administrator,archivedPreview.id,{confirmed:true},context('archive-confirm'));
+    while(await service.processNext()) {}
+    expect((await files.download(f.member,active.id)).file.id).toBe(active.id);
+    expect((await pool!.query('SELECT status FROM committees WHERE id=$1',[archived.id])).rows[0].status).toBe('ARCHIVED');
+    const all=await service.preview(administrator,{scope:'ALL'},context('all-preview'));
+    expect(all.total).toBe(2);expect(all.files?.some(file=>file.state==='UNTRACKED')).toBe(true);
+    await service.confirm(administrator,all.id,{confirmed:true},context('all-confirm'));
+    // Confirmed work survives re-enabling the policy.
+    await policy.update(administrator,{disabled:false,revision:2},context('enabled'));
+    while(await service.processNext()) {}
+    expect((await service.list(administrator,new URLSearchParams())).total).toBe(0);
+    expect(await staging.exists('cache/keep')).toBe(true);
+  });
+
+  it('rejects a stale cleanup preview after a file or archive state changes',async()=>{
+    const f=await storageFixture();await committedServerFile(f,'old','stale-cleanup');
+    const policy=new ServerVolumeOperationsService(pool!);await policy.update(administrator,{disabled:true,revision:1},context('disabled'));
+    await pool!.query("UPDATE committees SET status='ARCHIVED',archived_at=now() WHERE id=$1",[f.committee.id]);
+    const service=new ServerVolumeInventoryService(pool!,volume);
+    const preview=await service.preview(administrator,{scope:'ARCHIVED'},context('preview'));
+    await pool!.query("UPDATE committees SET status='ACTIVE',archived_at=NULL WHERE id=$1",[f.committee.id]);
+    await expect(service.confirm(administrator,preview.id,{confirmed:true},context('stale-confirm'))).rejects.toMatchObject({code:'REVISION_CONFLICT'});
+    expect(await service.processNext()).toBe(false);
+    const all=await service.preview(administrator,{scope:'ALL'},context('all-preview'));
+    await writeFile(all.files![0]!.path,'changed');
+    await expect(service.confirm(administrator,all.id,{confirmed:true},context('stale-bytes'))).rejects.toMatchObject({code:'REVISION_CONFLICT'});
+  });
+
   it('blocks volume bindings, uploads, staged commits and new versions while preserving reads and cache paths', async () => {
     const f = await storageFixture();
     const file = await committedServerFile(f, 'existing volume file', 'policy-existing');
@@ -449,6 +571,7 @@ integration('PostgreSQL stage 6 file metadata', () => {
     const formal=await committedServerFile(value.fixture,'previous formal version','migration-formal');
     await review.approve(value.fixture.chair,formal.id,{baseRevision:formal.revision,
       logicalName:'Migrated working paper',fileType:'WORKING_PAPER'},context('migration-formal-approve'));
+    await new ServerVolumeOperationsService(pool!).update(administrator,{disabled:true,revision:1},context('disable-before-agent-migration'));
     const root=await AgentStateStore.initialize(join(stagingRoot,'chair'),{committeeId:value.fixture.committee.id,deviceId:value.paired.host.deviceId});
     const local=new AgentFileStore(root);await value.start();await storageMigrations.processNextCopyItem();
     expect((await value.latest()).totalItems).toBe(4);
@@ -468,6 +591,7 @@ integration('PostgreSQL stage 6 file metadata', () => {
     for(let index=0;index<4;index+=1){const task=await value.claim('VERIFY_MIGRATION_BLOB');
       await local.verifyBlob(task.blobId!,task.expectedSizeBytes!,task.expectedSha256!);await value.finish(task);}
     await storageMigrations.processNextCopyItem();expect((await value.latest()).status).toBe('COMPLETED');
+    expect((await storage.volumePolicy(value.fixture.chair,value.fixture.committee.id)).submissionBlocked).toBe(false);
     expect((await pool!.query('SELECT count(*)::int AS count FROM file_blob_delete_jobs WHERE blob_id=ANY($1::uuid[])',
       [sources.rows.map(source=>source.id)])).rows[0].count).toBe(4);
     const failedDelete=vi.spyOn(volume,'delete').mockRejectedValueOnce(new Error('temporary source cleanup failure'));
@@ -1088,7 +1212,7 @@ integration('PostgreSQL stage 6 file metadata', () => {
         `content-${item.name}`, undefined, context(`content-${item.name}`))).rejects.toBeDefined();
     }
 
-    const diskOperations: StagingOperations = {link, lstat, mkdir, realpath, unlink,
+    const diskOperations: StagingOperations = {link, symlink, lstat, mkdir, realpath, unlink,
       open: async () => { throw Object.assign(new Error('disk full'), {code: 'ENOSPC'}); }} as StagingOperations;
     const failingStore = new DurableStagingStore(join(stagingRoot, 'disk-failure'), 1024, 2048, diskOperations);
     await failingStore.initialize();
@@ -1266,7 +1390,7 @@ integration('PostgreSQL stage 6 file metadata', () => {
     const fixture = await storageFixture();
     const file = await committedServerFile(fixture, 'cleanup retry bytes', 'cleanup-retry');
     const failingStore = new DurableStagingStore(stagingRoot, 20 * 1024 * 1024, 21 * 1024 * 1024, {
-      link, lstat, mkdir, open, realpath,
+      link, symlink, lstat, mkdir, open, realpath,
       unlink: async () => {throw Object.assign(new Error('cleanup unavailable'), {code: 'EIO'});}
     });
     await failingStore.initialize();
@@ -1533,7 +1657,7 @@ integration('PostgreSQL stage 6 file metadata', () => {
     await storage.deleteFile(fixture.member, created.id, {baseRevision: created.revision}, 'retry-delete',
       context('retry-delete'));
     const failingVolume = new ServerVolumeStore(volume.rootPath, 20 * 1024 * 1024, {
-      link, lstat, mkdir, open, realpath,
+      link, symlink, lstat, mkdir, open, realpath,
       unlink: async () => {throw Object.assign(new Error('provider unavailable'), {code: 'EIO'});},
       syncFile: handle => handle.sync(), syncDirectory: handle => handle.sync()
     });
@@ -1612,6 +1736,8 @@ integration('PostgreSQL stage 6 file metadata', () => {
     const fixture = await storageFixture();
     const content = 'provider migration content';
     const file = await committedServerFile(fixture, content, 'migration-success');
+    await new ServerVolumeOperationsService(pool!).update(administrator,{disabled:true,revision:1},context('disable-for-s3'));
+    const source=(await pool!.query('SELECT storage_key FROM file_blobs WHERE id=$1',[file.currentVersion.blobId])).rows[0];
     const config = await createMigrationS3Config('Migration Success');
     const transport = new IntegrationS3Transport();
     const migrations = new Stage6MigrationService(pool as pg.Pool, staging, volume, fileS3Configs,
@@ -1638,6 +1764,9 @@ integration('PostgreSQL stage 6 file metadata', () => {
     const completed = await migrations.confirm(fixture.chair, created.id, {baseRevision: ready?.revision},
       'confirm-migration-success', context('confirm-migration-success'));
     expect(completed.status).toBe('COMPLETED');
+    expect(completed.sourceCleanup).toMatchObject({total:1,pending:1});
+    expect((await storage.volumePolicy(fixture.chair,fixture.committee.id)).submissionBlocked).toBe(false);
+    expect(await uploads.createUpload(fixture.chair,fixture.committee.id,{logicalName:'allowed',originalName:'allowed.txt',mediaType:'text/plain',expectedSizeBytes:3,sha256:digest('abc')},randomUUID(),context('allowed-s3-upload'))).toHaveProperty('id');
     const bindings = await pool?.query(`SELECT id,status FROM storage_bindings WHERE committee_id=$1 ORDER BY id`,
       [fixture.committee.id]);
     expect(bindings?.rows).toEqual(expect.arrayContaining([
@@ -1662,6 +1791,8 @@ integration('PostgreSQL stage 6 file metadata', () => {
       WHERE migration_id=$1 AND staging_deleted_at IS NOT NULL`, [created.id]);
     expect(cleaned?.rows[0]?.count).toBe(1);
     expect((await migratedFiles.get(fixture.member, file.id)).id).toBe(file.id);
+    await expect(lstat(volume.pathForKey(source.storage_key))).rejects.toMatchObject({code:'ENOENT'});
+    expect((await migrations.list(fixture.chair,fixture.committee.id))[0]?.sourceCleanup).toMatchObject({pending:0,failed:0});
   });
 
   it('keeps the source active on copy failure and resumes with the same target blob', async () => {

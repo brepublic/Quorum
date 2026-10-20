@@ -21,14 +21,14 @@ export function useVolumePolicy(api: SelfHostedApi, committeeId: string, enabled
   return {disabled: policy?.disabled ?? true, blocked: policy?.submissionBlocked ?? enabled,
     loading: enabled && !policy && !error, error};
 }
-export function VolumePolicyNotice({blocked, manager, committeeId, error}: {
-  blocked: boolean; manager: boolean; committeeId: string; error?: unknown;
+export function VolumePolicyNotice({blocked, manager, committeeId, error, showAction = true}: {
+  blocked: boolean; manager: boolean; committeeId: string; error?: unknown; showAction?: boolean;
 }) {
   if (error) return <Message error role="alert">{apiErrorText(error)}</Message>;
   if (!blocked) return null;
   return <Message warning role="status">
     <p>{t(manager ? 'Server volume storage is disabled. Migrate storage before submitting files or new versions.'
       : 'Server volume storage is disabled. Ask a chair to migrate storage before submitting files.')}</p>
-    {manager && <Button as={Link} to={`/committees/${committeeId}/posts/storage`}>{t('Migrate storage')}</Button>}
+    {manager && showAction && <Button primary as={Link} to={`/committees/${committeeId}/posts/storage`}>{t('Migrate storage')}</Button>}
   </Message>;
 }

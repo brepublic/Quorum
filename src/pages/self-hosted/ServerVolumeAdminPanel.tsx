@@ -1,26 +1,110 @@
 import * as React from 'react';
-import {Checkbox, Header, Message, Segment} from 'semantic-ui-react';
+import {Button, Checkbox, Form, Header, Message, Modal, Segment, Table} from 'semantic-ui-react';
+import type {ServerVolumeCleanup, ServerVolumeInventory} from '@quorum/contracts';
 import type {SelfHostedApi} from '../../services/self-hosted-api';
 import {t, apiErrorText} from '../../i18n';
 
+const bytes = (value: number) => value<1024 ? `${value} B` : value<1024*1024 ? `${(value/1024).toFixed(1)} KiB` : `${(value/1024/1024).toFixed(2)} MiB`;
 export default function ServerVolumeAdminPanel({api}: {api: SelfHostedApi}) {
   const [policy, setPolicy] = React.useState<{disabled: boolean; revision: number}>();
+  const [inventory, setInventory] = React.useState<ServerVolumeInventory>();
+  const [jobs, setJobs] = React.useState<ServerVolumeCleanup[]>([]);
+  const [preview, setPreview] = React.useState<ServerVolumeCleanup>();
   const [error, setError] = React.useState<unknown>();
   const [working, setWorking] = React.useState(false);
-  React.useEffect(() => {let active = true;
-    api.serverVolumePolicy().then(value => {if (active) setPolicy(value);}).catch(e => {if (active) setError(e);});
-    return () => {active = false;};
-  }, [api]);
-  const update = async (disabled: boolean) => {
-    if (!policy) return; setWorking(true); setError(undefined);
-    try {setPolicy(await api.updateServerVolumePolicy({...policy, disabled}));}
-    catch (failure) {setError(failure); try {setPolicy(await api.serverVolumePolicy());} catch { /* keep original failure */ }}
-    finally {setWorking(false);}
+  const [search, setSearch] = React.useState('');
+  const [status, setStatus] = React.useState('');
+  const [page, setPage] = React.useState(1);
+  const generation = React.useRef(0);
+  const refresh = React.useCallback(async () => {
+    const current=++generation.current;
+    try {const [nextPolicy,nextFiles,nextJobs]=await Promise.all([api.serverVolumePolicy(),api.serverVolumeFiles(search,status,page),api.serverVolumeCleanups()]);
+      if(current===generation.current){setPolicy(nextPolicy);setInventory(nextFiles);setJobs(nextJobs);}}
+    catch(failure){if(current===generation.current)setError(failure);}
+  },[api,search,status,page]);
+  React.useEffect(()=>{void refresh();const timer=window.setInterval(()=>void refresh(),5000);
+    return()=>{generation.current++;window.clearInterval(timer);};},[refresh]);
+  const run = async (operation: () => Promise<void>) => {
+    if(working)return;setWorking(true);setError(undefined);
+    try {await operation();}catch(failure){setError(failure);}finally{setWorking(false);await refresh();}
   };
-  return <Segment loading={working}>
+  const requestCleanup = (scope: ServerVolumeCleanup['scope'], fileId?: string) => run(async()=>{
+    setPreview(await api.previewServerVolumeCleanup(scope,fileId));
+  });
+  return <Segment loading={working} className="server-volume-admin">
     <Header as="h2">{t('Server volume')}</Header>
     {Boolean(error) && <Message error role="alert">{apiErrorText(error)}</Message>}
-    <Checkbox toggle label={t('Disable server volume storage')} checked={policy?.disabled ?? false}
-      disabled={!policy || working} onChange={(_, data) => void update(Boolean(data.checked))} />
+    <div className="admin-actions">
+      <Checkbox toggle label={t('Disable server volume storage')} checked={policy?.disabled ?? false}
+        disabled={!policy || working} onChange={(_, data) => void run(async()=>{
+          if(policy)setPolicy(await api.updateServerVolumePolicy({revision:policy.revision,disabled:Boolean(data.checked)}));
+        })} />
+      {policy?.disabled && <>
+        <Button negative basic disabled={working} onClick={()=>void requestCleanup('ARCHIVED')}>{t('Clear archived committees’ server volume files')}</Button>
+        <Button negative disabled={working} onClick={()=>void requestCleanup('ALL')}>{t('Clear all server volume files')}</Button>
+      </>}
+    </div>
+    <Header as="h3">{t('Server volume files')}</Header>
+    <Form onSubmit={()=>void refresh()}><Form.Group>
+      <Form.Input aria-label={t('Search volume files')} placeholder={t('Search volume files')} value={search}
+        onChange={(_,data)=>{setSearch(data.value);setPage(1);}} />
+      <Form.Select aria-label={t('Committee status')} value={status || 'ALL'} options={[
+        {key:'all',value:'ALL',text:t('All committees')},{key:'active',value:'ACTIVE',text:t('Active')},
+        {key:'paused',value:'PAUSED',text:t('Paused')},{key:'archived',value:'ARCHIVED',text:t('Archived')}
+      ]} onChange={(_,data)=>{setStatus(data.value==='ALL'?'':String(data.value));setPage(1);}} />
+      <Button type="submit" disabled={working}>{t('Refresh')}</Button>
+    </Form.Group></Form>
+    {inventory && <>
+      <p>{t('Application filesystem path')}: <code>{inventory.rootPath}</code></p>
+      <p>{t('Volume file count: {count}; size: {size}',{count:inventory.total,size:bytes(inventory.totalBytes)})}</p>
+      <div style={{overflowX:'auto'}}><Table compact unstackable>
+        <Table.Header><Table.Row><Table.HeaderCell>{t('Committee')}</Table.HeaderCell><Table.HeaderCell>{t('File')}</Table.HeaderCell>
+          <Table.HeaderCell>{t('Application filesystem path')}</Table.HeaderCell><Table.HeaderCell>{t('Size')}</Table.HeaderCell>
+          <Table.HeaderCell>{t('Status')}</Table.HeaderCell><Table.HeaderCell>{t('Actions')}</Table.HeaderCell></Table.Row></Table.Header>
+        <Table.Body>{inventory.files.map(file=><Table.Row key={file.id}>
+          <Table.Cell>{file.committeeName ?? t('Untracked file')}<br />{file.committeeStatus && t(({ACTIVE:'Active',PAUSED:'Paused',ARCHIVED:'Archived',DELETING:'Deleting'} as Record<string,string>)[file.committeeStatus] ?? file.committeeStatus)}</Table.Cell>
+          <Table.Cell>{file.references.length ? <details><summary>{file.references[0].name} · v{file.references[0].version}</summary>
+            {file.references.map(ref=><div key={`${ref.fileId}/${ref.version}`}>{ref.name} · v{ref.version}</div>)}</details> : t('Untracked file')}</Table.Cell>
+          <Table.Cell><code style={{overflowWrap:'anywhere'}}>{file.path}</code><Button size="mini" icon="copy" aria-label={t('Copy path')}
+            onClick={()=>void navigator.clipboard.writeText(file.path).catch(setError)} /></Table.Cell>
+          <Table.Cell>{bytes(file.sizeBytes)}</Table.Cell>
+          <Table.Cell>{!file.present?t('Missing from disk'):file.state==='DELETE_PENDING'?t('Cleaning server volume')
+            :file.bindingStatus==='RETIRED'?t('Retired storage copy'):file.state==='UNTRACKED'?t('Untracked file'):t('Stored')}
+            {!file.hasOtherCopy && <div>{t('No verified copy in current alternative storage')}</div>}</Table.Cell>
+          <Table.Cell><Button negative basic size="small" disabled={working || file.state==='DELETE_PENDING'}
+            onClick={()=>void requestCleanup('SELECTED',file.id)}>{t('Delete')}</Button></Table.Cell>
+        </Table.Row>)}</Table.Body>
+      </Table></div>
+      <Button disabled={page<=1 || working} onClick={()=>setPage(value=>value-1)}>{t('Previous page')}</Button>
+      <span>{page} / {Math.max(1,Math.ceil(inventory.total/25))}</span>
+      <Button disabled={page*25>=inventory.total || working} onClick={()=>setPage(value=>value+1)}>{t('Next page')}</Button>
+    </>}
+    {jobs.length>0 && <><Header as="h3">{t('Server volume cleanup tasks')}</Header>{jobs.map(job=><Message key={job.id}
+      warning={job.failed>0} positive={job.status==='COMPLETED'} role="status">
+      {t(job.scope==='ARCHIVED'?'Clear archived committees’ server volume files':job.scope==='ALL'?'Clear all server volume files':'Delete selected volume file')}
+      {' · '}{t(job.status==='COMPLETED'?'Server volume cleanup completed':'Cleaning server volume')} · {job.completed}/{job.total}
+      {job.failed>0 && ` · ${t('Cleanup retrying')}: ${job.failed}`}
+    </Message>)}</>}
+    <Modal open={Boolean(preview)} onClose={()=>{if(!working)setPreview(undefined);}} size="small" closeOnDimmerClick={!working} closeOnEscape={!working}>
+      <Modal.Header>{t('Confirm server volume cleanup')}</Modal.Header>
+      <Modal.Content scrolling>
+        {Boolean(error) && <Message error role="alert">{apiErrorText(error)}</Message>}
+        {preview && <>
+          <p>{t(preview.scope==='ARCHIVED'?'Clear archived committees’ server volume files':preview.scope==='ALL'?'Clear all server volume files':'Delete selected volume file')}</p>
+          <p>{t('Clear {files} copies in {committees} committees, freeing approximately {size}.',
+            {files:preview.total,committees:preview.committeeCount,size:bytes(preview.sizeBytes)})}</p>
+          {preview.withoutOtherCopy>0 && <Message negative>{t('{count} copies have no verified copy in current alternative storage. Clearing them can permanently prevent downloads and migration.',{count:preview.withoutOtherCopy})}</Message>}
+          <details open={preview.scope==='SELECTED'}><summary>{t('Files to clear')}</summary>
+            {preview.files?.map(file=><div key={file.id}><strong>{file.committeeName ?? t('Untracked file')}</strong>
+              {file.references.map(ref=><div key={`${ref.fileId}/${ref.version}`}>{ref.name} · v{ref.version}</div>)}
+              <code style={{overflowWrap:'anywhere'}}>{file.path}</code> · {bytes(file.sizeBytes)}</div>)}
+          </details>
+        </>}
+      </Modal.Content>
+      <Modal.Actions><Button disabled={working} onClick={()=>setPreview(undefined)}>{t('Cancel')}</Button>
+        <Button negative disabled={working || !preview?.total} onClick={()=>void run(async()=>{
+          if(preview){await api.confirmServerVolumeCleanup(preview.id);setPreview(undefined);}
+        })}>{t('Confirm deletion')}</Button></Modal.Actions>
+    </Modal>
   </Segment>;
 }

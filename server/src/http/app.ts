@@ -1,3 +1,4 @@
+import type {ServerVolumeInventoryService} from '../modules/operations/volume-inventory.js';
 import type {ServerVolumeOperationsService} from '../modules/operations/volume-service.js';
 import {randomUUID} from 'node:crypto';
 import {createServer, type IncomingMessage, type RequestListener, type Server, type ServerResponse} from 'node:http';
@@ -77,6 +78,7 @@ export interface AppDependencies {
   operationsStatus?: Stage8OperationsStatusService;
   storageCacheOperations?: StorageCacheOperationsService;
   volumeOperations?: ServerVolumeOperationsService;
+  volumeInventory?: ServerVolumeInventoryService;
   searchIndex?: SearchIndexService;
   delegateFiles?: DelegateFileService;
   allowedOrigins?: string[];
@@ -1323,10 +1325,11 @@ async function handleIdentityRequest(options: {
   operationsStatus?: Stage8OperationsStatusService;
   storageCacheOperations?: StorageCacheOperationsService;
   volumeOperations?: ServerVolumeOperationsService;
+  volumeInventory?: ServerVolumeInventoryService;
   searchIndex?: SearchIndexService;
   allowedOrigins: readonly string[];
 }): Promise<boolean> {
-  const {request, response, pathname, requestId, identity, operationsStatus, storageCacheOperations, volumeOperations, searchIndex, allowedOrigins} = options;
+  const {request, response, pathname, requestId, identity, operationsStatus, storageCacheOperations, volumeOperations, volumeInventory, searchIndex, allowedOrigins} = options;
   const method = request.method ?? 'GET';
   const context = identityContext(request, requestId);
   const cookies = identityCookies(request);
@@ -1454,7 +1457,25 @@ async function handleIdentityRequest(options: {
       return true;
     }
   }
-  if (pathname === '/api/v1/admin/server-volume/policy' && volumeOperations) {
+  if (volumeInventory && pathname.startsWith('/api/v1/admin/server-volume/')) {
+    if (method==='GET' && pathname==='/api/v1/admin/server-volume/files') {
+      sendJson(response,200,success(await volumeInventory.list(await authenticatedRead(request,identity),
+        new URL(request.url!,'http://quorum.local').searchParams),requestId));return true;
+    }
+    if (method==='GET' && pathname==='/api/v1/admin/server-volume/cleanups') {
+      sendJson(response,200,success(await volumeInventory.batches(await authenticatedRead(request,identity)),requestId));return true;
+    }
+    if (method==='POST' && pathname==='/api/v1/admin/server-volume/cleanups') {
+      requireOrigin(request,allowedOrigins);
+      sendJson(response,201,success(await volumeInventory.preview(await authenticatedWrite(request,identity),await readJson(request),context),requestId));return true;
+    }
+    const confirm=/^\/api\/v1\/admin\/server-volume\/cleanups\/([0-9a-f-]{36})\/confirm$/.exec(pathname);
+    if (method==='POST' && confirm) {
+      requireOrigin(request,allowedOrigins);
+      sendJson(response,202,success(await volumeInventory.confirm(await authenticatedWrite(request,identity),confirm[1]!,await readJson(request),context),requestId));return true;
+    }
+  }
+  if (pathname === '/api/v1/admin/server-volume/policy'  && volumeOperations) {
     if (method === 'GET') {
       sendJson(response, 200, success(await volumeOperations.policy(await authenticatedRead(request, identity)), requestId)); return true;
     }
@@ -1572,6 +1593,7 @@ export function createRequestHandler(dependencies: AppDependencies): RequestList
           operationsStatus: dependencies.operationsStatus,
           storageCacheOperations: dependencies.storageCacheOperations,
           volumeOperations: dependencies.volumeOperations,
+          volumeInventory: dependencies.volumeInventory,
           searchIndex: dependencies.searchIndex,
           allowedOrigins: dependencies.allowedOrigins ?? []
         })) return;

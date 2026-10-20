@@ -747,6 +747,18 @@ export const selfHostedApi = {
   storagePolicy(committeeId: string) {
     return request<{disabled: boolean; revision: number; submissionBlocked: boolean}>(`/api/v1/committees/${committeeId}/storage-policy`);
   },
+  serverVolumeFiles(search = '', status = '', page = 1) {
+    return request<import('@quorum/contracts').ServerVolumeInventory>(`/api/v1/admin/server-volume/files?${new URLSearchParams({search,status,page:String(page)})}`);
+  },
+  serverVolumeCleanups() {
+    return request<import('@quorum/contracts').ServerVolumeCleanup[]>('/api/v1/admin/server-volume/cleanups');
+  },
+  previewServerVolumeCleanup(scope: 'ALL' | 'ARCHIVED' | 'SELECTED', fileId?: string) {
+    return request<import('@quorum/contracts').ServerVolumeCleanup>('/api/v1/admin/server-volume/cleanups', {method:'POST',body:{scope,...(fileId?{fileId}:{})}});
+  },
+  confirmServerVolumeCleanup(id: string) {
+    return request<import('@quorum/contracts').ServerVolumeCleanup>(`/api/v1/admin/server-volume/cleanups/${id}/confirm`, {method:'POST',body:{confirmed:true}});
+  },
   serverVolumePolicy() {
     return request<{disabled: boolean; revision: number}>('/api/v1/admin/server-volume/policy');
   },

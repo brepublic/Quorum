@@ -356,7 +356,7 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
     </Modal>
     {error && <Message error role="alert" content={error} />}
     {canUpload && !volumePolicy.loading && <VolumePolicyNotice blocked={volumePolicy.blocked} manager={canManage}
-      committeeId={committeeId} error={volumePolicy.error} />}
+      committeeId={committeeId} error={volumePolicy.error} showAction={section !== 'storage'} />}
     {section !== 'storage' && <>
     {pendingHostCommits.map(item => <Message key={item.id} header={item.logicalName}
       warning={Boolean(item.failureCode || item.agentCommitState === 'CONFLICT')}
@@ -399,7 +399,8 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
           <div className="motion-heading self-hosted-file-heading"><Card.Header>{file.logicalName}</Card.Header>
             <FileStatusLabel status={file.status} />
           </div>
-          {file.syncState !== 'SYNCED' && <div className="self-hosted-file-sync"><Label color="orange" icon="sync"
+          {file.contentCleared && <Label color="orange">{t('File content cleared by administrator')}</Label>}
+          {file.syncState !== 'SYNCED'  && <div className="self-hosted-file-sync"><Label color="orange" icon="sync"
             content={file.syncState === 'PENDING_HOST_COMMIT' ? t("Waiting for the chair computer to save") : t("Waiting for chair computer sync")} /></div>}
           <Table compact celled unstackable className="motion-metadata-table self-hosted-file-metadata"><Table.Body>
             <Table.Row><Table.Cell className="motion-metadata-key">{t('File source')}</Table.Cell><Table.Cell>{file.submissionSource === 'CHAIR' ? t('Chair') : file.submitterDisplayName ?? '—'}</Table.Cell></Table.Row>
@@ -609,6 +610,12 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
       </Form> : <p className="storage-empty-target">{t("No available storage migration targets")}</p>)}
       {migrations.length > 0 && <Card.Group stackable className="self-hosted-migrations">{migrations.map(migration =>
         <Card fluid key={migration.id}><Card.Content><Card.Header>{t(MIGRATION_STATUS[migration.status])}</Card.Header>
+          {migration.sourceCleanup && <Card.Meta>{t(migration.sourceCleanup.pending ? 'Storage switched; cleaning server volume' : 'Server volume cleanup completed')}
+            {migration.sourceCleanup.pending > 0 && ` · ${migration.sourceCleanup.total-migration.sourceCleanup.pending}/${migration.sourceCleanup.total}`}
+            {migration.sourceCleanup.failed > 0 && ` · ${t('Cleanup retrying')}: ${migration.sourceCleanup.failed}`}</Card.Meta>}
+          {volumePolicy.disabled && ['COPYING','READY_TO_CONFIRM','FAILED'].includes(migration.status)
+            && bindings.some(binding=>binding.id===migration.targetBindingId && binding.providerType==='SERVER_VOLUME')
+            && <Message warning>{t('The target server volume is disabled. Cancel this migration and select another storage location.')}</Message>}
           {!migration.progress&&<Card.Meta>{migration.completedItems}/{migration.totalItems}</Card.Meta>}
           {migration.progress&&<Card.Description>
             <p>{t("Server volume")} → {t("Chair computer")} · {migration.progress.targetDeviceLabel}</p>

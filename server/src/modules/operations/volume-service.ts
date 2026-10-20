@@ -11,7 +11,10 @@ export function requireVolumeAdmin(auth: AuthenticatedSession): void {
 }
 export class ServerVolumeOperationsService {
   constructor(private readonly pool: Pool) {}
-  async policy(auth: AuthenticatedSession) { requireVolumeAdmin(auth); return readVolumePolicy(this.pool); }
+  async policy(auth: AuthenticatedSession) {
+    requireVolumeAdmin(auth); const {disabled, revision} = await readVolumePolicy(this.pool);
+    return {disabled, revision};
+  }
   async update(auth: AuthenticatedSession, body: Record<string, unknown>, context: Stage4Context) {
     requireVolumeAdmin(auth); assertExactBody(body, ['disabled', 'revision']);
     if (typeof body.disabled !== 'boolean' || !Number.isSafeInteger(body.revision)) throw new AppError({code: 'VALIDATION_FAILED',
@@ -24,7 +27,7 @@ export class ServerVolumeOperationsService {
       await audit(client, context, {actorUserId: auth.user.id, capabilities: ['SYSTEM_ADMIN'],
         action: 'storage.volume_policy_updated', resourceType: 'system_settings', before: current,
         after: {disabled: body.disabled, revision: current.revision + 1}});
-      return readVolumePolicy(client);
+      return {disabled:Boolean(body.disabled),revision:current.revision+1};
     }));
   }
 }

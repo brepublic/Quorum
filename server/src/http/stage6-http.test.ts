@@ -1,3 +1,4 @@
+import type {ServerVolumeInventoryService} from '../modules/operations/volume-inventory';
 import type {ServerVolumeOperationsService} from '../modules/operations/volume-service';
 // @vitest-environment node
 
@@ -32,7 +33,7 @@ async function send(uploads: Stage6UploadService, options: {
   method: 'GET' | 'POST' | 'PUT' | 'DELETE'; path: string; chunks: Buffer[]; headers?: Record<string, string>;
 }, providerCommits?: Stage6ProviderCommitService, extras: {
   s3Configs?: Stage6S3ConfigService; storage?: Stage6StorageService; files?: Stage6FileService;
-  storageMigrations?: Stage6MigrationService; volumeOperations?: ServerVolumeOperationsService;
+  storageMigrations?: Stage6MigrationService; volumeOperations?: ServerVolumeOperationsService; volumeInventory?: ServerVolumeInventoryService;
 } = {}) {
   const identity = {authenticate: vi.fn(async () => authenticated)} as unknown as IdentityService;
   const handler = createRequestHandler({health: {ready: async () => ({ready: true, checks: {
@@ -55,6 +56,19 @@ async function send(uploads: Stage6UploadService, options: {
 }
 
 describe('stage 6 upload HTTP boundary', () => {
+  it('requires CSRF and Origin for cleanup preview and confirmation and never accepts a client path',async()=>{
+    const preview=vi.fn(async()=>({id:'job'}));const confirm=vi.fn(async()=>({status:'RUNNING'}));
+    const volumeInventory={preview,confirm} as unknown as ServerVolumeInventoryService;
+    for(const path of ['/api/v1/admin/server-volume/cleanups','/api/v1/admin/server-volume/cleanups/20000000-0000-4000-8000-000000000001/confirm']){
+      const request={method:'POST' as const,path,chunks:[Buffer.from('{"confirmed":true}')]};
+      expect((await send({} as Stage6UploadService,{...request,headers:{'x-csrf-token':'wrong'}},undefined,{volumeInventory})).statusCode).toBe(403);
+      expect((await send({} as Stage6UploadService,{...request,headers:{origin:'https://other.invalid'}},undefined,{volumeInventory})).statusCode).toBe(403);
+    }
+    expect(preview).not.toHaveBeenCalled();expect(confirm).not.toHaveBeenCalled();
+    expect((await send({} as Stage6UploadService,{method:'POST',path:'/api/v1/admin/server-volume/cleanups/20000000-0000-4000-8000-000000000001/confirm',
+      chunks:[Buffer.from('{"confirmed":true}')]},undefined,{volumeInventory})).statusCode).toBe(202);
+  });
+
   it('protects policy writes with Origin and CSRF and routes committee policy reads', async () => {
     const policy = vi.fn(async () => ({disabled:true,revision:2}));
     const update = vi.fn(async () => ({disabled:true,revision:2}));

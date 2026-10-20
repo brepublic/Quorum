@@ -53,6 +53,7 @@ export interface FileVersion {
 }
 
 export interface FileEntry {
+  contentCleared?: boolean;
   submissionSource?: 'DELEGATE_PORTAL' | 'CHAIR' | 'ACCOUNT' | 'LEGACY';
   submitterDisplayName?: string | null;
   fileType?: import('./delegate-files.js').DelegateFileType | null;
@@ -85,6 +86,7 @@ export interface FileBlobDeleteJob {
 export type StorageMigrationStatus = 'COPYING' | 'READY_TO_CONFIRM' | 'FAILED' | 'COMPLETED' | 'CANCELLED';
 
 export interface StorageMigration {
+  sourceCleanup?: {total: number; pending: number; failed: number};
   id: string;
   committeeId: string;
   sourceBindingId: string;

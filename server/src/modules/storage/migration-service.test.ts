@@ -107,7 +107,7 @@ describe('provider migration streaming copy', () => {
     const service = new Stage6MigrationService(pool as never, {} as never, {} as never, {} as never,
       (() => ({})) as never, {sample: vi.fn(), assertWriteAllowed: vi.fn().mockRejectedValue(new Error('full'))});
     await expect(service.processNextCopyItem()).resolves.toBeNull();
-    expect(pool.connect).toHaveBeenCalledOnce();
+    expect(pool.connect).toHaveBeenCalledTimes(2);
     expect(client.query.mock.calls.some(([sql]) => sql.includes('SELECT DISTINCT m.committee_id'))).toBe(true);
   });
 });
