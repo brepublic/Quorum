@@ -43,7 +43,7 @@ it('orders numeric versions and prerelease identifiers before the corresponding 
 });
 it.each([['', 'false'], ['1', 'false'], ['2', 'true']])('selects the release scope with input %j', async (input, expected) => {
   const result = await shell('select_channel <<< "$INPUT"; echo "allowed=$allow_prerelease"', {INPUT: input});
-  expect(result.stdout).toContain('2. 包含预发布版本（测试）');
+  expect(result.stdout).toContain('2. Include prereleases (testing)');
   expect(result.stdout).toContain(`allowed=${expected}`);
 });
 it.each(['q','bad'])('stops before discovery after scope selection %s', async input => {
@@ -89,22 +89,22 @@ async function discoverPrereleases(current: string, requested: string, allow: bo
 }
 it('includes compatible prereleases only after choosing the testing entry', async () => {
   const result = await discoverPrereleases('v1.1.0', '', false, '2\n4');
-  expect(result.stdout).toContain('1. v1.4.0（预发布）');
-  expect(result.stdout).toContain('2. v1.3.0-beta.1（预发布）');
+  expect(result.stdout).toContain('1. v1.4.0 (prerelease)');
+  expect(result.stdout).toContain('2. v1.3.0-beta.1 (prerelease)');
   expect(result.stdout).toContain('3. v1.2.0\n');
-  expect(result.stdout).toContain('4. v1.2.0-rc.2（预发布）');
+  expect(result.stdout).toContain('4. v1.2.0-rc.2 (prerelease)');
   expect(result.stdout).not.toMatch(/v[23]\.0\.0/);
-  expect(result.stderr).toContain('跳过不兼容的版本：v1.2.0-rc.10');
+  expect(result.stderr).toContain('Skipping incompatible release: v1.2.0-rc.10');
   expect(JSON.parse(await readFile(join(directory, 'release.json'), 'utf8')).version).toBe('v1.2.0-rc.2');
 });
 it('defaults to stable releases even when a prerelease tag lacks the GitHub prerelease flag', async () => {
   const result = await discoverPrereleases('v1.1.0', '', false, '\n1');
-  expect(result.stdout).not.toContain('（预发布）');
+  expect(result.stdout).not.toContain(' (prerelease)');
   expect(result.stdout).toContain('1. v1.2.0');
   expect(JSON.parse(await readFile(join(directory, 'release.json'), 'utf8')).version).toBe('v1.2.0');
 });
 it('does not accept an explicitly requested prerelease without opting in', async () => {
-  await expect(discoverPrereleases('v1.1.0', 'v1.2.0-rc.2', false)).rejects.toThrow('指定版本不在可升级列表中');
+  await expect(discoverPrereleases('v1.1.0', 'v1.2.0-rc.2', false)).rejects.toThrow('The requested release is not available for upgrade');
 });
 it('preserves case-sensitive prerelease tags in GitHub asset URLs', async () => {
   await discoverPrereleases('v1.1.0', 'v1.2.0-RC.1', true);
@@ -115,14 +115,14 @@ it('does not accept a repository URL without the exact release asset path', asyn
     assets:[{name:'quorum-server-release.json',browser_download_url:'https://github.com/brepublic/Quorum'}]}]));
   await expect(shell(`temporary="$TEST_DIR"; current_version=v1.1.0; github_repository=brepublic/Quorum; allow_prerelease=true
     fetch() { if [[ $1 == *api.github.com* ]]; then cat "$TEST_DIR/fixture-releases.json"; else touch "$TEST_DIR/unsafe"; return 22; fi; }
-    select_release`)).rejects.toMatchObject({code:2,stdout:expect.stringContaining('没有可用的兼容升级版本')});
+    select_release`)).rejects.toMatchObject({code:2,stdout:expect.stringContaining('No compatible upgrade releases are available')});
   await expect(readFile(join(directory, 'unsafe'))).rejects.toThrow();
 });
 it('allows a newer prerelease after opt-in and never offers older prereleases', async () => {
   const result = await discoverPrereleases('v1.2.0-rc.1', 'v1.2.0-rc.2', true);
-  expect(result.stdout).toContain('v1.2.0-rc.2（预发布）');
+  expect(result.stdout).toContain('v1.2.0-rc.2 (prerelease)');
   expect(result.stdout).not.toContain('v1.2.0-rc.1');
-  await expect(discoverPrereleases('v1.2.0', 'v1.2.0-rc.2', true)).rejects.toThrow('指定版本不在可升级列表中');
+  await expect(discoverPrereleases('v1.2.0', 'v1.2.0-rc.2', true)).rejects.toThrow('The requested release is not available for upgrade');
 });
 it('can leave a prerelease for its stable release without opting into more prereleases', async () => {
   const result = await discoverPrereleases('v1.2.0-rc.2', 'v1.2.0', false);

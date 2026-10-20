@@ -66,3 +66,15 @@ it('moves keyboard focus to download links without suppressing native Enter acti
   act(() => document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true, cancelable: true})));
   expect(toggle.classList.contains('active')).toBe(false);
 });
+
+it('shows only prepared development platforms and no GitHub release link', () => {
+  act(() => root.render(<ChairAgentDownload release={{schemaVersion: 1, development: true,
+    platforms: {linux: release.platforms.linux}}} />));
+  act(() => container.querySelector<HTMLElement>('.dropdown')!.click());
+  expect(container.textContent).toContain('本地开发构建');
+  expect(container.querySelectorAll('a[download]')).toHaveLength(1);
+  expect(container.querySelector('i.windows.icon')).toBeNull();
+  expect(container.querySelector('a[target="_blank"]')).toBeNull();
+  act(() => setLanguage('en'));
+  expect(container.textContent).toContain('Local development build');
+});

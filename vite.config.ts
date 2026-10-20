@@ -1,6 +1,7 @@
 import {existsSync, readFileSync} from 'node:fs'
 import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react-swc'
+import {readDevelopmentRelease, developmentDownloadPlugin} from './scripts/dev-chair-agent-downloads.mjs'
 
 // Dev-server API proxy target. Defaults to the Compose deployment's Caddy
 // (https://localhost) so pnpm start can hot-reload the frontend against the
@@ -16,36 +17,40 @@ if (process.env.RELEASE_TAG && (!agentRelease || agentRelease.serverVersion !== 
   || agentRelease.commit !== process.env.GITHUB_SHA)) throw new Error('Chair Agent release does not match this build')
 
 // https://vitejs.dev/config/
-export default defineConfig({
-  plugins: [react()],
-  define: {__CHAIR_AGENT_RELEASE__: JSON.stringify(agentRelease)},
-  build: {
-    outDir: 'build',
-  },
-  server: {
-    host: '127.0.0.1',
-    proxy: {
-      '/api/v1': {
-        target: devApiOrigin,
-        secure: false,
-        changeOrigin: true,
-        configure: (proxy) => {
-          proxy.on('proxyReq', (proxyReq) => {
-            proxyReq.setHeader('origin', devApiOrigin)
-          })
+export default defineConfig(({command, isPreview}) => {
+  const development = command === 'serve' && !isPreview && !process.env.RELEASE_TAG
+  const downloads = development ? readDevelopmentRelease() : agentRelease
+  return {
+    plugins: [react(), ...(development ? [developmentDownloadPlugin(downloads)] : [])],
+    define: {__CHAIR_AGENT_RELEASE__: JSON.stringify(downloads)},
+    build: {
+      outDir: 'build',
+    },
+    server: {
+      host: '127.0.0.1',
+      proxy: {
+        '/api/v1': {
+          target: devApiOrigin,
+          secure: false,
+          changeOrigin: true,
+          configure: (proxy) => {
+            proxy.on('proxyReq', (proxyReq) => {
+              proxyReq.setHeader('origin', devApiOrigin)
+            })
+          },
         },
       },
     },
-  },
-  test: {
-    globals: true,
-    environment: 'jsdom',
-    css: true,
-    reporters: ['verbose'],
-    coverage: {
-      reporter: ['text', 'json', 'html'],
-      include: ['src/**/*'],
-      exclude: [],
-    }
-  },
+    test: {
+      globals: true,
+      environment: 'jsdom',
+      css: true,
+      reporters: ['verbose'],
+      coverage: {
+        reporter: ['text', 'json', 'html'],
+        include: ['src/**/*'],
+        exclude: [],
+      }
+    },
+  }
 })
