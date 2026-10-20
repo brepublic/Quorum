@@ -1458,6 +1458,26 @@ async function handleIdentityRequest(options: {
     }
   }
   if (volumeInventory && pathname.startsWith('/api/v1/admin/server-volume/')) {
+    const volumeDownload = /^\/api\/v1\/admin\/server-volume\/files\/([^/]+)\/download$/.exec(pathname);
+    if (method === 'GET' && volumeDownload) {
+      const result = await volumeInventory.download(await authenticatedRead(request,identity),volumeDownload[1]!);
+      let disconnected = false;
+      const close = () => {disconnected = true; result.content.destroy();};
+      response.once('close',close);
+      try {
+        if (response.destroyed) return true;
+        for (const [name,value] of Object.entries(result.headers)) response.setHeader(name,value);
+        for await (const chunk of result.content) {
+          if (disconnected) break;
+          if (!response.write(chunk)) await new Promise<void>(resolve => {
+            const resume = () => {response.off('close',resume);response.off('drain',resume);resolve();};
+            response.once('close',resume);response.once('drain',resume);
+          });
+        }
+        if (!disconnected) response.end();
+      } finally {response.off('close',close);result.content.destroy();}
+      return true;
+    }
     if (method==='GET' && pathname==='/api/v1/admin/server-volume/files') {
       sendJson(response,200,success(await volumeInventory.list(await authenticatedRead(request,identity),
         new URL(request.url!,'http://quorum.local').searchParams),requestId));return true;

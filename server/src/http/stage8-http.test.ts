@@ -8,6 +8,7 @@ import {createLogger} from '../logger';
 import type {IdentityService} from '../modules/identity/service';
 import type {Stage8ArchiveService} from '../modules/operations/archive-service';
 import type {Stage8DeletionService} from '../modules/operations/deletion-service';
+import type {ServerVolumeInventoryService} from '../modules/operations/volume-inventory';
 import {createRequestHandler} from './app';
 
 const committeeId = '20000000-0000-4000-8000-000000000001';
@@ -104,5 +105,37 @@ describe('stage 8 archive HTTP boundary', () => {
     response.emit('close');
     await vi.waitFor(() => expect(finalized).toBe(true));
     expect(content.destroyed).toBe(true);
+  });
+});
+
+
+describe('admin volume download HTTP boundary', () => {
+  it.each(['none','during','before'])('streams a volume attachment and closes it on disconnect=%s',async disconnect=>{
+    const content=Readable.from(['volume bytes']);
+    const admin={...authenticated,user:{...authenticated.user,isSystemAdmin:true}};
+    const download=vi.fn(async()=>({content,headers:{'content-type':'application/octet-stream',
+      'content-disposition':"attachment; filename*=UTF-8''sample",'content-length':'12'}}));
+    const handler=createRequestHandler({health:{ready:async()=>({ready:true,checks:{database:{status:'ok'},storage:{status:'ok'}}})},
+      logger:createLogger(()=>undefined),version:'test',databaseMigrationVersion:91,
+      identity:{authenticate:vi.fn(async()=>admin)} as unknown as IdentityService,
+      volumeInventory:{download} as unknown as ServerVolumeInventoryService});
+    const incoming=Readable.from([]) as unknown as IncomingMessage;
+    Object.assign(incoming,{method:'GET',url:`/api/v1/admin/server-volume/files/${'a'.repeat(64)}/download`,
+      headers:{cookie:'__Host-quorum_session=session'},socket:{remoteAddress:'127.0.0.1'}});
+    const response=new TestResponse();
+    if(disconnect==='before'){
+      Object.assign(response,{destroyed:true});handler(incoming,response as unknown as ServerResponse);
+      await vi.waitFor(()=>expect(content.destroyed).toBe(true));
+    }else if(disconnect==='during'){
+      const write=vi.spyOn(response,'write').mockReturnValue(false);
+      handler(incoming,response as unknown as ServerResponse);
+      await vi.waitFor(()=>expect(write).toHaveBeenCalledOnce());response.emit('close');
+      await vi.waitFor(()=>expect(content.destroyed).toBe(true));
+    }else{
+      const finished=once(response,'finish');handler(incoming,response as unknown as ServerResponse);await finished;
+      expect(response.statusCode).toBe(200);expect(response.body).toBe('volume bytes');
+      expect(response.headers.get('content-disposition')).toContain('attachment;');
+    }
+    expect(download).toHaveBeenCalledWith(admin,'a'.repeat(64));
   });
 });

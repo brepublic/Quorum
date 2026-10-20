@@ -137,7 +137,7 @@ async function audience(client: PoolClient, committee: {id: string; owner_user_i
   return 'PUBLIC';
 }
 
-export function safeDownloadHeaders(file: FileEntry): Record<string, string> {
+export function safeDownloadHeaders(file: {currentVersion: Pick<FileEntry['currentVersion'], 'originalName' | 'mediaType' | 'sizeBytes'>}): Record<string, string> {
   const original = Array.from(file.currentVersion.originalName.normalize('NFC')).slice(0, 500).join('')
     .replace(/[\uD800-\uDFFF]/g, '\uFFFD');
   const extension = /(?:^|\.)([A-Za-z0-9]{1,12})$/.exec(original)?.[1];

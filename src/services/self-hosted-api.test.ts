@@ -365,3 +365,17 @@ it.each(['normal', 'delegate'] as const)('retains upload failure categories for 
     await expect(upload()).rejects.toMatchObject({name: 'AbortError'});
   }
 });
+
+
+it('downloads volume bytes with the supplied filename and preserves API errors',async()=>{
+  const blob=new Blob(['volume bytes']);
+  const fetchMock=vi.fn(async()=>({ok:true,status:200,headers:new Headers({
+    'content-disposition':"attachment; filename*=UTF-8''%E9%80%9A%E5%91%8A.txt"}),blob:async()=>blob}));
+  vi.stubGlobal('fetch',fetchMock);
+  expect(await selfHostedApi.downloadServerVolumeFile('volume-id')).toEqual({blob,name:'通告.txt'});
+  expect(fetchMock).toHaveBeenCalledWith('/api/v1/admin/server-volume/files/volume-id/download',{credentials:'same-origin'});
+  vi.stubGlobal('fetch',vi.fn(async()=>({ok:false,status:404,json:async()=>({error:{code:'NOT_FOUND',message:'File not available.'}})})));
+  await expect(selfHostedApi.downloadServerVolumeFile('gone')).rejects.toMatchObject({status:404,code:'NOT_FOUND'});
+  vi.stubGlobal('fetch',vi.fn().mockRejectedValue(new TypeError('fetch failed')));
+  await expect(selfHostedApi.downloadServerVolumeFile('gone')).rejects.toMatchObject({code:'NETWORK_ERROR'});
+});

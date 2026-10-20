@@ -1,4 +1,5 @@
 import * as React from 'react';
+import {saveAs} from 'file-saver';
 import {Button, Checkbox, Form, Header, Message, Modal, Segment, Table} from 'semantic-ui-react';
 import type {ServerVolumeCleanup, ServerVolumeInventory} from '@quorum/contracts';
 import type {SelfHostedApi} from '../../services/self-hosted-api';
@@ -12,6 +13,7 @@ export default function ServerVolumeAdminPanel({api}: {api: SelfHostedApi}) {
   const [preview, setPreview] = React.useState<ServerVolumeCleanup>();
   const [error, setError] = React.useState<unknown>();
   const [working, setWorking] = React.useState(false);
+  const [downloading, setDownloading] = React.useState<Set<string>>(() => new Set());
   const [search, setSearch] = React.useState('');
   const [status, setStatus] = React.useState('');
   const [page, setPage] = React.useState(1);
@@ -27,6 +29,12 @@ export default function ServerVolumeAdminPanel({api}: {api: SelfHostedApi}) {
   const run = async (operation: () => Promise<void>) => {
     if(working)return;setWorking(true);setError(undefined);
     try {await operation();}catch(failure){setError(failure);}finally{setWorking(false);await refresh();}
+  };
+  const download = async (id: string) => {
+    setDownloading(current => new Set(current).add(id)); setError(undefined);
+    try {const file = await api.downloadServerVolumeFile(id); saveAs(file.blob,file.name);}
+    catch (failure) {setError(failure);}
+    finally {setDownloading(current => {const next = new Set(current);next.delete(id);return next;});}
   };
   const requestCleanup = (scope: ServerVolumeCleanup['scope'], fileId?: string) => run(async()=>{
     setPreview(await api.previewServerVolumeCleanup(scope,fileId));
@@ -58,24 +66,28 @@ export default function ServerVolumeAdminPanel({api}: {api: SelfHostedApi}) {
       <Button type="submit" icon="refresh" content={t('Refresh')} disabled={working} />
     </Form>
     {inventory && <>
-      <div className="server-volume-root server-volume-secondary">{t('Application filesystem path')}: <code>{inventory.rootPath}</code></div>
+      <div className="server-volume-root server-volume-secondary">{t('Container path')}: <code>{inventory.rootPath}</code></div>
       {inventory.files.length === 0 ? <Message>{t('No files')}</Message> : <div className="server-volume-table-scroll" role="region" aria-label={t('Server volume files')} tabIndex={0}><Table compact unstackable className="server-volume-table">
-        <Table.Header><Table.Row><Table.HeaderCell>{t('Committee')}</Table.HeaderCell><Table.HeaderCell>{t('File')}</Table.HeaderCell>
-          <Table.HeaderCell>{t('Application filesystem path')}</Table.HeaderCell><Table.HeaderCell>{t('Size')}</Table.HeaderCell>
+        <Table.Header><Table.Row><Table.HeaderCell>{t('Owner account')}</Table.HeaderCell><Table.HeaderCell>{t('Committee')}</Table.HeaderCell><Table.HeaderCell>{t('File record')}</Table.HeaderCell>
+          <Table.HeaderCell>{t('Container path')}</Table.HeaderCell><Table.HeaderCell>{t('Size')}</Table.HeaderCell>
           <Table.HeaderCell>{t('Status')}</Table.HeaderCell><Table.HeaderCell>{t('Actions')}</Table.HeaderCell></Table.Row></Table.Header>
         <Table.Body>{inventory.files.map(file=><Table.Row key={file.id}>
-          <Table.Cell>{file.committeeName ?? t('Untracked file')}<div className="server-volume-secondary">{file.committeeStatus && t(({ACTIVE:'Active',PAUSED:'Paused',ARCHIVED:'Archived',DELETING:'Deleting'} as Record<string,string>)[file.committeeStatus] ?? file.committeeStatus)}</div></Table.Cell>
+          <Table.Cell>{file.ownerEmail ?? '—'}</Table.Cell>
+          <Table.Cell>{file.committeeName ?? '—'}<div className="server-volume-secondary">{file.committeeStatus && t(({ACTIVE:'Active',PAUSED:'Paused',ARCHIVED:'Archived',DELETING:'Deleting'} as Record<string,string>)[file.committeeStatus] ?? file.committeeStatus)}</div></Table.Cell>
           <Table.Cell>{file.references.length > 1 ? <details><summary>{file.references[0].name} · v{file.references[0].version}</summary>
             {file.references.slice(1).map(ref=><div key={`${ref.fileId}/${ref.version}`}>{ref.name} · v{ref.version}</div>)}</details>
-            : file.references.length === 1 ? <>{file.references[0].name} · v{file.references[0].version}</> : t('Untracked file')}</Table.Cell>
+            : file.references.length === 1 ? <>{file.references[0].name} · v{file.references[0].version}</> : '—'}</Table.Cell>
           <Table.Cell><div className="server-volume-path"><code>{file.path}</code><Button basic size="mini" icon="copy" aria-label={t('Copy path')} title={t('Copy path')}
             onClick={()=>void navigator.clipboard.writeText(file.path).catch(setError)} /></div></Table.Cell>
           <Table.Cell>{bytes(file.sizeBytes)}</Table.Cell>
           <Table.Cell>{!file.present?t('Missing from disk'):file.state==='DELETE_PENDING'?t('Cleaning server volume')
             :file.bindingStatus==='RETIRED'?t('Retired storage copy'):file.state==='UNTRACKED'?t('Untracked file'):t('Stored')}
-            {!file.hasOtherCopy && <div className="server-volume-secondary">{t('No verified copy in current alternative storage')}</div>}</Table.Cell>
-          <Table.Cell><Button negative basic size="small" disabled={working || file.state==='DELETE_PENDING'}
-            onClick={()=>void requestCleanup('SELECTED',file.id)}>{t('Delete')}</Button></Table.Cell>
+            {!file.hasOtherCopy && <div className="server-volume-secondary">{t(file.blobId ? 'No verified copy in other storage' : 'Copy status unknown')}</div>}</Table.Cell>
+          <Table.Cell><div className="server-volume-actions"><Button basic size="small" loading={downloading.has(file.id)}
+            disabled={working || downloading.has(file.id) || !file.present || file.state==='DELETE_PENDING'}
+            onClick={()=>void download(file.id)}>{t('Download')}</Button>
+            <Button negative basic size="small" disabled={working || file.state==='DELETE_PENDING'}
+            onClick={()=>void requestCleanup('SELECTED',file.id)}>{t('Delete')}</Button></div></Table.Cell>
         </Table.Row>)}</Table.Body>
       </Table></div>}
       {(inventory.total > 25 || page > 1) && <div className="server-volume-pagination">

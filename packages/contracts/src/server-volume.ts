@@ -3,6 +3,7 @@ export interface ServerVolumeFile {
   blobId: string | null;
   committeeId: string | null;
   committeeName: string | null;
+  ownerEmail: string | null;
   committeeStatus: string | null;
   bindingStatus: string | null;
   path: string;

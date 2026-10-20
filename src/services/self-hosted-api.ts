@@ -750,6 +750,21 @@ export const selfHostedApi = {
   serverVolumeFiles(search = '', status = '', page = 1) {
     return request<import('@quorum/contracts').ServerVolumeInventory>(`/api/v1/admin/server-volume/files?${new URLSearchParams({search,status,page:String(page)})}`);
   },
+  async downloadServerVolumeFile(id: string) {
+    let response: Response;
+    try {response = await fetch(`/api/v1/admin/server-volume/files/${encodeURIComponent(id)}/download`, {credentials:'same-origin'});}
+    catch {throw new SelfHostedApiError(0,'NETWORK_ERROR','Unable to connect to the server.');}
+    if (!response.ok) {
+      let payload: unknown;
+      try {payload = await response.json();} catch {throw new SelfHostedApiError(response.status,'INVALID_RESPONSE','The server response was invalid.');}
+      return responseData<never>(payload,response.status);
+    }
+    const encoded = /filename\*=UTF-8''([^;]+)/i.exec(response.headers.get('content-disposition') ?? '')?.[1];
+    let name = 'download';
+    try {if (encoded) name = decodeURIComponent(encoded);} catch { /* Use the fallback for malformed headers. */ }
+    try {return {name,blob:await response.blob()};}
+    catch {throw new SelfHostedApiError(0,'NETWORK_ERROR','Unable to complete the download.');}
+  },
   serverVolumeCleanups() {
     return request<import('@quorum/contracts').ServerVolumeCleanup[]>('/api/v1/admin/server-volume/cleanups');
   },

@@ -59,6 +59,29 @@ describe('SERVER_VOLUME provider', () => {
     expect(replay).toEqual(result);
   });
 
+  it('downloads untracked bytes and verifies tracked bytes before opening the stream', async () => {
+    const {volume} = await fixture();
+    await writeFile(join(volume.rootPath,'sample'),'sample');
+    const opened = await volume.openDownload('sample');
+    expect(opened.sizeBytes).toBe(6);
+    const chunks: Buffer[] = [];for await (const chunk of opened.content) chunks.push(chunk);
+    expect(Buffer.concat(chunks).toString()).toBe('sample');
+    await expect(volume.openDownload('sample',{sizeBytes:6,sha256:digest('wrong!')})).rejects.toMatchObject({failureCode:'PROVIDER_INTEGRITY_MISMATCH'});
+    const verified=await volume.openDownload('sample',{sizeBytes:6,sha256:digest('sample')});
+    verified.content.destroy();
+    await expect(volume.openDownload('absent/file')).rejects.toMatchObject({code:'ENOENT'});
+    await expect(lstat(join(volume.rootPath,'absent'))).rejects.toMatchObject({code:'ENOENT'});
+  });
+
+  it('refuses download traversal, file/directory symlinks and hard links', async () => {
+    const {volume}=await fixture();const outside=await temporaryRoot('download-outside');
+    await writeFile(join(outside,'secret'),'secret');
+    await symlink(join(outside,'secret'),join(volume.rootPath,'linked'));
+    await symlink(outside,join(volume.rootPath,'escape'));
+    await link(join(outside,'secret'),join(volume.rootPath,'hard'));
+    for (const key of ['../secret','linked','escape/secret','hard']) await expect(volume.openDownload(key)).rejects.toThrow();
+  });
+
   it.each([
     ['file open', {open: async () => { throw Object.assign(new Error('disk full'), {code: 'ENOSPC'}); }}],
     ['file sync', {syncFile: async () => { throw new Error('fsync failed'); }}],

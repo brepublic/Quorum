@@ -448,6 +448,42 @@ integration('PostgreSQL stage 6 file metadata', () => {
     expect(await readFile(join(outside,'keep'),'utf8')).toBe('keep');
   });
 
+  it('downloads volume files for admins, exposes owner email and handles untracked or unavailable content',async()=>{
+    const f=await storageFixture();const file=await committedServerFile(f,'download bytes','admin-download');
+    const service=new ServerVolumeInventoryService(pool!,volume);
+    const listing=await service.list(administrator,new URLSearchParams());const tracked=listing.files[0]!;
+    expect(tracked.ownerEmail).toBe(f.owner.user.email);
+    expect((await service.list(administrator,new URLSearchParams({search:f.owner.user.email}))).total).toBe(1);
+    await expect(service.download(f.chair,tracked.id)).rejects.toMatchObject({code:'FORBIDDEN'});
+    await expect(service.download({...administrator,user:{...administrator.user,mustChangePassword:true}},tracked.id)).rejects.toMatchObject({code:'FORBIDDEN'});
+    await expect(service.download(administrator,'../escape')).rejects.toMatchObject({code:'VALIDATION_FAILED'});
+    await expect(service.download(administrator,'f'.repeat(64))).rejects.toMatchObject({code:'NOT_FOUND'});
+    await mkdir(join(volume.rootPath,'versions'),{recursive:true});
+    await writeFile(join(volume.rootPath,'versions','newer'),'new version');
+    await storage.recordProviderCommit(f.member,f.committee.id,{bindingId:f.binding.id,fileEntryId:file.id,
+      baseRevision:file.revision,logicalName:file.logicalName,originalName:'new-version.txt',mediaType:'text/plain',
+      sizeBytes:11,sha256:digest('new version'),storageKey:'versions/newer'},'new-version',context('new-version'));
+    // The row identifies the original physical version, even after the business file advances.
+    const download=await service.download(administrator,tracked.id);
+    const chunks:Buffer[]=[];for await(const chunk of download.content)chunks.push(chunk);
+    expect(Buffer.concat(chunks).toString()).toBe('download bytes');
+    expect(download.headers['content-disposition']).toContain(encodeURIComponent(file.currentVersion.originalName));
+    expect(download.headers['content-type']).toBe('application/octet-stream');
+    await writeFile(join(volume.rootPath,'untracked'),'orphan bytes');
+    const orphan=(await service.list(administrator,new URLSearchParams())).files.find(item=>item.state==='UNTRACKED')!;
+    expect(orphan).toMatchObject({ownerEmail:null,committeeId:null,references:[]});
+    const untracked=await service.download(administrator,orphan.id);
+    const orphanChunks:Buffer[]=[];for await(const chunk of untracked.content)orphanChunks.push(chunk);
+    expect(Buffer.concat(orphanChunks).toString()).toBe('orphan bytes');
+    expect(untracked.headers['content-disposition']).toContain("filename*=UTF-8''untracked");
+    const preview=await service.preview(administrator,{scope:'SELECTED',fileId:orphan.id},context('download-preview'));
+    await service.confirm(administrator,preview.id,{confirmed:true},context('download-confirm'));
+    expect((await service.list(administrator,new URLSearchParams())).files.find(item=>item.id===orphan.id)?.state).toBe('DELETE_PENDING');
+    await expect(service.download(administrator,orphan.id)).rejects.toMatchObject({code:'NOT_FOUND'});
+    await unlink(tracked.path);
+    await expect(service.download(administrator,tracked.id)).rejects.toMatchObject({code:'NOT_FOUND'});
+  });
+
   it('previews and confirms a single volume deletion, retries physical failures and retains file metadata',async()=>{
     const f=await storageFixture();const file=await committedServerFile(f,'clear me','single-cleanup');
     const service=new ServerVolumeInventoryService(pool!,volume);

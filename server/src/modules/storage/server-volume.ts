@@ -230,6 +230,34 @@ export class ServerVolumeStore {
     }
   }
 
+  async openDownload(storageKey: string, expected?: {sizeBytes: number; sha256: string}) {
+    await this.ensureInitialized();
+    const target = this.pathForKey(validateInternalStorageKey(storageKey));
+    await this.ensureSafeDirectory(dirname(target), false);
+    await this.regularFile(target);
+    const handle = await this.operations.open(target, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK);
+    try {
+      const stats = await handle.stat();
+      if (!stats.isFile() || stats.nlink !== 1) throw new Error('The provider target is not a private regular file.');
+      if (expected) {
+        const hash = createHash('sha256');
+        const buffer = Buffer.allocUnsafe(64 * 1024);
+        let size = 0;
+        while (true) {
+          const {bytesRead} = await handle.read(buffer, 0, buffer.length, size);
+          if (!bytesRead) break;
+          hash.update(buffer.subarray(0, bytesRead)); size += bytesRead;
+        }
+        if (size !== expected.sizeBytes || hash.digest('hex') !== expected.sha256) {
+          throw new ProviderStorageError('PROVIDER_INTEGRITY_MISMATCH', 'SERVICE_NOT_READY', 'Server volume content failed verification.');
+        }
+      }
+      return {sizeBytes:stats.size,content:handle.createReadStream({start:0})};
+    } catch (error) {
+      await handle.close(); throw error;
+    }
+  }
+
   async delete(storageKey: string): Promise<void> {
     await this.ensureInitialized();
     const target = await this.checkedTarget(storageKey);
@@ -264,7 +292,7 @@ export class ServerVolumeStore {
     return target;
   }
 
-  private async ensureSafeDirectory(directory: string): Promise<void> {
+  private async ensureSafeDirectory(directory: string, create = true): Promise<void> {
     const root = this.canonicalRoot as string;
     if (directory === root) return;
     if (!within(root, directory)) throw new Error('The provider path escapes its root.');
@@ -275,7 +303,7 @@ export class ServerVolumeStore {
       try {
         stats = await this.operations.lstat(current);
       } catch (error) {
-        if (!missing(error)) throw error;
+        if (!missing(error) || !create) throw error;
         await this.operations.mkdir(current, {mode: 0o700});
         stats = await this.operations.lstat(current);
       }

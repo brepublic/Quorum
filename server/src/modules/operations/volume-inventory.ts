@@ -1,4 +1,6 @@
 import {createHash, randomUUID} from 'node:crypto';
+import {basename} from 'node:path';
+import {safeDownloadHeaders} from '../storage/file-service.js';
 import {lstat, readdir} from 'node:fs/promises';
 import type {Pool, PoolClient} from 'pg';
 import type {ServerVolumeFile, ServerVolumeInventory, ServerVolumeCleanup} from '@quorum/contracts';
@@ -23,10 +25,10 @@ export class ServerVolumeInventoryService {
 
   private async inventory(client: Pool | PoolClient): Promise<InventoryEntry[]> {
     const rows = await client.query(`SELECT b.id,b.storage_key,b.size_bytes,b.durability_state,b.admin_cleared_at,
-      s.status AS binding_status,c.id AS committee_id,c.name AS committee_name,c.status AS committee_status,
+      s.status AS binding_status,c.id AS committee_id,c.name AS committee_name,c.status AS committee_status,u.email AS owner_email,
       coalesce(refs.files,'[]'::jsonb) AS files,coalesce(refs.other_copy,false) AS other_copy
       FROM file_blobs b JOIN storage_bindings s ON s.id=b.storage_binding_id
-      JOIN committees c ON c.id=b.committee_id
+      JOIN committees c ON c.id=b.committee_id LEFT JOIN users u ON u.id=c.owner_user_id
       LEFT JOIN LATERAL (
         SELECT jsonb_agg(jsonb_build_object('fileId',v.file_entry_id,'name',e.logical_name,'version',v.version_number)
           ORDER BY v.file_entry_id,v.version_number) AS files,
@@ -61,7 +63,7 @@ export class ServerVolumeInventoryService {
       const stat = disk.get(row.storage_key); disk.delete(row.storage_key);
       if (!stat && row.durability_state === 'DELETED') continue;
       result.push({id:fingerprint(row.storage_key),storageKey:row.storage_key,blobId:row.id,
-        committeeId:row.committee_id,committeeName:row.committee_name,committeeStatus:row.committee_status,
+        committeeId:row.committee_id,committeeName:row.committee_name,ownerEmail:row.owner_email ?? null,committeeStatus:row.committee_status,
         bindingStatus:row.binding_status,path:this.volume.pathForKey(row.storage_key),sizeBytes:stat?.size ?? Number(row.size_bytes),
         present:Boolean(stat),modifiedAt:stat?.modified ?? null,state:row.durability_state,
         hasOtherCopy:row.other_copy,references:row.files});
@@ -69,15 +71,19 @@ export class ServerVolumeInventoryService {
     // Failed commits can have durable bytes before their blob metadata exists.
     // Associate them through the server-generated upload key so archive cleanup
     // includes those bytes without touching the independent staging file.
-    const uploads = disk.size ? await client.query(`SELECT u.provider_storage_key,c.id,c.name,c.status FROM file_uploads u
-      JOIN committees c ON c.id=u.committee_id JOIN storage_bindings s ON s.id=u.storage_binding_id
+    const uploads = disk.size ? await client.query(`SELECT u.provider_storage_key,c.id,c.name,c.status,owner.email AS owner_email FROM file_uploads u
+      JOIN committees c ON c.id=u.committee_id LEFT JOIN users owner ON owner.id=c.owner_user_id JOIN storage_bindings s ON s.id=u.storage_binding_id
       WHERE u.provider_storage_key=ANY($1::text[]) AND s.provider_type='SERVER_VOLUME'`,[[...disk.keys()]]) : {rows:[]};
     for (const [key,stat] of disk) {
       const owner=uploads.rows.find(row=>row.provider_storage_key===key);
       result.push({id:fingerprint(key),storageKey:key,blobId:null,committeeId:owner?.id ?? null,
-        committeeName:owner?.name ?? null,committeeStatus:owner?.status ?? null,bindingStatus:null,path:this.volume.pathForKey(key),sizeBytes:stat.size,
+        committeeName:owner?.name ?? null,ownerEmail:owner?.owner_email ?? null,committeeStatus:owner?.status ?? null,bindingStatus:null,path:this.volume.pathForKey(key),sizeBytes:stat.size,
         present:true,modifiedAt:stat.modified,state:'UNTRACKED',hasOtherCopy:false,references:[]});
     }
+    const pending = await client.query(`SELECT i.storage_key FROM server_volume_cleanup_items i
+      JOIN server_volume_cleanup_batches b ON b.id=i.batch_id WHERE b.status='RUNNING' AND i.status<>'COMPLETED'`);
+    const pendingKeys = new Set(pending.rows.map(row => row.storage_key));
+    for (const file of result) if (pendingKeys.has(file.storageKey)) file.state = 'DELETE_PENDING';
     return result.sort((a,b)=>a.path.localeCompare(b.path));
   }
 
@@ -86,9 +92,33 @@ export class ServerVolumeInventoryService {
     const page = Math.max(1,Math.floor(Number(query.get('page')) || 1));
     const term = (query.get('search') ?? '').toLocaleLowerCase();
     const files = (await this.inventory(this.pool)).filter(file => (!query.get('status') || file.committeeStatus===query.get('status'))
-      && (!term || [file.committeeName,file.path,...file.references.map(ref=>ref.name)].join(' ').toLocaleLowerCase().includes(term)));
+      && (!term || [file.ownerEmail,file.committeeName,file.path,...file.references.map(ref=>ref.name)].join(' ').toLocaleLowerCase().includes(term)));
     return {files:files.slice((page-1)*25,page*25).map(publicFile),page,total:files.length,
       totalBytes:files.reduce((sum,file)=>sum+(file.present?file.sizeBytes:0),0),rootPath:this.volume.rootPath};
+  }
+
+  async download(auth: AuthenticatedSession, id: string) {
+    requireVolumeAdmin(auth);
+    if (!/^[a-f0-9]{64}$/.test(id)) throw new AppError({code:'VALIDATION_FAILED',reason:'CLIENT_REQUEST_INVALID',message:'Invalid volume file ID.'});
+    const file = (await this.inventory(this.pool)).find(item => item.id === id);
+    if (!file?.present || file.state === 'DELETE_PENDING') throw new AppError({code:'NOT_FOUND',message:'File not available.'});
+    const metadata = file.blobId ? (await this.pool.query(`SELECT b.size_bytes,encode(b.sha256,'hex') AS sha256,
+      (SELECT v.original_name FROM file_versions v WHERE v.blob_id=b.id OR v.blob_id IN
+        (SELECT content_blob_id FROM file_blob_copies WHERE copy_blob_id=b.id)
+        ORDER BY v.created_at,v.id LIMIT 1) AS original_name
+      FROM file_blobs b WHERE b.id=$1`,[file.blobId])).rows[0] : undefined;
+    if (file.blobId && !metadata) throw new AppError({code:'NOT_FOUND',message:'File not available.'});
+    let opened;
+    try {
+      opened = await this.volume.openDownload(file.storageKey,metadata
+        ? {sizeBytes:Number(metadata.size_bytes),sha256:metadata.sha256} : undefined);
+    } catch (error) {
+      if (missing(error)) throw new AppError({code:'NOT_FOUND',message:'File not available.'});
+      throw error;
+    }
+    return {content:opened.content,headers:safeDownloadHeaders({currentVersion:{
+      originalName:metadata?.original_name ?? basename(file.storageKey),
+      mediaType:'application/octet-stream',sizeBytes:opened.sizeBytes}})};
   }
 
   async preview(auth: AuthenticatedSession, body: Record<string,unknown>, context: Stage4Context): Promise<ServerVolumeCleanup> {
