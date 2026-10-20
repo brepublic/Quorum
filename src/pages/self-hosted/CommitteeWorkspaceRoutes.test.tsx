@@ -3663,6 +3663,36 @@ describe('committee workspace routes and roles', () => {
     expect(stats).toContain('China');
   });
   it('redirects hidden resource routes to attachments', async () => { const page = await render('CHAIR', '/committees/committee/posts/links', user, value => ({...value, textPosts: [{id: 'link', title: 'Research', content: 'link:https://example.test/research', sortOrder: 0, revision: 1, authorSeatId: 'seat', authorDisplayName: 'China', actorUserId: 'chair', createdAt: '2026-08-16T00:00:00.000Z', updatedAt: '2026-08-16T00:00:00.000Z', deletedAt: null}]})); expect(page.textContent).toContain('File overview'); expect(page.textContent).not.toContain('Link resources'); expect(page.textContent).not.toContain('Publisher: China'); expect(page.querySelector('a[href="https://example.test/research"]')).toBeNull(); });
+  it.each(['RESYNCING', 'RECONNECTING'] as const)('reads storage policy during %s without a submission error', async state => {
+    vi.useFakeTimers();
+    let callbacks!: Parameters<SelfHostedApi['openCommitteeEvents']>[2];
+    let blocked = false;
+    const storagePolicy = vi.fn(async () => ({disabled: blocked, submissionBlocked: blocked, revision: 1}));
+    const page = await render('CHAIR', '/committees/committee/posts/storage', user, value => value, {
+      storagePolicy,
+      openCommitteeEvents: vi.fn((_id, _after, handlers) => {
+        callbacks = handlers; handlers.onState(state); return () => undefined;
+      })
+    });
+    expect(storagePolicy).toHaveBeenCalledWith('committee');
+    expect(page.querySelector('.committee-sync-fieldset')?.hasAttribute('disabled')).toBe(true);
+    expect(page.textContent).not.toContain('Wait for synchronization before submitting changes.');
+    storagePolicy.mockClear();
+    blocked = true;
+    await act(async () => {await vi.advanceTimersByTimeAsync(5000);});
+    expect(storagePolicy).toHaveBeenCalledTimes(1);
+    expect(page.textContent).toContain('Server volume storage is disabled.');
+    expect(page.textContent).not.toContain('Wait for synchronization before submitting changes.');
+    storagePolicy.mockClear();
+    blocked = false;
+    await act(async () => {window.dispatchEvent(new Event('focus'));});
+    expect(storagePolicy).toHaveBeenCalledTimes(1);
+    expect(page.textContent).not.toContain('Server volume storage is disabled.');
+    expect(page.textContent).not.toContain('Wait for synchronization before submitting changes.');
+    expect(page.querySelector('.committee-sync-fieldset')?.hasAttribute('disabled')).toBe(true);
+    await act(async () => {callbacks.onState('LIVE');});
+    expect(page.querySelector('.committee-sync-fieldset')?.hasAttribute('disabled')).toBe(false);
+  });
   it('retains prefetched file data and permissions while reconnecting', async () => {
     const share = {id: 'share', url: 'https://example.test/delegate-files#test', revision: 1};
     const getDelegateFileShare = vi.fn().mockResolvedValueOnce(share).mockImplementation(() => new Promise(() => {}));

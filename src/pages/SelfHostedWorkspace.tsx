@@ -1313,7 +1313,7 @@ function CommitteeWorkspaceContent({id, api: sourceApi, user, logout}: {
     writesBlocked, canWrite, lastSyncedAt, syncFailed, networkOffline, retry} = useCommitteeWorkspace();
   // Some forms save directly (including autosave); guard those calls as well as run().
   const api = React.useMemo(() => Object.fromEntries(Object.entries(sourceApi).map(([name, method]) => [name,
-    /^(get|list|preview)|Url$|^(snapshot|openCommitteeEvents|prepareFileDownload|fileDownloadReadiness)$/.test(name) ? method
+    /^(get|list|preview)|Url$|^(snapshot|openCommitteeEvents|prepareFileDownload|fileDownloadReadiness|storagePolicy)$/.test(name) ? method
       : (...args: unknown[]) => {
         if (!canWrite()) return Promise.reject({code: 'SYNC_PENDING'});
         return (method as (...input: unknown[]) => unknown)(...args);
