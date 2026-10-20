@@ -487,6 +487,7 @@ const zhCN: Record<string, string> = {
   "Choose operating system": "选择操作系统",
   "EXE installer": "EXE 安装包",
   "View this release on GitHub": "在 GitHub 查看此版本",
+  "Local development build": "本地开发构建",
   "Installers are unavailable for this build.": "此版本暂无安装包",
   "Download pairing file": "下载配对文件",
   "Manual pairing": "手动配对",

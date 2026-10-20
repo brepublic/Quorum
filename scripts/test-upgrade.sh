@@ -340,7 +340,7 @@ reject_preflight() {
 sed -i "s|image: $old_image|image: $project-old:local|" "$work/deploy/compose.production.yaml"
 "${compose[@]}" up -d --wait --wait-timeout 180 > "$work/mutable-tag.log" 2>&1
 docker tag "$project-new:local" "$project-old:local"
-reject_preflight mutable-tag '必须使用镜像内容哈希'
+reject_preflight mutable-tag 'must use an image content digest'
 docker tag "$old_image" "$project-old:local"
 cp -p "$work/baseline.yaml" "$work/deploy/compose.production.yaml"
 "${compose[@]}" up -d --wait --wait-timeout 180 >> "$work/mutable-tag.log" 2>&1
@@ -349,13 +349,13 @@ echo 'PASS: moved image tag is refused before stopping the actual old version'
 docker run -d --name "$project-extra" --label "com.docker.compose.project=$project" \
   --label com.docker.compose.oneoff=True --mount "type=volume,src=${project}_quorum_files,dst=/data" \
   --entrypoint sh "$old_image" -c 'sleep 600' >/dev/null
-reject_preflight extra-writer '数据卷被部署服务之外的容器使用'
+reject_preflight extra-writer 'Volume is used by a container outside the deployment services'
 docker rm -f "$project-extra" >/dev/null
 assert_restored
 echo 'PASS: an extra same-project container cannot keep writing into a cold snapshot'
 docker volume create --label "com.docker.compose.project=$project" "${project}_wrong_files" >/dev/null
 sed -i "/^  quorum_files:$/a\    name: ${project}_wrong_files" "$work/deploy/compose.production.yaml"
-reject_preflight wrong-volume '实际数据卷与配置不同'
+reject_preflight wrong-volume 'actual volumes that differ from its configuration'
 cp -p "$work/baseline.yaml" "$work/deploy/compose.production.yaml"
 assert_restored
 echo 'PASS: a changed volume name is rejected even when the Compose service hash is unchanged'

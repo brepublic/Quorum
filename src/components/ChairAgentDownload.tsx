@@ -13,10 +13,16 @@ export interface ChairAgentRelease {
   platforms: Record<'windows' | 'linux', {file: string; url: string; size: number; sha256: string}>;
 }
 
-declare const __CHAIR_AGENT_RELEASE__: ChairAgentRelease | null;
+export interface DevelopmentChairAgentRelease {
+  schemaVersion: 1;
+  development: true;
+  platforms: Partial<ChairAgentRelease['platforms']>;
+}
+type DownloadRelease = ChairAgentRelease | DevelopmentChairAgentRelease;
+declare const __CHAIR_AGENT_RELEASE__: DownloadRelease | null;
 
 /** The release workflow embeds the same manifest and installers in the website image. */
-export function ChairAgentDownload({release = __CHAIR_AGENT_RELEASE__}: {release?: ChairAgentRelease | null}) {
+export function ChairAgentDownload({release = __CHAIR_AGENT_RELEASE__}: {release?: DownloadRelease | null}) {
   useLanguage();
   const [open, setOpen] = React.useState(false);
   const handleKeys = (event: React.KeyboardEvent<HTMLElement>) => {
@@ -46,17 +52,23 @@ export function ChairAgentDownload({release = __CHAIR_AGENT_RELEASE__}: {release
     <Dropdown.Menu>
       <Dropdown.Header content={t('Choose operating system')} />
       {release ? <>
-        {(['windows', 'linux'] as const).map(platform => <a className="item" key={platform}
-          href={release.platforms[platform].url} download={release.platforms[platform].file}>
-          <span className="chair-agent-platform-icon"><Icon name={platform} /></span>
-          <span className="chair-agent-platform-copy"><span>{platform === 'windows' ? 'Windows' : 'Linux'}</span>
-            <small>{platform === 'windows' ? `X86-64 · ${t('EXE installer')}` : 'x86_64 · AppImage'}</small></span>
-          <Icon className="chair-agent-download-arrow" name="download" />
-        </a>)}
-        <Dropdown.Divider />
-        <a className="item chair-agent-release-link" href={release.releaseUrl} target="_blank" rel="noopener noreferrer">
-          <Icon name="github" />{t('View this release on GitHub')}<Icon name="external alternate" />
-        </a>
+        {'development' in release && <Dropdown.Header content={t('Local development build')} />}
+        {(['windows', 'linux'] as const).map(platform => {
+          const installer = release.platforms[platform];
+          return installer ? <a className="item" key={platform}
+            href={installer.url} download={installer.file}>
+            <span className="chair-agent-platform-icon"><Icon name={platform} /></span>
+            <span className="chair-agent-platform-copy"><span>{platform === 'windows' ? 'Windows' : 'Linux'}</span>
+              <small>{platform === 'windows' ? `X86-64 · ${t('EXE installer')}` : 'x86_64 · AppImage'}</small></span>
+            <Icon className="chair-agent-download-arrow" name="download" />
+          </a> : null;
+        })}
+        {'releaseUrl' in release && <>
+          <Dropdown.Divider />
+          <a className="item chair-agent-release-link" href={release.releaseUrl} target="_blank" rel="noopener noreferrer">
+            <Icon name="github" />{t('View this release on GitHub')}<Icon name="external alternate" />
+          </a>
+        </>}
       </> : <Dropdown.Item disabled text={t('Installers are unavailable for this build.')} />}
     </Dropdown.Menu>
   </ViewportDropdown>;

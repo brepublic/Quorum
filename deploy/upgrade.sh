@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 umask 077
 
-fail() { echo "升级停止：$*" >&2; return 1; }
+fail() { echo "Upgrade stopped: $*" >&2; return 1; }
 compose_file() {
   local env_file="$deploy/.env"
   # Saved JSON already contains escaped, resolved values. Recovery must work even
@@ -39,13 +39,13 @@ version_number() { jq -en --arg v "$1" "$version_filter"' $v | version_key'; }
 
 select_channel() {
   local answer
-  printf '  1. 正式版本（默认）\n  2. 包含预发布版本（测试）\n'
-  read -r -p '选择版本范围 [1]，或输入 q 退出：' answer
+  printf '  1. Stable releases (default)\n  2. Include prereleases (testing)\n'
+  read -r -p 'Select release scope [1], or enter q to quit: ' answer
   case "$answer" in
     ''|1) allow_prerelease=false ;;
     2) allow_prerelease=true ;;
     q) return 2 ;;
-    *) fail '无效选择。' ;;
+    *) fail 'Invalid selection.' ;;
   esac
 }
 
@@ -92,23 +92,23 @@ select_release() {
     asset="$temporary/release-$tag.json"
     fetch "$url" > "$asset"
     if ! validate_release "$tag" "$asset" || ! compatible_database "$asset"; then
-      echo "跳过不兼容的版本：$tag" >&2; continue
+      echo "Skipping incompatible release: $tag" >&2; continue
     fi
     index=$((index + 1))
     printf '%s\t%s\n' "$index" "$tag" >> "$temporary/choices"
-    if [[ $prerelease == true ]]; then printf '  %s. %s（预发布）\n' "$index" "$tag"
+    if [[ $prerelease == true ]]; then printf '  %s. %s (prerelease)\n' "$index" "$tag"
     else printf '  %s. %s\n' "$index" "$tag"; fi
   done < "$temporary/sorted"
-  ((index > 0)) || { echo '没有可用的兼容升级版本。'; return 2; }
+  ((index > 0)) || { echo 'No compatible upgrade releases are available.'; return 2; }
   if [[ -n ${requested_version:-} ]]; then
     chosen=$(awk -F '\t' -v tag="$requested_version" '$2 == tag {print $2}' "$temporary/choices")
-    [[ -n $chosen ]] || fail '指定版本不在可升级列表中。'
+    [[ -n $chosen ]] || fail 'The requested release is not available for upgrade.'
   else
-    read -r -p '选择版本，或输入 q 退出：' answer
+    read -r -p 'Select a release, or enter q to quit: ' answer
     [[ $answer != q ]] || return 2
-    [[ $answer =~ ^[0-9]+$ ]] || fail '无效选择。'
+    [[ $answer =~ ^[0-9]+$ ]] || fail 'Invalid selection.'
     chosen=$(awk -F '\t' -v n="$answer" '$1 == n {print $2}' "$temporary/choices")
-    [[ -n $chosen ]] || fail '无效选择。'
+    [[ -n $chosen ]] || fail 'Invalid selection.'
   fi
   cp "$temporary/release-$chosen.json" "$temporary/release.json"
 }
@@ -211,11 +211,11 @@ prepare_state() {
   local allowed_containers=' '
   for service in app caddy postgres; do
     container=$(compose_file "$config" ps -q "$service")
-    [[ -n $container ]] || fail "服务 $service 未运行。"
+    [[ -n $container ]] || fail "Service $service is not running."
     docker inspect "$container" > "$temporary/container-$service.json"
     expected_hash=$(compose_file "$config" config --hash "$service" | awk '{print $2}')
     actual_hash=$(jq -r '.[0].Config.Labels["com.docker.compose.config-hash"]' "$temporary/container-$service.json")
-    [[ $actual_hash == "$expected_hash" ]] || fail "服务 $service 的配置与运行状态不同，请先核对本机配置。"
+    [[ $actual_hash == "$expected_hash" ]] || fail "Service $service does not match its configuration. Check the local configuration first."
     # Compose's service hash omits top-level volume names. Compare actual mounts
     # as well, or a renamed volume could make us back up an unrelated database.
     jq -e --arg s "$service" --slurpfile actual "$temporary/container-$service.json" '
@@ -224,11 +224,11 @@ prepare_state() {
         target: .target, readonly: (.read_only // false)}] | sort_by(.target)) ==
       ([$actual[0][0].Mounts[] | {type: .Type, name: .Name, target: .Destination,
         readonly: (.RW | not)}] | sort_by(.target))
-    ' "$state.new/original.json" >/dev/null || fail "服务 $service 的实际数据卷与配置不同。"
+    ' "$state.new/original.json" >/dev/null || fail "Service $service has actual volumes that differ from its configuration."
     image=$(jq -r '.[0].Image' "$temporary/container-$service.json")
     reference=$(jq -r --arg s "$service" '.services[$s].image' "$state.new/original.json")
-    [[ $reference =~ ^([^[:space:]]+@)?sha256:[a-f0-9]{64}$ ]] || fail "服务 $service 必须使用镜像内容哈希，不能使用可变标签。"
-    [[ $(docker image inspect --format '{{.Id}}' "$reference") == "$image" ]] || fail "服务 $service 的镜像与运行版本不同。"
+    [[ $reference =~ ^([^[:space:]]+@)?sha256:[a-f0-9]{64}$ ]] || fail "Service $service must use an image content digest, not a mutable tag."
+    [[ $(docker image inspect --format '{{.Id}}' "$reference") == "$image" ]] || fail "The configured image for service $service differs from the running image."
     allowed_containers+="$container "
     jq --arg s "$service" --arg image "$image" '.services[$s].image = $image' "$state.new/old.json" > "$state.new/old.next"
     mv "$state.new/old.next" "$state.new/old.json"
@@ -245,21 +245,21 @@ prepare_state() {
     (.services.caddy.volumes | length == 2) and
     ([.services.app,.services.postgres] | all((.ports // []) | length == 0)) and
     (.services.app.command == null) and (.services.app.entrypoint == null)
-  ' "$state.new/old.json" >/dev/null || fail '部署结构不受支持；没有修改运行服务。'
+  ' "$state.new/old.json" >/dev/null || fail 'Unsupported deployment layout; running services have not been modified.'
   for key in caddy_config caddy_data postgres_data quorum_files; do
     volume=$(jq -r --arg k "$key" '.volumes[$k].name' "$state.new/old.json")
-    [[ $volume =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]+$ ]] || fail '无效数据卷名称。'
+    [[ $volume =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]+$ ]] || fail 'Invalid volume name.'
     docker volume inspect "$volume" >/dev/null
     ids=$(docker ps -aq --no-trunc --filter "volume=$volume")
     for container in $ids; do
-      [[ $allowed_containers == *" $container "* ]] || fail "数据卷被部署服务之外的容器使用：$volume"
+      [[ $allowed_containers == *" $container "* ]] || fail "Volume is used by a container outside the deployment services: $volume"
     done
   done
-  [[ $(docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$(jq -r '.services.postgres.image' "$state.new/old.json")") == *'PG_MAJOR=16'* ]] || fail '仅支持 PostgreSQL 16。'
+  [[ $(docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$(jq -r '.services.postgres.image' "$state.new/old.json")") == *'PG_MAJOR=16'* ]] || fail 'Only PostgreSQL 16 is supported.'
   local old_family new_family
   old_family=$(docker run --rm --network none --entrypoint sh "$(jq -r '.services.postgres.image' "$state.new/old.json")" -ec '. /etc/os-release; printf "%s" "$ID"')
   new_family=$(docker run --rm --network none --entrypoint sh "$(jq -r '.services.postgres.image' "$state.new/target.json")" -ec '. /etc/os-release; printf "%s" "$ID"')
-  [[ $old_family == "$new_family" ]] || fail 'PostgreSQL 镜像系统类型不同，需要单独迁移。'
+  [[ $old_family == "$new_family" ]] || fail 'PostgreSQL images use different operating system families. A separate migration is required.'
   printf '%s\n' "$current_version" > "$state.new/old-version"
   isolate_config "$state.new/target.json" "$state.new/verify.json"
   isolate_config "$state.new/old.json" "$state.new/restore-verify.json"
@@ -285,14 +285,14 @@ assert_quiescent() {
     (SELECT count(*) FROM storage_migration_items WHERE status = 'IN_PROGRESS') +
     (SELECT count(*) FROM committee_deletion_jobs WHERE status = 'IN_PROGRESS') +
     (SELECT count(*) FROM file_uploads WHERE status = 'RECEIVING');")
-  [[ $pending == 0 ]] || fail '仍有未完成的文件或 Agent 任务；已停止本次升级，请任务完成后重试。'
-  [[ $(compose_file "$state/old.json" ps -aq app | xargs docker inspect --format '{{.State.ExitCode}}') == 0 ]] || fail '旧应用未正常停止，不能建立恢复点。'
+  [[ $pending == 0 ]] || fail 'File or Agent tasks are still pending. Upgrade stopped; retry after the tasks finish.'
+  [[ $(compose_file "$state/old.json" ps -aq app | xargs docker inspect --format '{{.State.ExitCode}}') == 0 ]] || fail 'The old application did not stop cleanly. Cannot create a recovery snapshot.'
 }
 
 verify_http() {
   local file=$1 expected=$2 downloads=$3 address host site base
   site=$(jq -r '.services.caddy.environment.QUORUM_SITE_ADDRESS' "$file")
-  [[ $site =~ ^(https://)?[a-zA-Z0-9.-]+(:[0-9]+)?$ ]] || fail '需要单一 HTTPS 域名。'
+  [[ $site =~ ^(https://)?[a-zA-Z0-9.-]+(:[0-9]+)?$ ]] || fail 'A single HTTPS domain is required.'
   host=${site#https://}; host=${host%:*}; base="https://$host"
   address=$(docker inspect "$(compose_file "$file" ps -q caddy)" | jq -er --arg network "${project}_upgrade_isolated" '.[0].NetworkSettings.Networks[$network].IPAddress | select(length > 0)')
   local curl_args=(--noproxy '*' --fail --silent --show-error --connect-timeout 5 --max-time 30 --retry 3 --retry-delay 1 --connect-to "$host:443:$address:443")
@@ -307,20 +307,20 @@ verify_http() {
       url=$(jq -r --arg p "$platform" '.platforms[$p].url' "$state/manifest.json")
       expected_hash=$(jq -r --arg p "$platform" '.platforms[$p].sha256' "$state/manifest.json")
       actual=$(curl "${curl_args[@]}" --max-time 600 "$base$url" | sha256sum | cut -d ' ' -f1)
-      [[ $actual == "$expected_hash" ]] || fail "$platform 安装包下载校验失败。"
+      [[ $actual == "$expected_hash" ]] || fail "Downloaded $platform installer failed checksum verification."
     done
-    [[ $(curl --noproxy '*' --silent --show-error --connect-to "$host:443:$address:443" --max-time 10 -o /dev/null -w '%{http_code}' "$base/api/v1/bootstrap/status") == 503 ]] || fail '维护限制未生效。'
+    [[ $(curl --noproxy '*' --silent --show-error --connect-to "$host:443:$address:443" --max-time 10 -o /dev/null -w '%{http_code}' "$base/api/v1/bootstrap/status") == 503 ]] || fail 'Maintenance restrictions are not in effect.'
   fi
 }
 
 restore_previous() {
-  echo '正在恢复升级前的数据库、文件和部署配置……'
+  echo 'Restoring the database, files and deployment configuration from before the upgrade...'
   docker rm -f "$project-upgrade-io" >/dev/null 2>&1 || true
   stop_services
   compose_file "$state/old.json" stop -t 45 postgres
   local previous_phase; previous_phase=$(cat "$state/phase")
   if [[ $previous_phase == verifying || $previous_phase == restoring || $previous_phase == restored ]]; then
-    [[ -f $state/SHA256SUMS ]] || fail '完整恢复点缺失；保留维护状态。'
+    [[ -f $state/SHA256SUMS ]] || fail 'A complete recovery snapshot is missing; remaining in maintenance mode.'
   fi
   if [[ -f $state/SHA256SUMS ]]; then
     (cd "$state"; sha256sum -c SHA256SUMS)
@@ -344,7 +344,7 @@ finish_rollback() {
   compose_file "$state/original.json" up -d --no-build --pull never --wait --wait-timeout 180
   remove_isolated_network
   retire_state
-  echo '旧版本已恢复，部署配置、数据库和文件已回滚。'
+  echo 'Previous version restored. Deployment configuration, database and files have been rolled back.'
 }
 
 cleanup_success() {
@@ -370,7 +370,7 @@ cleanup_success() {
   done
   remove_isolated_network
   retire_state
-  echo '升级完成；临时恢复点已清理。'
+  echo 'Upgrade complete; temporary recovery snapshot removed.'
 }
 finish_upgrade() {
   # Committed is written BEFORE enabling any user/worker writes. Failures here resume activation, never restore old data.
@@ -386,12 +386,12 @@ run_transaction() {
     size=$(volume_io "$key" size); total=$((total + size))
   done
   free=$(df -Pk "$state" | awk 'NR==2 {print $4}')
-  ((free > total + total / 10 + 262144)) || fail '空间不足，无法保存完整恢复点。'
+  ((free > total + total / 10 + 262144)) || fail 'Not enough disk space to save a complete recovery snapshot.'
   docker run --rm --network none --user 0 --entrypoint sh \
     --mount "type=volume,src=$(jq -r '.volumes.postgres_data.name' "$state/old.json"),dst=/volume,readonly" \
     "$(jq -r '.services.app.image' "$state/old.json")" -ec 'test -z "$(find /volume -type l -print -quit)"' \
-    || fail '外置数据库表空间不支持自动快照。'
-  echo '进入维护阶段，暂停访问并备份数据。'
+    || fail 'Automatic snapshots do not support external database tablespaces.'
+  echo 'Entering maintenance mode, suspending access and backing up data.'
   phase quiescing
   stop_services
   assert_quiescent
@@ -402,7 +402,7 @@ run_transaction() {
   sync -f "$state"; mv "$state/SHA256SUMS.new" "$state/SHA256SUMS"; sync -f "$state"
   phase verifying
   compose_file "$state/verify.json" up -d --no-build --pull never --wait --wait-timeout 180
-  [[ $(sql "$state/verify.json" "SELECT bool_and(datcollversion IS NOT DISTINCT FROM pg_database_collation_actual_version(oid)) FROM pg_database WHERE datallowconn;") == t ]] || fail '数据库排序规则版本发生变化，需要单独迁移。'
+  [[ $(sql "$state/verify.json" "SELECT bool_and(datcollversion IS NOT DISTINCT FROM pg_database_collation_actual_version(oid)) FROM pg_database WHERE datallowconn;") == t ]] || fail 'Database collation versions have changed. A separate migration is required.'
   verify_http "$state/verify.json" "$target_version" yes
   # Protocol 1 does not migrate file bytes. Detect deletions or altered content before opening writes.
   volume_io quorum_files compare
@@ -413,11 +413,11 @@ run_transaction() {
 recover() {
   local stage; stage=$(cat "$state/phase")
   case "$stage" in
-    committed) echo '上次升级已验收，继续开放服务及清理；不会恢复旧数据。'; finish_upgrade ;;
+    committed) echo 'The previous upgrade passed verification. Resuming service activation and cleanup; old data will not be restored.'; finish_upgrade ;;
     rollback-verified) finish_rollback ;;
-    prepared) docker rm -f "$project-upgrade-io" >/dev/null 2>&1 || true; retire_state; echo '已取消尚未开始的升级。' ;;
+    prepared) docker rm -f "$project-upgrade-io" >/dev/null 2>&1 || true; retire_state; echo 'Cancelled the upgrade before it started.' ;;
     quiescing|backing-up|verifying|restoring|restored) restore_previous ;;
-    *) fail "无法识别的升级阶段：$stage；保留恢复材料。" ;;
+    *) fail "Unknown upgrade phase: $stage; recovery files retained." ;;
   esac
 }
 on_exit() {
@@ -425,36 +425,36 @@ on_exit() {
   trap - EXIT INT TERM
   if ((result != 0)) && [[ -f $state/phase ]]; then
     # Run recovery as an ordinary command under errexit, NOT an if/|| function call (which disables errexit in Bash).
-    echo "升级未完成；恢复材料：$state" >&2
+    echo "Upgrade incomplete; recovery files: $state" >&2
     set +e
     (set -Eeuo pipefail; recover)
     local recovery_result=$?
     set -e
-    if ((recovery_result != 0)); then echo '自动恢复未完成。保持当前状态，修复错误后再次运行同一脚本继续恢复。' >&2; fi
+    if ((recovery_result != 0)); then echo 'Automatic recovery did not complete. Keep the current state, fix the error and rerun this script to resume recovery.' >&2; fi
   fi
   rm -rf "$temporary"
   exit "$result"
 }
 
 upgrade_main() {
-  for command in docker jq curl sha256sum flock sync awk; do command -v "$command" >/dev/null || fail "缺少命令：$command"; done
+  for command in docker jq curl sha256sum flock sync awk; do command -v "$command" >/dev/null || fail "Missing command: $command"; done
   deploy=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
   config="$deploy/compose.production.yaml"; state="$deploy/.upgrade"
-  exec 9>"$deploy/.upgrade.lock"; flock -n 9 || fail '另一个升级正在运行。'
+  exec 9>"$deploy/.upgrade.lock"; flock -n 9 || fail 'Another upgrade is already running.'
   temporary=$(mktemp -d)
   trap on_exit EXIT; trap 'exit 130' INT; trap 'exit 143' TERM
   # The durable rename is the end of recovery. Only deletion may remain after a crash.
   if [[ -d $state.done ]]; then
-    [[ ! -e $state ]] || fail '发现冲突的升级记录；保留恢复材料。'
+    [[ ! -e $state ]] || fail 'Conflicting upgrade records found; recovery files retained.'
     rm -rf "$state.done"; sync -f "$deploy"
-    echo '上次升级事务的清理已完成。'; return
+    echo 'Cleanup of the previous upgrade transaction is complete.'; return
   fi
   if [[ -d $state ]]; then
     project=$(jq -er .name "$state/old.json")
   else
     project=$(docker compose --env-file "$deploy/.env" -f "$config" config --format json | jq -er .name)
   fi
-  [[ $project =~ ^[a-z0-9][a-z0-9_-]+$ ]] || fail '无效部署名称。'
+  [[ $project =~ ^[a-z0-9][a-z0-9_-]+$ ]] || fail 'Invalid deployment name.'
   repository=brepublic; github_repository=BREPUBLIC/Quorum
   if [[ -d $state ]]; then recover; return; fi
   rm -rf "$state.new"
@@ -462,25 +462,25 @@ upgrade_main() {
   while (($# > 0)); do
     case "$1" in
       --prerelease) allow_prerelease=true; shift ;;
-      --release) [[ $# -ge 2 && -z $requested_version ]] || fail '用法：upgrade.sh [--prerelease] [--release vX.Y.Z[-rc.N]]'; requested_version=$2; shift 2 ;;
-      *) fail '用法：upgrade.sh [--prerelease] [--release vX.Y.Z[-rc.N]]' ;;
+      --release) [[ $# -ge 2 && -z $requested_version ]] || fail 'Usage: upgrade.sh [--prerelease] [--release vX.Y.Z[-rc.N]]'; requested_version=$2; shift 2 ;;
+      *) fail 'Usage: upgrade.sh [--prerelease] [--release vX.Y.Z[-rc.N]]' ;;
     esac
   done
   compose_file "$config" config --format json > "$temporary/current.json"
   local container image
   container=$(compose_file "$config" ps -q app)
-  [[ -n $container ]] || fail '未找到正在运行的 Quorum；首次部署请使用部署手册。'
+  [[ -n $container ]] || fail 'No running Quorum instance found. For initial deployment, follow the deployment guide.'
   image=$(docker inspect --format '{{.Image}}' "$container")
   current_version=$(docker image inspect --format '{{index .Config.Labels "io.quorum.release"}}' "$image")
   if ! version_number "$current_version" >/dev/null 2>&1; then
     current_version=$(compose_file "$config" exec -T app node -e "fetch('http://127.0.0.1:3000/api/v1/version').then(r=>r.json()).then(v=>process.stdout.write(v.data.version))")
   fi
-  version_number "$current_version" >/dev/null || fail '当前版本号无法识别。'
-  echo "当前版本：$current_version"
+  version_number "$current_version" >/dev/null || fail 'Unrecognized current version number.'
+  echo "Current version: $current_version"
   # Do not wrap select_release in a conditional: network/check failures must stop immediately.
   select_release
   target_version=$(jq -r .version "$temporary/release.json"); target_commit=$(jq -r .commit "$temporary/release.json")
-  echo "准备升级至 $target_version。"
+  echo "Preparing to upgrade to $target_version."
   pull_release
   write_target_config
   prepare_state

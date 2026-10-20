@@ -7,10 +7,10 @@ import type {CommitteeWorkspaceSnapshot, FileEntry, StorageHost, StorageMigratio
 import type {SelfHostedApi} from '../../services/self-hosted-api';
 import {SelfHostedApiError} from '../../services/self-hosted-api';
 import {MemoryRouter} from 'react-router-dom';
-import type {ChairAgentRelease} from '../../components/ChairAgentDownload';
+import type {ChairAgentRelease, DevelopmentChairAgentRelease} from '../../components/ChairAgentDownload';
 import {openChairAgent, downloadChairConfiguration} from '../../services/agent-pairing';
 vi.mock('../../services/agent-pairing', () => ({openChairAgent: vi.fn(), downloadChairConfiguration: vi.fn()}));
-const agentDownloads = vi.hoisted(() => ({release: undefined as ChairAgentRelease | null | undefined}));
+const agentDownloads = vi.hoisted(() => ({release: undefined as ChairAgentRelease | DevelopmentChairAgentRelease | null | undefined}));
 vi.mock('../../components/ChairAgentDownload', async importOriginal => {
   const actual = await importOriginal<typeof import('../../components/ChairAgentDownload')>();
   // Render the real download menu with controlled release metadata in regression cases.
@@ -541,7 +541,9 @@ describe('self-hosted stage 6 file panel', () => {
 
   it.each([
     {build: 'source', release: null},
-    {build: 'release', release: agentRelease}
+    {build: 'release', release: agentRelease},
+    {build: 'development Linux', release: {schemaVersion: 1, development: true, platforms: {linux: agentRelease.platforms.linux}} as DevelopmentChairAgentRelease},
+    {build: 'development Windows', release: {schemaVersion: 1, development: true, platforms: {windows: agentRelease.platforms.windows}} as DevelopmentChairAgentRelease}
   ])('omits server download for a deleted source and offers save-as-new instead of acceptance ($build build)', async ({release}) => {
     agentDownloads.release = release;
     const {host, conflict} = comparisonFixture(); conflict.serverFile = {...conflict.serverFile!, status: 'DELETED'};
@@ -553,7 +555,7 @@ describe('self-hosted stage 6 file panel', () => {
     expect(card!.querySelector('a[download]')).toBeNull();
     const installers = [...view.querySelectorAll<HTMLAnchorElement>('.chair-agent-download a[download]')];
     expect(installers.map(link => link.getAttribute('href'))).toEqual(release
-      ? [release.platforms.windows.url, release.platforms.linux.url] : []);
+      ? [release.platforms.windows?.url, release.platforms.linux?.url].filter(Boolean) : []);
     expect(button('保留本地版本')?.disabled).toBe(true); expect(view.querySelector('.conflict-recommendation')?.textContent).toContain('保留两份');
   });
 
