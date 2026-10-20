@@ -912,9 +912,9 @@ export const selfHostedApi = {
     return request<{id: string; fileEntryId: string}>(`/api/v1/files/${fileId}/delegate-reject`,
       {method: 'POST', body: {baseRevision, logicalName, fileType, reason, rejectionTypeId}, idempotencyKey: key()});
   },
-  bootstrapDelegatePortal(capability: string) {
+  bootstrapDelegatePortal(capability: string, signal?: AbortSignal) {
     return delegateRequest<DelegatePortalBootstrap>('/api/v1/delegate-files/bootstrap',
-      {method: 'POST', body: {capability}});
+      {method: 'POST', body: {capability}, signal});
   },
   claimDelegatePortal(capability: string, seatId: string) {
     return delegateRequest<DelegatePortalBootstrap>('/api/v1/delegate-files/claim',

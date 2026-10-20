@@ -33,6 +33,19 @@ describe('self-hosted stage 4 API client', () => {
     }
   });
 
+  it('passes cancellation through delegate bootstrap requests', async () => {
+    const fetchMock = vi.fn((_url, options) => new Promise((_resolve, reject) => {
+      options.signal.addEventListener('abort', () => reject(new DOMException('', 'AbortError')));
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const controller = new AbortController();
+    const result = selfHostedApi.bootstrapDelegatePortal('test-link', controller.signal);
+    controller.abort();
+    await expect(result).rejects.toMatchObject({name: 'AbortError'});
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/delegate-files/bootstrap',
+      expect.objectContaining({signal: controller.signal, credentials: 'same-origin'}));
+  });
+
   it('sends CSRF, revision, and idempotency headers for commands', async () => {
     const fetchMock = vi.fn(async () => ({ok: true, status: 201,
       json: async () => ({data: {id: 'note'}, meta: {requestId: 'one'}})}));

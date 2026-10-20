@@ -70,7 +70,10 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
   const [seatId, setSeatId] = React.useState(''); const [confirming, setConfirming] = React.useState(false);
   const [failure, setError] = React.useState<unknown>();
   const error = failure ? portalError(failure) : undefined; const [working, setWorking] = React.useState(false);
-  const [connection, setConnection] = React.useState<'LIVE' | 'OFFLINE'>('OFFLINE');
+  const [connection, setConnection] = React.useState<'LIVE' | 'OFFLINE' | 'RESYNCING'>('OFFLINE');
+  const [syncFailure, setSyncFailure] = React.useState<unknown>();
+  const refreshRef = React.useRef<(afterChange?: boolean) => Promise<void>>(async () => {});
+  const refreshFiles = React.useCallback(() => refreshRef.current(true), []);
   const [notices, setNotices] = React.useState<Array<DelegateFileAvailableEvent & {expiresAt: number}>>([]);
   const [file, setFile] = React.useState<File>(); const [fileType, setFileType] = React.useState<StandardDelegateFileType | 'OTHER'>('WORKING_PAPER');
   const [customType, setCustomType] = React.useState('');
@@ -96,56 +99,125 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
   }, [api, capability]);
   React.useEffect(() => { void load(); }, [load]);
 
-  const refreshFiles = React.useCallback(async () => {
-    try { const next = await api.bootstrapDelegatePortal(capability);
-      const known = knownPublications.current;
-      if (known) {
-        const newlyPublished = next.files.filter(file => {
-          const previous = known.get(file.id);
-          return (!previous || file.publishedAt > previous) &&
-            (file.submissionSource === 'CHAIR' || file.submissionSource === 'DELEGATE_PORTAL');
-        });
-        if (newlyPublished.length) setNotices(current => {
-          const others = current.filter(item => !newlyPublished.some(file => file.id === item.fileId));
-          return [...others, ...newlyPublished.map(file => ({id: 0, fileId: file.id,
-            submissionSource: file.submissionSource as 'CHAIR' | 'DELEGATE_PORTAL',
-            submitterDisplayName: file.submitterDisplayName, logicalName: file.logicalName,
-            publishedAt: file.publishedAt, expiresAt: Date.now() + 60_000}))];
-        });
-      }
-      knownPublications.current = new Map(next.files.map(file => [file.id, file.publishedAt]));
-      setPortal(current => {
-        if (!current) return current;
-        const categoryOpenedAt = {...next.categoryOpenedAt};
-        for (const category of CATEGORIES) {
-          const local = current.categoryOpenedAt?.[category];
-          const remote = categoryOpenedAt[category];
-          if (local && (!remote || local > remote)) categoryOpenedAt[category] = local;
-        }
-        return {...next, categoryOpenedAt, eventSequence: current.eventSequence};
-      }); }
-    catch { /* The stream state communicates loss of service. */ }
-  }, [api, capability]);
-
   React.useEffect(() => {
     if (!portal?.claimedSeat) return;
-    const stream = new EventSource(`/api/v1/delegate-files/events?after=${portal.eventSequence}`);
-    stream.onopen = () => setConnection('LIVE'); stream.onerror = () => setConnection('OFFLINE');
-    const available = (event: MessageEvent<string>) => {
-      const item = JSON.parse(event.data) as DelegateFileAvailableEvent;
-      setNotices(current => [...current.filter(existing => existing.fileId !== item.fileId),
-        {...item, expiresAt: Date.now() + 60_000}]); void refreshFiles();
+    let active = true; let connected = false; let epoch = 0;
+    let cursor = portal.eventSequence; let lastActivity = Date.now(); let lastRefocus = -Infinity;
+    let stream: EventSource; let watchdog: number;
+    let request: AbortController | undefined; let inFlight: Promise<void> | undefined; let again = false;
+    const refresh = (afterChange = false): Promise<void> => {
+      if (!active) return Promise.resolve();
+      if (inFlight) {again ||= afterChange; return inFlight;}
+      inFlight = (async () => {
+        do {
+          again = false;
+          const readEpoch = epoch;
+          request = new AbortController();
+          const timeout = window.setTimeout(() => request?.abort(), 20_000);
+          try {
+            const next = await api.bootstrapDelegatePortal(capability, request.signal);
+            if (!active) return;
+            if (again || readEpoch !== epoch) continue;
+            const known = knownPublications.current;
+            if (known) {
+              const newlyPublished = next.files.filter(file => {
+                const previous = known.get(file.id);
+                return (!previous || file.publishedAt > previous) &&
+                  (file.submissionSource === 'CHAIR' || file.submissionSource === 'DELEGATE_PORTAL');
+              });
+              if (newlyPublished.length) setNotices(current => {
+                const others = current.filter(item => !newlyPublished.some(file => file.id === item.fileId));
+                return [...others, ...newlyPublished.map(file => ({id: 0, fileId: file.id,
+                  submissionSource: file.submissionSource as 'CHAIR' | 'DELEGATE_PORTAL',
+                  submitterDisplayName: file.submitterDisplayName, logicalName: file.logicalName,
+                  publishedAt: file.publishedAt, expiresAt: Date.now() + 60_000}))];
+              });
+            }
+            knownPublications.current = new Map(next.files.map(file => [file.id, file.publishedAt]));
+            setPortal(current => {
+              if (!current) return current;
+              const categoryOpenedAt = {...next.categoryOpenedAt};
+              for (const category of CATEGORIES) {
+                const local = current.categoryOpenedAt?.[category];
+                const remote = categoryOpenedAt[category];
+                if (local && (!remote || local > remote)) categoryOpenedAt[category] = local;
+              }
+              return {...next, categoryOpenedAt, eventSequence: current.eventSequence};
+            });
+            setSyncFailure(undefined);
+            if (connected && Date.now() - lastActivity < 45_000) setConnection('LIVE');
+          } catch (caught) {
+            if (!active) return;
+            if (readEpoch !== epoch) continue;
+            setSyncFailure(request.signal.aborted ? new SelfHostedApiError(408, 'REQUEST_TIMEOUT', '') : caught);
+            setConnection(connected ? 'RESYNCING' : 'OFFLINE');
+          } finally {window.clearTimeout(timeout);}
+        } while (again && active);
+      })().finally(() => {inFlight = undefined;});
+      return inFlight;
     };
-    const status = (event: MessageEvent<string>) => {
-      const value = JSON.parse(event.data) as {storageAvailable: boolean};
-      setPortal(current => current ? {...current, storageAvailable: value.storageAvailable} : current);
+    const touch = () => {
+      lastActivity = Date.now();
+      window.clearTimeout(watchdog);
+      watchdog = window.setTimeout(() => {
+        setSyncFailure(new SelfHostedApiError(408, 'REQUEST_TIMEOUT', ''));
+        connect();
+      }, 45_000);
     };
-    stream.addEventListener('file.available', available as EventListener);
-    stream.addEventListener('file.rejected', available as EventListener);
-    stream.addEventListener('portal.status', status as EventListener);
-    const refresh = window.setInterval(() => void refreshFiles(), 15_000);
-    return () => {window.clearInterval(refresh); stream.close();};
-  }, [portal?.claimedSeat?.id, portal?.eventSequence, refreshFiles]);
+    const connect = () => {
+      stream?.close(); connected = false; epoch++; setConnection('OFFLINE');
+      const current = stream = new EventSource(`/api/v1/delegate-files/events?after=${cursor}`);
+      const valid = () => active && current === stream;
+      touch();
+      stream.onopen = () => {
+        if (!valid()) return;
+        connected = true; epoch++; touch(); setConnection('RESYNCING'); void refresh(true);
+      };
+      stream.onerror = () => {
+        if (!valid()) return;
+        connected = false; epoch++; setConnection('OFFLINE');
+      };
+      const available = (event: MessageEvent<string>) => {
+        if (!valid()) return;
+        touch();
+        try {
+          const item = JSON.parse(event.data) as DelegateFileAvailableEvent;
+          cursor = Math.max(cursor, item.id);
+          setNotices(current => [...current.filter(existing => existing.fileId !== item.fileId),
+            {...item, expiresAt: Date.now() + 60_000}]);
+        } catch {setSyncFailure(new SelfHostedApiError(0, 'INVALID_RESPONSE', '')); setConnection('RESYNCING');}
+        void refresh(true);
+      };
+      const status = (event: MessageEvent<string>) => {
+        if (!valid()) return;
+        touch();
+        try {
+          const value = JSON.parse(event.data) as {storageAvailable: boolean};
+          setPortal(current => current ? {...current, storageAvailable: value.storageAvailable} : current);
+        } catch {setSyncFailure(new SelfHostedApiError(0, 'INVALID_RESPONSE', '')); setConnection('RESYNCING');}
+      };
+      stream.addEventListener('file.available', available as EventListener);
+      stream.addEventListener('file.rejected', available as EventListener);
+      stream.addEventListener('portal.status', status as EventListener);
+    };
+    const refocus = () => {
+      const now = Date.now();
+      if (now - lastRefocus < 100) return;
+      lastRefocus = now;
+      if (now < lastActivity || now - lastActivity >= 45_000) connect();
+      void refresh();
+    };
+    const visible = () => {if (document.visibilityState === 'visible') refocus();};
+    refreshRef.current = refresh;
+    connect();
+    const timer = window.setInterval(() => void refresh(), 15_000);
+    window.addEventListener('focus', refocus); document.addEventListener('visibilitychange', visible);
+    return () => {
+      active = false; request?.abort(); window.clearInterval(timer); window.clearTimeout(watchdog); stream.close();
+      refreshRef.current = async () => {};
+      window.removeEventListener('focus', refocus); document.removeEventListener('visibilitychange', visible);
+    };
+  }, [portal?.claimedSeat?.id, portal?.eventSequence, api, capability]);
   React.useEffect(() => {
     const timers = notices.map(item => window.setTimeout(() => setNotices(current => current.filter(
       candidate => candidate.fileId !== item.fileId)), Math.max(0, item.expiresAt - Date.now())));
@@ -279,7 +351,7 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
   const claimedSeat = portal.claimedSeat;
   const publishedFiles = portal.files.filter(item => publishedCategory === 'ALL' ||
     (publishedCategory === 'OTHER' ? Boolean(item.fileType && isCustomDelegateFileType(item.fileType)) : item.fileType === publishedCategory));
-  const status = isLive ? t("Live") : !portal.storageAvailable ? t("File storage unavailable") : t("Offline");
+  const status = isLive ? t("Live") : !portal.storageAvailable ? t("File storage unavailable") : connection === 'RESYNCING' ? t("Synchronizing") : t("Offline");
   const maxUploadSizeMiB = fileSizeMiB(portal.maxUploadSizeBytes);
   const statusItem = (compact: boolean) => <Menu.Item className={isLive ? 'realtime-status-live' : undefined}
     title={status} aria-label={status}>
@@ -320,6 +392,7 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
           <Menu.Item header className="delegate-file-committee-name">{portal.committeeName}</Menu.Item>
         </Menu></nav>
     <Container>
+      {syncFailure != null && <Message warning role="status" content={apiErrorText(syncFailure)} />}
       {notices.map(item => <Message info={item.kind !== 'rejected'} negative={item.kind === 'rejected'} key={item.fileId} onDismiss={() => setNotices(current =>
         current.filter(candidate => candidate.fileId !== item.fileId))}
         content={<>{t(item.kind === 'rejected' ? '{seat} submitted {file}, which was rejected by the chair.' : '{seat} submitted {file}, which is now available.',

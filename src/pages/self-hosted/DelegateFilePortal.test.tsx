@@ -3,7 +3,7 @@ import * as React from 'react';
 import {act} from 'react';
 import {createRoot, type Root} from 'react-dom/client';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
-import type {SelfHostedApi} from '../../services/self-hosted-api';
+import {SelfHostedApiError, type SelfHostedApi} from '../../services/self-hosted-api';
 import DelegateFilePortal from './DelegateFilePortal';
 import * as hashing from '../../services/sha256';
 
@@ -13,7 +13,7 @@ class FakeEventSource {
   listeners = new Map<string, EventListener>();
   constructor(readonly url: string) {FakeEventSource.latest = this;}
   addEventListener(type: string, listener: EventListener) {this.listeners.set(type, listener);}
-  close() {}
+  close = vi.fn();
   emit(type: string, data: unknown) {this.listeners.get(type)?.({data: JSON.stringify(data)} as unknown as Event);}
 }
 
@@ -29,6 +29,111 @@ afterEach(async () => {await act(async () => root.unmount()); host.remove(); vi.
 function client(overrides: Partial<SelfHostedApi>): SelfHostedApi {return overrides as SelfHostedApi;}
 
 describe('delegate file portal', () => {
+
+  const synchronizedPortal = {
+    committeeId: 'committee', committeeLanguage: 'zh-CN' as const, committeeName: '委员会', shareId: 'share',
+    claimedSeat: {id: 'seat', displayName: '中国', rank: 'STANDARD' as const}, eligibleSeats: [], mayUpload: true,
+    storageAvailable: true, eventSequence: 7, maxUploadSizeBytes: 1024, categoryOpenedAt: {},
+    files: [{id: 'old', logicalName: '现有文件', submissionSource: 'CHAIR' as const, fileType: 'NEWS' as const,
+      submitterDisplayName: null, submittedAt: null, publishedAt: '2026-10-20T00:00:00Z', revision: 1}]
+  };
+  const statusText = () => host.querySelector('.delegate-file-navigation-desktop .right.menu')?.textContent;
+  async function mountSync(bootstrapDelegatePortal = vi.fn().mockResolvedValue(synchronizedPortal)) {
+    vi.useFakeTimers();
+    await act(async () => root.render(<DelegateFilePortal api={client({bootstrapDelegatePortal})} />));
+    return bootstrapDelegatePortal;
+  }
+  it('requires a successful list refresh after opening or reopening the stream', async () => {
+    const read = await mountSync();
+    let complete!: (value: typeof synchronizedPortal) => void;
+    read.mockImplementationOnce(() => new Promise(resolve => {complete = resolve;}));
+    await act(async () => FakeEventSource.latest!.onopen!());
+    expect(statusText()).toContain('正在同步'); expect(statusText()).not.toContain('实时');
+    act(() => FakeEventSource.latest!.onerror!());
+    await act(async () => complete(synchronizedPortal));
+    expect(statusText()).toContain('离线');
+    await act(async () => FakeEventSource.latest!.onopen!());
+    expect(statusText()).toContain('实时');
+  });
+  it('retains files and reports refresh failure until data recovers, even with healthy heartbeats', async () => {
+    const read = await mountSync(); await act(async () => FakeEventSource.latest!.onopen!());
+    read.mockRejectedValueOnce(new SelfHostedApiError(503, 'SERVICE_NOT_READY', ''));
+    await act(async () => vi.advanceTimersByTimeAsync(15_000));
+    expect(statusText()).toContain('正在同步'); expect(host.textContent).toContain('现有文件');
+    expect(host.querySelector('[role="status"]')?.textContent).toContain('服务暂不可用');
+    await act(async () => FakeEventSource.latest!.emit('portal.status', {storageAvailable: true}));
+    expect(statusText()).not.toContain('实时');
+    await act(async () => vi.advanceTimersByTimeAsync(15_000));
+    expect(statusText()).toContain('实时'); expect(host.querySelector('[role="status"]')).toBeNull();
+  });
+  it('coalesces polling and refocus but follows up publications received during a read', async () => {
+    const read = await mountSync(); await act(async () => FakeEventSource.latest!.onopen!()); read.mockClear();
+    const stream = FakeEventSource.latest!;
+    let complete!: (value: typeof synchronizedPortal) => void;
+    read.mockImplementationOnce(() => new Promise(resolve => {complete = resolve;}));
+    await act(async () => vi.advanceTimersByTimeAsync(15_000));
+    await act(async () => {window.dispatchEvent(new Event('focus')); await vi.advanceTimersByTimeAsync(15_000);});
+    expect(read).toHaveBeenCalledTimes(1); expect(stream.close).not.toHaveBeenCalled();
+    const file = {...synchronizedPortal.files[0], id: 'new', logicalName: '新发布文件'};
+    read.mockResolvedValueOnce({...synchronizedPortal, files: [file]});
+    await act(async () => stream.emit('file.available', {...file, id: 8, fileId: file.id}));
+    await act(async () => complete(synchronizedPortal));
+    expect(read).toHaveBeenCalledTimes(2); expect(host.textContent).toContain('新发布文件');
+    expect(host.querySelectorAll('.info.message')).toHaveLength(1);
+  });
+  it('reports a failed read even when a publication has already queued the next refresh', async () => {
+    const read = await mountSync(); await act(async () => FakeEventSource.latest!.onopen!());
+    let reject!: (reason: unknown) => void; let complete!: (value: typeof synchronizedPortal) => void;
+    read.mockImplementationOnce(() => new Promise((_resolve, fail) => {reject = fail;}))
+      .mockImplementationOnce(() => new Promise(resolve => {complete = resolve;}));
+    act(() => window.dispatchEvent(new Event('focus')));
+    await act(async () => FakeEventSource.latest!.emit('file.available', {id: 8, fileId: 'new', logicalName: '新文件'}));
+    await act(async () => reject(new SelfHostedApiError(503, 'SERVICE_NOT_READY', '')));
+    expect(statusText()).toContain('正在同步'); expect(host.querySelector('[role="status"]')?.textContent).toContain('服务暂不可用');
+    await act(async () => complete(synchronizedPortal));
+    expect(statusText()).toContain('实时'); expect(host.querySelector('[role="status"]')).toBeNull();
+  });
+  it('times out a stalled list refresh, preserves data and recovers on the next poll', async () => {
+    const read = await mountSync(); await act(async () => FakeEventSource.latest!.onopen!());
+    let signal!: AbortSignal;
+    read.mockImplementationOnce((_capability, nextSignal) => new Promise((_resolve, reject) => {
+      signal = nextSignal; signal.addEventListener('abort', () => reject(new DOMException('', 'AbortError')));
+    }));
+    act(() => window.dispatchEvent(new Event('focus')));
+    await act(async () => vi.advanceTimersByTimeAsync(20_000));
+    expect(signal.aborted).toBe(true); expect(statusText()).toContain('正在同步');
+    expect(host.textContent).toContain('请求超时'); expect(host.textContent).toContain('现有文件');
+    await act(async () => vi.advanceTimersByTimeAsync(10_000));
+    expect(statusText()).toContain('实时'); expect(host.textContent).not.toContain('请求超时');
+  });
+  it('uses portal status as heartbeat and reconnects silence from the last received event', async () => {
+    await mountSync(); await act(async () => FakeEventSource.latest!.onopen!());
+    const stream = FakeEventSource.latest!;
+    for (let i = 0; i < 4; i++) {
+      await act(async () => {await vi.advanceTimersByTimeAsync(15_000); stream.emit('portal.status', {storageAvailable: true});});
+    }
+    expect(stream.close).not.toHaveBeenCalled();
+    await act(async () => stream.emit('file.available', {id: 12, fileId: 'new', logicalName: '新文件'}));
+    await act(async () => vi.advanceTimersByTimeAsync(45_000));
+    expect(stream.close).toHaveBeenCalledTimes(1); expect(FakeEventSource.latest!.url).toContain('after=12');
+    expect(statusText()).toContain('离线');
+    await act(async () => stream.onopen!()); expect(statusText()).toContain('离线');
+    await act(async () => FakeEventSource.latest!.onopen!()); expect(statusText()).toContain('实时');
+  });
+  it('reconnects a stale stream on return and aborts reads on unmount', async () => {
+    const read = await mountSync(); await act(async () => FakeEventSource.latest!.onopen!());
+    const stream = FakeEventSource.latest!; vi.setSystemTime(Date.now() + 60_000);
+    await act(async () => window.dispatchEvent(new Event('focus')));
+    expect(stream.close).toHaveBeenCalledTimes(1);
+    let signal!: AbortSignal;
+    read.mockImplementationOnce((_capability, nextSignal) => new Promise((_resolve, reject) => {
+      signal = nextSignal; signal.addEventListener('abort', () => reject(new DOMException('', 'AbortError')));
+    }));
+    await act(async () => FakeEventSource.latest!.onopen!());
+    await act(async () => root.render(<div>closed</div>));
+    expect(signal.aborted).toBe(true); expect(FakeEventSource.latest!.close).toHaveBeenCalledTimes(1);
+    await act(async () => vi.advanceTimersByTimeAsync(60_000)); expect(host.textContent).toBe('closed');
+  });
   it.each(['联合国安全理事会', '联合国大会裁军与国际安全委员会（第一委员会）'])('shows the current committee name before selecting a delegation: %s', async committeeName => {
     await act(async () => root.render(<DelegateFilePortal api={client({bootstrapDelegatePortal: async () => ({
       committeeId: 'committee', committeeLanguage: 'zh-CN', committeeName, shareId: 'share',
