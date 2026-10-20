@@ -51,6 +51,9 @@
   },
   "scripts": {
     "start": "vite",
+    "dev:chair-agent:prepare": "node scripts/dev-chair-agent-downloads.mjs",
+    "dev:chair-agent:build:linux": "node scripts/dev-chair-agent-downloads.mjs check-source && pnpm release:storage-agent:appimage",
+    "dev:chair-agent:build:windows": "node scripts/dev-chair-agent-downloads.mjs check-source && pnpm release:storage-agent:windows",
     "build": "pnpm --filter @quorum/contracts build && tsc && vite build",
     "build:self-host": "pnpm build && pnpm --filter @quorum/rule-schema build && pnpm --filter @quorum/server build && pnpm --filter @quorum/storage-agent build",
     "serve": "vite preview",

@@ -259,6 +259,8 @@ retention worker 使用 advisory lock，仅清理明确过期且不再承载业�
 
 ### 配套 Chair Agent 下载发行
 
+本地开发可手动运行 `pnpm dev:chair-agent:build:linux`／`pnpm dev:chair-agent:build:windows`，复用原平台打包流程；开发包装命令先拒绝未跟踪的 packages/scripts 文件，允许已跟踪文件的未提交修改。`pnpm dev:chair-agent:prepare --platform linux|windows --from <构建目录>` 校验全部产物并将选定安装包及独立清单写入被 Git/Docker 忽略的 `release/dev-chair-agent/`，以安装包 SHA-256 隔离下载地址；文件准备成功后原子替换清单，保留另一平台及旧文件。仅 Vite 开发服务器读取该清单并提供其列出的 GET/HEAD 附件下载；重启 Vite 后菜单生效，仅显示已准备平台并标记本地开发构建。生产构建、preview 和带 RELEASE_TAG 的流程不读取此目录，正式下载准备脚本及工作流不变。操作见 `docs/self-hosted/CHAIR_AGENT_DEVELOPMENT_DOWNLOADS.md`。
+
 正式服务器 Release 调用现有 Windows／Linux 构建与平台 smoke，从同一提交生成安装器和对应源码。`scripts/chair-agent-downloads.mjs` 校验两平台提交、源码干净状态、Agent 版本、所有发行文件大小与 SHA-256 后，把两份安装包、清单和 SHA256SUMS 放入忽略的 `public/downloads/chair-agent/`；Vite 将清单编入下载组件并把安装包复制到网站构建输出。正式构建还校验清单与发行标签／提交相符；源码开发构建缺少清单时明确显示无可用安装包。安装包以具体发行标签隔离 URL，GitHub 链接指向同一标签的 Release；源码和其他归档只发布至 GitHub，不进入网站镜像。
 
 Caddy 的 `/downloads/chair-agent/*` 分支独立于 SPA fallback，公开提供不可执行的附件响应、nosniff 和重新验证缓存，保留范围请求，缺失文件返回 404。该路径不使用业务存储卷、数据库或主席文件缓存。菜单复用已有 Semantic UI 图标和 ViewportDropdown，没有新增依赖。
