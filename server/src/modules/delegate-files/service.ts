@@ -1,3 +1,4 @@
+import {readVolumePolicy} from '../storage/volume-policy.js';
 import {createHash, randomUUID} from 'node:crypto';
 import type {Pool, PoolClient, QueryResultRow} from 'pg';
 import type {
@@ -629,6 +630,7 @@ export class DelegateFileService {
       allowedExtensions: settings.allowedExtensions,
       eligibleSeats: session ? [] : eligible,
       mayUpload: Boolean(session && eligible.some(item => item.id === session.seat_id)),
+      serverVolumeDisabled: (await readVolumePolicy(client, share.committee_id)).submissionBlocked,
       storageAvailable: await this.storageHealthy(share.committee_id, client),
       eventSequence: Number(committee.next_event_sequence) - 1,
       files: session ? await this.publishedForSession(session) : [],

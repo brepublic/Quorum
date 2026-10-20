@@ -10,6 +10,9 @@ import {DurableStagingStore} from './staging';
 import {copyProviderBlob, startStorageMigrationWorker} from './migration-service';
 import {Stage6MigrationService} from './migration-service';
 
+vi.mock('./volume-policy.js', async importOriginal => ({...await importOriginal<object>(),
+  withVolumeIO: (_pool: unknown, operation: () => Promise<unknown>) => operation()}));
+
 const roots: string[] = [];
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 

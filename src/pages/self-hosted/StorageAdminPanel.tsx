@@ -1,3 +1,4 @@
+import ServerVolumeAdminPanel from './ServerVolumeAdminPanel';
 import {t, useLanguage, getLanguage} from '../../i18n';
 import * as React from 'react';
 import type {S3ProviderConfigSummary} from '@quorum/contracts';
@@ -52,6 +53,7 @@ export default function StorageAdminPanel({api}: {api: SelfHostedApi}) {
   const valid = form.displayName.trim() && form.endpoint.trim() && form.region.trim() && form.bucket.trim() && validCredentials;
 
   return <div className="self-hosted-storage-admin">
+    <ServerVolumeAdminPanel api={api} />
     {error && <Message error role="alert" content={error} />}
     <Segment loading={working}>
       <Header as="h2">{editing ? t("Edit storage configuration") : t("Add storage configuration")}</Header>

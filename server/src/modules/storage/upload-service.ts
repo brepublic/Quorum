@@ -1,3 +1,4 @@
+import {assertBindingWritable} from './volume-policy.js';
 import {ERROR_TEXT, DELEGATE_FILE_TYPES} from '@quorum/contracts';
 import {randomUUID} from 'node:crypto';
 import type {Pool, PoolClient, QueryResultRow} from 'pg';
@@ -236,6 +237,7 @@ export class Stage6UploadService {
         await this.capacity?.assertWriteAllowed();
         const committee = await lockedCommittee(client, uuid(committeeId, 'Committee ID'));
         requireProceedingsActive(committee);
+        await assertBindingWritable(client, committee.active_storage_binding_id);
         await requireContributor(client, committee, auth.user.id);
         const seatId = submission?.seatId ?? (!await isChair(client, committee.id, auth.user.id)
           ? await activeSeat(client, committee.id, auth.user.id) : null);
@@ -337,6 +339,7 @@ export class Stage6UploadService {
       const upload = await uploadForUpdate(client, uploadId);
       const committee = await lockedCommittee(client, upload.committee_id);
       requireProceedingsActive(committee);
+      await assertBindingWritable(client, committee.active_storage_binding_id);
       if (upload.created_by_user_id !== auth.user.id) {
         throw new AppError({reason: 'UPLOAD_CREATOR_REQUIRED', code: 'FORBIDDEN', message: 'Only the upload creator may send its content.'});
       }
@@ -367,6 +370,7 @@ export class Stage6UploadService {
       const upload = await uploadForUpdate(client, claimed.id);
       const committee = await lockedCommittee(client, upload.committee_id);
       requireProceedingsActive(committee);
+      await assertBindingWritable(client, committee.active_storage_binding_id);
       if (upload.created_by_user_id !== auth.user.id || upload.status !== 'RECEIVING'
         || upload.content_idempotency_key !== key) {
         throw new AppError({reason: 'UPLOAD_STATE_CHANGED', code: 'RESOURCE_CONFLICT', message: 'Upload content is not expected in its current state.'});

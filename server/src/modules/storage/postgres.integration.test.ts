@@ -1,3 +1,4 @@
+import {ServerVolumeOperationsService} from '../operations/volume-service';
 import {testCommitteeInput} from '../../test/committee-fixture';
 // @vitest-environment node
 
@@ -395,6 +396,33 @@ integration('PostgreSQL stage 6 file metadata', () => {
     expect((await value.latest()).status).toBe('CANCELLED');
     expect(await files.processNextDeleteJob()).toBeNull();
     expect((await files.download(value.fixture.member,value.file!.id)).file.id).toBe(value.file!.id);
+  });
+
+  it('blocks volume bindings, uploads, staged commits and new versions while preserving reads and cache paths', async () => {
+    const f = await storageFixture();
+    const file = await committedServerFile(f, 'existing volume file', 'policy-existing');
+    const staged = await uploads.createUpload(f.chair, f.committee.id, {logicalName:'blocked.txt',originalName:'blocked.txt',
+      mediaType:'text/plain',expectedSizeBytes:3,sha256:digest('abc')},randomUUID(),context('policy-upload'));
+    await uploads.receiveContent(f.chair,staged.id,(async function*(){yield 'abc';})(),randomUUID(),3,context('policy-content'));
+    const ops = new ServerVolumeOperationsService(pool!);
+    await expect(ops.update(f.chair,{disabled:true,revision:1},context('non-admin'))).rejects.toMatchObject({code:'FORBIDDEN'});
+    expect(await ops.update(administrator,{disabled:true,revision:1},context('disable'))).toMatchObject({disabled:true,revision:2});
+    await expect(ops.update(administrator,{disabled:false,revision:1},context('stale'))).rejects.toMatchObject({code:'REVISION_CONFLICT'});
+    expect(await storage.volumePolicy(f.chair,f.committee.id)).toMatchObject({submissionBlocked:true});
+    await expect(serverVolume.commitUpload(f.chair,staged.id,{},randomUUID(),context('blocked-commit')))
+      .rejects.toMatchObject({reason:'SERVER_VOLUME_DISABLED'});
+    await expect(uploads.createUpload(f.chair,f.committee.id,{logicalName:'new',originalName:'new',mediaType:'text/plain',
+      expectedSizeBytes:3,sha256:digest('abc')},randomUUID(),context('blocked-create'))).rejects.toMatchObject({reason:'SERVER_VOLUME_DISABLED'});
+    await expect(storage.recordProviderCommit(f.chair,f.committee.id,{bindingId:f.binding.id,blobId:randomUUID(),fileEntryId:file.id,
+      baseRevision:file.revision,logicalName:file.logicalName,originalName:'new.txt',mediaType:'text/plain',sizeBytes:3,
+      sha256:digest('abc'),storageKey:'blobs/new'},randomUUID(),context('blocked-version'))).rejects.toMatchObject({reason:'SERVER_VOLUME_DISABLED'});
+    expect((await files.download(f.chair,file.id)).file.id).toBe(file.id);
+    const committee = await stage4.createCommittee(f.owner,await testCommitteeInput(pool!,f.owner,
+      {name:'No volume',visibility:'PUBLIC',countryTemplateKey:'builtin:default'}),randomUUID(),context('new-committee'));
+    await expect(storage.createServerVolumeBinding(f.owner,committee.id,{baseRevision:committee.revision},randomUUID(),context('blocked-binding')))
+      .rejects.toMatchObject({reason:'SERVER_VOLUME_DISABLED'});
+    await ops.update(administrator,{disabled:false,revision:2},context('enable'));
+    expect(await serverVolume.commitUpload(f.chair,staged.id,{},randomUUID(),context('resumed-commit'))).toHaveProperty('id');
   });
 
   it('automatically frees migrated source bytes, retries cleanup and preserves Chair downloads and approval',async()=>{

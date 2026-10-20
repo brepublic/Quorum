@@ -3,6 +3,8 @@ import type {ContentLanguage} from './localization.js';
 export const ERROR_TEXT = {
   PROVIDER_BLOB_ID_INVALID: {en: "The file storage identifier is invalid. Refresh and select the file again.", 'zh-CN': "文件存储标识无效，请刷新后重新选择文件。"},
   PROVIDER_INPUT_INVALID: {en: "The file size or checksum is invalid. Select the file and upload again.", 'zh-CN': "文件大小或校验信息无效，请重新选择并上传文件。"},
+  SERVER_VOLUME_DISABLED: {en: "Server volume storage is disabled. Ask a chair to migrate storage before submitting files.", 'zh-CN': "服务器卷已被管理员禁用，无法提交新文件或新版本。请联系主席迁移存储。"},
+  SERVER_VOLUME_CLEARED: {en: "This server volume copy was cleared by an administrator.", 'zh-CN': "此服务器卷文件已被管理员清理。"},
   SERVER_VOLUME_PATH_INVALID: {en: "The server storage directory is unsafe or unavailable. Ask an administrator to check it.", 'zh-CN': "服务器存储目录不安全或不可用，请联系管理员检查。"},
   PROVIDER_SIZE_MISMATCH: {en: "The received file size does not match. Upload the file again.", 'zh-CN': "接收到的文件大小不一致，请重新上传。"},
   PROVIDER_INTEGRITY_MISMATCH: {en: "File verification failed. Upload or sync the file again.", 'zh-CN': "文件校验失败，请重新上传或同步。"},

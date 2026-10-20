@@ -1,3 +1,4 @@
+import {assertVolumeEnabled, assertBindingWritable, readVolumePolicy} from './volume-policy.js';
 import {randomUUID} from 'node:crypto';
 import type {Pool, PoolClient, QueryResultRow} from 'pg';
 import type {FileEntry, FileEntryStatus, FileTombstone, StorageBinding} from '@quorum/contracts';
@@ -202,6 +203,15 @@ function requireFileRevision(row: FileEntryRow, value: unknown): void {
 export class Stage6StorageService {
   constructor(private readonly pool: Pool) {}
 
+  async volumePolicy(auth: AuthenticatedSession, committeeId: string) {
+    requireBusinessIdentity(auth);
+    return transaction(this.pool, async client => {
+      const committee = await lockedCommittee(client, uuid(committeeId, 'Committee ID'));
+      await requireContributor(client, committee, auth.user.id);
+      return readVolumePolicy(client, committee.id);
+    });
+  }
+
   async listBindings(auth: AuthenticatedSession, committeeId: string): Promise<StorageBinding[]> {
     requireBusinessIdentity(auth);
     return transaction(this.pool, async client => {
@@ -233,6 +243,7 @@ export class Stage6StorageService {
       work: async client => {
         const committee = await lockedCommittee(client, committeeId);
         requireEditable(committee);
+        await assertVolumeEnabled(client);
         await requireStorageManager(client, committee, auth.user.id);
         requireCommitteeRevision(committee, request.baseRevision);
         if (await client.query('SELECT 1 FROM storage_bindings WHERE committee_id=$1 AND status=$2',
@@ -385,6 +396,7 @@ export class Stage6StorageService {
     const storageKey = validateInternalStorageKey(input.storageKey);
     const committee = await lockedCommittee(client, committeeId);
     requireProceedingsActive(committee);
+    await assertBindingWritable(client, bindingId);
     await requireContributor(client, committee, auth.user.id);
     const activeBinding = await client.query<StorageBindingRow>(`SELECT * FROM storage_bindings
       WHERE id=$1 AND committee_id=$2 AND status='ACTIVE' FOR UPDATE`, [bindingId, committee.id]);

@@ -744,6 +744,15 @@ export const selfHostedApi = {
   listStorageBindings(committeeId: string) {
     return request<StorageBinding[]>(`/api/v1/committees/${committeeId}/storage-bindings`);
   },
+  storagePolicy(committeeId: string) {
+    return request<{disabled: boolean; revision: number; submissionBlocked: boolean}>(`/api/v1/committees/${committeeId}/storage-policy`);
+  },
+  serverVolumePolicy() {
+    return request<{disabled: boolean; revision: number}>('/api/v1/admin/server-volume/policy');
+  },
+  updateServerVolumePolicy(body: {disabled: boolean; revision: number}) {
+    return request<{disabled: boolean; revision: number}>('/api/v1/admin/server-volume/policy', {method: 'PUT', body});
+  },
   createServerVolumeBinding(committeeId: string, baseRevision: number, idempotencyKey = key()) {
     return request<StorageBinding>(`/api/v1/committees/${committeeId}/storage-bindings/server-volume`, {
       method: 'POST', body: {baseRevision}, idempotencyKey});

@@ -1,3 +1,4 @@
+import type {ServerVolumeOperationsService} from '../modules/operations/volume-service';
 // @vitest-environment node
 
 import {EventEmitter, once} from 'node:events';
@@ -31,7 +32,7 @@ async function send(uploads: Stage6UploadService, options: {
   method: 'GET' | 'POST' | 'PUT' | 'DELETE'; path: string; chunks: Buffer[]; headers?: Record<string, string>;
 }, providerCommits?: Stage6ProviderCommitService, extras: {
   s3Configs?: Stage6S3ConfigService; storage?: Stage6StorageService; files?: Stage6FileService;
-  storageMigrations?: Stage6MigrationService;
+  storageMigrations?: Stage6MigrationService; volumeOperations?: ServerVolumeOperationsService;
 } = {}) {
   const identity = {authenticate: vi.fn(async () => authenticated)} as unknown as IdentityService;
   const handler = createRequestHandler({health: {ready: async () => ({ready: true, checks: {
@@ -54,6 +55,22 @@ async function send(uploads: Stage6UploadService, options: {
 }
 
 describe('stage 6 upload HTTP boundary', () => {
+  it('protects policy writes with Origin and CSRF and routes committee policy reads', async () => {
+    const policy = vi.fn(async () => ({disabled:true,revision:2}));
+    const update = vi.fn(async () => ({disabled:true,revision:2}));
+    const volumeOperations = {policy,update} as unknown as ServerVolumeOperationsService;
+    const options = {method:'PUT' as const,path:'/api/v1/admin/server-volume/policy',chunks:[Buffer.from('{"disabled":true,"revision":1}')]};
+    expect((await send({} as Stage6UploadService,{...options,headers:{'x-csrf-token':'wrong'}},undefined,{volumeOperations})).statusCode).toBe(403);
+    expect((await send({} as Stage6UploadService,{...options,headers:{origin:'https://other.invalid'}},undefined,{volumeOperations})).statusCode).toBe(403);
+    expect(update).not.toHaveBeenCalled();
+    expect((await send({} as Stage6UploadService,options,undefined,{volumeOperations})).statusCode).toBe(200);
+    expect(update).toHaveBeenCalledWith(authenticated,{disabled:true,revision:1},expect.anything());
+    const volumePolicy = vi.fn(async () => ({disabled:true,submissionBlocked:true,revision:2}));
+    const response = await send({} as Stage6UploadService,{method:'GET',path:'/api/v1/committees/20000000-0000-4000-8000-000000000001/storage-policy',chunks:[]},undefined,
+      {storage:{volumePolicy} as unknown as Stage6StorageService});
+    expect(response.statusCode).toBe(200); expect(volumePolicy).toHaveBeenCalledWith(authenticated,expect.any(String));
+  });
+
   it('reads completion state through the authenticated upload service', async () => {
     const getUpload = vi.fn(async () => ({id: 'upload', status: 'COMMITTED', committedFileEntryId: 'file'}));
     const id = '20000000-0000-4000-8000-000000000001';

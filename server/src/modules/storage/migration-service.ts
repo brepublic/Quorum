@@ -1,3 +1,4 @@
+import {assertVolumeEnabled, withVolumeIO} from './volume-policy.js';
 import {ERROR_TEXT} from '@quorum/contracts';
 import {randomUUID} from 'node:crypto';
 import type {Pool, PoolClient, QueryResultRow} from 'pg';
@@ -198,6 +199,7 @@ export class Stage6MigrationService {
       if (!target || target.status !== 'MIGRATING') {
         throw new AppError({reason: 'MIGRATION_TARGET_UNAVAILABLE', code: 'RESOURCE_CONFLICT', message: 'The target storage binding is unavailable.'});
       }
+      if (target.provider_type === 'SERVER_VOLUME') await assertVolumeEnabled(client);
       if (target.provider_type === 'S3_COMPATIBLE') {
         await this.activeS3Config(client, target.provider_config_id as string);
       }
@@ -285,6 +287,7 @@ export class Stage6MigrationService {
         || committee.active_storage_binding_id !== source.id) {
         throw new AppError({reason: 'MIGRATION_STORAGE_CHANGED', code: 'RESOURCE_CONFLICT', message: 'Storage bindings changed during migration.'});
       }
+      if (target.provider_type === 'SERVER_VOLUME') await assertVolumeEnabled(client);
       if (target.provider_type === 'S3_COMPATIBLE') {
         await this.activeS3Config(client, target.provider_config_id as string);
       }
@@ -351,6 +354,10 @@ export class Stage6MigrationService {
   }
 
   async processNextCopyItem(): Promise<StorageMigrationItem | null> {
+    return withVolumeIO(this.pool, () => this.processNextCopyItemWithLock());
+  }
+
+  private async processNextCopyItemWithLock(): Promise<StorageMigrationItem | null> {
     await this.reconcileChairMigrations();
     try {
       await this.capacity?.assertWriteAllowed();
@@ -367,6 +374,7 @@ export class Stage6MigrationService {
         JOIN storage_bindings source_binding ON source_binding.id=source.storage_binding_id
         JOIN storage_bindings target_binding ON target_binding.id=m.target_binding_id
         WHERE m.status='COPYING' AND target_binding.provider_type<>'CHAIR_AGENT'
+          AND (target_binding.provider_type<>'SERVER_VOLUME' OR NOT (SELECT server_volume_disabled FROM system_settings WHERE singleton=true))
           AND ((i.status IN ('PENDING','RETRY') AND i.next_attempt_at<=now())
           OR (i.status='IN_PROGRESS' AND (i.claimed_at IS NULL OR i.claimed_at<=now()-interval '5 minutes')))
         ORDER BY CASE WHEN i.status='IN_PROGRESS' THEN i.claimed_at ELSE i.next_attempt_at END,i.created_at,i.id
@@ -584,6 +592,7 @@ export class Stage6MigrationService {
 
   private async validateTarget(client: PoolClient, source: BindingRow, targetType: ProviderType,
     targetConfigId: string | null): Promise<void> {
+    if (targetType === 'SERVER_VOLUME') await assertVolumeEnabled(client);
     if (targetType === 'CHAIR_AGENT' && source.provider_type !== 'SERVER_VOLUME') {
       throw new AppError({reason:'INVALID_STORAGE_PROVIDER',code:'VALIDATION_FAILED',message:'Chair migration requires server storage.'});
     }

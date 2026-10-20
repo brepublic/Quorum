@@ -51,7 +51,7 @@ function snapshot(audience: CommitteeWorkspaceSnapshot['viewer']['audience'],
 }
 
 function api(overrides: Partial<SelfHostedApi> = {}): SelfHostedApi {
-  return {listFiles: vi.fn(async () => [file]), fileDownloadUrl: vi.fn(id => `/api/v1/files/${id}/download`),
+  return {storagePolicy: async () => ({disabled: false, submissionBlocked: false, revision: 1}), listFiles: vi.fn(async () => [file]), fileDownloadUrl: vi.fn(id => `/api/v1/files/${id}/download`),
     listPendingHostCommits: vi.fn(async () => []),
     listStorageBindings: vi.fn(async () => []), listS3ProviderConfigs: vi.fn(async () => []),
     listStorageHosts: vi.fn(async () => []),
@@ -79,6 +79,15 @@ afterEach(() => {if (root) act(() => root?.unmount()); container?.remove(); root
   vi.restoreAllMocks(); window.history.replaceState(null, '', window.location.pathname);});
 
 describe('self-hosted stage 6 file panel', () => {
+  it('hides disabled volume targets and explains blocked submissions with a migration link', async () => {
+    const client = api({storagePolicy: async () => ({disabled:true,submissionBlocked:true,revision:2})});
+    const view = await render('CHAIR', client);
+    expect(view.textContent).toContain('服务器卷已被管理员禁用');
+    expect(view.querySelector('a[href$="/posts/storage"]')).not.toBeNull();
+    expect(view.querySelector<HTMLInputElement>('input[type="file"]')?.disabled).toBe(true);
+    expect(view.querySelector('.storage-target-row')?.textContent ?? '').not.toContain('服务器卷');
+  });
+
   it('keeps server storage after pairing and only starts Chair migration on explicit submission',async()=>{
     const client=api({
       listStorageBindings:vi.fn(async():Promise<StorageBinding[]>=>[{id:'volume',committeeId,providerType:'SERVER_VOLUME',providerConfigId:null,storageHostId:null,status:'ACTIVE',revision:1,createdAt:new Date().toISOString()}]),

@@ -1,3 +1,4 @@
+import type {ServerVolumeOperationsService} from '../modules/operations/volume-service.js';
 import {randomUUID} from 'node:crypto';
 import {createServer, type IncomingMessage, type RequestListener, type Server, type ServerResponse} from 'node:http';
 import {CONTRACT_VERSION, success, type VersionInfo} from '@quorum/contracts';
@@ -75,6 +76,7 @@ export interface AppDependencies {
   committeeDeletions?: Stage8DeletionService;
   operationsStatus?: Stage8OperationsStatusService;
   storageCacheOperations?: StorageCacheOperationsService;
+  volumeOperations?: ServerVolumeOperationsService;
   searchIndex?: SearchIndexService;
   delegateFiles?: DelegateFileService;
   allowedOrigins?: string[];
@@ -607,6 +609,10 @@ async function handleStage6UploadRequest(options: {
   const method = request.method ?? 'GET';
   const context = identityContext(request, requestId);
   const write = async () => { requireOrigin(request, allowedOrigins); return authenticatedWrite(request, identity); };
+  const committeePolicy = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/storage-policy$/.exec(pathname);
+  if (method === 'GET' && committeePolicy && storage) {
+    sendJson(response, 200, success(await storage.volumePolicy(await authenticatedRead(request, identity), committeePolicy[1]!), requestId)); return true;
+  }
   const committeeMigrations = /^\/api\/v1\/committees\/([0-9a-f-]{36})\/storage-migrations$/.exec(pathname);
   if (method === 'GET' && committeeMigrations && storageMigrations) {
     const auth = await authenticatedRead(request, identity);
@@ -1316,10 +1322,11 @@ async function handleIdentityRequest(options: {
   identity: IdentityService;
   operationsStatus?: Stage8OperationsStatusService;
   storageCacheOperations?: StorageCacheOperationsService;
+  volumeOperations?: ServerVolumeOperationsService;
   searchIndex?: SearchIndexService;
   allowedOrigins: readonly string[];
 }): Promise<boolean> {
-  const {request, response, pathname, requestId, identity, operationsStatus, storageCacheOperations, searchIndex, allowedOrigins} = options;
+  const {request, response, pathname, requestId, identity, operationsStatus, storageCacheOperations, volumeOperations, searchIndex, allowedOrigins} = options;
   const method = request.method ?? 'GET';
   const context = identityContext(request, requestId);
   const cookies = identityCookies(request);
@@ -1447,7 +1454,17 @@ async function handleIdentityRequest(options: {
       return true;
     }
   }
-  if (method === 'GET' && pathname === '/api/v1/admin/storage-cache' && storageCacheOperations) {
+  if (pathname === '/api/v1/admin/server-volume/policy' && volumeOperations) {
+    if (method === 'GET') {
+      sendJson(response, 200, success(await volumeOperations.policy(await authenticatedRead(request, identity)), requestId)); return true;
+    }
+    if (method === 'PUT') {
+      requireOrigin(request, allowedOrigins);
+      sendJson(response, 200, success(await volumeOperations.update(await authenticatedWrite(request, identity),
+        await readJson(request), context), requestId)); return true;
+    }
+  }
+  if (method === 'GET' && pathname === '/api/v1/admin/storage-cache'  && storageCacheOperations) {
     const auth = await identity.authenticate(cookies.get(SESSION_COOKIE_NAME));
     sendJson(response, 200, success(await storageCacheOperations.status(auth), requestId)); return true;
   }
@@ -1554,6 +1571,7 @@ export function createRequestHandler(dependencies: AppDependencies): RequestList
           identity: dependencies.identity,
           operationsStatus: dependencies.operationsStatus,
           storageCacheOperations: dependencies.storageCacheOperations,
+          volumeOperations: dependencies.volumeOperations,
           searchIndex: dependencies.searchIndex,
           allowedOrigins: dependencies.allowedOrigins ?? []
         })) return;

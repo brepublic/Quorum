@@ -21,6 +21,7 @@ import {startStorageCacheWorker, StorageCacheOperationsService,
   StorageCacheRuntimeStats} from './modules/operations/storage-cache-service.js';
 import {Stage6UploadService} from './modules/storage/upload-service.js';
 import {Stage6StorageService} from './modules/storage/service.js';
+import {ServerVolumeOperationsService} from './modules/operations/volume-service.js';
 import {ServerVolumeStore} from './modules/storage/server-volume.js';
 import {Stage6ServerVolumeService} from './modules/storage/server-volume-service.js';
 import {StorageCredentialCipher} from './modules/storage/credential-crypto.js';
@@ -154,6 +155,7 @@ async function main(): Promise<void> {
       operationsStatus,
       searchIndex,
       storageCacheOperations,
+      volumeOperations: new ServerVolumeOperationsService(pool),
       delegateFiles,
       allowedOrigins: config.allowedOrigins
     });

@@ -68,9 +68,9 @@ integration('PostgreSQL migrations', () => {
       await runMigrations(pool, staged);
       const history = (await pool.query('SELECT * FROM quorum_meta.schema_migrations ORDER BY version')).rows;
       expect(history.at(-1)).toMatchObject({version: 87, name: 'chair_conflict_replacements'});
-      expect(await runMigrations(pool, source)).toMatchObject({ready: true, latestAppliedVersion: 89});
+      expect(await runMigrations(pool, source)).toMatchObject({ready: true, latestAppliedVersion: 90});
       expect((await pool.query('SELECT * FROM quorum_meta.schema_migrations WHERE version<=87 ORDER BY version')).rows).toEqual(history);
-      expect((await pool.query('SELECT schema_compatibility FROM quorum_meta.runtime_metadata')).rows[0].schema_compatibility).toBe(89);
+      expect((await pool.query('SELECT schema_compatibility FROM quorum_meta.runtime_metadata')).rows[0].schema_compatibility).toBe(90);
       expect((await pool.query(`SELECT column_name FROM information_schema.columns WHERE table_name='file_versions'
         AND column_name='resolution_conflict_id'`)).rowCount).toBe(1);
       expect((await pool.query(`SELECT column_name FROM information_schema.columns WHERE table_name='storage_agent_tasks'
