@@ -8,7 +8,7 @@ const encode = (text: string) => new TextEncoder().encode(text);
 const flush = async () => {for (let i = 0; i < 10; i++) await Promise.resolve();};
 beforeEach(() => {
   vi.useFakeTimers(); streams = [];
-  handlers = {onState: vi.fn(), onEvent: vi.fn(), onAccessDenied: vi.fn(), onResyncRequired: vi.fn(async () => 20)};
+  handlers = {onActivity: vi.fn(), onFailure: vi.fn(), onState: vi.fn(), onEvent: vi.fn(), onAccessDenied: vi.fn(), onResyncRequired: vi.fn(async () => 20)};
   vi.stubGlobal('fetch', vi.fn(async (_url, options) => new Response(new ReadableStream({start(controller) {
     streams.push(controller);
     options.signal.addEventListener('abort', () => {try {controller.error(new DOMException('Aborted', 'AbortError'));} catch {}}, {once: true});
@@ -28,8 +28,10 @@ describe('committee connection health', () => {
   it('times out silent connections and accepts fragmented heartbeat frames', async () => {
     await open(); await vi.advanceTimersByTimeAsync(30_000);
     streams[0].enqueue(encode(': heartbeat 1\r')); streams[0].enqueue(encode('\n\r\n')); await flush();
+    expect(handlers.onActivity).toHaveBeenCalledTimes(2);
     await vi.advanceTimersByTimeAsync(44_999); expect(fetch).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(1); expect(handlers.onState).toHaveBeenLastCalledWith('RECONNECTING');
+    expect(handlers.onFailure).toHaveBeenCalledWith(expect.objectContaining({code: 'REQUEST_TIMEOUT'}));
     await vi.advanceTimersByTimeAsync(1000); expect(fetch).toHaveBeenCalledTimes(2);
   });
   it.each([401, 403, 404])('stops retrying and reports access failure %s', async status => {

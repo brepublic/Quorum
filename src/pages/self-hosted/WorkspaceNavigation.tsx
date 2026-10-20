@@ -3,7 +3,7 @@ import {useThemeFeature} from '../../theme/ThemeProvider';
 import {formatCommitteeContent, type CommitteeWorkspaceSnapshot, type RealtimeSyncState} from '@quorum/contracts';
 import {Button, Dropdown, Icon, Menu, Popup, Sidebar} from 'semantic-ui-react';
 import {Link, useLocation} from 'react-router-dom';
-import {LanguageSwitcher, t, useLanguage} from '../../i18n';
+import {LanguageSwitcher, apiErrorText, t, useLanguage} from '../../i18n';
 import type {SelfHostedUser} from '../../services/self-hosted-identity';
 
 export type RealtimeStatus = RealtimeSyncState;
@@ -15,16 +15,19 @@ const realtimeLabels: Record<RealtimeStatus, string> = {
 interface RealtimeDetails {
   lastSyncedAt?: number;
   syncFailed?: boolean;
+  syncFailure?: unknown;
   networkOffline?: boolean;
   onRetry?(): void;
 }
 
-export function RealtimeStatusItem({status, compact = false, lastSyncedAt, syncFailed, networkOffline, onRetry}: {
+export function RealtimeStatusItem({status, compact = false, lastSyncedAt, syncFailed, syncFailure, networkOffline, onRetry}: {
   status: RealtimeStatus; compact?: boolean;
 } & RealtimeDetails) {
+  useLanguage();
   const [open, setOpen] = React.useState(false);
   const label = t(realtimeLabels[status]);
   const detail = networkOffline ? 'The browser reports no network connection. Retrying when it returns.'
+    : syncFailure ? apiErrorText(syncFailure)
     : syncFailed ? 'Data refresh failed. Retrying automatically.'
     : status === 'RECONNECTING' ? 'Connection interrupted. Retrying automatically.' : undefined;
   return <Popup on="click" position="bottom right" open={open} onOpen={() => setOpen(true)} onClose={() => setOpen(false)}
@@ -262,7 +265,7 @@ function PrimaryItems({snapshot, onNavigate, onCreateCaucus, level = 0, hasPendi
   </>;
 }
 
-export function CommitteeNavigation({snapshot, user, logout, realtimeStatus = 'CONNECTING', onCreateCaucus, hasPendingFileReview = false, hasStorageSetupHint = false, pendingConflictCount = 0, lastSyncedAt, syncFailed, networkOffline, onRetry, children}: {
+export function CommitteeNavigation({snapshot, user, logout, realtimeStatus = 'CONNECTING', onCreateCaucus, hasPendingFileReview = false, hasStorageSetupHint = false, pendingConflictCount = 0, lastSyncedAt, syncFailed, syncFailure, networkOffline, onRetry, children}: {
   snapshot: CommitteeWorkspaceSnapshot; user?: SelfHostedUser; logout(): void; realtimeStatus?: RealtimeStatus;
   onCreateCaucus?(): void; hasPendingFileReview?: boolean; hasStorageSetupHint?: boolean; pendingConflictCount?: number; children?: React.ReactNode;
 } & RealtimeDetails) {
@@ -328,7 +331,7 @@ export function CommitteeNavigation({snapshot, user, logout, realtimeStatus = 'C
       <Menu className="committee-primary-navigation" size="large" fluid data-crisis-reminder={crisisReminder}>
         <PrimaryItems snapshot={snapshot} onCreateCaucus={onCreateCaucus} level={level} hasPendingFileReview={hasPendingFileReview} hasStorageSetupHint={hasStorageSetupHint} pendingConflictCount={pendingConflictCount} />
         <Menu.Menu position="right"><AttendanceThresholdItem snapshot={snapshot} /><RealtimeStatusItem status={realtimeStatus} compact={level >= 3} lastSyncedAt={lastSyncedAt}
-          syncFailed={syncFailed} networkOffline={networkOffline} onRetry={onRetry} />
+          syncFailed={syncFailed} syncFailure={syncFailure} networkOffline={networkOffline} onRetry={onRetry} />
           {user && <AccountMenu user={user} logout={logout} compact={level >= 1} />}</Menu.Menu>
       </Menu>
     </nav>
@@ -362,7 +365,7 @@ export function CommitteeNavigation({snapshot, user, logout, realtimeStatus = 'C
             </Menu.Item>
             <Menu.Item header as={Link} to={'/committees/' + snapshot.committee.id + '/info'}>{snapshot.committee.name}</Menu.Item>
             <Menu.Menu position="right"><RealtimeStatusItem status={realtimeStatus} compact lastSyncedAt={lastSyncedAt}
-              syncFailed={syncFailed} networkOffline={networkOffline} onRetry={onRetry} />
+              syncFailed={syncFailed} syncFailure={syncFailure} networkOffline={networkOffline} onRetry={onRetry} />
               {user && <AccountMenu user={user} logout={logout} compact />}</Menu.Menu>
           </Menu>
         </nav>

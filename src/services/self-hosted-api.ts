@@ -231,6 +231,8 @@ export function parseSseFrame(frame: string): {id?: number; type?: string; data?
 export interface CommitteeEventStreamCallbacks {
   onEvent(event: CommitteeEventEnvelope): void;
   onState(state: RealtimeSyncState): void;
+  onActivity?(): void;
+  onFailure?(error: unknown): void;
   onResyncRequired(): Promise<number>;
   onAccessDenied(error: SelfHostedApiError): void;
 }
@@ -251,13 +253,16 @@ function openCommitteeEventStream(committeeId: string, initialAfter: number,
     if (stopped) return;
     attempt = new AbortController();
     const signal = attempt.signal;
-    const touch = () => {
+    let failure: unknown;
+    const touch = (received = true) => {
+      if (received) callbacks.onActivity?.();
       window.clearTimeout(watchdog);
       watchdog = window.setTimeout(() => {
-        callbacks.onState('RECONNECTING'); attempt?.abort();
+        failure = new SelfHostedApiError(408, 'REQUEST_TIMEOUT', '');
+        callbacks.onFailure?.(failure); callbacks.onState('RECONNECTING'); attempt?.abort();
       }, 45_000);
     };
-    touch();
+    touch(false);
     try {
       const response = await fetch(`/api/v1/committees/${committeeId}/events?after=${cursor}&clientId=${encodeURIComponent(clientId)}`,
         {credentials: 'same-origin', headers: {'last-event-id': String(cursor)}, signal});
@@ -272,10 +277,10 @@ function openCommitteeEventStream(committeeId: string, initialAfter: number,
         await response.body?.cancel(); await resync(false);
       } else {
         if (!response.ok || !response.body || !response.headers.get('content-type')?.startsWith('text/event-stream')) {
-          throw new Error('SSE unavailable');
+          throw new SelfHostedApiError(response.status, 'INVALID_RESPONSE', '');
         }
         const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = '';
-        callbacks.onState('LIVE');
+        touch(); callbacks.onState('LIVE');
         while (!stopped && !signal.aborted) {
           const chunk = await reader.read();
           if (stopped || signal.aborted) return;
@@ -295,12 +300,13 @@ function openCommitteeEventStream(committeeId: string, initialAfter: number,
           if (chunk.done) break;
         }
       }
-    } catch {
-      // Both rejected reads and a clean EOF invalidate the connection below.
+    } catch (error) {
+      failure ??= error instanceof SelfHostedApiError ? error : new SelfHostedApiError(0, 'NETWORK_ERROR', '');
     } finally {
       window.clearTimeout(watchdog);
       attempt?.abort();
       if (!stopped) {
+        callbacks.onFailure?.(failure);
         callbacks.onState('RECONNECTING');
         retryTimer = window.setTimeout(() => void connect(), 1_000);
       }

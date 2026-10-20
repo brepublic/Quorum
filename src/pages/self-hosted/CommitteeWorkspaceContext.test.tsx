@@ -54,16 +54,66 @@ describe('committee synchronization', () => {
     act(() => {void value.refresh(); handlers.onState('RECONNECTING');});
     await act(async () => complete(snapshot)); expect(value.realtimeStatus).toBe('RECONNECTING');
   });
-  it('reconnects and recalibrates on focus and on network recovery', async () => {
+  it('refreshes on focus without disconnecting and reconnects on network recovery', async () => {
     await mount(); await act(async () => handlers.onState('LIVE'));
     await act(async () => window.dispatchEvent(new Event('focus')));
-    expect(disconnect).toHaveBeenCalledOnce(); expect(value.realtimeStatus).toBe('RECONNECTING');
-    await act(async () => handlers.onState('LIVE')); expect(value.realtimeStatus).toBe('LIVE');
+    expect(disconnect).not.toHaveBeenCalled(); expect(value.realtimeStatus).toBe('LIVE');
     vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
     act(() => window.dispatchEvent(new Event('offline'))); expect(value.networkOffline).toBe(true);
     vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true);
     await act(async () => window.dispatchEvent(new Event('online')));
     await act(async () => handlers.onState('LIVE')); expect(value.realtimeStatus).toBe('LIVE');
+  });
+  it('coalesces visible and focus notifications while preserving live edits', async () => {
+    await mount(); await act(async () => handlers.onState('LIVE')); read.mockClear();
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+    await act(async () => {document.dispatchEvent(new Event('visibilitychange')); window.dispatchEvent(new Event('focus'));});
+    expect(read).toHaveBeenCalledTimes(1); expect(disconnect).not.toHaveBeenCalled();
+    expect(value.writesBlocked).toBe(false);
+  });
+  it('reuses a pending focus refresh but follows up when a business event arrives', async () => {
+    await mount(); await act(async () => handlers.onState('LIVE')); read.mockClear();
+    let complete!: (next: CommitteeWorkspaceSnapshot) => void;
+    read.mockImplementationOnce(() => new Promise(resolve => {complete = resolve;}));
+    const receivedAt = value.snapshotReceivedAt;
+    act(() => {window.dispatchEvent(new Event('focus'));});
+    await act(async () => {await vi.advanceTimersByTimeAsync(200); window.dispatchEvent(new Event('focus'));});
+    expect(read).toHaveBeenCalledTimes(1);
+    act(() => handlers.onEvent({type: 'committee.updated'} as never));
+    expect(value.snapshotReceivedAt).toBe(receivedAt);
+    const updated = {...snapshot, sync: {committeeEventSequence: 8}};
+    read.mockResolvedValueOnce(updated);
+    await act(async () => complete(snapshot));
+    expect(read).toHaveBeenCalledTimes(2); expect(value.snapshot).toBe(updated);
+  });
+  it('reconnects on return after sleep but keeps a stream with recent heartbeats', async () => {
+    await mount(); await act(async () => handlers.onState('LIVE'));
+    vi.setSystemTime(Date.now() + 60_000);
+    act(() => handlers.onActivity?.());
+    await act(async () => window.dispatchEvent(new Event('focus')));
+    expect(disconnect).not.toHaveBeenCalled();
+    vi.setSystemTime(Date.now() + 45_000);
+    await act(async () => window.dispatchEvent(new Event('focus')));
+    expect(disconnect).toHaveBeenCalledTimes(1); expect(value.writesBlocked).toBe(true);
+  });
+  it('retains a refresh failure reason and clears it after recovery', async () => {
+    await mount(); await act(async () => handlers.onState('LIVE'));
+    const error = new SelfHostedApiError(503, 'SERVICE_NOT_READY', '');
+    read.mockRejectedValueOnce(error);
+    await act(async () => window.dispatchEvent(new Event('focus')));
+    expect(value.syncFailure).toBe(error); expect(value.writesBlocked).toBe(true);
+    await act(async () => {await vi.advanceTimersByTimeAsync(1000);});
+    expect(value.syncFailure).toBeUndefined(); expect(value.writesBlocked).toBe(false);
+  });
+  it('reports a snapshot timeout without losing the draft', async () => {
+    await mount(); await act(async () => handlers.onState('LIVE'));
+    read.mockImplementationOnce((_id, signal: AbortSignal) => new Promise((_resolve, reject) => {
+      signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+    }));
+    act(() => {window.dispatchEvent(new Event('focus'));});
+    await act(async () => {await vi.advanceTimersByTimeAsync(20_000);});
+    expect(value.syncFailure).toMatchObject({code: 'REQUEST_TIMEOUT'});
+    expect(value.writesBlocked).toBe(true); expect(host.querySelector('input')?.value).toBe('draft');
   });
   it('automatically routes authentication failures to login with a return address', async () => {
     await mount(); act(() => handlers.onAccessDenied(new SelfHostedApiError(401, 'AUTHENTICATION_REQUIRED', '')));

@@ -185,7 +185,7 @@ describe('self-hosted stage 4 workspace', () => {
     expect(container.querySelector('.committee-sync-fieldset')?.hasAttribute('disabled')).toBe(true);
     expect(container.textContent).not.toContain('Save note');
     await act(async () => { window.dispatchEvent(new Event('focus')); await Promise.resolve(); await Promise.resolve(); });
-    expect(api.snapshot).toHaveBeenCalledTimes(4);
+    expect(api.snapshot).toHaveBeenCalledTimes(3);
   });
 
   it('exposes stage 5 proceedings from the same-origin workspace', async () => {

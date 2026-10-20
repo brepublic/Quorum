@@ -13,6 +13,7 @@ interface CommitteeWorkspaceValue {
   accessFailure?: SelfHostedApiError;
   realtimeStatus: RealtimeSyncState;
   syncFailed: boolean;
+  syncFailure?: unknown;
   networkOffline: boolean;
   working: boolean;
   writesBlocked: boolean;
@@ -37,6 +38,7 @@ export function CommitteeWorkspaceProvider({committeeId, api, children}: React.P
   const [lastSyncedAt, setLastSyncedAt] = React.useState<number>();
   const [realtimeStatus, setRealtimeStatus] = React.useState<RealtimeSyncState>('CONNECTING');
   const [syncFailed, setSyncFailed] = React.useState(false);
+  const [syncFailure, setSyncFailure] = React.useState<unknown>();
   const [networkOffline, setNetworkOffline] = React.useState(navigator.onLine === false);
   const [failure, setError] = React.useState<unknown>();
   const [accessFailure, setAccessFailure] = React.useState<SelfHostedApiError>();
@@ -52,6 +54,7 @@ export function CommitteeWorkspaceProvider({committeeId, api, children}: React.P
   React.useEffect(() => {
     let active = true; let terminal = false; let deniedStatus: number | undefined; let connected = false; let synchronized = false;
     let current: CommitteeWorkspaceSnapshot | undefined; let epoch = 0;
+    let lastSignalAt = 0; let lastRefocusAt = -Infinity;
     let disconnect: (() => void) | undefined;
     let request: AbortController | undefined;
     let inFlight: Promise<CommitteeWorkspaceSnapshot | undefined> | undefined;
@@ -73,12 +76,14 @@ export function CommitteeWorkspaceProvider({committeeId, api, children}: React.P
     const startStream = () => {
       if (!active || terminal || !current || disconnect || navigator.onLine === false) return;
       disconnect = api.openCommitteeEvents(committeeId, current.sync.committeeEventSequence, {
-        onEvent: event => {if (active && !terminal && event.type !== 'sync.cursor_advanced') void read();},
+        onEvent: event => {if (active && !terminal && event.type !== 'sync.cursor_advanced') void read(true);},
+        onActivity: () => {if (active && !terminal) lastSignalAt = Date.now();},
+        onFailure: error => {if (active && !terminal) setSyncFailure(error);},
         onState: next => {
           if (!active || terminal) return;
           if (next === 'LIVE') {
             if (!connected) {
-              connected = true; synchronized = false; state('RESYNCING'); void read();
+              connected = true; lastSignalAt = Date.now(); synchronized = false; epoch++; state('RESYNCING'); void read(true);
             } else if (synchronized) state('LIVE');
           } else if (next === 'RESYNCING') {
             synchronized = false; state('RESYNCING');
@@ -87,16 +92,16 @@ export function CommitteeWorkspaceProvider({committeeId, api, children}: React.P
           }
         },
         onResyncRequired: async () => {
-          const next = await read();
+          const next = await read(true);
           if (!next) throw new Error('Snapshot unavailable');
           return next.sync.committeeEventSequence;
         },
         onAccessDenied: deny
       });
     };
-    const read = (): Promise<CommitteeWorkspaceSnapshot | undefined> => {
+    const read = (afterChange = false): Promise<CommitteeWorkspaceSnapshot | undefined> => {
       if (!active || terminal) return Promise.resolve(undefined);
-      if (inFlight) {refreshAgain = true; return inFlight;}
+      if (inFlight) {refreshAgain ||= afterChange; return inFlight;}
       window.clearTimeout(retryTimer);
       inFlight = (async () => {
         let result: CommitteeWorkspaceSnapshot | undefined;
@@ -109,14 +114,17 @@ export function CommitteeWorkspaceProvider({committeeId, api, children}: React.P
             const next = await api.snapshot(committeeId, request.signal);
             if (!active || terminal) return undefined;
             current = next; result = next;
-            setSnapshot(next); setSnapshotReceivedAt(performance.now()); setLastSyncedAt(Date.now());
-            setSyncFailed(false); setError(undefined);
-            if (connected && epoch === readEpoch) {synchronized = true; state('LIVE');}
+            if (!refreshAgain && epoch === readEpoch) {
+              setSnapshot(next); setSnapshotReceivedAt(performance.now()); setLastSyncedAt(Date.now());
+              setSyncFailed(false); setSyncFailure(undefined); setError(undefined);
+              if (connected) {synchronized = true; state('LIVE');}
+            }
           } catch (error) {
             if (!active || terminal) return undefined;
             synchronized = false; result = undefined;
             if (error instanceof SelfHostedApiError && [401, 403, 404].includes(error.status)) {deny(error); return undefined;}
             setSyncFailed(true);
+            setSyncFailure(request?.signal.aborted ? new SelfHostedApiError(408, 'REQUEST_TIMEOUT', '') : error);
             if (!current) setError(error);
             state(connected ? 'RESYNCING' : current ? 'RECONNECTING' : 'CONNECTING');
             retryTimer = window.setTimeout(() => void read(), 1_000);
@@ -143,9 +151,19 @@ export function CommitteeWorkspaceProvider({committeeId, api, children}: React.P
       state(current ? 'RECONNECTING' : 'CONNECTING');
       if (navigator.onLine !== false) {startStream(); void read();}
     };
-    const refocus = () => {if (!terminal) reconnect();};
+    const refocus = () => {
+      if (!active || terminal) return;
+      const now = Date.now();
+      // A tab becoming visible commonly also fires window focus.
+      if (now - lastRefocusAt < 100) return;
+      lastRefocusAt = now;
+      if (connected && navigator.onLine !== false && now >= lastSignalAt && now - lastSignalAt < 45_000) void read();
+      else reconnect();
+    };
     const visible = () => {if (document.visibilityState === 'visible') refocus();};
-    refreshRef.current = read; retryRef.current = reconnect;
+    refreshRef.current = () => read(true); retryRef.current = () => {
+      if (connected && Date.now() - lastSignalAt < 45_000) void read(); else reconnect();
+    };
     state('CONNECTING'); void read();
     window.addEventListener('focus', refocus);
     window.addEventListener('online', reconnect);
@@ -171,7 +189,7 @@ export function CommitteeWorkspaceProvider({committeeId, api, children}: React.P
     } finally {setWorking(false);}
   }, [refresh]);
   const value: CommitteeWorkspaceValue = {snapshot, snapshotReceivedAt, lastSyncedAt,
-    error: failure ? t(apiErrorText(failure)) : undefined, failure, accessFailure, realtimeStatus, syncFailed,
+    error: failure ? t(apiErrorText(failure)) : undefined, failure, accessFailure, realtimeStatus, syncFailed, syncFailure,
     networkOffline, working, writesBlocked: realtimeStatus !== 'LIVE' || !!accessFailure, canWrite, refresh, retry, run};
   return <CommitteeWorkspaceContext.Provider value={value}>{children}</CommitteeWorkspaceContext.Provider>;
 }

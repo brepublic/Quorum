@@ -128,63 +128,77 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
     finally { setPreparingDownloads(current => { const next = new Set(current); next.delete(fileId); return next; }); }
   };
 
-  const refresh = React.useCallback(async (clearError = true) => {
-    const refreshId = ++conflictRefresh.current;
-    try {
-      const [nextFiles, nextPendingHostCommits] = await Promise.all([
-        api.listFiles(committeeId), canUpload ? api.listPendingHostCommits(committeeId) : Promise.resolve([])
-      ]);
-      if (refreshId !== conflictRefresh.current) return;
-      setFiles(nextFiles); setPendingHostCommits(nextPendingHostCommits);
-      if (canManage) {
-        const [nextBindings, nextConfigs, nextMigrations, nextHosts, nextConflicts] = await Promise.all([
-          api.listStorageBindings(committeeId), api.listS3ProviderConfigs(), api.listStorageMigrations(committeeId),
-          api.listStorageHosts(committeeId), api.listStorageAgentConflicts(committeeId)
+  const refresh = React.useMemo(() => {
+    let inFlight: Promise<void> | undefined;
+    let again = false;
+    let clear = true;
+    let lastReadId = 0;
+    const read = async () => {
+      const refreshId = ++conflictRefresh.current; lastReadId = refreshId;
+      try {
+        const [nextFiles, nextPendingHostCommits] = await Promise.all([
+          api.listFiles(committeeId), canUpload ? api.listPendingHostCommits(committeeId) : Promise.resolve([])
         ]);
-        if (refreshId !== conflictRefresh.current) return;
-        setBindings(nextBindings); setConfigs(nextConfigs); setMigrations(nextMigrations); setHosts(nextHosts);
-        setConflicts(nextConflicts);
-        const missingIds = [...new Set(nextConflicts.filter(item => item.status === 'PENDING' && item.fileEntryId
-          && !nextFiles.some(file => file.id === item.fileEntryId)).map(item => item.fileEntryId!))];
-        const details = await Promise.allSettled(missingIds.map(id => Promise.resolve().then(() => api.getFile(id))));
-        if (refreshId !== conflictRefresh.current) return;
-        setComparisonRetryAt(details.some(result => result.status === 'rejected') ? Date.now() : 0);
-        setConflictFiles(Object.fromEntries(details.flatMap((result, index) => result.status === 'fulfilled'
-          && result.value?.committeeId === committeeId ? [[missingIds[index]!, result.value]] : [])));
-        setConflictNames(current => Object.fromEntries(nextConflicts.flatMap(item => item.change.kind === 'DELETE'
-          ? [] : [[item.id, current[item.id] ?? item.change.logicalName]])));
-        const active = nextBindings.find(binding => binding.status === 'ACTIVE');
-        const availableS3 = nextConfigs.filter(config => config.status === 'ACTIVE'
-          && config.id !== active?.providerConfigId);
-        if (active?.providerType === 'SERVER_VOLUME') {
-          const chairAvailable=nextHosts.some(host=>host.status==='ACTIVE'||host.status==='DEGRADED');
-          setTargetType(current=>current==='CHAIR_AGENT'&&chairAvailable||current==='S3_COMPATIBLE'&&availableS3.length>0
-            ?current:chairAvailable?'CHAIR_AGENT':'S3_COMPATIBLE');
-          setTargetConfigId(current => availableS3.some(config => config.id === current)
-            ? current : availableS3[0]?.id || '');
-        } else if (active?.providerType === 'S3_COMPATIBLE') {
-          setTargetType(current => current === 'S3_COMPATIBLE' && availableS3.length === 0
-            ? 'SERVER_VOLUME' : current);
-          setTargetConfigId(current => availableS3.some(config => config.id === current)
-            ? current : availableS3[0]?.id || '');
-        } else if (active?.providerType === 'CHAIR_AGENT') {
-          setTargetType('SERVER_VOLUME'); setTargetConfigId('');
+        if (refreshId !== conflictRefresh.current || again) return;
+        setFiles(nextFiles); setPendingHostCommits(nextPendingHostCommits);
+        if (canManage) {
+          const [nextBindings, nextConfigs, nextMigrations, nextHosts, nextConflicts] = await Promise.all([
+            api.listStorageBindings(committeeId), api.listS3ProviderConfigs(), api.listStorageMigrations(committeeId),
+            api.listStorageHosts(committeeId), api.listStorageAgentConflicts(committeeId)
+          ]);
+          if (refreshId !== conflictRefresh.current || again) return;
+          setBindings(nextBindings); setConfigs(nextConfigs); setMigrations(nextMigrations); setHosts(nextHosts);
+          setConflicts(nextConflicts);
+          const missingIds = [...new Set(nextConflicts.filter(item => item.status === 'PENDING' && item.fileEntryId
+            && !nextFiles.some(file => file.id === item.fileEntryId)).map(item => item.fileEntryId!))];
+          const details = await Promise.allSettled(missingIds.map(id => Promise.resolve().then(() => api.getFile(id))));
+          if (refreshId !== conflictRefresh.current || again) return;
+          setComparisonRetryAt(details.some(result => result.status === 'rejected') ? Date.now() : 0);
+          setConflictFiles(Object.fromEntries(details.flatMap((result, index) => result.status === 'fulfilled'
+            && result.value?.committeeId === committeeId ? [[missingIds[index]!, result.value]] : [])));
+          setConflictNames(current => Object.fromEntries(nextConflicts.flatMap(item => item.change.kind === 'DELETE'
+            ? [] : [[item.id, current[item.id] ?? item.change.logicalName]])));
+          const active = nextBindings.find(binding => binding.status === 'ACTIVE');
+          const availableS3 = nextConfigs.filter(config => config.status === 'ACTIVE'
+            && config.id !== active?.providerConfigId);
+          if (active?.providerType === 'SERVER_VOLUME') {
+            const chairAvailable=nextHosts.some(host=>host.status==='ACTIVE'||host.status==='DEGRADED');
+            setTargetType(current=>current==='CHAIR_AGENT'&&chairAvailable||current==='S3_COMPATIBLE'&&availableS3.length>0
+              ?current:chairAvailable?'CHAIR_AGENT':'S3_COMPATIBLE');
+            setTargetConfigId(current => availableS3.some(config => config.id === current)
+              ? current : availableS3[0]?.id || '');
+          } else if (active?.providerType === 'S3_COMPATIBLE') {
+            setTargetType(current => current === 'S3_COMPATIBLE' && availableS3.length === 0
+              ? 'SERVER_VOLUME' : current);
+            setTargetConfigId(current => availableS3.some(config => config.id === current)
+              ? current : availableS3[0]?.id || '');
+          } else if (active?.providerType === 'CHAIR_AGENT') {
+            setTargetType('SERVER_VOLUME'); setTargetConfigId('');
+          } else {
+            setTargetType(current => current === 'S3_COMPATIBLE' && availableS3.length === 0
+              ? 'SERVER_VOLUME' : current);
+            setTargetConfigId(current => availableS3.some(config => config.id === current)
+              ? current : availableS3[0]?.id || '');
+          }
         } else {
-          setTargetType(current => current === 'S3_COMPATIBLE' && availableS3.length === 0
-            ? 'SERVER_VOLUME' : current);
-          setTargetConfigId(current => availableS3.some(config => config.id === current)
-            ? current : availableS3[0]?.id || '');
+          setComparisonRetryAt(0);
+          setBindings([]); setConfigs([]); setMigrations([]); setHosts([]); setConflicts([]); setConflictFiles({});
         }
-      } else {
-        setComparisonRetryAt(0);
-        setBindings([]); setConfigs([]); setMigrations([]); setHosts([]); setConflicts([]); setConflictFiles({});
+        if (clear) setError(undefined);
+      } catch (caught) {
+        if (refreshId !== conflictRefresh.current || again) return;
+        setError(caught);
+        setComparisonRetryAt(caught instanceof SelfHostedApiError && [401, 403, 404].includes(caught.status) ? 0 : Date.now());
       }
-      if (clearError) setError(undefined);
-    } catch (caught) {
-      if (refreshId !== conflictRefresh.current) return;
-      setError(caught);
-      setComparisonRetryAt(caught instanceof SelfHostedApiError && [401, 403, 404].includes(caught.status) ? 0 : Date.now());
-    }
+    };
+    return (clearError = true): Promise<void> => {
+      if (inFlight) {again = true; clear &&= clearError; return inFlight;}
+      clear = clearError;
+      inFlight = (async () => {
+        do {again = false; await read();} while (again && lastReadId === conflictRefresh.current);
+      })().finally(() => {inFlight = undefined;});
+      return inFlight;
+    };
   }, [api, canManage, canUpload, committeeId]);
 
   React.useEffect(() => { void refresh(); }, [refresh, snapshot, reviewFiles]);

@@ -62,6 +62,13 @@ describe('self-hosted workspace navigation', () => {
     expect(button.getAttribute('aria-expanded')).toBe('false');
   });
 
+  it('shows the specific synchronization failure in both languages', () => {
+    const page = render(<RealtimeStatusItem status="RESYNCING" syncFailed syncFailure={{code: 'REQUEST_TIMEOUT'}} />);
+    act(() => page.querySelector('button')!.click());
+    expect(document.body.querySelector('[role="dialog"]')?.textContent).toContain('The request timed out.');
+    act(() => setLanguage('zh-CN'));
+    expect(document.body.querySelector('[role="dialog"]')?.textContent).toContain('请求超时');
+  });
   it('keeps an open crisis dropdown synchronized for multiple cycles while viewing another page', async () => {
     vi.useFakeTimers();
     const current = {...snapshot, crises: [

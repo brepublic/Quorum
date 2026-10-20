@@ -79,6 +79,20 @@ afterEach(() => {if (root) act(() => root?.unmount()); container?.remove(); root
   vi.restoreAllMocks(); window.history.replaceState(null, '', window.location.pathname);});
 
 describe('self-hosted stage 6 file panel', () => {
+  it('serializes overlapping refreshes and reads again for changes received in flight', async () => {
+    let finish!: (files: FileEntry[]) => void;
+    const listFiles = vi.fn().mockImplementationOnce(() => new Promise(resolve => {finish = resolve;}))
+      .mockResolvedValue([{...file, logicalName: 'Latest file'}]);
+    const client = api({listFiles});
+    await render('CHAIR', client);
+    for (let i = 0; i < 3; i++) await act(async () => root?.render(<MemoryRouter>
+      <FilesPanel snapshot={{...snapshot('CHAIR'), sync: {committeeEventSequence: i + 2}}} api={client} />
+    </MemoryRouter>));
+    expect(listFiles).toHaveBeenCalledTimes(1);
+    await act(async () => finish([file]));
+    expect(listFiles).toHaveBeenCalledTimes(2);
+    expect(container?.textContent).toContain('Latest file');
+  });
   it('hides disabled volume targets and explains blocked submissions with a migration link', async () => {
     const client = api({storagePolicy: async () => ({disabled:true,submissionBlocked:true,revision:2})});
     const view = await render('CHAIR', client);
@@ -536,14 +550,14 @@ describe('self-hosted stage 6 file panel', () => {
     expect(button('保留本地版本')?.disabled).toBe(false);
   }, 10000);
 
-  it('ignores an older response that completes after a newer workspace snapshot', async () => {
+  it('discards a pending old response and reads again after a newer workspace snapshot', async () => {
     let completeOld!: (files: FileEntry[]) => void;
     const listFiles = vi.fn().mockImplementationOnce(() => new Promise<FileEntry[]>(resolve => {completeOld = resolve;}))
       .mockResolvedValue([{...file, logicalName: '最新文件'}]);
     const client = api({listFiles});
     const view = await render('CHAIR', client, 'chair');
     await act(async () => {root!.render(<MemoryRouter><FilesPanel snapshot={snapshot('CHAIR')} api={client} currentUserId="chair" /></MemoryRouter>);});
-    expect(view.textContent).toContain('最新文件');
+    expect(listFiles).toHaveBeenCalledTimes(1);
     await act(async () => {completeOld([{...file, logicalName: '过期文件'}]);});
     expect(view.textContent).toContain('最新文件'); expect(view.textContent).not.toContain('过期文件');
   });

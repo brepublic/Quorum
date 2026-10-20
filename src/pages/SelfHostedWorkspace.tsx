@@ -1310,7 +1310,7 @@ function CommitteeWorkspaceContent({id, api: sourceApi, user, logout}: {
 }) {
   useLanguage();
   const {snapshot, snapshotReceivedAt, error, failure, accessFailure, realtimeStatus, refresh, run,
-    writesBlocked, canWrite, lastSyncedAt, syncFailed, networkOffline, retry} = useCommitteeWorkspace();
+    writesBlocked, canWrite, lastSyncedAt, syncFailed, syncFailure, networkOffline, retry} = useCommitteeWorkspace();
   // Some forms save directly (including autosave); guard those calls as well as run().
   const api = React.useMemo(() => Object.fromEntries(Object.entries(sourceApi).map(([name, method]) => [name,
     /^(get|list|preview)|Url$|^(snapshot|openCommitteeEvents|prepareFileDownload|fileDownloadReadiness|storagePolicy)$/.test(name) ? method
@@ -1401,7 +1401,7 @@ function CommitteeWorkspaceContent({id, api: sourceApi, user, logout}: {
     && snapshot.committee.status !== 'ARCHIVED' && snapshot.committee.status !== 'DELETING';
   const base = `/committees/${id}`;
   return <CommitteeNavigation snapshot={snapshot} user={user} logout={logout} realtimeStatus={realtimeStatus}
-    lastSyncedAt={lastSyncedAt} syncFailed={syncFailed} networkOffline={networkOffline} onRetry={retry}
+    lastSyncedAt={lastSyncedAt} syncFailed={syncFailed} syncFailure={syncFailure} networkOffline={networkOffline} onRetry={retry}
     hasStorageSetupHint={hasStorageSetupHint} pendingConflictCount={pendingConflictCount}
     hasPendingFileReview={hasPendingFileReview}
     onCreateCaucus={() => setCreateCaucusOpen(true)}>
