@@ -34,7 +34,9 @@ import type {
   FlagSnapshot,
   LocalizedNames,
   SeatRank,
-  Stage4CommitteeSeat
+  Stage4CommitteeSeat,
+  TemplateBundle,
+  TemplateImportResult
 } from '@quorum/contracts';
 import {formatCommitteeContent, type ContentLanguage, localizedDisplayName, isContentLanguage, committeeContentName, templateLanguageAvailability,
   type CommitteeContentSnapshot} from '@quorum/contracts';
@@ -63,7 +65,8 @@ import {
   validateCommitteeTemplate,
   validateCountryTemplate,
   validateFlag,
-  validateLocalizedNames
+  validateLocalizedNames,
+  validateTemplateBundle
 } from './validation.js';
 import {
   BUILTIN_COMMITTEE_TEMPLATE_DEFINITIONS,
@@ -633,6 +636,82 @@ async function replaceMembers(client: PoolClient, templateId: string, value: Com
 
 export class Stage4Service {
   constructor(private readonly pool: Pool) {}
+
+  previewTemplateImport(auth: AuthenticatedSession, input: unknown): TemplateBundle {
+    requireBusinessIdentity(auth);
+    return validateTemplateBundle(input);
+  }
+
+  async exportTemplate(auth: AuthenticatedSession, kind: 'country' | 'committee', id: string): Promise<TemplateBundle> {
+    requireBusinessIdentity(auth);
+    return transaction(this.pool, async client => {
+      await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY');
+      const committee = kind === 'committee'
+        ? await committeeTemplate(client, await committeeTemplateById(client, auth.user.id, id)) : null;
+      const countryId = committee
+        ? committee.countryTemplateKey === 'builtin:default' ? null : committee.countryTemplateKey.slice('custom:'.length)
+        : id;
+      let country: CountryTemplateInput | null = null;
+      if (countryId) {
+        const source = await countryTemplate(client, await countryTemplateById(client, auth.user.id, countryId));
+        const codes = await client.query<{country_stable_key: string; term: string}>(`
+          SELECT country_stable_key,term FROM manual_country_search_terms
+          WHERE owner_user_id=$1 AND country_template_key=$2 ORDER BY country_stable_key,term`,
+        [auth.user.id, source.key]);
+        country = {names: source.names, defaultLanguage: source.defaultLanguage, countryLanguages: source.countryLanguages,
+          countries: source.countries.map(item => ({
+            stableKey: item.stableKey, names: item.names, defaultLanguage: item.defaultLanguage, continent: item.continent,
+            sortOrder: item.sortOrder, flag: item.flag,
+            searchCodes: codes.rows.filter(code => code.country_stable_key === item.stableKey).map(code => code.term)
+          }))};
+      }
+      if (!committee) return validateTemplateBundle({format: 'quorum-template', version: 1, kind: 'country', countryTemplate: country});
+      return validateTemplateBundle({format: 'quorum-template', version: 1, kind: 'committee', countryTemplate: country,
+        committeeTemplate: {names: committee.names, defaultLanguage: committee.defaultLanguage,
+          countryTemplateKey: country ? 'bundled' : 'builtin:default',
+          members: committee.members.map(member => ({
+            stableKey: member.stableKey, names: member.names, defaultLanguage: member.defaultLanguage,
+            rank: member.rank, canVote: member.canVote, canProceduralVote: member.canProceduralVote,
+            hasVeto: member.hasVeto, mustVote: member.mustVote, sortOrder: member.sortOrder, flag: member.flag
+          }))}});
+    });
+  }
+
+  async importTemplate(auth: AuthenticatedSession, input: unknown, idempotencyKey: string,
+    context: Stage4Context): Promise<TemplateImportResult> {
+    requireBusinessIdentity(auth);
+    const bundle = validateTemplateBundle(input);
+    return idempotentTransaction({pool: this.pool, auth, route: 'POST /api/v1/template-imports', key: idempotencyKey,
+      request: bundle, status: 201, work: async client => {
+        let countryTemplateId: string | null = null;
+        let committeeTemplateId: string | null = null;
+        if (bundle.countryTemplate) {
+          const value = bundle.countryTemplate;
+          countryTemplateId = randomUUID();
+          await client.query(`INSERT INTO country_templates
+            (id,owner_user_id,names,default_language,country_languages) VALUES ($1,$2,$3,$4,$5)`,
+          [countryTemplateId, auth.user.id, value.names, value.defaultLanguage, value.countryLanguages]);
+          await replaceCountries(client, auth.user.id, countryTemplateId, value);
+          await audit(client, context, {actorUserId: auth.user.id, capabilities: ['ACCOUNT_OWNER'],
+            action: 'templates.country_imported', resourceType: 'country_template', resourceId: countryTemplateId,
+            after: {countryCount: value.countries.length}});
+        }
+        if (bundle.kind === 'committee') {
+          const value = bundle.committeeTemplate;
+          committeeTemplateId = randomUUID();
+          const countryTemplateKey = countryTemplateId ? `custom:${countryTemplateId}` : 'builtin:default';
+          await client.query(`INSERT INTO committee_templates
+            (id,owner_user_id,names,default_language,country_template_key,country_template_id)
+            VALUES ($1,$2,$3,$4,$5,$6)`,
+          [committeeTemplateId, auth.user.id, value.names, value.defaultLanguage, countryTemplateKey, countryTemplateId]);
+          await replaceMembers(client, committeeTemplateId, {...value, countryTemplateKey});
+          await audit(client, context, {actorUserId: auth.user.id, capabilities: ['ACCOUNT_OWNER'],
+            action: 'templates.committee_imported', resourceType: 'committee_template', resourceId: committeeTemplateId,
+            after: {countryTemplateKey, memberCount: value.members.length}});
+        }
+        return {countryTemplateId, committeeTemplateId};
+      }});
+  }
 
   async listCountryTemplates(auth: AuthenticatedSession): Promise<CountryTemplate[]> {
     requireBusinessIdentity(auth);

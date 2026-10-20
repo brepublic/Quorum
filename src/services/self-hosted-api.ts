@@ -16,6 +16,8 @@ import type {
   CommitteeMotionSettings,
   CommitteeTemplate,
   CommitteeTemplateInput,
+  TemplateBundle,
+  TemplateImportResult,
   CommitteeTextPost,
   CommitteeWorkspaceSnapshot,
   CountryTemplate,
@@ -529,6 +531,15 @@ export const selfHostedApi = {
   },
   committeeExportUrl(id: string) { return `/api/v1/committees/${encodeURIComponent(id)}/export`; },
   listCountryTemplates: async () => (await request<{countryTemplates: CountryTemplate[]}>('/api/v1/country-templates')).countryTemplates,
+  exportTemplate(kind: 'country' | 'committee', id: string) {
+    return request<TemplateBundle>(`/api/v1/${kind}-templates/${encodeURIComponent(id)}/export`);
+  },
+  previewTemplateImport(bundle: Record<string, unknown>) {
+    return request<TemplateBundle>('/api/v1/template-imports/preview', {method: 'POST', body: bundle});
+  },
+  importTemplate(bundle: TemplateBundle, idempotencyKey: string) {
+    return request<TemplateImportResult>('/api/v1/template-imports', {method: 'POST', body: bundle, idempotencyKey});
+  },
   updateBuiltinCountrySearchCodes(stableKey: string, codes: string[]) {
     return request<CountryTemplate>(`/api/v1/country-templates/builtin:default/countries/${encodeURIComponent(stableKey)}/search-codes`,
       {method: 'PUT', body: {codes}});

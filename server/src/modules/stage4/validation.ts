@@ -7,6 +7,7 @@ import type {
   LocalizedNames,
   SeatRank
 } from '@quorum/contracts';
+import {TEMPLATE_BUNDLE_MAX_BYTES, type TemplateBundle} from '@quorum/contracts';
 import {AppError} from '../../http/errors.js';
 
 const LANGUAGE = /^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/;
@@ -205,4 +206,30 @@ export function validateCommitteeTemplate(value: unknown): CommitteeTemplateInpu
 
 export function assertExactBody(value: Record<string, unknown>, keys: readonly string[], name = 'Request'): void {
   exactKeys(value, keys, name);
+}
+
+export function validateTemplateBundle(value: unknown): TemplateBundle {
+  const raw = object(value, 'Template file');
+  if (Buffer.byteLength(JSON.stringify(raw), 'utf8') > TEMPLATE_BUNDLE_MAX_BYTES) {
+    throw new AppError({code: 'PAYLOAD_TOO_LARGE', reason: 'REQUEST_TOO_LARGE', message: 'Template file is too large.'});
+  }
+  if (raw.format !== 'quorum-template' || raw.version !== 1 || !['country', 'committee'].includes(String(raw.kind))) {
+    invalid('INVALID_TEMPLATE_BUNDLE', 'Unsupported template file.');
+  }
+  if (raw.kind === 'country') {
+    exactKeys(raw, ['format', 'version', 'kind', 'countryTemplate'], 'Template file');
+    return {format: 'quorum-template', version: 1, kind: 'country',
+      countryTemplate: validateCountryTemplate(raw.countryTemplate)};
+  }
+  exactKeys(raw, ['format', 'version', 'kind', 'countryTemplate', 'committeeTemplate'], 'Template file');
+  const committee = object(raw.committeeTemplate, 'Committee template');
+  if (committee.countryTemplateKey !== 'bundled' && committee.countryTemplateKey !== 'builtin:default'
+    || committee.countryTemplateKey === 'bundled' && !raw.countryTemplate
+    || committee.countryTemplateKey === 'builtin:default' && raw.countryTemplate !== null) {
+    invalid('INVALID_TEMPLATE_BUNDLE', 'Country template dependency is missing or invalid.');
+  }
+  const validated = validateCommitteeTemplate({...committee, countryTemplateKey: 'builtin:default'});
+  return {format: 'quorum-template', version: 1, kind: 'committee',
+    committeeTemplate: {...validated, countryTemplateKey: committee.countryTemplateKey as 'bundled' | 'builtin:default'},
+    countryTemplate: committee.countryTemplateKey === 'bundled' ? validateCountryTemplate(raw.countryTemplate) : null};
 }

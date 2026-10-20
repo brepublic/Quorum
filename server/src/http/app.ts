@@ -2,7 +2,7 @@ import type {ServerVolumeInventoryService} from '../modules/operations/volume-in
 import type {ServerVolumeOperationsService} from '../modules/operations/volume-service.js';
 import {randomUUID} from 'node:crypto';
 import {createServer, type IncomingMessage, type RequestListener, type Server, type ServerResponse} from 'node:http';
-import {CONTRACT_VERSION, success, type VersionInfo} from '@quorum/contracts';
+import {CONTRACT_VERSION, success, TEMPLATE_BUNDLE_MAX_BYTES, type VersionInfo} from '@quorum/contracts';
 import {RULE_SCHEMA_VERSION} from '@quorum/rule-schema';
 import type {Logger} from '../logger.js';
 import {withRequestContext} from '../request-context.js';
@@ -110,13 +110,13 @@ function sendText(response: ServerResponse, status: number, contentType: string,
   response.end(body);
 }
 
-async function readJson(request: IncomingMessage): Promise<Record<string, unknown>> {
+async function readJson(request: IncomingMessage, maxBytes = MAX_JSON_BODY_BYTES): Promise<Record<string, unknown>> {
   const chunks: Buffer[] = [];
   let length = 0;
   for await (const chunk of request) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     length += buffer.length;
-    if (length > MAX_JSON_BODY_BYTES) {
+    if (length > maxBytes) {
       throw new AppError({reason: 'REQUEST_TOO_LARGE', code: 'PAYLOAD_TOO_LARGE', message: 'Request body is too large.'});
     }
     chunks.push(buffer);
@@ -416,6 +416,21 @@ async function handleStage4Request(options: {
   const method = request.method ?? 'GET'; const context = identityContext(request, requestId);
   const read = () => identity.authenticate(identityCookies(request).get(SESSION_COOKIE_NAME));
   const write = async () => { requireOrigin(request, allowedOrigins); return authenticatedWrite(request, identity); };
+
+  if (method === 'POST' && (pathname === '/api/v1/template-imports' || pathname === '/api/v1/template-imports/preview')) {
+    const auth = await write(); const body = await readJson(request, TEMPLATE_BUNDLE_MAX_BYTES);
+    if (pathname.endsWith('/preview')) {
+      sendJson(response, 200, success(stage4.previewTemplateImport(auth, body), requestId));
+    } else {
+      sendJson(response, 201, success(await stage4.importTemplate(auth, body, idempotencyKey(request), context), requestId));
+    }
+    return true;
+  }
+  const templateExport = /^\/api\/v1\/(country|committee)-templates\/([0-9a-f-]{36})\/export$/.exec(pathname);
+  if (method === 'GET' && templateExport) {
+    sendJson(response, 200, success(await stage4.exportTemplate(await read(), templateExport[1] as 'country' | 'committee',
+      templateExport[2] as string), requestId)); return true;
+  }
 
   if (method === 'GET' && pathname === '/api/v1/committees') {
     sendJson(response, 200, success({committees: await stage4.listCommittees(

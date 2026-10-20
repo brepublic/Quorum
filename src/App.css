@@ -944,6 +944,7 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
 .country-template-editor-header {
   align-items: center;
   display: flex;
+  flex-wrap: wrap;
   gap: 1rem;
   justify-content: space-between;
   margin-bottom: 1rem;
@@ -952,6 +953,14 @@ html[lang='zh-CN'] .ui.form .template-picker-field .ui.dropdown .menu > .item {
 .country-template-editor-header .ui.header {
   margin: 0;
 }
+
+.template-transfer-actions {display: flex; flex-wrap: wrap; gap: 0.5rem;}
+.template-transfer-actions .ui.button {margin: 0;}
+.ui.button.template-import-button {margin-top: 0.75rem;}
+.template-transfer-name, .template-transfer-filename {overflow-wrap: anywhere;}
+.template-transfer-flags {display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center;}
+.template-transfer-flags > span {display: inline-flex;}
+.template-transfer-modal .ui.list .item {overflow-wrap: anywhere;}
 
 .ui.fluid.container.country-manager-page {
   box-sizing: border-box;

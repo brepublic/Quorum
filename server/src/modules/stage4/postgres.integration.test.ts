@@ -13,6 +13,7 @@ import {Stage3Service} from '../stage3/service';
 import {DelegateFileService} from '../delegate-files/service';
 import {Stage4Service} from './service';
 import {SearchIndexService} from '../search/service';
+import {templateBundleFixture} from '../../test/template-bundle-fixture';
 
 const {Client, Pool} = pg;
 const adminUrl = process.env.TEST_DATABASE_ADMIN_URL;
@@ -72,6 +73,61 @@ const committeeTemplate = (countryTemplateKey: string) => ({names: {en: 'Council
     canVote: true, canProceduralVote: true, hasVeto: true, mustVote: false, sortOrder: 1, flag: {type: 'STANDARD' as const, value: 'cn'}}]});
 
 integration('PostgreSQL stage 4 templates and seat snapshots', () => {
+  it('imports visible owned dependencies atomically, preserves complete content and retries without duplicates', async () => {
+    const owner = await user('bundle-owner'); const recipient = await user('bundle-recipient');
+    const first = await stage4.importTemplate(owner, templateBundleFixture, 'first-bundle', context('bundle-first'));
+    const exported = await stage4.exportTemplate(owner, 'committee', first.committeeTemplateId!);
+    expect(exported).toEqual(templateBundleFixture);
+    expect(JSON.stringify(exported)).not.toContain(first.countryTemplateId);
+    await expect(stage4.exportTemplate(recipient, 'committee', first.committeeTemplateId!)).rejects.toMatchObject({code: 'NOT_FOUND'});
+    const result = await stage4.importTemplate(recipient, exported, 'recipient-bundle', context('bundle-recipient'));
+    expect(await stage4.importTemplate(recipient, exported, 'recipient-bundle', context('bundle-retry'))).toEqual(result);
+    expect(result.countryTemplateId).not.toBe(first.countryTemplateId);
+    const countries = (await stage4.listCountryTemplates(recipient)).filter(item => !item.builtin);
+    expect(countries).toHaveLength(1);
+    expect(countries[0]).toMatchObject({id: result.countryTemplateId, names: templateBundleFixture.countryTemplate.names});
+    expect(countries[0]!.countries).toHaveLength(4);
+    expect(countries[0]!.countries[1]!.searchCodes).toEqual(expect.arrayContaining(['HL', '海岚']));
+    const committee = await stage4.getCommitteeTemplate(recipient, result.committeeTemplateId!);
+    expect(committee.countryTemplateKey).toBe(countries[0]!.key);
+    expect(await stage4.exportTemplate(recipient, 'committee', result.committeeTemplateId!)).toEqual(exported);
+    const standalone = await stage4.exportTemplate(recipient, 'country', result.countryTemplateId!);
+    expect(standalone).toEqual({format: 'quorum-template', version: 1, kind: 'country',
+      countryTemplate: templateBundleFixture.countryTemplate});
+    const additional = await stage4.importTemplate(recipient, standalone, 'standalone-bundle', context('bundle-standalone'));
+    expect(additional.committeeTemplateId).toBeNull();
+    expect((await stage4.listCountryTemplates(recipient)).filter(item => !item.builtin)).toHaveLength(2);
+    const changed = {...templateBundleFixture.countryTemplate, names: {en: 'Edited by recipient', 'zh-CN': '接收者修改'}};
+    await stage4.updateCountryTemplate(recipient, result.countryTemplateId!, {baseRevision: countries[0]!.revision, template: changed}, context('bundle-edit'));
+    expect((await stage4.getCountryTemplate(recipient, result.countryTemplateId!)).names).toEqual(changed.names);
+    expect((await stage4.getCountryTemplate(owner, first.countryTemplateId!)).names).toEqual(templateBundleFixture.countryTemplate.names);
+  });
+
+  it('rolls back the bundled country and audit if saving the committee fails', async () => {
+    const owner = await user('bundle-rollback');
+    const broken = structuredClone(templateBundleFixture);
+    // Passes JSON integer validation, but fails the database integer column after the country insert.
+    broken.committeeTemplate.members[0]!.sortOrder = Number.MAX_SAFE_INTEGER;
+    await expect(stage4.importTemplate(owner, broken, 'rollback-bundle', context('bundle-rollback'))).rejects.toThrow();
+    expect((await stage4.listCountryTemplates(owner)).filter(item => !item.builtin)).toHaveLength(0);
+    expect((await stage4.listCommitteeTemplates(owner)).filter(item => !item.builtin)).toHaveLength(0);
+    expect((await pool!.query("SELECT id FROM audit_log WHERE actor_user_id=$1 AND action LIKE 'templates.%_imported'", [owner.user.id])).rows).toHaveLength(0);
+    const result = await stage4.importTemplate(owner, templateBundleFixture, 'rollback-bundle', context('bundle-recovered'));
+    expect(result.countryTemplateId).toBeTruthy();
+  });
+
+  it('imports builtin references without a hidden country template and rejects incomplete custom packages', async () => {
+    const owner = await user('bundle-builtin');
+    const builtinBundle = {...templateBundleFixture, countryTemplate: null,
+      committeeTemplate: {...templateBundleFixture.committeeTemplate, countryTemplateKey: 'builtin:default'}};
+    const result = await stage4.importTemplate(owner, builtinBundle, 'builtin-bundle', context('bundle-builtin'));
+    expect(result.countryTemplateId).toBeNull();
+    expect((await stage4.getCommitteeTemplate(owner, result.committeeTemplateId!)).countryTemplateKey).toBe('builtin:default');
+    expect(await stage4.exportTemplate(owner, 'committee', result.committeeTemplateId!)).toEqual(builtinBundle);
+    await expect(stage4.importTemplate(owner, {...templateBundleFixture, countryTemplate: null},
+      'missing-bundle', context('bundle-missing'))).rejects.toMatchObject({reason: 'INVALID_TEMPLATE_BUNDLE'});
+    expect((await stage4.listCountryTemplates(owner)).filter(item => !item.builtin)).toHaveLength(0);
+  });
   it('keeps file-only seats present outside roll call and enforces procedural permission dependencies', async () => {
     const chair = await user('procedural-chair');
     const committee = await stage4.createCommittee(chair, await testCommitteeInput(pool!, chair,

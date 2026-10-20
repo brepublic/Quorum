@@ -79,7 +79,8 @@
     "release:storage-agent:desktop": "bash scripts/package-storage-agent-desktop.sh",
     "release:storage-agent:appimage": "bash scripts/package-storage-agent-appimage.sh",
     "release:storage-agent:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-storage-agent-windows.ps1",
-    "test:server-volume:e2e": "node scripts/test-server-volume-e2e.mjs"
+    "test:server-volume:e2e": "node scripts/test-server-volume-e2e.mjs",
+    "test:templates:e2e": "node scripts/test-template-transfer-e2e.mjs"
   },
   "eslintConfig": {
     "extends": "react-app"

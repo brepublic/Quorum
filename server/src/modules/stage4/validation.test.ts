@@ -1,7 +1,8 @@
 // @vitest-environment node
 
 import {describe, expect, it} from 'vitest';
-import {validateCommitteeTemplate, validateCountryTemplate, validateFlag, webpDimensions} from './validation';
+import {validateCommitteeTemplate, validateCountryTemplate, validateFlag, webpDimensions, validateTemplateBundle} from './validation';
+import {templateBundleFixture} from '../../test/template-bundle-fixture';
 
 function webp(width: number, height: number): string {
   const bytes = Buffer.alloc(30);
@@ -11,6 +12,26 @@ function webp(width: number, height: number): string {
 }
 
 describe('stage 4 template validation', () => {
+  it('accepts portable templates without losing flags, translations or permissions', () => {
+    expect(validateTemplateBundle(templateBundleFixture)).toEqual(templateBundleFixture);
+    expect(validateTemplateBundle({format: 'quorum-template', version: 1, kind: 'country',
+      countryTemplate: templateBundleFixture.countryTemplate}).countryTemplate).toEqual(templateBundleFixture.countryTemplate);
+  });
+
+  it('rejects foreign references, missing dependencies, unsupported versions and untrusted image URLs', () => {
+    for (const patch of [{format: 'other'}, {version: 2}, {countryTemplate: null}, {ownerUserId: 'other'}]) {
+      expect(() => validateTemplateBundle({...templateBundleFixture, ...patch})).toThrow();
+    }
+    for (const key of ['custom:10000000-0000-4000-8000-000000000001', 'builtin:default']) {
+      expect(() => validateTemplateBundle({...templateBundleFixture,
+        committeeTemplate: {...templateBundleFixture.committeeTemplate, countryTemplateKey: key}})).toThrow();
+    }
+    for (const value of ['https://source.example/flag.webp', 'data:image/svg+xml;base64,PHN2Zz4=', 'data:image/webp;base64,YWJj']) {
+      const bundle = structuredClone(templateBundleFixture);
+      bundle.countryTemplate.countries[1]!.flag.value = value;
+      expect(() => validateTemplateBundle(bundle)).toThrow();
+    }
+  });
   it('validates WebP bytes and dimensions instead of trusting the data URL label', () => {
     expect(webpDimensions(Buffer.from(webp(256, 160).split(',')[1]!, 'base64'))).toEqual({width: 256, height: 160});
     expect(validateFlag({type: 'IMAGE', value: webp(256, 160)})).toEqual({type: 'IMAGE', value: webp(256, 160)});

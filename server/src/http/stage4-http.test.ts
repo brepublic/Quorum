@@ -59,6 +59,36 @@ async function request(stage4: Stage4Service, options: {path: string; method?: s
 }
 
 describe('stage 4 template and seat HTTP boundary', () => {
+  it('protects template import and export and passes the retry identity to the atomic import', async () => {
+    const previewTemplateImport = vi.fn(() => ({kind: 'country'}));
+    const importTemplate = vi.fn(async () => ({countryTemplateId: 'new-country', committeeTemplateId: null}));
+    const exportTemplate = vi.fn(async () => ({kind: 'country'}));
+    const stage4 = domain({previewTemplateImport, importTemplate, exportTemplate});
+    const path = '/api/v1/template-imports'; const body = {format: 'quorum-template', version: 1};
+    expect((await request(stage4, {path, method: 'POST', body})).status).not.toBe(201);
+    expect((await request(stage4, {path, method: 'POST', headers: {...protectedHeaders, 'x-csrf-token': 'wrong'}, body})).status).toBe(403);
+    expect(importTemplate).not.toHaveBeenCalled();
+    expect((await request(stage4, {path: `${path}/preview`, method: 'POST', headers: protectedHeaders, body})).status).toBe(200);
+    expect(previewTemplateImport).toHaveBeenCalledWith(authenticated, body);
+    expect((await request(stage4, {path, method: 'POST', headers: protectedHeaders, body})).status).toBe(201);
+    expect(importTemplate).toHaveBeenCalledWith(authenticated, body, 'request-one', expect.any(Object));
+    const exportPath = '/api/v1/country-templates/10000000-0000-4000-8000-000000000001/export';
+    expect((await request(stage4, {path: exportPath})).status).toBe(401);
+    expect((await request(stage4, {path: exportPath, headers: protectedHeaders})).status).toBe(200);
+    expect(exportTemplate).toHaveBeenCalledWith(authenticated, 'country', '10000000-0000-4000-8000-000000000001');
+  });
+
+  it('allows two editor-sized templates only on the import routes, with a bounded file limit', async () => {
+    const previewTemplateImport = vi.fn(() => ({kind: 'committee'}));
+    const stage4 = domain({previewTemplateImport});
+    const body = {data: 'x'.repeat(9 * 1024 * 1024)};
+    expect((await request(stage4, {path: '/api/v1/template-imports/preview', method: 'POST', headers: protectedHeaders, body})).status).toBe(200);
+    expect((await request(stage4, {path: '/api/v1/country-templates', method: 'POST', headers: protectedHeaders, body})).status).toBe(413);
+    expect((await request(stage4, {path: '/api/v1/template-imports/preview', method: 'POST', headers: protectedHeaders,
+      body: {data: 'x'.repeat(20 * 1024 * 1024)}})).status).toBe(413);
+    expect(previewTemplateImport).toHaveBeenCalledTimes(1);
+  });
+
   it('routes point withdrawal with its revision to the Chair command', async () => {
     const withdrawPoint = vi.fn(async () => ({id: 'point', status: 'WITHDRAWN'}));
     const stage4 = domain({withdrawPoint});

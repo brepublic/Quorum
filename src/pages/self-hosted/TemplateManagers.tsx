@@ -19,6 +19,7 @@ import {
   Button, Checkbox, Confirm, Container, Dropdown, Form, Grid, Header, Icon, List, Message, Segment, Table
 } from 'semantic-ui-react';
 import {CountryFlagDisplay} from '../../components/CountryFlagDisplay';
+import {useTemplateTransfer} from './TemplateTransfer';
 import {getLanguage, useLanguage, LANGUAGE_OPTIONS, type Language, SUPPORTED_LANGUAGES, t} from '../../i18n';
 import {SelfHostedApiError, type SelfHostedApi} from '../../services/self-hosted-api';
 
@@ -173,7 +174,7 @@ export function CountryTemplateManager({api}: {api: SelfHostedApi}) {
           continent: country.continent, sortOrder, flag: country.flag,
           searchCodes: country.searchCodeText.split(/[,，\n]+/).map(value => value.trim()).filter(Boolean)
         }))});
-      const next = await refresh(); load(next.find(item => item.id === updated.id) ?? updated); setSaved(true);
+      const next = await refresh(); load(next.find(item => item.id === updated.id) ?? updated); setSaved(true); return true;
     } catch (caught) { setError(caught); } finally { setSaving(false); }
   };
 
@@ -209,12 +210,20 @@ export function CountryTemplateManager({api}: {api: SelfHostedApi}) {
   const unusedTemplateLanguages = SUPPORTED_LANGUAGES.filter(language => language !== displayLanguage
     && !localizedNames.some(item => item.language === language));
   const unusedCountryLanguages = SUPPORTED_LANGUAGES.filter(language => !languages.includes(language));
+  const transfer = useTemplateTransfer({api, kind: 'country', selectedId: isBuiltin ? undefined : selectedId,
+    dirty: draft.dirty, busy: saving, countryTemplates: templates, protect: draft.protect, save,
+    imported: async result => {
+      const next = await refresh(); const imported = next.find(item => item.id === result.countryTemplateId);
+      if (!imported) throw new SelfHostedApiError(0, 'INVALID_RESPONSE', 'Imported template could not be loaded.');
+      load(imported); setSaved(true);
+    }});
 
   return <Container fluid className="country-manager-page">
     <Header as="h1">{t('Country manager')}</Header>
     <Grid stackable className="country-manager-layout">
       <Grid.Column className="country-manager-sidebar"><Segment>
         <Button primary fluid icon labelPosition="left" onClick={() => draft.protect(startNew)}><Icon name="plus" />{t('New country template')}</Button>
+        {transfer.importButton}
         <List divided relaxed selection>{templates.map(template => <List.Item key={template.id} active={template.id === selectedId} onClick={() => {if (template.id !== selectedId) draft.protect(() => load(template));}}>
           <Icon name={template.builtin ? 'world' : 'globe'} /><List.Content><List.Header>{localizedDisplayName(template.names, template.defaultLanguage)}</List.Header>
             <List.Description>{template.builtin ? `${t('Built-in')} · ` : ''}{t('{count} countries', {count: template.countries.length})}</List.Description>
@@ -227,7 +236,8 @@ export function CountryTemplateManager({api}: {api: SelfHostedApi}) {
           {error && <Message error content={error} />}<Button primary disabled={!name.trim()}>{t('Create country template')}</Button>
         </Form> : <>
           <div className="country-template-editor-header"><Header as="h2">{isBuiltin ? t('Default country template') : t('Edit country template')}</Header>
-            <Button type="button" basic primary onClick={() => draft.protect(() => void clone())}><Icon name="copy outline" />{t('Clone country template')}</Button></div>
+            <div className="template-transfer-actions"><Button type="button" basic primary onClick={() => draft.protect(() => void clone())}><Icon name="copy outline" />{t('Clone country template')}</Button>
+              {transfer.exportButton}</div></div>
           {isBuiltin && <Message info content={t('Names and flags of built-in countries are read-only. Clone the template to change them.')} />}
           <Form success={saved && !draft.dirty} error={!!error} onSubmit={save}>
             <Form.Input {...field(`names.${displayLanguage}`)} required disabled={isBuiltin} label={t('Country template name')} value={name}
@@ -297,7 +307,7 @@ export function CountryTemplateManager({api}: {api: SelfHostedApi}) {
         </>}
       </Segment></Grid.Column>
     </Grid>
-    {draft.confirmation}<Prompt when={draft.dirty && !saving} message={t('Discard unsaved changes?')} />
+    {transfer.dialogs}{draft.confirmation}<Prompt when={draft.dirty && !saving} message={t('Discard unsaved changes?')} />
     <Confirm open={deleteOpen} header={t('Delete country template?')} content={t('Are you sure that you want to delete this country template?')}
       cancelButton={t('Cancel')} confirmButton={{content: t('Delete'), primary: false, negative: true}} onCancel={() => setDeleteOpen(false)} onConfirm={() => void remove()} />
   </Container>;
@@ -343,7 +353,7 @@ export function CommitteeTemplateManager({api}: {api: SelfHostedApi}) {
         names: Object.fromEntries(Object.entries(member.names).filter(([, value]) => value.trim())), defaultLanguage: member.defaultLanguage,
         rank: member.rank, canVote: member.canVote, canProceduralVote: member.canProceduralVote, hasVeto: member.hasVeto, mustVote: member.mustVote, sortOrder, flag: member.flag}))};
     try { const result = selectedId ? await api.updateCommitteeTemplate(selectedId, templates.find(item => item.id === selectedId)!.revision, input)
-      : await api.createCommitteeTemplate(input); const {nextTemplates} = await refresh(); load(nextTemplates.find(item => item.id === result.id) ?? result); setSaved(true); }
+      : await api.createCommitteeTemplate(input); const {nextTemplates} = await refresh(); load(nextTemplates.find(item => item.id === result.id) ?? result); setSaved(true); return true; }
     catch (caught) { setError(caught); } finally { setSaving(false); }
   };
   const remove = async () => {if (!selectedId) return; try {await api.deleteCommitteeTemplate(selectedId); await refresh(); setDeleteOpen(false); startNew();}
@@ -360,16 +370,25 @@ export function CommitteeTemplateManager({api}: {api: SelfHostedApi}) {
     ? member.stableKey === selectedMemberCountry.stableKey
     : localizedDisplayName(member.names, member.defaultLanguage).trim().toLocaleLowerCase() === memberName.trim().toLocaleLowerCase());
   const unusedLanguages = SUPPORTED_LANGUAGES.filter(language => language !== displayLanguage && !localizedNames.some(item => item.language === language));
+  const transfer = useTemplateTransfer({api, kind: 'committee', selectedId, dirty: draft.dirty, busy: saving,
+    countryTemplates, committeeTemplates: templates, protect: draft.protect, save,
+    imported: async result => {
+      const {nextTemplates} = await refresh(); const imported = nextTemplates.find(item => item.id === result.committeeTemplateId);
+      if (!imported) throw new SelfHostedApiError(0, 'INVALID_RESPONSE', 'Imported template could not be loaded.');
+      load(imported); setSaved(true);
+    }});
 
   return <Container style={{padding: '1em 0 2em'}}><Header as="h1">{t('Template editor')}</Header>
     <Grid stackable columns={2}><Grid.Column width={5}><Segment>
       <Button primary fluid icon labelPosition="left" onClick={() => draft.protect(startNew)}><Icon name="plus" />{t('New template')}</Button>
+      {transfer.importButton}
       <List divided relaxed selection>{customTemplates.map(template => <List.Item key={template.id} active={template.id === selectedId} onClick={() => {if (template.id !== selectedId) draft.protect(() => load(template));}}>
         <Icon name="file alternate outline" /><List.Content><List.Header>{localizedDisplayName(template.names, template.defaultLanguage)}</List.Header>
           <List.Description>{t('{count} members', {count: template.members.length})}</List.Description></List.Content></List.Item>)}
         {customTemplates.length === 0 && <List.Item><List.Content>{t('No custom templates yet')}</List.Content></List.Item>}
       </List></Segment></Grid.Column>
-      <Grid.Column width={11}><Segment loading={saving}><Header as="h2">{selectedId ? t('Edit template') : t('New template')}</Header>
+      <Grid.Column width={11}><Segment loading={saving}><div className="country-template-editor-header">
+        <Header as="h2">{selectedId ? t('Edit template') : t('New template')}</Header>{transfer.exportButton}</div>
         <Form success={saved && !draft.dirty} error={!!error} warning={members.length === 0} onSubmit={save}>
           <Form.Input required label={t('Template name')} value={name} onChange={event => {setName(event.currentTarget.value); setSaved(false);}}
             placeholder={t('Enter a template name')} />
@@ -434,7 +453,7 @@ export function CommitteeTemplateManager({api}: {api: SelfHostedApi}) {
           <div className="template-editor-actions"><Button type="submit" primary disabled={!name.trim() || members.length === 0 || !selectedCountry}><Icon name="save" />{t('Save template')}</Button>
           {selectedId && <Button type="button" negative basic className="template-delete-action" onClick={() => setDeleteOpen(true)}><Icon name="trash" />{t('Delete template')}</Button>}</div>
         </Form></Segment></Grid.Column></Grid>
-    {draft.confirmation}<Prompt when={draft.dirty && !saving} message={t('Discard unsaved changes?')} />
+    {transfer.dialogs}{draft.confirmation}<Prompt when={draft.dirty && !saving} message={t('Discard unsaved changes?')} />
     <Confirm open={deleteOpen} header={t('Delete template?')} content={t('Are you sure that you want to delete this template?')}
       cancelButton={t('Cancel')} confirmButton={{content: t('Delete'), primary: false, negative: true}} onCancel={() => setDeleteOpen(false)} onConfirm={() => void remove()} />
   </Container>;

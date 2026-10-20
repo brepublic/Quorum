@@ -41,6 +41,8 @@ export const ERROR_TEXT = {
   STORAGE_AGENT_SOURCE_MISSING: {en: "The source file is missing or failed verification on the Chair computer. Check the file and sync again.", 'zh-CN': "主席电脑上的源文件缺失或校验失败，请检查文件并重新同步。"},
   INVALID_OBJECT: {en: "The settings must be an object. Reload the page or check the imported file format.", 'zh-CN': "设置格式必须是对象，请刷新页面或检查导入文件格式。"},
   INVALID_LANGUAGE_TAG: {en: "Use a valid language code, such as zh-CN or en.", 'zh-CN': "请使用有效的语言代码，例如 zh-CN 或 en。"},
+  INVALID_TEMPLATE_BUNDLE: {en: "Choose a complete Quorum template file with format version 1.", 'zh-CN': "请选择完整的 Quorum 模板文件，文件格式版本须为 1。"},
+  TEMPLATE_BUNDLE_KIND_MISMATCH: {en: "Import this file in the matching template manager.", 'zh-CN': "请在对应类型的模板管理器中导入此文件。"},
   INVALID_WEBP_FLAG: {en: "Choose a valid WebP flag image.", 'zh-CN': "请选择有效的 WebP 格式旗帜图片。"},
   INVALID_STANDARD_FLAG: {en: "Choose a standard flag with a two-letter country code.", 'zh-CN': "请选择使用两位字母国家代码的标准旗帜。"},
   FLAG_EMOJI_TOO_LONG: {en: "The flag emoji must fit within 32 UTF-8 bytes. Choose a shorter emoji.", 'zh-CN': "旗帜表情不能超过 32 个 UTF-8 字节，请选择较短的表情。"},

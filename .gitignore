@@ -56,3 +56,4 @@ pnpm-debug.log*
 
 # Local browser acceptance artifacts
 /outputs/server-volume-e2e/
+/outputs/template-transfer-e2e/
