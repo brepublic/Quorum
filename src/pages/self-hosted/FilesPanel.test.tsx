@@ -141,6 +141,49 @@ describe('self-hosted stage 6 file panel', () => {
     view=await render('CHAIR',client);expect(view.textContent).toContain('正在复核并切换');expect(button('确认切换')).toBeUndefined();
   });
 
+  it.each(['storage','all'] as const)('refreshes idle host heartbeats and detects disconnect and recovery in %s',async(section)=>{
+    vi.useFakeTimers();
+    try {
+      let online=true;let stoppedAt=Date.now();
+      const listStorageHosts=vi.fn(async():Promise<StorageHost[]>=>[{id:'host',committeeId,deviceId:'device',deviceLabel:'Test Chair',status:'ACTIVE',leaseGeneration:1,revision:1,
+        lastSeenAt:new Date(online?Date.now():stoppedAt).toISOString(),pairedAt:new Date().toISOString(),revokedAt:null,
+        agentProtocolVersion:2,capabilities:['STORAGE_MIGRATION']}]);
+      const client=api({listStorageHosts,listStorageBindings:vi.fn(async():Promise<StorageBinding[]>=>[
+        {id:'volume',committeeId,providerType:'SERVER_VOLUME',providerConfigId:null,storageHostId:null,status:'ACTIVE',revision:1,createdAt:new Date().toISOString()}])});
+      container=document.createElement('div');document.body.append(container);root=createRoot(container);
+      await act(async()=>root?.render(<MemoryRouter><FilesPanel snapshot={snapshot('CHAIR')} api={client} section={section} /></MemoryRouter>));
+      expect(button('开始迁移')?.disabled).toBe(false);
+      await act(async()=>{await vi.advanceTimersByTimeAsync(60000);});
+      expect(listStorageHosts).toHaveBeenCalledTimes(5);
+      expect(client.listStorageMigrations).toHaveBeenCalledTimes(1);
+      expect(button('开始迁移')?.disabled).toBe(false);
+      online=false;stoppedAt=Date.now();
+      await act(async()=>{await vi.advanceTimersByTimeAsync(60000);});
+      expect(button('开始迁移')?.disabled).toBe(true);
+      expect(container.textContent).toContain('主席电脑离线');
+      online=true;
+      await act(async()=>{await vi.advanceTimersByTimeAsync(15000);});
+      expect(button('开始迁移')?.disabled).toBe(false);
+      const reads=listStorageHosts.mock.calls.length;
+      act(()=>root?.unmount());root=undefined;
+      await act(async()=>{await vi.advanceTimersByTimeAsync(30000);});
+      expect(listStorageHosts).toHaveBeenCalledTimes(reads);
+    } finally {if(root){act(()=>root?.unmount());root=undefined;}vi.useRealTimers();}
+  });
+
+  it.each([['attachments',true],['storage',false]] as const)('does not poll idle hosts outside storage or before pairing (%s, %s)',async(section,paired)=>{
+    vi.useFakeTimers();
+    try {
+      const listStorageHosts=vi.fn(async():Promise<StorageHost[]>=>paired?[{id:'host',committeeId,deviceId:'device',deviceLabel:'Test Chair',status:'ACTIVE',leaseGeneration:1,revision:1,
+        lastSeenAt:new Date().toISOString(),pairedAt:new Date().toISOString(),revokedAt:null,agentProtocolVersion:2,capabilities:['STORAGE_MIGRATION']}]:[]);
+      const client=api({listStorageHosts});
+      container=document.createElement('div');document.body.append(container);root=createRoot(container);
+      await act(async()=>root?.render(<MemoryRouter><FilesPanel snapshot={snapshot('CHAIR')} api={client} section={section} /></MemoryRouter>));
+      await act(async()=>{await vi.advanceTimersByTimeAsync(60000);});
+      expect(listStorageHosts).toHaveBeenCalledTimes(1);
+    } finally {if(root){act(()=>root?.unmount());root=undefined;}vi.useRealTimers();}
+  });
+
   it.each([false,true])('requires both a recent heartbeat and migration capability before starting (offline: %s)',async(offline)=>{
     const client=api({listStorageBindings:vi.fn(async():Promise<StorageBinding[]>=>[{id:'volume',committeeId,providerType:'SERVER_VOLUME',providerConfigId:null,storageHostId:null,status:'ACTIVE',revision:1,createdAt:new Date().toISOString()}]),
       listStorageHosts:vi.fn(async():Promise<StorageHost[]>=>[{id:'host',committeeId,deviceId:'device',deviceLabel:'Test Chair',status:'ACTIVE',leaseGeneration:1,revision:1,

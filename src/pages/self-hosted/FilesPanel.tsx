@@ -265,17 +265,19 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
   const hostOnline=Boolean(activeHost?.lastSeenAt&&Date.now()-Date.parse(activeHost.lastSeenAt)<=45_000);
   const chairTargetBlocked=targetType==='CHAIR_AGENT'&&Boolean(activeBinding)&&(!hostOnline||!activeHost?.capabilities.includes('STORAGE_MIGRATION'));
   React.useEffect(()=>{
-    if (!canManage||!openMigration||!['storage','all'].includes(section)) return;
+    if (!canManage||(!openMigration&&!activeHost)||!['storage','all'].includes(section)) return;
+    const interval=openMigration?2000:15000;
     let cancelled=false;let timer:ReturnType<typeof setTimeout>;
     const poll=async()=>{
-      try {const [nextMigrations,nextHosts]=await Promise.all([api.listStorageMigrations(committeeId),api.listStorageHosts(committeeId)]);
-        if (!cancelled) {setMigrations(nextMigrations);setHosts(nextHosts);}
+      try {const [nextMigrations,nextHosts]=await Promise.all([
+        openMigration?api.listStorageMigrations(committeeId):Promise.resolve(undefined),api.listStorageHosts(committeeId)]);
+        if (!cancelled) {if (nextMigrations) setMigrations(nextMigrations);setHosts(nextHosts);}
       } catch (caught) {if (!cancelled) setError(caught);}
-      if (!cancelled) timer=setTimeout(poll,2000);
+      if (!cancelled) timer=setTimeout(poll,interval);
     };
-    timer=setTimeout(poll,2000);
+    timer=setTimeout(poll,interval);
     return()=>{cancelled=true;clearTimeout(timer);};
-  },[api,committeeId,canManage,section,openMigration?.id]);
+  },[api,committeeId,canManage,section,openMigration?.id,activeHost?.id]);
   const createPairing = async (purpose: 'INITIAL' | 'TRANSFER') => {
     setWorking(true); setError(undefined);
     try {
