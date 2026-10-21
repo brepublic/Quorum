@@ -176,13 +176,19 @@ function identityContext(request: IncomingMessage, requestId: string): RequestId
 }
 
 function identityCookies(request: IncomingMessage): Map<string, string> {
-  return parseCookies(singleHeader(request.headers.cookie));
+  const cookies=parseCookies(singleHeader(request.headers.cookie));
+  const path=request.url?.split('?')[0];
+  if(cookies.get('__Host-quorum_local_logout')==='1' && path!=='/api/v1/auth/logout' && path!=='/api/v1/auth/login') {
+    cookies.delete(SESSION_COOKIE_NAME);
+  }
+  return cookies;
 }
 
 function setSessionCookies(response: ServerResponse, session: SessionResult): void {
   response.setHeader('set-cookie', [
     sessionCookie(session.sessionToken, SESSION_MAX_AGE_SECONDS),
-    csrfCookie(session.csrfToken, SESSION_MAX_AGE_SECONDS)
+    csrfCookie(session.csrfToken, SESSION_MAX_AGE_SECONDS),
+    '__Host-quorum_local_logout=; Path=/; Secure; SameSite=Lax; Max-Age=0'
   ]);
 }
 
@@ -454,6 +460,10 @@ async function handleStage4Request(options: {
       const auth = await write(); const body = await readJson(request);
       sendJson(response, 201, success(await stage4.createCountryTemplate(auth, body, idempotencyKey(request), context), requestId)); return true;
     }
+  }
+  if (method === 'PUT' && pathname === '/api/v1/country-templates/builtin:default/search-codes') {
+    const auth=await write();const body=await readJson(request);
+    sendJson(response,200,success(await stage4.updateBuiltinCountrySearchCodesBatch(auth,body.changes,idempotencyKey(request),context),requestId));return true;
   }
   const builtinCountrySearch = /^\/api\/v1\/country-templates\/builtin:default\/countries\/([a-z]{2})\/search-codes$/.exec(pathname);
   if (method === 'PUT' && builtinCountrySearch) {
@@ -1376,7 +1386,7 @@ async function handleIdentityRequest(options: {
       password: stringField(body, 'password') as string
     }, context);
     setSessionCookies(response, session);
-    sendJson(response, 201, success({user: session.user, csrfToken: session.csrfToken}, requestId));
+    sendJson(response, 201, success({user: session.user, sessionId: (await identity.authenticate(session.sessionToken)).sessionId, csrfToken: session.csrfToken}, requestId));
     return true;
   }
 
@@ -1389,21 +1399,25 @@ async function handleIdentityRequest(options: {
       existingSessionToken: cookies.get(SESSION_COOKIE_NAME)
     }, context);
     setSessionCookies(response, session);
-    sendJson(response, 200, success({user: session.user, csrfToken: session.csrfToken}, requestId));
+    sendJson(response, 200, success({user: session.user, sessionId: (await identity.authenticate(session.sessionToken)).sessionId, csrfToken: session.csrfToken}, requestId));
     return true;
   }
 
   if (method === 'GET' && pathname === '/api/v1/auth/me') {
     const auth = await identity.authenticate(cookies.get(SESSION_COOKIE_NAME));
-    sendJson(response, 200, success({user: auth.user}, requestId));
+    sendJson(response, 200, success({user: auth.user, sessionId: auth.sessionId}, requestId));
     return true;
   }
 
   if (method === 'POST' && pathname === '/api/v1/auth/logout') {
     requireOrigin(request, allowedOrigins);
-    await authenticatedWrite(request, identity);
-    await identity.logout(cookies.get(SESSION_COOKIE_NAME), context);
-    response.setHeader('set-cookie', clearIdentityCookies());
+    const auth = await authenticatedWrite(request, identity);
+    const body = await readJson(request);
+    // A delayed logout must never revoke or clear a newer login.
+    if (!body.sessionId || body.sessionId === auth.sessionId) {
+      await identity.logout(cookies.get(SESSION_COOKIE_NAME), context);
+    }
+    if (body.localLogout !== true) response.setHeader('set-cookie', clearIdentityCookies());
     sendJson(response, 200, success({loggedOut: true}, requestId));
     return true;
   }
@@ -1417,7 +1431,7 @@ async function handleIdentityRequest(options: {
       newPassword: stringField(body, 'newPassword') as string
     }, context);
     setSessionCookies(response, session);
-    sendJson(response, 200, success({user: session.user, csrfToken: session.csrfToken}, requestId));
+    sendJson(response, 200, success({user: session.user, sessionId: (await identity.authenticate(session.sessionToken)).sessionId, csrfToken: session.csrfToken}, requestId));
     return true;
   }
 
@@ -1427,7 +1441,7 @@ async function handleIdentityRequest(options: {
     const body = await readJson(request);
     const session = await identity.elevateSession(auth, stringField(body, 'password') as string, context);
     setSessionCookies(response, session);
-    sendJson(response, 200, success({user: session.user, csrfToken: session.csrfToken}, requestId));
+    sendJson(response, 200, success({user: session.user, sessionId: (await identity.authenticate(session.sessionToken)).sessionId, csrfToken: session.csrfToken}, requestId));
     return true;
   }
 
@@ -1544,7 +1558,8 @@ async function handleIdentityRequest(options: {
     const body = await readJson(request);
     const result = await identity.createUser(auth, {
       email: stringField(body, 'email') as string,
-      displayName: stringField(body, 'displayName') as string
+      displayName: stringField(body, 'displayName') as string,
+      temporaryPassword: stringField(body, 'temporaryPassword', true)
     }, context);
     sendJson(response, 201, success(result, requestId));
     return true;

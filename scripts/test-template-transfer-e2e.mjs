@@ -208,7 +208,10 @@ try {
   })));
   for (const instance of instances) {
     await instance.pool?.end();
-    await admin.query(`DROP DATABASE IF EXISTS "${instance.database}" WITH (FORCE)`).catch(() => {});
+    // pg Pool.end can resolve before the socket has finished closing. Avoid forcing a
+    // database shutdown into those closing clients (57P01 / unhandled pool error).
+    await waitUntil(async()=>Number((await admin.query('SELECT count(*) FROM pg_stat_activity WHERE datname=$1',[instance.database])).rows[0].count)===0,'database connections closed',10000);
+    await admin.query(`DROP DATABASE IF EXISTS "${instance.database}"`);
   }
   await admin.end(); await rm(root, {recursive: true, force: true});
 }

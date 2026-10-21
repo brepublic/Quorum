@@ -163,6 +163,19 @@ const en: Record<string, string> = {
 };
 
 const zhCN: Record<string, string> = {
+  'Your changes could not be saved.': '修改未能保存。',
+  'This document changed. Your draft is preserved.': '文书已有新版本。请比较内容后选择保留的版本。',
+  'Downloading…': '正在下载…',
+  'Cancel download': '取消下载',
+  'This note changed in another window. Your draft is preserved.': '此笔记已在其他窗口修改。请比较内容后选择保留的版本。',
+  'Compare changes': '比较内容',
+  'Your draft': '你的草稿',
+  'Latest saved version': '已保存的最新版本',
+  'Save my edited version': '保存我的版本',
+  'Use latest saved version': '使用最新版本',
+  'Files could not be refreshed.': '文件列表暂时无法更新。',
+  'No accounts': '暂无账号',
+
   'Import template': '导入模板',
   'Export template': '导出模板',
   'Import country template': '导入国家模板',

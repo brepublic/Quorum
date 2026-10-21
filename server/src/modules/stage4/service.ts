@@ -744,12 +744,43 @@ export class Stage4Service {
       throw new AppError({reason: 'INVALID_SEARCH_TERM', code: 'VALIDATION_FAILED', message: 'Search codes are invalid.'});
     }
     await transaction(this.pool, async client => {
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`country-codes:${auth.user.id}`]);
       await replaceManualCountryTerms(client, auth.user.id, 'builtin:default', stableKey, codes as string[]);
       await audit(client, context, {actorUserId: auth.user.id, capabilities: ['ACCOUNT_OWNER'],
         action: 'templates.builtin_country_search_codes_updated', resourceType: 'country',
         after: {stableKey, count: codes.length}});
     });
     return this.getCountryTemplate(auth, 'builtin:default');
+  }
+
+  async updateBuiltinCountrySearchCodesBatch(auth: AuthenticatedSession, changes: unknown,
+    key: string, context: Stage4Context): Promise<CountryTemplate> {
+    requireBusinessIdentity(auth);
+    const allowed = new Set(builtinCountryTemplate().countries.map(country => country.stableKey));
+    if (!Array.isArray(changes) || changes.length > allowed.size || changes.some(item => !item
+      || !allowed.has(item.stableKey) || !Array.isArray(item.codes) || item.codes.some((code: unknown) => typeof code !== 'string')
+      || item.previousCodes!==undefined && (!Array.isArray(item.previousCodes) || item.previousCodes.some((code:unknown)=>typeof code!=='string')))
+      || new Set(changes.map(item => item.stableKey)).size !== changes.length) {
+      throw new AppError({code:'VALIDATION_FAILED',reason:'INVALID_SEARCH_TERM',message:'Country search codes are invalid.'});
+    }
+    await idempotentTransaction({pool:this.pool,auth,route:'PUT /api/v1/country-templates/builtin:default/search-codes',
+      key,request:changes,status:200,work:async client => {
+        await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`country-codes:${auth.user.id}`]);
+        for (const change of changes) {
+          if (Array.isArray(change.previousCodes)) {
+            const previous = await client.query<{term:string}>(`SELECT term FROM manual_country_search_terms
+              WHERE owner_user_id=$1 AND country_template_key='builtin:default' AND country_stable_key=$2 ORDER BY term`,[auth.user.id,change.stableKey]);
+            if (JSON.stringify(previous.rows.map(row=>row.term).sort()) !== JSON.stringify([...change.previousCodes].sort())) {
+              throw new AppError({code:'REVISION_CONFLICT',message:'Country search codes changed in another window.'});
+            }
+          }
+          await replaceManualCountryTerms(client,auth.user.id,'builtin:default',change.stableKey,change.codes);
+        }
+        await audit(client,context,{actorUserId:auth.user.id,capabilities:['ACCOUNT_OWNER'],
+          action:'templates.builtin_country_search_codes_updated',resourceType:'country',after:{count:changes.length}});
+        return {saved:true};
+      }});
+    return this.getCountryTemplate(auth,'builtin:default');
   }
 
   async createCountryTemplate(auth: AuthenticatedSession, input: unknown, idempotencyKey: string, context: Stage4Context): Promise<CountryTemplate> {

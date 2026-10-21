@@ -636,6 +636,10 @@ export class DelegateFileService {
       files: session ? await this.publishedForSession(session) : [],
       categoryOpenedAt: Object.fromEntries(categoryRows.map(row => [row.category, row.opened_at.toISOString()])),
       maxUploadSizeBytes: this.uploads.staging.maxFileBytes,
+      savedUploadIds: session ? (await client.query<{id:string}>(`SELECT u.id FROM file_uploads u
+        JOIN delegate_file_upload_contexts d ON d.upload_id=u.id JOIN delegate_file_sessions ds ON ds.id=d.delegate_session_id
+        JOIN delegate_file_shares sh ON sh.id=ds.share_id WHERE sh.committee_id=$1 AND d.seat_id=$2 AND u.status='COMMITTED'`,
+        [share.committee_id,session.seat_id])).rows.map(row=>row.id) : [],
       pendingUploads: session ? (await client.query<{id: string; logical_name: string; status: string;
         agent_commit_state: string | null; task_status: string | null; provider_commit_failed: boolean}>(`SELECT u.id,u.logical_name,u.status,u.agent_commit_state,u.provider_commit_failed,task.status AS task_status
         FROM file_uploads u LEFT JOIN storage_agent_tasks task ON task.id=u.agent_task_id
@@ -645,7 +649,7 @@ export class DelegateFileService {
         WHERE sh.committee_id=$1 AND d.seat_id=$2 AND u.status NOT IN ('COMMITTED','CANCELLED')
         ORDER BY d.submitted_at DESC`, [share.committee_id, session.seat_id])).rows.map(row => ({
           id: row.id, logicalName: row.logical_name,
-          status: row.provider_commit_failed || row.status === 'FAILED' || row.agent_commit_state === 'CONFLICT' || ['FAILED','CANCELLED','RETRY'].includes(row.task_status ?? '') ? 'FAILED' as const : 'SAVING' as const
+          status: ['CREATED','STAGED'].includes(row.status) && !row.task_status || row.provider_commit_failed || row.status === 'FAILED' || row.agent_commit_state === 'CONFLICT' || ['FAILED','CANCELLED','RETRY'].includes(row.task_status ?? '') ? 'FAILED' as const : 'SAVING' as const
         })) : [],
       submissions: session ? await this.history(share.committee_id, session.seat_id) : []};
   }

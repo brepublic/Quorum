@@ -28,6 +28,7 @@ export interface ServerVolumeCleanup {
   total: number;
   completed: number;
   failed: number;
+  failures?: Array<{id: string; path: string; code: string; attempts: number}>;
   sizeBytes: number;
   withoutOtherCopy: number;
   committeeCount: number;

@@ -29,6 +29,27 @@ afterEach(async () => {await act(async () => root.unmount()); host.remove(); vi.
 function client(overrides: Partial<SelfHostedApi>): SelfHostedApi {return overrides as SelfHostedApi;}
 
 describe('delegate file portal', () => {
+  it.each([true,false])('confirms an asynchronous save only with a server receipt: %s',async committed=>{
+    vi.spyOn(hashing,'sha256File').mockResolvedValue('a'.repeat(64));
+    let queued=false;let completed=false;
+    const bootstrap=()=>({committeeId:'committee',committeeLanguage:'zh-CN' as const,committeeName:'委员会',shareId:'share',
+      claimedSeat:{id:'seat',displayName:'中国',rank:'STANDARD' as const},eligibleSeats:[],mayUpload:true,storageAvailable:true,
+      eventSequence:0,files:[],categoryOpenedAt:{},maxUploadSizeBytes:1024,
+      pendingUploads:queued && !completed ? [{id:'upload',logicalName:'draft.txt',status:'SAVING' as const}]:[],savedUploadIds:completed && committed ? ['upload']:[]});
+    await act(async()=>root.render(<DelegateFilePortal api={client({bootstrapDelegatePortal:async()=>bootstrap(),
+      createDelegateFileUpload:async()=>({id:'upload'}),uploadDelegateFileContent:async()=>({}),
+      commitDelegateFileUpload:async()=>{queued=true;return {kind:'PENDING_HOST_COMMIT'};}
+    } as unknown as Partial<SelfHostedApi>)} />));
+    await act(async()=>[...host.querySelectorAll<HTMLElement>('.menu .item')].find(item=>item.textContent==='上传文件')!.click());
+    const input=host.querySelector<HTMLInputElement>('input[type=file]')!;Object.defineProperty(input,'files',{value:[new File(['abc'],'draft.txt')]});
+    await act(async()=>input.dispatchEvent(new Event('change',{bubbles:true})));
+    await act(async()=>host.querySelector('form')!.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true})));
+    expect(host.textContent).not.toContain('✔ 提交成功');
+    completed=true;await act(async()=>FakeEventSource.latest!.emit('file.available',{fileId:'file',logicalName:'draft.txt',publishedAt:new Date().toISOString(),submissionSource:'DELEGATE_PORTAL'}));
+    expect(Boolean(host.querySelector('.delegate-file-upload-success'))).toBe(committed);
+    if(!committed)expect(host.textContent).toContain('文件未能保存，请重新上传。');
+  });
+
   it.each(['联合国安全理事会', '联合国大会裁军与国际安全委员会（第一委员会）'])('shows the current committee name before selecting a delegation: %s', async committeeName => {
     await act(async () => root.render(<DelegateFilePortal api={client({bootstrapDelegatePortal: async () => ({
       committeeId: 'committee', committeeLanguage: 'zh-CN', committeeName, shareId: 'share',

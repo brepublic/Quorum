@@ -120,7 +120,7 @@ export default function StorageCacheSettingsPanel({api}: {api: SelfHostedApi}) {
     setReserve(field === 'bytes' ? {bytes: raw, percent: String(percent)} : {bytes: String(bytes), percent: raw});
   };
   const input = (field: (typeof byteFields)[number]) => <Form.Field key={field.key} error={invalid[field.key]}>
-    <label>{t(field.label)}</label>
+    <label htmlFor={`cache-${field.key}`}>{t(field.label)}</label>
     <Form.Input id={`cache-${field.key}`} type="number" required min={0} step="any"
       value={displayed[field.key]} onChange={(_, data) => updateSavedBytes(field.key, String(data.value))}
       action={<Select compact button options={unitOptions} value={units[field.key]}

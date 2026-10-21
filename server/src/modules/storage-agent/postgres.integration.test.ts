@@ -810,6 +810,7 @@ integration('PostgreSQL stage 7 storage Agent identity', () => {
     const pending = await service.commitUpload(claimed.sessionToken, upload.id, randomUUID(),
       context('delegate-file-commit'));
     expect(pending).toMatchObject({kind: 'PENDING_HOST_COMMIT'});
+    expect((await service.bootstrap(capability,claimed.sessionToken)).savedUploadIds).not.toContain(upload.id);
     if (!('kind' in pending) || pending.kind !== 'PENDING_HOST_COMMIT') throw new Error('Expected pending host commit.');
     const task = await tasks.claim(chairStorageResult.paired.credential, pending.taskId, {
       leaseGeneration: pending.leaseGeneration, fileRevision: 1, requestId: randomUUID()});
@@ -831,6 +832,7 @@ integration('PostgreSQL stage 7 storage Agent identity', () => {
     await service.approve(value.chair,firstFile!.id,{baseRevision:firstFile!.revision,logicalName:'工作文件 1.1',fileType:'WORKING_PAPER'},context('approve'));
     expect((await service.bootstrap(capability,claimed.sessionToken)).submissions).toEqual([expect.objectContaining({status:'PUBLISHED',logicalName:'工作文件 1.1'})]);
     expect((await service.bootstrap(capability,claimed.sessionToken)).maxUploadSizeBytes).toBe(staging.maxFileBytes);
+    expect((await service.bootstrap(capability,claimed.sessionToken)).savedUploadIds).toContain(upload.id);
     const submit = async () => {
       const up = await service.createUpload(claimed.sessionToken,{logicalName:'original.txt',originalName:'original.txt',
         mediaType:'text/plain',expectedSizeBytes:content.length,sha256,fileType:'WORKING_PAPER'},randomUUID(),context('upload'));
@@ -1183,6 +1185,12 @@ integration('PostgreSQL stage 7 storage Agent identity', () => {
       fileRevision: claimed.fileRevision, claimToken: claimed.claimToken, requestId: randomUUID()},
     context('refill-complete'));
     await expect(refill.readiness(file.blob_id)).resolves.toEqual({status: 'READY'});
+    const capacity=vi.spyOn(cache,'assertRefillCapacity').mockRejectedValue(new Error('Unexpected capacity probe'));
+    await expect(refill.prepare(request)).resolves.toEqual({status:'READY'});expect(capacity).not.toHaveBeenCalled();
+    await pool!.query("UPDATE storage_cache_entries SET state='FAILED',failure_code='PROVIDER_READ_FAILED',storage_key=NULL,cached_at=NULL WHERE blob_id=$1",[file.blob_id]);
+    await expect(refill.readiness(file.blob_id)).resolves.toEqual({status:'UNAVAILABLE',code:'DOWNLOAD_PREPARATION_FAILED'});
+    await expect(refill.prepare(request)).rejects.toThrow('Unexpected capacity probe');capacity.mockRestore();
+
     await expect(staging.verify(cacheStorageKey(file.blob_id), source.content.length, source.sha256)).resolves.toBeDefined();
   });
 

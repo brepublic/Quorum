@@ -1,3 +1,4 @@
+import {downloadPreparedFile} from '../../services/file-download';
 import {useVolumePolicy, VolumePolicyNotice} from './VolumePolicyNotice';
 import {StorageErrorMessage} from '../../components/StorageErrorMessage';
 import {ViewportFormSelect} from '../../components/ViewportDropdown';
@@ -244,14 +245,9 @@ function DelegateFileReviewPanel({snapshot, api, files, refresh}: {
   const download = async (id: string) => {
     setDownloading(id); setError(undefined);
     try {
-      let state = await api.prepareFileDownload(id);
-      while (state.status === 'PREPARING') {
-        await new Promise(resolve => window.setTimeout(resolve, (state.retryAfterSeconds ?? 2) * 1000));
-        state = await api.fileDownloadReadiness(id);
-      }
-      if (state.status !== 'READY') throw new SelfHostedApiError(503, 'SERVICE_NOT_READY', 'File unavailable');
-      window.location.assign(api.fileDownloadUrl(id));
-    } catch (caught) {setError(caught);} finally {setDownloading(undefined);}
+      await downloadPreparedFile(() => api.prepareFileDownload(id),
+        () => api.fileDownloadReadiness(id), api.fileDownloadUrl(id));
+    } catch (caught) {if (!(caught instanceof DOMException && caught.name==='AbortError')) setError(caught);} finally {setDownloading(undefined);}
   };
   const readOnly = snapshot.committee.status !== 'ACTIVE';
   const pendingFiles = files

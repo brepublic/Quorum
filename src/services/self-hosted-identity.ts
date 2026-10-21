@@ -1,3 +1,4 @@
+import {isTemporaryFailure, requestWithPolicy} from './request-policy';
 import type {ApiErrorBody} from '@quorum/contracts';
 export type SelfHostedUserStatus = 'ACTIVE' | 'DISABLED' | 'ANONYMIZED';
 
@@ -50,7 +51,7 @@ export interface SelfHostedIdentityClient {
   listUsers(): Promise<SelfHostedUser[]>;
   getDefaultCommitteeBehavior(): Promise<DefaultCommitteeBehavior>;
   updateDefaultCommitteeBehavior(input: DefaultCommitteeBehavior): Promise<DefaultCommitteeBehavior>;
-  createUser(email: string, displayName: string): Promise<{user: SelfHostedUser; temporaryPassword: string}>;
+  createUser(email: string, displayName: string, temporaryPassword?: string): Promise<{user: SelfHostedUser; temporaryPassword: string}>;
   resetPassword(userId: string): Promise<{user: SelfHostedUser; temporaryPassword: string}>;
   disableUser(userId: string): Promise<void>;
   revokeSessions(userId: string): Promise<void>;
@@ -73,11 +74,12 @@ async function request<T>(path: string, options: {
     if (csrf) headers['x-csrf-token'] = csrf;
   }
   if (options.idempotencyKey) headers['idempotency-key'] = options.idempotencyKey;
+  return requestWithPolicy(async signal => {
   let response: Response;
   try {
     response = await fetch(path, {
       method: options.method ?? 'GET',
-      credentials: 'same-origin',
+      credentials: 'same-origin', signal,
       headers,
       ...(options.body ? {body: JSON.stringify(options.body)} : {})
     });
@@ -102,6 +104,21 @@ async function request<T>(path: string, options: {
     throw new IdentityApiError(response.status, 'INVALID_RESPONSE', 'The server returned an invalid response. Try again later.');
   }
   return payload.data;
+  }, {read: !options.method, repeatable: Boolean(options.idempotencyKey)});
+}
+
+const LOGOUT_KEY = 'quorum-local-logout';
+let sessionId: string | undefined;
+export function isLocallyLoggedOut() {return localStorage.getItem(LOGOUT_KEY) !== null;}
+export function recordLocalLogout() {
+  localStorage.setItem(LOGOUT_KEY, sessionId ?? localStorage.getItem(LOGOUT_KEY) ?? 'pending');
+  document.cookie='__Host-quorum_local_logout=1; Path=/; Secure; SameSite=Lax; Max-Age=604800';
+}
+function acceptSession(result: {user: SelfHostedUser; sessionId?: string}) {
+  sessionId = result.sessionId;
+  localStorage.removeItem(LOGOUT_KEY);
+  document.cookie='__Host-quorum_local_logout=; Path=/; Secure; SameSite=Lax; Max-Age=0';
+  return result.user;
 }
 
 export const selfHostedIdentityClient: SelfHostedIdentityClient = {
@@ -109,26 +126,39 @@ export const selfHostedIdentityClient: SelfHostedIdentityClient = {
     return (await request<{initialized: boolean}>('/api/v1/bootstrap/status')).initialized;
   },
   async bootstrap(input) {
-    return (await request<{user: SelfHostedUser}>('/api/v1/bootstrap/admin', {method: 'POST', body: input})).user;
+    return acceptSession(await request('/api/v1/bootstrap/admin', {method: 'POST', body: input}));
   },
   async me() {
-    return (await request<{user: SelfHostedUser}>('/api/v1/auth/me')).user;
+    if (isLocallyLoggedOut()) throw new IdentityApiError(401, 'AUTHENTICATION_REQUIRED', 'Please log in again.');
+    const result = await request<{user: SelfHostedUser; sessionId?: string}>('/api/v1/auth/me');
+    sessionId = result.sessionId;
+    return result.user;
   },
   async login(email, password) {
-    return (await request<{user: SelfHostedUser}>('/api/v1/auth/login', {method: 'POST', body: {email, password}})).user;
+    try {return acceptSession(await request('/api/v1/auth/login', {method: 'POST', body: {email, password}}));}
+    catch (error) {
+      if (isTemporaryFailure(error)) {
+        try {return acceptSession(await request('/api/v1/auth/me'));} catch { /* Keep the original login error. */ }
+      }
+      throw error;
+    }
   },
   async logout() {
-    await request('/api/v1/auth/logout', {method: 'POST', csrf: true});
+    recordLocalLogout();
+    try {await request('/api/v1/auth/logout', {method: 'POST', csrf: true,
+      body: {localLogout: true, sessionId: sessionId ?? localStorage.getItem(LOGOUT_KEY)},
+      idempotencyKey: crypto.randomUUID()});}
+    catch (error) {if (!(error instanceof IdentityApiError && error.status === 401)) throw error;}
   },
   async changePassword(newPassword, currentPassword) {
-    return (await request<{user: SelfHostedUser}>('/api/v1/auth/change-password', {
+    return acceptSession(await request('/api/v1/auth/change-password', {
       method: 'POST', csrf: true, body: {...(currentPassword ? {currentPassword} : {}), newPassword}
-    })).user;
+    }));
   },
   async elevate(password) {
-    return (await request<{user: SelfHostedUser}>('/api/v1/auth/elevate', {
+    return acceptSession(await request('/api/v1/auth/elevate', {
       method: 'POST', csrf: true, body: {password}
-    })).user;
+    }));
   },
   async listUsers() {
     return (await request<{users: SelfHostedUser[]}>('/api/v1/admin/users')).users;
@@ -142,8 +172,8 @@ export const selfHostedIdentityClient: SelfHostedIdentityClient = {
       method: 'PUT', csrf: true, body: {...settings, baseRevision: revision}
     });
   },
-  createUser(email, displayName) {
-    return request('/api/v1/admin/users', {method: 'POST', csrf: true, body: {email, displayName}});
+  createUser(email, displayName, temporaryPassword) {
+    return request('/api/v1/admin/users', {method: 'POST', csrf: true, body: {email, displayName, ...(temporaryPassword ? {temporaryPassword} : {})}});
   },
   resetPassword(userId) {
     return request(`/api/v1/admin/users/${userId}/reset-password`, {method: 'POST', csrf: true});

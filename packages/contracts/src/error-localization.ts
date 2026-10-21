@@ -36,6 +36,8 @@ export const ERROR_TEXT = {
   INHERITED_SPEECH_CANNOT_YIELD: {en: "Inherited speaking time cannot be yielded again.", 'zh-CN': "继承的发言时间不能再次让渡。"},
   PAUSE_BEFORE_YIELD: {en: "Pause the speech with more than one second remaining before yielding.", 'zh-CN': "请在剩余时间超过一秒时暂停发言，再进行让渡。"},
   STORAGE_CACHE_CAPACITY_UNAVAILABLE: {en: "Download cache space is unavailable. Ask an administrator to check cache capacity and free disk space.", 'zh-CN': "下载缓存空间不可用，请联系管理员检查缓存容量和磁盘剩余空间。"},
+  UPLOAD_NOT_SAVED: {en: 'The file could not be saved. Please upload it again.', 'zh-CN': '文件未能保存，请重新上传。'},
+  DOWNLOAD_PREPARATION_FAILED: {en: "The file could not be prepared. Try downloading it again.", 'zh-CN': "文件准备失败，请重新下载。"},
   STORAGE_AGENT_OFFLINE: {en: "The Chair computer is offline. Bring it online before downloading this file.", 'zh-CN': "主席电脑已离线，请让该电脑上线后再下载此文件。"},
   STORAGE_AGENT_UPGRADE_REQUIRED: {en: "Update the Chair Agent to support file downloads through the server.", 'zh-CN': "请升级主席 Agent，以支持通过服务器下载文件。"},
   STORAGE_AGENT_SOURCE_MISSING: {en: "The source file is missing or failed verification on the Chair computer. Check the file and sync again.", 'zh-CN': "主席电脑上的源文件缺失或校验失败，请检查文件并重新同步。"},

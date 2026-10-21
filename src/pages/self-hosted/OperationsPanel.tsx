@@ -24,6 +24,8 @@ export default function OperationsPanel({api}: {api: SelfHostedApi}) {
   const [searchFailure, setSearchFailure] = React.useState<unknown>();
   const [rebuildingSearch, setRebuildingSearch] = React.useState(false);
   const [searchRebuilt, setSearchRebuilt] = React.useState(false);
+  const [publishedPage, setPublishedPage] = React.useState(1);
+  const [pendingPage, setPendingPage] = React.useState(1);
   const [reload, setReload] = React.useState(0);
   const [loading, setLoading] = React.useState(true);
   React.useEffect(() => {
@@ -33,15 +35,19 @@ export default function OperationsPanel({api}: {api: SelfHostedApi}) {
       if (active) setError(caught);
     });
     const loadCache = typeof api.storageCacheStatus === 'function' ? Promise.all([
-      api.storageCacheStatus(), api.storageCacheFiles('published'), api.storageCacheFiles('pending')
+      api.storageCacheStatus(), api.storageCacheFiles('published', publishedPage), api.storageCacheFiles('pending', pendingPage)
     ]).then(([nextCache, nextPublished, nextPending]) => {
-      if (active) {setCache(nextCache); setPublished(nextPublished); setPending(nextPending);}
+      if (active) {setCache(nextCache); setPublished(nextPublished); setPending(nextPending);
+        const publishedLast=Math.max(1,Math.ceil(nextPublished.total/nextPublished.pageSize));
+        const pendingLast=Math.max(1,Math.ceil(nextPending.total/nextPending.pageSize));
+        if(publishedPage>publishedLast)setPublishedPage(publishedLast);if(pendingPage>pendingLast)setPendingPage(pendingLast);
+      }
     }, caught => {if (active) setCacheError(caught);}) : undefined;
     const loadSearch = typeof api.searchIndexStatus === 'function' ? api.searchIndexStatus()
-      .then(value => {if (active) setSearchIndex(value);}, caught => {if (active) setSearchFailure(caught);}) : undefined;
+      .then(value => {if (active) {setSearchIndex(value); setSearchFailure(undefined);}}, caught => {if (active) setSearchFailure(caught);}) : undefined;
     void Promise.all([loadStatus, loadCache, loadSearch]).finally(() => {if (active) setLoading(false);});
     return () => {active = false;};
-  }, [api, reload]);
+  }, [api, reload, publishedPage, pendingPage]);
   const percent = Math.round((status?.storage.usageRatio ?? 0) * 100);
   const fileTable = (title: string, page: typeof published, lru: boolean) => <Segment as="details" className="storage-cache-inventory">
     <summary>{title}<Label size="small">{page?.total ?? 0}</Label></summary>
@@ -55,6 +61,10 @@ export default function OperationsPanel({api}: {api: SelfHostedApi}) {
         <Table.Cell>{t(cacheStateText[file.state] ?? file.state)}</Table.Cell><Table.Cell>{new Date((lru ? file.lastAccessedAt : file.cachedAt)
           ?? file.cachedAt ?? 0).toLocaleString(getLanguage())}</Table.Cell></Table.Row>)}</Table.Body>
     </Table></div>}
+    {page && page.total > page.pageSize && <Button.Group size="small">
+      <Button disabled={page.page<=1} onClick={()=>lru?setPublishedPage(value=>value-1):setPendingPage(value=>value-1)}>{t('Previous')}</Button>
+      <Button disabled={page.page*page.pageSize>=page.total} onClick={()=>lru?setPublishedPage(value=>value+1):setPendingPage(value=>value+1)}>{t('Next')}</Button>
+    </Button.Group>}
   </Segment>;
   return <div className="self-hosted-operations">
     <div className="system-settings-section-heading">
@@ -73,17 +83,17 @@ export default function OperationsPanel({api}: {api: SelfHostedApi}) {
         <Segment><Statistic size="small" label={t("Active committees")} value={status.committees.active} /></Segment>
         <Segment><Statistic size="small" label={t("Database version")} value={status.database.schemaCompatibility} /></Segment>
       </div>
-      {searchIndex && <Segment>
+      {typeof api.searchIndexStatus === 'function' && <Segment loading={!searchIndex && !searchFailure}>
         <Header as="h2">{t('Search index')}</Header>
-        <p>{t('Indexed options')}: {searchIndex.count}</p>
-        <Button primary loading={rebuildingSearch} disabled={rebuildingSearch} onClick={() => {
+        <p>{t('Indexed options')}: {searchIndex?.count ?? '—'}</p>
+        <Button primary loading={rebuildingSearch} disabled={rebuildingSearch || !searchIndex} onClick={() => {
           setRebuildingSearch(true); setSearchFailure(undefined); setSearchRebuilt(false);
           void api.rebuildSearchIndex().then(() => api.searchIndexStatus()).then(next => {
             setSearchIndex(next); setSearchRebuilt(true);
           }, caught => setSearchFailure(caught)).finally(() => setRebuildingSearch(false));
         }}>{t('Rebuild search index')}</Button>
         {searchRebuilt && <Message positive content={t('Search index rebuilt')} />}
-        {Boolean(searchFailure) && <Message error content={apiErrorText(searchFailure)} />}
+        {Boolean(searchFailure) && <Message error role="alert">{apiErrorText(searchFailure)} <Button onClick={()=>setReload(value=>value+1)}>{t('Retry')}</Button></Message>}
       </Segment>}
       <div className="operations-task-cards">
         <Segment>

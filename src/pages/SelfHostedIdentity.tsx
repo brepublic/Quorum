@@ -8,6 +8,7 @@ import Loading from '../components/Loading';
 import {LanguageMenuItem, t} from '../i18n';
 import {
   IdentityApiError,
+  recordLocalLogout, isLocallyLoggedOut,
   selfHostedIdentityClient,
   type SelfHostedIdentityClient,
   type SelfHostedUser
@@ -32,7 +33,7 @@ function errorTitle(error: unknown): string {
 }
 
 function message(error: unknown): string {
-  if (!(error instanceof IdentityApiError)) return t('Request failed. Try again later.');
+  if (!(error instanceof IdentityApiError)) return apiErrorText(error);
   if (error.status === 0) return t('Unable to connect. Check your network and try again.');
   if (error.status === 502 || error.status === 503) return t('The service is unavailable. Try again later or contact the administrator.');
   if (error.status === 504 || error.status === 408) return t('The server took too long to respond. Try again later.');
@@ -190,18 +191,23 @@ function AccountManager({client, currentUser, onLogout}: {
   const [users, setUsers] = React.useState<SelfHostedUser[]>([]);
   const [email, setEmail] = React.useState('');
   const [displayName, setDisplayName] = React.useState('');
+  const [password, setPassword] = React.useState(() => crypto.randomUUID().replace(/-/g, ''));
+  const [loaded, setLoaded] = React.useState(false);
+  const [loading, setLoading] = React.useState(false);
   const [temporary, setTemporary] = React.useState<{email: string; password: string}>();
   const [failure, setError] = React.useState<unknown>();
   const error = failure ? message(failure) : undefined;
   const [working, setWorking] = React.useState(false);
 
   const refresh = React.useCallback(async () => {
+    setLoading(true);
     try {
-      setUsers(await client.listUsers());
+      setUsers(await client.listUsers()); setLoaded(true); setError(undefined);
     } catch (caught) {
-      setError(caught);
-    }
-  }, [client]);
+      if (caught instanceof IdentityApiError && caught.status === 401) onLogout();
+      else setError(caught);
+    } finally {setLoading(false);}
+  }, [client, onLogout]);
   React.useEffect(() => void refresh(), [refresh]);
 
   const run = async (operation: () => Promise<void>) => {
@@ -210,15 +216,18 @@ function AccountManager({client, currentUser, onLogout}: {
     try {
       await operation();
     } catch (caught) {
-      setError(caught);
+      if (caught instanceof IdentityApiError && caught.status === 401) onLogout();
+      else setError(caught);
     } finally {
       setWorking(false);
     }
   };
 
   const create = () => run(async () => {
-    const result = await client.createUser(email.trim(), displayName.trim());
+    const result = await client.createUser(email.trim(), displayName.trim(), password);
     setTemporary({email: result.user.email, password: result.temporaryPassword});
+    setUsers(current => [...current.filter(item => item.id !== result.user.id), result.user]);
+    setPassword(crypto.randomUUID().replace(/-/g, ''));
     setEmail('');
     setDisplayName('');
     await refresh();
@@ -259,11 +268,14 @@ function AccountManager({client, currentUser, onLogout}: {
           <Form.Input label={t('Display name')} required value={displayName}
             onChange={event => setDisplayName(event.currentTarget.value)} />
         </Form.Group>
+        <Form.Input label={t('Temporary password')} readOnly value={password} />
         <Button primary disabled={!email || !displayName || working}>{t('Create account')}</Button>
       </Form>
     </Segment>
-    <Segment loading={working}>
+    <Segment loading={loading}>
       <Header as="h2">{t('Accounts')}</Header>
+      {Boolean(failure) && <Button basic onClick={() => void refresh()}>{t('Retry')}</Button>}
+      {loaded && users.length === 0 && <Message content={t('No accounts')} />}
       <Table celled stackable className="account-admin-table">
         <Table.Header><Table.Row>
           <Table.HeaderCell>{t('Email')}</Table.HeaderCell>
@@ -291,6 +303,7 @@ function AccountManager({client, currentUser, onLogout}: {
               onClick={() => run(async () => {
                 if (window.confirm(t('Disable account {email}?', {email: account.email}))) {
                   await client.disableUser(account.id);
+                  setUsers(current => current.map(item => item.id === account.id ? {...item, status: 'DISABLED'} : item));
                   await refresh();
                 }
               })}>{t('Disable account')}</Button>
@@ -317,7 +330,7 @@ export default function SelfHostedIdentity({client = selfHostedIdentityClient}: 
   const loginState = location.state as {reauthenticate?: boolean; returnTo?: string} | undefined;
   const reauthenticate = location.pathname === '/login' && loginState?.reauthenticate === true;
   const returnTo = React.useRef<string>();
-  if (reauthenticate && loginState?.returnTo?.startsWith('/committees/') && !loginState.returnTo.startsWith('//')) {
+  if (location.pathname === '/login' && loginState?.returnTo?.startsWith('/') && !loginState.returnTo.startsWith('//')) {
     returnTo.current = loginState.returnTo;
   }
 
@@ -337,6 +350,7 @@ export default function SelfHostedIdentity({client = selfHostedIdentityClient}: 
           if (active) setScreen('bootstrap');
           return;
         }
+        if (isLocallyLoggedOut()) {if (active) setScreen('login'); return;}
         try {
           const identity = await client.me();
           if (active) authenticated(identity);
@@ -351,15 +365,20 @@ export default function SelfHostedIdentity({client = selfHostedIdentityClient}: 
     return () => { active = false; };
   }, [authenticated, client, attempt]);
 
-  const logout = async () => {
-    try {
-      await client.logout();
-    } finally {
-      setUser(undefined);
-      setScreen('login');
-      history.replace('/');
-    }
-  };
+  const logout = React.useCallback(async () => {
+    recordLocalLogout(); setUser(undefined); setScreen('login'); setError(undefined);
+    history.replace('/login');
+    void client.logout().catch(() => undefined);
+  }, [client, history]);
+  React.useEffect(() => {
+    const sync = (event: StorageEvent) => {
+      if (event.key === 'quorum-local-logout' && event.newValue !== null) {
+        setUser(undefined); setScreen('login'); history.replace('/login');
+      }
+    };
+    window.addEventListener('storage', sync);
+    return () => window.removeEventListener('storage', sync);
+  }, [history]);
 
   if (location.pathname === '/delegate-files') return <DelegateFilePortal />;
 
@@ -378,7 +397,7 @@ export default function SelfHostedIdentity({client = selfHostedIdentityClient}: 
   if (screen === 'bootstrap') return <BootstrapForm client={client} onAuthenticated={authenticated} />;
   if (screen === 'login' && location.pathname === '/committees') return <SelfHostedPublicCommittees />;
   if (screen === 'login' && /^\/committees\/[^/]+/.test(location.pathname)) return <>
-    <Menu><Menu.Item header>Quorum</Menu.Item><Menu.Menu position="right"><Menu.Item as={Link} to="/login">{t('Login')}</Menu.Item></Menu.Menu></Menu>
+    <Menu><Menu.Item header>Quorum</Menu.Item><Menu.Menu position="right"><Menu.Item as={Link} to={{pathname: '/login', state: {returnTo: location.pathname + location.search}}}>{t('Login')}</Menu.Item></Menu.Menu></Menu>
     <Route path="/committees/:id"><SelfHostedCommitteeWorkspace /></Route>
   </>;
   if (screen === 'login') return <Switch>

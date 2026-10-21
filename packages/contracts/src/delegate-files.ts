@@ -57,6 +57,7 @@ export interface DelegatePortalBootstrap {
   categoryOpenedAt: Partial<Record<DelegateFileCategory, string>>;
   maxUploadSizeBytes: number;
   submissions?: DelegateReviewFile[];
+  savedUploadIds?: string[];
   pendingUploads?: Array<{id: string; logicalName: string; status: 'SAVING' | 'FAILED'}>;
   allowedExtensions?: Record<DelegateFileExtensionType, string[]>;
 }

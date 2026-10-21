@@ -1,3 +1,4 @@
+import {useSaveBeforeLeave} from '../components/useSaveBeforeLeave';
 import {ViewportFormDropdown, ViewportFormSelect} from '../components/ViewportDropdown';
 import {useApiFieldErrors} from '../components/useApiFieldErrors';
 import {useLanguage} from '../i18n';
@@ -279,47 +280,81 @@ function NotesPanel({snapshot, run, api}: {snapshot: CommitteeWorkspaceSnapshot;
   const [pending, setPending] = React.useState<'save' | 'delete'>();
   const [dirty, setDirty] = React.useState(false);
   const editVersion = React.useRef(0);
+  const [saveFailure, setSaveFailure] = React.useState<unknown>();
+  const [conflict, setConflict] = React.useState(false);
+  const baseline = React.useRef(selected?.revision);
+  const inFlight = React.useRef<Promise<boolean>>();
+  const createAttempt=React.useRef<{key:string;title:string;content:string;version:number}>();
   const canWrite = snapshot.viewer.audience !== 'PUBLIC'
     && snapshot.committee.status !== 'ARCHIVED' && snapshot.committee.status !== 'DELETING';
   React.useEffect(() => {
     if (dirty) return;
     const next = snapshot.notes.find(note => note.id === selectedId);
+    baseline.current = next?.revision;
     setTitle(next?.title ?? ''); setContent(next?.content ?? '');
   }, [dirty, selectedId, selected?.revision, snapshot.notes]);
   const saveDraft = React.useCallback(async (selectCreated: boolean): Promise<boolean> => {
-    if (!canWrite || !dirty || !content.trim()) return true;
-    if (pending) return false;
-    const version = editVersion.current; let saved = false; let createdId: string | undefined;
-    setPending('save');
-    await run(async () => {
-      if (selected) await api.updateNote(selected.id, selected.revision, {title, content});
-      else createdId = (await api.createNote(snapshot.committee.id, {title, content})).id;
-      saved = true;
-    });
-    if (saved && editVersion.current === version) {
-      setDirty(false);
-      if (selectCreated && createdId) setSelectedId(createdId);
-    }
-    setPending(undefined);
-    return saved;
-  }, [api, canWrite, content, dirty, pending, run, selected, snapshot.committee.id, title]);
+    if (inFlight.current) return inFlight.current;
+    if (!canWrite || !dirty) return true;
+    if (conflict) return false;
+    if(!selected && !createAttempt.current && !title.trim() && !content.trim()) {setDirty(false);return true;}
+    let version = editVersion.current; let saved = false;
+    if(!selected && !createAttempt.current) createAttempt.current={key:crypto.randomUUID(),title,content,version};
+    const task = (async () => {
+      setPending('save'); setSaveFailure(undefined);
+      await run(async () => {
+        try {
+          const next = selected ? await api.updateNote(selected.id, baseline.current ?? selected.revision, {title, content})
+            : await api.createNote(snapshot.committee.id, {title:createAttempt.current!.title,content:createAttempt.current!.content},createAttempt.current!.key);
+          if(!selected) {version=createAttempt.current!.version;createAttempt.current=undefined;}
+          baseline.current = next.revision;
+          // A created ID belongs to this note even if the user typed while saving.
+          if (!selected) setSelectedId(next.id);
+          saved = true;
+        } catch (error) {
+          setSaveFailure(error);
+          const status=(error as {status?:number}).status;
+          if(status && status>=400 && status<500 && ![408,429].includes(status)) createAttempt.current=undefined;
+          if ((error as {code?: string}).code === 'REVISION_CONFLICT') setConflict(true);
+          // This editor presents the error beside the preserved draft; run still refreshes the snapshot.
+        }
+      });
+      if (saved && editVersion.current === version) setDirty(false);
+      setPending(undefined); return saved && editVersion.current === version;
+    })();
+    inFlight.current = task;
+    try {return await task;} finally {inFlight.current = undefined;}
+  }, [api, canWrite, content, dirty, run, selected, snapshot.committee.id, title, conflict]);
+  const leaveConfirmation=useSaveBeforeLeave(dirty, () => saveDraft(true));
   React.useEffect(() => {
-    if (writesBlocked || !canWrite || !dirty || !content.trim() || pending) return;
+    if (writesBlocked || !canWrite || !dirty || pending || saveFailure || conflict) return;
     const timeout = window.setTimeout(() => {void saveDraft(true);}, 600);
     return () => window.clearTimeout(timeout);
-  }, [writesBlocked, canWrite, content, dirty, pending, saveDraft]);
+  }, [writesBlocked, canWrite, content, dirty, pending, saveDraft, saveFailure, conflict]);
   const selectNote = async (id: string | undefined) => {
     if (id === selectedId || pending) return;
     if (!await saveDraft(false)) return;
-    setDirty(false); setSelectedId(id);
+    setDirty(false); setSaveFailure(undefined); setConflict(false); createAttempt.current=undefined; setSelectedId(id);
   };
   const remove = async () => {
     if (!selected) return;
     setPending('delete');
-    try {await run(() => api.deleteNote(selected.id, selected.revision)); setSelectedId(undefined);}
-    finally {setPending(undefined);}
+    try {let deleted=false;await run(async()=>{await api.deleteNote(selected.id,selected.revision);deleted=true;});
+      if(deleted){setSelectedId(undefined);setDirty(false);setTitle('');setContent('');createAttempt.current=undefined;}
+    } finally {setPending(undefined);}
   };
-  return <Container className="notes-editor">
+  return <Container className="notes-editor">{leaveConfirmation}
+    {conflict && <Message warning role="alert"><p>{t('This note changed in another window. Your draft is preserved.')}</p>
+      <details className="note-conflict-comparison"><summary>{t('Compare changes')}</summary><Grid columns={2} stackable className="note-conflict-columns">
+        <Grid.Column><Header as="h4">{t('Your draft')}</Header><pre style={{whiteSpace:'pre-wrap'}}>{content}</pre></Grid.Column>
+        <Grid.Column><Header as="h4">{t('Latest saved version')}</Header><pre style={{whiteSpace:'pre-wrap'}}>{selected?.content}</pre></Grid.Column>
+      </Grid></details>
+      <div className="note-conflict-actions"><Button type="button" primary icon="save" content={t('Save my edited version')}
+        onClick={() => {baseline.current=selected?.revision;setConflict(false);setSaveFailure(undefined);}} />
+      <Button type="button" basic icon="cloud download" content={t('Use latest saved version')}
+        onClick={() => {setTitle(selected?.title ?? '');setContent(selected?.content ?? '');baseline.current=selected?.revision;setDirty(false);setConflict(false);setSaveFailure(undefined);}} /></div>
+    </Message>}
+    {!conflict && !!saveFailure && <Message warning role="alert">{apiErrorText(saveFailure)} <Button type="button" onClick={() => {setSaveFailure(undefined);void saveDraft(true);}}>{t('Retry')}</Button></Message>}
     <Menu vertical fluid aria-label={t('Note list')}>
       {snapshot.notes.map(note => <Menu.Item key={note.id} active={note.id === selectedId}
         onClick={() => void selectNote(note.id)}>
@@ -331,7 +366,7 @@ function NotesPanel({snapshot, run, api}: {snapshot: CommitteeWorkspaceSnapshot;
         onChange={event => {editVersion.current += 1; setTitle(event.currentTarget.value); setDirty(true);}} />
       <Form.TextArea id="note-content" rows={12} label={t('Content')} value={content} readOnly={!canWrite}
         onChange={(_, data) => {editVersion.current += 1; setContent(String(data.value)); setDirty(true);}} />
-      {canWrite && selected && <Button type="button" negative loading={pending === 'delete'} onClick={() => void remove()}>{t('Delete')}</Button>}
+      {canWrite && selected && <Button type="button" negative disabled={Boolean(pending)} loading={pending === 'delete'} onClick={() => void remove()}>{t('Delete')}</Button>}
     </Form>
   </Container>;
 }
@@ -1045,7 +1080,7 @@ function PointsPanel({snapshot, run, api, canChair}: {snapshot: CommitteeWorkspa
   const invalidProposer = canChair && !presentSeatIds.has(seatId);
   const create = async () => {if (!session || invalidProposer) return; await run(() => api.createPoint(snapshot.committee.id,
     {meetingSessionId: session.id, pointTypeId: type, content: content.trim(),
-      ...(canChair && seatId ? {onBehalfOfSeatId: seatId} : {})})); setContent('');};
+      ...(canChair && seatId ? {onBehalfOfSeatId: seatId} : {})}).then(() => {setContent('');}));};
   const resolve = (point: CommitteePoint, status: Exclude<PointStatus, 'PENDING' | 'WITHDRAWN'>) =>
     void run(() => api.resolvePoint(point.id, {baseRevision: point.revision, status}));
   const label = (point: CommitteePoint) => point.status === 'PENDING' ? t('PENDING')

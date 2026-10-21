@@ -1,3 +1,4 @@
+import {downloadPreparedFile} from '../../services/file-download';
 import {ViewportFormSelect} from '../../components/ViewportDropdown';
 import {apiErrorText} from '../../i18n';
 import {StorageErrorMessage} from '../../components/StorageErrorMessage';
@@ -59,7 +60,7 @@ function PublishedCard({file, committeeLanguage, preparing, onDownload}: {
     href={`/api/v1/delegate-files/files/${encodeURIComponent(file.id)}/download`}
     loading={preparing} disabled={preparing}
     onClick={(event: React.MouseEvent) => {event.preventDefault(); onDownload(file.id);}}>
-    {preparing ? t("Preparing the file from the chair computer") : <>{t("Download")} <Icon name="arrow down" /></>}
+    {preparing ? t("Downloading…") : <>{t("Download")} <Icon name="arrow down" /></>}
   </Button></Card.Content></Card>;
 }
 
@@ -71,6 +72,7 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
   const [seatId, setSeatId] = React.useState(''); const [confirming, setConfirming] = React.useState(false);
   const [failure, setError] = React.useState<unknown>();
   const error = failure ? portalError(failure) : undefined; const [working, setWorking] = React.useState(false);
+  const streamReady=React.useRef(false); const activeUpload=React.useRef<string>();
   const [connection, setConnection] = React.useState<'LIVE' | 'OFFLINE'>('OFFLINE');
   const [notices, setNotices] = React.useState<Array<DelegateFileAvailableEvent & {expiresAt: number}>>([]);
   const [file, setFile] = React.useState<File>(); const [fileType, setFileType] = React.useState<StandardDelegateFileType | 'OTHER'>('WORKING_PAPER');
@@ -82,6 +84,10 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
   const [localOpenedAt, setLocalOpenedAt] = React.useState<Partial<Record<DelegateFileCategory, string>>>({});
   const [progress, setProgress] = React.useState<number>(); const [submitted, setSubmitted] = React.useState(false);
   const [awaitingSave, setAwaitingSave] = React.useState(false);
+  const submittedUpload = React.useRef<string>();
+  const refreshFailures = React.useRef(0);
+  const refreshing = React.useRef(false);
+  const [listFailure, setListFailure] = React.useState<unknown>();
   const [preparingDownload, setPreparingDownload] = React.useState<string>();
   const [navigationLevel, setNavigationLevel] = React.useState(0);
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
@@ -98,7 +104,15 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
   React.useEffect(() => { void load(); }, [load]);
 
   const refreshFiles = React.useCallback(async () => {
+    if (refreshing.current || refreshFailures.current >= 3) return;
+    refreshing.current=true;
     try { const next = await api.bootstrapDelegatePortal(capability);
+      refreshFailures.current=0; setListFailure(undefined); if(streamReady.current)setConnection('LIVE');
+      if (submittedUpload.current && !next.pendingUploads?.some(item => item.id === submittedUpload.current)) {
+        setAwaitingSave(false);
+        if (!next.savedUploadIds?.includes(submittedUpload.current)) {setSubmitted(false);setError({code:'UPLOAD_NOT_SAVED'});}
+        submittedUpload.current=undefined;
+      }
       const known = knownPublications.current;
       if (known) {
         const newlyPublished = next.files.filter(file => {
@@ -125,13 +139,14 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
         }
         return {...next, categoryOpenedAt, eventSequence: current.eventSequence};
       }); }
-    catch { /* The stream state communicates loss of service. */ }
+    catch (error) {refreshFailures.current++; setListFailure(error); setConnection('OFFLINE');}
+    finally {refreshing.current=false;}
   }, [api, capability]);
 
   React.useEffect(() => {
     if (!portal?.claimedSeat) return;
     const stream = new EventSource(`/api/v1/delegate-files/events?after=${portal.eventSequence}`);
-    stream.onopen = () => setConnection('LIVE'); stream.onerror = () => setConnection('OFFLINE');
+    stream.onopen = () => {streamReady.current=true;if (!refreshFailures.current) setConnection('LIVE');}; stream.onerror = () => {streamReady.current=false;setConnection('OFFLINE');};
     const available = (event: MessageEvent<string>) => {
       const item = JSON.parse(event.data) as DelegateFileAvailableEvent;
       setNotices(current => [...current.filter(existing => existing.fileId !== item.fileId),
@@ -145,7 +160,7 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
     stream.addEventListener('file.rejected', available as EventListener);
     stream.addEventListener('portal.status', status as EventListener);
     const refresh = window.setInterval(() => void refreshFiles(), 15_000);
-    return () => {window.clearInterval(refresh); stream.close();};
+    return () => {window.clearInterval(refresh); streamReady.current=false;stream.close();};
   }, [portal?.claimedSeat?.id, portal?.eventSequence, refreshFiles]);
   React.useEffect(() => {
     const timers = notices.map(item => window.setTimeout(() => setNotices(current => current.filter(
@@ -175,22 +190,18 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
       const sha256 = await sha256File(file, {onProgress: (done, total) => setProgress(total ? done / total * 20 : 0)});
       const created = await api.createDelegateFileUpload({logicalName: file.name, originalName: file.name,
         mediaType: file.type || 'application/octet-stream', expectedSizeBytes: file.size, sha256, fileType: type});
+      activeUpload.current=created.id;
       await api.uploadDelegateFileContent(created.id, file, (done, total) => setProgress(20 + (total ? done / total * 75 : 0)));
-      setProgress(98); const result = await api.commitDelegateFileUpload(created.id); setAwaitingSave('kind' in result); setProgress(100); setSubmitted(true); setFile(undefined); await refreshFiles();
+      setProgress(98); const result = await api.commitDelegateFileUpload(created.id); setAwaitingSave('kind' in result); submittedUpload.current='kind' in result ? created.id : undefined; setProgress(100); setSubmitted(true); setFile(undefined); await refreshFiles();
     } catch (caught) { setProgress(undefined); setError(caught); }
     finally { setWorking(false); }
   };
   const download = async (id: string) => {
     setPreparingDownload(id); setNotices(current => current.filter(item => item.fileId !== id)); setError(undefined);
     try {
-      let readiness = await api.prepareDelegateFileDownload(id);
-      while (readiness.status === 'PREPARING') {
-        await new Promise(resolve => window.setTimeout(resolve, (readiness.retryAfterSeconds ?? 2) * 1000));
-        readiness = await api.delegateFileDownloadReadiness(id);
-      }
-      if (readiness.status !== 'READY') throw Object.assign(new Error(), {code: readiness.code ?? 'FILE_CONTENT_UNAVAILABLE'});
-      window.location.assign(api.delegateFileDownloadUrl(id));
-    } catch (caught) { setError(caught); }
+      await downloadPreparedFile(() => api.prepareDelegateFileDownload(id),
+        () => api.delegateFileDownloadReadiness(id), api.delegateFileDownloadUrl(id));
+    } catch (caught) { if (!(caught instanceof DOMException && caught.name === 'AbortError')) setError(caught); }
     finally { setPreparingDownload(undefined); }
   };
   const openCategory = (category: DelegateFileCategory | 'ALL') => {
@@ -251,7 +262,8 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
   if (!portal) return <Container className="delegate-file-portal">{error
     ? <StorageErrorMessage error={failure} text={error} /> : <Message content={t("Loading…")} />}</Container>;
   if (!portal.claimedSeat) return <Container className="delegate-file-claim-page">
-    {error && <StorageErrorMessage error={failure} text={error} />}
+    {Boolean(listFailure) && <Message warning content={<>{t('Files could not be refreshed.')} <Button basic onClick={() => {refreshFailures.current=0; void refreshFiles();}}>{t('Retry')}</Button></>} />}
+      {error && <StorageErrorMessage error={failure} text={error} />}
     <Card centered className="delegate-file-claim-card"><Card.Content><Card.Header>{t("Delegate file system")}</Card.Header>
       <Card.Meta className="delegate-file-claim-committee">{portal.committeeName}</Card.Meta>
       <Form><ViewportFormSelect fluid selection label={t("Select a delegation")} search={(options, query) => {
@@ -367,7 +379,7 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
         {submitted && !awaitingSave && <div className="delegate-file-upload-success">{t("✔ Submitted, awaiting review")}</div>}
         </Form>
       </Card.Content></Card>
-      {portal.pendingUploads?.map(item => <Message key={item.id} warning={item.status === 'FAILED'} info={item.status === 'SAVING'}
+      {portal.pendingUploads?.filter(item=>!working || item.id!==activeUpload.current).map(item => <Message key={item.id} warning={item.status === 'FAILED'} info={item.status === 'SAVING'}
         header={item.logicalName} content={item.status === 'FAILED' ? t('Save failed. Upload the file again.') : t('Saving files')} />)}
       <Divider className="delegate-file-review-divider" />
       <div className="delegate-file-card-list">{portal.submissions?.length ? portal.submissions.map(item =>

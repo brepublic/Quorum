@@ -38,7 +38,7 @@ export class StorageCacheOperationsService {
       (SELECT COALESCE(sum(size_bytes),0) FROM storage_cache_entries WHERE state='REVIEW_PINNED') AS pending,
       (SELECT COALESCE(sum(size_bytes),0) FROM storage_cache_entries WHERE state IN ('READY','EVICTING')) AS published,
       (SELECT count(*)::int FROM storage_cache_entries WHERE state='FETCHING') AS fetching,
-      (SELECT COALESCE(sum(expected_size_bytes),0) FROM file_uploads WHERE staging_deleted_at IS NULL) AS staging`)).rows[0];
+      (SELECT COALESCE(sum(received_size_bytes),0) FROM file_uploads WHERE staging_deleted_at IS NULL) AS staging`)).rows[0];
     const pending = Number(usage?.pending ?? 0); const published = Number(usage?.published ?? 0);
     const staging = Number(usage?.staging ?? 0);
     return {config, capacity: {totalBytes: Number(fs.blocks) * Number(fs.bsize),

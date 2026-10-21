@@ -25,4 +25,18 @@ describe('self-hosted storage administrator panel', () => {
     expect((container.querySelector('input[type="password"]') as HTMLInputElement).value).toBe('');
     act(() => root.unmount()); container.remove();
   });
+  it('keeps an unfinished configuration while verifying another one', async () => {
+    const verifyS3ProviderConfig=vi.fn(async()=>undefined);
+    const api={serverVolumeFiles:async()=>({files:[],total:0,page:1,totalBytes:0,rootPath:'/storage'}),serverVolumeCleanups:async()=>[],
+      serverVolumePolicy:async()=>({disabled:false,revision:1}),verifyS3ProviderConfig,listS3ProviderConfigs:async()=>[{id:'config',displayName:'已有配置',endpoint:'https://s3.example.com',region:'test',bucket:'files',prefix:'',status:'ACTIVE',revision:1}]} as unknown as SelfHostedApi;
+    const container=document.createElement('div');document.body.append(container);const root=createRoot(container);
+    try {
+      await act(async()=>root.render(<StorageAdminPanel api={api} />));
+      const name=container.querySelector<HTMLInputElement>('form input')!;
+      await act(async()=>{Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')!.set!.call(name,'尚未完成的配置');name.dispatchEvent(new Event('input',{bubbles:true}));});
+      await act(async()=>[...container.querySelectorAll('button')].find(button=>button.textContent?.includes('验证配置'))!.click());
+      expect(verifyS3ProviderConfig).toHaveBeenCalledWith('config');expect(name.value).toBe('尚未完成的配置');
+    } finally {act(()=>root.unmount());container.remove();}
+  });
+
 });
