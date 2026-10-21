@@ -63,6 +63,34 @@ function PublishedCard({file, committeeLanguage, preparing, onDownload}: {
 }
 
 export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHostedApi}) {
+  useLanguage();
+  const userAgent = navigator.userAgent;
+  if (/MicroMessenger/i.test(userAgent)) {
+    const safari = /iPhone|iPad|iPod/i.test(userAgent);
+    return <main className="delegate-browser-guide">
+      <svg className="delegate-browser-guide-arrow" viewBox="0 0 180 150" fill="none" aria-hidden="true">
+        <path d="M15 135C100 135 148 100 148 14M112 44L148 12L173 49" />
+      </svg>
+      <ol className="delegate-browser-guide-steps">
+        <li><span>{t('Tap the top-right “…” menu')}</span>
+          <svg className="delegate-browser-guide-menu" viewBox="0 0 80 40" aria-hidden="true">
+            <circle cx="20" cy="20" r="4" /><circle cx="40" cy="20" r="4" /><circle cx="60" cy="20" r="4" />
+          </svg>
+        </li>
+        <li><span>{safari ? t('Choose “Open in Safari”') : t('Choose “Open in browser”')}</span>
+          <svg className="delegate-browser-guide-browser" viewBox="0 0 80 80" fill="none" aria-hidden="true">
+            <circle cx="40" cy="40" r="32" />
+            {safari ? <><path d="M53 27L45 45L27 53L35 35Z" /><path d="M35 35L45 45" /></>
+              : <><ellipse cx="40" cy="40" rx="14" ry="32" /><path d="M8 40H72M14 23H66M14 57H66" /></>}
+          </svg>
+        </li>
+      </ol>
+    </main>;
+  }
+  return <DelegateFilePortalContent api={api} />;
+}
+
+function DelegateFilePortalContent({api}: {api: SelfHostedApi}) {
   const language = useLanguage();
   const capability = window.location.hash.replace(/^#/, '');
   const [portal, setPortal] = React.useState<DelegatePortalBootstrap>();

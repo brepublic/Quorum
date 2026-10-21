@@ -29,6 +29,33 @@ afterEach(async () => {await act(async () => root.unmount()); host.remove(); vi.
 function client(overrides: Partial<SelfHostedApi>): SelfHostedApi {return overrides as SelfHostedApi;}
 
 describe('delegate file portal', () => {
+  it.each([
+    ['iPhone MicroMessenger/8.0', '选择“在 Safari 中打开”'],
+    ['Android micromessenger/8.0', '选择“在浏览器打开”'],
+    ['Windows MicroMessenger/8.0', '选择“在浏览器打开”']
+  ])('blocks portal requests and operations in WeChat: %s', async (userAgent, instruction) => {
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(userAgent);
+    const bootstrapDelegatePortal = vi.fn();
+    const eventSource = vi.fn(); vi.stubGlobal('EventSource', eventSource);
+    const originalUrl = window.location.href;
+    await act(async () => root.render(<DelegateFilePortal api={client({bootstrapDelegatePortal})} />));
+    expect(host.textContent).toContain('点击右上角“…”');
+    expect(host.textContent).toContain(instruction);
+    expect(host.querySelectorAll('svg')).toHaveLength(3);
+    expect(host.querySelector('button, a, input, select, .delegate-file-portal, .delegate-file-claim-page')).toBeNull();
+    await act(async () => {window.dispatchEvent(new Event('focus')); window.dispatchEvent(new Event('online'));});
+    expect(bootstrapDelegatePortal).not.toHaveBeenCalled();
+    expect(eventSource).not.toHaveBeenCalled();
+    expect(window.location.href).toBe(originalUrl);
+  });
+  it('localizes the WeChat guide in English', async () => {
+    setLanguage('en');
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Android MicroMessenger');
+    await act(async () => root.render(<DelegateFilePortal />));
+    expect(host.textContent).toContain('Tap the top-right “…” menu');
+    expect(host.textContent).toContain('Choose “Open in browser”');
+  });
+
 
   const synchronizedPortal = {
     committeeId: 'committee', committeeLanguage: 'zh-CN' as const, committeeName: '委员会', shareId: 'share',
