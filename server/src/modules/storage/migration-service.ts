@@ -165,6 +165,10 @@ export class Stage6MigrationService {
           (id,committee_id,source_binding_id,target_binding_id,manifest_revision,created_by_user_id)
           VALUES ($1,$2,$3,$4,$5,$6)`,
         [migrationId, committee.id, source.id, targetBindingId, committee.file_manifest_revision, auth.user.id]);
+        if (targetType === 'CHAIR_AGENT') {
+          await client.query(`UPDATE storage_migrations SET confirmation_requested_at=now(),confirmation_user_id=$2,
+            confirmation_request_id=$3 WHERE id=$1`, [migrationId, auth.user.id, context.requestId]);
+        }
         const contents = await this.contentLocations(client, committee.id, source.id);
         for (const content of contents) {
           if (!content.source_blob_id) {
@@ -224,10 +228,12 @@ export class Stage6MigrationService {
         WHERE migration_id=$1 AND status IN ('PENDING','IN_PROGRESS','RETRY') LIMIT 1`, [row.id]);
       const next = outstanding.rowCount ? 'COPYING' : 'READY_TO_CONFIRM';
       await client.query(`UPDATE storage_migrations SET status=$2::storage_migration_status,manifest_revision=$3,revision=revision+1,
-        confirmation_requested_at=NULL,confirmation_user_id=NULL,confirmation_request_id=NULL,
+        confirmation_requested_at=CASE WHEN $4 THEN now() ELSE NULL END,
+        confirmation_user_id=CASE WHEN $4 THEN $5::uuid ELSE NULL END,
+        confirmation_request_id=CASE WHEN $4 THEN $6::text ELSE NULL END,
         ready_at=CASE WHEN $2::storage_migration_status='READY_TO_CONFIRM'::storage_migration_status THEN now() ELSE NULL END,
         failure_code=NULL,failure_reason=NULL,updated_at=now() WHERE id=$1`,
-      [row.id, next, committee.file_manifest_revision]);
+      [row.id, next, committee.file_manifest_revision, target.provider_type === 'CHAIR_AGENT', auth.user.id, context.requestId]);
       await client.query(`UPDATE storage_migration_items SET received_bytes=0,progress_phase='WAITING',
         progress_updated_at=NULL,transfer_started_at=NULL,bytes_per_second=NULL,verified_at=NULL
         WHERE migration_id=$1 AND status<>'CANCELLED'`, [row.id]);
@@ -815,9 +821,23 @@ export class Stage6MigrationService {
               else {
                 await client.query(`UPDATE storage_migrations SET status='READY_TO_CONFIRM',ready_at=now(),
                   revision=revision+1,updated_at=now() WHERE id=$1`,[row.id]);
+                if (row.confirmation_requested_at) {
+                  await client.query('UPDATE storage_migration_items SET verified_at=NULL WHERE migration_id=$1',[row.id]);
+                  for (const item of items.rows.filter(item=>item.status==='COMPLETED')) {
+                    await this.queueChairTask(client,committee,binding,item,'VERIFY_MIGRATION_BLOB');
+                  }
+                }
                 await appendEvent(client,committee,{type:'storage.migration_ready',resourceType:'storage_migration',
                   resourceId:row.id,revision:row.revision+1,audience:'CHAIR',payload:{status:'READY_TO_CONFIRM'}});
               }
+            }
+          }
+          if (row.status==='READY_TO_CONFIRM' && row.confirmation_requested_at) {
+            for (const item of items.rows.filter(item=>item.status==='COMPLETED'&&!item.verified_at)) {
+              const verification=await client.query(`SELECT 1 FROM storage_agent_tasks WHERE migration_item_id=$1
+                AND task_type::text='VERIFY_MIGRATION_BLOB' AND created_at >= $2
+                AND status IN ('PENDING','IN_PROGRESS','RETRY','COMPLETED')`,[item.id,row.confirmation_requested_at]);
+              if (!verification.rowCount) await this.queueChairTask(client,committee,binding,item,'VERIFY_MIGRATION_BLOB');
             }
           }
           if (row.status==='READY_TO_CONFIRM' && row.confirmation_requested_at

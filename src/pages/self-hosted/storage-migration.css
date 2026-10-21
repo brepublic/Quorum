@@ -1,0 +1,23 @@
+.ui.modal.storage-migration-confirm {
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, .28), 0 4px 16px rgba(0, 0, 0, .12);
+}
+.ui.modal.storage-migration-confirm > .header { padding: 1.5rem; }
+.ui.modal.storage-migration-confirm > .content { padding: 1.5rem; }
+.storage-migration-device {
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+  padding: 1rem;
+  margin-bottom: 1.25rem;
+  background: rgba(33, 133, 208, .07);
+  border-radius: 10px;
+  overflow-wrap: anywhere;
+}
+.storage-migration-device strong { min-width: 0; }
+.ui.modal.storage-migration-confirm > .actions { padding: 1rem 1.5rem; }
+@media (max-width: 480px) {
+  .ui.modal.storage-migration-confirm > .actions { display: flex; gap: .5rem; padding: 1rem !important; }
+  .ui.modal.storage-migration-confirm > .actions > .button { margin: 0; flex: 1; }
+}

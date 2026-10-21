@@ -114,7 +114,17 @@ describe('self-hosted stage 6 file panel', () => {
     expect(client.createStorageMigration).not.toHaveBeenCalled();
     expect(button('开始迁移')?.disabled).toBe(false);
     await act(async()=>{view.querySelector('.self-hosted-storage-panel form')?.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));});
-    expect(client.createStorageMigration).toHaveBeenCalledWith(committeeId,2,'CHAIR_AGENT',undefined);
+    expect(client.createStorageMigration).not.toHaveBeenCalled();
+    const dialog=document.querySelector('.storage-migration-confirm');
+    expect(dialog?.textContent).toContain('Test Chair');
+    expect(dialog?.textContent).toContain('清理服务器上的原文件');
+    const dialogButton=(label:string)=>Array.from(document.querySelectorAll<HTMLButtonElement>('.storage-migration-confirm button')).find(item=>item.textContent===label)!;
+    await act(async()=>dialogButton('取消').click());
+    expect(client.createStorageMigration).not.toHaveBeenCalled();
+    await act(async()=>{view.querySelector('.self-hosted-storage-panel form')?.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));});
+    await act(async()=>dialogButton('确认并开始迁移').click());
+    expect(client.createStorageMigration).toHaveBeenCalledTimes(1);
+    expect(client.createStorageMigration).toHaveBeenCalledWith(committeeId,2,'CHAIR_AGENT');
   });
 
   it('shows real migration bytes, time estimate and blocks confirmation during the final device check',async()=>{

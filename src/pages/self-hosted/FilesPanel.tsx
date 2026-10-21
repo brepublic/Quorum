@@ -15,6 +15,7 @@ import {FileStatusLabel} from '../../components/FileStatusLabel';
 import {sha256File} from '../../services/sha256';
 import {compareStorageConflict, conflictRecommendationReason} from './conflict-comparison';
 import './conflict-comparison.css';
+import './storage-migration.css';
 
 const MIGRATION_STATUS: Record<StorageMigration['status'], string> = {
   COPYING: "Copying", READY_TO_CONFIRM: "Awaiting confirmation", FAILED: "Migration failed", COMPLETED: "Migration completed", CANCELLED: "Cancelled"
@@ -76,6 +77,7 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
   const canUpload = !readOnly && snapshot.viewer.audience !== 'PUBLIC';
   const volumePolicy = useVolumePolicy(api, committeeId, canUpload);
   const [statusFilter, setStatusFilter] = React.useState('ACTIVE');
+  const [confirmChairMigration, setConfirmChairMigration] = React.useState(false);
   const [deletingFile, setDeletingFile] = React.useState<FileEntry>();
   const [files, setFiles] = React.useState<FileEntry[]>([]);
   const [pendingHostCommits, setPendingHostCommits] = React.useState<FileUpload[]>([]);
@@ -250,8 +252,13 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
     ? api.createServerVolumeBinding(committeeId, snapshot.committee.revision)
     : targetType === 'CHAIR_AGENT' ? api.createChairAgentBinding(committeeId, snapshot.committee.revision)
       : api.createS3Binding(committeeId, snapshot.committee.revision, targetConfigId));
-  const createMigration = () => run(() => api.createStorageMigration(committeeId, snapshot.committee.revision,
-    targetType, targetType === 'S3_COMPATIBLE' ? targetConfigId : undefined));
+  const createMigration = () => {
+    if (targetType === 'CHAIR_AGENT') {
+      setError(undefined); setConfirmChairMigration(true); return;
+    }
+    return run(() => api.createStorageMigration(committeeId, snapshot.committee.revision,
+      targetType, targetType === 'S3_COMPATIBLE' ? targetConfigId : undefined));
+  };
   const activeBinding = bindings.find(binding => binding.status === 'ACTIVE');
   const activeHost = hosts.find(host => host.status === 'ACTIVE' || host.status === 'DEGRADED');
   const openMigration=migrations.find(item=>!['COMPLETED','CANCELLED'].includes(item.status));
@@ -441,6 +448,24 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
       })}
     </div>}</div></>}
 
+    <Modal size="tiny" className="storage-migration-confirm" open={confirmChairMigration} centered
+      closeOnDimmerClick={!working} closeOnEscape={!working} onClose={() => setConfirmChairMigration(false)}
+      aria-labelledby="storage-migration-title" aria-describedby="storage-migration-description">
+      <Modal.Header id="storage-migration-title"><Icon name="desktop" />{t('Migrate to Chair computer?')}</Modal.Header>
+      <Modal.Content>
+        {error && <Message negative>{storageErrorText(error)}</Message>}
+        <div className="storage-migration-device"><Icon name="computer" /><strong>{activeHost?.deviceLabel}</strong></div>
+        <p id="storage-migration-description">{t('After migration, this computer will store the files and the original server files will be cleaned up.')}</p>
+      </Modal.Content>
+      <Modal.Actions>
+        <Button disabled={working} onClick={() => setConfirmChairMigration(false)}>{t('Cancel')}</Button>
+        <Button primary loading={working} disabled={working || chairTargetBlocked || Boolean(openMigration) || targetType !== 'CHAIR_AGENT'}
+          onClick={() => {void run(async () => {
+            await api.createStorageMigration(committeeId, snapshot.committee.revision, 'CHAIR_AGENT');
+            setConfirmChairMigration(false);
+          });}}>{t('Confirm and start migration')}</Button>
+      </Modal.Actions>
+    </Modal>
     <Modal size="tiny" open={Boolean(deletingFile)} closeOnDimmerClick={!working} closeOnEscape={!working}
       onClose={() => {if (!working) setDeletingFile(undefined);}}>
       <Modal.Header>{t('Delete permanently')}</Modal.Header>
@@ -623,7 +648,7 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
         {chairTargetBlocked&&<p>{t(!hostOnline?"The Chair computer is offline.":"Update the Chair Agent to migrate storage.")}</p>}
       </Form> : <p className="storage-empty-target">{t("No available storage migration targets")}</p>)}
       {migrations.length > 0 && <Card.Group stackable className="self-hosted-migrations">{migrations.map(migration =>
-        <Card fluid key={migration.id}><Card.Content><Card.Header>{t(MIGRATION_STATUS[migration.status])}</Card.Header>
+        <Card fluid key={migration.id}><Card.Content><Card.Header>{t(migration.status==='READY_TO_CONFIRM'&&migration.progress?.phase==='CONFIRMING' ? 'Verifying before switch' : MIGRATION_STATUS[migration.status])}</Card.Header>
           {migration.sourceCleanup && <Card.Meta>{t(migration.sourceCleanup.pending ? 'Storage switched; cleaning server volume' : 'Server volume cleanup completed')}
             {migration.sourceCleanup.pending > 0 && ` · ${migration.sourceCleanup.total-migration.sourceCleanup.pending}/${migration.sourceCleanup.total}`}
             {migration.sourceCleanup.failed > 0 && ` · ${t('Cleanup retrying')}: ${migration.sourceCleanup.failed}`}</Card.Meta>}
@@ -636,7 +661,6 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
             {migration.status==='COPYING'&&<p>{t(!migration.progress.online?"Connection interrupted":
               ({WAITING:"Waiting for Chair computer",TRANSFERRING:"Transferring files",VERIFYING:"Verifying files",
                 CONFIRMING:"Verifying before switch",IDLE:"Waiting for Chair computer"} as const)[migration.progress.phase])}</p>}
-            {migration.progress.phase==='CONFIRMING'&&<p>{t("Verifying before switch")}</p>}
             <Progress color="blue" size="small" percent={migration.progress.totalBytes>0
               ?100*migration.progress.completedBytes/migration.progress.totalBytes:migration.status==='COPYING'?0:100}
               aria-label={t("Verified migration progress")} />

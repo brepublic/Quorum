@@ -259,7 +259,6 @@ integration('PostgreSQL stage 6 file metadata', () => {
       copy.expectedSizeBytes!, copy.expectedSha256!);
     await value.finish(copy); await storageMigrations.processNextCopyItem();
     const ready = await value.latest();
-    await storageMigrations.confirm(value.fixture.chair, ready.id, {baseRevision: ready.revision}, randomUUID(), context('review-migrate'));
     const verify = await value.claim('VERIFY_MIGRATION_BLOB');
     await local.verifyBlob(verify.blobId!, verify.expectedSizeBytes!, verify.expectedSha256!);
     await value.finish(verify); await storageMigrations.processNextCopyItem();
@@ -352,7 +351,7 @@ integration('PostgreSQL stage 6 file metadata', () => {
       .toEqual({status: 'PENDING_REVIEW', revision: value.file!.revision});
   });
 
-  it('manually migrates server content to the paired Chair, reports progress, then rechecks before switching',async()=>{
+  it('automatically migrates server content to the paired Chair after initial approval and rechecks before switching',async()=>{
     const value=await chairMigration();
     expect((await pool!.query('SELECT active_storage_binding_id FROM committees WHERE id=$1',[value.fixture.committee.id])).rows[0].active_storage_binding_id).toBe(value.fixture.binding.id);
     const created=await value.start();
@@ -373,8 +372,8 @@ integration('PostgreSQL stage 6 file metadata', () => {
     await storageMigrations.processNextCopyItem();
     const ready=await value.latest();expect(ready.status).toBe('READY_TO_CONFIRM');
     expect((await files.download(value.fixture.member,value.file!.id)).file.id).toBe(value.file!.id);
-    const confirming=await storageMigrations.confirm(value.fixture.chair,created.id,{baseRevision:ready.revision},randomUUID(),context('chair-confirm'));
-    expect(confirming.progress?.phase).toBe('CONFIRMING');
+    expect(ready.progress?.phase).toBe('CONFIRMING');
+    await storageMigrations.processNextCopyItem();
     expect(await files.processNextDeleteJob()).toBeNull();
     const verify=await value.claim('VERIFY_MIGRATION_BLOB');await value.finish(verify);
     await storageMigrations.processNextCopyItem();
@@ -382,6 +381,21 @@ integration('PostgreSQL stage 6 file metadata', () => {
     expect((await pool!.query('SELECT active_storage_binding_id FROM committees WHERE id=$1',[value.fixture.committee.id])).rows[0].active_storage_binding_id).toBe(created.targetBindingId);
     const ordinary=(await value.taskService.tasks(value.paired.credential,task.leaseGeneration)).tasks.filter(item=>item.type==='STORE_BLOB').at(-1)!;
     expect(ordinary.localBlobId).toBe(task.blobId);
+  });
+
+  it('keeps existing unapproved Chair migrations waiting for explicit confirmation',async()=>{
+    const value=await chairMigration();const created=await value.start();
+    await pool!.query(`UPDATE storage_migrations SET confirmation_requested_at=NULL,confirmation_user_id=NULL,
+      confirmation_request_id=NULL WHERE id=$1`,[created.id]);
+    await storageMigrations.processNextCopyItem();await value.finish(await value.claim('MIGRATE_BLOB'));
+    await storageMigrations.processNextCopyItem();await storageMigrations.processNextCopyItem();
+    const ready=await value.latest();expect(ready.status).toBe('READY_TO_CONFIRM');
+    expect(ready.progress?.phase).not.toBe('CONFIRMING');
+    expect((await value.taskService.tasks(value.paired.credential,value.paired.host.leaseGeneration)).tasks
+      .some(task=>task.type==='VERIFY_MIGRATION_BLOB')).toBe(false);
+    await storageMigrations.confirm(value.fixture.chair,ready.id,{baseRevision:ready.revision},randomUUID(),context('legacy-confirm'));
+    await value.finish(await value.claim('VERIFY_MIGRATION_BLOB'));await storageMigrations.processNextCopyItem();
+    expect((await value.latest()).status).toBe('COMPLETED');
   });
 
   it('cancels an in-flight Chair migration, rejects late progress and schedules only its private copy for cleanup',async()=>{
@@ -623,7 +637,6 @@ integration('PostgreSQL stage 6 file metadata', () => {
     }
     await storageMigrations.processNextCopyItem();const ready=await value.latest();
     expect(await files.processNextDeleteJob()).toBeNull();
-    await storageMigrations.confirm(value.fixture.chair,ready.id,{baseRevision:ready.revision},randomUUID(),context('history-confirm'));
     for(let index=0;index<4;index+=1){const task=await value.claim('VERIFY_MIGRATION_BLOB');
       await local.verifyBlob(task.blobId!,task.expectedSizeBytes!,task.expectedSha256!);await value.finish(task);}
     await storageMigrations.processNextCopyItem();expect((await value.latest()).status).toBe('COMPLETED');
@@ -716,18 +729,16 @@ integration('PostgreSQL stage 6 file metadata', () => {
     expect(await files.processNextDeleteJob()).toMatchObject({status:'COMPLETED'});
   });
 
-  it('re-copies a missing final verification target before allowing another switch confirmation',async()=>{
+  it('re-copies a missing final verification target and automatically resumes the switch after retry',async()=>{
     const value=await chairMigration();await value.start();await storageMigrations.processNextCopyItem();
     const copied=await value.claim('MIGRATE_BLOB');await value.finish(copied);await storageMigrations.processNextCopyItem();
-    let ready=await value.latest();await storageMigrations.confirm(value.fixture.chair,ready.id,{baseRevision:ready.revision},randomUUID(),context('missing-confirm'));
     await value.finish(await value.claim('VERIFY_MIGRATION_BLOB'),'LOCAL_CONTENT_INVALID');
     let row=await value.latest();expect(row.status).toBe('FAILED');
     expect(await files.processNextDeleteJob()).toBeNull();
     expect((await files.download(value.fixture.member,value.file!.id)).file.id).toBe(value.file!.id);
     await storageMigrations.retry(value.fixture.chair,row.id,{baseRevision:row.revision},randomUUID(),context('repair-local-copy'));
     await storageMigrations.processNextCopyItem();const recovered=await value.claim('MIGRATE_BLOB');expect(recovered.blobId).toBe(copied.blobId);
-    await value.finish(recovered);await storageMigrations.processNextCopyItem();ready=await value.latest();
-    await storageMigrations.confirm(value.fixture.chair,ready.id,{baseRevision:ready.revision},randomUUID(),context('repaired-confirm'));
+    await value.finish(recovered);await storageMigrations.processNextCopyItem();
     await value.finish(await value.claim('VERIFY_MIGRATION_BLOB'));await storageMigrations.processNextCopyItem();
     expect((await value.latest()).status).toBe('COMPLETED');
   });
@@ -745,7 +756,7 @@ integration('PostgreSQL stage 6 file metadata', () => {
     await storageMigrations.processNextCopyItem();expect((await value.latest()).status).toBe('READY_TO_CONFIRM');
   });
 
-  it('requires an online migration-capable Chair and keeps empty storage manual',async()=>{
+  it('requires an online migration-capable Chair and automatically switches empty storage',async()=>{
     const value=await chairMigration(false);
     await value.agent.heartbeat(value.paired.credential,{leaseGeneration:value.paired.host.leaseGeneration,capabilities:['SSE_WAKE','CACHE_REFILL'],agentProtocolVersion:2});
     await expect(value.start()).rejects.toMatchObject({reason:'AGENT_UPGRADE_REQUIRED'});
@@ -753,7 +764,6 @@ integration('PostgreSQL stage 6 file metadata', () => {
     await pool!.query("UPDATE storage_hosts SET last_seen_at=now()-interval '1 minute' WHERE id=$1",[value.paired.host.id]);
     await expect(value.start()).rejects.toMatchObject({reason:'STORAGE_AGENT_OFFLINE'});
     await value.heartbeat();const row=await value.start();expect(row.status).toBe('READY_TO_CONFIRM');
-    await storageMigrations.confirm(value.fixture.chair,row.id,{baseRevision:row.revision},randomUUID(),context('empty-confirm'));
     await storageMigrations.processNextCopyItem();expect((await value.latest()).status).toBe('COMPLETED');
   });
 
