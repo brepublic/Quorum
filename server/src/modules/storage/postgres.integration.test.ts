@@ -271,7 +271,7 @@ integration('PostgreSQL stage 6 file metadata', () => {
     const config = {publishedCacheMaxBytes: 1048576, pendingReviewMaxBytes: 1048576,
       pendingReviewCommitteeMaxBytes: 1048576, storageMinFreeBytes: 0, storageMinFreePercent: 0};
     const cache = new StorageCacheService(pool!, staging, staging,
-      {effective: async () => ({...config, revision: 1, hardLimits: config})} as never);
+      {effective: async () => ({...config, revision: 1})} as never);
     const provider = new Stage7ChairAgentProviderService(pool!, storage, cache);
     const tasks = new Stage7StorageTaskService(value.agent, staging, files, undefined, provider, storageMigrations);
     const reader = new Stage6FileService(pool!, volume, fileS3Configs,
@@ -658,7 +658,7 @@ integration('PostgreSQL stage 6 file metadata', () => {
       await local.verifyBlob(task.localBlobId!,task.expectedSizeBytes!,task.expectedSha256!);await value.finish(task);}
     const config={publishedCacheMaxBytes:1048576,pendingReviewMaxBytes:1048576,pendingReviewCommitteeMaxBytes:1048576,
       storageMinFreeBytes:0,storageMinFreePercent:0};
-    const cache=new StorageCacheService(pool!,staging,staging,{effective:async()=>({...config,revision:1,hardLimits:config})} as never);
+    const cache=new StorageCacheService(pool!,staging,staging,{effective:async()=>({...config,revision:1})} as never);
     const refill=new StorageCacheRefillService(pool!,cache);
     const reader=new Stage6FileService(pool!,volume,fileS3Configs,provider=>new S3CompatibleStore(provider,new IntegrationS3Transport(),1048576),staging,staging,refill);
     expect((await reader.prepareDownload(value.fixture.member,latestFile.id)).status).toBe('PREPARING');

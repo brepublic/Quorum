@@ -1,8 +1,10 @@
+import {downloadPreparedFile} from '../../services/file-download';
 import {useVolumePolicy, VolumePolicyNotice} from './VolumePolicyNotice';
 import {ChairAgentDownload} from '../../components/ChairAgentDownload';
 import {openChairAgent, downloadChairConfiguration} from '../../services/agent-pairing';
 import {ViewportFormSelect} from '../../components/ViewportDropdown';
 import {apiErrorText} from '../../i18n';
+import {StorageErrorMessage} from '../../components/StorageErrorMessage';
 import {t, useLanguage, getLanguage} from '../../i18n';
 import * as React from 'react';
 import type {CommitteeWorkspaceSnapshot, FileEntry, FileUpload, StorageMigration, DelegateReviewFile,
@@ -119,14 +121,9 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
   const downloadFile = async (fileId: string) => {
     setPreparingDownloads(current => new Set(current).add(fileId)); setError(undefined);
     try {
-      let readiness = await api.prepareFileDownload(fileId);
-      while (readiness.status === 'PREPARING') {
-        await new Promise(resolve => window.setTimeout(resolve, (readiness.retryAfterSeconds ?? 2) * 1000));
-        readiness = await api.fileDownloadReadiness(fileId);
-      }
-      if (readiness.status !== 'READY') throw Object.assign(new Error(), {code: readiness.code ?? 'FILE_CONTENT_UNAVAILABLE'});
-      window.location.assign(api.fileDownloadUrl(fileId));
-    } catch (caught) { setError(caught); }
+      await downloadPreparedFile(() => api.prepareFileDownload(fileId),
+        () => api.fileDownloadReadiness(fileId), api.fileDownloadUrl(fileId));
+    } catch (caught) { if (!(caught instanceof DOMException && caught.name === 'AbortError')) setError(caught); }
     finally { setPreparingDownloads(current => { const next = new Set(current); next.delete(fileId); return next; }); }
   };
 
@@ -377,7 +374,7 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
           }}>{t('Confirm choice: {choice}', {choice: conflictDecision ? t(conflictDecision.label) : ''})}</Button>
       </Modal.Actions>
     </Modal>
-    {error && <Message error role="alert" content={error} />}
+    {error && <StorageErrorMessage error={failure} text={error} />}
     {canUpload && !volumePolicy.loading && <VolumePolicyNotice blocked={volumePolicy.blocked} manager={canManage}
       committeeId={committeeId} error={volumePolicy.error} showAction={section !== 'storage'} />}
     {section !== 'storage' && <>
@@ -440,7 +437,7 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
           <Button as="a" primary fluid href={api.fileDownloadUrl(file.id)} download
             loading={preparingDownloads.has(file.id)} disabled={preparingDownloads.has(file.id)}
             onClick={(event: React.MouseEvent) => {event.preventDefault(); void downloadFile(file.id);}}>
-            {preparingDownloads.has(file.id) ? t("Preparing the file from the chair computer") : <>{t("Download file")} <Icon name="arrow down" /></>}</Button>
+            {preparingDownloads.has(file.id) ? t("Downloading…") : <>{t("Download file")} <Icon name="arrow down" /></>}</Button>
           {canChange && file.status === 'UPLOAD_COMPLETE' && <Button size="small"
             onClick={() => void run(() => api.submitFileForReview(file.id, file.revision))}>{t("Submit for review")}</Button>}
           {canManage && ['PENDING_REVIEW', 'UPLOAD_COMPLETE'].includes(file.status) && <Button as={Link} primary size="small"

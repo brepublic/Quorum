@@ -1,3 +1,4 @@
+import {RequestTimeout, requestWithPolicy} from './request-policy';
 import type {
   CreateCommitteeFromTemplateRequest, ApiErrorReason, ApiErrorParams, ApiFieldError,
   CrisisGroup, CrisisNoticePreview,
@@ -87,9 +88,10 @@ async function request<T>(path: string, options: {
     const csrf = cookie('__Host-quorum_csrf'); if (csrf) headers['x-csrf-token'] = csrf;
   }
   if (options.idempotencyKey) headers['idempotency-key'] = options.idempotencyKey;
+  return requestWithPolicy(async signal => {
   let response: Response;
   try {
-    response = await fetch(path, {method, credentials: 'same-origin', headers, signal: options.signal,
+    response = await fetch(path, {method, credentials: 'same-origin', headers, signal,
       ...(options.body ? {body: JSON.stringify(options.body)} : {})});
   } catch (error) {
     if (options.signal?.aborted || error instanceof DOMException && error.name === 'AbortError') throw error;
@@ -102,6 +104,7 @@ async function request<T>(path: string, options: {
     throw new SelfHostedApiError(response.status, 'INVALID_RESPONSE', 'The server response was invalid.');
   }
   return responseData<T>(payload, response.status);
+  }, {signal: options.signal, read: method === 'GET', repeatable: Boolean(options.idempotencyKey)});
 }
 
 function responseData<T>(payload: unknown, status: number): T {
@@ -129,13 +132,16 @@ function uploadContentRequest(uploadId: string, file: File, idempotencyKey: stri
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     const abort = () => xhr.abort();
-    const finish = () => options.signal?.removeEventListener('abort', abort);
+    let idle:ReturnType<typeof setTimeout>;
+    const arm=()=>{clearTimeout(idle);idle=setTimeout(()=>{reject(new RequestTimeout());xhr.abort();},30_000);};
+    const finish = () => {clearTimeout(idle);options.signal?.removeEventListener('abort', abort);};
     xhr.open('PUT', `/api/v1/file-uploads/${encodeURIComponent(uploadId)}/content`);
     xhr.withCredentials = true;
     const csrf = cookie('__Host-quorum_csrf');
     if (csrf) xhr.setRequestHeader('x-csrf-token', csrf);
     xhr.setRequestHeader('idempotency-key', idempotencyKey);
-    xhr.upload.onprogress = event => options.onProgress?.(event.loaded, event.lengthComputable ? event.total : file.size);
+    xhr.upload.onprogress = event => {arm();options.onProgress?.(event.loaded, event.lengthComputable ? event.total : file.size);};
+    xhr.onprogress=arm;
     xhr.onload = () => {
       finish();
       let payload: unknown;
@@ -149,7 +155,7 @@ function uploadContentRequest(uploadId: string, file: File, idempotencyKey: stri
     if (options.signal?.aborted) { reject(new DOMException('Upload cancelled.', 'AbortError')); return; }
     options.signal?.addEventListener('abort', abort, {once: true});
     options.onProgress?.(0, file.size);
-    xhr.send(file);
+    arm();xhr.send(file);
   });
 }
 
@@ -162,9 +168,10 @@ async function delegateRequest<T>(path: string, options: {
     const csrf = cookie('__Host-quorum_delegate_files_csrf'); if (csrf) headers['x-csrf-token'] = csrf;
   }
   if (options.idempotencyKey) headers['idempotency-key'] = options.idempotencyKey;
+  return requestWithPolicy(async signal => {
   let response: Response;
   try {
-    response = await fetch(path, {method, credentials: 'same-origin', headers, signal: options.signal,
+    response = await fetch(path, {method, credentials: 'same-origin', headers, signal,
       ...(options.body ? {body: JSON.stringify(options.body)} : {})});
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') throw error;
@@ -174,27 +181,34 @@ async function delegateRequest<T>(path: string, options: {
   try {payload = await response.json();}
   catch {throw new SelfHostedApiError(response.status, 'INVALID_RESPONSE', 'The server response was invalid.');}
   return responseData<T>(payload, response.status);
+  }, {signal: options.signal, read: method === 'GET', repeatable: Boolean(options.idempotencyKey)});
 }
 
 function delegateUploadContentRequest(uploadId: string, file: File, idempotencyKey: string,
   onProgress: (sentBytes: number, totalBytes: number) => void): Promise<FileUpload> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
+    let idle:ReturnType<typeof setTimeout>;
+    const finish=()=>clearTimeout(idle);
+    const arm=()=>{finish();idle=setTimeout(()=>{reject(new RequestTimeout());xhr.abort();},30_000);};
     xhr.open('PUT', `/api/v1/delegate-files/uploads/${encodeURIComponent(uploadId)}/content`);
     xhr.withCredentials = true;
     const csrf = cookie('__Host-quorum_delegate_files_csrf');
     if (csrf) xhr.setRequestHeader('x-csrf-token', csrf);
     xhr.setRequestHeader('idempotency-key', idempotencyKey);
-    xhr.upload.onprogress = event => onProgress(event.loaded, event.lengthComputable ? event.total : file.size);
+    xhr.upload.onprogress = event => {arm();onProgress(event.loaded, event.lengthComputable ? event.total : file.size);};
+    xhr.onprogress=arm;
     xhr.onload = () => {
+      finish();
       let payload: unknown;
       try {payload = JSON.parse(xhr.responseText);}
       catch {reject(new SelfHostedApiError(xhr.status, 'INVALID_RESPONSE', 'Upload response was invalid.')); return;}
       try {resolve(responseData<FileUpload>(payload, xhr.status));}
       catch (error) {reject(error);}
     };
-    xhr.onerror = () => reject(new SelfHostedApiError(0, 'NETWORK_ERROR', 'Upload connection was interrupted.'));
-    onProgress(0, file.size); xhr.send(file);
+    xhr.onerror = () => {finish();reject(new SelfHostedApiError(0, 'NETWORK_ERROR', 'Upload connection was interrupted.'));};
+    xhr.onabort=()=>{finish();reject(new DOMException('Upload cancelled.','AbortError'));};
+    onProgress(0, file.size); arm();xhr.send(file);
   });
 }
 
@@ -550,6 +564,10 @@ export const selfHostedApi = {
     return request<CountryTemplate>(`/api/v1/country-templates/builtin:default/countries/${encodeURIComponent(stableKey)}/search-codes`,
       {method: 'PUT', body: {codes}});
   },
+  updateBuiltinCountrySearchCodesBatch(changes: Array<{stableKey:string;codes:string[];previousCodes:string[]}>, idempotencyKey: string) {
+    return request<CountryTemplate>('/api/v1/country-templates/builtin:default/search-codes',
+      {method:'PUT',body:{changes},idempotencyKey});
+  },
   createCountryTemplate(input: CountryTemplateInput) {
     return request<CountryTemplate>('/api/v1/country-templates', {method: 'POST', body: input as unknown as Record<string, unknown>, idempotencyKey: key()});
   },
@@ -654,8 +672,8 @@ export const selfHostedApi = {
     return request<CommitteeSummary>(`/api/v1/committees/${committeeId}/rules/activate`, {method: 'POST',
       body: {rulePackageVersionId, baseRevision}});
   },
-  createNote(committeeId: string, input: {title?: string; content: string; sortOrder?: number}) {
-    return request<CommitteeNote>(`/api/v1/committees/${committeeId}/notes`, {method: 'POST', body: input, idempotencyKey: key()});
+  createNote(committeeId: string, input: {title?: string; content: string; sortOrder?: number}, idempotencyKey = key()) {
+    return request<CommitteeNote>(`/api/v1/committees/${committeeId}/notes`, {method: 'POST', body: input, idempotencyKey});
   },
   updateNote(id: string, baseRevision: number, patch: Record<string, unknown>) {
     return request<CommitteeNote>(`/api/v1/notes/${id}`, {method: 'PUT', body: {baseRevision, patch}});

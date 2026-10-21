@@ -15,9 +15,7 @@ beforeEach(() => {setLanguage('zh-CN');
 });
 afterEach(() => {act(() => root.unmount()); host.remove();});
 const config = {publishedCacheMaxBytes: 1000, pendingReviewMaxBytes: 500, pendingReviewCommitteeMaxBytes: 250,
-  storageMinFreeBytes: 100, storageMinFreePercent: 20, revision: 2,
-  hardLimits: {publishedCacheMaxBytes: 2000, pendingReviewMaxBytes: 1000, pendingReviewCommitteeMaxBytes: 500,
-    storageMinFreeBytes: 100, storageMinFreePercent: 20}};
+  storageMinFreeBytes: 100, storageMinFreePercent: 20, revision: 2};
 const mbToBytes = (value: number) => Math.round(value * 1024 * 1024);
 const operations = {database: {schemaCompatibility: 52}, storage: {state: 'normal', usageRatio: 0.4},
   accounts: {active: 2}, committees: {active: 1}, queues: {agentTasks: 3},
@@ -54,6 +52,59 @@ async function fill(selector: string, value: string) {
 }
 
 describe('system settings navigation and extracted settings', () => {
+  it('links percentages and byte values in both directions using nearest integers', async () => {
+    const {api} = await render('/system-settings/cache');
+    const input = (field: string) => host.querySelector<HTMLInputElement>(`#cache-${field}`)!;
+    // Existing values remain untouched until either reserve input is edited.
+    expect(input('storageMinFreeBytes').value).toBe('100');
+    expect(input('storageMinFreePercent').value).toBe('20');
+    await fill('#cache-storageMinFreePercent', '13');
+    expect(input('storageMinFreeBytes').value).toBe('520');
+    await fill('#cache-storageMinFreeBytes', '250');
+    expect(input('storageMinFreePercent').value).toBe('6');
+    await act(async () => {host.querySelector('form')!.dispatchEvent(new Event('submit', {bubbles: true, cancelable: true}));});
+    expect(api.updateStorageCacheConfig).toHaveBeenCalledWith({...config,
+      storageMinFreeBytes: 250, storageMinFreePercent: 6});
+    expect(input('storageMinFreePercent').value).toBe('6');
+    await fill('#cache-storageMinFreeBytes', '0');
+    expect(input('storageMinFreePercent').value).toBe('0');
+    await fill('#cache-storageMinFreePercent', '100');
+    expect(input('storageMinFreeBytes').value).toBe('4000');
+  });
+  it('blocks blank or invalid reserves without submitting the last valid value', async () => {
+    const {api} = await render('/system-settings/cache');
+    for (const [field, value] of [['storageMinFreeBytes', ''], ['storageMinFreePercent', '101'],
+      ['storageMinFreeBytes', '-1'], ['storageMinFreeBytes', '0.5']]) {
+      await fill(`#cache-${field}`, value);
+      expect(host.querySelector<HTMLButtonElement>('button.primary')!.disabled).toBe(true);
+      await act(async () => {host.querySelector('form')!.dispatchEvent(new Event('submit', {bubbles: true, cancelable: true}));});
+    }
+    expect(api.updateStorageCacheConfig).not.toHaveBeenCalled();
+  });
+  it('rounds converted bytes and percentages to the nearest integer', async () => {
+    const deps = clients(); const status = await deps.api.storageCacheStatus();
+    deps.api.storageCacheStatus.mockResolvedValue({...status, capacity: {...status.capacity, totalBytes: 4001}});
+    await render('/system-settings/cache', deps);
+    await fill('#cache-storageMinFreePercent', '50');
+    expect(host.querySelector<HTMLInputElement>('#cache-storageMinFreeBytes')!.value).toBe('2001');
+    await fill('#cache-storageMinFreeBytes', '260');
+    expect(host.querySelector<HTMLInputElement>('#cache-storageMinFreePercent')!.value).toBe('6');
+    await fill('#cache-storageMinFreeBytes', '261');
+    expect(host.querySelector<HTMLInputElement>('#cache-storageMinFreePercent')!.value).toBe('7');
+  });
+  it('saves administrator quotas above the old limits and allows zero reserved space', async () => {
+    const {api} = await render('/system-settings/cache');
+    await fill('#cache-publishedCacheMaxBytes', '20480');
+    await fill('#cache-pendingReviewMaxBytes', '10240');
+    await fill('#cache-pendingReviewCommitteeMaxBytes', '2048');
+    await fill('#cache-storageMinFreeBytes', '0');
+    await fill('#cache-storageMinFreePercent', '0');
+    await act(async () => {host.querySelector('form')!.dispatchEvent(new Event('submit', {bubbles: true, cancelable: true}));});
+    expect(api.updateStorageCacheConfig).toHaveBeenCalledWith({publishedCacheMaxBytes: mbToBytes(20480),
+      pendingReviewMaxBytes: mbToBytes(10240), pendingReviewCommitteeMaxBytes: mbToBytes(2048),
+      storageMinFreeBytes: 0, storageMinFreePercent: 0, revision: 2});
+    expect((host.querySelector('#cache-storageMinFreeBytes') as HTMLInputElement).value).toBe('0');
+  });
   it.each(['/system-settings', '/operations', '/system-settings/operations'])('opens the status tab at %s', async path => {
     const {api, client} = await render(path);
     expect(host.querySelector('nav a[aria-current="page"]')?.getAttribute('href')).toBe('/system-settings/operations');

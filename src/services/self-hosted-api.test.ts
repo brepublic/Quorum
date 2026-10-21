@@ -43,7 +43,28 @@ describe('self-hosted stage 4 API client', () => {
     controller.abort();
     await expect(result).rejects.toMatchObject({name: 'AbortError'});
     expect(fetchMock).toHaveBeenCalledWith('/api/v1/delegate-files/bootstrap',
-      expect.objectContaining({signal: controller.signal, credentials: 'same-origin'}));
+      expect.objectContaining({credentials: 'same-origin'}));
+    expect(fetchMock.mock.calls[0][1].signal.aborted).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('bounds delegate bootstrap by the POST timeout without replaying it', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = vi.fn((_url, options) => new Promise((_resolve, reject) => {
+        options.signal.addEventListener('abort', () => reject(new DOMException('', 'AbortError')));
+      }));
+      vi.stubGlobal('fetch', fetchMock);
+      const controller = new AbortController();
+      const result = expect(selfHostedApi.bootstrapDelegatePortal('test-link', controller.signal))
+        .rejects.toMatchObject({code: 'REQUEST_TIMEOUT'});
+      await vi.advanceTimersByTimeAsync(15_000);
+      await result;
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock.mock.calls[0][1].signal.aborted).toBe(true);
+      expect(controller.signal.aborted).toBe(false);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {vi.useRealTimers();}
   });
 
   it('sends CSRF, revision, and idempotency headers for commands', async () => {
@@ -334,15 +355,18 @@ describe('self-hosted stage 4 API client', () => {
 });
 
 it.each(['normal', 'delegate'] as const)('distinguishes network and invalid response errors for %s requests', async mode => {
+  vi.useFakeTimers();
   const request = () => mode === 'normal' ? selfHostedApi.listFiles('committee') : selfHostedApi.bootstrapDelegatePortal('test-link');
   vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('fetch failed with private details')));
-  await expect(request()).rejects.toMatchObject({code: 'NETWORK_ERROR'});
+  const network=expect(request()).rejects.toMatchObject({code: 'NETWORK_ERROR'});
+  await vi.runAllTimersAsync(); await network;
   for (const payload of [null, [], {}, 'private proxy error', {error: null}, {error: {code: 123}}]) {
     vi.stubGlobal('fetch', vi.fn(async () => ({ok: true, status: 200, json: async () => payload})));
     await expect(request()).rejects.toMatchObject({code: 'INVALID_RESPONSE'});
   }
   vi.stubGlobal('fetch', vi.fn(async () => ({ok: false, status: 502, json: async () => {throw new SyntaxError('HTML');}})));
-  await expect(request()).rejects.toMatchObject({code: 'INVALID_RESPONSE', status: 502});
+  const proxy=expect(request()).rejects.toMatchObject({code: 'INVALID_RESPONSE', status: 502});
+  await vi.runAllTimersAsync(); await proxy; vi.useRealTimers();
 });
 
 it.each(['normal', 'delegate'] as const)('retains upload failure categories for %s uploads', async mode => {
@@ -391,4 +415,16 @@ it('downloads volume bytes with the supplied filename and preserves API errors',
   await expect(selfHostedApi.downloadServerVolumeFile('gone')).rejects.toMatchObject({status:404,code:'NOT_FOUND'});
   vi.stubGlobal('fetch',vi.fn().mockRejectedValue(new TypeError('fetch failed')));
   await expect(selfHostedApi.downloadServerVolumeFile('gone')).rejects.toMatchObject({code:'NETWORK_ERROR'});
+});
+
+
+it.each(['normal','delegate'] as const)('times out %s upload only after thirty seconds without progress',async mode=>{
+  vi.useFakeTimers();let xhr:any;
+  class Request {upload:any={};onabort?:()=>void;onprogress?:()=>void;open(){}setRequestHeader(){}send(){}abort(){this.onabort?.();}constructor(){xhr=this;}}
+  vi.stubGlobal('XMLHttpRequest',Request);
+  const file=new File(['abc'],'paper.txt');const result=expect(mode==='normal'?selfHostedApi.uploadFileContent('upload',file,'key'):
+    selfHostedApi.uploadDelegateFileContent('upload',file,()=>undefined)).rejects.toMatchObject({code:'REQUEST_TIMEOUT'});
+  await vi.advanceTimersByTimeAsync(29000);xhr.upload.onprogress({loaded:1,total:3,lengthComputable:true});
+  await vi.advanceTimersByTimeAsync(29000);expect(vi.getTimerCount()).toBe(1);
+  await vi.advanceTimersByTimeAsync(1000);await result;vi.useRealTimers();
 });

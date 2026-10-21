@@ -48,7 +48,9 @@ afterEach(async () => {
   await pool?.end(); pool = undefined;
   if (!adminUrl || !databaseName) return;
   const admin = new Client({connectionString: adminUrl}); await admin.connect();
-  try { await admin.query(`DROP DATABASE IF EXISTS ${quoteIdentifier(databaseName)} WITH (FORCE)`); }
+  // Pool.end() may resolve just before its sockets close. Let PostgreSQL wait
+  // for those disconnects instead of injecting 57P01 into the closing clients.
+  try { await admin.query(`DROP DATABASE IF EXISTS ${quoteIdentifier(databaseName)}`); }
   finally { await admin.end(); databaseName = ''; }
 });
 

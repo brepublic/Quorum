@@ -145,6 +145,26 @@ describe('identity HTTP security boundary', () => {
     expect(setCookie).not.toContain('old-session');
   });
 
+  it('treats a locally logged out browser as anonymous and clears its marker on a new login', async () => {
+    const identity=fakeIdentity({authenticate:vi.fn(async token=>{
+      if(!token) throw new AppError({code:'AUTHENTICATION_REQUIRED',message:'Authentication required.'});
+      return {sessionId:'session-id',user};
+    })});
+    const cookie='__Host-quorum_session=session; __Host-quorum_local_logout=1';
+    const denied=await request(identity,{path:'/api/v1/auth/me',headers:{cookie}});expect(denied.status).toBe(401);
+    const login=await request(identity,{path:'/api/v1/auth/login',method:'POST',headers:{cookie,origin:'https://quorum.example.com'},body:{email:user.email,password:'correct-password'}});
+    expect(login.status).toBe(200);expect(String(login.headers.get('set-cookie'))).toContain('__Host-quorum_local_logout=;');
+  });
+
+  it('revokes only the expected logout session without clearing a newer login cookie', async () => {
+    const identity=fakeIdentity();
+    const headers={origin:'https://quorum.example.com',cookie:'__Host-quorum_session=session; __Host-quorum_csrf=expected','x-csrf-token':'expected'};
+    const stale=await request(identity,{path:'/api/v1/auth/logout',method:'POST',headers,body:{localLogout:true,sessionId:'old-session'}});
+    expect(stale.status).toBe(200);expect(identity.logout).not.toHaveBeenCalled();expect(stale.headers.get('set-cookie')).toBeUndefined();
+    const current=await request(identity,{path:'/api/v1/auth/logout',method:'POST',headers,body:{localLogout:true,sessionId:'session-id'}});
+    expect(current.status).toBe(200);expect(identity.logout).toHaveBeenCalledTimes(1);expect(current.headers.get('set-cookie')).toBeUndefined();
+  });
+
   it('rejects missing or incorrect CSRF tokens on authenticated writes', async () => {
     const identity = fakeIdentity();
     const headers = {origin: 'https://quorum.example.com', cookie: '__Host-quorum_session=session; __Host-quorum_csrf=expected'};

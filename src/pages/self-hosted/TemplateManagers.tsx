@@ -1,5 +1,6 @@
 import {ViewportFormDropdown, ViewportDropdown} from '../../components/ViewportDropdown';
 import {useApiFieldErrors} from '../../components/useApiFieldErrors';
+import {newIdempotencyKey} from '../../services/self-hosted-api';
 import {apiErrorText} from '../../i18n';
 import {committeeContentName, normalizeSearchTerm, searchOptions, type ContentLanguage} from '@quorum/contracts';
 import * as React from 'react';
@@ -142,7 +143,8 @@ export function CountryTemplateManager({api}: {api: SelfHostedApi}) {
     try {
       const created = await api.createCountryTemplate({names: {[displayLanguage]: name.trim()}, defaultLanguage: displayLanguage,
         countryLanguages: [displayLanguage], countries: []});
-      const next = await refresh(); load(next.find(item => item.id === created.id) ?? created);
+      setTemplates(current => [...current.filter(item => item.id !== created.id), created]); load(created); setSaved(true);
+      void refresh().catch(() => undefined);
     } catch (caught) { setError(caught); } finally { setSaving(false); }
   };
 
@@ -159,7 +161,8 @@ export function CountryTemplateManager({api}: {api: SelfHostedApi}) {
       || (country.flagMode === 'IMAGE' && country.flag.type !== 'IMAGE'));
     if (invalid) {
       setInvalidCountry(invalid.id);
-      document.getElementById(`country-name-${invalid.id}-${languages[0]}`)?.focus();
+      document.getElementById(invalid.flagMode === 'IMAGE' && invalid.flag.type !== 'IMAGE'
+        ? `country-flag-${invalid.id}` : `country-name-${invalid.id}-${languages[0]}`)?.focus();
       return;
     }
     setInvalidCountry(undefined);
@@ -174,7 +177,8 @@ export function CountryTemplateManager({api}: {api: SelfHostedApi}) {
           continent: country.continent, sortOrder, flag: country.flag,
           searchCodes: country.searchCodeText.split(/[,，\n]+/).map(value => value.trim()).filter(Boolean)
         }))});
-      const next = await refresh(); load(next.find(item => item.id === updated.id) ?? updated); setSaved(true); return true;
+      setTemplates(current => current.map(item => item.id === updated.id ? updated : item)); load(updated); setSaved(true);
+      void refresh().catch(() => undefined); return true;
     } catch (caught) { setError(caught); } finally { setSaving(false); }
   };
 
@@ -182,7 +186,7 @@ export function CountryTemplateManager({api}: {api: SelfHostedApi}) {
     if (!selected) return; setSaving(true); setError(undefined);
     const copyName = `${localizedDisplayName(selected.names, selected.defaultLanguage)} (${displayLanguage === 'zh-CN' ? '副本' : 'copy'})`;
     try { const copy = await api.cloneCountryTemplate(selected.id, {...selected.names, [displayLanguage]: copyName}, displayLanguage);
-      const next = await refresh(); load(next.find(item => item.id === copy.id) ?? copy); }
+      setTemplates(current=>[...current,copy]); load(copy); void refresh().catch(()=>undefined); }
     catch (caught) { setError(caught); } finally { setSaving(false); }
   };
 
@@ -198,13 +202,12 @@ export function CountryTemplateManager({api}: {api: SelfHostedApi}) {
     if (!selected?.builtin) return;
     setSaving(true); setError(undefined);
     try {
-      for (const country of countries) {
-        const next = country.searchCodeText.split(/[,，\n]+/).map(value => value.trim()).filter(Boolean);
-        if (JSON.stringify(next) !== JSON.stringify(country.searchCodes ?? [])) {
-          await api.updateBuiltinCountrySearchCodes(country.stableKey, next);
-        }
-      }
-      const updated = await refresh(); load(updated.find(item => item.id === selected.id) ?? selected); setSaved(true);
+      const changes = countries.map(country => ({stableKey:country.stableKey,
+        codes:country.searchCodeText.split(/[,，\n]+/).map(value=>value.trim()).filter(Boolean),previousCodes:country.searchCodes ?? []}))
+        .filter(change=>JSON.stringify(change.codes)!==JSON.stringify(change.previousCodes));
+      const updated = await api.updateBuiltinCountrySearchCodesBatch(changes,newIdempotencyKey());
+      setTemplates(current=>current.map(item=>item.id===updated.id?updated:item));load(updated);setSaved(true);
+      void refresh().catch(()=>undefined);
     } catch (caught) {setError(caught);} finally {setSaving(false);}
   };
   const unusedTemplateLanguages = SUPPORTED_LANGUAGES.filter(language => language !== displayLanguage
@@ -239,7 +242,7 @@ export function CountryTemplateManager({api}: {api: SelfHostedApi}) {
             <div className="template-transfer-actions"><Button type="button" basic primary onClick={() => draft.protect(() => void clone())}><Icon name="copy outline" />{t('Clone country template')}</Button>
               {transfer.exportButton}</div></div>
           {isBuiltin && <Message info content={t('Names and flags of built-in countries are read-only. Clone the template to change them.')} />}
-          <Form success={saved && !draft.dirty} error={!!error} onSubmit={save}>
+          <Form success={saved && !draft.dirty} error={!!error || Boolean(invalidCountry)} onSubmit={save}>
             <Form.Input {...field(`names.${displayLanguage}`)} required disabled={isBuiltin} label={t('Country template name')} value={name}
               onChange={event => {setName(event.currentTarget.value); setSaved(false);}} />
             <div className="template-localized-names">{localizedNames.map(item => <Form.Group key={item.id} className="template-localized-name-row">
@@ -261,16 +264,18 @@ export function CountryTemplateManager({api}: {api: SelfHostedApi}) {
               {!isBuiltin && unusedCountryLanguages.length > 0 && <Button type="button" basic onClick={() => {
                 setLanguages(current => [...current, unusedCountryLanguages[0]!]); setSaved(false);}}>
                 <Icon name="language" />{t('Add country name language')}</Button>}</div>
-            <div className="country-table-scroll"><Table compact celled stackable className="country-editor-table"><Table.Header><Table.Row>
+            <div className="country-table-scroll" role="region" aria-label={t('Countries')} tabIndex={0}><Table compact celled stackable className="country-editor-table"><colgroup>
+              {languages.map(language=><col key={language} />)}<col style={{width:'18rem'}} /><col style={{width:'10rem'}} /><col style={{width:'12rem'}} />{!isBuiltin && <col style={{width:'3.5rem'}} />}
+            </colgroup><Table.Header><Table.Row>
               {languages.map(language => <Table.HeaderCell key={language}>{t('Country name')} · {LANGUAGE_OPTIONS.find(item => item.value === language)?.text}</Table.HeaderCell>)}
               <Table.HeaderCell>{t('Flag')}</Table.HeaderCell><Table.HeaderCell>{t('Continent')}</Table.HeaderCell>
               <Table.HeaderCell>{t('Search codes (comma-separated)')}</Table.HeaderCell>{!isBuiltin && <Table.HeaderCell />}
             </Table.Row></Table.Header><Table.Body>{countries.map((country, index) => <Table.Row key={country.id}>
-              {languages.map(language => <Table.Cell data-label={`${t('Country name')} · ${language}`} key={language}><Form.Input {...field(`countries.${index}.names.${language}`)} id={`country-name-${country.id}-${language}`}
+              {languages.map(language => <Table.Cell data-label={`${t('Country name')} · ${LANGUAGE_OPTIONS.find(item=>item.value===language)?.text ?? language}`} key={language}><Form.Input {...field(`countries.${index}.names.${language}`)} id={`country-name-${country.id}-${language}`}
                 error={invalidCountry === country.id && !languages.some(lang => country.names[lang]?.trim()) ? {content: t('Enter a country name')} : field(`countries.${index}.names.${language}`).error}
-                aria-label={`${t('Country name')} · ${language} · ${index + 1}`} disabled={isBuiltin} value={country.names[language] ?? ''}
+                aria-label={`${t('Country name')} · ${LANGUAGE_OPTIONS.find(item=>item.value===language)?.text ?? language} · ${index + 1}`} disabled={isBuiltin} value={country.names[language] ?? ''}
                 onChange={event => updateCountry(country.id, {names: {...country.names, [language]: event.currentTarget.value}, defaultLanguage: country.defaultLanguage || language})} /></Table.Cell>)}
-              <Table.Cell data-label={t('Flag')}><div className="country-flag-editor"><FlagDisplay flag={country.flag} />
+              <Table.Cell data-label={t('Flag')}><div className="country-flag-editor"><div className="country-flag-preview">{country.flagMode === 'IMAGE' && country.flag.type !== 'IMAGE' ? <Icon name="image outline" aria-hidden="true" /> : <FlagDisplay flag={country.flag} />}</div><div className="country-flag-controls">
                 <Dropdown disabled={isBuiltin} selection value={country.flagMode} options={[
                   {key: 'standard', value: 'STANDARD', text: t('Standard flag')}, {key: 'emoji', value: 'EMOJI', text: 'Emoji'},
                   {key: 'image', value: 'IMAGE', text: t('Image')}]}
@@ -279,11 +284,11 @@ export function CountryTemplateManager({api}: {api: SelfHostedApi}) {
                       : data.value === 'EMOJI' ? {flag: {type: 'EMOJI', value: '🏳️'} as FlagSnapshot} : {})})} />
                 {country.flagMode !== 'IMAGE' && <Form.Input disabled={isBuiltin} maxLength={country.flagMode === 'STANDARD' ? 2 : undefined}
                   value={country.flag.value} onChange={event => updateCountry(country.id, {flag: {...country.flag, value: event.currentTarget.value} as FlagSnapshot})} />}
-                {!isBuiltin && country.flagMode === 'IMAGE' && <input type="file" accept="image/*" onChange={event => {const file = event.currentTarget.files?.[0];
+                {!isBuiltin && country.flagMode === 'IMAGE' && <input id={`country-flag-${country.id}`} aria-label={t('Choose an image for this flag')} aria-invalid={invalidCountry === country.id && country.flag.type !== 'IMAGE'} aria-describedby={invalidCountry === country.id && country.flagMode === 'IMAGE' && country.flag.type !== 'IMAGE' ? `country-flag-error-${country.id}` : undefined} type="file" accept="image/*" onChange={event => {const file = event.currentTarget.files?.[0];
                   if (file) void resizeFlagImage(file).then(value => updateCountry(country.id, {flag: {type: 'IMAGE', value}, flagMode: 'IMAGE'}))
                     .catch(caught => setError(caught));}} />}
-                {invalidCountry === country.id && country.flagMode === 'IMAGE' && country.flag.type !== 'IMAGE' && <Message error content={t('Choose an image for this flag')} />}
-              </div></Table.Cell>
+                {invalidCountry === country.id && country.flagMode === 'IMAGE' && country.flag.type !== 'IMAGE' && <Message id={`country-flag-error-${country.id}`} error role="alert" content={t('Choose an image for this flag')} />}
+              </div></div></Table.Cell>
               <Table.Cell data-label={t('Continent')}><Dropdown disabled={isBuiltin} clearable selection value={country.continent ?? ''}
                 options={CONTINENTS.map(continent => ({key: continent, value: continent, text: t(continent)}))}
                 onChange={(_event, data) => updateCountry(country.id, {continent: String(data.value || '') || null})} /></Table.Cell>
@@ -353,7 +358,7 @@ export function CommitteeTemplateManager({api}: {api: SelfHostedApi}) {
         names: Object.fromEntries(Object.entries(member.names).filter(([, value]) => value.trim())), defaultLanguage: member.defaultLanguage,
         rank: member.rank, canVote: member.canVote, canProceduralVote: member.canProceduralVote, hasVeto: member.hasVeto, mustVote: member.mustVote, sortOrder, flag: member.flag}))};
     try { const result = selectedId ? await api.updateCommitteeTemplate(selectedId, templates.find(item => item.id === selectedId)!.revision, input)
-      : await api.createCommitteeTemplate(input); const {nextTemplates} = await refresh(); load(nextTemplates.find(item => item.id === result.id) ?? result); setSaved(true); return true; }
+      : await api.createCommitteeTemplate(input); setTemplates(current => [...current.filter(item => item.id !== result.id), result]); load(result); setSaved(true); void refresh().catch(() => undefined); return true; }
     catch (caught) { setError(caught); } finally { setSaving(false); }
   };
   const remove = async () => {if (!selectedId) return; try {await api.deleteCommitteeTemplate(selectedId); await refresh(); setDeleteOpen(false); startNew();}

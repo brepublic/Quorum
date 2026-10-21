@@ -12,6 +12,8 @@ export default function ServerVolumeAdminPanel({api}: {api: SelfHostedApi}) {
   const [jobs, setJobs] = React.useState<ServerVolumeCleanup[]>([]);
   const [preview, setPreview] = React.useState<ServerVolumeCleanup>();
   const [error, setError] = React.useState<unknown>();
+  const [loadFailure, setLoadFailure] = React.useState<unknown>();
+  const failures = React.useRef(0); const refreshing=React.useRef(false);
   const [working, setWorking] = React.useState(false);
   const [downloading, setDownloading] = React.useState<Set<string>>(() => new Set());
   const [search, setSearch] = React.useState('');
@@ -19,12 +21,15 @@ export default function ServerVolumeAdminPanel({api}: {api: SelfHostedApi}) {
   const [page, setPage] = React.useState(1);
   const generation = React.useRef(0);
   const refresh = React.useCallback(async () => {
-    const current=++generation.current;
+    if(refreshing.current || failures.current>=3) return;
+    refreshing.current=true; const current=++generation.current;
     try {const [nextPolicy,nextFiles,nextJobs]=await Promise.all([api.serverVolumePolicy(),api.serverVolumeFiles(search,status,page),api.serverVolumeCleanups()]);
-      if(current===generation.current){setPolicy(nextPolicy);setInventory(nextFiles);setJobs(nextJobs);}}
-    catch(failure){if(current===generation.current)setError(failure);}
+      if(current===generation.current){setLoadFailure(undefined);failures.current=0;setPolicy(nextPolicy);setInventory(nextFiles);setJobs(nextJobs);
+        const lastPage=Math.max(1,Math.ceil(nextFiles.total/25));if(page>lastPage)setPage(lastPage);}}
+    catch(failure){if(current===generation.current){failures.current++;setLoadFailure(failure);}}
+    finally{refreshing.current=false;}
   },[api,search,status,page]);
-  React.useEffect(()=>{void refresh();const timer=window.setInterval(()=>void refresh(),5000);
+  React.useEffect(()=>{failures.current=0;void refresh();const timer=window.setInterval(()=>void refresh(),5000);
     return()=>{generation.current++;window.clearInterval(timer);};},[refresh]);
   const run = async (operation: () => Promise<void>) => {
     if(working)return;setWorking(true);setError(undefined);
@@ -41,7 +46,7 @@ export default function ServerVolumeAdminPanel({api}: {api: SelfHostedApi}) {
   });
   return <Segment loading={working} className="server-volume-admin">
     <Header as="h2">{t('Server volume')}</Header>
-    {Boolean(error) && <Message error role="alert">{apiErrorText(error)}</Message>}
+    {Boolean(error || loadFailure) && <Message error role="alert">{apiErrorText(error || loadFailure)} {Boolean(loadFailure) && <Button basic onClick={()=>{failures.current=0;void refresh();}}>{t('Retry')}</Button>}</Message>}
     <div className="server-volume-policy">
       <Checkbox toggle label={t('Disable server volume storage')} checked={policy?.disabled ?? false}
         disabled={!policy || working} onChange={(_, data) => void run(async()=>{
@@ -56,7 +61,7 @@ export default function ServerVolumeAdminPanel({api}: {api: SelfHostedApi}) {
       <Header as="h3">{t('Server volume files')}</Header>
       {inventory && <span className="server-volume-secondary">{t('Volume file count: {count}; size: {size}',{count:inventory.total,size:bytes(inventory.totalBytes)})}</span>}
     </div>
-    <Form className="server-volume-toolbar" onSubmit={()=>void refresh()}>
+    <Form className="server-volume-toolbar" onSubmit={()=>{failures.current=0;void refresh();}}>
       <Form.Input className="server-volume-search" icon="search" aria-label={t('Search volume files')} placeholder={t('Search volume files')} value={search}
         onChange={(_,data)=>{setSearch(data.value);setPage(1);}} />
       <Form.Select aria-label={t('Committee status')} value={status || 'ALL'} options={[
@@ -101,11 +106,14 @@ export default function ServerVolumeAdminPanel({api}: {api: SelfHostedApi}) {
       {t(job.scope==='ARCHIVED'?'Clear archived committees’ server volume files':job.scope==='ALL'?'Clear all server volume files':'Delete selected volume file')}
       {' · '}{t(job.status==='COMPLETED'?'Server volume cleanup completed':'Cleaning server volume')} · {job.completed}/{job.total}
       {job.failed>0 && ` · ${t('Cleanup retrying')}: ${job.failed}`}
+      {Boolean(job.failures?.length) && <details><summary>{t('Details')}</summary>{job.failures!.map(item=><div key={item.id}>
+        <code>{item.path}</code> · <code>{item.code}</code> · {item.attempts}
+      </div>)}</details>}
     </Message>)}</>}
     <Modal className="server-volume-confirm" open={Boolean(preview)} onClose={()=>{if(!working)setPreview(undefined);}} size="small" closeOnDimmerClick={!working} closeOnEscape={!working}>
       <Modal.Header>{t('Confirm server volume cleanup')}</Modal.Header>
       <Modal.Content scrolling>
-        {Boolean(error) && <Message error role="alert">{apiErrorText(error)}</Message>}
+        {Boolean(error || loadFailure) && <Message error role="alert">{apiErrorText(error || loadFailure)} {Boolean(loadFailure) && <Button basic onClick={()=>{failures.current=0;void refresh();}}>{t('Retry')}</Button>}</Message>}
         {preview && <>
           <p>{t(preview.scope==='ARCHIVED'?'Clear archived committees’ server volume files':preview.scope==='ALL'?'Clear all server volume files':'Delete selected volume file')}</p>
           <p>{t('Clear {files} copies in {committees} committees, freeing approximately {size}.',

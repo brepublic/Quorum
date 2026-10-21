@@ -159,6 +159,21 @@ integration('PostgreSQL stage 4 templates and seat snapshots', () => {
     expect(next).toMatchObject({status: 'COMPLETED', seats: []});
   });
 
+  it('saves country search codes together, rolls back on invalid input and rejects concurrent edits', async () => {
+    const owner=await user('batch-codes');
+    const changes=[{stableKey:'cn',codes:['CHN'],previousCodes:[]},{stableKey:'fr',codes:['FRA'],previousCodes:[]}];
+    const key=randomUUID();
+    const result=await stage4.updateBuiltinCountrySearchCodesBatch(owner,changes,key,context('batch'));
+    expect(result.countries.find(country=>country.stableKey==='cn')?.searchCodes).toEqual(['CHN']);
+    await expect(stage4.updateBuiltinCountrySearchCodesBatch(owner,changes,key,context('replay'))).resolves.toMatchObject({id:'builtin:default'});
+    await expect(stage4.updateBuiltinCountrySearchCodesBatch(owner,[{stableKey:'cn',codes:['NEW'],previousCodes:['CHN']},
+      {stableKey:'fr',codes:['x'.repeat(65)],previousCodes:['FRA']}],randomUUID(),context('invalid-batch'))).rejects.toMatchObject({code:'VALIDATION_FAILED'});
+    const after=await stage4.getCountryTemplate(owner,'builtin:default');
+    expect(after.countries.find(country=>country.stableKey==='cn')?.searchCodes).toEqual(['CHN']);
+    await expect(stage4.updateBuiltinCountrySearchCodesBatch(owner,[{stableKey:'cn',codes:['OLD'],previousCodes:[]}],
+      randomUUID(),context('stale-batch'))).rejects.toMatchObject({code:'REVISION_CONFLICT'});
+  });
+
   it('keeps manual country codes through rebuilds and scopes them to the right viewers', async () => {
     const owner = await user('search-owner');
     const other = await user('search-other');

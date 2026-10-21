@@ -1,7 +1,9 @@
-import {afterEach, describe, expect, it, vi} from 'vitest';
+import {beforeEach, afterEach, describe, expect, it, vi} from 'vitest';
 import {getThemeSettings, updateThemeSettings, selfHostedIdentityClient} from './self-hosted-identity';
 
+beforeEach(() => {vi.useFakeTimers(); localStorage.clear();});
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -9,19 +11,22 @@ afterEach(() => {
 describe('self-hosted identity client', () => {
   it('classifies network failure without exposing fetch internals', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
-    await expect(selfHostedIdentityClient.bootstrapStatus()).rejects.toMatchObject({status: 0, code: 'NETWORK_ERROR'});
+    const result = expect(selfHostedIdentityClient.bootstrapStatus()).rejects.toMatchObject({status: 0, code: 'NETWORK_ERROR'});
+    await vi.runAllTimersAsync(); await result;
   });
 
   it.each([401, 403, 404, 429, 500, 502, 503, 504])('preserves HTTP %s for empty or non-JSON responses', async status => {
     for (const body of ['', '<html>Proxy error</html>']) {
       vi.stubGlobal('fetch', vi.fn(async () => new Response(body, {status})));
-      await expect(selfHostedIdentityClient.bootstrapStatus()).rejects.toMatchObject({status, code: 'HTTP_ERROR'});
+      const result = expect(selfHostedIdentityClient.bootstrapStatus()).rejects.toMatchObject({status, code: 'HTTP_ERROR'});
+      await vi.runAllTimersAsync(); await result;
     }
   });
 
   it.each(['', 'null', '[]', '{}', '{"error":null}', '{"error":{"code":123}}'])('rejects malformed success: %s', async body => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(body, {status: 200})));
-    await expect(selfHostedIdentityClient.bootstrapStatus()).rejects.toMatchObject({status: 200, code: 'INVALID_RESPONSE'});
+    const result = expect(selfHostedIdentityClient.bootstrapStatus()).rejects.toMatchObject({status: 200, code: 'INVALID_RESPONSE'});
+    await vi.runAllTimersAsync(); await result;
   });
 
   it('preserves structured backend errors and request IDs', async () => {

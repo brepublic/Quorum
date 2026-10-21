@@ -238,10 +238,11 @@ export class IdentityService {
     return result;
   }
 
-  async createUser(auth: AuthenticatedSession, input: {email: string; displayName: string},
+  async createUser(auth: AuthenticatedSession, input: {email: string; displayName: string; temporaryPassword?: string},
     context: RequestIdentityContext): Promise<{user: IdentityUser; temporaryPassword: string}> {
     this.requireAdministrator(auth);
-    const temporaryPassword = createTemporaryPassword();
+    const temporaryPassword = input.temporaryPassword ?? createTemporaryPassword();
+    requirePassword(temporaryPassword);
     const passwordHash = await hashPassword(temporaryPassword);
     try {
       const user = await this.store.createUser({
