@@ -31,8 +31,7 @@ export function StorageErrorMessage({error, text}: {error: unknown; text: string
     [t('Required free space after writing'), display(minimum)],
     [t('Additional space needed'), display(available !== undefined && write !== undefined && minimum !== undefined
       ? Math.max(0, minimum - available + write) : undefined)],
-    [t('Effective free-space rule'), `${display(bytes('storageMinFreeBytes'))} / ${percent('storageMinFreePercent')}`],
-    [t('Deployment minimum'), `${display(bytes('hardMinFreeBytes'))} / ${percent('hardMinFreePercent')}`]
+    [t('Effective free-space rule'), `${display(bytes('storageMinFreeBytes'))} / ${percent('storageMinFreePercent')}`]
   ];
   return <Message error role="alert">
     <p>{text}</p>
@@ -40,7 +39,6 @@ export function StorageErrorMessage({error, text}: {error: unknown; text: string
       <p><code>STORAGE_RESERVE_REQUIRED</code></p>
       <dl>{rows.map(([label, value]) => <React.Fragment key={label}><dt>{label}</dt><dd style={{overflowWrap: 'anywhere'}}>{value}</dd></React.Fragment>)}</dl>
       <p>{t('The larger of the byte and percentage limits applies. Administrators: check System settings → Cache settings and free space on the cache filesystem.')}</p>
-      <p>{t('Deployment limits')}: <code>QUORUM_STORAGE_HARD_MIN_FREE_BYTES</code>, <code>QUORUM_STORAGE_HARD_MIN_FREE_PERCENT</code></p>
       {typeof failure?.requestId === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(failure.requestId)
         && <p>{t('Request ID')}: <code>{failure.requestId}</code></p>}
     </details>

@@ -21,9 +21,7 @@ async function fixture(usage = {global_bytes: 0, committee_bytes: 0}) {
   const source = new DurableStagingStore(join(root, 'staging'), 1024, 1024); await source.initialize();
   const cache = new DurableStagingStore(root, 1024, 1024); await cache.initialize();
   const effective = vi.fn(async () => ({publishedCacheMaxBytes: 1024, pendingReviewMaxBytes: 100,
-    pendingReviewCommitteeMaxBytes: 80, storageMinFreeBytes: 0, storageMinFreePercent: 0, revision: 1,
-    hardLimits: {publishedCacheMaxBytes: 1024, pendingReviewMaxBytes: 100,
-      pendingReviewCommitteeMaxBytes: 80, storageMinFreeBytes: 0, storageMinFreePercent: 0}}));
+    pendingReviewCommitteeMaxBytes: 80, storageMinFreeBytes: 0, storageMinFreePercent: 0, revision: 1}));
   const query = vi.fn(async (sql: string) => sql.includes('COALESCE(sum(size_bytes)')
     ? {rows: [usage]} : {rows: []});
   const service = new StorageCacheService({query} as never, source, cache, {effective} as never);
@@ -53,17 +51,16 @@ describe('Chair file cache', () => {
     expect(value.query).toHaveBeenCalledTimes(1);
   });
 
-  it('returns disk measurements and effective and deployment limits through the API', async () => {
+  it('returns disk measurements and administrator-configured limits through the API', async () => {
     const value = await fixture();
     const config = await value.effective();
-    value.effective.mockResolvedValue({...config, storageMinFreeBytes: 20, storageMinFreePercent: 10,
-      hardLimits: {...config.hardLimits, storageMinFreeBytes: 10, storageMinFreePercent: 5}});
+    value.effective.mockResolvedValue({...config, storageMinFreeBytes: 20, storageMinFreePercent: 10});
     const error = await value.service.assertPendingCapacity('20000000-0000-4000-8000-000000000001', 1)
       .catch(error => error);
     expect(normalizeError(error, 'reserve-request').body.error).toMatchObject({
       code: 'SERVICE_NOT_READY', reason: 'STORAGE_RESERVE_REQUIRED', requestId: 'reserve-request',
       details: {availableBytes: 100, totalBytes: 1000, writeBytes: 1, minimumFreeBytes: 100,
-        storageMinFreeBytes: 20, storageMinFreePercent: 10, hardMinFreeBytes: 10, hardMinFreePercent: 5}
+        storageMinFreeBytes: 20, storageMinFreePercent: 10}
     });
     // Exact equality with the reserve remains writable.
     await expect(value.service.assertPendingCapacity('20000000-0000-4000-8000-000000000001', 0)).resolves.toBeUndefined();

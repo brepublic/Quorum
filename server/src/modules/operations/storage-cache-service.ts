@@ -21,7 +21,7 @@ function admin(auth: AuthenticatedSession): void {
 
 function integer(value: unknown, name: string, maximum: number): number {
   if (!Number.isSafeInteger(value) || Number(value) < 0 || Number(value) > maximum) {
-    throw new AppError({reason: 'NUMBER_OUT_OF_RANGE', params: {max: maximum}, code: 'VALIDATION_FAILED', message: `${name} is outside the deployment boundary.`});
+    throw new AppError({reason: 'NUMBER_OUT_OF_RANGE', params: {max: maximum}, code: 'VALIDATION_FAILED', message: `${name} is outside the allowed numeric range.`});
   }
   return Number(value);
 }
@@ -50,20 +50,18 @@ export class StorageCacheOperationsService {
   }
 
   async update(auth: AuthenticatedSession, body: Record<string, unknown>, context: Stage4Context) {
-    admin(auth); const hard = this.policy.hardLimits;
+    admin(auth);
     const requested: StorageCacheConfig = {
-      publishedCacheMaxBytes: integer(body.publishedCacheMaxBytes, 'Published cache limit', hard.publishedCacheMaxBytes),
-      pendingReviewMaxBytes: integer(body.pendingReviewMaxBytes, 'Pending review limit', hard.pendingReviewMaxBytes),
+      publishedCacheMaxBytes: integer(body.publishedCacheMaxBytes, 'Published cache limit', Number.MAX_SAFE_INTEGER),
+      pendingReviewMaxBytes: integer(body.pendingReviewMaxBytes, 'Pending review limit', Number.MAX_SAFE_INTEGER),
       pendingReviewCommitteeMaxBytes: integer(body.pendingReviewCommitteeMaxBytes, 'Committee pending review limit',
-        hard.pendingReviewCommitteeMaxBytes),
+        Number.MAX_SAFE_INTEGER),
       storageMinFreeBytes: integer(body.storageMinFreeBytes, 'Minimum free bytes', Number.MAX_SAFE_INTEGER),
       storageMinFreePercent: integer(body.storageMinFreePercent, 'Minimum free percent', 100),
       revision: integer(body.revision, 'Revision', Number.MAX_SAFE_INTEGER)
     };
-    if (requested.pendingReviewCommitteeMaxBytes > requested.pendingReviewMaxBytes
-      || requested.storageMinFreeBytes < hard.storageMinFreeBytes
-      || requested.storageMinFreePercent < hard.storageMinFreePercent) {
-      throw new AppError({reason: 'CACHE_LIMIT_INVALID', code: 'VALIDATION_FAILED', message: 'Storage cache configuration violates deployment boundaries.'});
+    if (requested.pendingReviewCommitteeMaxBytes > requested.pendingReviewMaxBytes) {
+      throw new AppError({reason: 'CACHE_LIMIT_INVALID', code: 'VALIDATION_FAILED', message: 'The committee pending review limit cannot exceed the global pending review limit.'});
     }
     await transaction(this.pool, async client => {
       const current = (await client.query<{storage_cache_config_revision: number}>(

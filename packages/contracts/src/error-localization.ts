@@ -76,7 +76,7 @@ export const ERROR_TEXT = {
   CHAIR_OR_OWNER_REQUIRED: {en: "Chair or committee owner access is required.", 'zh-CN': "需要主席或委员会所有者权限。"},
   FILE_SHARING_UNAVAILABLE: {en: "File sharing has ended or is unavailable. Ask a Chair for a valid link.", 'zh-CN': "文件分享已结束或当前不可用，请向主席索取有效链接。"},
   FILE_SHARE_CUSTODIAN_UNAVAILABLE: {en: "The Chair who started file sharing is unavailable. Ask another Chair to restart sharing.", 'zh-CN': "发起文件分享的主席账号已不可用，请由其他主席重新开始分享。"},
-  CACHE_LIMIT_INVALID: {en: "Cache settings exceed server limits. Lower the capacity limit or increase reserved space.", 'zh-CN': "缓存设置超出服务器允许范围，请降低容量上限或增加保留空间。"},
+  CACHE_LIMIT_INVALID: {en: "The per-committee pending review quota cannot exceed the total pending review quota.", 'zh-CN': "单委员会待审核额度不能超过待审核总额度。"},
   OPERATIONS_UNAVAILABLE: {en: "Operations status could not be read. Refresh the operations page later.", 'zh-CN': "暂时无法读取运行状态，请稍后刷新运维页面。"},
   INVALID_DELETION_CONFIRMATION: {en: "Enter the full committee name to confirm deletion.", 'zh-CN': "请输入完整的委员会名称以确认删除。"},
   ARCHIVE_BEFORE_DELETE: {en: "Archive the committee before deleting it.", 'zh-CN': "请先归档委员会，再删除。"},

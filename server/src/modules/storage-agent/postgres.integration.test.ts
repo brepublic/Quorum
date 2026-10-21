@@ -72,9 +72,7 @@ beforeEach(async () => {
   uploads = new Stage6UploadService(pool, staging);
   cache = new StorageCacheService(pool, staging, staging, {effective: async () => ({
     publishedCacheMaxBytes: 1024 * 1024, pendingReviewMaxBytes: 1024 * 1024,
-    pendingReviewCommitteeMaxBytes: 1024 * 1024, storageMinFreeBytes: 0, storageMinFreePercent: 0, revision: 1,
-    hardLimits: {publishedCacheMaxBytes: 1024 * 1024, pendingReviewMaxBytes: 1024 * 1024,
-      pendingReviewCommitteeMaxBytes: 1024 * 1024, storageMinFreeBytes: 0, storageMinFreePercent: 0}
+    pendingReviewCommitteeMaxBytes: 1024 * 1024, storageMinFreeBytes: 0, storageMinFreePercent: 0, revision: 1
   })} as never);
   chairProvider = new Stage7ChairAgentProviderService(pool, storage, cache);
   tasks = new Stage7StorageTaskService(agent, staging, {} as Stage6FileService, undefined, chairProvider);
@@ -1200,30 +1198,26 @@ integration('PostgreSQL stage 7 storage Agent identity', () => {
       .rejects.toMatchObject({code: 'STALE_STORAGE_LEASE'});
   });
 
-  it('revision-updates cache settings within deployment boundaries', async () => {
-    const policy = new StorageCachePolicyService(pool as pg.Pool, {
-      publishedCacheHardMaxBytes: 2_000, pendingReviewHardMaxBytes: 1_000,
-      pendingReviewCommitteeHardMaxBytes: 500, storageHardMinFreeBytes: 100,
-      storageHardMinFreePercent: 20
-    } as never);
+  it('lets administrators set cache quotas and free space without deployment boundaries', async () => {
+    const policy = new StorageCachePolicyService(pool as pg.Pool);
     const operations = new StorageCacheOperationsService(pool as pg.Pool, staging, policy,
       new StorageCacheRuntimeStats(), createLogger(() => undefined));
-    const configured = await operations.update(administrator, {publishedCacheMaxBytes: 1_500,
-      pendingReviewMaxBytes: 900, pendingReviewCommitteeMaxBytes: 400,
-      storageMinFreeBytes: 200, storageMinFreePercent: 25, revision: 1}, context('cache-config'));
-    expect(configured).toMatchObject({publishedCacheMaxBytes: 1_500, pendingReviewMaxBytes: 900,
-      pendingReviewCommitteeMaxBytes: 400, storageMinFreeBytes: 200, storageMinFreePercent: 25, revision: 2});
-    await expect(operations.update(administrator, {publishedCacheMaxBytes: 1_500,
-      pendingReviewMaxBytes: 900, pendingReviewCommitteeMaxBytes: 400,
-      storageMinFreeBytes: 200, storageMinFreePercent: 25, revision: 1}, context('cache-config-stale')))
+    const settings = {publishedCacheMaxBytes: 20 * 1024 ** 3, pendingReviewMaxBytes: 10 * 1024 ** 3,
+      pendingReviewCommitteeMaxBytes: 2 * 1024 ** 3, storageMinFreeBytes: 5 * 1024 ** 3,
+      storageMinFreePercent: 5, revision: 1};
+    expect(await operations.update(administrator, settings, context('cache-config')))
+      .toEqual({...settings, revision: 2});
+    await expect(operations.update(administrator, settings, context('cache-config-stale')))
       .rejects.toMatchObject({code: 'REVISION_CONFLICT'});
-    await expect(operations.update(administrator, {publishedCacheMaxBytes: 2_001,
-      pendingReviewMaxBytes: 900, pendingReviewCommitteeMaxBytes: 400,
-      storageMinFreeBytes: 200, storageMinFreePercent: 25, revision: 2}, context('cache-config-over-limit')))
-      .rejects.toMatchObject({code: 'VALIDATION_FAILED'});
+    expect(await operations.update(administrator, {...settings, storageMinFreeBytes: 0,
+      storageMinFreePercent: 0, revision: 2}, context('cache-config-zero')))
+      .toEqual({...settings, storageMinFreeBytes: 0, storageMinFreePercent: 0, revision: 3});
+    await expect(operations.update(administrator, {...settings, pendingReviewCommitteeMaxBytes: settings.pendingReviewMaxBytes + 1,
+      revision: 3}, context('cache-config-invalid')))
+      .rejects.toMatchObject({code: 'VALIDATION_FAILED', reason: 'CACHE_LIMIT_INVALID'});
     const audit = await pool?.query<{count: number}>(`SELECT count(*)::int AS count FROM audit_log
       WHERE action='storage.cache_config_updated'`);
-    expect(audit?.rows).toEqual([{count: 1}]);
+    expect(audit?.rows).toEqual([{count: 2}]);
   });
 
   it('lists safe cache metadata in LRU order and evicts the first READY entry', async () => {
@@ -1238,12 +1232,8 @@ integration('PostgreSQL stage 7 storage Agent identity', () => {
       () => {throw new Error('Unexpected S3');});
     const [saved] = await fileService.list(value.owner, value.committee.id);
     await fileService.publish(value.owner, saved!.id, {baseRevision: saved!.revision}, randomUUID(), context('lru-publish'));
-    const policy = {hardLimits: {publishedCacheMaxBytes: 0, pendingReviewMaxBytes: 1024,
-      pendingReviewCommitteeMaxBytes: 1024, storageMinFreeBytes: 0, storageMinFreePercent: 0},
-    effective: async () => ({publishedCacheMaxBytes: 0, pendingReviewMaxBytes: 1024,
-      pendingReviewCommitteeMaxBytes: 1024, storageMinFreeBytes: 0, storageMinFreePercent: 0, revision: 1,
-      hardLimits: {publishedCacheMaxBytes: 0, pendingReviewMaxBytes: 1024,
-        pendingReviewCommitteeMaxBytes: 1024, storageMinFreeBytes: 0, storageMinFreePercent: 0}})};
+    const policy = {effective: async () => ({publishedCacheMaxBytes: 0, pendingReviewMaxBytes: 1024,
+      pendingReviewCommitteeMaxBytes: 1024, storageMinFreeBytes: 0, storageMinFreePercent: 0, revision: 1})};
     const operations = new StorageCacheOperationsService(pool as pg.Pool, staging, policy as never,
       new StorageCacheRuntimeStats(), createLogger(() => undefined));
     const listed = await operations.files(administrator, 'published', 1, 25);

@@ -33,9 +33,7 @@ describe('operations status panel', () => {
       queues: {blobDelete: 0, uploadStaging: 0, migration: 0, agentTasks: 0, committeeDeletion: 0},
       retention: {lastStatus: null, lastCompletedAt: null}};
     const config = {publishedCacheMaxBytes: 1_000, pendingReviewMaxBytes: 500,
-      pendingReviewCommitteeMaxBytes: 250, storageMinFreeBytes: 100, storageMinFreePercent: 20, revision: 2,
-      hardLimits: {publishedCacheMaxBytes: 2_000, pendingReviewMaxBytes: 1_000,
-        pendingReviewCommitteeMaxBytes: 500, storageMinFreeBytes: 100, storageMinFreePercent: 20}};
+      pendingReviewCommitteeMaxBytes: 250, storageMinFreeBytes: 100, storageMinFreePercent: 20, revision: 2};
     const api = {operationsStatus: vi.fn(async () => operations), storageCacheStatus: vi.fn(async () => ({config,
       capacity: {totalBytes: 4_000, availableBytes: 2_000, quorumBytes: 300,
         pendingReviewBytes: 100, publishedCacheBytes: 200, otherStagingBytes: 0},

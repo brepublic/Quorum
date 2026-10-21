@@ -234,8 +234,6 @@ const zhCN: Record<string, string> = {
   "Required free space after writing": "写入后必须保留的空间",
   "Additional space needed": "本次写入还缺少的空间",
   "Effective free-space rule": "生效的最低剩余空间规则",
-  "Deployment minimum": "部署规定的最低剩余空间",
-  "Deployment limits": "部署配置项",
   "Request ID": "请求编号",
   "The larger of the byte and percentage limits applies. Administrators: check System settings → Cache settings and free space on the cache filesystem.": "字节数与百分比限制取较大值。管理员请检查“系统设置 → 缓存设置”，并核对缓存所在文件系统的可用空间。",
   "Delete server file": "删除服务器文件",

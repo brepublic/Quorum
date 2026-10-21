@@ -14,7 +14,7 @@ describe('cache disk space feedback', () => {
     const error = new SelfHostedApiError(503, 'SERVICE_NOT_READY', '/private/server/path', 'req-reserve', {
       totalBytes: 100 * 1024 ** 3, availableBytes: 8 * 1024 ** 3, writeBytes: 1024 ** 2,
       minimumFreeBytes: 20 * 1024 ** 3, storageMinFreeBytes: 10 * 1024 ** 3,
-      storageMinFreePercent: 20, hardMinFreeBytes: 10 * 1024 ** 3, hardMinFreePercent: 20,
+      storageMinFreePercent: 20,
       privatePath: '/private/cache/path'
     }, {reason: 'STORAGE_RESERVE_REQUIRED'});
     const host = document.createElement('div'); const root = createRoot(host);
@@ -27,7 +27,7 @@ describe('cache disk space feedback', () => {
       expect(details.textContent).toContain('req-reserve');
       expect(details.textContent).toContain('20 GiB');
       expect(details.textContent).toContain('12,885,950,464 B');
-      expect(details.textContent).toContain('QUORUM_STORAGE_HARD_MIN_FREE_BYTES');
+      expect(details.textContent).not.toContain('QUORUM_STORAGE_HARD_MIN_FREE_BYTES');
       expect(host.textContent).not.toContain('/private');
       await act(async () => details.querySelector('summary')!.click());
       expect(details.open).toBe(true);

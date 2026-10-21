@@ -15,9 +15,7 @@ beforeEach(() => {setLanguage('zh-CN');
 });
 afterEach(() => {act(() => root.unmount()); host.remove();});
 const config = {publishedCacheMaxBytes: 1000, pendingReviewMaxBytes: 500, pendingReviewCommitteeMaxBytes: 250,
-  storageMinFreeBytes: 100, storageMinFreePercent: 20, revision: 2,
-  hardLimits: {publishedCacheMaxBytes: 2000, pendingReviewMaxBytes: 1000, pendingReviewCommitteeMaxBytes: 500,
-    storageMinFreeBytes: 100, storageMinFreePercent: 20}};
+  storageMinFreeBytes: 100, storageMinFreePercent: 20, revision: 2};
 const mbToBytes = (value: number) => Math.round(value * 1024 * 1024);
 const operations = {database: {schemaCompatibility: 52}, storage: {state: 'normal', usageRatio: 0.4},
   accounts: {active: 2}, committees: {active: 1}, queues: {agentTasks: 3},
@@ -54,6 +52,19 @@ async function fill(selector: string, value: string) {
 }
 
 describe('system settings navigation and extracted settings', () => {
+  it('saves administrator quotas above the old limits and allows zero reserved space', async () => {
+    const {api} = await render('/system-settings/cache');
+    await fill('#cache-publishedCacheMaxBytes', '20480');
+    await fill('#cache-pendingReviewMaxBytes', '10240');
+    await fill('#cache-pendingReviewCommitteeMaxBytes', '2048');
+    await fill('#cache-storageMinFreeBytes', '0');
+    await fill('#cache-storageMinFreePercent', '0');
+    await act(async () => {host.querySelector('form')!.dispatchEvent(new Event('submit', {bubbles: true, cancelable: true}));});
+    expect(api.updateStorageCacheConfig).toHaveBeenCalledWith({publishedCacheMaxBytes: mbToBytes(20480),
+      pendingReviewMaxBytes: mbToBytes(10240), pendingReviewCommitteeMaxBytes: mbToBytes(2048),
+      storageMinFreeBytes: 0, storageMinFreePercent: 0, revision: 2});
+    expect((host.querySelector('#cache-storageMinFreeBytes') as HTMLInputElement).value).toBe('0');
+  });
   it.each(['/system-settings', '/operations', '/system-settings/operations'])('opens the status tab at %s', async path => {
     const {api, client} = await render(path);
     expect(host.querySelector('nav a[aria-current="page"]')?.getAttribute('href')).toBe('/system-settings/operations');

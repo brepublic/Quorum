@@ -67,8 +67,7 @@ async function createInstance(index) {
   instance.origin = `http://localhost:${webPort}`;
   const storage = join(root, `storage-${index}`); await mkdir(storage);
   instance.backend = start(['server/dist/index.js'], {DATABASE_URL: url.toString(), PORT: String(apiPort), HOST: '127.0.0.1',
-    QUORUM_ALLOWED_ORIGINS: `http://localhost:${apiPort}`, QUORUM_STORAGE_PATH: storage,
-    QUORUM_STORAGE_HARD_MIN_FREE_BYTES: '1', QUORUM_STORAGE_HARD_MIN_FREE_PERCENT: '1'});
+    QUORUM_ALLOWED_ORIGINS: `http://localhost:${apiPort}`, QUORUM_STORAGE_PATH: storage});
   instance.web = start(['node_modules/vite/bin/vite.js', '--host', '127.0.0.1', '--port', String(webPort), '--strictPort'],
     {QUORUM_DEV_API_ORIGIN: `http://localhost:${apiPort}`});
   await waitUntil(async () => (await fetch(`${instance.origin}/api/v1/bootstrap/status`, {signal: AbortSignal.timeout(2000)})).ok, 'instance startup');

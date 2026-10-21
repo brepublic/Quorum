@@ -84,7 +84,7 @@ async function main(): Promise<void> {
     await staging.initialize();
     const cacheStore = new DurableStagingStore(config.storagePath, config.maxFileBytes, config.maxUploadRequestBytes);
     await cacheStore.initialize();
-    const cachePolicy = new StorageCachePolicyService(pool, config);
+    const cachePolicy = new StorageCachePolicyService(pool);
     const cache = new StorageCacheService(pool, staging, cacheStore, cachePolicy);
     const cacheRefill = new StorageCacheRefillService(pool, cache);
     const cacheRuntime = new StorageCacheRuntimeStats();
