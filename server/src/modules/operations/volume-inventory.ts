@@ -203,7 +203,10 @@ export class ServerVolumeInventoryService {
       FROM server_volume_cleanup_batches b LEFT JOIN server_volume_cleanup_items i ON i.batch_id=b.id
       WHERE b.id=$1 GROUP BY b.id`,[id]);
     const row=result.rows[0];if(!row) throw new AppError({code:'NOT_FOUND',message:'Cleanup not found.'});
-    return {id:row.id,scope:row.scope,status:row.status,total:row.total,completed:row.completed,failed:row.failed,
+    const failures=await client.query<{id:string;path:string;code:string;attempts:number}>(
+      `SELECT id,file_snapshot->>'path' AS path,failure_code AS code,attempts FROM server_volume_cleanup_items
+       WHERE batch_id=$1 AND status='RETRY' ORDER BY id LIMIT 50`,[id]);
+    return {id:row.id,scope:row.scope,status:row.status,total:row.total,completed:row.completed,failed:row.failed,failures:failures.rows,
       sizeBytes:Number(row.bytes),withoutOtherCopy:row.endangered,committeeCount:row.committees};
   }
   async batches(auth: AuthenticatedSession): Promise<ServerVolumeCleanup[]> {

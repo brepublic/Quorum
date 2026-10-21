@@ -1,3 +1,4 @@
+import {downloadPreparedFile} from '../../services/file-download';
 import {ViewportDropdown, ViewportFormSelect, ViewportFormDropdown, dropdownPlacement} from '../../components/ViewportDropdown';
 import {FileStatusLabel} from '../../components/FileStatusLabel';
 import {apiErrorText} from '../../i18n';
@@ -795,7 +796,11 @@ function AmendmentCard({snapshot, amendment, run, api, canChair, representedSeat
   const hasBallot = amendmentBallots.length > 0;
   const deletable = editable && !hasBallot && !amendment.votingVersionId
     && !['VOTING', 'INCORPORATED', 'REJECTED'].includes(amendment.status);
+  const editRevision = React.useRef(amendment.revision);
+  const latestText = React.useRef({title,content}); latestText.current={title,content};
   React.useEffect(() => {
+    if (titleDirty || bodyDirty) return;
+    editRevision.current=amendment.revision;
     setTitle(amendment.title); setTitleDirty(false); setBodyDirty(false); setContent(amendment.currentVersion.content);
     setFileId(amendment.currentVersion.contentFile?.id ?? '');
   }, [amendment.id, amendment.revision]);
@@ -812,6 +817,7 @@ function AmendmentCard({snapshot, amendment, run, api, canChair, representedSeat
     return () => {active = false;};
   }, [api, snapshot.committee.id, snapshot.sync.committeeEventSequence, source, filesRetry]);
   const save = (requestedSource?: 'TEXT' | 'FILE', nextFileId = fileId) => {
+    if(editRevision.current!==amendment.revision) return;
     if (!requestedSource && !bodyDirty && !titleDirty) return;
     const nextSource = requestedSource ?? (bodyDirty ? source : amendment.currentVersion.contentFile ? 'FILE' : 'TEXT');
     const nextContent = nextSource === 'TEXT' ? content : '';
@@ -820,8 +826,13 @@ function AmendmentCard({snapshot, amendment, run, api, canChair, representedSeat
       || nextSource === 'FILE' && !contentFileEntryId
       || !titleDirty && nextContent === amendment.currentVersion.content
         && contentFileEntryId === (amendment.currentVersion.contentFile?.id ?? null)) return;
-    return run(() => api.createDocumentVersion(amendment.id, {baseRevision: amendment.revision,
-      customTitle: titleDirty ? title.trim() || null : amendment.customTitle, content: nextContent, contentFileEntryId, ...represented}));
+    const captured=latestText.current;
+    return run(async () => {const saved=await api.createDocumentVersion(amendment.id, {baseRevision: editRevision.current,
+      customTitle: titleDirty ? title.trim() || null : amendment.customTitle, content: nextContent, contentFileEntryId, ...represented});
+      editRevision.current=saved.revision;
+      if(latestText.current.title===captured.title && latestText.current.content===captured.content) {setTitleDirty(false);setBodyDirty(false);}
+      return saved;
+    });
   };
   const useFile = async () => {
     if (savingFile.current || filesLoading || !files.some(file => file.id === selectedFileId)) return;
@@ -835,16 +846,9 @@ function AmendmentCard({snapshot, amendment, run, api, canChair, representedSeat
     const generation = downloadGeneration.current;
     downloadingFile.current = true; setPreparingDownload(true); setDownloadFailure(undefined);
     try {
-      let readiness = await api.prepareFileDownload(id);
-      while (readiness.status === 'PREPARING' && generation === downloadGeneration.current) {
-        await new Promise(resolve => window.setTimeout(resolve, (readiness.retryAfterSeconds ?? 2) * 1000));
-        if (generation !== downloadGeneration.current) return;
-        readiness = await api.fileDownloadReadiness(id);
-      }
-      if (generation !== downloadGeneration.current) return;
-      if (readiness.status !== 'READY') throw Object.assign(new Error(), {code: readiness.code ?? 'NOT_FOUND'});
-      window.location.assign(api.fileDownloadUrl(id));
-    } catch (caught) {if (generation === downloadGeneration.current) setDownloadFailure(caught);}
+      await downloadPreparedFile(() => api.prepareFileDownload(id),
+        () => api.fileDownloadReadiness(id), api.fileDownloadUrl(id));
+    } catch (caught) {if (generation === downloadGeneration.current && !(caught instanceof DOMException && caught.name==='AbortError')) setDownloadFailure(caught);}
     finally {downloadingFile.current = false; if (generation === downloadGeneration.current) setPreparingDownload(false);}
   };
   const friendly = amendment.amendmentType === 'FRIENDLY';
@@ -871,6 +875,12 @@ function AmendmentCard({snapshot, amendment, run, api, canChair, representedSeat
     <Button className="amendment-delete-button" icon="trash" negative basic disabled={!deletable || adopting} aria-label={t('Delete')}
       onClick={() => void run(() => api.deleteAmendment(amendment.id, amendment.revision))} />
   </div>
+  {(titleDirty || bodyDirty) && editRevision.current!==amendment.revision && <Message warning role="alert">
+    {t('This document changed. Your draft is preserved.')}
+    <details><summary>{t('Latest saved version')}</summary><strong>{amendment.title}</strong><pre>{amendment.currentVersion.contentFile?.logicalName ?? amendment.currentVersion.content}</pre></details>
+    <Button type="button" onClick={()=>{editRevision.current=amendment.revision;void save();}}>{t('Save my edited version')}</Button>
+    <Button type="button" onClick={()=>{editRevision.current=amendment.revision;setTitle(amendment.title);setContent(amendment.currentVersion.content);setFileId(amendment.currentVersion.contentFile?.id ?? '');setTitleDirty(false);setBodyDirty(false);}}>{t('Use latest saved version')}</Button>
+  </Message>}
   <Button.Group basic compact className="amendment-source-buttons"><Button active={source === 'FILE'}
     onClick={() => setSource('FILE')}>{t('File')}</Button><Button active={source === 'TEXT'}
     onClick={() => setSource('TEXT')}>{t('Text')}</Button></Button.Group>
@@ -2059,8 +2069,11 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab, draft
       else creatingDraft.current = false;
     })();
   }, [api, canParticipate, history, resourceId, run, session, snapshot.committee.id, draftType]);
+  const editRevision = React.useRef(selectedDocument?.revision);
+  const latestText = React.useRef({title:versionTitle,content:versionContent}); latestText.current={title:versionTitle,content:versionContent};
   React.useEffect(() => {
-    if (!selectedDocument) return;
+    if (!selectedDocument || versionTitleDirty || bodyDirty) return;
+    editRevision.current=selectedDocument.revision;
     setVersionTitle(selectedDocument.title); setVersionTitleDirty(false); setBodyDirty(false); setVersionContent(selectedDocument.currentVersion.content);
     setVersionFileId(selectedDocument.currentVersion.contentFile?.id ?? '');
   }, [selectedDocument?.id, selectedDocument?.revision]);
@@ -2091,6 +2104,7 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab, draft
   const base = `/committees/${snapshot.committee.id}/${draftType === 'DIRECTIVE' ? 'directives' : 'resolutions'}/${document.id}`;
   const editable = canParticipate && !document.votingVersionId && !['VOTING', 'PASSED', 'FAILED'].includes(document.status);
   const saveVersion = (requestedSource?: 'TEXT' | 'FILE', nextFileId = versionFileId) => {
+    if(editRevision.current!==document.revision) return;
     if (!requestedSource && !bodyDirty && !versionTitleDirty) return;
     const nextSource = requestedSource ?? (bodyDirty ? contentSource : document.currentVersion.contentFile ? 'FILE' : 'TEXT');
     const nextContent = nextSource === 'TEXT' ? versionContent : '';
@@ -2098,8 +2112,13 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab, draft
     if (!editable || nextSource === 'FILE' && !contentFileEntryId
       || !versionTitleDirty && nextContent === document.currentVersion.content
         && contentFileEntryId === (document.currentVersion.contentFile?.id ?? null)) return;
-    return run(() => api.createDocumentVersion(document.id, {baseRevision: document.revision,
-      customTitle: versionTitleDirty ? versionTitle.trim() || null : document.customTitle, content: nextContent, contentFileEntryId, ...represented}));
+    const captured=latestText.current;
+    return run(async () => {const saved=await api.createDocumentVersion(document.id, {baseRevision: editRevision.current ?? document.revision,
+      customTitle: versionTitleDirty ? versionTitle.trim() || null : document.customTitle, content: nextContent, contentFileEntryId, ...represented});
+      editRevision.current=saved.revision;
+      if(latestText.current.title===captured.title && latestText.current.content===captured.content) {setVersionTitleDirty(false);setBodyDirty(false);}
+      return saved;
+    });
   };
   const useFile = async () => {
     if (savingFile.current || filesLoading || !availableFiles.some(file => file.id === selectedExistingFileId)) return;
@@ -2113,16 +2132,9 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab, draft
     const generation = downloadGeneration.current;
     downloadingFile.current = true; setPreparingDownload(true); setDownloadFailure(undefined);
     try {
-      let readiness = await api.prepareFileDownload(id);
-      while (readiness.status === 'PREPARING' && generation === downloadGeneration.current) {
-        await new Promise(resolve => window.setTimeout(resolve, (readiness.retryAfterSeconds ?? 2) * 1000));
-        if (generation !== downloadGeneration.current) return;
-        readiness = await api.fileDownloadReadiness(id);
-      }
-      if (generation !== downloadGeneration.current) return;
-      if (readiness.status !== 'READY') throw Object.assign(new Error(), {code: readiness.code ?? 'NOT_FOUND'});
-      window.location.assign(api.fileDownloadUrl(id));
-    } catch (caught) {if (generation === downloadGeneration.current) setDownloadFailure(caught);}
+      await downloadPreparedFile(() => api.prepareFileDownload(id),
+        () => api.fileDownloadReadiness(id), api.fileDownloadUrl(id));
+    } catch (caught) {if (generation === downloadGeneration.current && !(caught instanceof DOMException && caught.name==='AbortError')) setDownloadFailure(caught);}
     finally {downloadingFile.current = false; if (generation === downloadGeneration.current) setPreparingDownload(false);}
   };
   const presentSeatIds = new Set((snapshot.attendanceBySession?.[document.meetingSessionId] ?? snapshot.attendance)
@@ -2155,6 +2167,12 @@ function DocumentWorkspace({snapshot, run, api, canChair, resourceId, tab, draft
         <Menu.Item key={path} as={Link} to={path === 'text' ? base : `${base}/${path}`}
           active={activeTab === path}>{t(label)}</Menu.Item>)}</Menu></Grid.Column></Grid.Row>
     <Grid.Row><Grid.Column width={11}>
+    {(versionTitleDirty || bodyDirty) && editRevision.current!==document.revision && <Message warning role="alert">
+      {t('This document changed. Your draft is preserved.')}
+      <details><summary>{t('Latest saved version')}</summary><strong>{document.title}</strong><pre>{document.currentVersion.contentFile?.logicalName ?? document.currentVersion.content}</pre></details>
+      <Button type="button" onClick={()=>{editRevision.current=document.revision;void saveVersion();}}>{t('Save my edited version')}</Button>
+      <Button type="button" onClick={()=>{editRevision.current=document.revision;setVersionTitle(document.title);setVersionContent(document.currentVersion.content);setVersionFileId(document.currentVersion.contentFile?.id ?? '');setVersionTitleDirty(false);setBodyDirty(false);}}>{t('Use latest saved version')}</Button>
+    </Message>}
     {draftType==='DIRECTIVE' && <Form><ViewportFormSelect fluid selection label={t('Responding to crisis')} aria-label={t('Responding to crisis')}
       value={document.directVote?.crisisGroupId ?? ''} disabled={!canChair || !canParticipate || Boolean(document.directVote?.startedAt || document.directVote?.invalidatedAt)}
       options={(snapshot.crises ?? []).flatMap(group=> {
@@ -2255,7 +2273,7 @@ export default function ProceedingsPanel({snapshot, run, api, canChair, view, re
   if (view === 'strawpoll') return <StrawpollWorkspace snapshot={snapshot} run={run} api={api} canChair={canChair} resourceId={resourceId} />;
   if ((view === 'resolution' || view === 'directive') && ['voting', 'ballot'].includes(tab ?? '')) return <Redirect to={`/committees/${snapshot.committee.id}/votes/${resourceId}`} />;
   if (view === 'voting') return <VotingWorkspace snapshot={snapshot} run={run} api={api} canChair={canChair} resourceId={resourceId} />;
-  if (view === 'directive') return <DocumentWorkspace snapshot={snapshot} run={run} api={api} canChair={canChair} resourceId={resourceId} tab={tab} draftType="DIRECTIVE" />;
-  if (view === 'resolution') return <DocumentWorkspace snapshot={snapshot} run={run} api={api} canChair={canChair} resourceId={resourceId} tab={tab} />;
+  if (view === 'directive') return <DocumentWorkspace key={`${view}:${resourceId}`} snapshot={snapshot} run={run} api={api} canChair={canChair} resourceId={resourceId} tab={tab} draftType="DIRECTIVE" />;
+  if (view === 'resolution') return <DocumentWorkspace key={`${view}:${resourceId}`} snapshot={snapshot} run={run} api={api} canChair={canChair} resourceId={resourceId} tab={tab} />;
   return <Motions snapshot={snapshot} run={run} api={api} canChair={canChair} />;
 }

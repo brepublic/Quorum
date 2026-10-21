@@ -1,4 +1,6 @@
+import {downloadPreparedFile} from '../../services/file-download';
 import {useVolumePolicy, VolumePolicyNotice} from './VolumePolicyNotice';
+import {StorageErrorMessage} from '../../components/StorageErrorMessage';
 import {ViewportFormSelect} from '../../components/ViewportDropdown';
 import {t, useLanguage, getLanguage} from '../../i18n';
 import {customDelegateFileType, DELEGATE_FILE_TYPES, delegateFileTypeName, isCustomDelegateFileType, committeeContentName, formatCommitteeContent, suggestCrisisNoticeName} from '@quorum/contracts';
@@ -107,7 +109,7 @@ function DelegateFileSharePanel({snapshot, api, share, setShare, qr}: {
   const end = async () => {if (!share) return; setWorking(true); try {await api.endDelegateFileShare(snapshot.committee.id,
     share.revision); setShare(null); setError(undefined);} catch (caught) {setError(caught);} finally {setWorking(false);}};
   return <Segment className="delegate-file-share-panel">
-    {error && <Message error content={error} />}
+    {error && <StorageErrorMessage error={failure} text={error} />}
     {!share ? <Button primary fluid loading={working} onClick={() => void start()}><Icon name="share alternate" />{t("Start sharing")}</Button> : <>
       <Form><Form.Input readOnly label={t("Delegate link")} value={share.url} action={{basic: true, icon: 'copy', content: t("Copy"),
         onClick: () => void navigator.clipboard?.writeText(share.url)}} /></Form>
@@ -185,7 +187,7 @@ export function DelegateFileUploadPanel({snapshot, api}: {snapshot: CommitteeWor
       <Header as="h3">{t('File submitted for review')}</Header><p>{saved}</p>
       <Button as={Link} primary fluid to={`/committees/${snapshot.committee.id}/posts/attachments`}>{t('View files')} <Icon name="arrow right" /></Button>
     </Segment>}
-    {error && <Message error content={error} />}
+    {error && <StorageErrorMessage error={failure} text={error} />}
     <Card centered fluid className="delegate-file-chair-upload"><Card.Content><Form onSubmit={() => void upload()}>
       <Form.Select fluid label={t('File type')} value={isCustomDelegateFileType(uploadType) ? 'OTHER' : uploadType} disabled={volumePolicy.blocked || Boolean(volumePolicy.error) || working || snapshot.committee.status!=='ACTIVE'}
         options={[...FILE_TYPES.filter(type => media ? type === 'NEWS' || type === 'INSTANT_MESSAGE' : chair || type !== 'CRISIS_NOTICE').map(type=>({key:type,value:type,text:delegateFileTypeName(type,snapshot.committee.committeeLanguage)})),...(media ? [] : [{key:'OTHER',value:'OTHER',text:t('Other')}])]}
@@ -243,21 +245,16 @@ function DelegateFileReviewPanel({snapshot, api, files, refresh}: {
   const download = async (id: string) => {
     setDownloading(id); setError(undefined);
     try {
-      let state = await api.prepareFileDownload(id);
-      while (state.status === 'PREPARING') {
-        await new Promise(resolve => window.setTimeout(resolve, (state.retryAfterSeconds ?? 2) * 1000));
-        state = await api.fileDownloadReadiness(id);
-      }
-      if (state.status !== 'READY') throw new SelfHostedApiError(503, 'SERVICE_NOT_READY', 'File unavailable');
-      window.location.assign(api.fileDownloadUrl(id));
-    } catch (caught) {setError(caught);} finally {setDownloading(undefined);}
+      await downloadPreparedFile(() => api.prepareFileDownload(id),
+        () => api.fileDownloadReadiness(id), api.fileDownloadUrl(id));
+    } catch (caught) {if (!(caught instanceof DOMException && caught.name==='AbortError')) setError(caught);} finally {setDownloading(undefined);}
   };
   const readOnly = snapshot.committee.status !== 'ACTIVE';
   const pendingFiles = files
     .filter(file => ['UPLOAD_COMPLETE', 'PENDING_REVIEW'].includes(file.status))
     .sort((first, second) => toSubmissionTime(first.submittedAt) - toSubmissionTime(second.submittedAt));
   return <div className="delegate-file-review-panel">
-    {error && <Message error content={error} />}
+    {error && <StorageErrorMessage error={failure} text={error} />}
     <div className="delegate-file-card-list">{pendingFiles.length ? pendingFiles.map(file => file.fileType==='CRISIS_NOTICE'
       ? <CrisisNoticeReviewCard key={file.id} file={file} snapshot={snapshot} api={api} refresh={refresh} download={download} downloading={downloading} />
       : <Card fluid key={file.id} className="delegate-file-card motion-card">
@@ -293,7 +290,7 @@ function DelegateFileReviewPanel({snapshot, api, files, refresh}: {
       <Modal.Header>{t('Replace and publish file')}</Modal.Header>
       <Modal.Content><Header as="h4" style={{overflowWrap: 'anywhere'}}>{replacing?.logicalName}</Header>
         <p>{t('This will replace the current version. Draft Resolutions and Amendments that reference this file will use the new version.')}</p>
-        {error && <Message error content={error} />}
+        {error && <StorageErrorMessage error={failure} text={error} />}
       </Modal.Content>
       <Modal.Actions><Button disabled={working} onClick={() => setReplacing(undefined)}>{t('Cancel')}</Button>
         <Button positive loading={working} disabled={working} onClick={() => {
@@ -317,7 +314,7 @@ function DelegateFileReviewPanel({snapshot, api, files, refresh}: {
               disabled={working} onChange={(_, data) => setReason(String(data.value))} />
             : <Message content={settings?.rejectionTypes.find(item => item.id === rejectionTypeId) ? committeeContentName(settings.rejectionTypes.find(item => item.id === rejectionTypeId)!.message, snapshot.committee.committeeLanguage) : ''} />}
         </Form>
-        {error && <Message error content={error} />}
+        {error && <StorageErrorMessage error={failure} text={error} />}
       </Modal.Content><Modal.Actions><Button disabled={working} onClick={() => setRejecting(undefined)}>{t("Cancel")}</Button>
         <Button negative loading={working} disabled={working || !rejectionTypeId || Boolean(settings?.rejectionTypes.find(item => item.id === rejectionTypeId)?.custom && !reason.trim())} onClick={() => {if (!rejecting) return;
           const file = rejecting; void run(async () => {await api.rejectDelegateFile(file.id,file.revision,nameFor(file),

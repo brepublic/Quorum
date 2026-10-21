@@ -19,16 +19,17 @@ export default function StorageAdminPanel({api}: {api: SelfHostedApi}) {
   const [failure, setError] = React.useState<unknown>();
   const error = failure ? storageErrorText(failure) : undefined;
   const [working, setWorking] = React.useState(false);
+  const [loaded, setLoaded] = React.useState(false);
   const refresh = React.useCallback(async (clearError = true) => {
-    try { setConfigs(await api.listS3ProviderConfigs()); if (clearError) setError(undefined); }
+    try { setConfigs(await api.listS3ProviderConfigs()); setLoaded(true); if (clearError) setError(undefined); }
     catch (caught) { setError(caught); }
   }, [api]);
   React.useEffect(() => void refresh(), [refresh]);
 
-  const run = async (operation: () => Promise<unknown>) => {
+  const run = async (operation: () => Promise<unknown>, reset = true) => {
     setWorking(true); setError(undefined);
     let failed = false;
-    try { await operation(); setEditing(undefined); setForm(EMPTY_FORM); }
+    try { await operation(); if (reset) {setEditing(undefined); setForm(EMPTY_FORM);} }
     catch (caught) { failed = true; setError(caught); }
     finally { await refresh(!failed); setWorking(false); }
   };
@@ -93,14 +94,16 @@ export default function StorageAdminPanel({api}: {api: SelfHostedApi}) {
     </Form></Segment>
     <Segment>
       <Header as="h2">{t("Configured storage")}</Header>
-      {!configs.length && <p>{t("No storage configurations")}</p>}
+      {!loaded && !error && <Icon loading name="spinner" aria-label={t("Loading…")} />}
+      {!loaded && error && <Button onClick={() => void refresh()}>{t("Retry")}</Button>}
+      {loaded && !configs.length && <p>{t("No storage configurations")}</p>}
       {configs.length > 0 && <Card.Group stackable className="storage-config-cards">{configs.map(config => <Card key={config.id}><Card.Content>
       <Card.Header>{config.displayName}</Card.Header><Card.Meta>{config.status === 'ACTIVE' ? t("Enabled") : t("Deactivate")} · {
         config.verifiedAt ? t("Verified") : t("Not verified")}</Card.Meta>
       <Card.Description>{config.endpoint}<br />{config.bucket}{config.prefix ? `/${config.prefix}` : ''}</Card.Description>
     </Card.Content><Card.Content extra className="admin-actions">
-      <Button size="small" onClick={() => edit(config)}>{t("Edit configuration")}</Button>
-      <Button size="small" onClick={() => void run(() => api.verifyS3ProviderConfig(config.id))}>{t("Verify configuration")}</Button>
+      <Button size="small" disabled={working} onClick={() => edit(config)}>{t("Edit configuration")}</Button>
+      <Button size="small" disabled={working} onClick={() => void run(() => api.verifyS3ProviderConfig(config.id), false)}>{t("Verify configuration")}</Button>
     </Card.Content></Card>)}</Card.Group>}
     </Segment>
   </div>;

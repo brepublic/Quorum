@@ -108,6 +108,29 @@ describe('delegate file portal', () => {
     expect(read).toHaveBeenCalledTimes(2); expect(host.textContent).toContain('新发布文件');
     expect(host.querySelectorAll('.info.message')).toHaveLength(1);
   });
+  it('keeps polling after three failures and recovers without replacing a healthy stream', async () => {
+    const read = await mountSync();
+    await act(async () => FakeEventSource.latest!.onopen!());
+    const stream = FakeEventSource.latest!;
+    read.mockClear();
+    for (let attempt = 0; attempt < 3; attempt++) {
+      read.mockRejectedValueOnce(new SelfHostedApiError(503, 'SERVICE_NOT_READY', ''));
+      await act(async () => {
+        stream.emit('portal.status', {storageAvailable: true});
+        await vi.advanceTimersByTimeAsync(15_000);
+      });
+      expect(statusText()).toContain('正在同步');
+      expect(host.textContent).toContain('现有文件');
+    }
+    await act(async () => {
+      stream.emit('portal.status', {storageAvailable: true});
+      await vi.advanceTimersByTimeAsync(15_000);
+    });
+    expect(read).toHaveBeenCalledTimes(4);
+    expect(stream.close).not.toHaveBeenCalled();
+    expect(statusText()).toContain('实时');
+    expect(host.querySelector('[role="status"]')).toBeNull();
+  });
   it('reports a failed read even when a publication has already queued the next refresh', async () => {
     const read = await mountSync(); await act(async () => FakeEventSource.latest!.onopen!());
     let reject!: (reason: unknown) => void; let complete!: (value: typeof synchronizedPortal) => void;
@@ -161,6 +184,33 @@ describe('delegate file portal', () => {
     expect(signal.aborted).toBe(true); expect(FakeEventSource.latest!.close).toHaveBeenCalledTimes(1);
     await act(async () => vi.advanceTimersByTimeAsync(60_000)); expect(host.textContent).toBe('closed');
   });
+  it.each([true,false])('confirms an asynchronous save only with a server receipt: %s',async committed=>{
+    vi.spyOn(hashing,'sha256File').mockResolvedValue('a'.repeat(64));
+    let queued=false;let completed=false;
+    const bootstrap=()=>({committeeId:'committee',committeeLanguage:'zh-CN' as const,committeeName:'委员会',shareId:'share',
+      claimedSeat:{id:'seat',displayName:'中国',rank:'STANDARD' as const},eligibleSeats:[],mayUpload:true,storageAvailable:true,
+      eventSequence:0,files:[],categoryOpenedAt:{},maxUploadSizeBytes:1024,
+      pendingUploads:queued && !completed ? [{id:'upload',logicalName:'draft.txt',status:'SAVING' as const}]:[],savedUploadIds:completed && committed ? ['upload']:[]});
+    await act(async()=>root.render(<DelegateFilePortal api={client({bootstrapDelegatePortal:async()=>bootstrap(),
+      createDelegateFileUpload:async()=>({id:'upload'}),uploadDelegateFileContent:async()=>({}),
+      commitDelegateFileUpload:async()=>{queued=true;return {kind:'PENDING_HOST_COMMIT'};}
+    } as unknown as Partial<SelfHostedApi>)} />));
+    await act(async () => FakeEventSource.latest!.onopen!());
+    await act(async()=>[...host.querySelectorAll<HTMLElement>('.menu .item')].find(item=>item.textContent==='上传文件')!.click());
+    const input=host.querySelector<HTMLInputElement>('input[type=file]')!;Object.defineProperty(input,'files',{value:[new File(['abc'],'draft.txt')]});
+    await act(async()=>input.dispatchEvent(new Event('change',{bubbles:true})));
+    await act(async()=>host.querySelector('form')!.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true})));
+    expect(host.querySelector('.delegate-file-upload-success')).toBeNull();
+    await act(async () => FakeEventSource.latest!.onerror!());
+    completed = true;
+    // A save completed while disconnected must be reconciled on reconnect,
+    // even when its publication event was missed.
+    await act(async () => FakeEventSource.latest!.onopen!());
+    expect(statusText()).toContain('实时');
+    expect(Boolean(host.querySelector('.delegate-file-upload-success'))).toBe(committed);
+    if(!committed)expect(host.textContent).toContain('文件未能保存，请重新上传。');
+  });
+
   it.each(['联合国安全理事会', '联合国大会裁军与国际安全委员会（第一委员会）'])('shows the current committee name before selecting a delegation: %s', async committeeName => {
     await act(async () => root.render(<DelegateFilePortal api={client({bootstrapDelegatePortal: async () => ({
       committeeId: 'committee', committeeLanguage: 'zh-CN', committeeName, shareId: 'share',

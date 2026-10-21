@@ -1,3 +1,5 @@
+import {useSaveBeforeLeave} from '../../components/useSaveBeforeLeave';
+import {downloadPreparedFile} from '../../services/file-download';
 import {ViewportFormSelect} from '../../components/ViewportDropdown';
 import * as React from 'react';
 import {Link, useHistory} from 'react-router-dom';
@@ -59,14 +61,16 @@ function CrisisCard({group,card,files,api,run,editable}: {
 }) {
   const fromCard = (value: CrisisUpdate) => ({title: value.title,minutes: value.handlingDurationMs === null ? '' : String(value.handlingDurationMs/60000),
     fileId: value.notice?.id ?? null,revision: value.revision});
-  const [draft,setDraft] = React.useState(()=>fromCard(card)); const previous = React.useRef(card);
+  const [draft,setDraft] = React.useState(()=>fromCard(card)); const previous = React.useRef(card); const baseline = React.useRef(card);
+  const inFlight = React.useRef<Promise<CrisisUpdate>>(); const currentDraft = React.useRef(draft); currentDraft.current = draft;
   const [working,setWorking] = React.useState(false); const [replacement,setReplacement] = React.useState<string>();
   const workingRef=React.useRef(false);
   const [failure,setFailure] = React.useState<unknown>(); const attempt = React.useRef<{revision: number; key: string}>();
-  const dirty = draft.title!==card.title || draft.minutes!==fromCard(card).minutes || draft.fileId!==(card.notice?.id ?? null);
+  const dirty = draft.title!==baseline.current.title || draft.minutes!==fromCard(baseline.current).minutes || draft.fileId!==(baseline.current.notice?.id ?? null);
   React.useEffect(()=> {
     const before=fromCard(previous.current);
     setDraft(current => current.revision===card.revision ? current : current.title===before.title && current.minutes===before.minutes && current.fileId===before.fileId ? fromCard(card) : current);
+    if (currentDraft.current.title===before.title && currentDraft.current.minutes===before.minutes && currentDraft.current.fileId===before.fileId) baseline.current=card;
     previous.current=card;
   },[card]);
   const validTime = Number(draft.minutes)>0 && Number.isSafeInteger(Number(draft.minutes)*60000);
@@ -76,13 +80,32 @@ function CrisisCard({group,card,files,api,run,editable}: {
       && n?.sessionOrdinal===group.sessionOrdinal && n.groupOrdinal===group.ordinal && n.updateOrdinal===card.ordinal;
   };
   const choices=files.filter(matches);
-  const save = async () => {
-    if (!dirty) return card;
-    const saved=await api.updateCrisisCard(card.id,{baseRevision: draft.revision,title: draft.title,
-      handlingDurationMs: draft.minutes==='' ? null : Number(draft.minutes)*60000,fileId:draft.fileId,
-      replaceNoticeId:card.notice && draft.fileId!==card.notice.id ? card.notice.id : undefined});
-    const next=saved.updates.find(update=>update.id===card.id)!; setDraft(fromCard(next)); return next;
+  const save = async (): Promise<CrisisUpdate> => {
+    if (inFlight.current) return inFlight.current;
+    if (!dirty) return baseline.current;
+    const captured = draft;
+    const task = (async () => {
+      try {
+        const saved=await api.updateCrisisCard(card.id,{baseRevision: baseline.current.revision,title: captured.title,
+          handlingDurationMs: captured.minutes==='' ? null : Number(captured.minutes)*60000,fileId:captured.fileId,
+          replaceNoticeId:baseline.current.notice && captured.fileId!==baseline.current.notice.id ? baseline.current.notice.id : undefined});
+        const next=saved.updates.find(update=>update.id===card.id)!; baseline.current=next;
+        setDraft(current => current===captured ? fromCard(next) : {...current,revision:next.revision});
+        setFailure(undefined); return next;
+      } catch (error) {setFailure(error); throw error;}
+    })();
+    inFlight.current=task;
+    try {return await task;} finally {inFlight.current=undefined;}
   };
+  const flush = async () => {try {await save(); return currentDraft.current.title===baseline.current.title
+    && currentDraft.current.minutes===fromCard(baseline.current).minutes && currentDraft.current.fileId===(baseline.current.notice?.id ?? null);}
+    catch {return false;}};
+  const leaveConfirmation=useSaveBeforeLeave(editable && dirty, flush);
+  React.useEffect(() => {
+    if (!editable || !dirty || failure || draft.minutes!=='' && !validTime) return;
+    const timer=setTimeout(() => void save().catch(() => undefined),600);
+    return () => clearTimeout(timer);
+  }, [draft, editable, dirty, failure]);
   const perform = async (operation: ()=>Promise<unknown>) => {
     if (workingRef.current) return; workingRef.current=true;setWorking(true);
     try {await run(operation);} finally {workingRef.current=false;setWorking(false);}
@@ -96,18 +119,16 @@ function CrisisCard({group,card,files,api,run,editable}: {
     if (!card.notice) return;
     setWorking(true);setFailure(undefined);
     try {
-      let state=await api.prepareFileDownload(card.notice.id);
-      while (state.status==='PREPARING') {await new Promise(resolve=>window.setTimeout(resolve,(state.retryAfterSeconds ?? 2)*1000)); state=await api.fileDownloadReadiness(card.notice.id);}
-      if (state.status!=='READY') throw new Error('File unavailable');
-      window.location.assign(api.fileDownloadUrl(card.notice.id));
-    } catch(error) {setFailure(error);} finally {setWorking(false);}
+      const id = card.notice.id;
+      await downloadPreparedFile(() => api.prepareFileDownload(id), () => api.fileDownloadReadiness(id), api.fileDownloadUrl(id));
+    } catch(error) {if (!(error instanceof DOMException && error.name==='AbortError')) setFailure(error);} finally {setWorking(false);}
   };
-  return <Card fluid className="crisis-card motion-card"><Card.Content>
+  return <Card fluid className="crisis-card motion-card">{leaveConfirmation}<Card.Content>
     <div className="motion-heading crisis-card-heading"><Card.Header className="crisis-card-title"><strong>{t('Crisis')} {numberFor(group,card)}</strong>
       {editable ? <Input fluid aria-label={t('Crisis title')} placeholder={t('Title')} value={draft.title} disabled={working}
-        onChange={event=> {const title=event.currentTarget.value;setDraft(current=>({...current,title}));}} /> : card.title && <span> — {card.title}</span>}
+        onChange={event=> {const title=event.currentTarget.value;setFailure(undefined);setDraft(current=>({...current,title}));}} /> : card.title && <span> — {card.title}</span>}
     </Card.Header><Label basic color={card.status==='PENDING' ? 'orange' : card.status==='UNPUBLISHED' ? 'blue' : card.status==='ENDED' ? 'green' : 'grey'}>{t(statusLabels[card.status])}</Label></div>
-    {Boolean(failure) && <Message error content={storageErrorText(failure)} />}
+    {Boolean(failure) && <Message error content={<>{storageErrorText(failure)} {editable && <Button basic onClick={() => {setFailure(undefined); void save().catch(() => undefined);}}>{t('Retry')}</Button>}</>} />}
     {editable ? <Form>
       <Table compact celled unstackable className="motion-metadata-table crisis-metadata"><Table.Body>
       <Table.Row><Table.Cell className="motion-metadata-key">{t('Crisis notice')}</Table.Cell><Table.Cell>
@@ -123,7 +144,7 @@ function CrisisCard({group,card,files,api,run,editable}: {
       <div className="crisis-duration-editor">
       <Form.Input fluid type="number" step="any" min={0} aria-label={t('Handling time (minutes)')}
         value={draft.minutes} error={Boolean(draft.minutes && !validTime)} disabled={working}
-        onChange={event=> {const minutes=event.currentTarget.value;setDraft(current=>({...current,minutes}));}} />
+        onChange={event=> {const minutes=event.currentTarget.value;setFailure(undefined);setDraft(current=>({...current,minutes}));}} />
       <span className="crisis-duration-unit">{t('min')}</span>
       </div>
       </Table.Cell></Table.Row>

@@ -135,7 +135,7 @@ s=re.sub(r'image: postgres@sha256:[a-f0-9]+','image: '+postgres,s)
 s=s.replace('"80:80"','"127.0.0.1::80"').replace('"443:443"','"127.0.0.1::443"').replace('      - "443:443/udp"\n','')
 s=s.replace('interval: 10s','interval: 1s').replace('interval: 5s','interval: 1s').replace('retries: 6','retries: 10').replace('start_period: 15s','start_period: 5s')
 Path(work+'/deploy/compose.production.yaml').write_text(s)
-Path(work+'/deploy/.env').write_text('POSTGRES_USER=upgrade_test\nPOSTGRES_PASSWORD=only-for-isolated-test\nPOSTGRES_DB=upgrade_test\nQUORUM_SITE_ADDRESS=localhost\nQUORUM_ALLOWED_ORIGINS=https://localhost\nQUORUM_STORAGE_HARD_MIN_FREE_BYTES=1\n')
+Path(work+'/deploy/.env').write_text('POSTGRES_USER=upgrade_test\nPOSTGRES_PASSWORD=only-for-isolated-test\nPOSTGRES_DB=upgrade_test\nQUORUM_SITE_ADDRESS=localhost\nQUORUM_ALLOWED_ORIGINS=https://localhost\n')
 PY
 compose=(docker compose -p "$project" --env-file "$work/deploy/.env" -f "$work/deploy/compose.production.yaml")
 stage=start-baseline

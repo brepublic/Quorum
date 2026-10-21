@@ -1,3 +1,4 @@
+import {AppError} from '../../http/errors.js';
 import {randomUUID} from 'node:crypto';
 import type {DownloadReadiness} from '@quorum/contracts';
 import type {Pool} from 'pg';
@@ -10,8 +11,15 @@ export class StorageCacheRefillService {
   async prepare(input: {committeeId: string; fileEntryId: string; fileRevision: number; fileVersionId: string;
     blobId: string; sizeBytes: number; sha256: string; providerType: string}): Promise<DownloadReadiness> {
     if (input.providerType !== 'CHAIR_AGENT') return {status: 'READY'};
-    try { await this.cache?.assertRefillCapacity(input.sizeBytes); }
-    catch { return {status: 'UNAVAILABLE', code: 'STORAGE_CACHE_CAPACITY_UNAVAILABLE'}; }
+    const hit=(await this.pool.query<{state:string}>('SELECT state::text FROM storage_cache_entries WHERE blob_id=$1',[input.blobId])).rows[0];
+    if (hit?.state==='READY' || hit?.state==='REVIEW_PINNED') return {status:'READY'};
+    try {await this.cache?.assertRefillCapacity(input.sizeBytes);}
+    catch (error) {
+      if (error instanceof AppError && ['CACHE_FULL','STORAGE_RESERVE_REQUIRED'].includes(error.reason ?? '')) {
+        return {status: 'UNAVAILABLE', code: 'STORAGE_CACHE_CAPACITY_UNAVAILABLE',reason:error.reason,details:error.details};
+      }
+      throw error;
+    }
     return transaction(this.pool, async client => {
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [input.blobId]);
       const cached = (await client.query<{state: string}>(
@@ -59,7 +67,10 @@ export class StorageCacheRefillService {
       'SELECT state::text,failure_code FROM storage_cache_entries WHERE blob_id=$1', [blobId])).rows[0];
     if (row?.state === 'READY' || row?.state === 'REVIEW_PINNED') return {status: 'READY'};
     if (row?.state === 'FETCHING') return {status: 'PREPARING', code: 'DOWNLOAD_PREPARING', retryAfterSeconds: 2};
-    return {status: 'UNAVAILABLE', code: row?.failure_code === 'LOCAL_CONTENT_INVALID'
-      ? 'STORAGE_AGENT_SOURCE_MISSING' : 'STORAGE_AGENT_OFFLINE'};
+    if (row?.failure_code === 'LOCAL_CONTENT_INVALID') return {status:'UNAVAILABLE',code:'STORAGE_AGENT_SOURCE_MISSING'};
+    const host=(await this.pool.query<{status:string}>(`SELECT h.status FROM file_versions v
+      JOIN committees c ON c.id=v.committee_id JOIN storage_bindings b ON b.id=c.active_storage_binding_id
+      JOIN storage_hosts h ON h.id=b.storage_host_id WHERE v.blob_id=$1 LIMIT 1`,[blobId])).rows[0];
+    return {status:'UNAVAILABLE',code:host && host.status!=='ACTIVE' ? 'STORAGE_AGENT_OFFLINE' : 'DOWNLOAD_PREPARATION_FAILED'};
   }
 }

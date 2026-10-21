@@ -15,14 +15,8 @@ export interface StorageCacheConfig {
   revision: number;
 }
 
-export interface StorageCacheHardLimits extends Omit<StorageCacheConfig, 'revision'> {}
-
-export interface EffectiveStorageCacheConfig extends StorageCacheConfig {
-  hardLimits: StorageCacheHardLimits;
-}
-
 export const DOWNLOAD_PREPARATION_CODES = [
-  'DOWNLOAD_PREPARING', 'STORAGE_AGENT_OFFLINE', 'STORAGE_AGENT_UPGRADE_REQUIRED',
+  'DOWNLOAD_PREPARATION_FAILED', 'DOWNLOAD_PREPARING', 'STORAGE_AGENT_OFFLINE', 'STORAGE_AGENT_UPGRADE_REQUIRED',
   'STORAGE_AGENT_SOURCE_MISSING', 'STORAGE_CACHE_CAPACITY_UNAVAILABLE'
 ] as const;
 export type DownloadPreparationCode = typeof DOWNLOAD_PREPARATION_CODES[number];
@@ -31,6 +25,8 @@ export interface DownloadReadiness {
   status: 'READY' | 'PREPARING' | 'UNAVAILABLE';
   code?: DownloadPreparationCode;
   retryAfterSeconds?: number;
+  reason?: import('./api.js').ApiErrorReason;
+  details?: Record<string,unknown>;
 }
 
 export interface StorageCacheFileSummary {
@@ -46,7 +42,7 @@ export interface StorageCacheFileSummary {
 }
 
 export interface StorageCacheStatus {
-  config: EffectiveStorageCacheConfig;
+  config: StorageCacheConfig;
   capacity: {totalBytes: number; availableBytes: number; quorumBytes: number; pendingReviewBytes: number;
     publishedCacheBytes: number; otherStagingBytes: number};
   runtime: {hits: number; misses: number; refills: number; fetching: number;

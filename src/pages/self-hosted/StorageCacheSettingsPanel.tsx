@@ -30,6 +30,9 @@ const parseDisplayValue = (raw: string, unit: ByteUnit): number | undefined => {
 export default function StorageCacheSettingsPanel({api}: {api: SelfHostedApi}) {
   useLanguage();
   const [config, setConfig] = React.useState<Config>();
+  const [totalBytes, setTotalBytes] = React.useState<number>();
+  const [reserve, setReserve] = React.useState({bytes: '', percent: ''});
+  const [reserveInvalid, setReserveInvalid] = React.useState(false);
   const [failure, setError] = React.useState<unknown>();
   const error = failure ? apiErrorText(failure) : undefined;
   const [displayed, setDisplayed] = React.useState<Record<ByteField, string>>({
@@ -49,7 +52,12 @@ export default function StorageCacheSettingsPanel({api}: {api: SelfHostedApi}) {
     let active = true;
     setError(undefined);
     void api.storageCacheStatus().then(value => {if (!active) return;
-      setConfig(value.config); setDirty(false); setSaved(false);
+      const total = value.capacity.totalBytes;
+      const measured = Number.isSafeInteger(total) && total > 0 ? total : undefined;
+      const next = value.config;
+      setTotalBytes(measured); setConfig(next); setDirty(false); setSaved(false);
+      setReserve({bytes: String(next.storageMinFreeBytes), percent: String(next.storageMinFreePercent)});
+      setReserveInvalid(false);
       setDisplayed({
         publishedCacheMaxBytes: bytesToDisplayValue(value.config.publishedCacheMaxBytes, defaultByteUnit),
         pendingReviewMaxBytes: bytesToDisplayValue(value.config.pendingReviewMaxBytes, defaultByteUnit),
@@ -69,9 +77,10 @@ export default function StorageCacheSettingsPanel({api}: {api: SelfHostedApi}) {
     return () => window.removeEventListener('beforeunload', prevent);
   }, [dirty]);
   const save = async () => {
-    if (!config) return;
+    if (!config || reserveInvalid || saving || Object.values(invalid).some(value => value)) return;
     setSaving(true); setError(undefined); setSaved(false);
     try {const next = await api.updateStorageCacheConfig(config); setConfig(next);
+      setReserve({bytes: String(next.storageMinFreeBytes), percent: String(next.storageMinFreePercent)});
       setDisplayed({
         publishedCacheMaxBytes: bytesToDisplayValue(next.publishedCacheMaxBytes, units.publishedCacheMaxBytes),
         pendingReviewMaxBytes: bytesToDisplayValue(next.pendingReviewMaxBytes, units.pendingReviewMaxBytes),
@@ -97,8 +106,21 @@ export default function StorageCacheSettingsPanel({api}: {api: SelfHostedApi}) {
     setDisplayed(current => ({...current, [key]: bytesToDisplayValue(bytes, unit)}));
     setInvalid(current => ({...current, [key]: false}));
   };
+  const updateReserve = (field: 'bytes' | 'percent', raw: string) => {
+    setReserve(current => ({...current, [field]: raw}));
+    setDirty(true); setSaved(false);
+    const number = Number(raw);
+    const valid = raw.trim() !== '' && Number.isFinite(number) && number >= 0
+      && Number.isSafeInteger(number) && (field === 'bytes' ? number <= (totalBytes ?? 0) : number <= 100);
+    setReserveInvalid(!valid);
+    if (!valid || !config || !totalBytes) return;
+    const bytes = field === 'bytes' ? number : Math.round(totalBytes * number / 100);
+    const percent = field === 'percent' ? number : Math.round(bytes / totalBytes * 100);
+    setConfig({...config, storageMinFreeBytes: bytes, storageMinFreePercent: percent});
+    setReserve(field === 'bytes' ? {bytes: raw, percent: String(percent)} : {bytes: String(bytes), percent: raw});
+  };
   const input = (field: (typeof byteFields)[number]) => <Form.Field key={field.key} error={invalid[field.key]}>
-    <label>{t(field.label)}</label>
+    <label htmlFor={`cache-${field.key}`}>{t(field.label)}</label>
     <Form.Input id={`cache-${field.key}`} type="number" required min={0} step="any"
       value={displayed[field.key]} onChange={(_, data) => updateSavedBytes(field.key, String(data.value))}
       action={<Select compact button options={unitOptions} value={units[field.key]}
@@ -120,13 +142,13 @@ export default function StorageCacheSettingsPanel({api}: {api: SelfHostedApi}) {
       <Segment>
         <Header as="h2">{t("Free space reserve")}</Header>
         <Form.Group widths="equal">
-          <Form.Input id="cache-storageMinFreeBytes" label={t("Minimum free space (bytes)")} type="number" required min={0} step={1}
-            value={config.storageMinFreeBytes} onChange={(_, data) => {setConfig({...config, storageMinFreeBytes: Number(data.value)}); setDirty(true); setSaved(false);}} />
-          <Form.Input id="cache-storageMinFreePercent" label={t("Minimum free space (%)")} type="number" required min={0} max={100}
-            value={config.storageMinFreePercent} onChange={(_, data) => {setConfig({...config, storageMinFreePercent: Number(data.value)}); setDirty(true); setSaved(false);}} />
+          <Form.Input id="cache-storageMinFreeBytes" label={t("Minimum free space (bytes)")} type="number" required min={0} max={totalBytes} step={1}
+            disabled={!totalBytes} error={reserveInvalid} value={reserve.bytes} onChange={(_, data) => updateReserve('bytes', String(data.value))} />
+          <Form.Input id="cache-storageMinFreePercent" label={t("Minimum free space (%)")} type="number" required min={0} max={100} step={1}
+            disabled={!totalBytes} error={reserveInvalid} value={reserve.percent} onChange={(_, data) => updateReserve('percent', String(data.value))} />
         </Form.Group>
       </Segment>
-      <Button primary disabled={saving || !dirty || Object.values(invalid).some(value => value)}><Icon name="save" />{t("Save cache configuration")}</Button>
+      <Button primary disabled={saving || !dirty || reserveInvalid || Object.values(invalid).some(value => value)}><Icon name="save" />{t("Save cache configuration")}</Button>
     </Form>}
   </div>;
 }

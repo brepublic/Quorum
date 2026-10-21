@@ -1,3 +1,5 @@
+import {saveAs} from 'file-saver';
+vi.mock('file-saver', () => ({saveAs:vi.fn()}));
 import {setLanguage} from '../../i18n';
 import * as React from 'react';
 import {act} from 'react';
@@ -532,6 +534,7 @@ describe('self-hosted stage 6 file panel', () => {
   });
 
   it('prepares a server download, reports a cache failure and lets the user retry', async () => {
+    vi.stubGlobal('fetch', vi.fn(async()=>new Response('abc',{headers:{'content-length':'3'}})));
     const {host, conflict} = comparisonFixture();
     const prepareFileDownload = vi.fn().mockResolvedValueOnce({status: 'PREPARING', retryAfterSeconds: 0})
       .mockResolvedValue({status: 'READY'});
@@ -541,11 +544,11 @@ describe('self-hosted stage 6 file panel', () => {
       listStorageAgentConflicts: vi.fn(async () => [conflict]), prepareFileDownload, fileDownloadReadiness, fileDownloadUrl}), 'chair');
     const download = () => [...view.querySelectorAll<HTMLAnchorElement>('[data-conflict-id="comparison"] a[download]')]
       .find(item => item.textContent?.includes('下载服务器版本'))!;
-    await act(async () => {download().click(); await new Promise(resolve => setTimeout(resolve, 15));});
+    await act(async () => {download().click(); await new Promise(resolve => setTimeout(resolve, 1100));});
     expect(prepareFileDownload).toHaveBeenCalledWith(file.id); expect(fileDownloadReadiness).toHaveBeenCalledWith(file.id);
     expect(view.querySelector('.ui.message[role="alert"]')).not.toBeNull();
     await act(async () => {download().click(); await new Promise(resolve => setTimeout(resolve, 0));});
-    expect(prepareFileDownload).toHaveBeenCalledTimes(2); expect(window.location.hash).toBe('#server-download-ready');
+    expect(prepareFileDownload).toHaveBeenCalledTimes(2); expect(saveAs).toHaveBeenCalledWith(expect.any(Blob), 'download');
     expect(view.querySelector('.ui.message[role="alert"]')).toBeNull();
   });
 

@@ -119,6 +119,19 @@ integration('PostgreSQL identity integration', () => {
       .rejects.toThrow('append-only');
   });
 
+  it('accepts a pre-generated temporary password while storing only its hash', async () => {
+    const identity=service();
+    const admin=await identity.bootstrapAdmin({secret:await identity.ensureBootstrapSecret() as string,
+      email:'admin@example.com',displayName:'Admin',password:'admin-password-123'},context);
+    const auth=await identity.authenticate(admin.sessionToken); const temporaryPassword='known-before-create-123!';
+    const created=await identity.createUser(auth,{email:'precreated@example.com',displayName:'Precreated',temporaryPassword},context);
+    expect(created.temporaryPassword).toBe(temporaryPassword);
+    expect((await identity.login({email:created.user.email,password:temporaryPassword},context)).user.mustChangePassword).toBe(true);
+    const stored=await pool!.query('SELECT password_hash FROM user_credentials WHERE user_id=$1',[created.user.id]);
+    expect(stored.rows[0].password_hash).not.toContain(temporaryPassword);
+    await expect(identity.createUser(auth,{email:'bad@example.com',displayName:'Bad',temporaryPassword:'short'},context)).rejects.toMatchObject({code:'VALIDATION_FAILED'});
+  });
+
   it('rotates login and password Sessions and enforces the temporary-password flow', async () => {
     const identity = service();
     const secret = await identity.ensureBootstrapSecret();

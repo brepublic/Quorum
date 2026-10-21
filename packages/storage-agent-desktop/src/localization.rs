@@ -234,7 +234,7 @@ pub fn translate(key: &str, language: &str) -> &'static str {
         "STORAGE_CACHE_CAPACITY_UNAVAILABLE" => ("Download cache space is unavailable. Ask an administrator to check cache capacity and free disk space.", "下载缓存空间不可用，请联系管理员检查缓存容量和磁盘剩余空间。"),
         "STORAGE_CAPACITY_LOW" => ("Storage space is low. Free space or increase capacity before retrying.", "存储空间不足，请清理文件或扩容后重试。"),
         "STORAGE_CAPACITY_UNAVAILABLE" => ("Available storage space could not be read. Ask an administrator to check the storage volume.", "无法读取存储剩余空间，请联系管理员检查存储卷。"),
-        "STORAGE_RESERVE_REQUIRED" => ("Saving this file would use reserved disk space. Free space or increase storage capacity.", "保存文件会占用服务器保留空间，请清理存储或扩容。"),
+        "STORAGE_RESERVE_REQUIRED" => ("The server does not have enough disk space to cache this file under its current settings. Contact the server administrator.", "服务器当前可用于文件缓存的磁盘空间不足，无法保存此文件。请联系服务器管理员处理。"),
         "UNSAFE_FILE_NAME" => ("File names cannot contain absolute paths, parent-directory traversal, or reserved names.", "文件名不能包含绝对路径、上级目录跳转或系统保留名称。"),
         "UPLOAD_ACCOUNT_INACTIVE" => ("The upload account is inactive. Upload again using an active account.", "发起上传的账号已停用，请使用活动账号重新上传。"),
         "UPLOAD_CREATOR_REQUIRED" => ("Only the account that started the upload can continue it. Use that account or start a new upload.", "只有发起上传的账号可以继续该上传，请使用原账号或重新上传。"),

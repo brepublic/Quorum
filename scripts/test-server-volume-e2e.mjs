@@ -68,7 +68,7 @@ try{
     .map(row=>({name:row.name,path:volume.pathForKey(row.storage_key)}));
   await mkdir(join(root,'published-cache'),{recursive:true});const cachePath=join(root,'published-cache','keep');await writeFile(cachePath,'independent cache');
   start(process.execPath,['server/dist/index.js'],{DATABASE_URL:url.toString(),PORT:String(backendPort),HOST:'127.0.0.1',
-    QUORUM_ALLOWED_ORIGINS:`http://localhost:${backendPort}`,QUORUM_STORAGE_PATH:root,QUORUM_STORAGE_HARD_MIN_FREE_BYTES:'1',QUORUM_STORAGE_HARD_MIN_FREE_PERCENT:'1'});
+    QUORUM_ALLOWED_ORIGINS:`http://localhost:${backendPort}`,QUORUM_STORAGE_PATH:root});
   start(process.execPath,['node_modules/vite/bin/vite.js','--host','127.0.0.1','--port',String(webPort),'--strictPort'],{QUORUM_DEV_API_ORIGIN:`http://localhost:${backendPort}`});
   await waitUntil(async()=>{const response=await fetch(`${origin}/api/v1/bootstrap/status`,{signal:AbortSignal.timeout(2000)});return response.ok;},'application startup',60000);
   browser=await chromium.launch({executablePath:process.env.CHROMIUM_EXECUTABLE || '/usr/bin/chromium',headless:true,args:['--no-sandbox']});

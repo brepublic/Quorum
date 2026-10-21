@@ -54,6 +54,20 @@ describe('self-hosted template managers', () => {
     expect(api.listCountryTemplates).toHaveBeenCalledTimes(2);
   });
 
+  it('retains a successful save and its new revision when the follow-up list read fails', async () => {
+    setLanguage('en');
+    const listCountryTemplates=vi.fn().mockResolvedValueOnce([builtin,custom]).mockRejectedValue(new Error('Read failed'));
+    const updateCountryTemplate=vi.fn(async(_id:string,_revision:number,_input:unknown)=>({...custom,revision:2,names:{en:'Updated'}}));
+    await render({listCountryTemplates,updateCountryTemplate} as unknown as SelfHostedApi);
+    await act(async()=>[...container!.querySelectorAll<HTMLElement>('.selection.list .item')].find(item=>item.textContent?.includes('测试模板'))!.click());
+    const input=container!.querySelector<HTMLInputElement>('form input')!;
+    await act(async()=>{Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')!.set!.call(input,'Updated');input.dispatchEvent(new Event('input',{bubbles:true}));});
+    await act(async()=>container!.querySelector('form')!.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true})));
+    expect(updateCountryTemplate).toHaveBeenCalledTimes(1);expect(container!.textContent).not.toContain('Read failed');expect(input.value).toBe('Updated');
+    await act(async()=>container!.querySelector('form')!.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true})));
+    expect(updateCountryTemplate.mock.calls[1]?.[1]).toBe(2);
+  });
+
   it('creates an empty country template from its name before showing the legacy table editor', async () => {
     const createCountryTemplate = vi.fn(async () => custom);
     const listCountryTemplates = vi.fn().mockResolvedValueOnce([builtin]).mockResolvedValue([builtin, custom]);
