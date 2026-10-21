@@ -48,7 +48,7 @@ docker compose -p quorum --env-file deploy/.env \
 
 ```sh
 cd /opt/quorum
-sudo bash deploy/upgrade.sh
+bash deploy/upgrade.sh
 # 非交互使用同一套版本、兼容性及完整性检查：
 # sudo bash deploy/upgrade.sh --release vX.Y.Z
 # 包含预发布的版本列表：
@@ -57,9 +57,11 @@ sudo bash deploy/upgrade.sh
 # sudo bash deploy/upgrade.sh --prerelease --release vX.Y.Z-rc.1
 ```
 
+脚本启动时检查 root 权限；普通用户会收到提示并通过 sudo 重新运行，保留命令参数和已设置的 `CURL_CA_BUNDLE`。没有 sudo 或提权失败时停止。
+
 需要 Linux、Bash、Docker Compose（支持 `config --hash`）、jq、curl 和 GNU coreutils。脚本从 GitHub Releases 分页读取已完成发布清单的版本，按所选范围筛选，检查数据库已有迁移的校验值，下载固定镜像并核对发布标签、源码提交、平台、PostgreSQL 16 和安装包。只改原始 Compose 中的三张镜像及发布提交，不展开或重写 `.env` 中的密码和密钥，不覆盖本机其他设置。当前三张镜像也必须使用内容哈希固定；可变标签、实际镜像或卷与配置不一致、其他容器占用备份卷（包括同项目容器）、额外挂载、外置数据库表空间及不支持的部署结构会停止升级。
 
-预发布选择只对本次运行生效，支持 `vX.Y.Z-alpha.1`、`vX.Y.Z-beta.1`、`vX.Y.Z-rc.1` 等版本号。仍只提供比当前版本新的兼容版本，顺序为 `rc.2 < rc.10 < 同版本正式版`；运行预发布后也可以选择同版本正式发布。草稿、未完成发布和不兼容版本不显示，这个入口不提供降级。
+预发布选择只对本次运行生效，支持 `vX.Y.Z-alpha.1`、`vX.Y.Z-beta.1`、`vX.Y.Z-rc.1` 等版本号。仍只提供比当前版本新的兼容版本，顺序为 `rc.2 < rc.10 < 同版本正式版`；运行预发布后也可以选择同版本正式发布。草稿、未完成发布和不兼容版本不显示，这个入口不提供降级。中间版本也必须带有 `quorum-server-release.json`，缺少该附件的历史发布无法通过此脚本升级。
 
 下载与预检查期间旧服务继续运行。切换前关闭公网入口，停止应用，拒绝仍有执行中文件／Agent 任务的情况；然后停止数据库，将 PostgreSQL、服务器文件（包括暂存、缓存、隐藏文件）、Caddy 数据及配置四个卷完整冷备份到私有的 `deploy/.upgrade/`，保存原始 Compose、`.env`、实际运行镜像和 SHA-256。需要暂存新旧镜像以及完整恢复点，空间不足就停止。此恢复点只用于本次升级，不能替代异地备份。
 

@@ -18,6 +18,25 @@ afterEach(async () => {await rm(directory, {recursive: true, force: true});});
 async function shell(code: string, env: Record<string,string> = {}) {
   return run('bash', ['-c', 'source "$UPGRADE_SCRIPT"\n' + code], {env: {...process.env, UPGRADE_SCRIPT: script, TEST_DIR: directory, ...env}});
 }
+it('continues without sudo when already root', async () => {
+  const result = await shell('id() { echo 0; }; sudo() { exit 99; }; require_root; echo ready');
+  expect(result.stdout.trim()).toBe('ready');
+  expect(result.stderr).toBe('');
+});
+it.each([false, true])('restarts with sudo and preserves arguments (custom CA: %s)', async customCa => {
+  await writeFile(join(directory, 'sudo'), '#!/bin/bash\nprintf "%s\\n" "$@" > "$TEST_DIR/sudo-args"\nexit 23\n', {mode: 0o755});
+  await expect(shell(`id() { echo 1000; }; require_root --prerelease --release 'v1.3.0-rc.1'; touch "$TEST_DIR/unsafe"`,
+    {PATH: `${directory}:${process.env.PATH}`, CURL_CA_BUNDLE: customCa ? '/tmp/custom ca.pem' : ''}))
+    .rejects.toMatchObject({code: 23, stderr: expect.stringContaining('restarting with sudo')});
+  expect((await readFile(join(directory, 'sudo-args'), 'utf8')).trim().split('\n')).toEqual([
+    ...(customCa ? ['--preserve-env=CURL_CA_BUNDLE'] : []), '--', 'bash', script, '--prerelease', '--release', 'v1.3.0-rc.1']);
+  await expect(readFile(join(directory, 'unsafe'))).rejects.toThrow();
+});
+it('explains how to proceed when sudo is unavailable', async () => {
+  await expect(shell(`id() { echo 1000; }; command() { return 1; }; require_root; touch "$TEST_DIR/unsafe"`))
+    .rejects.toThrow('Missing command: sudo. Run this script as root.');
+  await expect(readFile(join(directory, 'unsafe'))).rejects.toThrow();
+});
 it('accepts only complete stable manifests with pinned images', async () => {
   await writeFile(join(directory, 'release.json'), JSON.stringify(manifest));
   await shell('repository=brepublic; validate_release v1.2.0 "$TEST_DIR/release.json"');

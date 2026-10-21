@@ -4,6 +4,14 @@ set -Eeuo pipefail
 umask 077
 
 fail() { echo "Upgrade stopped: $*" >&2; return 1; }
+require_root() {
+  [[ $(id -u) != 0 ]] || return 0
+  echo 'Administrator privileges required; restarting with sudo.' >&2
+  command -v sudo >/dev/null || fail 'Missing command: sudo. Run this script as root.'
+  local options=()
+  if [[ -n ${CURL_CA_BUNDLE:-} ]]; then options+=(--preserve-env=CURL_CA_BUNDLE); fi
+  exec sudo "${options[@]}" -- bash "${BASH_SOURCE[0]}" "$@"
+}
 compose_file() {
   local env_file="$deploy/.env"
   # Saved JSON already contains escaped, resolved values. Recovery must work even
@@ -487,4 +495,7 @@ upgrade_main() {
   run_transaction
 }
 
-if [[ ${BASH_SOURCE[0]} == "$0" ]]; then upgrade_main "$@"; fi
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  require_root "$@"
+  upgrade_main "$@"
+fi
