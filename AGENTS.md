@@ -1,5 +1,9 @@
 # Agent Notes
 
+## 架构与设计变更权限
+
+未经用户明确许可，不得变更架构和设计。实现请求时沿用现有架构、数据模型和接口；如确需变更，先说明原因与影响并取得用户许可，不得自行扩大范围。
+
 ## Required Orientation
 
 Before working on this repository, read `PROJECT_ARCHITECTURE.md` and this
