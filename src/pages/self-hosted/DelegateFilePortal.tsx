@@ -1,5 +1,6 @@
 import {ViewportFormSelect} from '../../components/ViewportDropdown';
 import {apiErrorText} from '../../i18n';
+import {StorageErrorMessage} from '../../components/StorageErrorMessage';
 import {t, useLanguage, getLanguage} from '../../i18n';
 import * as React from 'react';
 import {customDelegateFileType, DELEGATE_FILE_TYPES, delegateFileTypeName, isCustomDelegateFileType, type ContentLanguage, isAllowedDelegateFile} from '@quorum/contracts';
@@ -248,9 +249,9 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
   React.useEffect(() => {setSidebarOpen(false);}, [navigationLevel]);
 
   if (!portal) return <Container className="delegate-file-portal">{error
-    ? <Message error content={error} /> : <Message content={t("Loading…")} />}</Container>;
+    ? <StorageErrorMessage error={failure} text={error} /> : <Message content={t("Loading…")} />}</Container>;
   if (!portal.claimedSeat) return <Container className="delegate-file-claim-page">
-    {error && <Message error content={error} />}
+    {error && <StorageErrorMessage error={failure} text={error} />}
     <Card centered className="delegate-file-claim-card"><Card.Content><Card.Header>{t("Delegate file system")}</Card.Header>
       <Card.Meta className="delegate-file-claim-committee">{portal.committeeName}</Card.Meta>
       <Form><ViewportFormSelect fluid selection label={t("Select a delegation")} search={(options, query) => {
@@ -326,7 +327,7 @@ export default function DelegateFilePortal({api = selfHostedApi}: {api?: SelfHos
           {}).split(/(\{seat\}|\{file\})/).map((part, index) => part === '{seat}'
             ? <strong key={index}>{item.submissionSource === 'CHAIR' ? t('Chair') : item.submitterDisplayName}</strong> : part === '{file}'
               ? <strong key={index}>{item.logicalName}</strong> : part)}{item.rejectionReason && <div>{item.rejectionReason}</div>}</>} />)}
-      {error && <Message error content={error} />}
+      {error && <StorageErrorMessage error={failure} text={error} />}
       {active === 'files' && <><Menu pointing secondary className="delegate-file-category-menu" aria-label={t('Published file categories')}>
         <Menu.Item active={publishedCategory === 'ALL'} onClick={() => void openCategory('ALL')}>{t('All files')}</Menu.Item>
         {FILE_TYPES.map(type => <Menu.Item key={type} active={publishedCategory === type} onClick={() => void openCategory(type)}>

@@ -375,6 +375,8 @@ Windows Node Agent 的 GUI 和 CLI 共用原生 `quorum-agent-platform.exe` 辅�
 
 Windows 正常停止先关闭 Node CLI 的输入管道并等待清理，15 秒超时后强制结束。GUI 将桥接及其后代加入 kill-on-close Windows Job Object，窗口异常退出仍清理进程树。原生测试覆盖实际子进程与孙进程清理，隔离 HTTPS 测试覆盖启动、停止和恢复；正式窗口及现有 WSL 服务器的实际验收边界记录于 `docs/self-hosted/CHAIR_AGENT_WINDOWS_ACCEPTANCE.md`。
 
+文件缓存的磁盘保留阈值拒绝写入时，`STORAGE_RESERVE_REQUIRED` 响应携带磁盘可用／总字节数、写入大小、最低剩余空间及生效规则和部署硬下限。文件页与代表入口默认显示联系服务器管理员的提示，可展开查看经字段及数值校验的容量详情、请求编号和配置检查入口；不展示任意服务器异常文本或路径。
+
 ### 服务器卷禁用策略（schema 90）
 
 `system_settings.server_volume_disabled` 由系统管理员通过带 revision、Origin 和 CSRF 的接口更新。服务器卷绑定、迁入、上传创建／接收／提交及新版本元数据写入统一校验策略。Agent、S3 和独立缓存不受影响。物理卷写入与策略变更通过 PostgreSQL advisory lock 协调；锁连接独立于业务连接池，防止等待者耗尽业务连接造成死锁。浏览器读取委员会策略并定时刷新，代表分享快照也包含提交限制。已有归档数据不会因开关自动清理。

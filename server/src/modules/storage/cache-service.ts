@@ -79,7 +79,12 @@ export class StorageCacheService {
     const total = Number(sample.blocks) * Number(sample.bsize);
     const minimum = Math.max(config.storageMinFreeBytes, Math.ceil(total * config.storageMinFreePercent / 100));
     if (available - sizeBytes < minimum) {
-      throw new AppError({reason: 'STORAGE_RESERVE_REQUIRED', expose: true, code: 'SERVICE_NOT_READY', message: 'Storage reserve would be exceeded.'});
+      throw new AppError({reason: 'STORAGE_RESERVE_REQUIRED', expose: true, code: 'SERVICE_NOT_READY',
+        message: 'The server cannot cache this file because free disk space would fall below its configured minimum. Contact the server administrator.',
+        details: {availableBytes: available, totalBytes: total, writeBytes: sizeBytes, minimumFreeBytes: minimum,
+          storageMinFreeBytes: config.storageMinFreeBytes, storageMinFreePercent: config.storageMinFreePercent,
+          hardMinFreeBytes: config.hardLimits.storageMinFreeBytes,
+          hardMinFreePercent: config.hardLimits.storageMinFreePercent}});
     }
   }
 

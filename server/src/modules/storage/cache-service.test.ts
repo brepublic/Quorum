@@ -1,16 +1,22 @@
 // @vitest-environment node
 
-import {mkdtemp, rm} from 'node:fs/promises';
+import {mkdtemp, rm, statfs} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {afterEach, describe, expect, it, vi} from 'vitest';
 import {DurableStagingStore} from './staging';
 import {cacheStorageKey, StorageCacheService} from './cache-service';
+import {normalizeError} from '../../http/errors';
+
+vi.mock('node:fs/promises', async importOriginal => ({
+  ...await importOriginal<typeof import('node:fs/promises')>(), statfs: vi.fn()
+}));
 
 const roots: string[] = [];
 afterEach(async () => Promise.all(roots.splice(0).map(root => rm(root, {recursive: true, force: true}))));
 
 async function fixture(usage = {global_bytes: 0, committee_bytes: 0}) {
+  vi.mocked(statfs).mockResolvedValue({bavail: 100, blocks: 1000, bsize: 1} as never);
   const root = await mkdtemp(join(tmpdir(), 'quorum-cache-')); roots.push(root);
   const source = new DurableStagingStore(join(root, 'staging'), 1024, 1024); await source.initialize();
   const cache = new DurableStagingStore(root, 1024, 1024); await cache.initialize();
@@ -21,7 +27,7 @@ async function fixture(usage = {global_bytes: 0, committee_bytes: 0}) {
   const query = vi.fn(async (sql: string) => sql.includes('COALESCE(sum(size_bytes)')
     ? {rows: [usage]} : {rows: []});
   const service = new StorageCacheService({query} as never, source, cache, {effective} as never);
-  return {source, cache, service, client: {query} as never, query};
+  return {source, cache, service, client: {query} as never, query, effective};
 }
 
 describe('Chair file cache', () => {
@@ -45,5 +51,21 @@ describe('Chair file cache', () => {
     await expect(value.service.assertPendingCapacity('20000000-0000-4000-8000-000000000001', 10))
       .rejects.toMatchObject({code: 'SERVICE_NOT_READY'});
     expect(value.query).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns disk measurements and effective and deployment limits through the API', async () => {
+    const value = await fixture();
+    const config = await value.effective();
+    value.effective.mockResolvedValue({...config, storageMinFreeBytes: 20, storageMinFreePercent: 10,
+      hardLimits: {...config.hardLimits, storageMinFreeBytes: 10, storageMinFreePercent: 5}});
+    const error = await value.service.assertPendingCapacity('20000000-0000-4000-8000-000000000001', 1)
+      .catch(error => error);
+    expect(normalizeError(error, 'reserve-request').body.error).toMatchObject({
+      code: 'SERVICE_NOT_READY', reason: 'STORAGE_RESERVE_REQUIRED', requestId: 'reserve-request',
+      details: {availableBytes: 100, totalBytes: 1000, writeBytes: 1, minimumFreeBytes: 100,
+        storageMinFreeBytes: 20, storageMinFreePercent: 10, hardMinFreeBytes: 10, hardMinFreePercent: 5}
+    });
+    // Exact equality with the reserve remains writable.
+    await expect(value.service.assertPendingCapacity('20000000-0000-4000-8000-000000000001', 0)).resolves.toBeUndefined();
   });
 });

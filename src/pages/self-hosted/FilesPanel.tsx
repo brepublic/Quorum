@@ -3,6 +3,7 @@ import {ChairAgentDownload} from '../../components/ChairAgentDownload';
 import {openChairAgent, downloadChairConfiguration} from '../../services/agent-pairing';
 import {ViewportFormSelect} from '../../components/ViewportDropdown';
 import {apiErrorText} from '../../i18n';
+import {StorageErrorMessage} from '../../components/StorageErrorMessage';
 import {t, useLanguage, getLanguage} from '../../i18n';
 import * as React from 'react';
 import type {CommitteeWorkspaceSnapshot, FileEntry, FileUpload, StorageMigration, DelegateReviewFile,
@@ -354,7 +355,7 @@ export default function FilesPanel({snapshot, api, currentUserId, section = 'all
           }}>{t('Confirm choice: {choice}', {choice: conflictDecision ? t(conflictDecision.label) : ''})}</Button>
       </Modal.Actions>
     </Modal>
-    {error && <Message error role="alert" content={error} />}
+    {error && <StorageErrorMessage error={failure} text={error} />}
     {canUpload && !volumePolicy.loading && <VolumePolicyNotice blocked={volumePolicy.blocked} manager={canManage}
       committeeId={committeeId} error={volumePolicy.error} showAction={section !== 'storage'} />}
     {section !== 'storage' && <>

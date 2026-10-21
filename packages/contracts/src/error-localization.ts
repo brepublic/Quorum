@@ -106,7 +106,7 @@ export const ERROR_TEXT = {
   STORAGE_CAPACITY_LOW: {en: "Storage space is low. Free space or increase capacity before retrying.", 'zh-CN': "存储空间不足，请清理文件或扩容后重试。"},
   CACHE_FULL: {en: "The download cache is full. Ask an administrator to free cache space or increase its limit.", 'zh-CN': "下载缓存已满，请联系管理员清理缓存或提高缓存容量。"},
   REVIEW_STORAGE_FULL: {en: "Pending review storage is full. Review pending files or increase capacity first.", 'zh-CN': "待审核文件空间已满，请先处理待审核文件或增加容量。"},
-  STORAGE_RESERVE_REQUIRED: {en: "Saving this file would use reserved disk space. Free space or increase storage capacity.", 'zh-CN': "保存文件会占用服务器保留空间，请清理存储或扩容。"},
+  STORAGE_RESERVE_REQUIRED: {en: "The server does not have enough disk space to cache this file under its current settings. Contact the server administrator.", 'zh-CN': "服务器当前可用于文件缓存的磁盘空间不足，无法保存此文件。请联系服务器管理员处理。"},
   INVALID_FILE_SIZE: {en: "The file size is invalid. Select the file again.", 'zh-CN': "文件大小无效，请重新选择文件。"},
   COMMITTEE_MEMBER_REQUIRED: {en: "Join this committee before performing this action.", 'zh-CN': "需要加入该委员会后才能执行此操作。"},
   UPLOAD_CREATOR_REQUIRED: {en: "Only the account that started the upload can continue it. Use that account or start a new upload.", 'zh-CN': "只有发起上传的账号可以继续该上传，请使用原账号或重新上传。"},
